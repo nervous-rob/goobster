@@ -246,9 +246,19 @@ export const api = {
     projectMissionStartStep: (slug: string, stepId: number, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/start${ownerQs(owner)}`,
             { method: 'POST', body: owner ? { owner } : {} }),
-    projectMissionCompleteStep: (slug: string, stepId: number, note?: string, owner?: string | null) =>
+    projectMissionCompleteStep: (
+        slug: string,
+        stepId: number,
+        note?: string,
+        owner?: string | null,
+        selectedId?: string | null
+    ) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/complete${ownerQs(owner)}`,
-            { method: 'POST', body: { note, owner: owner || undefined } }),
+            { method: 'POST', body: { note, selectedId: selectedId || undefined, owner: owner || undefined } }),
+    projectNeedsYou: (project?: string | null, owner?: string | null) =>
+        request(`/api/app/projects/needs-you${ownerQs(owner, { project: project || undefined })}`),
+    projectSetupAudit: (slug: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/setup-audit${ownerQs(owner)}`),
     projectMissionSkipStep: (slug: string, stepId: number, reason?: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(slug)}/mission/steps/${stepId}/skip${ownerQs(owner)}`,
             { method: 'POST', body: { reason, owner: owner || undefined } }),

@@ -52,6 +52,14 @@ const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const { windowLines } = require('../utils/toolResultWindow');
 const { makeRunnerId, makeLeaseToken, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
+const {
+    CHECKPOINT_FILE,
+    FRAMES_DIR,
+    RUNS_DIR,
+    layoutReminder,
+    auditProjectSetup,
+    formatSetupAuditText
+} = require('../utils/projectSetupContract');
 
 /** How long a live owner has to observe cancelRequested after a stale reap. */
 const STOP_ACK_MS = 1500;
@@ -63,14 +71,9 @@ const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', '
  * trusted HTML - a snippet must never be able to author it.
  */
 const DASHBOARDS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'dashboards');
-/** The checkpoint/resume convention: this file, under runs/<jobId>/. */
-const CHECKPOINT_FILE = 'checkpoint.json';
-/** Per-job tree for checkpoint, frames, logs. Shared root is inputs/artifacts. */
-const RUNS_DIR = 'runs';
 /** The render convention: numbered frames in this run subdirectory. */
-const FRAMES_DIR = 'frames';
-const RENDERS_DIR = 'renders';
 const FRAME_PATTERN = /^frame_\d+\.png$/;
+const RENDERS_DIR = 'renders';
 /** Persisted stream tails per segment (forensics, not archival). */
 const TAIL_CHARS = 8000;
 /** A busy sandbox defers a job segment instead of failing the job. */
@@ -91,6 +94,10 @@ const MANIFEST_MAX_ASSETS = 20;
 const MANIFEST_MAX_TRIGGERS = 20;
 const MANIFEST_MAX_FILES = 20;
 const MANIFEST_MAX_KNOWLEDGE = 8;
+/** Caps for the agent-facing inspect action (one call, bounded). */
+const INSPECT_MAX_JOBS = 5;
+const INSPECT_TAIL_CHARS = 600;
+const INSPECT_CHECKPOINT_CHARS = 400;
 const PROJECT_CONV_PREFIX = '🔭 ';
 const GENERIC_OBS_TITLE = '🔭 Observatory';
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
@@ -1354,6 +1361,289 @@ class ObservatoryService {
                 knowledge: knowledgeTruncated
             }
         };
+    }
+
+    /**
+     * One-call orientation for the agent: mission, assets, triggers, recent
+     * jobs (with tails on active/failed), workspace, checkpoint, knowledge,
+     * and members — plus the setup-contract layout reminder. Prefer this
+     * over chaining status/files/list_assets/list_triggers/mission get.
+     * @param {Object} params
+     * @returns {{ text: string, truncated: object, project: object }}
+     */
+    async inspectProject({
+        userId,
+        project,
+        owner = null,
+        maxJobs = INSPECT_MAX_JOBS,
+        maxAssets = MANIFEST_MAX_ASSETS,
+        maxTriggers = MANIFEST_MAX_TRIGGERS,
+        maxFiles = MANIFEST_MAX_FILES,
+        includeTails = true
+    } = {}) {
+        await this._requireEnabled();
+        const detail = await this.getProjectDetail({ userId, project, owner });
+        const p = detail.project;
+        const projectAssetService = require('./projectAssetService');
+        const projectTriggerService = require('./projectTriggerService');
+
+        const [assets, triggers, roster, topLevel] = await Promise.all([
+            projectAssetService.list({ userId, project: p.slug, owner: p.ownerId }),
+            projectTriggerService.list({ userId, project: p.slug, owner: p.ownerId }),
+            this.listMembers({ userId, project: p.slug, owner: p.ownerId }).catch(() => null),
+            this.listFiles({ userId, project: p.slug, path: '', owner: p.ownerId })
+                .catch(() => ({ entries: [] }))
+        ]);
+
+        const jobCap = Math.max(1, Number(maxJobs) || INSPECT_MAX_JOBS);
+        const assetCap = Math.max(1, Number(maxAssets) || MANIFEST_MAX_ASSETS);
+        const triggerCap = Math.max(1, Number(maxTriggers) || MANIFEST_MAX_TRIGGERS);
+        const fileCap = Math.max(1, Number(maxFiles) || MANIFEST_MAX_FILES);
+        const knowledgeCap = MANIFEST_MAX_KNOWLEDGE;
+
+        const shownJobs = (detail.jobs || []).slice(0, jobCap);
+        const shownAssets = assets.slice(0, assetCap);
+        const shownTriggers = triggers.slice(0, triggerCap);
+        const entries = topLevel.entries || [];
+        const shownFiles = entries.slice(0, fileCap);
+
+        let missionText = null;
+        try {
+            missionText = await require('./projectMissionService').describeForManifest({
+                userId, project: p.slug, owner: p.ownerId
+            });
+        } catch { /* best-effort */ }
+
+        let knowledgeText = '(none)';
+        let knowledgeTruncated = false;
+        try {
+            const coords = this.knowledgeCoords({ id: p.id, ownerId: p.ownerId, userId: p.ownerId });
+            const excerpt = await knowledgeGraphService.describeForPrompt({
+                guildId: coords.guildId,
+                scopeKey: coords.scopeKey,
+                limit: knowledgeCap
+            });
+            const tags = await knowledgeGraphService.listScopeTags({
+                guildId: coords.guildId,
+                scopeKey: coords.scopeKey
+            });
+            const tagSummary = (tags || []).slice(0, knowledgeCap).map(t => t.name).join(', ');
+            const parts = [];
+            if (excerpt) parts.push(excerpt);
+            if (tagSummary) {
+                parts.push(`Tags: ${tagSummary}${(tags || []).length > knowledgeCap
+                    ? ` … +${tags.length - knowledgeCap} more` : ''}`);
+            }
+            if (parts.length) knowledgeText = parts.join('\n');
+            knowledgeTruncated = (tags || []).length > knowledgeCap;
+        } catch { /* optional */ }
+
+        const clip = (text, n) => {
+            const s = String(text || '');
+            if (!s) return '';
+            return s.length > n ? `${s.slice(0, n)}…` : s;
+        };
+
+        const interesting = new Set(['RUNNING', 'FAILED', 'TIMED_OUT', 'INTERRUPTED', 'CANCELLED']);
+        const jobLines = shownJobs.map((job) => {
+            let line = `#${job.id} [${job.status}] ${job.language} · `
+                + `${job.segments} seg, ${job.resumeCount} resume(s)`
+                + `${job.exitCode != null ? ` · exit ${job.exitCode}` : ''}`
+                + `${job.renderPath ? ' · video' : ''}`
+                + `${job.error ? ` · ${clip(job.error, 120)}` : ''}`
+                + `${job.checkpointAt ? ` · ckpt ${job.checkpointAt}` : ''}`;
+            if (includeTails && interesting.has(job.status)) {
+                if (job.stdoutTail) line += `\n  stdout: ${clip(job.stdoutTail, INSPECT_TAIL_CHARS)}`;
+                if (job.stderrTail && job.status !== 'COMPLETED') {
+                    line += `\n  stderr: ${clip(job.stderrTail, INSPECT_TAIL_CHARS)}`;
+                }
+            }
+            return line;
+        });
+
+        const memberLine = roster
+            ? `Members: owner ${roster.ownerName || roster.ownerId}`
+                + (roster.members?.length
+                    ? `; ${roster.members.length} collaborator(s)`
+                    : '')
+                + (roster.invites?.length
+                    ? `; ${roster.invites.length} pending invite(s)`
+                    : '')
+            : null;
+
+        const lines = [
+            `🔭 Project "${p.name}" (slug: ${p.slug}) · ${p.role || 'owner'}`
+                + `${p.role === 'collaborator' ? ` · owner ${p.ownerName || p.ownerId}` : ''}`,
+            `Quota ${p.sizeMb}/${p.quotaMb} MB · ${p.runningJobs} running / ${p.totalJobs} total job(s)`
+                + ` · updated ${p.updatedAt}`
+                + `${p.shared ? ' · shared' : ''}`,
+            layoutReminder(),
+            missionText || 'Mission: (none open)',
+            `Assets (${assets.length}): ${shownAssets.length
+                ? shownAssets.map(a => `${a.slug} ${a.kind} ${a.language || ''} v${a.currentVersion || a.version || '?'}`
+                    .replace(/\s+/g, ' ').trim()).join('; ')
+                : '(none)'}`
+                + (assets.length > assetCap ? `; … +${assets.length - assetCap} more` : ''),
+            `Triggers (${triggers.length}): ${shownTriggers.length
+                ? shownTriggers.map(t => {
+                    const when = t.kind === 'cron'
+                        ? `cron ${t.schedule || '?'}`
+                        : (t.eventTopic || 'event');
+                    const next = t.nextRun ? ` next ${t.nextRun}` : '';
+                    return `${t.name} ${when} ${t.isEnabled ? 'on' : 'off'} → ${t.action}${next}`;
+                }).join('; ')
+                : '(none)'}`
+                + (triggers.length > triggerCap ? `; … +${triggers.length - triggerCap} more` : ''),
+            `Jobs (newest ${shownJobs.length}/${(detail.jobs || []).length}):`,
+            ...(jobLines.length ? jobLines : ['(none)']),
+            (detail.jobs || []).length > jobCap
+                ? `… +${detail.jobs.length - jobCap} more jobs (use action "status")`
+                : null,
+            `Workspace / (${entries.length} top-level, ${detail.totalFiles} files total): `
+                + (shownFiles.length
+                    ? shownFiles.map(f => f.kind === 'directory' ? `${f.name}/` : f.name).join(' ')
+                    : '(empty)')
+                + (entries.length > fileCap ? ` … +${entries.length - fileCap} more` : ''),
+            detail.checkpoint
+                ? `Checkpoint:\n${clip(detail.checkpoint, INSPECT_CHECKPOINT_CHARS)}`
+                : 'Checkpoint: (none — background jobs must write $GOOBSTER_RUN_DIR/checkpoint.json)',
+            `Knowledge:\n${knowledgeText}`,
+            memberLine
+        ].filter(Boolean);
+
+        lines.push(formatSetupAuditText(await this.auditSetup({
+            userId, project: p.slug, owner: p.ownerId,
+            scanScripts: false,
+            _prefetched: { detail, assets }
+        }).catch(() => ({ ok: true, findings: [] }))));
+
+        return {
+            text: lines.filter(Boolean).join('\n'),
+            project: p,
+            truncated: {
+                jobs: (detail.jobs || []).length > jobCap,
+                assets: assets.length > assetCap,
+                triggers: triggers.length > triggerCap,
+                files: entries.length > fileCap,
+                knowledge: knowledgeTruncated
+            }
+        };
+    }
+
+    /**
+     * Audit one project against the setup contract (legacy root checkpoint/
+     * frames, script sources, legacyWorkspace jobs). Findings are recomputed.
+     * @param {Object} params
+     * @returns {Promise<{ ok: boolean, project: object, findings: object[], text: string }>}
+     */
+    async auditSetup({ userId, project, owner = null, _prefetched = null, scanScripts = true } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const projectAssetService = require('./projectAssetService');
+        const detail = _prefetched?.detail
+            || await this.getProjectDetail({ userId, project: row.slug, owner: row.ownerId });
+        let assets = _prefetched?.assets;
+        if (!assets) {
+            assets = await projectAssetService.list({
+                userId, project: row.slug, owner: row.ownerId
+            });
+        }
+        const scriptsMeta = assets.filter(a => a.kind === 'script');
+        const scripts = [];
+        if (scanScripts) {
+            for (const asset of scriptsMeta.slice(0, 20)) {
+                try {
+                    const full = await projectAssetService.get({
+                        userId, project: row.slug, owner: row.ownerId, asset: asset.slug
+                    });
+                    scripts.push({ slug: asset.slug, source: full.source || '' });
+                } catch {
+                    scripts.push({ slug: asset.slug, source: '' });
+                }
+            }
+        } else {
+            for (const asset of scriptsMeta) scripts.push({ slug: asset.slug, source: '' });
+        }
+
+        let rootNames;
+        try {
+            rootNames = fs.readdirSync(row.dir);
+        } catch { rootNames = []; }
+        const hasRootCheckpoint = rootNames.includes(CHECKPOINT_FILE);
+        const hasRootFrames = rootNames.includes(FRAMES_DIR);
+        let runCheckpointCount = 0;
+        try {
+            const runsRoot = path.join(row.dir, RUNS_DIR);
+            for (const name of fs.readdirSync(runsRoot)) {
+                if (!/^\d+$/.test(name)) continue;
+                if (fs.existsSync(path.join(runsRoot, name, CHECKPOINT_FILE))) runCheckpointCount += 1;
+            }
+        } catch { /* no runs */ }
+
+        const jobs = await db.all(
+            `SELECT id, legacyWorkspace FROM observatory_jobs
+             WHERE projectId = @projectId ORDER BY id DESC LIMIT 50`,
+            { projectId: row.id }
+        );
+
+        const audited = auditProjectSetup({
+            rootNames,
+            hasRootCheckpoint,
+            hasRootFrames,
+            runCheckpointCount,
+            jobs,
+            scripts
+        });
+        return {
+            ok: audited.ok,
+            project: detail.project,
+            findings: audited.findings,
+            text: `🔭 Setup audit for "${row.name}" (${row.slug})\n${formatSetupAuditText(audited)}`
+        };
+    }
+
+    /**
+     * Audit every project the user can access. Bounded; soft findings only.
+     * @param {{ userId: string }} params
+     * @returns {Promise<{ text: string, results: object[] }>}
+     */
+    async auditAllSetups({ userId } = {}) {
+        await this._requireEnabled();
+        const projects = await this.listProjects(userId);
+        const results = [];
+        for (const p of projects.slice(0, 40)) {
+            try {
+                const one = await this.auditSetup({
+                    userId, project: p.slug, owner: p.ownerId || p.userId
+                });
+                results.push(one);
+            } catch (error) {
+                results.push({
+                    ok: false,
+                    project: p,
+                    findings: [{
+                        code: 'audit_failed',
+                        severity: 'warn',
+                        message: error?.message || 'audit failed'
+                    }],
+                    text: `🔭 Setup audit for "${p.name}" (${p.slug}) failed: ${error?.message || 'error'}`
+                });
+            }
+        }
+        const needing = results.filter(r => !r.ok);
+        const lines = [
+            `🔭 Setup audit across ${results.length} project(s): `
+                + `${needing.length} need attention, ${results.length - needing.length} ok.`,
+            layoutReminder()
+        ];
+        for (const r of needing.slice(0, 20)) {
+            lines.push(`\n— ${r.project?.name || '?'} (${r.project?.slug || '?'})`);
+            lines.push(formatSetupAuditText(r));
+        }
+        if (needing.length === 0 && results.length) {
+            lines.push('\nAll accessible projects look aligned with the contract.');
+        }
+        return { text: lines.join('\n'), results };
     }
 
     // --- Project knowledge (kg_* scope PROJECT:<id>) -------------------------

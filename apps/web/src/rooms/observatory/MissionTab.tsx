@@ -7,6 +7,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { whenLabel } from './format';
 
 type Criterion = { id: string; text: string };
+type Choice = { id: string; label: string };
 type Step = {
     id: number;
     kind: 'expedition' | 'job' | 'watch' | 'human';
@@ -14,6 +15,12 @@ type Step = {
     description?: string | null;
     status: string;
     dependsOn?: number[];
+    actionParams?: {
+        prompt?: string;
+        choices?: Choice[];
+        allowOther?: boolean;
+        selectedId?: string;
+    };
 };
 type Evidence = {
     id: number;
@@ -110,7 +117,8 @@ export function MissionTab({
                         run.mutate(() => api.projectMissionAction(slug, 'cancel', {}, ownerId));
                     }}
                     onStartStep={(id) => run.mutate(() => api.projectMissionStartStep(slug, id, ownerId))}
-                    onCompleteStep={(id) => run.mutate(() => api.projectMissionCompleteStep(slug, id, undefined, ownerId))}
+                    onCompleteStep={(id, selectedId, note) => run.mutate(() =>
+                        api.projectMissionCompleteStep(slug, id, note, ownerId, selectedId))}
                     onSkipStep={(id) => run.mutate(() => api.projectMissionSkipStep(slug, id, undefined, ownerId))}
                     onRetryStep={(id) => run.mutate(() => api.projectMissionRetryStep(slug, id, ownerId))}
                     onAddStep={(body) => run.mutate(() => api.addProjectMissionStep(slug, body, ownerId))}
@@ -226,7 +234,7 @@ function MissionView({
     onResume: () => void;
     onCancel: () => void;
     onStartStep: (id: number) => void;
-    onCompleteStep: (id: number) => void;
+    onCompleteStep: (id: number, selectedId?: string, note?: string) => void;
     onSkipStep: (id: number) => void;
     onRetryStep: (id: number) => void;
     onAddStep: (body: Record<string, unknown>) => void;
@@ -237,6 +245,8 @@ function MissionView({
     const [stepKind, setStepKind] = useState<Step['kind']>('human');
     const [stepTitle, setStepTitle] = useState('');
     const [stepParam, setStepParam] = useState('');
+    const [stepChoices, setStepChoices] = useState('');
+    const [answerByStep, setAnswerByStep] = useState<Record<number, string>>({});
     const [reviewNotes, setReviewNotes] = useState(mission.review?.notes || '');
     const [verdict, setVerdict] = useState(
         mission.review?.verdict && ['met', 'unmet', 'mixed'].includes(mission.review.verdict)
@@ -293,18 +303,53 @@ function MissionView({
                 ? <div className="empty">No steps yet — add one below or ask Goobster to plan.</div>
                 : (
                     <div className="list-card">
-                        {mission.steps.map((step) => (
+                        {mission.steps.map((step) => {
+                            const choices = step.actionParams?.choices || [];
+                            const humanOpen = mission.status === 'ACTIVE'
+                                && step.kind === 'human'
+                                && step.status !== 'DONE'
+                                && step.status !== 'SKIPPED';
+                            return (
                             <div key={step.id} className="list-row task-row">
                                 <div className="row-body">
                                     <span className="badge">{step.status}</span>
                                     <strong>{step.title}</strong>
                                     <div className="row-meta">{step.kind}{step.description ? ` · ${step.description}` : ''}</div>
+                                    {step.actionParams?.prompt ? (
+                                        <p className="hint">{step.actionParams.prompt}</p>
+                                    ) : null}
+                                    {humanOpen && choices.length > 0 && (
+                                        <div className="obs-mission-choices" role="radiogroup" aria-label={step.title}>
+                                            {choices.map((choice) => (
+                                                <label key={choice.id} className="obs-choice">
+                                                    <input
+                                                        type="radio"
+                                                        name={`step-${step.id}`}
+                                                        value={choice.id}
+                                                        checked={answerByStep[step.id] === choice.id}
+                                                        onChange={() => setAnswerByStep((prev) => ({
+                                                            ...prev, [step.id]: choice.id
+                                                        }))}
+                                                    />
+                                                    {choice.label}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {step.actionParams?.selectedId ? (
+                                        <p className="row-meta">Answered: {step.actionParams.selectedId}</p>
+                                    ) : null}
                                 </div>
                                 {mission.status === 'ACTIVE' && (step.status === 'READY' || step.status === 'PENDING') && step.kind !== 'human' && (
                                     <button type="button" className="btn" disabled={busy} onClick={() => onStartStep(step.id)}>Start</button>
                                 )}
-                                {mission.status === 'ACTIVE' && step.kind === 'human' && step.status !== 'DONE' && step.status !== 'SKIPPED' && (
-                                    <button type="button" className="btn primary" disabled={busy} onClick={() => onCompleteStep(step.id)}>Done</button>
+                                {humanOpen && (
+                                    <button
+                                        type="button"
+                                        className="btn primary"
+                                        disabled={busy || (choices.length > 0 && !answerByStep[step.id])}
+                                        onClick={() => onCompleteStep(step.id, answerByStep[step.id])}
+                                    >{choices.length ? 'Answer' : 'Done'}</button>
                                 )}
                                 {['ACTIVE', 'BLOCKED'].includes(mission.status) && step.status === 'FAILED' && (
                                     <button type="button" className="btn primary" disabled={busy} onClick={() => onRetryStep(step.id)}>Retry</button>
@@ -314,7 +359,8 @@ function MissionView({
                                     <button type="button" className="btn" disabled={busy} onClick={() => onSkipStep(step.id)}>Skip</button>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
 
@@ -323,6 +369,7 @@ function MissionView({
                     <select className="input" value={stepKind} onChange={(e) => {
                         setStepKind(e.target.value as Step['kind']);
                         setStepParam('');
+                        setStepChoices('');
                     }}>
                         {STEP_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
                     </select>
@@ -336,18 +383,27 @@ function MissionView({
                         <input className="input" placeholder="watch topic" value={stepParam}
                             onChange={(e) => setStepParam(e.target.value)} />
                     )}
+                    {stepKind === 'human' && (
+                        <input className="input" placeholder="Choices (semicolon-separated), optional"
+                            value={stepChoices}
+                            onChange={(e) => setStepChoices(e.target.value)} />
+                    )}
                     <button type="button" className="btn" disabled={busy || !stepTitle.trim()
                         || (stepKind === 'job' && !stepParam.trim())
                         || (stepKind === 'watch' && !stepParam.trim())}
                         onClick={() => {
+                            const choiceLabels = stepChoices.split(/;|\n/).map((s) => s.trim()).filter(Boolean);
                             const actionParams = stepKind === 'job'
                                 ? { asset: stepParam.trim() }
                                 : stepKind === 'watch'
                                     ? { topic: stepParam.trim() }
-                                    : undefined;
+                                    : stepKind === 'human' && choiceLabels.length >= 2
+                                        ? { choices: choiceLabels.map((label) => ({ label })), prompt: stepTitle.trim() }
+                                        : undefined;
                             onAddStep({ kind: stepKind, title: stepTitle.trim(), actionParams });
                             setStepTitle('');
                             setStepParam('');
+                            setStepChoices('');
                         }}>Add step</button>
                     {mission.status === 'APPROVED' && (
                         <span className="hint">Adding a step returns this mission to draft so you can re-approve the new plan.</span>

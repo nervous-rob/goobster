@@ -5,6 +5,7 @@
 
 const { OBSERVATORY_COMMAND_MAX_LENGTH } = require('../appHelpers');
 const { streamWebChatTurn } = require('../appStream');
+const { backgroundJobHint } = require('../../utils/projectSetupContract');
 
 function mountProjects(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, projectOwner } = h;
@@ -19,6 +20,16 @@ function mountProjects(app, ctx, h) {
     app.get('/api/app/projects/invites', requireAuth, chatRoute(async (req) => ({
         invites: await ctx.observatory.listInvites(req.webUser.userId)
     })));
+
+    // Cross-project "Needs you" review board (optional ?project=&owner= filter).
+    // Registered beside invites so it never competes with :slug routes.
+    app.get('/api/app/projects/needs-you', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.listNeedsYou({
+            userId: req.webUser.userId,
+            project: req.query.project || null,
+            owner: req.query.owner || null
+        })
+    ));
 
     app.post('/api/app/projects/invites/:inviteId/respond', requireAuth, chatRoute(async (req) =>
         ctx.observatory.respondInvite({
@@ -126,7 +137,8 @@ function mountProjects(app, ctx, h) {
                   + 'Use the observatory tool on this project to carry out the instructions below. '
                 : '[Observatory command] Use the observatory tool to carry out the instructions below '
                   + '(create a project first if none fits). ')
-                + 'Prefer background jobs with the checkpoint.json convention for anything long, and '
+                + 'Start with action "inspect" if you need current project state. '
+                + `${backgroundJobHint()}, and `
                 + 'report back what you started, changed, or found.'
                 + manifestText
                 + '\n\n'
@@ -819,7 +831,16 @@ function mountProjects(app, ctx, h) {
             owner: projectOwner(req),
             missionId: req.body?.missionId,
             stepId: req.params.stepId,
-            note: req.body?.note
+            note: req.body?.note,
+            selectedId: req.body?.selectedId
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/setup-audit', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.auditSetup({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
         })
     ));
 

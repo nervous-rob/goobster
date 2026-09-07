@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-07
+
+### Fixed
+- **Observatory project-setup guidance no longer contradicts itself.** The tool description correctly put background checkpoints and frames under `$GOOBSTER_RUN_DIR`, but `create-project` told Goobster to put them under `$GOOBSTER_PROJECT_DIR`, and `documentation/projects.md` repeated the legacy path. New jobs only resume from the per-run file, so following that reply could block checkpoint resume. Tool description, create-project reply, starter examples, agent-prompt hints, and the projects guide now come from `utils/projectSetupContract.js`. The existing timeout→resume journey runs the shared Python starter. Jest: `projectSetupContract`, `toolsRegistryObservatory`, `observatoryService`.
+
+### Added
+- **Observatory `inspect` — one-call project orientation.** Answering "what's going on in this project?" previously meant chaining `status` / `files` / `list_assets` / `list_triggers` / `mission get` (and often still missing tails). `inspect` returns mission, assets, triggers, recent jobs with selective tails, workspace, checkpoint, knowledge, and members in one bounded string, and restates the setup-contract layout. Prefer it before deep-dive actions. Service: `projectService.inspectProject`. Jest: `projectChat`, `toolsRegistryObservatory`.
+- **Setup-contract `audit` for legacy projects.** `auditProjectSetup` / `projectService.auditSetup` (and `auditAllSetups`) recompute findings: root `checkpoint.json`/`frames/`, scripts writing under `$GOOBSTER_PROJECT_DIR`, legacyWorkspace jobs. Tool action `audit` (omit project to scan all). Portal `GET …/setup-audit`. Inspect includes a light filesystem check.
+- **Needs you review board.** Cross-project queue of mission human gates (approve / answer MC / unblock / review) plus setup findings. Human steps accept `actionParams.choices`; completing requires `selectedId`. Portal Observatory list board + Mission tab radios; tool `needs-you`; `GET /api/app/projects/needs-you`. Stays on Missions — not a new room. Jest: `projectSetupAudit`.
+
 ## 2026-09-04
 
 ### Changed

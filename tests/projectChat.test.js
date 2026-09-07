@@ -296,6 +296,50 @@ describe('compact project manifest', () => {
         expect(manifest.text).toContain('note-11');
         expect(manifest.text).not.toContain('note-0');
     });
+
+    test('inspectProject returns one bounded overview with the setup-contract layout', async () => {
+        const svc = makeService();
+        const userId = `inspect-user-${process.pid}`;
+        TEST_USERS.push(userId);
+        const { slug } = await svc.createProject({ userId, name: 'Inspect Lab' });
+        await projectAssetService.save({
+            userId, project: slug, name: 'readme', kind: 'note',
+            language: 'markdown', source: '# hi\n', origin: 'portal'
+        });
+        await projectTriggerService.create({
+            userId,
+            project: slug,
+            name: 'on-done',
+            kind: 'event',
+            eventTopic: 'job_completed',
+            action: 'agent_prompt',
+            actionParams: { prompt: 'summarize' }
+        });
+        await svc.writeWorkspaceFile({
+            userId, slug, relativePath: 'data/input.csv', bytes: 'a,b\n1,2\n'
+        });
+        fs.mkdirSync(path.join(PROJECTS_ROOT, userId, slug, 'runs', '1'), { recursive: true });
+        fs.writeFileSync(
+            path.join(PROJECTS_ROOT, userId, slug, 'runs', '1', 'checkpoint.json'),
+            JSON.stringify({ step: 3 })
+        );
+
+        const inspected = await svc.inspectProject({
+            userId, project: slug, maxJobs: 3, maxAssets: 5, maxTriggers: 5, maxFiles: 5
+        });
+        expect(inspected.project.slug).toBe(slug);
+        expect(inspected.text).toContain('Inspect Lab');
+        expect(inspected.text).toContain(slug);
+        expect(inspected.text).toMatch(/Layout:/);
+        expect(inspected.text).toContain('$GOOBSTER_RUN_DIR/checkpoint.json');
+        expect(inspected.text).toContain('readme');
+        expect(inspected.text).toContain('on-done');
+        expect(inspected.text).toContain('data/');
+        expect(inspected.text).toContain('"step":3');
+        expect(inspected.text).toMatch(/Assets \(1\)/);
+        expect(inspected.text).toMatch(/Triggers \(1\)/);
+        expect(inspected.truncated.assets).toBe(false);
+    });
 });
 
 describe('project refetch hints', () => {

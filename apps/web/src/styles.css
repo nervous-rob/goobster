@@ -210,6 +210,14 @@ a.nav-btn {
 .obs-mission-actions, .obs-mission-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .obs-mission-criteria, .obs-mission-evidence { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .obs-mission-timeline ol, .obs-mission-history ul { margin: 8px 0 0; padding-left: 18px; }
+.obs-mission-choices { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.obs-choice { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.obs-needs-you { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.obs-needs-columns { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 900px) {
+    .obs-needs-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+}
+.obs-needs-column .list-card { margin-top: 6px; }
 .verdict-met { background: color-mix(in srgb, seagreen 30%, transparent); }
 .verdict-unmet { background: color-mix(in srgb, crimson 30%, transparent); }
 .verdict-open { opacity: 0.75; }

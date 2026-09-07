@@ -175,6 +175,63 @@ function requiredStepParams(kind, params) {
     return body;
 }
 
+const MAX_CHOICES = 8;
+const MAX_CHOICE_LABEL = 160;
+const MAX_CHOICE_PROMPT = 500;
+
+/**
+ * Legalize multiple-choice options on a human step.
+ * @param {object} params
+ * @returns {object}
+ */
+function legalizeHumanActionParams(params) {
+    const body = { ...(parseJson(params, {}) || {}) };
+    const rawChoices = body.choices;
+    if (rawChoices == null || rawChoices === '') {
+        delete body.choices;
+        if (body.prompt) body.prompt = clip(body.prompt, MAX_CHOICE_PROMPT);
+        return body;
+    }
+    const list = Array.isArray(rawChoices)
+        ? rawChoices
+        : String(rawChoices).split(/;|\n/).map(s => s.trim()).filter(Boolean).map(label => ({ label }));
+    if (list.length < 2) {
+        throw new ProjectMissionError(400, 'BAD_CHOICES',
+            'A multiple-choice human step needs at least two options.');
+    }
+    if (list.length > MAX_CHOICES) {
+        throw new ProjectMissionError(400, 'BAD_CHOICES',
+            `At most ${MAX_CHOICES} choices per human step.`);
+    }
+    const used = new Set();
+    const choices = [];
+    for (const item of list) {
+        const label = clip(
+            typeof item === 'string' ? item : (item?.label || item?.text || ''),
+            MAX_CHOICE_LABEL
+        );
+        if (!label) continue;
+        let id = String(
+            (typeof item === 'object' && item?.id) || label
+        ).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'opt';
+        let candidate = id;
+        let n = 2;
+        while (used.has(candidate)) candidate = `${id}-${n++}`;
+        used.add(candidate);
+        choices.push({ id: candidate, label });
+    }
+    if (choices.length < 2) {
+        throw new ProjectMissionError(400, 'BAD_CHOICES',
+            'A multiple-choice human step needs at least two options.');
+    }
+    body.choices = choices;
+    if (body.prompt) body.prompt = clip(body.prompt, MAX_CHOICE_PROMPT);
+    body.allowOther = body.allowOther === true;
+    delete body.selectedId;
+    delete body.answeredAt;
+    return body;
+}
+
 function legalizeDependsOn(input) {
     if (input == null || input === '') return [];
     const list = Array.isArray(input)
@@ -634,7 +691,14 @@ class ProjectMissionService {
         if (!cleanTitle) {
             throw new ProjectMissionError(400, 'BAD_STEP', 'Each step needs a short title.');
         }
-        const params = parseJson(actionParams, {}) || {};
+        let params = parseJson(actionParams, {}) || {};
+        if (cleanKind === 'human') {
+            params = legalizeHumanActionParams(params);
+        } else {
+            for (const key of Object.keys(params)) {
+                if (params[key] == null || params[key] === '') delete params[key];
+            }
+        }
         return handle.insert(
             `INSERT INTO project_mission_steps
                 (missionId, userId, kind, title, description, status, dependsOnJson,
@@ -1559,7 +1623,7 @@ class ProjectMissionService {
     }
 
     async completeStep({
-        userId, project, owner = null, missionId = null, stepId, note = null
+        userId, project, owner = null, missionId = null, stepId, note = null, selectedId = null
     } = {}) {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['ACTIVE', 'BLOCKED']
@@ -1569,17 +1633,49 @@ class ProjectMissionService {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
                 `Step “${step.title}” cannot be marked done from ${step.status}.`);
         }
+        const params = parseJson(step.actionParamsJson, {}) || {};
+        const choices = Array.isArray(params.choices) ? params.choices : [];
+        let chosen = selectedId == null || selectedId === '' ? null : String(selectedId).trim();
+        if (step.kind === 'human' && choices.length) {
+            const match = choices.find(c => c.id === chosen);
+            if (!match) {
+                if (!(params.allowOther && clip(note, 240))) {
+                    throw new ProjectMissionError(400, 'BAD_CHOICE',
+                        'Pick one of the offered choices to complete this step.');
+                }
+                chosen = 'other';
+            }
+        }
         let nextStatus = row.status;
         await db.transaction(async (tx) => {
-            await tx.run(
-                `UPDATE project_mission_steps
-                 SET status = 'DONE', finishedAt = datetime('now'), updatedAt = datetime('now')
-                 WHERE id = @id`,
-                { id: step.id }
-            );
+            if (step.kind === 'human' && choices.length) {
+                const nextParams = {
+                    ...params,
+                    selectedId: chosen,
+                    answeredAt: toUtcText(new Date())
+                };
+                await tx.run(
+                    `UPDATE project_mission_steps
+                     SET status = 'DONE', finishedAt = datetime('now'), updatedAt = datetime('now'),
+                         actionParamsJson = @actionParams
+                     WHERE id = @id`,
+                    { id: step.id, actionParams: JSON.stringify(nextParams) }
+                );
+            } else {
+                await tx.run(
+                    `UPDATE project_mission_steps
+                     SET status = 'DONE', finishedAt = datetime('now'), updatedAt = datetime('now')
+                     WHERE id = @id`,
+                    { id: step.id }
+                );
+            }
             await this._appendEvent(tx, {
                 missionId: row.id, userId, kind: 'step_done',
-                payload: { stepId: step.id, note: clip(note, 240) || null }
+                payload: {
+                    stepId: step.id,
+                    note: clip(note, 240) || null,
+                    selectedId: chosen
+                }
             });
             await this._refreshReadySteps(tx, row.id);
             if (row.status === 'ACTIVE') {
@@ -2135,6 +2231,153 @@ class ProjectMissionService {
         );
         return { missions: row?.missions || 0, decisions: row?.decisions || 0 };
     }
+
+    /**
+     * Cross-project "Needs you" queue for the Observatory board: approve,
+     * answer (MC human steps), unblock, review. Optional project filter.
+     * @param {{ userId: string, project?: string|null, owner?: string|null }} params
+     * @returns {Promise<{ cards: object[], text: string }>}
+     */
+    async listNeedsYou({ userId, project = null, owner = null } = {}) {
+        const obs = this._obs();
+        const projects = project
+            ? [await obs._requireProject(userId, project, owner)]
+            : await obs.listProjects(userId);
+        const cards = [];
+        for (const p of projects.slice(0, 40)) {
+            const slug = p.slug;
+            const ownerId = p.ownerId || p.userId;
+            let mission;
+            try {
+                mission = await this.getOpen({ userId, project: slug, owner: ownerId });
+            } catch {
+                continue;
+            }
+            if (!mission) continue;
+            const base = {
+                projectSlug: slug,
+                projectName: p.name,
+                ownerId,
+                missionId: mission.id,
+                missionTitle: mission.title,
+                missionStatus: mission.status
+            };
+            if (mission.status === 'DRAFT') {
+                cards.push({
+                    ...base,
+                    column: 'approve',
+                    id: `approve:${mission.id}`,
+                    title: 'Approve mission plan',
+                    detail: mission.objective
+                });
+            }
+            if (mission.status === 'APPROVED') {
+                cards.push({
+                    ...base,
+                    column: 'approve',
+                    id: `start:${mission.id}`,
+                    title: 'Start approved mission',
+                    detail: mission.objective
+                });
+            }
+            if (mission.status === 'REVIEW') {
+                cards.push({
+                    ...base,
+                    column: 'review',
+                    id: `review:${mission.id}`,
+                    title: 'Review & complete',
+                    detail: mission.evaluation
+                        ? `Assessment: ${mission.evaluation.overall}`
+                        : 'Compare evidence to the original criteria.'
+                });
+            }
+            if (mission.status === 'BLOCKED') {
+                const failed = (mission.steps || []).filter(s => s.status === 'FAILED');
+                cards.push({
+                    ...base,
+                    column: 'unblock',
+                    id: `blocked:${mission.id}`,
+                    title: failed.length
+                        ? `Unblock: ${failed.map(s => s.title).join(', ')}`
+                        : 'Mission blocked',
+                    detail: 'Retry or skip the failed step, then resume.'
+                });
+            }
+            if (mission.status === 'ACTIVE' || mission.status === 'BLOCKED') {
+                for (const step of mission.steps || []) {
+                    if (step.kind !== 'human') continue;
+                    if (step.status === 'DONE' || step.status === 'SKIPPED') continue;
+                    if (!(step.status === 'READY' || step.status === 'PENDING')) continue;
+                    const choices = Array.isArray(step.actionParams?.choices)
+                        ? step.actionParams.choices
+                        : [];
+                    cards.push({
+                        ...base,
+                        column: 'answer',
+                        id: `answer:${mission.id}:${step.id}`,
+                        stepId: step.id,
+                        title: step.title,
+                        detail: step.actionParams?.prompt || step.description || null,
+                        choices,
+                        allowOther: step.actionParams?.allowOther === true
+                    });
+                }
+            }
+        }
+
+        // Setup-audit warnings as soft board cards (recomputed, capped).
+        if (!project) {
+            try {
+                const audited = await obs.auditAllSetups({ userId });
+                for (const r of (audited.results || []).filter(x => !x.ok).slice(0, 15)) {
+                    const warns = (r.findings || []).filter(f => f.severity === 'warn' || f.severity === 'error');
+                    if (!warns.length) continue;
+                    cards.push({
+                        projectSlug: r.project?.slug,
+                        projectName: r.project?.name,
+                        ownerId: r.project?.ownerId,
+                        column: 'setup',
+                        id: `setup:${r.project?.slug}`,
+                        title: `Setup: ${warns.length} finding(s)`,
+                        detail: warns.map(f => f.message).join(' ')
+                    });
+                }
+            } catch { /* observatory may be disabled */ }
+        } else {
+            try {
+                const one = await obs.auditSetup({ userId, project, owner });
+                if (!one.ok) {
+                    const warns = (one.findings || []).filter(f => f.severity === 'warn' || f.severity === 'error');
+                    cards.push({
+                        projectSlug: one.project?.slug,
+                        projectName: one.project?.name,
+                        ownerId: one.project?.ownerId,
+                        column: 'setup',
+                        id: `setup:${one.project?.slug}`,
+                        title: `Setup: ${warns.length} finding(s)`,
+                        detail: warns.map(f => f.message).join(' ')
+                    });
+                }
+            } catch { /* ignore */ }
+        }
+
+        const order = { approve: 0, answer: 1, unblock: 2, review: 3, setup: 4 };
+        cards.sort((a, b) => (order[a.column] ?? 9) - (order[b.column] ?? 9)
+            || String(a.projectName).localeCompare(String(b.projectName)));
+
+        const byCol = {};
+        for (const c of cards) {
+            byCol[c.column] = (byCol[c.column] || 0) + 1;
+        }
+        const summary = Object.entries(byCol).map(([k, n]) => `${n} ${k}`).join(', ') || 'nothing waiting';
+        const lines = [
+            `📋 Needs you (${cards.length}): ${summary}`,
+            ...cards.slice(0, 30).map(c =>
+                `- [${c.column}] ${c.projectSlug}: ${c.title}`
+                + (c.choices?.length ? ` (${c.choices.length} choices)` : ''))
+        ];
+        return { cards, text: lines.join('\n') };
+    }
 }
 
 module.exports = new ProjectMissionService();
@@ -2146,5 +2389,6 @@ module.exports.HUMAN_ORIGINS = HUMAN_ORIGINS;
 module.exports.RECEIPT_KINDS = RECEIPT_KINDS;
 module.exports.ASSESSMENTS = ASSESSMENTS;
 module.exports.legalizeCriteria = legalizeCriteria;
+module.exports.legalizeHumanActionParams = legalizeHumanActionParams;
 module.exports.toUtcText = toUtcText;
 module.exports.watchReconcileOutcome = watchReconcileOutcome;

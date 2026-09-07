@@ -65,6 +65,29 @@ directory, **plus** the workspace:
   there survives between runs; anything written to the cwd is collected and
   attached to the chat like a normal `runCode` output, then pruned.
 
+**Orienting from chat.** Prefer observatory action `inspect` (project slug)
+for a one-call overview — mission, assets, triggers, recent jobs with
+tails, workspace, checkpoint, knowledge, and members — before chaining
+`status` / `files` / `list_assets` / `list_triggers` / `mission get`.
+Deep dives still use those actions. `inspect` restates the setup contract
+from `utils/projectSetupContract.js` (`$GOOBSTER_PROJECT_DIR` vs
+`$GOOBSTER_RUN_DIR`).
+
+**Auditing legacy projects.** Action `audit` (one project, or omit
+`project` to audit all) recomputes setup-contract findings: root
+`checkpoint.json` / `frames/`, scripts that still write under
+`$GOOBSTER_PROJECT_DIR`, and `legacyWorkspace` jobs. Findings are not
+stored — they are derived from disk + assets. Portal:
+`GET /api/app/projects/:slug/setup-audit`.
+
+**Needs you (review board).** Cross-project queue of human gates —
+approve a draft mission, answer multiple-choice human steps, unblock
+failed steps, complete a review, and setup findings. Portal Observatory
+list shows a **Needs you** board (filterable); tool action `needs-you`
+returns the same cards. Human steps may carry
+`actionParams.choices` (portal radios / `selectedId` on complete). This
+stays on Missions + Observatory — not a new room.
+
 **Reading files from chat.** Prefer observatory action `read` (workspace-
 relative `path`, optional 1-based `offset` + line `limit`) over `run` +
 `cat`/`head`/`sed`. The result is a line window (default 400, max 800)
@@ -236,14 +259,23 @@ approvers. Trigger `fetch_data` actions are allowlisted-hosts only.
 
 `action: "run"` with `background: true` detaches the run into a job.
 The engine runs the same snippet in *segments* — each a fully legalized
-sandbox run. Resume is a documented convention, not magic:
+sandbox run. Resume is a documented convention, not magic. The layout
+contract (tool description, create-project reply, and starter examples)
+is generated from `utils/projectSetupContract.js` so guidance cannot
+drift from runtime:
 
-1. Load `$GOOBSTER_PROJECT_DIR/checkpoint.json` when it exists.
+1. Load `$GOOBSTER_RUN_DIR/checkpoint.json` when it exists (legacy only:
+   `$GOOBSTER_PROJECT_DIR/checkpoint.json`).
 2. Rewrite it as work progresses.
 3. A segment killed at the timeout wall resumes only if the checkpoint
    advanced — up to `maxResumes` times.
 4. Exit 0 completes; non-zero fails; timeout with no checkpoint progress
    is terminal.
+
+`$GOOBSTER_PROJECT_DIR` is the shared project root (inputs and published
+artifacts). Each job owns `runs/<jobId>/`, exposed as `$GOOBSTER_RUN_DIR`
+— put `checkpoint.json` and `frames/` there. New jobs do **not** resume
+from a project-root checkpoint.
 
 Jobs found `RUNNING` with no live handle after a restart are reaped to
 `INTERRUPTED` and auto-resumed when a checkpoint exists
