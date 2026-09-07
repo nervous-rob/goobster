@@ -976,6 +976,7 @@ class ProjectTriggerService {
         const prompt = String(params.prompt || '').trim();
         const message = `[Observatory command for project "${projectRow.name}" (slug: ${projectRow.slug})] `
             + 'Use the observatory tool on this project to carry out the instructions below. '
+            + 'Start with action "inspect" if you need current project state. '
             + `${backgroundJobHint()}, and `
             + 'report back what you started, changed, or found.\n\n'
             + prompt;

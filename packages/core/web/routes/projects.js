@@ -127,6 +127,7 @@ function mountProjects(app, ctx, h) {
                   + 'Use the observatory tool on this project to carry out the instructions below. '
                 : '[Observatory command] Use the observatory tool to carry out the instructions below '
                   + '(create a project first if none fits). ')
+                + 'Start with action "inspect" if you need current project state. '
                 + `${backgroundJobHint()}, and `
                 + 'report back what you started, changed, or found.'
                 + manifestText
