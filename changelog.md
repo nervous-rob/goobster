@@ -5,6 +5,9 @@
 ### Fixed
 - **Observatory project-setup guidance no longer contradicts itself.** The tool description correctly put background checkpoints and frames under `$GOOBSTER_RUN_DIR`, but `create-project` told Goobster to put them under `$GOOBSTER_PROJECT_DIR`, and `documentation/projects.md` repeated the legacy path. New jobs only resume from the per-run file, so following that reply could block checkpoint resume. Tool description, create-project reply, starter examples, agent-prompt hints, and the projects guide now come from `utils/projectSetupContract.js`. The existing timeout→resume journey runs the shared Python starter. Jest: `projectSetupContract`, `toolsRegistryObservatory`, `observatoryService`.
 
+### Added
+- **Observatory `inspect` — one-call project orientation.** Answering "what's going on in this project?" previously meant chaining `status` / `files` / `list_assets` / `list_triggers` / `mission get` (and often still missing tails). `inspect` returns mission, assets, triggers, recent jobs with selective tails, workspace, checkpoint, knowledge, and members in one bounded string, and restates the setup-contract layout. Prefer it before deep-dive actions. Service: `projectService.inspectProject`. Jest: `projectChat`, `toolsRegistryObservatory`.
+
 ## 2026-09-04
 
 ### Changed

@@ -65,6 +65,14 @@ directory, **plus** the workspace:
   there survives between runs; anything written to the cwd is collected and
   attached to the chat like a normal `runCode` output, then pruned.
 
+**Orienting from chat.** Prefer observatory action `inspect` (project slug)
+for a one-call overview — mission, assets, triggers, recent jobs with
+tails, workspace, checkpoint, knowledge, and members — before chaining
+`status` / `files` / `list_assets` / `list_triggers` / `mission get`.
+Deep dives still use those actions. `inspect` restates the setup contract
+from `utils/projectSetupContract.js` (`$GOOBSTER_PROJECT_DIR` vs
+`$GOOBSTER_RUN_DIR`).
+
 **Reading files from chat.** Prefer observatory action `read` (workspace-
 relative `path`, optional 1-based `offset` + line `limit`) over `run` +
 `cat`/`head`/`sed`. The result is a line window (default 400, max 800)

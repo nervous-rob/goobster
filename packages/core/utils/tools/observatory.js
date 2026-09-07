@@ -152,7 +152,10 @@ module.exports = {
                 'The Observatory: persistent, long-running simulation projects layered on the code sandbox. '
                 + `A project gives every run a durable workspace directory (exposed as $${PROJECT_DIR_ENV}) `
                 + 'whose files SURVIVE between runs - unlike runCode, whose working directory is wiped. '
-                + 'Actions: "create-project" (name), "list" (your projects), "run" (language+code inside a project; '
+                + 'Actions: "inspect" (ONE call for what\'s going on: mission, assets, triggers, recent jobs '
+                + 'with tails, workspace, checkpoint, knowledge, members — prefer this before chaining '
+                + 'status/files/list_assets/list_triggers/mission get), '
+                + '"create-project" (name), "list" (your projects), "run" (language+code inside a project; '
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
                 + '"files" (workspace listing), "read" (one workspace text file by path; optional '
@@ -186,15 +189,15 @@ module.exports = {
                 properties: {
                     action: {
                         type: 'string',
-                        enum: ['create-project', 'list', 'run', 'status', 'resume', 'cancel',
+                        enum: ['inspect', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'read', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'delete_trigger', 'invite_user', 'list_members', 'remove_member',
                             'note_knowledge', 'recall_knowledge', 'mission'],
-                        description: 'What to do'
+                        description: 'What to do. Prefer "inspect" when you need an overview of one project.'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission)' },
+                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission)' },
                     path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
                     offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
                     limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
@@ -311,6 +314,15 @@ module.exports = {
                     case 'create-project': {
                         const created = await observatoryService.createProject({ userId, name: name || project });
                         return createProjectResponse(created);
+                    }
+                    case 'inspect': {
+                        if (!project && !name) {
+                            return '❌ inspect needs a project name or slug.';
+                        }
+                        const inspected = await observatoryService.inspectProject({
+                            userId, project: project || name, owner
+                        });
+                        return inspected.text;
                     }
                     case 'list': {
                         const projects = await observatoryService.listProjects(userId);

@@ -105,7 +105,7 @@ describe('getDefinitions gating', () => {
         expect(def).toBeTruthy();
         expect(def.parameters.required).toEqual(['action']);
         expect(def.parameters.properties.action.enum).toEqual(expect.arrayContaining([
-            'create-project', 'list', 'run', 'status', 'resume', 'cancel',
+            'inspect', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
             'files', 'render', 'delete-project',
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
@@ -116,6 +116,7 @@ describe('getDefinitions gating', () => {
         expect(def.description).toMatch(/checkpoint\.json/);
         expect(def.description).toMatch(/\$GOOBSTER_RUN_DIR\/checkpoint\.json/);
         expect(def.description).toMatch(/legacy: \$GOOBSTER_PROJECT_DIR\/checkpoint\.json/);
+        expect(def.description).toMatch(/"inspect"/);
         expect(def.description).toMatch(/"read"/);
         expect(def.parameters.properties.path).toBeTruthy();
         expect(def.parameters.properties.offset).toBeTruthy();
@@ -197,6 +198,19 @@ describe('execute happy path (through the registry)', () => {
         expect(created).toContain('checkpoint.json');
         expect(created).toMatch(/Do not put checkpoint\.json/);
         expect(created).not.toMatch(/put source files, checkpoint\.json/);
+        expect(created).toMatch(/action "inspect"/);
+
+        const inspected = await toolsRegistry.execute('observatory', {
+            action: 'inspect', project: 'tool-test-sim',
+            interactionContext: webContext()
+        });
+        expect(inspected).toContain('tool-test-sim');
+        expect(inspected).toContain('$GOOBSTER_PROJECT_DIR');
+        expect(inspected).toContain('$GOOBSTER_RUN_DIR');
+        expect(inspected).toMatch(/Layout:/);
+        expect(inspected).toMatch(/Assets \(/);
+        expect(inspected).toMatch(/Jobs /);
+        expect(inspected).toMatch(/Workspace/);
 
         const listed = await toolsRegistry.execute('observatory', {
             action: 'list', interactionContext: webContext()

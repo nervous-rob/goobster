@@ -14,6 +14,7 @@ const {
     createProjectResponse,
     starterExamples,
     docsCheckpointSteps,
+    layoutReminder,
     backgroundJobHint
 } = require('@goobster/core/utils/projectSetupContract');
 
@@ -30,9 +31,10 @@ describe('projectSetupContract', () => {
         const created = createProjectResponse({ name: 'Sim Lab', slug: 'sim-lab' });
         const docs = docsCheckpointSteps().join('\n');
         const hint = backgroundJobHint();
+        const layout = layoutReminder();
         const { python, bash } = starterExamples();
 
-        for (const surface of [convention, created, docs, hint, python, bash]) {
+        for (const surface of [convention, created, docs, hint, layout, python, bash]) {
             expect(surface).toContain(RUN_DIR_ENV);
             expect(surface).toContain(CHECKPOINT_FILE);
         }
@@ -46,6 +48,7 @@ describe('projectSetupContract', () => {
         expect(created).toContain(`$${PROJECT_DIR_ENV}`);
         expect(created).toContain(`$${RUN_DIR_ENV}`);
         expect(created).toMatch(new RegExp(`Do not put ${CHECKPOINT_FILE}`));
+        expect(created).toMatch(/action "inspect"/);
         // Never tell operators to park the live checkpoint under the project root.
         expect(created).not.toMatch(
             new RegExp(`put source files, ${CHECKPOINT_FILE}`)
@@ -53,6 +56,9 @@ describe('projectSetupContract', () => {
         expect(created).not.toMatch(
             new RegExp(`via \\$${PROJECT_DIR_ENV} - put source files, ${CHECKPOINT_FILE}`)
         );
+
+        expect(layout).toContain(checkpointPath);
+        expect(layout).toContain(`$${PROJECT_DIR_ENV}`);
 
         expect(python).toContain(`os.environ['${RUN_DIR_ENV}']`);
         expect(python).not.toContain(`os.environ['${PROJECT_DIR_ENV}']`);

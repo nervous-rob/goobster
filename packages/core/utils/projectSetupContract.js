@@ -38,20 +38,6 @@ function longJobConventionText() {
 }
 
 /**
- * Reply after a successful create-project tool call.
- * @param {{ name: string, slug: string }} project
- * @returns {string}
- */
-function createProjectResponse({ name, slug }) {
-    return `🔭 Created project "${name}" (slug: ${slug}). `
-        + `Shared workspace: $${PROJECT_DIR_ENV} — put source files, inputs, and published artifacts there. `
-        + `Per-job run dir: $${RUN_DIR_ENV} — write ${CHECKPOINT_FILE} and ${FRAMES_DIR}/ there so `
-        + 'background jobs can resume and stitch video. '
-        + `Do not put ${CHECKPOINT_FILE} or ${FRAMES_DIR}/ under $${PROJECT_DIR_ENV}; `
-        + `new jobs only resume from ${checkpointPath}.`;
-}
-
-/**
  * Compact starter snippets that obey the resume contract. Tests drive the
  * timeout→resume journey through these so guidance and runtime stay aligned.
  * @returns {{ python: string, bash: string }}
@@ -107,6 +93,32 @@ function backgroundJobHint() {
         + 'for anything long';
 }
 
+/**
+ * One-line layout reminder for inspect / create replies so every surface
+ * restates the same contract.
+ * @returns {string}
+ */
+function layoutReminder() {
+    return `Layout: $${PROJECT_DIR_ENV} = inputs/published artifacts; `
+        + `${checkpointPath} + ${framesPath} for resume/video `
+        + `(legacy only: ${legacyCheckpointPath}).`;
+}
+
+/**
+ * Reply after a successful create-project tool call.
+ * @param {{ name: string, slug: string }} project
+ * @returns {string}
+ */
+function createProjectResponse({ name, slug }) {
+    return `🔭 Created project "${name}" (slug: ${slug}). `
+        + `Shared workspace: $${PROJECT_DIR_ENV} — put source files, inputs, and published artifacts there. `
+        + `Per-job run dir: $${RUN_DIR_ENV} — write ${CHECKPOINT_FILE} and ${FRAMES_DIR}/ there so `
+        + 'background jobs can resume and stitch video. '
+        + `Do not put ${CHECKPOINT_FILE} or ${FRAMES_DIR}/ under $${PROJECT_DIR_ENV}; `
+        + `new jobs only resume from ${checkpointPath}. `
+        + `Orient with action "inspect" (one call for mission, assets, jobs, workspace, checkpoint).`;
+}
+
 module.exports = {
     PROJECT_DIR_ENV,
     RUN_DIR_ENV,
@@ -122,5 +134,6 @@ module.exports = {
     createProjectResponse,
     starterExamples,
     docsCheckpointSteps,
-    backgroundJobHint
+    backgroundJobHint,
+    layoutReminder
 };
