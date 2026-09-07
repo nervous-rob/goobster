@@ -114,6 +114,8 @@ describe('getDefinitions gating', () => {
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
         expect(def.description).toMatch(/GOOBSTER_RUN_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);
+        expect(def.description).toMatch(/\$GOOBSTER_RUN_DIR\/checkpoint\.json/);
+        expect(def.description).toMatch(/legacy: \$GOOBSTER_PROJECT_DIR\/checkpoint\.json/);
         expect(def.description).toMatch(/"read"/);
         expect(def.parameters.properties.path).toBeTruthy();
         expect(def.parameters.properties.offset).toBeTruthy();
@@ -191,6 +193,10 @@ describe('execute happy path (through the registry)', () => {
         });
         expect(created).toContain('tool-test-sim');
         expect(created).toContain('$GOOBSTER_PROJECT_DIR');
+        expect(created).toContain('$GOOBSTER_RUN_DIR');
+        expect(created).toContain('checkpoint.json');
+        expect(created).toMatch(/Do not put checkpoint\.json/);
+        expect(created).not.toMatch(/put source files, checkpoint\.json/);
 
         const listed = await toolsRegistry.execute('observatory', {
             action: 'list', interactionContext: webContext()

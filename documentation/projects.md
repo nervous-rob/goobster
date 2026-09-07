@@ -236,14 +236,23 @@ approvers. Trigger `fetch_data` actions are allowlisted-hosts only.
 
 `action: "run"` with `background: true` detaches the run into a job.
 The engine runs the same snippet in *segments* — each a fully legalized
-sandbox run. Resume is a documented convention, not magic:
+sandbox run. Resume is a documented convention, not magic. The layout
+contract (tool description, create-project reply, and starter examples)
+is generated from `utils/projectSetupContract.js` so guidance cannot
+drift from runtime:
 
-1. Load `$GOOBSTER_PROJECT_DIR/checkpoint.json` when it exists.
+1. Load `$GOOBSTER_RUN_DIR/checkpoint.json` when it exists (legacy only:
+   `$GOOBSTER_PROJECT_DIR/checkpoint.json`).
 2. Rewrite it as work progresses.
 3. A segment killed at the timeout wall resumes only if the checkpoint
    advanced — up to `maxResumes` times.
 4. Exit 0 completes; non-zero fails; timeout with no checkpoint progress
    is terminal.
+
+`$GOOBSTER_PROJECT_DIR` is the shared project root (inputs and published
+artifacts). Each job owns `runs/<jobId>/`, exposed as `$GOOBSTER_RUN_DIR`
+— put `checkpoint.json` and `frames/` there. New jobs do **not** resume
+from a project-root checkpoint.
 
 Jobs found `RUNNING` with no live handle after a restart are reaped to
 `INTERRUPTED` and auto-resumed when a checkpoint exists

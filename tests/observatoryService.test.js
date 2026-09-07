@@ -533,20 +533,8 @@ describe('background jobs', () => {
         const svc = makeService({ sandbox: { timeoutMs: 1500, maxCpuSeconds: 30 } });
         const userId = nextUser();
         await svc.createProject({ userId, name: 'checkpointed' });
-        const code = [
-            'import json, os, time',
-            "d = os.environ['GOOBSTER_RUN_DIR']",
-            "cp = os.path.join(d, 'checkpoint.json')",
-            "state = {'step': 0}",
-            'if os.path.exists(cp):',
-            '    state = json.load(open(cp))',
-            "if state['step'] >= 2:",
-            "    print('finished at step', state['step'])",
-            '    raise SystemExit(0)',
-            "state['step'] += 1",
-            "json.dump(state, open(cp, 'w'))",
-            'time.sleep(60)'
-        ].join('\n');
+        const { starterExamples } = require('@goobster/core/utils/projectSetupContract');
+        const code = starterExamples().python;
         const { jobId } = await svc.run({
             userId, project: 'checkpointed', language: 'python', code, background: true
         });
@@ -556,6 +544,11 @@ describe('background jobs', () => {
         expect(job.resumeCount).toBe(2);
         expect(job.checkpointAt).toBeTruthy();
         expect(job.stdoutTail).toContain('finished at step 2');
+        // Guidance that parks checkpoints under the project root would break resume.
+        expect(fs.existsSync(path.join(PROJECTS_ROOT, userId, 'checkpointed', 'checkpoint.json'))).toBe(false);
+        expect(fs.existsSync(path.join(
+            PROJECTS_ROOT, userId, 'checkpointed', 'runs', String(jobId), 'checkpoint.json'
+        ))).toBe(true);
     }, 60_000);
 
     test('a timeout without checkpoint progress is terminal, with the reason spelled out', async () => {

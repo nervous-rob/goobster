@@ -18,6 +18,12 @@ const {
     formatTextWindow,
     fenceLanguage
 } = require('../toolResultWindow');
+const {
+    PROJECT_DIR_ENV,
+    longJobConventionText,
+    createProjectResponse,
+    backgroundJobHint
+} = require('../projectSetupContract');
 
 module.exports = {
     runCode: {
@@ -144,7 +150,7 @@ module.exports = {
             name: 'observatory',
             description:
                 'The Observatory: persistent, long-running simulation projects layered on the code sandbox. '
-                + 'A project gives every run a durable workspace directory (exposed as $GOOBSTER_PROJECT_DIR) '
+                + `A project gives every run a durable workspace directory (exposed as $${PROJECT_DIR_ENV}) `
                 + 'whose files SURVIVE between runs - unlike runCode, whose working directory is wiped. '
                 + 'Actions: "create-project" (name), "list" (your projects), "run" (language+code inside a project; '
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
@@ -173,14 +179,8 @@ module.exports = {
                 + 'in the portal, then steps can run), and '
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
                 + 'project and collaborate on another with the same name). '
-                + 'Long-job conventions: background code should load '
-                + '$GOOBSTER_RUN_DIR/checkpoint.json when present (legacy: $GOOBSTER_PROJECT_DIR/checkpoint.json) '
-                + 'and rewrite it as it progresses - a segment '
-                + 'killed at the sandbox time limit is automatically resumed from that checkpoint (bounded resume '
-                + 'budget). Numbered frames saved to $GOOBSTER_RUN_DIR/frames/frame_0001.png (and so on) are '
-                + 'stitched into a video automatically when a background job completes. '
-                + '$GOOBSTER_PROJECT_DIR is the shared project root (inputs and published artifacts). '
-                + 'When a background job finishes, the user is notified in their Discord DMs.',
+                + longJobConventionText()
+                + ' When a background job finishes, the user is notified in their Discord DMs.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -310,9 +310,7 @@ module.exports = {
                 switch (action) {
                     case 'create-project': {
                         const created = await observatoryService.createProject({ userId, name: name || project });
-                        return `🔭 Created project "${created.name}" (slug: ${created.slug}). Runs in it see a `
-                            + 'persistent workspace via $GOOBSTER_PROJECT_DIR - put source files, checkpoint.json, '
-                            + 'and frames/ there.';
+                        return createProjectResponse(created);
                     }
                     case 'list': {
                         const projects = await observatoryService.listProjects(userId);
@@ -412,11 +410,11 @@ module.exports = {
                         // Foreground: same delivery + summary contract as runCode.
                         const result = outcome.result;
                         await sendFiles(result.files.map(f => f.path));
-                        const runHint = 'truncated — write long output to $GOOBSTER_PROJECT_DIR and use action "read"';
+                        const runHint = `truncated — write long output to $${PROJECT_DIR_ENV} and use action "read"`;
                         const lines = [];
                         if (result.timedOut) {
                             lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s. `
-                                + 'For long work, rerun with background=true and the checkpoint.json convention.');
+                                + `For long work, rerun with background=true. ${backgroundJobHint()}.`);
                         } else if (result.ok) {
                             lines.push(`✅ Ran ${result.language} in project "${outcome.project}" (${result.durationMs} ms).`);
                         } else {
@@ -434,7 +432,7 @@ module.exports = {
                             lines.push(`\nFiles produced: ${result.files
                                 .map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB) [attached above]`).join(', ')}`);
                         }
-                        lines.push('\n(Persistent files belong in $GOOBSTER_PROJECT_DIR; use action "files" to browse them '
+                        lines.push(`\n(Persistent files belong in $${PROJECT_DIR_ENV}; use action "files" to browse them `
                             + 'and action "read" to open one. '
                             + 'The project\'s shareable results dashboard was refreshed - action "dashboard" attaches it.)');
                         return lines.join('\n');
@@ -587,10 +585,11 @@ module.exports = {
                         }
                         const result = outcome.result;
                         await sendFiles(result.files.map(f => f.path));
-                        const runHint = 'truncated — write long output to $GOOBSTER_PROJECT_DIR and use action "read"';
+                        const runHint = `truncated — write long output to $${PROJECT_DIR_ENV} and use action "read"`;
                         const lines = [];
                         if (result.timedOut) {
-                            lines.push(`⏱️ "${script.slug}" v${script.version} hit the time limit after ~${Math.round(result.durationMs / 1000)}s.`);
+                            lines.push(`⏱️ "${script.slug}" v${script.version} hit the time limit after ~${Math.round(result.durationMs / 1000)}s. `
+                                + `For long work, rerun with background=true. ${backgroundJobHint()}.`);
                         } else if (result.ok) {
                             lines.push(`✅ Ran "${script.slug}" v${script.version} (${script.language}) in "${outcome.project}" (${result.durationMs} ms).`);
                         } else {

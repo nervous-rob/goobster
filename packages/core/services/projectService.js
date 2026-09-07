@@ -52,6 +52,11 @@ const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const { windowLines } = require('../utils/toolResultWindow');
 const { makeRunnerId, makeLeaseToken, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
+const {
+    CHECKPOINT_FILE,
+    FRAMES_DIR,
+    RUNS_DIR
+} = require('../utils/projectSetupContract');
 
 /** How long a live owner has to observe cancelRequested after a stale reap. */
 const STOP_ACK_MS = 1500;
@@ -63,14 +68,9 @@ const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', '
  * trusted HTML - a snippet must never be able to author it.
  */
 const DASHBOARDS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'dashboards');
-/** The checkpoint/resume convention: this file, under runs/<jobId>/. */
-const CHECKPOINT_FILE = 'checkpoint.json';
-/** Per-job tree for checkpoint, frames, logs. Shared root is inputs/artifacts. */
-const RUNS_DIR = 'runs';
 /** The render convention: numbered frames in this run subdirectory. */
-const FRAMES_DIR = 'frames';
-const RENDERS_DIR = 'renders';
 const FRAME_PATTERN = /^frame_\d+\.png$/;
+const RENDERS_DIR = 'renders';
 /** Persisted stream tails per segment (forensics, not archival). */
 const TAIL_CHARS = 8000;
 /** A busy sandbox defers a job segment instead of failing the job. */

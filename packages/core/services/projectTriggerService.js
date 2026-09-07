@@ -18,6 +18,7 @@ const { validateCron } = require('./automationManagerService');
 const sandboxConfig = require('../config/sandboxConfig');
 const { assessUrl, SafeFetchError } = require('../utils/safeFetch');
 const { dmScopeId } = require('../utils/dmScope');
+const { backgroundJobHint } = require('../utils/projectSetupContract');
 
 const MAX_NAME = 80;
 const MAX_OUTCOME = 240;
@@ -975,7 +976,7 @@ class ProjectTriggerService {
         const prompt = String(params.prompt || '').trim();
         const message = `[Observatory command for project "${projectRow.name}" (slug: ${projectRow.slug})] `
             + 'Use the observatory tool on this project to carry out the instructions below. '
-            + 'Prefer background jobs with the checkpoint.json convention for anything long, and '
+            + `${backgroundJobHint()}, and `
             + 'report back what you started, changed, or found.\n\n'
             + prompt;
         const sourceDescription =

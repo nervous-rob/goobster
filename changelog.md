@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-07
+
+### Fixed
+- **Observatory project-setup guidance no longer contradicts itself.** The tool description correctly put background checkpoints and frames under `$GOOBSTER_RUN_DIR`, but `create-project` told Goobster to put them under `$GOOBSTER_PROJECT_DIR`, and `documentation/projects.md` repeated the legacy path. New jobs only resume from the per-run file, so following that reply could block checkpoint resume. Tool description, create-project reply, starter examples, agent-prompt hints, and the projects guide now come from `utils/projectSetupContract.js`. The existing timeout→resume journey runs the shared Python starter. Jest: `projectSetupContract`, `toolsRegistryObservatory`, `observatoryService`.
+
 ## 2026-09-04
 
 ### Changed
