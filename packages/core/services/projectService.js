@@ -56,7 +56,9 @@ const {
     CHECKPOINT_FILE,
     FRAMES_DIR,
     RUNS_DIR,
-    layoutReminder
+    layoutReminder,
+    auditProjectSetup,
+    formatSetupAuditText
 } = require('../utils/projectSetupContract');
 
 /** How long a live owner has to observe cancelRequested after a stale reap. */
@@ -1509,8 +1511,14 @@ class ObservatoryService {
             memberLine
         ].filter(Boolean);
 
+        lines.push(formatSetupAuditText(await this.auditSetup({
+            userId, project: p.slug, owner: p.ownerId,
+            scanScripts: false,
+            _prefetched: { detail, assets }
+        }).catch(() => ({ ok: true, findings: [] }))));
+
         return {
-            text: lines.join('\n'),
+            text: lines.filter(Boolean).join('\n'),
             project: p,
             truncated: {
                 jobs: (detail.jobs || []).length > jobCap,
@@ -1520,6 +1528,122 @@ class ObservatoryService {
                 knowledge: knowledgeTruncated
             }
         };
+    }
+
+    /**
+     * Audit one project against the setup contract (legacy root checkpoint/
+     * frames, script sources, legacyWorkspace jobs). Findings are recomputed.
+     * @param {Object} params
+     * @returns {Promise<{ ok: boolean, project: object, findings: object[], text: string }>}
+     */
+    async auditSetup({ userId, project, owner = null, _prefetched = null, scanScripts = true } = {}) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const projectAssetService = require('./projectAssetService');
+        const detail = _prefetched?.detail
+            || await this.getProjectDetail({ userId, project: row.slug, owner: row.ownerId });
+        let assets = _prefetched?.assets;
+        if (!assets) {
+            assets = await projectAssetService.list({
+                userId, project: row.slug, owner: row.ownerId
+            });
+        }
+        const scriptsMeta = assets.filter(a => a.kind === 'script');
+        const scripts = [];
+        if (scanScripts) {
+            for (const asset of scriptsMeta.slice(0, 20)) {
+                try {
+                    const full = await projectAssetService.get({
+                        userId, project: row.slug, owner: row.ownerId, asset: asset.slug
+                    });
+                    scripts.push({ slug: asset.slug, source: full.source || '' });
+                } catch {
+                    scripts.push({ slug: asset.slug, source: '' });
+                }
+            }
+        } else {
+            for (const asset of scriptsMeta) scripts.push({ slug: asset.slug, source: '' });
+        }
+
+        let rootNames = [];
+        try {
+            rootNames = fs.readdirSync(row.dir);
+        } catch { rootNames = []; }
+        const hasRootCheckpoint = rootNames.includes(CHECKPOINT_FILE);
+        const hasRootFrames = rootNames.includes(FRAMES_DIR);
+        let runCheckpointCount = 0;
+        try {
+            const runsRoot = path.join(row.dir, RUNS_DIR);
+            for (const name of fs.readdirSync(runsRoot)) {
+                if (!/^\d+$/.test(name)) continue;
+                if (fs.existsSync(path.join(runsRoot, name, CHECKPOINT_FILE))) runCheckpointCount += 1;
+            }
+        } catch { /* no runs */ }
+
+        const jobs = await db.all(
+            `SELECT id, legacyWorkspace FROM observatory_jobs
+             WHERE projectId = @projectId ORDER BY id DESC LIMIT 50`,
+            { projectId: row.id }
+        );
+
+        const audited = auditProjectSetup({
+            rootNames,
+            hasRootCheckpoint,
+            hasRootFrames,
+            runCheckpointCount,
+            jobs,
+            scripts
+        });
+        return {
+            ok: audited.ok,
+            project: detail.project,
+            findings: audited.findings,
+            text: `🔭 Setup audit for "${row.name}" (${row.slug})\n${formatSetupAuditText(audited)}`
+        };
+    }
+
+    /**
+     * Audit every project the user can access. Bounded; soft findings only.
+     * @param {{ userId: string }} params
+     * @returns {Promise<{ text: string, results: object[] }>}
+     */
+    async auditAllSetups({ userId } = {}) {
+        await this._requireEnabled();
+        const projects = await this.listProjects(userId);
+        const results = [];
+        for (const p of projects.slice(0, 40)) {
+            try {
+                const one = await this.auditSetup({
+                    userId, project: p.slug, owner: p.ownerId || p.userId
+                });
+                results.push(one);
+            } catch (error) {
+                results.push({
+                    ok: false,
+                    project: p,
+                    findings: [{
+                        code: 'audit_failed',
+                        severity: 'warn',
+                        message: error?.message || 'audit failed'
+                    }],
+                    text: `🔭 Setup audit for "${p.name}" (${p.slug}) failed: ${error?.message || 'error'}`
+                });
+            }
+        }
+        const needing = results.filter(r => !r.ok);
+        const lines = [
+            `🔭 Setup audit across ${results.length} project(s): `
+                + `${needing.length} need attention, ${results.length - needing.length} ok.`,
+            layoutReminder()
+        ];
+        for (const r of needing.slice(0, 20)) {
+            lines.push(`\n— ${r.project?.name || '?'} (${r.project?.slug || '?'})`);
+            lines.push(formatSetupAuditText(r));
+        }
+        if (needing.length === 0 && results.length) {
+            lines.push('\nAll accessible projects look aligned with the contract.');
+        }
+        return { text: lines.join('\n'), results };
     }
 
     // --- Project knowledge (kg_* scope PROJECT:<id>) -------------------------

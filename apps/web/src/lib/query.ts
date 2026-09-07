@@ -18,6 +18,7 @@ export const keys = {
     friends: ['friends'] as const,
     observatory: ['observatory'] as const,
     projectInvites: ['project-invites'] as const,
+    projectNeedsYou: (project?: string | null) => ['project-needs-you', project || ''] as const,
     projectMembers: (slug: string, owner?: string | null) => ['project-members', slug, owner || ''] as const,
     projectAssets: (slug: string, owner?: string | null) => ['project-assets', slug, owner || ''] as const,
     projectFiles: (slug: string, dir = '', owner?: string | null) => ['project-files', slug, dir, owner || ''] as const,

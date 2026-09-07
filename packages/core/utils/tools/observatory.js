@@ -155,6 +155,10 @@ module.exports = {
                 + 'Actions: "inspect" (ONE call for what\'s going on: mission, assets, triggers, recent jobs '
                 + 'with tails, workspace, checkpoint, knowledge, members — prefer this before chaining '
                 + 'status/files/list_assets/list_triggers/mission get), '
+                + '"audit" (check one project — or omit project to audit all — against the setup contract: '
+                + 'checkpoints/frames under $GOOBSTER_RUN_DIR, script entry points; use this to review legacy projects), '
+                + '"needs-you" (cross-project review board: approvals, multiple-choice decisions, blocked missions, '
+                + 'setup findings — filter with project=), '
                 + '"create-project" (name), "list" (your projects), "run" (language+code inside a project; '
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
@@ -189,15 +193,15 @@ module.exports = {
                 properties: {
                     action: {
                         type: 'string',
-                        enum: ['inspect', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
+                        enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'read', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'delete_trigger', 'invite_user', 'list_members', 'remove_member',
                             'note_knowledge', 'recall_knowledge', 'mission'],
-                        description: 'What to do. Prefer "inspect" when you need an overview of one project.'
+                        description: 'What to do. Prefer "inspect" for overview; "audit" for setup-contract review; "needs-you" for the human decision board.'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission)' },
+                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
                     path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
                     offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
                     limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
@@ -245,6 +249,8 @@ module.exports = {
                     stepTitle: { type: 'string', description: 'mission add_step: short step title' },
                     stepDescription: { type: 'string', description: 'mission add_step: what this step does' },
                     stepId: { type: 'integer', description: 'mission start_step / complete_step / skip_step' },
+                    choices: { type: 'string', description: 'mission add_step human: multiple-choice options, semicolon-separated labels (at least two)' },
+                    selectedId: { type: 'string', description: 'mission complete_step: id of the chosen option when the human step offered choices' },
                     seed: { type: 'string', description: 'mission add_step expedition: research seed' },
                     watchTopic: { type: 'string', description: 'mission add_step watch: domain event topic' },
                     criterionId: { type: 'string', description: 'mission add_evidence: success-criterion id (c1, c2, …)' },
@@ -272,6 +278,7 @@ module.exports = {
             relation, path: workspacePath, offset, limit, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
+            choices, selectedId,
             interactionContext
         }) => {
             if (!observatoryService.enabled) {
@@ -323,6 +330,22 @@ module.exports = {
                             userId, project: project || name, owner
                         });
                         return inspected.text;
+                    }
+                    case 'audit': {
+                        if (project || name) {
+                            const audited = await observatoryService.auditSetup({
+                                userId, project: project || name, owner
+                            });
+                            return audited.text;
+                        }
+                        const all = await observatoryService.auditAllSetups({ userId });
+                        return all.text;
+                    }
+                    case 'needs-you': {
+                        const queue = await projectMissionService.listNeedsYou({
+                            userId, project: project || name || null, owner
+                        });
+                        return queue.text;
                     }
                     case 'list': {
                         const projects = await observatoryService.listProjects(userId);
@@ -694,8 +717,12 @@ module.exports = {
                             const criteria = (mission.successCriteria || [])
                                 .map(c => `  - [${c.id}] ${c.text}`).join('\n');
                             const steps = (mission.steps || []).length
-                                ? mission.steps.map(s =>
-                                    `  - #${s.id} [${s.status}] ${s.kind}: ${s.title}`).join('\n')
+                                ? mission.steps.map(s => {
+                                    const choiceHint = Array.isArray(s.actionParams?.choices) && s.actionParams.choices.length
+                                        ? ` · choices: ${s.actionParams.choices.map(c => c.id).join('|')}`
+                                        : '';
+                                    return `  - #${s.id} [${s.status}] ${s.kind}: ${s.title}${choiceHint}`;
+                                }).join('\n')
                                 : '  (none yet)';
                             const evalLine = mission.evaluation
                                 ? `Assessment: ${mission.evaluation.overall} `
@@ -755,6 +782,9 @@ module.exports = {
                             case 'complete':
                                 return '❌ Approval, start, and completion are human-only. Ask the owner to confirm this mission in the Observatory portal.';
                             case 'add_step': {
+                                const choiceList = choices
+                                    ? String(choices).split(/;|\n/).map(s => s.trim()).filter(Boolean)
+                                    : [];
                                 const updated = await projectMissionService.addStep({
                                     userId, project, owner,
                                     kind: stepKind,
@@ -764,7 +794,10 @@ module.exports = {
                                         seed,
                                         asset: slug,
                                         topic: watchTopic,
-                                        prompt: reviewNotes || prompt
+                                        prompt: reviewNotes || prompt || stepDescription,
+                                        choices: choiceList.length
+                                            ? choiceList.map(label => ({ label }))
+                                            : undefined
                                     }
                                 });
                                 return `Added a ${stepKind || 'step'}.\n\n${fmt(updated)}`;
@@ -779,7 +812,9 @@ module.exports = {
                             case 'complete_step': {
                                 if (!stepId) return '❌ complete_step needs stepId.';
                                 const updated = await projectMissionService.completeStep({
-                                    userId, project, owner, stepId, note: reviewNotes || note
+                                    userId, project, owner, stepId,
+                                    note: reviewNotes || note,
+                                    selectedId
                                 });
                                 return `Marked step #${stepId} done.\n\n${fmt(updated)}`;
                             }

@@ -73,6 +73,21 @@ Deep dives still use those actions. `inspect` restates the setup contract
 from `utils/projectSetupContract.js` (`$GOOBSTER_PROJECT_DIR` vs
 `$GOOBSTER_RUN_DIR`).
 
+**Auditing legacy projects.** Action `audit` (one project, or omit
+`project` to audit all) recomputes setup-contract findings: root
+`checkpoint.json` / `frames/`, scripts that still write under
+`$GOOBSTER_PROJECT_DIR`, and `legacyWorkspace` jobs. Findings are not
+stored — they are derived from disk + assets. Portal:
+`GET /api/app/projects/:slug/setup-audit`.
+
+**Needs you (review board).** Cross-project queue of human gates —
+approve a draft mission, answer multiple-choice human steps, unblock
+failed steps, complete a review, and setup findings. Portal Observatory
+list shows a **Needs you** board (filterable); tool action `needs-you`
+returns the same cards. Human steps may carry
+`actionParams.choices` (portal radios / `selectedId` on complete). This
+stays on Missions + Observatory — not a new room.
+
 **Reading files from chat.** Prefer observatory action `read` (workspace-
 relative `path`, optional 1-based `offset` + line `limit`) over `run` +
 `cat`/`head`/`sed`. The result is a line window (default 400, max 800)

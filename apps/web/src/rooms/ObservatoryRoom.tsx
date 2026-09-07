@@ -81,9 +81,10 @@ export function ObservatoryRoom() {
     const toast = useToast();
     const me = useMe();
     const queryClient = useQueryClient();
-    const [selected, setSelected] = useState<{ slug: string; ownerId: string } | null>(null);
+    const [selected, setSelected] = useState<{ slug: string; ownerId: string; tab?: 'mission' | 'overview' } | null>(null);
     const slug = selected?.slug ?? null;
     const ownerId = selected?.ownerId ?? null;
+    const openTab = selected?.tab;
     const [inboxPreview, setInboxPreview] = useState(false);
     const [dockOpen, setDockOpen] = useState(false);
     const [peopleOpen, setPeopleOpen] = useState(false);
@@ -299,6 +300,11 @@ export function ObservatoryRoom() {
                 )}
                 {!slug && !inboxPreview && projects.length > 0 && (
                     <>
+                        <NeedsYouBoard
+                            onOpenProject={(next) => {
+                                setSelected(next);
+                            }}
+                        />
                         <div className="section-title">Projects</div>
                         <div className="list-card">
                             {projects.map((item) => (
@@ -363,8 +369,10 @@ export function ObservatoryRoom() {
                         )}
                         <div className="obs-project-main">
                             <DetailView
+                                key={`${slug}:${ownerId}:${openTab || 'overview'}`}
                                 detail={project}
                                 ownerId={ownerId}
+                                initialTab={openTab === 'mission' ? 'mission' : 'overview'}
                                 onDeleted={() => { setSelected(null); queryClient.invalidateQueries({ queryKey: keys.observatory }); }}
                                 onChanged={() => queryClient.invalidateQueries({ queryKey: keys.observatory })}
                             />
@@ -426,15 +434,126 @@ export function ObservatoryRoom() {
     );
 }
 
+type NeedsYouCard = {
+    id: string;
+    column: string;
+    title: string;
+    detail?: string | null;
+    projectSlug?: string;
+    projectName?: string;
+    ownerId?: string;
+    choices?: Array<{ id: string; label: string }>;
+};
+
+const NEEDS_YOU_COLUMNS = [
+    { id: 'approve', label: 'Approve' },
+    { id: 'answer', label: 'Answer' },
+    { id: 'unblock', label: 'Unblock' },
+    { id: 'review', label: 'Review' },
+    { id: 'setup', label: 'Setup' }
+] as const;
+
+function NeedsYouBoard({
+    onOpenProject
+}: {
+    onOpenProject: (next: { slug: string; ownerId: string; tab?: 'mission' | 'overview' }) => void;
+}) {
+    const me = useMe();
+    const [filter, setFilter] = useState('');
+    const q = useQuery({
+        queryKey: keys.projectNeedsYou(),
+        queryFn: () => api.projectNeedsYou() as Promise<{ cards: NeedsYouCard[]; text: string }>,
+        retry: false
+    });
+    const cards = (q.data?.cards || []).filter((card) => {
+        if (!filter.trim()) return true;
+        const needle = filter.trim().toLowerCase();
+        return [card.projectSlug, card.projectName, card.title, card.column]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase().includes(needle));
+    });
+    if (q.isPending) return null;
+    if (!q.data?.cards?.length) return null;
+
+    return (
+        <div className="obs-needs-you">
+            <div className="obs-section-head">
+                <h3>Needs you</h3>
+                <span className="badge">{cards.length}</span>
+            </div>
+            <p className="hint">
+                Approvals, design choices, blocked missions, and setup-contract findings across your projects.
+                Open a card to continue in that project&apos;s Mission tab.
+            </p>
+            <input
+                className="input"
+                placeholder="Filter by project or column…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+            />
+            <div className="obs-needs-columns">
+                {NEEDS_YOU_COLUMNS.map((col) => {
+                    const colCards = cards.filter((c) => c.column === col.id);
+                    if (!colCards.length) return null;
+                    return (
+                        <div key={col.id} className="obs-needs-column">
+                            <div className="section-title">{col.label} ({colCards.length})</div>
+                            <div className="list-card">
+                                {colCards.map((card) => (
+                                    <div
+                                        key={card.id}
+                                        className="list-row task-row"
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                            if (!card.projectSlug) return;
+                                            onOpenProject({
+                                                slug: card.projectSlug,
+                                                ownerId: card.ownerId || me.user.id,
+                                                tab: card.column === 'setup' ? 'overview' : 'mission'
+                                            });
+                                        }}
+                                        onKeyDown={(event) => {
+                                            if ((event.key === 'Enter' || event.key === ' ') && card.projectSlug) {
+                                                event.preventDefault();
+                                                onOpenProject({
+                                                    slug: card.projectSlug,
+                                                    ownerId: card.ownerId || me.user.id,
+                                                    tab: card.column === 'setup' ? 'overview' : 'mission'
+                                                });
+                                            }
+                                        }}
+                                    >
+                                        <div className="row-body">
+                                            <strong>{card.title}</strong>
+                                            <span className="badge">{card.projectSlug}</span>
+                                            {card.choices?.length ? (
+                                                <span className="badge">{card.choices.length} choices</span>
+                                            ) : null}
+                                            {card.detail ? <div className="row-meta">{card.detail}</div> : null}
+                                        </div>
+                                        <span className="obs-chevron" aria-hidden="true">›</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function DetailView({
-    detail, ownerId, onDeleted, onChanged
+    detail, ownerId, initialTab = 'overview', onDeleted, onChanged
 }: {
     detail: Detail;
     ownerId?: string | null;
+    initialTab?: 'overview' | 'mission' | 'explorer' | 'apps' | 'automations' | 'knowledge';
     onDeleted: () => void;
     onChanged: () => void;
 }) {
-    const [tab, setTab] = useState<'overview' | 'mission' | 'explorer' | 'apps' | 'automations' | 'knowledge'>('overview');
+    const [tab, setTab] = useState(initialTab);
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;

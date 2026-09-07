@@ -116,7 +116,142 @@ function createProjectResponse({ name, slug }) {
         + 'background jobs can resume and stitch video. '
         + `Do not put ${CHECKPOINT_FILE} or ${FRAMES_DIR}/ under $${PROJECT_DIR_ENV}; `
         + `new jobs only resume from ${checkpointPath}. `
-        + `Orient with action "inspect" (one call for mission, assets, jobs, workspace, checkpoint).`;
+        + 'Orient with action "inspect"; audit existing projects with action "audit".';
+}
+
+/**
+ * Detect snippets that write the live checkpoint under the project root
+ * instead of the per-run dir. Heuristic — comments can false-positive at
+ * info severity only when GOOBSTER_RUN_DIR is also referenced.
+ * @param {string} source
+ * @returns {{ usesRunDir: boolean, usesProjectCheckpoint: boolean }}
+ */
+function scanCheckpointUsage(source) {
+    const text = String(source || '');
+    const usesRunDir = new RegExp(
+        `${RUN_DIR_ENV}[^\\n]{0,80}${CHECKPOINT_FILE}|os\\.environ\\[['"]${RUN_DIR_ENV}['"]\\][^\\n]{0,120}${CHECKPOINT_FILE}`
+    ).test(text)
+        || (text.includes(RUN_DIR_ENV) && text.includes(CHECKPOINT_FILE)
+            && !new RegExp(`${PROJECT_DIR_ENV}[^\\n]{0,80}${CHECKPOINT_FILE}`).test(text));
+    const usesProjectCheckpoint = new RegExp(
+        `${PROJECT_DIR_ENV}[^\\n]{0,120}${CHECKPOINT_FILE}`
+    ).test(text)
+        || /(?:^|[\s"'`])checkpoint\.json(?:$|[\s"'`])/m.test(text)
+            && text.includes(PROJECT_DIR_ENV)
+            && !text.includes(RUN_DIR_ENV);
+    return { usesRunDir, usesProjectCheckpoint };
+}
+
+/**
+ * Pure setup-contract auditor. Recomputes findings from disk + job/asset
+ * metadata — no durable finding rows.
+ *
+ * @param {{
+ *   rootNames?: string[],
+ *   hasRootCheckpoint?: boolean,
+ *   hasRootFrames?: boolean,
+ *   runCheckpointCount?: number,
+ *   jobs?: Array<{ id?: number, legacyWorkspace?: number|boolean }>,
+ *   scripts?: Array<{ slug: string, source?: string }>
+ * }} input
+ * @returns {{ ok: boolean, findings: Array<{ code: string, severity: string, message: string }> }}
+ */
+function auditProjectSetup(input = {}) {
+    const findings = [];
+    const rootNames = Array.isArray(input.rootNames) ? input.rootNames : [];
+    const hasRootCheckpoint = input.hasRootCheckpoint != null
+        ? Boolean(input.hasRootCheckpoint)
+        : rootNames.includes(CHECKPOINT_FILE);
+    const hasRootFrames = input.hasRootFrames != null
+        ? Boolean(input.hasRootFrames)
+        : rootNames.includes(FRAMES_DIR);
+    const runCheckpointCount = Number(input.runCheckpointCount) || 0;
+    const jobs = Array.isArray(input.jobs) ? input.jobs : [];
+    const scripts = Array.isArray(input.scripts) ? input.scripts : [];
+    const legacyJobs = jobs.filter(j => Number(j.legacyWorkspace));
+
+    if (hasRootCheckpoint) {
+        findings.push({
+            code: 'legacy_root_checkpoint',
+            severity: 'warn',
+            message: `${CHECKPOINT_FILE} is at the project root. New jobs only resume from `
+                + `${checkpointPath}; move/rewrite checkpoints under $${RUN_DIR_ENV}.`
+        });
+    }
+    if (hasRootFrames) {
+        findings.push({
+            code: 'legacy_root_frames',
+            severity: 'warn',
+            message: `${FRAMES_DIR}/ is at the project root. Write numbered frames under `
+                + `${framesPath} so background jobs stitch video correctly.`
+        });
+    }
+    if (legacyJobs.length) {
+        findings.push({
+            code: 'legacy_workspace_jobs',
+            severity: 'info',
+            message: `${legacyJobs.length} job(s) still use the legacy workspace layout `
+                + `(project-root checkpoint/frames). New runs use per-job $${RUN_DIR_ENV}.`
+        });
+    }
+    if (!scripts.length) {
+        findings.push({
+            code: 'no_script_asset',
+            severity: 'info',
+            message: 'No script assets yet. Save a versioned script (save_script) so jobs and '
+                + 'triggers have a stable entry point.'
+        });
+    }
+    for (const script of scripts) {
+        if (!script?.source) continue;
+        const usage = scanCheckpointUsage(script.source);
+        if (usage.usesProjectCheckpoint && !usage.usesRunDir) {
+            findings.push({
+                code: 'script_writes_project_checkpoint',
+                severity: 'warn',
+                message: `Script "${script.slug}" appears to write ${CHECKPOINT_FILE} under `
+                    + `$${PROJECT_DIR_ENV}. Update it to load/rewrite ${checkpointPath}.`
+            });
+        }
+    }
+    if (runCheckpointCount > 0 && !hasRootCheckpoint) {
+        findings.push({
+            code: 'run_dir_checkpoints_ok',
+            severity: 'ok',
+            message: `Found ${runCheckpointCount} per-run ${CHECKPOINT_FILE} under ${RUNS_DIR}/.`
+        });
+    }
+    if (findings.length === 0) {
+        findings.push({
+            code: 'setup_ok',
+            severity: 'ok',
+            message: `Setup looks aligned with the contract (${layoutReminder()}).`
+        });
+    }
+
+    const ok = !findings.some(f => f.severity === 'warn' || f.severity === 'error');
+    return { ok, findings };
+}
+
+/**
+ * Compact text block for inspect / tool replies.
+ * @param {{ ok: boolean, findings: Array<{ severity: string, message: string, code?: string }> }} audit
+ * @returns {string}
+ */
+function formatSetupAuditText(audit) {
+    const findings = audit?.findings || [];
+    const warns = findings.filter(f => f.severity === 'warn' || f.severity === 'error').length;
+    const head = audit?.ok
+        ? `Setup: ok (${findings.length} check(s))`
+        : `Setup: ${warns} finding(s) need attention`;
+    const lines = findings
+        .filter(f => f.severity !== 'ok' || !audit.ok)
+        .slice(0, 8)
+        .map(f => `  [${f.severity}] ${f.message}`);
+    if (!lines.length && audit?.ok) {
+        return `${head}\n  ${layoutReminder()}`;
+    }
+    return [head, ...lines].join('\n');
 }
 
 module.exports = {
@@ -135,5 +270,8 @@ module.exports = {
     starterExamples,
     docsCheckpointSteps,
     backgroundJobHint,
-    layoutReminder
+    layoutReminder,
+    scanCheckpointUsage,
+    auditProjectSetup,
+    formatSetupAuditText
 };

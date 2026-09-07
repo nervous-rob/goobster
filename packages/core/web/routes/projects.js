@@ -21,6 +21,16 @@ function mountProjects(app, ctx, h) {
         invites: await ctx.observatory.listInvites(req.webUser.userId)
     })));
 
+    // Cross-project "Needs you" review board (optional ?project=&owner= filter).
+    // Registered beside invites so it never competes with :slug routes.
+    app.get('/api/app/projects/needs-you', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.listNeedsYou({
+            userId: req.webUser.userId,
+            project: req.query.project || null,
+            owner: req.query.owner || null
+        })
+    ));
+
     app.post('/api/app/projects/invites/:inviteId/respond', requireAuth, chatRoute(async (req) =>
         ctx.observatory.respondInvite({
             userId: req.webUser.userId,
@@ -821,7 +831,16 @@ function mountProjects(app, ctx, h) {
             owner: projectOwner(req),
             missionId: req.body?.missionId,
             stepId: req.params.stepId,
-            note: req.body?.note
+            note: req.body?.note,
+            selectedId: req.body?.selectedId
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/setup-audit', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.auditSetup({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
         })
     ));
 
