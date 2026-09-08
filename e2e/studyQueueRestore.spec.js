@@ -187,6 +187,7 @@ test('a restore retry whose first events belong to a later turn does not hydrate
     for (const url of streamUrls) {
         expect(url).toContain('turnId=turn-restore-1');
     }
+    await page.screenshot({ path: '/opt/cursor/artifacts/study_restore_ignores_later_turn.png', fullPage: true });
 });
 
 test('idle cleanup keeps the incognito transcript', async ({ page }) => {
@@ -212,6 +213,7 @@ test('idle cleanup keeps the incognito transcript', async ({ page }) => {
     });
     await page.goto('/app/study');
     await page.getByRole('button', { name: /Incognito/i }).click();
+    await expect(page.getByText(/messages here aren't saved/)).toBeVisible();
     await expect(page.getByText('Secret question')).toBeVisible();
     await expect(page.getByText('A private draft…')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Queue message' })).toBeVisible();

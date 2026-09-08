@@ -770,7 +770,7 @@ export function StudyRoom() {
                     </div>
                     <div className="chat-header-actions">
                         <HeaderOverflow>
-                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
+                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} aria-label="Incognito" title="Incognito" onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
                         <button type="button" className="icon-action" onClick={() => {
                             if (incognito) { toast('Incognito chats cannot be shared.', true); return; }
                             if (activeId === null) { toast('Say something first — an empty chat has nothing to share.', true); return; }
