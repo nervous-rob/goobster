@@ -7,6 +7,7 @@ export const keys = {
     home: ['home'] as const,
     conversations: ['conversations'] as const,
     history: (id: number | string | null) => ['history', id] as const,
+    chatQueue: ['chat-queue'] as const,
     tasks: ['tasks'] as const,
     attention: ['attention'] as const,
     usage: (days: number) => ['usage', days] as const,

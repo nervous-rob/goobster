@@ -220,6 +220,26 @@ export type TurnStep = {
     running?: boolean;
 };
 
+/** Server snapshot of an in-flight Study turn (thoughts / tools / draft). */
+export type TurnProgress = {
+    userContent?: string;
+    draft?: string;
+    typing?: boolean;
+    steps?: TurnStep[];
+};
+
+/** Follow-up waiting for the current Study reply to finish. */
+export type ChatQueueItem = {
+    id: number | string;
+    conversationId?: number | null;
+    position: number;
+    message: string;
+    imageCount?: number;
+    fileCount?: number;
+    incognito?: boolean;
+    createdAt?: string | null;
+};
+
 /** SSE `tool` event payload: per-tool progress within a streaming turn. */
 export type ToolEvent = {
     phase: 'start' | 'result';

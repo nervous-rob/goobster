@@ -1872,8 +1872,27 @@ CREATE TABLE IF NOT EXISTS web_live_turns (
     turnId TEXT NOT NULL,
     startedAtMs INTEGER NOT NULL,
     conversationId INTEGER,
-    aborted INTEGER NOT NULL DEFAULT 0 CHECK (aborted IN (0, 1))
+    aborted INTEGER NOT NULL DEFAULT 0 CHECK (aborted IN (0, 1)),
+    -- Snapshot of the in-flight reply (draft + thinking/tool steps) so a
+    -- browser that left and came back can restore progress without waiting
+    -- for the turn to settle.
+    progressJson TEXT
 );
+
+-- Follow-up Study messages waiting for the current in-flight turn to
+-- finish. Drained one at a time through startTurn (same per-user lock).
+CREATE TABLE IF NOT EXISTS web_chat_queue (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    conversationId INTEGER,
+    position INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    imagesJson TEXT,
+    filesJson TEXT,
+    incognito INTEGER NOT NULL DEFAULT 0 CHECK (incognito IN (0, 1)),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_web_chat_queue_user ON web_chat_queue (userId, position);
 
 -- ---------------------------------------------------------------------------
 -- The attention ledger (services/attention*.js, documentation/attention.md).

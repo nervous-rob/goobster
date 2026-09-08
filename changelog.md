@@ -2,8 +2,18 @@
 
 ## 2026-09-08
 
+### Added
+- **Study follow-up queue.** Sending (or pressing Enter) while a reply is still generating queues the next message instead of treating Send as Stop. Up to 10 follow-ups wait in `web_chat_queue` (incognito stays in memory), can be reordered or removed, and drain one-at-a-time through the existing per-user turn lock after the current reply settles. Stop is its own control beside Send.
+- **Restore an in-progress Study reply after you leave.** Navigating away used to drop the live thoughts/tool chips/draft until the turn finished. The server now snapshots that timeline on `web_live_turns.progressJson`; coming back hydrates the chat and reattaches to `GET /api/app/chat/turn/stream` so progress keeps arriving. Draft text stays off the portal event bus. Playwright: `studyQueueRestore`.
+
+### Changed
+- `/forget-me` and the transparency report cover queued Study follow-ups (`web_chat_queue` / `queuedChatMessages`).
+
 ### Fixed
 - **Study composer too narrow on phones.** Attach, settings, and voice sat on the same row as the textarea, so a PWA/browser draft was a sliver you could neither read nor caret-edit. Below 720px the textarea now takes a full-width row (and grows with the text up to 40dvh); the buttons sit underneath. Playwright: `e2e/composer.spec.js`.
+- **Incognito Study turns no longer persist the prompt or live draft.** The per-user lock row is still written (`web_live_turns`) so a second replica 409s, but `progressJson` stays empty; thoughts/tools/tokens live only on the in-memory turn. Jest: `webChatService` incognito progress.
+- **Queued follow-ups are claimed atomically.** `_popQueue` deletes the head row with `RETURNING` and only returns it if this worker won the delete, so two Postgres api processes cannot both start (and later requeue) the same message. Jest: `webChatService` queue claim.
+- **Reconnect SSE is bound to the requested turnId.** `GET /api/app/chat/turn/stream?turnId=` rejects a later queued turn before sending `start`/`snapshot`, so a retry after A drops cannot hydrate B into A's chat. The client sends that id on every attempt and ignores mismatched events. When status goes idle, saved chats reset (history refetch); incognito keeps completed messages. Jest: `appStream`; Playwright: `studyQueueRestore`.
 
 ## 2026-09-07
 

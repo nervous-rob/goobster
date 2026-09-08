@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { api, fetchSpeech, streamChat, ApiError } from '../lib/api';
+import { api, fetchSpeech, streamChat, streamLiveTurn, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
@@ -9,7 +9,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
 import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
 import { ChatTranscript } from '../components/ChatTranscript';
-import type { ChatMessage, Conversation } from '../lib/types';
+import type { ChatMessage, ChatQueueItem, Conversation, TurnProgress } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
 import { HeaderOverflow } from '../shell/HeaderOverflow';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
@@ -28,7 +28,15 @@ const SUGGESTIONS = [
 ];
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
+const QUEUE_HINT = 'Enter queues a follow-up — it sends when this reply finishes. Stop is the square beside Send.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
+
+/** Saved chats refetch history after a restore ends; incognito has none, so keep completed messages. */
+function clearRestoreOverlay(api: { end: () => void; reset: () => void }, incognito: boolean) {
+    if (incognito) api.end();
+    else api.reset();
+}
+
 const MAX_ATTACH = 4;
 const MAX_TEXT_FILE_BYTES = 200 * 1024;
 const REASONING_OPTIONS = [
@@ -57,7 +65,13 @@ type Integration = {
     account?: string; tokenHint?: string; docsUrl?: string;
 };
 type ShareState = { shared?: boolean; url?: string; createdAt?: string };
-type TurnStatus = { inFlight: boolean; elapsedMs?: number; conversationId?: number | null };
+type TurnStatus = {
+    inFlight: boolean;
+    elapsedMs?: number;
+    conversationId?: number | null;
+    turnId?: string;
+    progress?: TurnProgress | null;
+};
 
 function elapsedLabel(ms?: number): string {
     const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
@@ -122,6 +136,10 @@ export function StudyRoom() {
     const [aiSettings, setAiSettings] = useState<ChatSettings | null>(null);
     const chats = useConversationDrawer();
     const abortRef = useRef<AbortController | null>(null);
+    const attachAbortRef = useRef<AbortController | null>(null);
+    const hydratedTurnId = useRef<string | null>(null);
+    const turnApiRef = useRef(turn);
+    turnApiRef.current = turn;
     const searchTimer = useRef<number | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
@@ -171,6 +189,13 @@ export function StudyRoom() {
         queryFn: () => api.turnStatus() as Promise<TurnStatus>,
         refetchInterval: (query) => ((query.state.data as TurnStatus | undefined)?.inFlight ? 5_000 : false)
     });
+    const queueQ = useQuery({
+        queryKey: keys.chatQueue,
+        queryFn: () => api.listChatQueue(),
+        refetchInterval: (query) => (((query.state.data as { items?: ChatQueueItem[] } | undefined)?.items?.length || 0) > 0
+            ? 5_000
+            : false)
+    });
     // A turn this tab is not streaming (it survived a reload, or lives in
     // another tab): show the banner and offer Stop. Only trust a status
     // fetched after our own last turn settled, so the banner never flashes
@@ -179,20 +204,36 @@ export function StudyRoom() {
     const orphanTurn = !sending && turnQ.data?.inFlight && turnQ.dataUpdatedAt > localTurnSettledAt.current
         ? turnQ.data
         : null;
+    const matchingOrphan = Boolean(
+        orphanTurn
+        && ((orphanTurn.conversationId == null && incognito)
+            || (orphanTurn.conversationId != null && orphanTurn.conversationId === activeId))
+    );
+    const liveTurn = sending || turn.active || Boolean(orphanTurn?.inFlight);
+    const queueItems = ((queueQ.data?.items || []) as ChatQueueItem[])
+        .filter((item) => Boolean(item.incognito) === incognito);
 
     const prevInFlight = useRef(false);
     useEffect(() => {
         const inFlight = Boolean(turnQ.data?.inFlight);
         if (prevInFlight.current && !inFlight && !sending) {
-            // The orphaned turn settled: its reply is in SQLite now.
+            // The orphaned turn settled: drop live progress (stale draft /
+            // Queue-as-Send) even if the reconnect SSE died first. Saved
+            // chats refetch history; incognito keeps the local transcript.
+            hydratedTurnId.current = null;
+            clearRestoreOverlay(turnApiRef.current, incognito);
             void queryClient.invalidateQueries({ queryKey: keys.conversations });
+            void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+            void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
             if (activeId !== null) void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
         }
         prevInFlight.current = inFlight;
-    }, [turnQ.data?.inFlight, sending, activeId, queryClient]);
+    }, [turnQ.data?.inFlight, sending, activeId, incognito, queryClient]);
 
     const conversations = convs.data?.conversations || [];
     const history = (incognito ? [] : historyQ.data?.messages || []) as LocalTurnMessage[];
+    const historyRef = useRef(history);
+    historyRef.current = history;
     const display = [...history, ...turn.messages, ...(turn.pending ? [turn.pending] : [])];
     const lastAssistant = [...display].reverse().find((m) => m.role === 'assistant' && !m.draft && !m.typing);
     const lastUser = [...display].reverse().find((m) => m.role === 'user');
@@ -206,6 +247,7 @@ export function StudyRoom() {
     useEffect(() => {
         if (Number.isFinite(routeId) && routeId !== activeId && !incognito) {
             setActiveId(routeId);
+            hydratedTurnId.current = null;
             resetTurn();
         }
     }, [routeId, activeId, incognito, resetTurn]);
@@ -215,8 +257,129 @@ export function StudyRoom() {
         if (el) el.scrollTop = el.scrollHeight;
     }, [display.length, turn.pending?.content, turn.pending?.steps?.length, sending]);
 
+    // Restore an in-flight reply this tab is not streaming (navigation,
+    // reload, another conversation then back) from the server snapshot,
+    // then attach to the live SSE so thoughts/tools keep arriving.
+    useEffect(() => {
+        if (sending) return undefined;
+        if (!matchingOrphan || !orphanTurn) {
+            if (hydratedTurnId.current) {
+                hydratedTurnId.current = null;
+                localTurnSettledAt.current = Date.now();
+                clearRestoreOverlay(turnApiRef.current, incognito);
+            }
+            return undefined;
+        }
+        if (!incognito && activeId != null && historyQ.isPending) return undefined;
+        const live = turnApiRef.current;
+        const turnId = orphanTurn.turnId || `conv-${orphanTurn.conversationId ?? 'none'}`;
+        if (hydratedTurnId.current !== turnId) {
+            const userContent = String(orphanTurn.progress?.userContent || '');
+            const already = [...historyRef.current, ...live.messages].some(
+                (message) => message.role === 'user' && message.content === userContent
+            );
+            if (userContent && !already) {
+                live.begin({ role: 'user', content: userContent }, { keep: incognito });
+            }
+            live.hydrate(orphanTurn.progress || { typing: true });
+            hydratedTurnId.current = turnId;
+        }
+        const controller = new AbortController();
+        attachAbortRef.current = controller;
+        const RETRY_MS = [400, 1200, 3000];
+        void (async () => {
+            let attempt = 0;
+            let toasted = false;
+            while (!controller.signal.aborted) {
+                let finished = false;
+                try {
+                    await streamLiveTurn({
+                        onSnapshot: (progress) => turnApiRef.current.hydrate(progress),
+                        onTyping: () => turnApiRef.current.onTyping(),
+                        onDelta: (text) => turnApiRef.current.onDelta(text),
+                        onTool: (event) => turnApiRef.current.onTool(event),
+                        onMessage: (message) => {
+                            turnApiRef.current.onMessage({
+                                role: 'assistant',
+                                content: message.content || '',
+                                attachments: message.attachments,
+                                isError: message.isError
+                            });
+                        },
+                        onError: (error) => {
+                            turnApiRef.current.onMessage({
+                                role: 'assistant',
+                                content: error.message || 'Something went wrong.',
+                                isError: true
+                            });
+                        },
+                        onDone: () => {
+                            finished = true;
+                            turnApiRef.current.end();
+                            localTurnSettledAt.current = Date.now();
+                            hydratedTurnId.current = null;
+                            void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
+                            void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+                            if (!incognito && activeId != null) {
+                                void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
+                                void queryClient.invalidateQueries({ queryKey: keys.conversations });
+                                turnApiRef.current.reset();
+                            }
+                        }
+                    }, controller.signal, orphanTurn.turnId);
+                    if (controller.signal.aborted || finished) return;
+                    // Premature EOF: the generator may still be running.
+                } catch (error) {
+                    if ((error as Error).name === 'AbortError') return;
+                    if (!toasted) {
+                        toasted = true;
+                        toast((error as Error).message, true);
+                    }
+                }
+                const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)];
+                attempt += 1;
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        if (controller.signal.aborted) {
+                            const err = new Error('Aborted');
+                            err.name = 'AbortError';
+                            reject(err);
+                            return;
+                        }
+                        const timer = window.setTimeout(resolve, delay);
+                        const onAbort = () => {
+                            window.clearTimeout(timer);
+                            const err = new Error('Aborted');
+                            err.name = 'AbortError';
+                            reject(err);
+                        };
+                        controller.signal.addEventListener('abort', onAbort, { once: true });
+                    });
+                } catch (error) {
+                    if ((error as Error).name === 'AbortError') return;
+                    throw error;
+                }
+            }
+        })();
+        return () => {
+            controller.abort();
+            if (attachAbortRef.current === controller) attachAbortRef.current = null;
+        };
+    }, [
+        sending,
+        matchingOrphan,
+        orphanTurn?.turnId,
+        orphanTurn?.conversationId,
+        incognito,
+        activeId,
+        historyQ.isPending,
+        queryClient,
+        toast
+    ]);
+
     useEffect(() => () => {
         abortRef.current?.abort();
+        attachAbortRef.current?.abort();
         if (incognito) api.clearIncognito().catch(() => { /* nothing to clear */ });
         speechRef.current?.audio.pause();
         if (speechRef.current) URL.revokeObjectURL(speechRef.current.url);
@@ -224,6 +387,7 @@ export function StudyRoom() {
 
     const goToConversation = useCallback((id: number | null) => {
         setActiveId(id);
+        hydratedTurnId.current = null;
         resetTurn();
         if (id) navigate({ to: '/study/$conversationId', params: { conversationId: String(id) } });
         else navigate({ to: '/study' });
@@ -392,13 +556,27 @@ export function StudyRoom() {
     }
 
     async function sendMessage(forcedText: string | null = null) {
-        if (sending) {
-            try { await api.stop(); } catch { /* settled */ }
-            abortRef.current?.abort();
-            return;
-        }
         const text = (forcedText ?? composer).trim();
         if (!text) return;
+        if (liveTurn) {
+            try {
+                await api.enqueueChat({
+                    message: text,
+                    conversationId: incognito ? null : activeId,
+                    images: images.map((image) => image.dataUrl),
+                    files,
+                    incognito
+                });
+                if (forcedText === null) setComposer('');
+                setImages([]);
+                setFiles([]);
+                await queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+                toast('Queued — it will send when this reply finishes.');
+            } catch (error) {
+                toast((error as Error).message, true);
+            }
+            return;
+        }
         let conversationId = activeId;
         if (conversationId === null && !incognito) {
             try {
@@ -416,6 +594,7 @@ export function StudyRoom() {
         setImages([]);
         setFiles([]);
         if (forcedText === null) setComposer('');
+        attachAbortRef.current?.abort();
         setSending(true);
         const controller = new AbortController();
         abortRef.current = controller;
@@ -458,9 +637,7 @@ export function StudyRoom() {
         } catch (error) {
             if ((error as Error).name !== 'AbortError') {
                 if (error instanceof ApiError && error.status === 409) {
-                    // Another tab (or a pre-refresh send) holds the turn lock -
-                    // surface the banner, which carries its own Stop button.
-                    toast(`${error.message} You can stop it from the bar above the chat.`, true);
+                    toast(`${error.message} Queue a follow-up, or stop it from the bar above the chat.`, true);
                     void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
                 } else {
                     toast((error as Error).message, true);
@@ -469,14 +646,11 @@ export function StudyRoom() {
         } finally {
             setSending(false);
             abortRef.current = null;
-            // A turn that settled without a spoken reply (abort, dead stream)
-            // re-opens the voice-chat mic; no-op when already speaking.
             if (voiceChat.isActive()) voiceChat.resume();
-            // Whatever was still streaming (an abort, a dead stream) settles
-            // into a visible message instead of vanishing.
             turn.end();
             localTurnSettledAt.current = Date.now();
             void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
+            void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
             if (!incognito && conversationId) {
                 await queryClient.invalidateQueries({ queryKey: keys.history(conversationId) });
                 await queryClient.invalidateQueries({ queryKey: keys.conversations });
@@ -485,14 +659,44 @@ export function StudyRoom() {
         }
     }
 
-    async function stopOrphanTurn() {
+    async function stopLiveTurn() {
         try {
             await api.stop();
-            toast('Asked Goobster to stop - the partial reply (if any) is kept.');
+            toast('Asked Goobster to stop — the partial reply (if any) is kept.');
         } catch (error) {
             toast((error as Error).message, true);
         }
+        abortRef.current?.abort();
+        attachAbortRef.current?.abort();
+        turn.end();
+        localTurnSettledAt.current = Date.now();
+        hydratedTurnId.current = null;
         await queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
+        await queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+    }
+
+    async function moveQueued(index: number, delta: number) {
+        const next = index + delta;
+        if (next < 0 || next >= queueItems.length) return;
+        const ids = queueItems.map((item) => item.id);
+        const swap = ids[index];
+        ids[index] = ids[next];
+        ids[next] = swap;
+        try {
+            await api.reorderQueue(ids);
+            await queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    async function dropQueued(id: number | string) {
+        try {
+            await api.removeQueued(id);
+            await queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
     }
 
     const title = incognito ? 'Incognito chat' : (conversations.find((c) => c.id === activeId)?.title || 'New chat');
@@ -566,7 +770,7 @@ export function StudyRoom() {
                     </div>
                     <div className="chat-header-actions">
                         <HeaderOverflow>
-                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
+                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} aria-label="Incognito" title="Incognito" onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
                         <button type="button" className="icon-action" onClick={() => {
                             if (incognito) { toast('Incognito chats cannot be shared.', true); return; }
                             if (activeId === null) { toast('Say something first — an empty chat has nothing to share.', true); return; }
@@ -579,20 +783,20 @@ export function StudyRoom() {
                 {incognito && (
                     <div className="incognito-banner">🕶 Incognito — messages here aren't saved to history or long-term memory.</div>
                 )}
-                {orphanTurn && (
+                {orphanTurn && !matchingOrphan && (
                     <div className="turn-banner">
                         <span className="tool-spinner" aria-hidden="true" />
                         <span className="turn-banner-text">
                             Goobster is still writing a reply you asked for {elapsedLabel(orphanTurn.elapsedMs)} ago
-                            {orphanTurn.conversationId != null && orphanTurn.conversationId !== activeId ? ' (in another chat)' : ''}.
-                            It will appear here when it finishes.
+                            {orphanTurn.conversationId != null ? ' in another chat' : ''}.
+                            Open that chat to watch it live.
                         </span>
-                        {orphanTurn.conversationId != null && orphanTurn.conversationId !== activeId && (
+                        {orphanTurn.conversationId != null && (
                             <button type="button" className="btn" onClick={() => goToConversation(orphanTurn.conversationId as number)}>
                                 Open that chat
                             </button>
                         )}
-                        <button type="button" className="btn danger" onClick={() => void stopOrphanTurn()}>◼ Stop</button>
+                        <button type="button" className="btn danger" onClick={() => void stopLiveTurn()}>◼ Stop</button>
                     </div>
                 )}
                 <div className="chat-scroll" ref={logRef}>
@@ -656,6 +860,25 @@ export function StudyRoom() {
                             ))}
                         </div>
                     )}
+                    {queueItems.length > 0 && (
+                        <ol className="composer-queue" aria-label="Queued messages">
+                            {queueItems.map((item, index) => (
+                                <li key={String(item.id)} className="composer-queue-item">
+                                    <span className="composer-queue-text">
+                                        {item.message}
+                                        {(item.imageCount || 0) > 0 ? ` · ${item.imageCount} image${item.imageCount === 1 ? '' : 's'}` : ''}
+                                        {(item.fileCount || 0) > 0 ? ` · ${item.fileCount} file${item.fileCount === 1 ? '' : 's'}` : ''}
+                                        {item.conversationId != null && item.conversationId !== activeId ? ' · another chat' : ''}
+                                    </span>
+                                    <span className="composer-queue-actions">
+                                        <button type="button" className="msg-action" disabled={index === 0} onClick={() => void moveQueued(index, -1)} aria-label="Move up">↑</button>
+                                        <button type="button" className="msg-action" disabled={index === queueItems.length - 1} onClick={() => void moveQueued(index, 1)} aria-label="Move down">↓</button>
+                                        <button type="button" className="msg-action" onClick={() => void dropQueued(item.id)} aria-label="Remove from queue">✕</button>
+                                    </span>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
                     <form className="composer composer--tools" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
                         <div className="composer-actions">
                             <button type="button" className="icon-action attach attach-plus" title="Attach files" aria-label="Attach files" onClick={() => fileRef.current?.click()}>
@@ -711,11 +934,16 @@ export function StudyRoom() {
                                 }
                             }}
                         />
-                        <button type="submit" className={`btn primary send-btn${sending ? ' stop' : ''}`} aria-label={sending ? 'Stop' : 'Send'}>
-                            {sending ? '◼' : '➤'}
+                        {liveTurn && (
+                            <button type="button" className="btn danger send-btn stop" aria-label="Stop" onClick={() => void stopLiveTurn()}>
+                                ◼
+                            </button>
+                        )}
+                        <button type="submit" className="btn primary send-btn" aria-label={liveTurn ? 'Queue message' : 'Send'}>
+                            ➤
                         </button>
                     </form>
-                    <div className="composer-hint hint">{incognito ? INCOGNITO_HINT : DEFAULT_HINT}</div>
+                    <div className="composer-hint hint">{incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : DEFAULT_HINT)}</div>
                 </div>
             </div>
             {settingsOpen && (

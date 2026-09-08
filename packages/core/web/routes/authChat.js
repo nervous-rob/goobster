@@ -6,7 +6,7 @@
 const crypto = require('node:crypto');
 const axios = require('axios');
 const { DISCORD_API, SESSION_COOKIE, STATE_COOKIE } = require('../appHelpers');
-const { streamWebChatTurn } = require('../appStream');
+const { streamWebChatTurn, streamLiveTurnProgress } = require('../appStream');
 
 function mountAuthChat(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, parseCookies, cookieAttributes } = h;
@@ -243,10 +243,72 @@ function mountAuthChat(app, ctx, h) {
     })));
 
     // Is a reply still generating for this user? Lets the client rediscover
-    // (and offer to stop) an in-flight turn after a reload or from another
-    // conversation - the per-user lock spans all of them.
+    // (and restore progress for) an in-flight turn after a reload or from
+    // another conversation - the per-user lock spans all of them.
     app.get('/api/app/chat/turn', requireAuth, chatRoute(async (req) =>
-        ctx.chat.turnStatus(req.webUser.userId)
+        ctx.chat.turnStatus(req.webUser.userId, {
+            client: ctx.client,
+            gateway: ctx.gateway,
+            userName: req.webUser.userName
+        })
+    ));
+
+    // Reattach to the in-flight turn's thoughts/tools/draft. Disconnect
+    // only stops writing; the turn itself keeps running.
+    app.get('/api/app/chat/turn/stream', requireAuth, async (req, res) => {
+        try {
+            Promise.resolve(ctx.chat.turnStatus?.(req.webUser.userId, {
+                client: ctx.client,
+                gateway: ctx.gateway,
+                userName: req.webUser.userName
+            })).catch(() => {});
+            const rawTurnId = req.query?.turnId;
+            const expectedTurnId = typeof rawTurnId === 'string' && rawTurnId.trim()
+                ? rawTurnId.trim()
+                : null;
+            await streamLiveTurnProgress(res, {
+                userId: req.webUser.userId,
+                chat: ctx.chat,
+                expectedTurnId
+            });
+        } catch (error) {
+            if (res.headersSent) return;
+            const status = error.status || 500;
+            sendError(res, status, error.code || 'INTERNAL',
+                status === 500 ? 'Something went wrong.' : error.message,
+                error.details || null);
+        }
+    });
+
+    app.get('/api/app/chat/queue', requireAuth, chatRoute(async (req) =>
+        ctx.chat.listQueue(req.webUser.userId, {
+            client: ctx.client,
+            gateway: ctx.gateway,
+            userName: req.webUser.userName
+        })
+    ));
+
+    app.post('/api/app/chat/queue', requireAuth, chatRoute(async (req) => {
+        const files = await ctx.chat.extractDocumentFiles(req.body?.files ?? null);
+        return ctx.chat.enqueue({
+            client: ctx.client,
+            gateway: ctx.gateway,
+            userId: req.webUser.userId,
+            userName: req.webUser.userName,
+            message: req.body?.message,
+            conversationId: req.body?.conversationId ?? null,
+            images: req.body?.images ?? null,
+            files,
+            incognito: req.body?.incognito === true
+        });
+    }));
+
+    app.delete('/api/app/chat/queue/:id', requireAuth, chatRoute(async (req) =>
+        ctx.chat.removeQueued(req.webUser.userId, req.params.id)
+    ));
+
+    app.patch('/api/app/chat/queue', requireAuth, chatRoute(async (req) =>
+        ctx.chat.reorderQueue(req.webUser.userId, req.body?.ids)
     ));
 
     // AI settings for the user's web/DM scope (same storage as /aisettings

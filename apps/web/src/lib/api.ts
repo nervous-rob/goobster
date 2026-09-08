@@ -1,4 +1,4 @@
-import type { AppConfig, ChatMessage, Conversation, Me, ToolEvent } from './types';
+import type { AppConfig, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -70,6 +70,13 @@ export const api = {
         request(`/api/app/chat/conversations/${conversationId}/share`, { method: 'DELETE' }),
     stop: () => request('/api/app/chat/stop', { method: 'POST' }),
     turnStatus: () => request('/api/app/chat/turn'),
+    listChatQueue: () => request<{ items: ChatQueueItem[] }>('/api/app/chat/queue'),
+    enqueueChat: (body: Record<string, unknown>) =>
+        request<ChatQueueItem>('/api/app/chat/queue', { method: 'POST', body }),
+    removeQueued: (id: number | string) =>
+        request(`/api/app/chat/queue/${encodeURIComponent(String(id))}`, { method: 'DELETE' }),
+    reorderQueue: (ids: Array<number | string>) =>
+        request<{ items: ChatQueueItem[] }>('/api/app/chat/queue', { method: 'PATCH', body: { ids } }),
     searchMessages: (query: string, limit = 20) =>
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
@@ -479,7 +486,8 @@ export async function fetchSpeech(text: string, signal?: AbortSignal | null): Pr
 }
 
 type ChatHandlers = {
-    onStart?: (data: { conversationId?: number }) => void;
+    onStart?: (data: { conversationId?: number; turnId?: string }) => void;
+    onSnapshot?: (progress: TurnProgress) => void;
     onTyping?: () => void;
     onDelta?: (text: string) => void;
     onTool?: (data: ToolEvent) => void;
@@ -498,10 +506,11 @@ type ParlorHandlers = ChatHandlers & {
 };
 
 async function readSse(url: string, payload: unknown, dispatch: (event: string, data: unknown) => void, signal?: AbortSignal | null) {
+    const isGet = payload === null || payload === undefined;
     const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        method: isGet ? 'GET' : 'POST',
+        headers: isGet ? {} : { 'Content-Type': 'application/json' },
+        body: isGet ? undefined : JSON.stringify(payload),
         signal: signal || undefined
     });
     if (!res.ok) {
@@ -538,6 +547,48 @@ export function streamChat(payload: Record<string, unknown>, handlers: ChatHandl
         else if (event === 'message') handlers.onMessage?.(data as { content: string });
         else if (event === 'error') handlers.onError?.(data as { message?: string });
         else if (event === 'done') handlers.onDone?.(data as { ok?: boolean });
+    }, signal);
+}
+
+/** Reattach to an in-flight Study turn (snapshot + live events). */
+export function streamLiveTurn(
+    handlers: ChatHandlers = {},
+    signal?: AbortSignal | null,
+    turnId?: string | null
+) {
+    const expected = turnId ? String(turnId) : null;
+    const qs = expected ? `?turnId=${encodeURIComponent(expected)}` : '';
+    // Until a matching `start` arrives, ignore snapshots/deltas so a retry
+    // cannot hydrate a later queued turn into this chat. `done` still ends
+    // the stream so the original turn can settle.
+    let bound = expected;
+    let matching = !expected;
+    return readSse(`/api/app/chat/turn/stream${qs}`, null, (event, data) => {
+        if (event === 'start') {
+            const incoming = (data as { turnId?: string })?.turnId;
+            if (bound && incoming && incoming !== bound) {
+                matching = false;
+                return;
+            }
+            if (incoming) bound = String(incoming);
+            matching = true;
+            handlers.onStart?.(data as { conversationId?: number; turnId?: string });
+            return;
+        }
+        if (event === 'done') {
+            handlers.onDone?.(data as { ok?: boolean });
+            return;
+        }
+        if (event === 'error') {
+            handlers.onError?.(data as { message?: string });
+            return;
+        }
+        if (!matching) return;
+        if (event === 'snapshot') handlers.onSnapshot?.(data as TurnProgress);
+        else if (event === 'typing') handlers.onTyping?.();
+        else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');
+        else if (event === 'tool') handlers.onTool?.(data as ToolEvent);
+        else if (event === 'message') handlers.onMessage?.(data as { content: string });
     }, signal);
 }
 
