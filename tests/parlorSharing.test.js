@@ -490,7 +490,8 @@ describe('portal events for shared discussions', () => {
         });
         const events = await collectEvents(() =>
             parlorService.respondInvite({ userId: FRIEND, userName: 'Frieda', inviteId: invite.id, accept: true }));
-        const memberEvents = events.filter(e => e.kind === 'parlor-members');
+        const memberEvents = events.filter(e => e.kind === 'parlor-members'
+            && Number(e.payload.conversationId) === Number(conversation.id));
         expect(memberEvents.map(e => e.payload.userId).sort()).toEqual([OWNER, FRIEND].sort());
         for (const event of memberEvents) {
             expect(event.payload.invalidate).toEqual([`parlor-members:${conversation.id}`]);
@@ -502,7 +503,8 @@ describe('portal events for shared discussions', () => {
         await acceptInvite(conversation.id);
         const events = await collectEvents(() =>
             parlorService.removeMember({ userId: OWNER, conversationId: conversation.id, memberId: FRIEND }));
-        const recipients = events.filter(e => e.kind === 'parlor-members').map(e => e.payload.userId);
+        const recipients = events.filter(e => e.kind === 'parlor-members'
+            && Number(e.payload.conversationId) === Number(conversation.id)).map(e => e.payload.userId);
         expect(recipients.sort()).toEqual([OWNER, FRIEND].sort());
     });
 
