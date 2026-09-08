@@ -212,7 +212,9 @@ expect(mockService.method).toHaveBeenCalledWith(args);
 5. `both engines` — fails unless sqlite, postgres, and isolation succeeded
 6. `test (live integrations)` — main pushes and `workflow_dispatch` only
 
-Group steps use `continue-on-error` so a later group still runs after an
+Group steps are ordinary named steps in each engine job (not a composite
+action) so the Actions step list shows names, statuses, and timings.
+They use `continue-on-error` so a later group still runs after an
 earlier failure. The job fails at the end. An inventory step fails if the
 manifest drifts from Jest's discovered files.
 

@@ -22,9 +22,10 @@ do not receive repository secrets.
    once. Replace the single `npm test` step with named groups from
    `tests/ciGroups.js`, run via `--runTestsByPath`.
 2. **Inventory first.** `scripts/check-test-groups.js` compares the
-   manifest to `jest --listTests` and to
-   `.github/actions/run-test-groups/action.yml`. A new spec that is not in
-   exactly one group fails CI before any group runs.
+   manifest to `jest --listTests` and to `.github/workflows/ci.yml`.
+   Named groups are ordinary job steps in both engine jobs — not a
+   composite action, which GitHub collapses to one parent step. A new spec
+   that is not in exactly one group fails CI before any group runs.
 3. **Continue after a group failure.** Group steps use `continue-on-error`.
    A final step fails the job if any group's `outcome` is not `success`.
    Setup failures (checkout, `npm ci`) still skip the groups.
@@ -40,7 +41,8 @@ Local `npm test` is unchanged: one Jest invocation, no keys, no network.
 
 ## Consequences
 
-The Actions log shows which domain failed. Sequential group startups add
+The Actions log shows which domain failed because each group is an
+ordinary named step on both engine jobs. Sequential group startups add
 a little wall-clock time (timeouts raised to 25 minutes). Parallel jobs per
 group can wait until timings justify repeating ffmpeg/npm setup.
 

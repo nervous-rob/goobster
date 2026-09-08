@@ -272,12 +272,14 @@ function listedFiles(groups = GROUPS) {
  * @param {object} opts
  * @param {string[]} opts.discovered
  * @param {object[]} [opts.groups]
- * @param {string} [opts.actionSource] - composite action.yml text, if present
+ * @param {string} [opts.workflowSource] - `.github/workflows/ci.yml` text
  */
-function auditTestGroups({ discovered, groups = GROUPS, actionSource } = {}) {
+function auditTestGroups({ discovered, groups = GROUPS, workflowSource } = {}) {
     const errors = [];
     const discoveredSet = new Set(discovered);
     const owners = new Map();
+    const workflowPath = '.github/workflows/ci.yml';
+    const engineJobs = 2;
 
     for (const group of groups) {
         if (!group.id || !group.name) {
@@ -312,23 +314,34 @@ function auditTestGroups({ discovered, groups = GROUPS, actionSource } = {}) {
         }
     }
 
-    if (typeof actionSource === 'string') {
-        const yamlIds = new Set(
-            [...actionSource.matchAll(/run-test-group\.js\s+(\S+)/g)].map((m) => m[1])
-        );
+    if (typeof workflowSource === 'string') {
+        const ids = [...workflowSource.matchAll(/run-test-group\.js\s+(\S+)/g)]
+            .map((m) => m[1]);
+        const counts = new Map();
+        for (const id of ids) {
+            counts.set(id, (counts.get(id) || 0) + 1);
+        }
         for (const group of groups) {
-            if (!yamlIds.has(group.id)) {
+            const n = counts.get(group.id) || 0;
+            if (n === 0) {
+                errors.push(`group id "${group.id}" is not a named step in ${workflowPath}`);
+            } else if (n < engineJobs) {
                 errors.push(
-                    `group id "${group.id}" is not referenced in .github/actions/run-test-groups/action.yml`
+                    `group id "${group.id}" appears ${n} time(s) in ${workflowPath}; ` +
+                    `expected once per engine job (${engineJobs})`
                 );
             }
         }
-        for (const id of [...yamlIds].sort()) {
+        for (const id of [...counts.keys()].sort()) {
             if (!groups.some((group) => group.id === id)) {
-                errors.push(
-                    `action.yml references unknown group id "${id}"`
-                );
+                errors.push(`${workflowPath} references unknown group id "${id}"`);
             }
+        }
+        if (/\.\/\.github\/actions\/run-test-groups/.test(workflowSource)) {
+            errors.push(
+                `${workflowPath} still invokes the run-test-groups composite action; ` +
+                'named groups must be ordinary job steps'
+            );
         }
     }
 

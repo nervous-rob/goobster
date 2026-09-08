@@ -27,13 +27,14 @@ function globUnitTests() {
 describe('test group inventory', () => {
     test('every discovered unit spec is in exactly one group', () => {
         const discovered = globUnitTests();
-        const actionSource = fs.readFileSync(
-            path.join(ROOT, '.github/actions/run-test-groups/action.yml'),
+        const workflowSource = fs.readFileSync(
+            path.join(ROOT, '.github/workflows/ci.yml'),
             'utf8'
         );
-        const errors = auditTestGroups({ discovered, groups: GROUPS, actionSource });
+        const errors = auditTestGroups({ discovered, groups: GROUPS, workflowSource });
         expect(errors).toEqual([]);
         expect(listedFiles()).toHaveLength(discovered.length);
+        expect(workflowSource).not.toMatch(/uses:\s*\.\/\.github\/actions\/run-test-groups/);
     });
 
     test('reports missing, duplicated, and undiscovered paths', () => {
@@ -60,15 +61,26 @@ describe('test group inventory', () => {
         ]));
     });
 
-    test('requires every group id to appear in the composite action', () => {
+    test('requires every group id as a named step in both engine jobs', () => {
         const errors = auditTestGroups({
             discovered: ['tests/a.test.js'],
             groups: [{ id: 'core', name: 'Core', files: ['tests/a.test.js'] }],
-            actionSource: 'run: node scripts/run-test-group.js chat\n'
+            workflowSource: 'run: node scripts/run-test-group.js chat\n'
         });
         expect(errors).toEqual(expect.arrayContaining([
-            'group id "core" is not referenced in .github/actions/run-test-groups/action.yml',
-            'action.yml references unknown group id "chat"'
+            'group id "core" is not a named step in .github/workflows/ci.yml',
+            '.github/workflows/ci.yml references unknown group id "chat"'
+        ]));
+    });
+
+    test('requires each group id once per engine job', () => {
+        const errors = auditTestGroups({
+            discovered: ['tests/a.test.js'],
+            groups: [{ id: 'core', name: 'Core', files: ['tests/a.test.js'] }],
+            workflowSource: 'run: node scripts/run-test-group.js core\n'
+        });
+        expect(errors).toEqual(expect.arrayContaining([
+            'group id "core" appears 1 time(s) in .github/workflows/ci.yml; expected once per engine job (2)'
         ]));
     });
 

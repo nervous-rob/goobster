@@ -3,8 +3,8 @@
  * Fail if the CI group manifest drifts from Jest's discovered unit specs.
  *
  * Discovers files the same way `npm test` does (`jest --listTests`), then
- * compares against `tests/ciGroups.js`. Also checks that the composite
- * action lists every group id.
+ * compares against `tests/ciGroups.js`. Also checks that both engine jobs
+ * in `.github/workflows/ci.yml` list every group as an ordinary step.
  */
 'use strict';
 
@@ -36,16 +36,16 @@ function listJestTests() {
         .map((filePath) => toRepoPosix(filePath, ROOT));
 }
 
-const actionPath = path.join(ROOT, '.github/actions/run-test-groups/action.yml');
-const actionSource = fs.existsSync(actionPath)
-    ? fs.readFileSync(actionPath, 'utf8')
+const workflowPath = path.join(ROOT, '.github/workflows/ci.yml');
+const workflowSource = fs.existsSync(workflowPath)
+    ? fs.readFileSync(workflowPath, 'utf8')
     : '';
 
 const discovered = listJestTests();
-const errors = auditTestGroups({ discovered, groups: GROUPS, actionSource });
+const errors = auditTestGroups({ discovered, groups: GROUPS, workflowSource });
 
-if (!actionSource) {
-    errors.push('missing .github/actions/run-test-groups/action.yml');
+if (!workflowSource) {
+    errors.push('missing .github/workflows/ci.yml');
 }
 
 if (errors.length) {

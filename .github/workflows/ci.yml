@@ -46,13 +46,84 @@ jobs:
       - name: Build React client
         run: npm run build:web
 
-      - name: Unit tests (SQLite)
-        uses: ./.github/actions/run-test-groups
+      # Named groups are ordinary job steps on purpose. A composite action
+      # collapses to one "Unit tests" parent in the Actions step list, which
+      # hid names, statuses, and timings. Shared runners: scripts/run-test-group.js.
+      - name: Inventory test groups
+        run: node scripts/check-test-groups.js
+
+      - name: Core infrastructure
+        id: core
+        continue-on-error: true
+        run: node scripts/run-test-group.js core
+
+      - name: Chat and AI
+        id: chat
+        continue-on-error: true
+        run: node scripts/run-test-group.js chat
+
+      - name: Portal and collaboration
+        id: portal
+        continue-on-error: true
+        run: node scripts/run-test-group.js portal
+
+      - name: Knowledge and memory
+        id: knowledge
+        continue-on-error: true
+        run: node scripts/run-test-group.js knowledge
+
+      - name: Projects and autonomy
+        id: projects
+        continue-on-error: true
+        run: node scripts/run-test-group.js projects
+
+      - name: Voice and media
+        id: voice
+        continue-on-error: true
+        run: node scripts/run-test-group.js voice
+
+      - name: Games and economy
+        id: games
+        continue-on-error: true
+        run: node scripts/run-test-group.js games
+
+      - name: Privacy and execution safety
+        id: privacy
+        continue-on-error: true
+        run: node scripts/run-test-group.js privacy
+
+      - name: Publish test group summary
+        if: always()
+        run: node scripts/publish-test-group-summary.js
+
+      - name: Fail if any unit group failed
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "core=${{ steps.core.outcome }}"
+          echo "chat=${{ steps.chat.outcome }}"
+          echo "portal=${{ steps.portal.outcome }}"
+          echo "knowledge=${{ steps.knowledge.outcome }}"
+          echo "projects=${{ steps.projects.outcome }}"
+          echo "voice=${{ steps.voice.outcome }}"
+          echo "games=${{ steps.games.outcome }}"
+          echo "privacy=${{ steps.privacy.outcome }}"
+          test "${{ steps.core.outcome }}" = success
+          test "${{ steps.chat.outcome }}" = success
+          test "${{ steps.portal.outcome }}" = success
+          test "${{ steps.knowledge.outcome }}" = success
+          test "${{ steps.projects.outcome }}" = success
+          test "${{ steps.voice.outcome }}" = success
+          test "${{ steps.games.outcome }}" = success
+          test "${{ steps.privacy.outcome }}" = success
 
   test-postgres:
     name: test (postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
+      GOOBSTER_PG_TEST_ISOLATE: '1'
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -80,11 +151,75 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Unit tests (Postgres)
-        uses: ./.github/actions/run-test-groups
-        env:
-          GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
-          GOOBSTER_PG_TEST_ISOLATE: '1'
+      # Same named steps as test (sqlite): GitHub only shows group names,
+      # statuses, and timings when they are ordinary job steps.
+      - name: Inventory test groups
+        run: node scripts/check-test-groups.js
+
+      - name: Core infrastructure
+        id: core
+        continue-on-error: true
+        run: node scripts/run-test-group.js core
+
+      - name: Chat and AI
+        id: chat
+        continue-on-error: true
+        run: node scripts/run-test-group.js chat
+
+      - name: Portal and collaboration
+        id: portal
+        continue-on-error: true
+        run: node scripts/run-test-group.js portal
+
+      - name: Knowledge and memory
+        id: knowledge
+        continue-on-error: true
+        run: node scripts/run-test-group.js knowledge
+
+      - name: Projects and autonomy
+        id: projects
+        continue-on-error: true
+        run: node scripts/run-test-group.js projects
+
+      - name: Voice and media
+        id: voice
+        continue-on-error: true
+        run: node scripts/run-test-group.js voice
+
+      - name: Games and economy
+        id: games
+        continue-on-error: true
+        run: node scripts/run-test-group.js games
+
+      - name: Privacy and execution safety
+        id: privacy
+        continue-on-error: true
+        run: node scripts/run-test-group.js privacy
+
+      - name: Publish test group summary
+        if: always()
+        run: node scripts/publish-test-group-summary.js
+
+      - name: Fail if any unit group failed
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "core=${{ steps.core.outcome }}"
+          echo "chat=${{ steps.chat.outcome }}"
+          echo "portal=${{ steps.portal.outcome }}"
+          echo "knowledge=${{ steps.knowledge.outcome }}"
+          echo "projects=${{ steps.projects.outcome }}"
+          echo "voice=${{ steps.voice.outcome }}"
+          echo "games=${{ steps.games.outcome }}"
+          echo "privacy=${{ steps.privacy.outcome }}"
+          test "${{ steps.core.outcome }}" = success
+          test "${{ steps.chat.outcome }}" = success
+          test "${{ steps.portal.outcome }}" = success
+          test "${{ steps.knowledge.outcome }}" = success
+          test "${{ steps.projects.outcome }}" = success
+          test "${{ steps.voice.outcome }}" = success
+          test "${{ steps.games.outcome }}" = success
+          test "${{ steps.privacy.outcome }}" = success
 
   # Optional live provider checks. Mocked provider suites always run in the
   # unit jobs above. This job never disables that coverage: missing secrets
