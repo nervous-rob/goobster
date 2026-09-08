@@ -11,6 +11,7 @@ import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { ParlorConversationView } from '../components/ParlorConversationView';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
+import { useComposerAutosize } from '../hooks/useComposerAutosize';
 import { useParlorLive } from '../hooks/useParlorLive';
 import { PersonaModal } from './parlor/PersonaModal';
 import { PeopleModal } from './parlor/PeopleModal';
@@ -66,6 +67,7 @@ export function ParlorRoom() {
     const abortRef = useRef<AbortController | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
     const composerRef = useRef<HTMLTextAreaElement>(null);
+    useComposerAutosize(composerRef, composer);
     const livePersonaRef = useRef<Persona | undefined>(undefined);
 
     const personasQ = useQuery({
