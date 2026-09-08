@@ -171,6 +171,26 @@ describe('AnthropicService', () => {
         expect(body.top_p).toBeUndefined();
     });
 
+    test('omits sampling params and adds high thinking headroom for Sonnet 5 by default', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                content: [{ type: 'text', text: 'ok' }],
+                usage: {}
+            })
+        });
+
+        const service = createService();
+        // Everyday chat path: callers often pass temperature: 0.7. Sonnet 5
+        // rejects non-default sampling and thinks adaptively at high.
+        await service.chat('hi', { model: 'claude-sonnet-5', temperature: 0.7, max_tokens: 500 });
+        const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(body.temperature).toBeUndefined();
+        expect(body.top_p).toBeUndefined();
+        expect(body.output_config).toBeUndefined();
+        expect(body.max_tokens).toBe(500 + 24576);
+    });
+
     test('maps reasoning effort to output_config.effort on supported models', async () => {
         global.fetch = jest.fn().mockResolvedValue({
             ok: true,

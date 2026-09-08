@@ -189,6 +189,7 @@ describe('GeminiService', () => {
         body = JSON.parse(global.fetch.mock.calls[2][1].body);
         expect(body.generationConfig.thinkingConfig).toBeUndefined();
         expect(body.generationConfig.maxOutputTokens).toBe(500);
+        expect(body.generationConfig.temperature).toBe(0.7);
 
         // Gemini 3.x always thinks: headroom applies even with no requested
         // effort (Flash defaults to medium, Pro to high)
@@ -196,6 +197,31 @@ describe('GeminiService', () => {
         body = JSON.parse(global.fetch.mock.calls[3][1].body);
         expect(body.generationConfig.thinkingConfig).toBeUndefined();
         expect(body.generationConfig.maxOutputTokens).toBe(500 + 8192);
+        // Sampling is deprecated on Gemini 3; omit rather than send 0.7
+        expect(body.generationConfig.temperature).toBeUndefined();
+        expect(body.generationConfig.topP).toBeUndefined();
+    });
+
+    test('omits temperature and top_p on Gemini 3.x even when callers pass them', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                candidates: [{ content: { parts: [{ text: 'ok' }] } }]
+            })
+        });
+
+        const service = createService();
+        await service.chat('hi', {
+            model: 'gemini-3.1-pro-preview',
+            temperature: 0.2,
+            top_p: 0.5,
+            reasoning_effort: 'high',
+            max_tokens: 500
+        });
+        const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' });
+        expect(body.generationConfig.temperature).toBeUndefined();
+        expect(body.generationConfig.topP).toBeUndefined();
     });
 
     test('streams SSE chunks and reports deltas', async () => {

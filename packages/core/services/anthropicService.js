@@ -8,11 +8,20 @@ const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com/v1';
 const ANTHROPIC_VERSION = '2023-06-01';
 
 /**
- * Models with always-on adaptive thinking (Claude Fable/Mythos 5 generation)
- * reject sampling parameters, like OpenAI's reasoning models.
+ * Models with always-on adaptive thinking. They reject sampling parameters
+ * (`temperature` / `top_p` / `top_k` → 400) and think at effort `high`
+ * when none is requested, so the visible-token budget needs headroom even
+ * on a default chat turn. OpenAI reasoning models follow the same pattern.
+ *
+ * Sonnet 5 and Opus 4.7+ joined Fable/Mythos here; older Sonnet 4.x and
+ * Opus 4.5/4.6 still accept sampling unless an effort is set.
  */
 function isAdaptiveThinkingModel(model) {
-    return /claude-(fable|mythos)/i.test(model);
+    const id = String(model || '');
+    return /claude-(fable|mythos)/i.test(id)
+        || /claude-sonnet-5/i.test(id)
+        || /claude-opus-5/i.test(id)
+        || /claude-opus-4-[7-9]/i.test(id);
 }
 
 /**
@@ -373,9 +382,10 @@ class AnthropicService {
             effort
         };
 
-        // Adaptive-thinking models reject sampling params, and effortful
-        // (thinking) requests must not carry them either; on newer Claude
-        // models temperature and top_p are mutually exclusive, so prefer
+        // Adaptive-thinking models (Sonnet 5, Fable/Mythos 5, Opus 4.7+)
+        // reject sampling params even without an effort field. Effortful
+        // requests must not carry them either; on older Claude models
+        // temperature and top_p are mutually exclusive, so prefer
         // temperature and only pass top_p when it's the sole override.
         if (!isAdaptiveThinkingModel(modelToUse) && !effort) {
             if (temperature !== undefined) {

@@ -260,11 +260,24 @@ class GeminiService {
 
     /**
      * The level a Gemini 3.x model thinks at when none is requested (thinking
-     * can't be disabled on these models): 'high' for Pro, 'medium' for Flash.
+     * can't be disabled on these models): 'high' for Pro, 'minimal' for
+     * Flash-Lite, 'medium' for Flash.
      */
     _defaultThinkingLevel(model) {
         if (!/^gemini-3/i.test(model)) return null;
-        return /pro/i.test(model) ? 'high' : 'medium';
+        if (/pro/i.test(model)) return 'high';
+        if (/lite/i.test(model)) return 'minimal';
+        return 'medium';
+    }
+
+    /**
+     * Gemini 3.x thinking is optimized for the API default temperature (1.0).
+     * Sampling params are deprecated on that generation; sending our
+     * historical 0.7 default can loop or degrade reasoning. Gemini 2.x still
+     * accepts temperature/top_p. Unsupported combos are dropped, not errors.
+     */
+    _allowsSampling(model) {
+        return !/^gemini-3/i.test(model);
     }
 
     async _postGenerateContent(request, { stream = false, signal = null } = {}) {
@@ -351,7 +364,7 @@ class GeminiService {
      */
     async chat(messages, opts = {}) {
         this._requireApiKey();
-        const { temperature = 0.7, top_p, max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
+        const { temperature, top_p, max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
 
         const modelToUse = model || this.defaultModel;
         const hasTools = Boolean(functions && functions.length > 0);
@@ -364,10 +377,12 @@ class GeminiService {
         const effectiveLevel = thinkingLevel || this._defaultThinkingLevel(modelToUse);
 
         const config = {
-            temperature,
             maxOutputTokens: withThinkingHeadroom(max_tokens, effectiveLevel)
         };
-        if (top_p !== undefined) config.topP = top_p;
+        if (this._allowsSampling(modelToUse)) {
+            config.temperature = temperature ?? 0.7;
+            if (top_p !== undefined) config.topP = top_p;
+        }
         if (systemInstruction) config.systemInstruction = systemInstruction;
         if (thinkingLevel) config.thinkingLevel = thinkingLevel;
 
