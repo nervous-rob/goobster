@@ -1144,6 +1144,7 @@ describe('follow-up queue', () => {
     async function waitForIdle() {
         expect(await waitUntil(async () => {
             if (webChatService._activeTurns.has(USER)) return false;
+            if (webChatService._kicking.has(USER)) return false;
             const row = await db.get(
                 'SELECT 1 AS ok FROM web_live_turns WHERE userId = @userId', { userId: USER }
             );
@@ -1223,43 +1224,46 @@ describe('follow-up queue', () => {
     });
 
     test('only one worker claims a queued follow-up', async () => {
+        const claimUser = '100000000000000091';
+        await db.run('DELETE FROM web_chat_queue WHERE userId = @userId', { userId: claimUser });
         await db.insert(
             `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
              VALUES (@userId, NULL, 1, 'only-once', NULL, NULL, 0)`,
-            { userId: USER }
+            { userId: claimUser }
         );
         const [first, second] = await Promise.all([
-            webChatService._popQueue(USER),
-            webChatService._popQueue(USER)
+            webChatService._popQueue(claimUser),
+            webChatService._popQueue(claimUser)
         ]);
         const claimed = [first, second].filter(Boolean);
         expect(claimed).toHaveLength(1);
         expect(claimed[0].message).toBe('only-once');
         expect((await db.get(
             'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId',
-            { userId: USER }
+            { userId: claimUser }
         )).c).toBe(0);
     });
 
-    test('two queued rows are claimed by two pops without duplicating either', async () => {
+    test('queued rows are claimed in order without duplicating either', async () => {
+        const claimUser = '100000000000000092';
+        await db.run('DELETE FROM web_chat_queue WHERE userId = @userId', { userId: claimUser });
         await db.insert(
             `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
              VALUES (@userId, NULL, 1, 'one', NULL, NULL, 0)`,
-            { userId: USER }
+            { userId: claimUser }
         );
         await db.insert(
             `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
              VALUES (@userId, NULL, 2, 'two', NULL, NULL, 0)`,
-            { userId: USER }
+            { userId: claimUser }
         );
-        const [first, second] = await Promise.all([
-            webChatService._popQueue(USER),
-            webChatService._popQueue(USER)
-        ]);
-        expect(new Set([first?.message, second?.message])).toEqual(new Set(['one', 'two']));
+        const first = await webChatService._popQueue(claimUser);
+        const second = await webChatService._popQueue(claimUser);
+        expect(first.message).toBe('one');
+        expect(second.message).toBe('two');
         expect((await db.get(
             'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId',
-            { userId: USER }
+            { userId: claimUser }
         )).c).toBe(0);
     });
 });
