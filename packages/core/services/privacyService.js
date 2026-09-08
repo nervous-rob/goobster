@@ -25,6 +25,7 @@ const { dmScopeId } = require('../utils/dmScope');
  *   cascade), pinned Workshop applets (web_applets), generated-file
  *   registry rows (web_generated_files), shared web rate-limit events
  *   (web_rate_events), in-flight web-chat turn rows (web_live_turns),
+ *   queued Study follow-ups (web_chat_queue),
  *   cached new-chat suggestions (web_suggested_queries),
  *   and the user's Observatory (project registry, job records, and the
  *   whole on-disk workspace tree; live jobs are cancelled first).
@@ -430,6 +431,10 @@ class PrivacyService {
                 decks: mtga?.decks || 0
             },
             applets: applets?.c || 0,
+            queuedChatMessages: (await db.get(
+                'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId',
+                { userId }
+            ))?.c || 0,
             friends: {
                 cached: friends?.mine || 0,
                 listedByOthers: friends?.listedBy || 0
@@ -752,6 +757,9 @@ class PrivacyService {
             counts.webLiveTurns = (await db.run(
                 'DELETE FROM web_live_turns WHERE userId = @userId', { userId }
             )).changes;
+            counts.webChatQueue = (await db.run(
+                'DELETE FROM web_chat_queue WHERE userId = @userId', { userId }
+            )).changes;
             // Personalized new-chat suggestions (a cache derived from the
             // very data erased above - it goes with it)
             counts.webSuggestedQueries = (await db.run(
@@ -1010,6 +1018,9 @@ class PrivacyService {
             )).c,
             web_live_turns: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_live_turns WHERE userId = @userId', { userId }
+            )).c,
+            web_chat_queue: (await db.get(
+                'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId', { userId }
             )).c,
             web_suggested_queries: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_suggested_queries WHERE userId = @userId', { userId }

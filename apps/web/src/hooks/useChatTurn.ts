@@ -36,6 +36,7 @@ type TurnAction =
     | { kind: 'delta'; text: string }
     | { kind: 'tool'; event: ToolEvent }
     | { kind: 'message'; message: LocalTurnMessage }
+    | { kind: 'hydrate'; progress: { userContent?: string; draft?: string; typing?: boolean; steps?: TurnStep[] } }
     | { kind: 'end' }
     | { kind: 'reset' };
 
@@ -109,6 +110,21 @@ function reduce(state: TurnState, action: TurnAction): TurnState {
             };
             return { ...state, messages: [...state.messages, message], steps: [], draft: '', typing: false };
         }
+        case 'hydrate': {
+            const progress = action.progress || {};
+            const steps = Array.isArray(progress.steps)
+                ? progress.steps.map((step) => ({ ...step }))
+                : [];
+            const draft = String(progress.draft || '');
+            const empty = !draft && steps.length === 0;
+            return {
+                ...state,
+                active: true,
+                steps,
+                draft,
+                typing: Boolean(progress.typing) || empty
+            };
+        }
         case 'end': {
             if (!state.active && !state.typing && state.draft === '') return state;
             // A turn that ends while text or steps are still un-settled (an
@@ -157,6 +173,9 @@ export function useChatTurn() {
     }, []);
     const end = useCallback(() => dispatch({ kind: 'end' }), []);
     const reset = useCallback(() => dispatch({ kind: 'reset' }), []);
+    const hydrate = useCallback((progress: { userContent?: string; draft?: string; typing?: boolean; steps?: TurnStep[] } | null | undefined) => {
+        dispatch({ kind: 'hydrate', progress: progress || {} });
+    }, []);
 
     // The reply being generated, as a renderable pseudo-message: the steps
     // timeline plus whatever text is currently streaming.
@@ -182,6 +201,7 @@ export function useChatTurn() {
         onTool,
         onMessage,
         end,
-        reset
+        reset,
+        hydrate
     };
 }

@@ -145,6 +145,8 @@ const COLUMN_MIGRATIONS = [
     ['pending_integration_actions', 'claimedAt', 'claimedAt TEXT'],
     ['sandbox_requests', 'attemptId', 'attemptId TEXT'],
     ['sandbox_requests', 'claimedAt', 'claimedAt TEXT'],
+    // Live Study progress snapshot (thoughts / tools / draft) for reconnect.
+    ['web_live_turns', 'progressJson', 'progressJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

@@ -63,6 +63,17 @@ const fakeChat = {
     deleteConversation: jest.fn(() => ({ deleted: true, deletedMessages: 2 })),
     truncateFrom: jest.fn(() => ({ deleted: 2 })),
     stopTurn: jest.fn(() => true),
+    turnStatus: jest.fn(() => ({ inFlight: false })),
+    attachToTurn: jest.fn(() => ({
+        snapshot: null, conversationId: null, turnId: null, unsubscribe: () => {}
+    })),
+    getPersistedTurn: jest.fn(async () => null),
+    listQueue: jest.fn(async () => ({ items: [] })),
+    enqueue: jest.fn(async ({ message }) => ({
+        id: 1, conversationId: 7, position: 1, message, imageCount: 0, fileCount: 0, incognito: false
+    })),
+    removeQueued: jest.fn(async () => ({ removed: true })),
+    reorderQueue: jest.fn(async () => ({ items: [] })),
     getAiSettings: jest.fn(async () => ({ thoughtful: false, thoughtfulAvailable: true, model: 'gpt-everyday', provider: null })),
     setThoughtful: jest.fn(async ({ thoughtful }) => ({ thoughtful, thoughtfulAvailable: true, model: 'gpt-x', provider: null })),
     extractDocumentFiles: jest.fn(async (files) => files),
@@ -411,6 +422,76 @@ describe('chat routes', () => {
         expect(fakeChat.searchMessages).toHaveBeenCalledWith(
             expect.objectContaining({ userId: USER, query: 'pi cluster' })
         );
+    });
+
+    test('queue routes delegate with the session user', async () => {
+        const cookie = await login();
+        fakeChat.listQueue.mockResolvedValueOnce({
+            items: [{ id: 3, message: 'follow up', position: 1, imageCount: 0, fileCount: 0 }]
+        });
+        const listed = await request({ reqPath: '/api/app/chat/queue', headers: { Cookie: cookie } });
+        expect(listed.status).toBe(200);
+        expect(listed.json.items[0].message).toBe('follow up');
+        expect(fakeChat.listQueue).toHaveBeenCalledWith(USER, expect.objectContaining({
+            userName: 'rob'
+        }));
+
+        const queued = await request({
+            method: 'POST', reqPath: '/api/app/chat/queue',
+            headers: { Cookie: cookie },
+            body: { message: 'next please', conversationId: 7 }
+        });
+        expect(queued.status).toBe(200);
+        expect(queued.json.message).toBe('next please');
+        expect(fakeChat.enqueue).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER, message: 'next please', conversationId: 7
+        }));
+
+        const removed = await request({
+            method: 'DELETE', reqPath: '/api/app/chat/queue/3', headers: { Cookie: cookie }
+        });
+        expect(removed.status).toBe(200);
+        expect(fakeChat.removeQueued).toHaveBeenCalledWith(USER, '3');
+
+        const reordered = await request({
+            method: 'PATCH', reqPath: '/api/app/chat/queue',
+            headers: { Cookie: cookie }, body: { ids: [3, 1] }
+        });
+        expect(reordered.status).toBe(200);
+        expect(fakeChat.reorderQueue).toHaveBeenCalledWith(USER, [3, 1]);
+    });
+
+    test('turn status includes progress and the reconnect stream sends a snapshot', async () => {
+        const cookie = await login();
+        fakeChat.turnStatus.mockResolvedValueOnce({
+            inFlight: true, elapsedMs: 1200, conversationId: 7, turnId: 'abc',
+            progress: { userContent: 'hi', draft: 'Hel', typing: false, steps: [] }
+        });
+        const status = await request({ reqPath: '/api/app/chat/turn', headers: { Cookie: cookie } });
+        expect(status.status).toBe(200);
+        expect(status.json).toMatchObject({ inFlight: true, turnId: 'abc', progress: { draft: 'Hel' } });
+
+        fakeChat.attachToTurn.mockImplementationOnce((_userId, listener) => {
+            queueMicrotask(() => listener.onSettled?.());
+            return {
+                snapshot: { userContent: 'hi', draft: 'Hel', typing: false, steps: [] },
+                conversationId: 7,
+                turnId: 'abc',
+                unsubscribe: () => {}
+            };
+        });
+        const stream = await request({
+            reqPath: '/api/app/chat/turn/stream', headers: { Cookie: cookie }
+        });
+        expect(stream.status).toBe(200);
+        expect(stream.headers['content-type']).toContain('text/event-stream');
+        const events = stream.raw.split('\n\n').filter(Boolean).map((block) => {
+            const event = block.match(/^event: (.*)$/m)?.[1];
+            const data = block.match(/^data: (.*)$/m)?.[1];
+            return { event, data: data ? JSON.parse(data) : null };
+        }).filter((row) => row.event);
+        expect(events.map((row) => row.event)).toEqual(expect.arrayContaining(['start', 'snapshot', 'done']));
+        expect(events.find((row) => row.event === 'snapshot').data.draft).toBe('Hel');
     });
 
     test('turn validation failures stay proper HTTP errors (no stream)', async () => {

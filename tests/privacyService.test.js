@@ -182,6 +182,8 @@ async function seed() {
     await db.run(`INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted)
             VALUES (@u, 'forget-me-turn', @now, NULL, 0)`,
         { u: USER, now: Date.now() });
+    await db.run(`INSERT INTO web_chat_queue (userId, conversationId, position, message)
+            VALUES (@u, NULL, 1, 'queued follow-up')`, { u: USER });
 }
 
 beforeAll(async () => {
@@ -213,6 +215,7 @@ describe('buildUserReport', () => {
         expect(report.activityMessages).toBe(15);
         expect(report.economy).toEqual({ balance: 750, transactions: 1, stockHoldings: 1, stockTrades: 1 });
         expect(report.applets).toBe(1);
+        expect(report.queuedChatMessages).toBe(1);
         expect(report.observatory.projects).toBe(1);
         expect(report.observatory.assets).toBe(1);
         expect(report.observatory.assetVersions).toBe(1);
@@ -339,6 +342,11 @@ describe('forgetUser', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM web_rate_events WHERE subject = @id', { id: USER })).c).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS c FROM web_rate_events WHERE subject = @id', { id: OTHER })).c).toBe(1);
         expect((await db.get('SELECT COUNT(*) AS c FROM web_live_turns WHERE userId = @id', { id: USER })).c).toBe(0);
+    });
+
+    test('deletes queued Study follow-ups', async () => {
+        expect(counts.webChatQueue).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @id', { id: USER })).c).toBe(0);
     });
 
     test('deletes uploaded web chat images from disk', () => {

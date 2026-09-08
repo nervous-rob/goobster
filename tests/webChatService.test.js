@@ -84,9 +84,15 @@ beforeEach(async () => {
     handleChatInteraction.mockResolvedValue(undefined);
     for (const turn of webChatService._activeTurns.values()) {
         if (turn.abortPoll) clearInterval(turn.abortPoll);
+        if (turn.persistTimer) clearTimeout(turn.persistTimer);
     }
     webChatService._activeTurns.clear();
+    webChatService._incognitoQueue.clear();
+    webChatService._kicking.clear();
+    webChatService._runtimeByUser.clear();
+    webChatService._incognito.clear();
     await db.run('DELETE FROM web_live_turns');
+    await db.run('DELETE FROM web_chat_queue');
     await db.run('DELETE FROM web_rate_events');
     await db.run('DELETE FROM messages');
     await db.run('DELETE FROM conversations');
@@ -203,6 +209,47 @@ describe('turn validation', () => {
         expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
     });
 
+    test('turnStatus includes live progress and attachToTurn shares the snapshot', async () => {
+        let releaseHold;
+        const held = new Promise((resolve) => { releaseHold = resolve; });
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.channel.sendTyping();
+            interaction.onStreamDelta('Hello');
+            interaction.onToolEvent({
+                phase: 'start', id: 1, name: 'performSearch', argsPreview: 'q'
+            });
+            await held;
+        });
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'look this up'
+        });
+        const running = turn.run({});
+        expect(await waitUntil(async () => {
+            const status = await webChatService.turnStatus(USER);
+            return status.progress?.draft === 'Hello'
+                && status.progress?.steps?.[0]?.name === 'performSearch';
+        })).toBe(true);
+        const status = await webChatService.turnStatus(USER);
+        expect(status).toMatchObject({
+            inFlight: true,
+            turnId: expect.any(String),
+            progress: {
+                userContent: 'look this up',
+                draft: 'Hello',
+                typing: false
+            }
+        });
+        expect(status.progress.steps[0]).toMatchObject({
+            type: 'tool', name: 'performSearch', running: true
+        });
+        const attached = webChatService.attachToTurn(USER, { onDelta() {} });
+        expect(attached.turnId).toBe(status.turnId);
+        expect(attached.snapshot.draft).toBe('Hello');
+        attached.unsubscribe();
+        releaseHold();
+        await running;
+    });
+
     test('publishes web-turn lifecycle events (started on reserve, settled on release)', async () => {
         const eventBus = require('@goobster/core/services/eventBusService');
         const events = [];
@@ -222,7 +269,7 @@ describe('turn validation', () => {
             expect(events[1]).toMatchObject({ userId: USER, phase: 'settled', conversationId: turn.conversationId });
             // Settling tells reactive clients to refetch the transcript.
             expect(events[1].invalidate).toEqual(
-                expect.arrayContaining(['chat-turn', 'conversations', `history:${turn.conversationId}`])
+                expect.arrayContaining(['chat-turn', 'chat-queue', 'conversations', `history:${turn.conversationId}`])
             );
 
             // release() is idempotent - no duplicate settled event
@@ -1042,5 +1089,85 @@ describe('custom instructions', () => {
         expect(block).toContain('Be concise.');
         await setUserInstructions(USER, null);
         expect(await buildInstructionsBlock(USER)).toBeNull();
+    });
+});
+
+describe('follow-up queue', () => {
+    async function waitForIdle() {
+        expect(await waitUntil(async () => {
+            const status = await webChatService.turnStatus(USER);
+            return !status.inFlight && !webChatService._kicking.has(USER);
+        }, 4000)).toBe(true);
+    }
+
+    test('enqueue while a turn is in flight and drain after release', async () => {
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'first'
+        });
+        const queued = await webChatService.enqueue({
+            client, userId: USER, userName: 'rob',
+            message: 'second', conversationId: turn.conversationId
+        });
+        expect(queued.message).toBe('second');
+        expect((await webChatService.listQueue(USER)).items.map((item) => item.message))
+            .toEqual(['second']);
+        handleChatInteraction.mockClear();
+        await turn.release();
+        expect(await waitUntil(async () =>
+            (await webChatService.listQueue(USER)).items.length === 0, 4000)).toBe(true);
+        expect(handleChatInteraction).toHaveBeenCalled();
+        await waitForIdle();
+        expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+    });
+
+    test('caps the queue at 10', async () => {
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'hold'
+        });
+        for (let i = 0; i < 10; i++) {
+            await webChatService.enqueue({
+                client, userId: USER, userName: 'rob', message: `q${i}`
+            });
+        }
+        await expect(webChatService.enqueue({
+            client, userId: USER, userName: 'rob', message: 'one more'
+        })).rejects.toMatchObject({ status: 400, code: 'QUEUE_FULL' });
+        await db.run('DELETE FROM web_chat_queue');
+        await turn.release();
+        await waitForIdle();
+    });
+
+    test('reorder and remove queued follow-ups', async () => {
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'hold'
+        });
+        const a = await webChatService.enqueue({
+            client, userId: USER, userName: 'rob', message: 'aaa'
+        });
+        const b = await webChatService.enqueue({
+            client, userId: USER, userName: 'rob', message: 'bbb'
+        });
+        const reordered = await webChatService.reorderQueue(USER, [b.id, a.id]);
+        expect(reordered.items.map((item) => item.message)).toEqual(['bbb', 'aaa']);
+        await webChatService.removeQueued(USER, b.id);
+        expect((await webChatService.listQueue(USER)).items.map((item) => item.message))
+            .toEqual(['aaa']);
+        await turn.release();
+        await waitForIdle();
+    });
+
+    test('incognito follow-ups stay in memory and clear with incognito', async () => {
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'hold', incognito: true
+        });
+        const queued = await webChatService.enqueue({
+            client, userId: USER, userName: 'rob', message: 'later', incognito: true
+        });
+        expect(String(queued.id)).toMatch(/^incog-/);
+        expect((await webChatService.listQueue(USER)).items).toHaveLength(1);
+        webChatService.clearIncognito(USER);
+        expect((await webChatService.listQueue(USER)).items).toHaveLength(0);
+        await turn.release();
+        await waitForIdle();
     });
 });

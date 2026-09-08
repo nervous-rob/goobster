@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-08
+
+### Added
+- **Study follow-up queue.** Sending (or pressing Enter) while a reply is still generating queues the next message instead of treating Send as Stop. Up to 10 follow-ups wait in `web_chat_queue` (incognito stays in memory), can be reordered or removed, and drain one-at-a-time through the existing per-user turn lock after the current reply settles. Stop is its own control beside Send.
+- **Restore an in-progress Study reply after you leave.** Navigating away used to drop the live thoughts/tool chips/draft until the turn finished. The server now snapshots that timeline on `web_live_turns.progressJson`; coming back hydrates the chat and reattaches to `GET /api/app/chat/turn/stream` so progress keeps arriving. Draft text stays off the portal event bus.
+
+### Changed
+- `/forget-me` and the transparency report cover queued Study follow-ups (`web_chat_queue` / `queuedChatMessages`).
+
 ## 2026-09-07
 
 ### Fixed

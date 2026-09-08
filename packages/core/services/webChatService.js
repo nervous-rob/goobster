@@ -24,6 +24,12 @@ const { handleChatInteraction } = require('../utils/chatHandler');
 const { dmScopeId } = require('../utils/dmScope');
 const { createPlaceholderThreadId, getOrCreateConversation } = require('../utils/chat/chatDb');
 const eventBus = require('./eventBusService');
+const {
+    emptyProgress,
+    cloneProgress,
+    parseProgress,
+    applyProgressEvent
+} = require('../utils/webTurnProgress');
 
 const WEB_CHANNEL_PREFIX = 'web:';
 // Custom interface, custom limits: web inputs are not bound by Discord's
@@ -62,6 +68,8 @@ const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 // Read-only share links: bounded transcript, unguessable token
 const SHARE_MESSAGE_LIMIT = 500;
 const SHARE_TOKEN_PATTERN = /^[a-f0-9]{32,64}$/;
+const MAX_QUEUE_LENGTH = 10;
+const PROGRESS_PERSIST_MS = 250;
 
 /** Machine-readable web app error (panelService's PanelError pattern). */
 class WebChatError extends Error {
@@ -93,6 +101,11 @@ class WebChatService {
          * @type {Map<string, { messages: Array<{content: string, isBot: boolean}>, updatedAt: number }>}
          */
         this._incognito = new Map();
+        /** Last startTurn runtime so a queued follow-up can run unattended. */
+        this._runtimeByUser = new Map();
+        /** In-memory follow-ups for incognito (never persisted). */
+        this._incognitoQueue = new Map();
+        this._kicking = new Set();
     }
 
     get maxInputLength() {
@@ -130,19 +143,21 @@ class WebChatService {
                     phase: 'settled',
                     turnId: local.turnId,
                     conversationId: local.conversationId ?? null,
-                    invalidate: ['chat-turn', 'conversations']
+                    invalidate: ['chat-turn', 'chat-queue', 'conversations']
                 });
+                void this._kickQueue(userId);
                 return null;
             }
             return local;
         }
         const row = await db.get(
-            'SELECT turnId, startedAtMs, conversationId, aborted FROM web_live_turns WHERE userId = @userId',
+            'SELECT turnId, startedAtMs, conversationId, aborted, progressJson FROM web_live_turns WHERE userId = @userId',
             { userId }
         );
         if (!row) return null;
         if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
             await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
+            void this._kickQueue(userId);
             return null;
         }
         return {
@@ -151,6 +166,7 @@ class WebChatService {
             startedAt: Number(row.startedAtMs),
             conversationId: row.conversationId ?? null,
             aborted: Number(row.aborted) === 1,
+            progress: parseProgress(row.progressJson),
             abort: () => {
                 db.run(
                     'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
@@ -166,15 +182,21 @@ class WebChatService {
      * a reload, from another conversation, or when the SSE stream died while
      * the server kept working.
      * @param {string} userId
-     * @returns {{inFlight: boolean, elapsedMs?: number, conversationId?: number|null}}
+     * @returns {{inFlight: boolean, elapsedMs?: number, conversationId?: number|null, turnId?: string, progress?: object}}
      */
-    async turnStatus(userId) {
+    async turnStatus(userId, runtime = null) {
+        if (runtime) this._rememberRuntime(userId, runtime);
         const turn = await this._liveTurn(userId);
-        if (!turn) return { inFlight: false };
+        if (!turn) {
+            void this._kickQueue(userId);
+            return { inFlight: false };
+        }
         return {
             inFlight: true,
             elapsedMs: Date.now() - turn.startedAt,
-            conversationId: turn.conversationId ?? null
+            conversationId: turn.conversationId ?? null,
+            turnId: turn.turnId,
+            progress: cloneProgress(turn.progress)
         };
     }
 
@@ -186,6 +208,94 @@ class WebChatService {
             `A reply you asked for ${formatElapsed(elapsedMs)} ago is still being generated ` +
             `(long tool runs and slower models can take a while) - ${action}.`,
             { elapsedMs, conversationId: live?.conversationId ?? null });
+    }
+
+    _rememberRuntime(userId, runtime) {
+        if (!runtime || !userId) return;
+        const prev = this._runtimeByUser.get(userId) || {};
+        this._runtimeByUser.set(userId, {
+            client: runtime.client !== undefined ? runtime.client : prev.client,
+            gateway: runtime.gateway !== undefined ? runtime.gateway : prev.gateway,
+            userName: runtime.userName || prev.userName
+        });
+    }
+
+    _emitTurnEvent(turnState, kind, payload) {
+        if (!turnState) return;
+        turnState.progress = applyProgressEvent(turnState.progress || emptyProgress(), kind, payload);
+        if (kind === 'tool' || kind === 'message' || kind === 'typing') {
+            this._persistProgress(turnState);
+        } else {
+            this._schedulePersistProgress(turnState);
+        }
+        for (const listener of turnState.listeners || []) {
+            try {
+                if (kind === 'typing') listener.onTyping?.();
+                else if (kind === 'delta') listener.onDelta?.(payload);
+                else if (kind === 'tool') listener.onTool?.(payload);
+                else if (kind === 'message') listener.onMessage?.(payload);
+            } catch { /* a subscriber must never break the turn */ }
+        }
+    }
+
+    _schedulePersistProgress(turnState) {
+        if (turnState.persistTimer) return;
+        turnState.persistTimer = setTimeout(() => {
+            turnState.persistTimer = null;
+            this._persistProgress(turnState);
+        }, PROGRESS_PERSIST_MS);
+        turnState.persistTimer.unref?.();
+    }
+
+    _persistProgress(turnState) {
+        if (!turnState?.turnId || !turnState.userId) return;
+        const json = JSON.stringify(turnState.progress || emptyProgress());
+        db.run(
+            `UPDATE web_live_turns SET progressJson = @progressJson
+             WHERE userId = @userId AND turnId = @turnId`,
+            { userId: turnState.userId, turnId: turnState.turnId, progressJson: json }
+        ).catch(() => {});
+    }
+
+    /**
+     * Subscribe to a local in-flight turn so a returning browser can keep
+     * watching thoughts/tools/tokens. Snapshot is the current progress.
+     */
+    attachToTurn(userId, listener) {
+        const turn = this._activeTurns.get(userId);
+        if (!turn || !listener) {
+            return { snapshot: null, conversationId: null, turnId: null, unsubscribe: () => {} };
+        }
+        if (!turn.listeners) turn.listeners = new Set();
+        turn.listeners.add(listener);
+        return {
+            snapshot: cloneProgress(turn.progress),
+            conversationId: turn.conversationId ?? null,
+            turnId: turn.turnId,
+            unsubscribe: () => {
+                turn.listeners.delete(listener);
+            }
+        };
+    }
+
+    /**
+     * Last persisted snapshot for a turn this replica is not running
+     * (another api process holds the AbortController). Used by the
+     * reconnect SSE to poll progressJson until the row disappears.
+     */
+    async getPersistedTurn(userId) {
+        const row = await db.get(
+            `SELECT turnId, startedAtMs, conversationId, progressJson
+             FROM web_live_turns WHERE userId = @userId`,
+            { userId }
+        );
+        if (!row) return null;
+        return {
+            turnId: row.turnId,
+            conversationId: row.conversationId ?? null,
+            startedAt: Number(row.startedAtMs),
+            progress: parseProgress(row.progressJson)
+        };
     }
 
     // --- Conversations ------------------------------------------------------
@@ -1025,6 +1135,7 @@ class WebChatService {
      * @returns {{cleared: boolean}}
      */
     clearIncognito(userId) {
+        this._incognitoQueue.delete(userId);
         return { cleared: this._incognito.delete(userId) };
     }
 
@@ -1321,6 +1432,7 @@ class WebChatService {
         if (!botUser?.id) {
             throw new WebChatError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
         }
+        this._rememberRuntime(userId, { client, gateway: resolvedGateway, userName });
         const text = String(message ?? '').trim();
         if (!text) {
             throw new WebChatError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
@@ -1378,15 +1490,17 @@ class WebChatService {
         // the agent loop between rounds.
         const controller = new AbortController();
         const turnId = crypto.randomBytes(8).toString('hex');
+        const initialProgress = emptyProgress(text);
         try {
             await db.run(
-                `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted)
-                 VALUES (@userId, @turnId, @startedAtMs, @conversationId, 0)`,
+                `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted, progressJson)
+                 VALUES (@userId, @turnId, @startedAtMs, @conversationId, 0, @progressJson)`,
                 {
                     userId,
                     turnId,
                     startedAtMs: Date.now(),
-                    conversationId: conversation?.id ?? null
+                    conversationId: conversation?.id ?? null,
+                    progressJson: JSON.stringify(initialProgress)
                 }
             );
         } catch (error) {
@@ -1398,11 +1512,14 @@ class WebChatService {
         const turnState = {
             aborted: false,
             turnId,
+            userId,
             startedAt: Date.now(),
             // Lets turnStatus point the browser at the conversation that is
             // holding the per-user lock (null for incognito turns).
             conversationId: conversation?.id ?? null,
             signal: controller.signal,
+            listeners: new Set(),
+            progress: initialProgress,
             abort: () => {
                 turnState.aborted = true;
                 try { controller.abort(); } catch { /* double-abort is fine */ }
@@ -1433,10 +1550,19 @@ class WebChatService {
             if (this._activeTurns.get(userId) === turnState) {
                 this._activeTurns.delete(userId);
             }
+            if (turnState.persistTimer) {
+                clearTimeout(turnState.persistTimer);
+                turnState.persistTimer = null;
+            }
+            const settledListeners = [...(turnState.listeners || [])];
+            turnState.listeners = new Set();
             await db.run(
                 'DELETE FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
                 { userId, turnId }
             ).catch(() => {});
+            for (const listener of settledListeners) {
+                try { listener.onSettled?.(); } catch { /* never break release */ }
+            }
             // Reactive clients (this browser after a reload, another tab)
             // learn the turn settled and refetch the finished transcript.
             eventBus.publish('web-turn', {
@@ -1446,10 +1572,12 @@ class WebChatService {
                 conversationId: conversation?.id ?? null,
                 invalidate: [
                     'chat-turn',
+                    'chat-queue',
                     'conversations',
                     ...(conversation ? [`history:${conversation.id}`] : [])
                 ]
             });
+            void this._kickQueue(userId);
         };
         eventBus.publish('web-turn', {
             userId,
@@ -1464,6 +1592,19 @@ class WebChatService {
             abort: turnState.abort,
             release,
             run: async (events = {}) => {
+                const sseListener = {
+                    onTyping: events.onTyping,
+                    onDelta: events.onDelta,
+                    onTool: events.onTool,
+                    onMessage: events.onMessage
+                };
+                turnState.listeners.add(sseListener);
+                const hubEvents = {
+                    onTyping: () => this._emitTurnEvent(turnState, 'typing'),
+                    onDelta: (delta) => this._emitTurnEvent(turnState, 'delta', delta),
+                    onTool: (event) => this._emitTurnEvent(turnState, 'tool', event),
+                    onMessage: (payload) => this._emitTurnEvent(turnState, 'message', payload)
+                };
                 try {
                     if (conversation) {
                         await db.run(
@@ -1479,13 +1620,13 @@ class WebChatService {
                     const capturedReplies = [];
                     const effectiveEvents = incognito
                         ? {
-                            ...events,
+                            ...hubEvents,
                             onMessage: (payload) => {
                                 if (payload?.content && !payload.isError) capturedReplies.push(payload.content);
-                                try { events.onMessage?.(payload); } catch { /* never break the turn */ }
+                                hubEvents.onMessage(payload);
                             }
                         }
-                        : events;
+                        : hubEvents;
                     const interaction = this._buildInteraction({
                         client, gateway: resolvedGateway, botUser, userId, userName,
                         text: composed,
@@ -1508,6 +1649,7 @@ class WebChatService {
                         }
                     }
                 } finally {
+                    turnState.listeners.delete(sseListener);
                     await release();
                 }
             }
@@ -1656,6 +1798,274 @@ class WebChatService {
         try {
             events.onMessage?.({ content, attachments, isError: Boolean(isError) });
         } catch { /* never break the turn */ }
+    }
+
+    // --- Follow-up queue ----------------------------------------------------
+
+    async listQueue(userId, runtime = null) {
+        if (runtime) this._rememberRuntime(userId, runtime);
+        void this._kickQueue(userId);
+        const incognito = this._incognitoQueue.get(userId) || [];
+        const rows = await db.all(
+            `SELECT id, conversationId, position, message, imagesJson, filesJson, incognito, createdAt
+             FROM web_chat_queue WHERE userId = @userId
+             ORDER BY position ASC, id ASC`,
+            { userId }
+        );
+        const persisted = rows.map((row) => this._queueRowToItem(row));
+        return { items: [...incognito, ...persisted].map((item) => this._queuePublicItem(item)) };
+    }
+
+    async enqueue({
+        userId, userName, client, gateway, message, conversationId = null,
+        images = null, files = null, incognito = false
+    }) {
+        this._rememberRuntime(userId, { client, gateway, userName });
+        const text = String(message ?? '').trim();
+        if (!text) throw new WebChatError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
+        if (text.length > MAX_INPUT_LENGTH) {
+            throw new WebChatError(400, 'MESSAGE_TOO_LONG',
+                `Message is too long (max ${MAX_INPUT_LENGTH} characters).`);
+        }
+        const imageUrls = this._validateImages(images);
+        const textFiles = this._validateTextFiles(files);
+        if (incognito) {
+            const list = this._incognitoQueue.get(userId) || [];
+            if (list.length >= MAX_QUEUE_LENGTH) {
+                throw new WebChatError(400, 'QUEUE_FULL',
+                    `At most ${MAX_QUEUE_LENGTH} follow-ups can wait in the queue.`);
+            }
+            const item = {
+                id: `incog-${Date.now()}-${list.length}`,
+                conversationId: null,
+                position: list.length,
+                message: text,
+                images: imageUrls,
+                files: textFiles,
+                incognito: true
+            };
+            list.push(item);
+            this._incognitoQueue.set(userId, list);
+            void this._kickQueue(userId);
+            return this._queuePublicItem(item);
+        }
+        const countRow = await db.get(
+            'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId',
+            { userId }
+        );
+        if ((countRow?.c || 0) >= MAX_QUEUE_LENGTH) {
+            throw new WebChatError(400, 'QUEUE_FULL',
+                `At most ${MAX_QUEUE_LENGTH} follow-ups can wait in the queue.`);
+        }
+        if (conversationId != null) {
+            await this._requireConversation(userId, conversationId);
+        }
+        const maxPos = await db.get(
+            'SELECT MAX(position) AS m FROM web_chat_queue WHERE userId = @userId',
+            { userId }
+        );
+        const position = Number(maxPos?.m || 0) + 1;
+        const id = await db.insert(
+            `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
+             VALUES (@userId, @conversationId, @position, @message, @imagesJson, @filesJson, 0)`,
+            {
+                userId,
+                conversationId: conversationId ?? null,
+                position,
+                message: text,
+                imagesJson: imageUrls.length ? JSON.stringify(imageUrls) : null,
+                filesJson: textFiles.length ? JSON.stringify(textFiles) : null
+            }
+        );
+        eventBus.publish('web-turn', {
+            userId,
+            phase: 'queued',
+            conversationId: conversationId ?? null,
+            invalidate: ['chat-queue']
+        });
+        void this._kickQueue(userId);
+        return this._queuePublicItem({
+            id,
+            conversationId: conversationId ?? null,
+            position,
+            message: text,
+            images: imageUrls,
+            files: textFiles,
+            incognito: false
+        });
+    }
+
+    async removeQueued(userId, id) {
+        if (typeof id === 'string' && String(id).startsWith('incog-')) {
+            const list = (this._incognitoQueue.get(userId) || []).filter((item) => item.id !== id);
+            this._incognitoQueue.set(userId, list);
+            return { removed: true };
+        }
+        const result = await db.run(
+            'DELETE FROM web_chat_queue WHERE id = @id AND userId = @userId',
+            { id: Number(id), userId }
+        );
+        if (!result.changes) throw new WebChatError(404, 'NOT_FOUND', 'That queued message is gone.');
+        eventBus.publish('web-turn', {
+            userId, phase: 'queued', invalidate: ['chat-queue']
+        });
+        return { removed: true };
+    }
+
+    async reorderQueue(userId, ids) {
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new WebChatError(400, 'BAD_ORDER', 'ids must be the queue in the desired order.');
+        }
+        const incognito = ids.every((id) => typeof id === 'string' && String(id).startsWith('incog-'));
+        if (incognito) {
+            const list = this._incognitoQueue.get(userId) || [];
+            const byId = new Map(list.map((item) => [item.id, item]));
+            if (ids.length !== list.length || ids.some((id) => !byId.has(id))) {
+                throw new WebChatError(400, 'BAD_ORDER', 'ids must list every queued message once.');
+            }
+            this._incognitoQueue.set(userId, ids.map((id, index) => ({ ...byId.get(id), position: index })));
+            return this.listQueue(userId);
+        }
+        const rows = await db.all(
+            'SELECT id FROM web_chat_queue WHERE userId = @userId ORDER BY position ASC, id ASC',
+            { userId }
+        );
+        const have = rows.map((row) => Number(row.id));
+        const want = ids.map((id) => Number(id));
+        if (have.length !== want.length || [...have].sort((a, b) => a - b).join() !== [...want].sort((a, b) => a - b).join()) {
+            throw new WebChatError(400, 'BAD_ORDER', 'ids must list every queued message once.');
+        }
+        await db.transaction(async (tx) => {
+            let position = 1;
+            for (const id of want) {
+                await tx.run(
+                    'UPDATE web_chat_queue SET position = @position WHERE id = @id AND userId = @userId',
+                    { position, id, userId }
+                );
+                position += 1;
+            }
+        });
+        eventBus.publish('web-turn', {
+            userId, phase: 'queued', invalidate: ['chat-queue']
+        });
+        return this.listQueue(userId);
+    }
+
+    _queueRowToItem(row) {
+        let images = [];
+        let files = [];
+        try { images = row.imagesJson ? JSON.parse(row.imagesJson) : []; } catch { images = []; }
+        try { files = row.filesJson ? JSON.parse(row.filesJson) : []; } catch { files = []; }
+        return {
+            id: row.id,
+            conversationId: row.conversationId ?? null,
+            position: row.position,
+            message: row.message,
+            images,
+            files,
+            incognito: Number(row.incognito) === 1,
+            createdAt: row.createdAt
+        };
+    }
+
+    /** List/enqueue payloads omit image/file bytes; the drain still has them. */
+    _queuePublicItem(item) {
+        return {
+            id: item.id,
+            conversationId: item.conversationId ?? null,
+            position: item.position,
+            message: item.message,
+            imageCount: Array.isArray(item.images) ? item.images.length : 0,
+            fileCount: Array.isArray(item.files) ? item.files.length : 0,
+            incognito: Boolean(item.incognito),
+            createdAt: item.createdAt || null
+        };
+    }
+
+    async _popQueue(userId) {
+        const incognito = this._incognitoQueue.get(userId) || [];
+        if (incognito.length > 0) {
+            const item = incognito.shift();
+            this._incognitoQueue.set(userId, incognito);
+            return item;
+        }
+        return db.transaction(async (tx) => {
+            const live = await tx.get(
+                'SELECT 1 AS ok FROM web_live_turns WHERE userId = @userId',
+                { userId }
+            );
+            if (live) return null;
+            const row = await tx.get(
+                `SELECT id, conversationId, position, message, imagesJson, filesJson, incognito
+                 FROM web_chat_queue WHERE userId = @userId
+                 ORDER BY position ASC, id ASC LIMIT 1`,
+                { userId }
+            );
+            if (!row) return null;
+            await tx.run('DELETE FROM web_chat_queue WHERE id = @id', { id: row.id });
+            return this._queueRowToItem(row);
+        });
+    }
+
+    async _requeueFront(userId, item) {
+        if (!item) return;
+        if (item.incognito || (typeof item.id === 'string' && String(item.id).startsWith('incog-'))) {
+            const list = this._incognitoQueue.get(userId) || [];
+            this._incognitoQueue.set(userId, [item, ...list]);
+            return;
+        }
+        const minPos = await db.get(
+            'SELECT MIN(position) AS m FROM web_chat_queue WHERE userId = @userId',
+            { userId }
+        );
+        const position = Number.isFinite(Number(minPos?.m)) ? Number(minPos.m) - 1 : 1;
+        await db.run(
+            `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
+             VALUES (@userId, @conversationId, @position, @message, @imagesJson, @filesJson, 0)`,
+            {
+                userId,
+                conversationId: item.conversationId ?? null,
+                position,
+                message: item.message,
+                imagesJson: item.images?.length ? JSON.stringify(item.images) : null,
+                filesJson: item.files?.length ? JSON.stringify(item.files) : null
+            }
+        );
+    }
+
+    async _kickQueue(userId) {
+        if (!userId || this._kicking.has(userId)) return;
+        this._kicking.add(userId);
+        try {
+            for (;;) {
+                if (await this._liveTurn(userId)) return;
+                const item = await this._popQueue(userId);
+                if (!item) return;
+                const runtime = this._runtimeByUser.get(userId) || {};
+                try {
+                    const turn = await this.startTurn({
+                        client: runtime.client,
+                        gateway: runtime.gateway,
+                        userId,
+                        userName: runtime.userName,
+                        message: item.message,
+                        conversationId: item.conversationId,
+                        images: item.images,
+                        files: item.files,
+                        incognito: Boolean(item.incognito)
+                    });
+                    await turn.run({});
+                } catch (error) {
+                    await this._requeueFront(userId, item).catch(() => {});
+                    if (error?.code !== 'TURN_IN_FLIGHT' && error?.code !== 'RATE_LIMITED') {
+                        console.warn('[WebChat] Queue kick failed:', error.message || error);
+                    }
+                    return;
+                }
+            }
+        } finally {
+            this._kicking.delete(userId);
+        }
     }
 }
 
