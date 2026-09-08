@@ -301,6 +301,7 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
 
     if (isWeb && mode === 'chat') {
         parts.push(richRenderingContract({ surface: 'portal' }));
+        parts.push('Replies here may be read aloud. You cannot change the TTS voice, accent, or engine settings with tools. If they ask for an accent or a way of speaking, just do it in your reply. They pick the voice in Voice settings.');
     }
 
     if (skipHistory) {

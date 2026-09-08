@@ -32,6 +32,22 @@ function getCommandAdapter(name) {
 }
 
 /**
+ * Web portal and unattended automation turns have no Discord voice
+ * channel. Tools that join one (speakMessage, playTrack) must refuse
+ * here rather than throw on a null `member`.
+ */
+function isWebOrAutomationTurn(interactionContext) {
+    return interactionContext?.isAutomation === true
+        || (typeof interactionContext?.channelId === 'string'
+            && interactionContext.channelId.startsWith('web:'));
+}
+
+/** The Discord voice channel the caller is in, or null. */
+function discordVoiceChannel(interactionContext) {
+    return interactionContext?.member?.voice?.channel || null;
+}
+
+/**
  * Resolve which wallet an economy/stock tool acts on. The model picks the
  * account explicitly via the tool's `owner` parameter:
  *   - 'user' (default): the human who triggered this turn.
@@ -213,6 +229,8 @@ module.exports = {
     commandAdapters,
     registerCommandAdapters,
     getCommandAdapter,
+    isWebOrAutomationTurn,
+    discordVoiceChannel,
     resolveEconomyAccount,
     resolveGuildMember,
     resolveNotionAccess,

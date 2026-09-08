@@ -120,6 +120,14 @@ module.exports = {
                     ? { ...def, description: def.description + note }
                     : def);
         }
+        // speakMessage / playTrack join a Discord voice channel. The web
+        // portal (and automations) have none — offering them makes accent /
+        // "use a voice" requests call speakMessage with extra voice/style
+        // settings, which then crash on a null member.
+        if (isWeb || isAutomation) {
+            definitions = definitions.filter(def =>
+                def.name !== 'speakMessage' && def.name !== 'playTrack');
+        }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);
         return definitions.filter(def => allowed.has(def.name));

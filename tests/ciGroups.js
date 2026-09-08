@@ -62,7 +62,8 @@ const GROUPS = [
             'toolsRegistryFollowup',
             'toolsRegistryObservatory',
             'toolsRegistryOrder',
-            'toolsRegistryRunCode'
+            'toolsRegistryRunCode',
+            'toolsRegistryVoiceChannel'
         ])
     },
     {
