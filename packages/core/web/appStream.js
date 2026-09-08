@@ -111,7 +111,9 @@ async function streamParlorTurn(res, turn, ctx) {
  * portal event bus (ids and hints only).
  *
  * Local replica: attach to the in-process listeners. Other replicas poll
- * `web_live_turns.progressJson` until the row is gone.
+ * `web_live_turns.progressJson` until the original turnId is gone (or a
+ * different turn takes the lock — this stream then ends rather than
+ * leaking the next reply into the previous chat).
  */
 async function streamLiveTurnProgress(res, { userId, chat }) {
     res.status(200).set({
@@ -155,7 +157,23 @@ async function streamLiveTurnProgress(res, { userId, chat }) {
         waiters.add(finish);
     });
 
+    const dropForeign = (handle) => {
+        try { handle?.unsubscribe?.(); } catch { /* already dropped */ }
+    };
+
     try {
+        // Bound to the first turn we see. A later queued turn (possibly
+        // another conversation) must not reuse this stream's identity.
+        let boundTurnId = null;
+        let sentStart = false;
+        const announce = (conversationId, turnId, snapshot) => {
+            if (!sentStart) {
+                send('start', { conversationId: conversationId ?? null, turnId });
+                sentStart = true;
+            }
+            send('snapshot', snapshot || {});
+        };
+
         for (;;) {
             if (!open) return;
             let settled = false;
@@ -175,33 +193,37 @@ async function streamLiveTurnProgress(res, { userId, chat }) {
             };
             const attached = chat.attachToTurn ? chat.attachToTurn(userId, listener) : null;
             if (attached?.turnId) {
+                if (boundTurnId && attached.turnId !== boundTurnId) {
+                    dropForeign(attached);
+                    send('done', { ok: true });
+                    return;
+                }
+                boundTurnId = attached.turnId;
                 unsubscribe = attached.unsubscribe || (() => {});
-                send('start', {
-                    conversationId: attached.conversationId ?? null,
-                    turnId: attached.turnId
-                });
-                send('snapshot', attached.snapshot || {});
+                announce(attached.conversationId, attached.turnId, attached.snapshot);
                 if (!settled) await settledPromise;
                 return;
             }
             const persisted = typeof chat.getPersistedTurn === 'function'
                 ? await chat.getPersistedTurn(userId)
                 : null;
-            if (!persisted) {
+            if (!persisted || (boundTurnId && persisted.turnId !== boundTurnId)) {
                 send('done', { ok: true });
                 return;
             }
-            send('start', {
-                conversationId: persisted.conversationId ?? null,
-                turnId: persisted.turnId
-            });
-            send('snapshot', persisted.progress || {});
+            boundTurnId = persisted.turnId;
+            if (!sentStart) announce(persisted.conversationId, persisted.turnId, persisted.progress);
             let lastJson = JSON.stringify(persisted.progress || {});
             while (open) {
                 await wait(400);
                 if (!open) return;
                 const retry = chat.attachToTurn ? chat.attachToTurn(userId, listener) : null;
                 if (retry?.turnId) {
+                    if (retry.turnId !== boundTurnId) {
+                        dropForeign(retry);
+                        send('done', { ok: true });
+                        return;
+                    }
                     unsubscribe = retry.unsubscribe || (() => {});
                     send('snapshot', retry.snapshot || {});
                     if (!settled) await settledPromise;
@@ -210,7 +232,7 @@ async function streamLiveTurnProgress(res, { userId, chat }) {
                 const next = typeof chat.getPersistedTurn === 'function'
                     ? await chat.getPersistedTurn(userId)
                     : null;
-                if (!next) {
+                if (!next || next.turnId !== boundTurnId) {
                     send('done', { ok: true });
                     return;
                 }

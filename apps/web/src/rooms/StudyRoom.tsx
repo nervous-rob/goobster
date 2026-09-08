@@ -210,8 +210,14 @@ export function StudyRoom() {
     useEffect(() => {
         const inFlight = Boolean(turnQ.data?.inFlight);
         if (prevInFlight.current && !inFlight && !sending) {
-            // The orphaned turn settled: its reply is in SQLite now.
+            // The orphaned turn settled: drop the restore UI (stale draft /
+            // Queue-as-Send) even if the reconnect SSE died first, then
+            // refetch the finished transcript.
+            hydratedTurnId.current = null;
+            turnApiRef.current.reset();
             void queryClient.invalidateQueries({ queryKey: keys.conversations });
+            void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+            void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
             if (activeId !== null) void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
         }
         prevInFlight.current = inFlight;
@@ -248,7 +254,15 @@ export function StudyRoom() {
     // reload, another conversation then back) from the server snapshot,
     // then attach to the live SSE so thoughts/tools keep arriving.
     useEffect(() => {
-        if (sending || !matchingOrphan || !orphanTurn) return undefined;
+        if (sending) return undefined;
+        if (!matchingOrphan || !orphanTurn) {
+            if (hydratedTurnId.current) {
+                hydratedTurnId.current = null;
+                localTurnSettledAt.current = Date.now();
+                turnApiRef.current.reset();
+            }
+            return undefined;
+        }
         if (!incognito && activeId != null && historyQ.isPending) return undefined;
         const live = turnApiRef.current;
         const turnId = orphanTurn.turnId || `conv-${orphanTurn.conversationId ?? 'none'}`;
@@ -265,41 +279,81 @@ export function StudyRoom() {
         }
         const controller = new AbortController();
         attachAbortRef.current = controller;
-        void streamLiveTurn({
-            onSnapshot: (progress) => turnApiRef.current.hydrate(progress),
-            onTyping: () => turnApiRef.current.onTyping(),
-            onDelta: (text) => turnApiRef.current.onDelta(text),
-            onTool: (event) => turnApiRef.current.onTool(event),
-            onMessage: (message) => {
-                turnApiRef.current.onMessage({
-                    role: 'assistant',
-                    content: message.content || '',
-                    attachments: message.attachments,
-                    isError: message.isError
-                });
-            },
-            onError: (error) => {
-                turnApiRef.current.onMessage({
-                    role: 'assistant',
-                    content: error.message || 'Something went wrong.',
-                    isError: true
-                });
-            },
-            onDone: () => {
-                turnApiRef.current.end();
-                localTurnSettledAt.current = Date.now();
-                hydratedTurnId.current = null;
-                void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
-                void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
-                if (!incognito && activeId != null) {
-                    void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
-                    void queryClient.invalidateQueries({ queryKey: keys.conversations });
-                    turnApiRef.current.reset();
+        const RETRY_MS = [400, 1200, 3000];
+        void (async () => {
+            let attempt = 0;
+            let toasted = false;
+            while (!controller.signal.aborted) {
+                let finished = false;
+                try {
+                    await streamLiveTurn({
+                        onSnapshot: (progress) => turnApiRef.current.hydrate(progress),
+                        onTyping: () => turnApiRef.current.onTyping(),
+                        onDelta: (text) => turnApiRef.current.onDelta(text),
+                        onTool: (event) => turnApiRef.current.onTool(event),
+                        onMessage: (message) => {
+                            turnApiRef.current.onMessage({
+                                role: 'assistant',
+                                content: message.content || '',
+                                attachments: message.attachments,
+                                isError: message.isError
+                            });
+                        },
+                        onError: (error) => {
+                            turnApiRef.current.onMessage({
+                                role: 'assistant',
+                                content: error.message || 'Something went wrong.',
+                                isError: true
+                            });
+                        },
+                        onDone: () => {
+                            finished = true;
+                            turnApiRef.current.end();
+                            localTurnSettledAt.current = Date.now();
+                            hydratedTurnId.current = null;
+                            void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
+                            void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
+                            if (!incognito && activeId != null) {
+                                void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
+                                void queryClient.invalidateQueries({ queryKey: keys.conversations });
+                                turnApiRef.current.reset();
+                            }
+                        }
+                    }, controller.signal);
+                    if (controller.signal.aborted || finished) return;
+                    // Premature EOF: the generator may still be running.
+                } catch (error) {
+                    if ((error as Error).name === 'AbortError') return;
+                    if (!toasted) {
+                        toasted = true;
+                        toast((error as Error).message, true);
+                    }
+                }
+                const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)];
+                attempt += 1;
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        if (controller.signal.aborted) {
+                            const err = new Error('Aborted');
+                            err.name = 'AbortError';
+                            reject(err);
+                            return;
+                        }
+                        const timer = window.setTimeout(resolve, delay);
+                        const onAbort = () => {
+                            window.clearTimeout(timer);
+                            const err = new Error('Aborted');
+                            err.name = 'AbortError';
+                            reject(err);
+                        };
+                        controller.signal.addEventListener('abort', onAbort, { once: true });
+                    });
+                } catch (error) {
+                    if ((error as Error).name === 'AbortError') return;
+                    throw error;
                 }
             }
-        }, controller.signal).catch((error) => {
-            if ((error as Error).name !== 'AbortError') toast((error as Error).message, true);
-        });
+        })();
         return () => {
             controller.abort();
             if (attachAbortRef.current === controller) attachAbortRef.current = null;

@@ -223,10 +223,15 @@ class WebChatService {
     _emitTurnEvent(turnState, kind, payload) {
         if (!turnState) return;
         turnState.progress = applyProgressEvent(turnState.progress || emptyProgress(), kind, payload);
-        if (kind === 'tool' || kind === 'message' || kind === 'typing') {
-            this._persistProgress(turnState);
-        } else {
-            this._schedulePersistProgress(turnState);
+        // Incognito progress stays in `_activeTurns` only — writing the
+        // prompt/draft/tools into progressJson would persist the thing
+        // incognito opted out of, even if the lock row is later deleted.
+        if (!turnState.incognito) {
+            if (kind === 'tool' || kind === 'message' || kind === 'typing') {
+                this._persistProgress(turnState);
+            } else {
+                this._schedulePersistProgress(turnState);
+            }
         }
         for (const listener of turnState.listeners || []) {
             try {
@@ -248,7 +253,7 @@ class WebChatService {
     }
 
     _persistProgress(turnState) {
-        if (!turnState?.turnId || !turnState.userId) return;
+        if (!turnState?.turnId || !turnState.userId || turnState.incognito) return;
         const json = JSON.stringify(turnState.progress || emptyProgress());
         db.run(
             `UPDATE web_live_turns SET progressJson = @progressJson
@@ -1500,7 +1505,9 @@ class WebChatService {
                     turnId,
                     startedAtMs: Date.now(),
                     conversationId: conversation?.id ?? null,
-                    progressJson: JSON.stringify(initialProgress)
+                    // Lock metadata only for incognito — the prompt/draft live
+                    // on turnState.progress in memory (same rule as the window).
+                    progressJson: incognito ? null : JSON.stringify(initialProgress)
                 }
             );
         } catch (error) {
@@ -1513,6 +1520,7 @@ class WebChatService {
             aborted: false,
             turnId,
             userId,
+            incognito: Boolean(incognito),
             startedAt: Date.now(),
             // Lets turnStatus point the browser at the conversation that is
             // holding the per-user lock (null for incognito turns).
@@ -1999,14 +2007,24 @@ class WebChatService {
                 { userId }
             );
             if (live) return null;
+            // One statement claims the head row. SELECT-then-DELETE would
+            // let two Postgres workers both read the same row; the loser
+            // still "got" it and later requeued a duplicate. RETURNING is
+            // empty for whoever lost the delete.
             const row = await tx.get(
-                `SELECT id, conversationId, position, message, imagesJson, filesJson, incognito
-                 FROM web_chat_queue WHERE userId = @userId
-                 ORDER BY position ASC, id ASC LIMIT 1`,
+                `DELETE FROM web_chat_queue
+                 WHERE id = (
+                     SELECT id FROM (
+                         SELECT id FROM web_chat_queue
+                         WHERE userId = @userId
+                         ORDER BY position ASC, id ASC
+                         LIMIT 1
+                     ) AS claimed
+                 )
+                 RETURNING id, conversationId, position, message, imagesJson, filesJson, incognito`,
                 { userId }
             );
             if (!row) return null;
-            await tx.run('DELETE FROM web_chat_queue WHERE id = @id', { id: row.id });
             return this._queueRowToItem(row);
         });
     }

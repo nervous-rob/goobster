@@ -22,33 +22,36 @@ const PROGRESS = {
     ]
 };
 
-function sseBody() {
-    return [
-        'event: start',
-        `data: ${JSON.stringify({ conversationId: CONV_ID, turnId: 'turn-restore-1' })}`,
-        '',
-        'event: snapshot',
-        `data: ${JSON.stringify(PROGRESS)}`,
-        '',
-        ''
-    ].join('\n');
+function sseFrame(event, data) {
+    return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-test('returning to Study restores live thoughts and shows the follow-up queue', async ({ page }) => {
-    await login(page);
+function sseBody(progress = PROGRESS, { done = false } = {}) {
+    let body = sseFrame('start', { conversationId: CONV_ID, turnId: 'turn-restore-1' })
+        + sseFrame('snapshot', progress);
+    if (done) body += sseFrame('done', { ok: true });
+    return body;
+}
 
+async function stubRestore(page, {
+    turnInFlight = () => true,
+    streamBody = () => sseBody()
+} = {}) {
     await page.route(/\/api\/app\/chat\/turn$/, async (route) => {
         if (route.request().method() !== 'GET') return route.fallback();
+        const inFlight = turnInFlight();
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify({
-                inFlight: true,
-                elapsedMs: 42000,
-                conversationId: CONV_ID,
-                turnId: 'turn-restore-1',
-                progress: PROGRESS
-            })
+            body: JSON.stringify(inFlight
+                ? {
+                    inFlight: true,
+                    elapsedMs: 42000,
+                    conversationId: CONV_ID,
+                    turnId: 'turn-restore-1',
+                    progress: PROGRESS
+                }
+                : { inFlight: false })
         });
     });
     await page.route(/\/api\/app\/chat\/turn\/stream/, async (route) => {
@@ -58,7 +61,7 @@ test('returning to Study restores live thoughts and shows the follow-up queue', 
                 'content-type': 'text/event-stream',
                 'cache-control': 'no-cache'
             },
-            body: sseBody()
+            body: streamBody()
         });
     });
     await page.route(/\/api\/app\/chat\/queue$/, async (route) => {
@@ -105,7 +108,11 @@ test('returning to Study restores live thoughts and shows the follow-up queue', 
             body: JSON.stringify({ messages: [] })
         });
     });
+}
 
+test('returning to Study restores live thoughts and shows the follow-up queue', async ({ page }) => {
+    await login(page);
+    await stubRestore(page);
     await page.goto(`/app/study/${CONV_ID}`);
 
     await expect(page.getByText('What is a Grassmannian?')).toBeVisible();
@@ -117,4 +124,33 @@ test('returning to Study restores live thoughts and shows the follow-up queue', 
     await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Queue message' })).toBeVisible();
     await page.screenshot({ path: '/opt/cursor/artifacts/study_queue_restore.png', fullPage: true });
+});
+
+test('a dropped restore stream retries and then hydrates the next snapshot', async ({ page }) => {
+    await login(page);
+    let streams = 0;
+    await stubRestore(page, {
+        streamBody: () => {
+            streams += 1;
+            if (streams === 1) return sseBody();
+            return sseBody({ ...PROGRESS, draft: 'Looking that up… more' });
+        }
+    });
+    await page.goto(`/app/study/${CONV_ID}`);
+    await expect(page.getByText('Looking that up…')).toBeVisible();
+    await expect(page.getByText('Looking that up… more')).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByRole('button', { name: 'Queue message' })).toBeVisible();
+});
+
+test('when the turn goes idle, a dropped restore stream clears Stop/Queue', async ({ page }) => {
+    await login(page);
+    let inFlight = true;
+    await stubRestore(page, { turnInFlight: () => inFlight });
+    await page.goto(`/app/study/${CONV_ID}`);
+    await expect(page.getByRole('button', { name: 'Queue message' })).toBeVisible();
+    inFlight = false;
+    // Status polling is 5s while in-flight; wait for the idle fetch + reset.
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 12_000 });
+    await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Queue message' })).toHaveCount(0);
 });

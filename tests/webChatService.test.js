@@ -248,6 +248,12 @@ describe('turn validation', () => {
             expect(attached.turnId).toBe(status.turnId);
             expect(attached.snapshot.steps[0].content).toBe('Hello');
             attached.unsubscribe();
+            const row = await db.get(
+                'SELECT progressJson FROM web_live_turns WHERE userId = @userId',
+                { userId: USER }
+            );
+            expect(JSON.parse(row.progressJson).userContent).toBe('look this up');
+            expect(JSON.parse(row.progressJson).steps[0].content).toBe('Hello');
         } finally {
             releaseHold();
             await running;
@@ -848,6 +854,44 @@ describe('incognito mode', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM guild_conversations')).c).toBe(0);
     });
 
+    test('incognito progress stays in memory and is not written to progressJson', async () => {
+        let releaseHold = () => {};
+        const held = new Promise((resolve) => { releaseHold = resolve; });
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.channel.sendTyping();
+            interaction.onStreamDelta('secret draft');
+            await held;
+        });
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'secret question', incognito: true
+        });
+        const running = turn.run({});
+        try {
+            expect(await waitUntil(async () => {
+                const status = await webChatService.turnStatus(USER);
+                return status.progress?.draft === 'secret draft';
+            })).toBe(true);
+            // Wait past the persist throttle so a leak would have flushed.
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            const row = await db.get(
+                'SELECT progressJson FROM web_live_turns WHERE userId = @userId',
+                { userId: USER }
+            );
+            expect(row).toBeTruthy();
+            expect(row.progressJson == null || row.progressJson === '').toBe(true);
+            const persisted = await webChatService.getPersistedTurn(USER);
+            expect(persisted.progress.userContent).toBe('');
+            expect(persisted.progress.draft).toBe('');
+            const attached = webChatService.attachToTurn(USER, { onDelta() {} });
+            expect(attached.snapshot.userContent).toBe('secret question');
+            expect(attached.snapshot.draft).toBe('secret draft');
+            attached.unsubscribe();
+        } finally {
+            releaseHold();
+            await running;
+        }
+    });
+
     test('the in-memory window serves context to the next incognito turn', async () => {
         handleChatInteraction.mockImplementation(async (interaction) => {
             await interaction.sendFullResponse('the answer is 42');
@@ -1176,5 +1220,46 @@ describe('follow-up queue', () => {
         expect((await webChatService.listQueue(USER)).items).toHaveLength(0);
         await turn.release();
         await waitForIdle();
+    });
+
+    test('only one worker claims a queued follow-up', async () => {
+        await db.insert(
+            `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
+             VALUES (@userId, NULL, 1, 'only-once', NULL, NULL, 0)`,
+            { userId: USER }
+        );
+        const [first, second] = await Promise.all([
+            webChatService._popQueue(USER),
+            webChatService._popQueue(USER)
+        ]);
+        const claimed = [first, second].filter(Boolean);
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0].message).toBe('only-once');
+        expect((await db.get(
+            'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId',
+            { userId: USER }
+        )).c).toBe(0);
+    });
+
+    test('two queued rows are claimed by two pops without duplicating either', async () => {
+        await db.insert(
+            `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
+             VALUES (@userId, NULL, 1, 'one', NULL, NULL, 0)`,
+            { userId: USER }
+        );
+        await db.insert(
+            `INSERT INTO web_chat_queue (userId, conversationId, position, message, imagesJson, filesJson, incognito)
+             VALUES (@userId, NULL, 2, 'two', NULL, NULL, 0)`,
+            { userId: USER }
+        );
+        const [first, second] = await Promise.all([
+            webChatService._popQueue(USER),
+            webChatService._popQueue(USER)
+        ]);
+        expect(new Set([first?.message, second?.message])).toEqual(new Set(['one', 'two']));
+        expect((await db.get(
+            'SELECT COUNT(*) AS c FROM web_chat_queue WHERE userId = @userId',
+            { userId: USER }
+        )).c).toBe(0);
     });
 });
