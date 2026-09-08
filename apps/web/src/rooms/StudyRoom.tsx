@@ -14,6 +14,7 @@ import { MenuButton } from '../shell/MenuButton';
 import { HeaderOverflow } from '../shell/HeaderOverflow';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useChatTurn, type LocalTurnMessage } from '../hooks/useChatTurn';
+import { useComposerAutosize } from '../hooks/useComposerAutosize';
 import { useVoiceChat } from '../hooks/useVoiceChat';
 import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
 
@@ -135,6 +136,8 @@ export function StudyRoom() {
     const searchTimer = useRef<number | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
+    const composerRef = useRef<HTMLTextAreaElement>(null);
+    useComposerAutosize(composerRef, composer);
     const speechRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
     const voiceChat = useVoiceChat({
         onUtterance: (text) => void sendMessage(text),
@@ -815,43 +818,47 @@ export function StudyRoom() {
                             ))}
                         </ol>
                     )}
-                    <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
-                        <button type="button" className="icon-action attach attach-plus" title="Attach files" aria-label="Attach files" onClick={() => fileRef.current?.click()}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            </svg>
-                        </button>
-                        <button type="button" className="model-chip composer-model-chip" onClick={() => setSettingsOpen(true)} title="Chat settings — model & reasoning">
-                            <span className="model-chip-gear" aria-hidden="true">⚙</span>
-                            <span className="model-chip-label wide-only">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
-                        </button>
-                        <input
-                            ref={fileRef}
-                            type="file"
-                            multiple
-                            className="hidden"
-                            accept="image/png,image/jpeg,image/webp,image/gif,text/*,.txt,.md,.json,.csv"
-                            onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                                if (event.target.files) void addFiles(event.target.files);
-                                event.target.value = '';
-                            }}
-                        />
-                        {voice.data?.stt && voice.data?.tts && (
-                            <button
-                                type="button"
-                                className={`icon-action attach voice-chat-btn${voiceChat.active ? ' on' : ''}`}
-                                title={voiceChat.active ? 'End voice chat' : 'Voice chat — talk with Goobster out loud'}
-                                aria-pressed={voiceChat.active}
-                                onClick={() => {
-                                    if (voiceChat.active) voiceChat.stop();
-                                    else void voiceChat.start({ live: Boolean(voice.data?.live) });
+                    <form className="composer composer--tools" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
+                        <div className="composer-actions">
+                            <button type="button" className="icon-action attach attach-plus" title="Attach files" aria-label="Attach files" onClick={() => fileRef.current?.click()}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                </svg>
+                            </button>
+                            <button type="button" className="model-chip composer-model-chip" onClick={() => setSettingsOpen(true)} title="Chat settings — model & reasoning" aria-label="Chat settings">
+                                <span className="model-chip-gear" aria-hidden="true">⚙</span>
+                                <span className="model-chip-label wide-only">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
+                            </button>
+                            <input
+                                ref={fileRef}
+                                type="file"
+                                multiple
+                                className="hidden"
+                                accept="image/png,image/jpeg,image/webp,image/gif,text/*,.txt,.md,.json,.csv"
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                                    if (event.target.files) void addFiles(event.target.files);
+                                    event.target.value = '';
                                 }}
-                            >🎤</button>
-                        )}
-                        {voice.data?.stt && !voice.data?.tts && (
-                            <button type="button" className="icon-action attach" title="Dictate a message" onClick={() => void toggleMic()}>🎤</button>
-                        )}
+                            />
+                            {voice.data?.stt && voice.data?.tts && (
+                                <button
+                                    type="button"
+                                    className={`icon-action attach voice-chat-btn${voiceChat.active ? ' on' : ''}`}
+                                    title={voiceChat.active ? 'End voice chat' : 'Voice chat — talk with Goobster out loud'}
+                                    aria-label={voiceChat.active ? 'End voice chat' : 'Voice chat'}
+                                    aria-pressed={voiceChat.active}
+                                    onClick={() => {
+                                        if (voiceChat.active) voiceChat.stop();
+                                        else void voiceChat.start({ live: Boolean(voice.data?.live) });
+                                    }}
+                                >🎤</button>
+                            )}
+                            {voice.data?.stt && !voice.data?.tts && (
+                                <button type="button" className="icon-action attach" title="Dictate a message" aria-label="Dictate a message" onClick={() => void toggleMic()}>🎤</button>
+                            )}
+                        </div>
                         <textarea
+                            ref={composerRef}
                             className="composer-input"
                             rows={1}
                             value={composer}

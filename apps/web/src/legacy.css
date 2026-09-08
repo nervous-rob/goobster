@@ -490,8 +490,12 @@ body.applet-open { overflow: hidden; }
 
 .composer-wrap { max-width: 780px; margin: 0 auto; width: 100%; padding: 6px 20px 12px; }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
+.composer-actions { display: flex; gap: 8px; flex: none; align-items: flex-end; }
 .composer-input {
-  flex: 1; resize: none; max-height: 40vh;
+  flex: 1; min-width: 0; resize: none;
+  min-height: 44px; max-height: 40vh; max-height: 40dvh;
+  overflow-y: auto; overflow-wrap: anywhere; field-sizing: content;
+  -webkit-overflow-scrolling: touch;
   background: var(--bg-raise); border: 1px solid var(--border); color: var(--text);
   border-radius: 14px; padding: 11px 15px; font: inherit; outline: none;
 }
@@ -1490,8 +1494,17 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
    * else moves into the dropdown so nothing has to overlap. */
   .icon-action.more-btn { display: inline-flex; }
   /* The composer model chip collapses to just the gear (the label is
-   * .wide-only) so the input keeps its width on phones. */
+   * .wide-only). Attach/settings/voice sit on a row UNDER the textarea so
+   * a phone does not squeeze the draft into a sliver beside those buttons. */
   .composer-model-chip { width: 44px; padding: 0; justify-content: center; border-radius: 50%; }
+  .composer--tools { flex-wrap: wrap; }
+  .composer--tools .composer-input {
+    flex: 1 1 100%;
+    order: -1;
+    width: 100%;
+    min-height: 72px;
+  }
+  .composer--tools .composer-actions { flex: 1; min-width: 0; }
   .header-overflow {
     display: none; position: absolute; top: calc(100% + 6px); right: 12px; z-index: 30;
     flex-direction: column; align-items: stretch; gap: 4px; min-width: 208px;

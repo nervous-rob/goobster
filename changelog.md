@@ -9,6 +9,9 @@
 ### Changed
 - `/forget-me` and the transparency report cover queued Study follow-ups (`web_chat_queue` / `queuedChatMessages`).
 
+### Fixed
+- **Study composer too narrow on phones.** Attach, settings, and voice sat on the same row as the textarea, so a PWA/browser draft was a sliver you could neither read nor caret-edit. Below 720px the textarea now takes a full-width row (and grows with the text up to 40dvh); the buttons sit underneath. Playwright: `e2e/composer.spec.js`.
+
 ## 2026-09-07
 
 ### Fixed
