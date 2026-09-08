@@ -426,6 +426,22 @@ function getDb() {
     throw new Error('getDb() is SQLite-only; check db.engine before using raw handles.');
 }
 
+/**
+ * LISTEN/NOTIFY channel scoped like advisory locks: production uses the
+ * base name; GOOBSTER_PG_TEST_ISOLATE suffixes the private schema so
+ * parallel Jest workers do not share a database-wide channel.
+ * @param {string} base
+ * @returns {string}
+ */
+function notificationChannel(base) {
+    if (!/^[a-z_][a-z0-9_]*$/i.test(base)) {
+        throw new Error(`Bad notification channel base: ${base}`);
+    }
+    getPool();
+    if (!schemaName) return base;
+    return `${base}_${schemaName}`;
+}
+
 /** Raw parameterized query escape hatch for engine-aware code (pgvector). */
 async function rawQuery(text, values = []) {
     await ensureReady();
@@ -572,6 +588,7 @@ module.exports = {
     closeConnection,
     rawQuery,
     listenNotifications,
+    notificationChannel,
     withAdvisoryLock,
     _testSchemaName: () => schemaName,
 };

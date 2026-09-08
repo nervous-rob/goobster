@@ -12,9 +12,10 @@
  * Transport mirrors the portal bus so there is no new infrastructure:
  *  - Always: an in-process EventEmitter, which is the whole story for the lite
  *    single-process deployment.
- *  - On Postgres: publish() also pg_notify()s a dedicated channel and the
- *    first subscriber starts LISTENing, so events cross the bot/api boundary.
- *    A process skips its own notifications (it delivered them locally).
+ *  - On Postgres: publish() also pg_notify()s a dedicated channel (suffixed
+ *    with the test-isolation schema when GOOBSTER_PG_TEST_ISOLATE is on)
+ *    and the first subscriber starts LISTENing, so events cross the bot/api
+ *    boundary. A process skips its own notifications (it delivered them locally).
  *
  * **Events are hints, never the source of truth.** Nothing here is durable: a
  * subscriber that is restarting misses whatever fires in the meantime. The
@@ -89,11 +90,15 @@ emitter.setMaxListeners(0);
 let pgListenerStop = null;
 let pgListenerStarted = false;
 
+function pgChannel() {
+    return db.notificationChannel(CHANNEL);
+}
+
 function ensureCrossProcessListener() {
     if (pgListenerStarted) return;
     if (db.engine !== 'postgres') return; // lite: one process, local emitter is complete
     pgListenerStarted = true;
-    pgListenerStop = db.listenNotifications(CHANNEL, (text) => {
+    pgListenerStop = db.listenNotifications(pgChannel(), (text) => {
         let event;
         try {
             event = JSON.parse(text);
@@ -142,7 +147,7 @@ function publish(topic, payload = {}) {
         try {
             const text = JSON.stringify(event);
             if (text.length <= MAX_PAYLOAD_CHARS) {
-                db.rawQuery('SELECT pg_notify($1, $2)', [CHANNEL, text])
+                db.rawQuery('SELECT pg_notify($1, $2)', [pgChannel(), text])
                     .catch(error => logger.warn?.(`[domain-events] pg_notify failed: ${error.message}`));
             }
         } catch (error) {
