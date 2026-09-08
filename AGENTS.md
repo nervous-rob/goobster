@@ -19,7 +19,8 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
 - Dev run: `npm run dev` (nodemon `apps/bot/index.js`) — does NOT call `deploy-commands`.
 - Prod-style run: `npm start` (runs `apps/bot/deploy-commands.js` then `apps/bot/index.js`).
 - DB init: `npm run db-init` (creates `data/goobster.sqlite`; `packages/core/db/schema.sql` is also applied automatically on every DB open).
-- Tests: `npm test` / `npm run test:integration`. Lint: `npm run lint`.
+- Tests: `npm test` (full unit suite, no keys) / `npm run test:live` (optional
+  provider checks; skips when env vars are unset). Lint: `npm run lint`.
   Portal browser journeys: `npm run build:web && npm run test:e2e`
   (Playwright + Chromium; first time run `npm run test:e2e:install`).
 
@@ -59,11 +60,14 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   `Ready! Logged in as <tag>`.
 
 - **Lint, smoke, typecheck, build, and tests all pass and are enforced in CI**
-  (`.github/workflows/ci.yml`), across two jobs. The `test (sqlite)` job runs `npm run lint`
+  (`.github/workflows/ci.yml`), across two engine jobs. The `test (sqlite)` job runs `npm run lint`
   (ESLint flat config in `eslint.config.js`, zero errors required), `npm run smoke` (every module
   must `require()` cleanly with a minimal config), `npm run typecheck:web`, `npm run build:web`,
-  and `npm test`. The `test (postgres)` job re-runs `npm test` against a pgvector container with
-  `GOOBSTER_DB_URL` set, so a change has to pass on **both** database engines.
+  and the named Jest groups in `tests/ciGroups.js`. The `test (postgres)` job re-runs those groups
+  against a pgvector container with `GOOBSTER_DB_URL` set, so a change has to pass on **both**
+  database engines. A new `tests/*.test.js` file must be added to exactly one group or the
+  inventory step fails. Optional live provider tests (`npm run test:live`) run on trusted
+  `main` pushes and `workflow_dispatch` only; they are not part of `both engines`.
 
 - **Local Postgres 17 + pgvector is available for the engine-parity suite.**
   `scripts/ensure-local-postgres.sh` is idempotent (install packages, start the
@@ -85,6 +89,8 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   `memoryVecIndex.test.js`) and must pass. They use a throwaway SQLite file via `GOOBSTER_DB_PATH`,
   so no config or network is needed. The other `tests/test*.js` files are standalone manual
   scripts, not Jest specs. Playwright lives in `e2e/*.spec.js` and is not part of `npm test`.
+  Live provider checks live in `tests/live/*.live.test.js` and skip when the matching API key
+  is unset (`npm run test:live`). Each unit spec belongs to one CI group in `tests/ciGroups.js`.
 
 - **Portal Playwright journeys need Chromium and a built React client.**
   `e2e/server.js` mounts `createWebAppApp(createWebAppContext({ gateway, config:

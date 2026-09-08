@@ -1,59 +1,59 @@
 # Testing Guide
 
 ## Overview
-This guide outlines the testing infrastructure and procedures for Goobster's development process, with special focus on voice and audio system testing.
+
+Goobster's automated tests are Jest unit specs plus optional live provider
+checks and Playwright portal journeys. The unit suite needs no
+`config.json`, API keys, or network. Cloud providers are mocked.
 
 ## Test Structure
 
 ### 1. Unit Tests
-Located in `__tests__/unit/`
-- Command tests
-- Service tests
-- Utility tests
 
-### 2. Integration Tests
-Located in `__tests__/integration/`
-- Voice recognition tests
-- Audio system tests
-- Database operations tests
+Located in `tests/*.test.js`. These are the only files `npm test` runs.
+Each file belongs to exactly one CI group in `tests/ciGroups.js`:
+
+| Group | Scope |
+| --- | --- |
+| Core infrastructure | Database, migrations, gateways, locks, configuration |
+| Chat and AI | Providers, prompts, tools, conversations, message queues |
+| Portal and collaboration | Web APIs, sessions, applets, Parlor, sharing |
+| Knowledge and memory | Spitball, graphs, memory, research expeditions |
+| Projects and autonomy | Observatory, missions, triggers, automation, attention |
+| Voice and media | Speech, realtime audio, playback, music |
+| Games and economy | Casino, exchange, Tavern, GBA |
+| Privacy and execution safety | Erasure, permissions, approvals, sandbox |
+
+`tests/test*.js` files that do not match `*.test.js` are standalone manual
+scripts — do not run them under Jest.
+
+### 2. Live provider checks
+
+Located in `tests/live/*.live.test.js`, run with `npm run test:live`
+(`jest.live.config.js`). Each file skips when its env var is unset and
+fails when the key is present but the provider call fails. Mocked provider
+suites in `tests/*.test.js` always run; live checks never replace them.
+
+| Variable | Live file |
+| --- | --- |
+| `OPENAI_API_KEY` | `tests/live/openai.live.test.js` |
+| `ANTHROPIC_API_KEY` | `tests/live/anthropic.live.test.js` |
+| `GEMINI_API_KEY` | `tests/live/gemini.live.test.js` |
+| `PERPLEXITY_API_KEY` | `tests/live/perplexity.live.test.js` |
+| `ELEVENLABS_API_KEY` | `tests/live/elevenlabs.live.test.js` |
+
+### 3. Playwright journeys
+
+Located in `e2e/*.spec.js`. Run with `npm run test:e2e` after `npm run build:web`.
 
 ## Test Configuration
 
-### 1. Jest Setup
-```javascript
-// jest.config.js
-module.exports = {
-    preset: 'ts-jest',
-    testEnvironment: 'node',
-    collectCoverageFrom: [
-        'utils/**/*.{js,ts}',
-        'commands/**/*.{js,ts}',
-        '!**/node_modules/**'
-    ],
-    coverageThreshold: {
-        global: {
-            branches: 80,
-            functions: 80,
-            lines: 80,
-            statements: 80
-        }
-    }
-}
-```
+Unit Jest config lives in the root `package.json` (`testMatch`:
+`tests/*.test.js`). Coverage thresholds (80%) apply only when running
+`npm run test:coverage`, and only to `packages/core/utils/**` and
+`apps/bot/commands/**`.
 
-### 2. Integration Test Setup
-```javascript
-// jest.integration.config.js
-module.exports = {
-    testMatch: ['**/__tests__/integration/**/*.test.js'],
-    testTimeout: 10000,
-    setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
-    testEnvironment: 'node',
-    verbose: true,
-    detectOpenHandles: true,
-    forceExit: true
-}
-```
+Live checks use `jest.live.config.js`. They do not require `config.json`.
 
 ## Mock Setup
 
@@ -91,8 +91,17 @@ jest.mock('prism-media', () => ({
 
 ### 1. Unit Tests
 ```bash
-# Run all unit tests
+# Run all unit tests (SQLite)
 npm test
+
+# Same suite against local Postgres + pgvector
+npm run test:postgres
+
+# One CI group
+npm run test:group -- core
+
+# Fail if a spec is missing from tests/ciGroups.js
+npm run test:groups:check
 
 # Run with coverage
 npm run test:coverage
@@ -101,11 +110,14 @@ npm run test:coverage
 npm run test:watch
 ```
 
-### 2. Integration Tests
+### 2. Live provider checks
 ```bash
-# Run integration tests
+npm run test:live
+# alias:
 npm run test:integration
 ```
+
+Missing keys skip; invalid keys fail. Values are never printed.
 
 ## Test Cases
 
@@ -156,6 +168,7 @@ describe('Component Name', () => {
 - Mock external dependencies
 - Handle async operations
 - Test error cases
+- Put a new `tests/*.test.js` file in exactly one group in `tests/ciGroups.js`
 
 ### 3. Mocking Examples
 ```javascript
@@ -180,6 +193,8 @@ expect(mockService.method).toHaveBeenCalledWith(args);
 - Lines: 80%
 - Statements: 80%
 
+(`npm run test:coverage` only; CI does not collect coverage.)
+
 ### 2. Critical Paths
 - Voice recognition flow
 - Audio processing pipeline
@@ -188,17 +203,26 @@ expect(mockService.method).toHaveBeenCalledWith(args);
 
 ## Continuous Integration
 
-### 1. Pre-commit Checks
-- Linting
-- Unit tests
-- Type checking
-- Format verification
+`.github/workflows/ci.yml`:
 
-### 2. CI Pipeline
-- Full test suite
-- Integration tests
-- Coverage report
-- Performance tests
+1. `test (sqlite)` — lint, smoke, typecheck, web build, then named Jest groups
+2. `test (postgres)` — the same groups against pgvector
+3. `sandbox isolation` — bubblewrap canary
+4. `test (playwright)` — portal journeys
+5. `both engines` — fails unless sqlite, postgres, and isolation succeeded
+6. `test (live integrations)` — main pushes and `workflow_dispatch` only
+
+Group steps are ordinary named steps in each engine job (not a composite
+action) so the Actions step list shows names, statuses, and timings.
+They use `continue-on-error` so a later group still runs after an
+earlier failure. The job fails at the end. An inventory step fails if the
+manifest drifts from Jest's discovered files.
+
+The job summary lists group, engine, passed/failed/skipped counts, duration,
+and skip reasons (live credentials: names and status only).
+
+See `documentation/adr/0007-ci-test-groups.md`.
+
 
 ## Debugging Tests
 

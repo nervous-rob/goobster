@@ -1196,9 +1196,12 @@ describe('follow-up queue', () => {
             .toEqual(['second']);
         handleChatInteraction.mockClear();
         await turn.release();
-        expect(await waitUntil(async () =>
-            (await webChatService.listQueue(USER)).items.length === 0, 4000)).toBe(true);
-        expect(handleChatInteraction).toHaveBeenCalled();
+        // `_popQueue` deletes the row before `startTurn`/`run()` invoke the
+        // handler, so an empty queue is not proof the drain started. Wait
+        // for the queued turn to enter the pipeline (Postgres is slow enough
+        // that the old check raced).
+        expect(await waitUntil(() => handleChatInteraction.mock.calls.length > 0, 4000)).toBe(true);
+        expect((await webChatService.listQueue(USER)).items).toEqual([]);
         await waitForIdle();
         expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
     });

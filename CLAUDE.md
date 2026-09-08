@@ -14,11 +14,14 @@ The authoritative conventions document is `documentation/development_standards_a
 npm test                          # Jest unit tests (no config, keys, or network needed)
 npx jest tests/attentionService.test.js       # single test file
 npx jest -t "name substring"                  # single test by name
+npm run test:group -- core        # one CI group locally (see tests/ciGroups.js)
+npm run test:groups:check         # fail if a spec is missing from the group manifest
 npm run lint                      # ESLint flat config, zero errors, max 60 warnings
 npm run smoke                     # every module must require() cleanly with minimal config
 npm run typecheck:web             # tsc --noEmit for the React client
 npm run build:web                 # Vite build → apps/web/dist (served at /app)
-npm run test:integration          # needs a real config.json with credentials
+npm run test:live                 # optional live provider checks (skips when keys are unset)
+npm run test:integration          # alias for test:live
 npm run test:e2e                  # Playwright portal journeys (needs build:web + Chromium)
 npm run test:e2e:install          # npx playwright install --with-deps chromium
 npm run dev                       # nodemon apps/bot/index.js (does NOT deploy slash commands)
@@ -26,11 +29,12 @@ npm start                         # deploy-commands then apps/bot/index.js
 npm run db-init                   # creates data/goobster.sqlite (schema is also applied on every DB open)
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck:web, build:web, and `npm test` twice — once on SQLite and once on Postgres (`GOOBSTER_DB_URL` set, pgvector image). A change must pass on **both engines**. A separate `test (playwright)` job runs `npm run test:e2e`.
+CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck:web, build:web, then the Jest matrix as **named groups** (`tests/ciGroups.js`) twice — once on SQLite and once on Postgres (`GOOBSTER_DB_URL` set, pgvector image). A change must pass on **both engines**. A separate `test (playwright)` job runs `npm run test:e2e`. Optional live provider tests run on trusted `main` pushes and `workflow_dispatch` only; missing secrets skip, they do not drop mocked coverage. See `documentation/adr/0007-ci-test-groups.md`.
 
 Test notes:
-- Only `tests/*.test.js` are Jest specs. The `tests/test*.js` files are standalone manual scripts — do not convert or run them under Jest. Playwright specs live in `e2e/*.spec.js`.
+- Only `tests/*.test.js` are Jest specs. The `tests/test*.js` files are standalone manual scripts — do not convert or run them under Jest. Playwright specs live in `e2e/*.spec.js`. Live provider checks live in `tests/live/*.live.test.js` and are not part of `npm test`.
 - Jest's `globalSetup` writes a placeholder `config.json` if missing, and suites use a throwaway SQLite file via `GOOBSTER_DB_PATH`. Tests inject fake providers/pipelines/gateways instead of hitting the network.
+- Each unit spec belongs to exactly one CI group in `tests/ciGroups.js`. A new file that is not listed (or is listed twice) fails the inventory check.
 - Coverage thresholds (80% global) apply to `packages/core/utils/**` and `apps/bot/commands/**` when running `npm run test:coverage`.
 
 `config.json` (gitignored, from `config.example.json`) is **required to run the bot**: Discord credentials (`token`, `clientId`, `guildIds`) are read from it only — not from env. AI/integration keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `ELEVENLABS_API_KEY`) are also read from env via `packages/core/config/aiConfig.js`.

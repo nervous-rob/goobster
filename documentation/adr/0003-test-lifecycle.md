@@ -13,10 +13,11 @@ Both CI jobs are green and both are noisy: a worker is force-exited for
 leaked handles; SQLite emits late-log warnings; Postgres adds teardown
 `missing relation` chatter while dropping isolation schemas.
 
-Unit Jest does **not** set `forceExit` (only `jest.integration.config.js`
-does). Jest 30 still force-exits a worker that still has open handles
-after the suite’s `afterAll`. That can hide a real leak behind a green
-tick.
+Unit Jest does **not** set `forceExit`. The optional live config
+(`jest.live.config.js`) does, because keep-alive HTTP sockets from real
+provider clients are not application leaks. Jest 30 still force-exits a
+worker that still has open handles after the suite’s `afterAll`. That can
+hide a real leak behind a green tick.
 
 Likely sources, from code inspection:
 
