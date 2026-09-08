@@ -257,11 +257,11 @@ function mountAuthChat(app, ctx, h) {
     // only stops writing; the turn itself keeps running.
     app.get('/api/app/chat/turn/stream', requireAuth, async (req, res) => {
         try {
-            ctx.chat.turnStatus?.(req.webUser.userId, {
+            Promise.resolve(ctx.chat.turnStatus?.(req.webUser.userId, {
                 client: ctx.client,
                 gateway: ctx.gateway,
                 userName: req.webUser.userName
-            });
+            })).catch(() => {});
             await streamLiveTurnProgress(res, {
                 userId: req.webUser.userId,
                 chat: ctx.chat

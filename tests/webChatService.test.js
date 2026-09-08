@@ -210,7 +210,7 @@ describe('turn validation', () => {
     });
 
     test('turnStatus includes live progress and attachToTurn shares the snapshot', async () => {
-        let releaseHold;
+        let releaseHold = () => {};
         const held = new Promise((resolve) => { releaseHold = resolve; });
         handleChatInteraction.mockImplementation(async (interaction) => {
             await interaction.channel.sendTyping();
@@ -224,30 +224,34 @@ describe('turn validation', () => {
             client, userId: USER, userName: 'rob', message: 'look this up'
         });
         const running = turn.run({});
-        expect(await waitUntil(async () => {
+        try {
+            expect(await waitUntil(async () => {
+                const status = await webChatService.turnStatus(USER);
+                return status.progress?.steps?.[0]?.content === 'Hello'
+                    && status.progress?.steps?.[1]?.name === 'performSearch';
+            })).toBe(true);
             const status = await webChatService.turnStatus(USER);
-            return status.progress?.draft === 'Hello'
-                && status.progress?.steps?.[0]?.name === 'performSearch';
-        })).toBe(true);
-        const status = await webChatService.turnStatus(USER);
-        expect(status).toMatchObject({
-            inFlight: true,
-            turnId: expect.any(String),
-            progress: {
-                userContent: 'look this up',
-                draft: 'Hello',
-                typing: false
-            }
-        });
-        expect(status.progress.steps[0]).toMatchObject({
-            type: 'tool', name: 'performSearch', running: true
-        });
-        const attached = webChatService.attachToTurn(USER, { onDelta() {} });
-        expect(attached.turnId).toBe(status.turnId);
-        expect(attached.snapshot.draft).toBe('Hello');
-        attached.unsubscribe();
-        releaseHold();
-        await running;
+            expect(status).toMatchObject({
+                inFlight: true,
+                turnId: expect.any(String),
+                progress: {
+                    userContent: 'look this up',
+                    draft: '',
+                    typing: false
+                }
+            });
+            expect(status.progress.steps[0]).toMatchObject({ type: 'text', content: 'Hello' });
+            expect(status.progress.steps[1]).toMatchObject({
+                type: 'tool', name: 'performSearch', running: true
+            });
+            const attached = webChatService.attachToTurn(USER, { onDelta() {} });
+            expect(attached.turnId).toBe(status.turnId);
+            expect(attached.snapshot.steps[0].content).toBe('Hello');
+            attached.unsubscribe();
+        } finally {
+            releaseHold();
+            await running;
+        }
     });
 
     test('publishes web-turn lifecycle events (started on reserve, settled on release)', async () => {
@@ -1095,8 +1099,11 @@ describe('custom instructions', () => {
 describe('follow-up queue', () => {
     async function waitForIdle() {
         expect(await waitUntil(async () => {
-            const status = await webChatService.turnStatus(USER);
-            return !status.inFlight && !webChatService._kicking.has(USER);
+            if (webChatService._activeTurns.has(USER)) return false;
+            const row = await db.get(
+                'SELECT 1 AS ok FROM web_live_turns WHERE userId = @userId', { userId: USER }
+            );
+            return !row;
         }, 4000)).toBe(true);
     }
 

@@ -1952,17 +1952,21 @@ class WebChatService {
     }
 
     _queueRowToItem(row) {
-        let images = [];
-        let files = [];
-        try { images = row.imagesJson ? JSON.parse(row.imagesJson) : []; } catch { images = []; }
-        try { files = row.filesJson ? JSON.parse(row.filesJson) : []; } catch { files = []; }
+        const parseJsonArray = (json) => {
+            try {
+                const value = json ? JSON.parse(json) : [];
+                return Array.isArray(value) ? value : [];
+            } catch {
+                return [];
+            }
+        };
         return {
             id: row.id,
             conversationId: row.conversationId ?? null,
             position: row.position,
             message: row.message,
-            images,
-            files,
+            images: parseJsonArray(row.imagesJson),
+            files: parseJsonArray(row.filesJson),
             incognito: Number(row.incognito) === 1,
             createdAt: row.createdAt
         };
@@ -2037,32 +2041,36 @@ class WebChatService {
         if (!userId || this._kicking.has(userId)) return;
         this._kicking.add(userId);
         try {
-            for (;;) {
-                if (await this._liveTurn(userId)) return;
-                const item = await this._popQueue(userId);
-                if (!item) return;
-                const runtime = this._runtimeByUser.get(userId) || {};
-                try {
-                    const turn = await this.startTurn({
-                        client: runtime.client,
-                        gateway: runtime.gateway,
-                        userId,
-                        userName: runtime.userName,
-                        message: item.message,
-                        conversationId: item.conversationId,
-                        images: item.images,
-                        files: item.files,
-                        incognito: Boolean(item.incognito)
-                    });
-                    await turn.run({});
-                } catch (error) {
-                    await this._requeueFront(userId, item).catch(() => {});
-                    if (error?.code !== 'TURN_IN_FLIGHT' && error?.code !== 'RATE_LIMITED') {
-                        console.warn('[WebChat] Queue kick failed:', error.message || error);
-                    }
-                    return;
+            if (await this._liveTurn(userId)) return;
+            const item = await this._popQueue(userId);
+            if (!item) return;
+            const runtime = this._runtimeByUser.get(userId) || {};
+            let turn;
+            try {
+                turn = await this.startTurn({
+                    client: runtime.client,
+                    gateway: runtime.gateway,
+                    userId,
+                    userName: runtime.userName,
+                    message: item.message,
+                    conversationId: item.conversationId,
+                    images: item.images,
+                    files: item.files,
+                    incognito: Boolean(item.incognito)
+                });
+            } catch (error) {
+                await this._requeueFront(userId, item).catch(() => {});
+                if (error?.code !== 'TURN_IN_FLIGHT' && error?.code !== 'RATE_LIMITED') {
+                    console.warn('[WebChat] Queue kick failed:', error.message || error);
                 }
+                return;
             }
+            // Do not hold `_kicking` across `run()` — release() kicks the
+            // next item when this turn settles.
+            turn.run({}).catch((error) => {
+                console.warn('[WebChat] Queued turn failed:', error.message || error);
+                void this._kickQueue(userId);
+            });
         } finally {
             this._kicking.delete(userId);
         }
