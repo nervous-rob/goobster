@@ -113,9 +113,11 @@ async function streamParlorTurn(res, turn, ctx) {
  * Local replica: attach to the in-process listeners. Other replicas poll
  * `web_live_turns.progressJson` until the original turnId is gone (or a
  * different turn takes the lock — this stream then ends rather than
- * leaking the next reply into the previous chat).
+ * leaking the next reply into the previous chat). When the caller passes
+ * `expectedTurnId`, the stream is bound to that id before the first
+ * attach/persist — a retry after A settles cannot hydrate B.
  */
-async function streamLiveTurnProgress(res, { userId, chat }) {
+async function streamLiveTurnProgress(res, { userId, chat, expectedTurnId = null }) {
     res.status(200).set({
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
@@ -162,9 +164,9 @@ async function streamLiveTurnProgress(res, { userId, chat }) {
     };
 
     try {
-        // Bound to the first turn we see. A later queued turn (possibly
-        // another conversation) must not reuse this stream's identity.
-        let boundTurnId = null;
+        // Bound to the caller's expected turnId when given, otherwise the
+        // first turn we see. A later queued turn must not reuse this stream.
+        let boundTurnId = expectedTurnId ? String(expectedTurnId) : null;
         let sentStart = false;
         const announce = (conversationId, turnId, snapshot) => {
             if (!sentStart) {
@@ -191,7 +193,7 @@ async function streamLiveTurnProgress(res, { userId, chat }) {
                     wakeAll();
                 }
             };
-            const attached = chat.attachToTurn ? chat.attachToTurn(userId, listener) : null;
+            const attached = chat.attachToTurn ? chat.attachToTurn(userId, listener, boundTurnId) : null;
             if (attached?.turnId) {
                 if (boundTurnId && attached.turnId !== boundTurnId) {
                     dropForeign(attached);
@@ -217,7 +219,7 @@ async function streamLiveTurnProgress(res, { userId, chat }) {
             while (open) {
                 await wait(400);
                 if (!open) return;
-                const retry = chat.attachToTurn ? chat.attachToTurn(userId, listener) : null;
+                const retry = chat.attachToTurn ? chat.attachToTurn(userId, listener, boundTurnId) : null;
                 if (retry?.turnId) {
                     if (retry.turnId !== boundTurnId) {
                         dropForeign(retry);

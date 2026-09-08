@@ -260,6 +260,37 @@ describe('turn validation', () => {
         }
     });
 
+    test('attachToTurn does not subscribe when expectedTurnId does not match', async () => {
+        let releaseHold = () => {};
+        const held = new Promise((resolve) => { releaseHold = resolve; });
+        handleChatInteraction.mockImplementation(async () => {
+            await held;
+        });
+        const turn = await webChatService.startTurn({
+            client, userId: USER, userName: 'rob', message: 'hello'
+        });
+        const running = turn.run({});
+        try {
+            const status = await waitUntil(async () => {
+                const current = await webChatService.turnStatus(USER);
+                return current.inFlight && current.turnId;
+            });
+            expect(status).toBe(true);
+            const live = await webChatService.turnStatus(USER);
+            const listener = { onDelta: jest.fn() };
+            const foreign = webChatService.attachToTurn(USER, listener, 'not-this-turn');
+            expect(foreign.snapshot).toBeNull();
+            expect(foreign.turnId).toBe(live.turnId);
+            const matched = webChatService.attachToTurn(USER, listener, live.turnId);
+            expect(matched.snapshot).toBeTruthy();
+            expect(matched.turnId).toBe(live.turnId);
+            matched.unsubscribe();
+        } finally {
+            releaseHold();
+            await running;
+        }
+    });
+
     test('publishes web-turn lifecycle events (started on reserve, settled on release)', async () => {
         const eventBus = require('@goobster/core/services/eventBusService');
         const events = [];

@@ -30,6 +30,13 @@ const SUGGESTIONS = [
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
 const QUEUE_HINT = 'Enter queues a follow-up — it sends when this reply finishes. Stop is the square beside Send.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
+
+/** Saved chats refetch history after a restore ends; incognito has none, so keep completed messages. */
+function clearRestoreOverlay(api: { end: () => void; reset: () => void }, incognito: boolean) {
+    if (incognito) api.end();
+    else api.reset();
+}
+
 const MAX_ATTACH = 4;
 const MAX_TEXT_FILE_BYTES = 200 * 1024;
 const REASONING_OPTIONS = [
@@ -210,18 +217,18 @@ export function StudyRoom() {
     useEffect(() => {
         const inFlight = Boolean(turnQ.data?.inFlight);
         if (prevInFlight.current && !inFlight && !sending) {
-            // The orphaned turn settled: drop the restore UI (stale draft /
-            // Queue-as-Send) even if the reconnect SSE died first, then
-            // refetch the finished transcript.
+            // The orphaned turn settled: drop live progress (stale draft /
+            // Queue-as-Send) even if the reconnect SSE died first. Saved
+            // chats refetch history; incognito keeps the local transcript.
             hydratedTurnId.current = null;
-            turnApiRef.current.reset();
+            clearRestoreOverlay(turnApiRef.current, incognito);
             void queryClient.invalidateQueries({ queryKey: keys.conversations });
             void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
             void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
             if (activeId !== null) void queryClient.invalidateQueries({ queryKey: keys.history(activeId) });
         }
         prevInFlight.current = inFlight;
-    }, [turnQ.data?.inFlight, sending, activeId, queryClient]);
+    }, [turnQ.data?.inFlight, sending, activeId, incognito, queryClient]);
 
     const conversations = convs.data?.conversations || [];
     const history = (incognito ? [] : historyQ.data?.messages || []) as LocalTurnMessage[];
@@ -259,7 +266,7 @@ export function StudyRoom() {
             if (hydratedTurnId.current) {
                 hydratedTurnId.current = null;
                 localTurnSettledAt.current = Date.now();
-                turnApiRef.current.reset();
+                clearRestoreOverlay(turnApiRef.current, incognito);
             }
             return undefined;
         }
@@ -319,7 +326,7 @@ export function StudyRoom() {
                                 turnApiRef.current.reset();
                             }
                         }
-                    }, controller.signal);
+                    }, controller.signal, orphanTurn.turnId);
                     if (controller.signal.aborted || finished) return;
                     // Premature EOF: the generator may still be running.
                 } catch (error) {

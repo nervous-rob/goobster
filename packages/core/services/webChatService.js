@@ -265,11 +265,22 @@ class WebChatService {
     /**
      * Subscribe to a local in-flight turn so a returning browser can keep
      * watching thoughts/tools/tokens. Snapshot is the current progress.
+     * When `expectedTurnId` is set and a different turn holds the lock,
+     * do not subscribe — the caller asked for a specific turn.
      */
-    attachToTurn(userId, listener) {
+    attachToTurn(userId, listener, expectedTurnId = null) {
         const turn = this._activeTurns.get(userId);
         if (!turn || !listener) {
             return { snapshot: null, conversationId: null, turnId: null, unsubscribe: () => {} };
+        }
+        if (expectedTurnId && turn.turnId !== String(expectedTurnId)) {
+            // Do not subscribe — the caller asked for a different turn.
+            return {
+                snapshot: null,
+                conversationId: turn.conversationId ?? null,
+                turnId: turn.turnId,
+                unsubscribe: () => {}
+            };
         }
         if (!turn.listeners) turn.listeners = new Set();
         turn.listeners.add(listener);

@@ -35,7 +35,9 @@ function sseBody(progress = PROGRESS, { done = false } = {}) {
 
 async function stubRestore(page, {
     turnInFlight = () => true,
-    streamBody = () => sseBody()
+    streamBody = () => sseBody(),
+    statusWhenInFlight = null,
+    onStreamRequest = () => {}
 } = {}) {
     await page.route(/\/api\/app\/chat\/turn$/, async (route) => {
         if (route.request().method() !== 'GET') return route.fallback();
@@ -44,17 +46,18 @@ async function stubRestore(page, {
             status: 200,
             contentType: 'application/json',
             body: JSON.stringify(inFlight
-                ? {
+                ? (statusWhenInFlight || {
                     inFlight: true,
                     elapsedMs: 42000,
                     conversationId: CONV_ID,
                     turnId: 'turn-restore-1',
                     progress: PROGRESS
-                }
+                })
                 : { inFlight: false })
         });
     });
     await page.route(/\/api\/app\/chat\/turn\/stream/, async (route) => {
+        onStreamRequest(route.request());
         await route.fulfill({
             status: 200,
             headers: {
@@ -154,3 +157,70 @@ test('when the turn goes idle, a dropped restore stream clears Stop/Queue', asyn
     await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Queue message' })).toHaveCount(0);
 });
+
+test('a restore retry whose first events belong to a later turn does not hydrate them', async ({ page }) => {
+    await login(page);
+    const streamUrls = [];
+    let streams = 0;
+    await stubRestore(page, {
+        onStreamRequest: (request) => { streamUrls.push(request.url()); },
+        streamBody: () => {
+            streams += 1;
+            if (streams === 1) return sseBody();
+            return sseFrame('start', { conversationId: CONV_ID, turnId: 'turn-b' })
+                + sseFrame('snapshot', {
+                    userContent: 'queued follow-up',
+                    draft: 'Turn B draft',
+                    typing: false,
+                    steps: []
+                });
+        }
+    });
+    await page.goto(`/app/study/${CONV_ID}`);
+    await expect(page.getByText('Looking that up…')).toBeVisible();
+    await expect(page.getByText('What is a Grassmannian?')).toBeVisible();
+    await expect.poll(() => streams, { timeout: 8_000 }).toBeGreaterThanOrEqual(2);
+    await expect(page.getByText('Turn B draft')).toHaveCount(0);
+    await expect(page.getByText('queued follow-up')).toHaveCount(0);
+    await expect(page.getByText('Looking that up…')).toBeVisible();
+    expect(streamUrls.length).toBeGreaterThanOrEqual(2);
+    for (const url of streamUrls) {
+        expect(url).toContain('turnId=turn-restore-1');
+    }
+});
+
+test('idle cleanup keeps the incognito transcript', async ({ page }) => {
+    await login(page);
+    let inFlight = true;
+    const incognitoProgress = {
+        userContent: 'Secret question',
+        draft: 'A private draft…',
+        typing: false,
+        steps: []
+    };
+    await stubRestore(page, {
+        turnInFlight: () => inFlight,
+        statusWhenInFlight: {
+            inFlight: true,
+            elapsedMs: 8000,
+            conversationId: null,
+            turnId: 'turn-incog-1',
+            progress: incognitoProgress
+        },
+        streamBody: () => sseFrame('start', { conversationId: null, turnId: 'turn-incog-1' })
+            + sseFrame('snapshot', incognitoProgress)
+    });
+    await page.goto('/app/study');
+    await page.getByRole('button', { name: /Incognito/i }).click();
+    await expect(page.getByText('Secret question')).toBeVisible();
+    await expect(page.getByText('A private draft…')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Queue message' })).toBeVisible();
+    inFlight = false;
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 12_000 });
+    await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Queue message' })).toHaveCount(0);
+    await expect(page.getByText('Secret question')).toBeVisible();
+    await expect(page.getByText('A private draft…')).toBeVisible();
+    await page.screenshot({ path: '/opt/cursor/artifacts/study_incognito_idle_keeps_transcript.png', fullPage: true });
+});
+

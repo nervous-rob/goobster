@@ -494,6 +494,35 @@ describe('chat routes', () => {
         expect(events.find((row) => row.event === 'snapshot').data.draft).toBe('Hel');
     });
 
+    test('reconnect stream with a mismatched turnId query does not snapshot the live turn', async () => {
+        const cookie = await login();
+        fakeChat.attachToTurn.mockImplementationOnce((_userId, _listener, expectedTurnId) => {
+            expect(expectedTurnId).toBe('turn-a');
+            return {
+                snapshot: { userContent: 'queued', draft: 'Turn B draft' },
+                conversationId: 9,
+                turnId: 'turn-b',
+                unsubscribe: () => {}
+            };
+        });
+        const stream = await request({
+            reqPath: '/api/app/chat/turn/stream?turnId=turn-a',
+            headers: { Cookie: cookie }
+        });
+        expect(stream.status).toBe(200);
+        const events = stream.raw.split('\n\n').filter(Boolean).map((block) => {
+            const event = block.match(/^event: (.*)$/m)?.[1];
+            const data = block.match(/^data: (.*)$/m)?.[1];
+            return { event, data: data ? JSON.parse(data) : null };
+        }).filter((row) => row.event);
+        expect(events.some((row) => row.event === 'start')).toBe(false);
+        expect(events.some((row) => row.data?.draft === 'Turn B draft')).toBe(false);
+        expect(events.at(-1).event).toBe('done');
+        expect(fakeChat.attachToTurn).toHaveBeenCalledWith(
+            USER, expect.any(Object), 'turn-a'
+        );
+    });
+
     test('turn validation failures stay proper HTTP errors (no stream)', async () => {
         const cookie = await login();
         fakeChat.startTurn.mockImplementationOnce(() => {

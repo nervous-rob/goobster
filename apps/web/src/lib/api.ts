@@ -551,16 +551,44 @@ export function streamChat(payload: Record<string, unknown>, handlers: ChatHandl
 }
 
 /** Reattach to an in-flight Study turn (snapshot + live events). */
-export function streamLiveTurn(handlers: ChatHandlers = {}, signal?: AbortSignal | null) {
-    return readSse('/api/app/chat/turn/stream', null, (event, data) => {
-        if (event === 'start') handlers.onStart?.(data as { conversationId?: number; turnId?: string });
-        else if (event === 'snapshot') handlers.onSnapshot?.(data as TurnProgress);
+export function streamLiveTurn(
+    handlers: ChatHandlers = {},
+    signal?: AbortSignal | null,
+    turnId?: string | null
+) {
+    const expected = turnId ? String(turnId) : null;
+    const qs = expected ? `?turnId=${encodeURIComponent(expected)}` : '';
+    // Until a matching `start` arrives, ignore snapshots/deltas so a retry
+    // cannot hydrate a later queued turn into this chat. `done` still ends
+    // the stream so the original turn can settle.
+    let bound = expected;
+    let matching = !expected;
+    return readSse(`/api/app/chat/turn/stream${qs}`, null, (event, data) => {
+        if (event === 'start') {
+            const incoming = (data as { turnId?: string })?.turnId;
+            if (bound && incoming && incoming !== bound) {
+                matching = false;
+                return;
+            }
+            if (incoming) bound = String(incoming);
+            matching = true;
+            handlers.onStart?.(data as { conversationId?: number; turnId?: string });
+            return;
+        }
+        if (event === 'done') {
+            handlers.onDone?.(data as { ok?: boolean });
+            return;
+        }
+        if (event === 'error') {
+            handlers.onError?.(data as { message?: string });
+            return;
+        }
+        if (!matching) return;
+        if (event === 'snapshot') handlers.onSnapshot?.(data as TurnProgress);
         else if (event === 'typing') handlers.onTyping?.();
         else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');
         else if (event === 'tool') handlers.onTool?.(data as ToolEvent);
         else if (event === 'message') handlers.onMessage?.(data as { content: string });
-        else if (event === 'error') handlers.onError?.(data as { message?: string });
-        else if (event === 'done') handlers.onDone?.(data as { ok?: boolean });
     }, signal);
 }
 

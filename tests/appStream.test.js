@@ -1,7 +1,8 @@
 /**
  * Reconnect SSE for an in-flight Study turn: the stream is bound to the
- * turnId it first saw, so a queued follow-up (even in another chat) cannot
- * splice its snapshot into the previous conversation.
+ * requested turnId (or the first turn it sees), so a queued follow-up
+ * cannot splice its snapshot into the previous conversation — including
+ * when the retry's first response already belongs to that later turn.
  */
 const { streamLiveTurnProgress } = require('@goobster/core/web/appStream');
 
@@ -123,4 +124,54 @@ test('switching to a local listener for the same turn keeps watching it', async 
     expect(events.find((row) => row.event === 'start').data.turnId).toBe('turn-a');
     expect(events.some((row) => row.data?.draft === 'still going')).toBe(true);
     expect(events.at(-1).event).toBe('done');
+});
+
+test('expected turnId rejects a stream whose first attach belongs to a later turn', async () => {
+    const res = mockRes();
+    const unsubscribeB = jest.fn();
+    const chat = {
+        attachToTurn: (_userId, _listener, expectedTurnId) => {
+            expect(expectedTurnId).toBe('turn-a');
+            return {
+                snapshot: { userContent: 'queued', draft: 'Turn B draft' },
+                conversationId: 2,
+                turnId: 'turn-b',
+                unsubscribe: unsubscribeB
+            };
+        },
+        getPersistedTurn: async () => ({
+            turnId: 'turn-b',
+            conversationId: 2,
+            progress: { userContent: 'queued', draft: 'Turn B draft' }
+        })
+    };
+    await streamLiveTurnProgress(res, { userId: 'u1', chat, expectedTurnId: 'turn-a' });
+    const events = sseEvents(res);
+    expect(events.some((row) => row.event === 'start')).toBe(false);
+    expect(events.some((row) => row.data?.draft === 'Turn B draft')).toBe(false);
+    expect(events.some((row) => row.data?.turnId === 'turn-b')).toBe(false);
+    expect(unsubscribeB).toHaveBeenCalled();
+    expect(events.at(-1).event).toBe('done');
+    expect(res.ended).toBe(true);
+});
+
+test('expected turnId rejects a first persist that belongs to a later turn', async () => {
+    const res = mockRes();
+    const chat = {
+        attachToTurn: (_userId, _listener, expectedTurnId) => {
+            expect(expectedTurnId).toBe('turn-a');
+            return noLocalTurn();
+        },
+        getPersistedTurn: async () => ({
+            turnId: 'turn-b',
+            conversationId: 2,
+            progress: { userContent: 'queued', draft: 'Turn B draft' }
+        })
+    };
+    await streamLiveTurnProgress(res, { userId: 'u1', chat, expectedTurnId: 'turn-a' });
+    const events = sseEvents(res);
+    expect(events.some((row) => row.event === 'start')).toBe(false);
+    expect(events.some((row) => row.data?.draft === 'Turn B draft')).toBe(false);
+    expect(events.at(-1).event).toBe('done');
+    expect(res.ended).toBe(true);
 });

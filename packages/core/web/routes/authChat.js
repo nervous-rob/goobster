@@ -262,9 +262,14 @@ function mountAuthChat(app, ctx, h) {
                 gateway: ctx.gateway,
                 userName: req.webUser.userName
             })).catch(() => {});
+            const rawTurnId = req.query?.turnId;
+            const expectedTurnId = typeof rawTurnId === 'string' && rawTurnId.trim()
+                ? rawTurnId.trim()
+                : null;
             await streamLiveTurnProgress(res, {
                 userId: req.webUser.userId,
-                chat: ctx.chat
+                chat: ctx.chat,
+                expectedTurnId
             });
         } catch (error) {
             if (res.headersSent) return;
