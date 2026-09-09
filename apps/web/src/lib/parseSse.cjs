@@ -28,7 +28,10 @@ const HINT_TO_KEYS = {
     tasks: [['tasks'], ['home']],
     attention: [['attention'], ['home']],
     observatory: [['observatory']],
-    'project-invites': [['project-invites'], ['observatory']]
+    'project-invites': [['project-invites'], ['observatory']],
+    settings: [['settings']],
+    'chat-settings': [['chat-settings']],
+    'voice-settings': [['voice-settings']]
 };
 
 /**

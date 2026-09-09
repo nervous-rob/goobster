@@ -268,3 +268,93 @@ export type ApiErrorShape = {
     message: string;
     details?: unknown;
 };
+
+export type SettingSection<TValues = Record<string, unknown>, TEffective = Record<string, unknown>> = {
+    revision: number;
+    scope: 'private' | 'account' | 'device';
+    values: TValues;
+    effective: TEffective;
+    sources: Record<string, string>;
+    appliesTo: string[];
+    providers?: Array<{ key: string; name: string; configured: boolean; chatModel?: string }>;
+    thoughtfulAvailable?: boolean;
+    categories?: string[];
+    initiativeLevels?: string[];
+};
+
+export type UserSettingsResponse = {
+    schemaVersion: number;
+    sections: {
+        profile: SettingSection<{
+            callGoobster: string | null;
+            callUser: string | null;
+            customInstructions: string | null;
+            personalityDirective: string | null;
+            memeMode: boolean;
+        }>;
+        chat: SettingSection<{
+            provider: string | null;
+            model: string | null;
+            reasoningEffort: string | null;
+            thoughtful?: boolean;
+        }>;
+        voice: SettingSection<{
+            voiceId: string | null;
+            voiceName: string | null;
+            speed: number;
+        }>;
+        initiative: SettingSection<{
+            enabled: boolean;
+            initiative: string;
+            maxContactsPerDay: number;
+            contactCooldownMinutes: number;
+            quietStartMinute: number | null;
+            quietEndMinute: number | null;
+            boundaries: Record<string, { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean }>;
+        }>;
+        memory: SettingSection<{
+            retentionDays: number | null;
+        }>;
+        appearance: SettingSection<{
+            theme: 'light' | 'dark' | 'system';
+            linkByTag: boolean;
+        }>;
+        connections: SettingSection<Record<string, { connected: boolean; verifiedAccount: string | null }>>;
+        account: SettingSection<{
+            userId: string;
+            username: string;
+            avatar: string | null;
+        }>;
+    };
+    capabilities: {
+        stt: boolean;
+        tts: boolean;
+        liveVoice?: boolean;
+    };
+};
+
+export type SectionUpdateResponse = {
+    section: string;
+    revision: number;
+    data: SettingSection;
+};
+
+export type ResetPreviewResponse = {
+    section: string;
+    currentRevision: number;
+    currentValues: Record<string, unknown>;
+    proposedValues: Record<string, unknown>;
+    changes: Record<string, unknown>;
+};
+
+export type RetentionPreviewResponse = {
+    section: 'memory';
+    currentRevision: number;
+    currentRetentionDays: number | null;
+    proposedRetentionDays: number | null;
+    memoryCount: number;
+    affectedCount: number;
+    dataClasses: string[];
+};
+
+export type SettingsSectionId = keyof UserSettingsResponse['sections'];

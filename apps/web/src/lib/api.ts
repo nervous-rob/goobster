@@ -1,4 +1,4 @@
-import type { AppConfig, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress } from './types';
+import type { AppConfig, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -80,6 +80,17 @@ export const api = {
     searchMessages: (query: string, limit = 20) =>
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
+    settings: () => request<UserSettingsResponse>('/api/app/settings'),
+    updateSettingsSection: (section: string, body: { expectedRevision?: number | null; changes: Record<string, unknown> }) =>
+        request<SectionUpdateResponse>(`/api/app/settings/${encodeURIComponent(section)}`, { method: 'PATCH', body }),
+    resetSettingsPreview: (section: string) =>
+        request<ResetPreviewResponse>(`/api/app/settings/${encodeURIComponent(section)}/reset-preview`, { method: 'POST' }),
+    resetSettingsSection: (section: string, expectedRevision?: number | null) =>
+        request<SectionUpdateResponse>(`/api/app/settings/${encodeURIComponent(section)}/reset`, { method: 'POST', body: { expectedRevision } }),
+    retentionPreview: (days: number | null) =>
+        request<RetentionPreviewResponse>('/api/app/settings/memory/retention-preview', { method: 'POST', body: { days } }),
+    applyRetention: (days: number | null, expectedRevision?: number | null) =>
+        request<SectionUpdateResponse & { purged: number }>('/api/app/settings/memory/retention', { method: 'POST', body: { days, expectedRevision } }),
     listModels: (provider?: string | null) =>
         request(`/api/app/chat/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
     setThoughtful: (thoughtful: boolean) =>
