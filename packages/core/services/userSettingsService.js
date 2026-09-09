@@ -893,7 +893,10 @@ class UserSettingsService {
 
     async _prepareInitiativeChanges(userId, changes) {
         const existing = await attentionPolicyService.get(userId);
-        const willEnable = ('enabled' in changes) ? Boolean(changes.enabled) : (existing ? Boolean(existing.enabled) : false);
+
+        if ('enabled' in changes && typeof changes.enabled !== 'boolean') {
+            throw new UserSettingsError(400, 'BAD_REQUEST', 'enabled must be a boolean.');
+        }
 
         if ('initiative' in changes) {
             const lvl = changes.initiative;

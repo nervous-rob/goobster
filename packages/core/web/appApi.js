@@ -55,8 +55,9 @@ function createWebAppApp(ctx) {
     mountSpitball(app, ctx, helpers);
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
-    mountEventsStatic(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
+    // Last: the static client + API 404 fallback
+    mountEventsStatic(app, ctx, helpers);
     return app;
 }
 
