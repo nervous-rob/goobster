@@ -13,9 +13,10 @@ describe('toolsRegistry catalog', () => {
         expect(TOOL_ORDER[3]).toBe('observatory');
         expect(TOOL_ORDER).toContain('manageParlor');
         expect(TOOL_ORDER).toContain('tavernInfo');
+        expect(TOOL_ORDER).toContain('setSpeechAccent');
         expect(TOOL_ORDER[TOOL_ORDER.length - 1]).toBe('executePlan');
-        expect(TOOL_ORDER).toHaveLength(48);
-        expect(new Set(TOOL_ORDER).size).toBe(48);
+        expect(TOOL_ORDER).toHaveLength(49);
+        expect(new Set(TOOL_ORDER).size).toBe(49);
     });
 
     test('getDefinitions preserves that order after gating', async () => {

@@ -116,6 +116,8 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     tts_voice_name TEXT,
     -- Speech playback speed multiplier (client-side), NULL = 1.0
     tts_voice_speed REAL CHECK (tts_voice_speed IS NULL OR (tts_voice_speed >= 0.5 AND tts_voice_speed <= 2.0)),
+    -- Portal TTS accent id (utils/ttsAccent.js). NULL = no audio tag.
+    tts_accent TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

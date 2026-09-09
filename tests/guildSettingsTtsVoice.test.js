@@ -28,20 +28,20 @@ afterAll(async () => {
 describe('getTtsVoice / setTtsVoice', () => {
     test('defaults to no voice and no speed', async () => {
         expect(await getTtsVoice('600000000000000099')).toEqual({
-            voiceId: null, voiceName: null, speed: null
+            voiceId: null, voiceName: null, speed: null, accent: null
         });
     });
 
     test('stores a guild voice and reads it back (cache invalidated)', async () => {
         const saved = await setTtsVoice(GUILD, { voiceId: 'voiceAAA111111111111', voiceName: 'Aria' });
-        expect(saved).toEqual({ voiceId: 'voiceAAA111111111111', voiceName: 'Aria', speed: null });
+        expect(saved).toEqual({ voiceId: 'voiceAAA111111111111', voiceName: 'Aria', speed: null, accent: null });
         expect(await getTtsVoice(GUILD)).toEqual(saved);
     });
 
     test('a DM scope stores independently of guilds (per-user voice)', async () => {
         await setTtsVoice(dmScopeId(USER), { voiceId: 'voiceBBB222222222222', voiceName: 'Baxter', speed: 1.25 });
         expect(await getTtsVoice(dmScopeId(USER))).toEqual({
-            voiceId: 'voiceBBB222222222222', voiceName: 'Baxter', speed: 1.25
+            voiceId: 'voiceBBB222222222222', voiceName: 'Baxter', speed: 1.25, accent: null
         });
         // The guild row from the previous test is untouched
         expect((await getTtsVoice(GUILD)).voiceId).toBe('voiceAAA111111111111');
@@ -50,13 +50,20 @@ describe('getTtsVoice / setTtsVoice', () => {
     test('partial updates leave other fields alone', async () => {
         await setTtsVoice(GUILD, { speed: 1.5 });
         expect(await getTtsVoice(GUILD)).toEqual({
-            voiceId: 'voiceAAA111111111111', voiceName: 'Aria', speed: 1.5
+            voiceId: 'voiceAAA111111111111', voiceName: 'Aria', speed: 1.5, accent: null
         });
     });
 
     test('null clears back to the default voice', async () => {
         const cleared = await setTtsVoice(GUILD, { voiceId: null, voiceName: null, speed: null });
-        expect(cleared).toEqual({ voiceId: null, voiceName: null, speed: null });
+        expect(cleared).toEqual({ voiceId: null, voiceName: null, speed: null, accent: null });
+    });
+
+    test('stores an accent independently of the voice id', async () => {
+        await setTtsVoice(GUILD, { accent: 'british' });
+        expect(await getTtsVoice(GUILD)).toEqual({
+            voiceId: null, voiceName: null, speed: null, accent: 'british'
+        });
     });
 
     test('rejects out-of-range speeds', async () => {

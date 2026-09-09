@@ -14,8 +14,8 @@
  * Everything degrades gracefully: no keys means capabilities() reports both
  * features off and the client hides the buttons - never an error. Audio is
  * transcoded and forgotten; the only persisted state is the user's voice
- * preference (voice id + playback speed), stored on the guild_settings row
- * under the dm:<userId> scope - the same row privacyService already erases
+ * preference (voice id, playback speed, accent), stored on the guild_settings
+ * row under the dm:<userId> scope - the same row privacyService already erases
  * on /forget-me, so no new erasure surface.
  */
 
@@ -23,6 +23,12 @@ const fetch = require('node-fetch');
 const crypto = require('node:crypto');
 const { stripUrlsForSpeech } = require('./voice/speechText');
 const { dmScopeId } = require('../utils/dmScope');
+const {
+    AUDIO_TAG_MODEL,
+    listAccents,
+    legalizeAccent,
+    applyAccentTag
+} = require('../utils/ttsAccent');
 
 // Browser MediaRecorder output formats (Chrome/Firefox webm+opus, Safari
 // mp4/aac) plus plain wave/ogg for exotic clients.
@@ -198,14 +204,21 @@ class WebVoiceService {
     /**
      * The user's saved voice preference (their dm:<userId> settings row).
      * @param {Object} params - { userId }
-     * @returns {Promise<{ voiceId: string|null, voiceName: string|null, speed: number }>}
+     * @returns {Promise<{ voiceId: string|null, voiceName: string|null, speed: number, accent: string|null, accentLabel: string|null, accents: Array<{id: string, label: string}> }>}
      */
     async getVoiceSettings({ userId }) {
         const voice = await this._guildSettings().getTtsVoice(dmScopeId(userId));
+        let accent = null;
+        try {
+            accent = legalizeAccent(voice.accent);
+        } catch { /* stale/unknown id stored before a catalog change */ }
         return {
             voiceId: voice.voiceId,
             voiceName: voice.voiceName,
-            speed: voice.speed ?? 1
+            speed: voice.speed ?? 1,
+            accent: accent?.id || null,
+            accentLabel: accent?.label || null,
+            accents: listAccents()
         };
     }
 
@@ -213,18 +226,20 @@ class WebVoiceService {
      * Save the user's voice preference. voiceId may be an ElevenLabs voice
      * id or a human name (resolved against the account library); null
      * clears back to the server default. Fields left undefined are kept.
-     * @param {Object} params - { userId, voiceId?, speed? }
+     * @param {Object} params - { userId, voiceId?, speed?, accent? }
      */
-    async setVoiceSettings({ userId, voiceId, speed }) {
+    async setVoiceSettings({ userId, voiceId, speed, accent }) {
         const changes = {};
         if (voiceId !== undefined) changes.voiceId = voiceId;
         if (speed !== undefined) changes.speed = speed;
+        if (accent !== undefined) changes.accent = accent;
         try {
             const userSettingsService = require('./userSettingsService');
             await userSettingsService.updateSection({
                 userId,
                 section: 'voice',
-                changes
+                changes,
+                voiceCatalog: this._catalogTts()
             });
         } catch (error) {
             throw new WebVoiceError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
@@ -349,27 +364,36 @@ class WebVoiceService {
         if (raw.length > MAX_TTS_INPUT_CHARS) {
             throw new WebVoiceError(400, 'TEXT_TOO_LONG', 'That message is too long to read aloud.');
         }
-        const speakable = speechTextFromMarkdown(raw);
+        const settings = await this._guildSettings().getTtsVoice(dmScopeId(userId)).catch(() => null);
+        let speakable = speechTextFromMarkdown(raw);
         if (!speakable) {
             throw new WebVoiceError(400, 'NOTHING_SPEAKABLE',
                 'That message is all code, math, or links - nothing to read aloud.');
         }
+        let accent = null;
+        try {
+            accent = legalizeAccent(settings?.accent);
+        } catch { /* ignore stale ids */ }
+        if (accent) speakable = applyAccentTag(speakable, accent);
 
         await this._checkRateLimit('web_voice_tts', userId, TTS_RATE_LIMIT, 'read-alouds');
 
         // The user's saved voice (their dm scope), unless explicitly overridden
         let voice = voiceId;
         if (!voice) {
-            try {
-                voice = (await this._guildSettings().getTtsVoice(dmScopeId(userId))).voiceId;
-            } catch { /* default voice */ }
+            voice = settings?.voiceId || null;
         }
+        // Flash ignores audio tags; v3 is the model that reads them. Portal
+        // TTS is after the full reply, so the extra latency is acceptable.
+        const modelId = accent ? AUDIO_TAG_MODEL : null;
 
         const tts = this._ttsService();
         if (tts) {
             // The shared service falls back to the default voice when the
             // requested voice is stale or unresolvable.
-            const response = await tts.fetchStream(speakable, { voiceId: voice || null });
+            const opts = { voiceId: voice || null };
+            if (modelId) opts.modelId = modelId;
+            const response = await tts.fetchStream(speakable, opts);
             return { stream: response.body, contentType: 'audio/mpeg' };
         }
 
@@ -378,7 +402,9 @@ class WebVoiceService {
             throw new WebVoiceError(503, 'TTS_UNAVAILABLE',
                 'Read-aloud needs an ElevenLabs API key on this server.');
         }
-        return await this._directElevenLabsTts({ text: speakable, apiKey, voiceId: voice || null });
+        return await this._directElevenLabsTts({
+            text: speakable, apiKey, voiceId: voice || null, modelId
+        });
     }
 
     /**
@@ -386,9 +412,9 @@ class WebVoiceService {
      * voice stack failed to initialize but the key exists). Same voice and
      * model resolution rules as ElevenLabsTTSService's defaults.
      */
-    async _directElevenLabsTts({ text, apiKey, voiceId: voiceOverride = null }) {
+    async _directElevenLabsTts({ text, apiKey, voiceId: voiceOverride = null, modelId = null }) {
         const voiceId = voiceOverride || process.env.ELEVENLABS_VOICE_ID || this._configVoiceId() || '21m00Tcm4TlvDq8ikWAM';
-        const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
+        const model = modelId || process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
         const res = await this._fetch()(
             `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`,
             {
@@ -396,8 +422,10 @@ class WebVoiceService {
                 headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     text,
-                    model_id: modelId,
-                    voice_settings: { stability: 0.35, similarity_boost: 0.85 }
+                    model_id: model,
+                    voice_settings: /^eleven_v3/i.test(model)
+                        ? { stability: 0.4, similarity_boost: 0.75 }
+                        : { stability: 0.35, similarity_boost: 0.85 }
                 })
             }
         );

@@ -339,7 +339,7 @@ async function setMemoryRetentionDays(guildId, days) {
  * Gets the TTS voice for a scope (a guild, or a user's dm:<userId> scope).
  * Null fields mean "use the globally configured default voice".
  * @param {string} guildId - The Discord guild ID or DM scope id
- * @returns {Promise<{voiceId: string|null, voiceName: string|null, speed: number|null}>}
+ * @returns {Promise<{voiceId: string|null, voiceName: string|null, speed: number|null, accent: string|null}>}
  */
 async function getTtsVoice(guildId) {
     const cached = guildSettingsCache.get(guildId);
@@ -349,19 +349,20 @@ async function getTtsVoice(guildId) {
 
     try {
         const row = await db.get(
-            'SELECT tts_voice_id, tts_voice_name, tts_voice_speed FROM guild_settings WHERE guildId = @guildId',
+            'SELECT tts_voice_id, tts_voice_name, tts_voice_speed, tts_accent FROM guild_settings WHERE guildId = @guildId',
             { guildId }
         );
         const voice = {
             voiceId: row?.tts_voice_id || null,
             voiceName: row?.tts_voice_name || null,
-            speed: row?.tts_voice_speed ?? null
+            speed: row?.tts_voice_speed ?? null,
+            accent: row?.tts_accent || null
         };
         getCacheEntry(guildId).ttsVoice = voice;
         return voice;
     } catch (error) {
         console.error('Error getting TTS voice setting:', error);
-        return { voiceId: null, voiceName: null, speed: null };
+        return { voiceId: null, voiceName: null, speed: null, accent: null };
     }
 }
 
@@ -370,10 +371,10 @@ async function getTtsVoice(guildId) {
  * null clears back to the default. The caller is responsible for resolving
  * names to real ElevenLabs voice ids first.
  * @param {string} guildId - The Discord guild ID or DM scope id
- * @param {Object} voice - { voiceId, voiceName, speed } (all optional)
- * @returns {Promise<{voiceId: string|null, voiceName: string|null, speed: number|null}>}
+ * @param {Object} voice - { voiceId, voiceName, speed, accent } (all optional)
+ * @returns {Promise<{voiceId: string|null, voiceName: string|null, speed: number|null, accent: string|null}>}
  */
-async function setTtsVoice(guildId, { voiceId, voiceName, speed } = {}) {
+async function setTtsVoice(guildId, { voiceId, voiceName, speed, accent } = {}) {
     if (speed !== undefined && speed !== null) {
         const value = Number(speed);
         if (!Number.isFinite(value) || value < 0.5 || value > 2.0) {
@@ -384,6 +385,7 @@ async function setTtsVoice(guildId, { voiceId, voiceName, speed } = {}) {
     if (voiceId !== undefined) await upsertGuildSetting(guildId, 'tts_voice_id', voiceId);
     if (voiceName !== undefined) await upsertGuildSetting(guildId, 'tts_voice_name', voiceName);
     if (speed !== undefined) await upsertGuildSetting(guildId, 'tts_voice_speed', speed);
+    if (accent !== undefined) await upsertGuildSetting(guildId, 'tts_accent', accent);
     delete getCacheEntry(guildId).ttsVoice;
     return await getTtsVoice(guildId);
 }

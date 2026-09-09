@@ -10,6 +10,8 @@ const { PermissionFlagsBits } = require('discord.js');
 const { windowLines, formatTextWindow, fenceLanguage } = require('../toolResultWindow');
 const {
     getCommandAdapter,
+    isWebOrAutomationTurn,
+    discordVoiceChannel,
     resolveNotionAccess,
     isUserInBotVoiceChannel,
     getCommandResponse,
@@ -94,7 +96,7 @@ module.exports = {
     playTrack: {
         definition: {
             name: 'playTrack',
-            description: 'Queue or play a music track in the user\'s current voice channel.',
+            description: 'Queue or play a music track in the user\'s current Discord voice channel. Not available in the web app.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -125,10 +127,13 @@ module.exports = {
         },
         execute: async ({ track, subcommand = 'play', volume, playlistName, searchQuery, interactionContext }) => {
             if (!interactionContext) return '❌ Cannot play music without an interaction context.';
+            if (isWebOrAutomationTurn(interactionContext)) {
+                return '❌ Music playback needs a Discord voice channel. It is not available in the web app.';
+            }
 
             // Check if user is in a voice channel for relevant commands
             if (['play', 'pause', 'resume', 'skip', 'stop', 'volume'].includes(subcommand)) {
-                const voiceChannel = interactionContext.member.voice.channel;
+                const voiceChannel = discordVoiceChannel(interactionContext);
                 if (!voiceChannel) {
                     return '❌ You need to be in a voice channel to use this command!';
                 }
@@ -206,19 +211,33 @@ module.exports = {
     speakMessage: {
         definition: {
             name: 'speakMessage',
-            description: 'Convert text to speech in the user\'s voice channel.',
+            description: 'Speak text in the Discord voice channel the user is already in. Not for accents or TTS engine settings — just write the words in that accent. voice is an ElevenLabs voice name or id from the server library, never an accent or a settings object.',
             parameters: {
                 type: 'object',
                 properties: {
                     message: { type: 'string', description: 'Text to speak' },
-                    voice: { type: 'string', description: 'Voice style (optional)' },
-                    style: { type: 'string', description: 'Speech effect style (optional)' }
+                    voice: {
+                        type: 'string',
+                        description: 'Optional ElevenLabs voice name or id already in the server library. Not an accent, language, or voice_settings blob.'
+                    },
+                    style: {
+                        type: 'string',
+                        description: 'Optional speech-effect preset (sing, happy, sad, angry, whisper, …). Not an accent or engine setting.'
+                    }
                 },
                 required: ['message']
             }
         },
         execute: async ({ message, voice, style, interactionContext }) => {
             if (!interactionContext) return '❌ Cannot speak without interaction context.';
+            if (isWebOrAutomationTurn(interactionContext)) {
+                return '❌ Discord /speak is not available here. This reply is already read aloud. '
+                    + 'If they asked for an accent or a way of speaking, just do that in your words — '
+                    + 'do not pass voice, style, or engine settings to an API. They pick the voice in Voice settings.';
+            }
+            if (!discordVoiceChannel(interactionContext)) {
+                return '❌ You need to be in a Discord voice channel for me to speak there.';
+            }
 
             const speakCmd = getCommandAdapter('speak');
             if (!speakCmd) return '❌ Text-to-speech is not available in this context.';
@@ -233,8 +252,46 @@ module.exports = {
                 getBoolean: () => false // default for other bool options
             };
 
-            await speakCmd.execute(interactionContext);
-            return `🔊 Speaking your message...`;
+            try {
+                await speakCmd.execute(interactionContext);
+                return '🔊 Speaking your message...';
+            } catch (error) {
+                console.error('SpeakMessage command error:', error);
+                return `❌ Error: ${error.message || 'Could not speak that in the voice channel.'}`;
+            }
+        }
+    },
+    setSpeechAccent: {
+        definition: {
+            name: 'setSpeechAccent',
+            description: 'Set or clear the accent used when this web conversation is read aloud. Applies an ElevenLabs v3 audio tag to later TTS (Study voice and Listen). Does not change the chosen voice. Pass accent "none" to clear. Do not put audio tags in your visible reply.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    accent: {
+                        type: 'string',
+                        description: 'Accent to use (american, british, irish, scottish, australian, indian, french, german, spanish, italian, southern-us) or "none" to clear.'
+                    }
+                },
+                required: ['accent']
+            }
+        },
+        execute: async ({ accent, interactionContext }) => {
+            if (!isWebOrAutomationTurn(interactionContext)) {
+                return '❌ Speech accent is a web-portal setting. In Discord, pick a voice with /setvoice; live voice stays on the fast Flash model.';
+            }
+            const userId = interactionContext?.user?.id;
+            if (!userId) return '❌ I could not tell whose voice settings to change.';
+            const webVoiceService = require('../../services/webVoiceService');
+            try {
+                const saved = await webVoiceService.setVoiceSettings({ userId, accent });
+                if (!saved.accent) {
+                    return '🎙️ Accent cleared. Read-aloud uses the selected voice with no regional tag.';
+                }
+                return `🎙️ Read-aloud accent set to ${saved.accentLabel}. Later spoken replies use ElevenLabs v3 with a ${saved.accentLabel} audio tag.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
         }
     },
     echoMessage: {

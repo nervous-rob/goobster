@@ -120,6 +120,23 @@ function listenNotifications(channel, onPayload, options = {}) {
 }
 
 /**
+ * LISTEN/NOTIFY channel for a logical bus name. Production keeps the
+ * base name so bot and api share one channel. Isolated Postgres tests
+ * suffix the private schema (same idea as advisory-lock keys) so
+ * parallel Jest workers cannot see each other's notifications.
+ * @param {string} base
+ * @returns {string}
+ */
+function notificationChannel(base) {
+    if (!/^[a-z_][a-z0-9_]*$/i.test(base)) {
+        throw new Error(`Bad notification channel base: ${base}`);
+    }
+    const a = getAdapter();
+    if (typeof a.notificationChannel === 'function') return a.notificationChannel(base);
+    return base;
+}
+
+/**
  * Run `fn` only if this process holds the named singleton-worker lock.
  *
  * On SQLite (lite = one process) this always acquires and runs `fn`.
@@ -169,6 +186,7 @@ module.exports = {
     getDb,
     rawQuery,
     listenNotifications,
+    notificationChannel,
     withSingletonLock,
     run,
     get,

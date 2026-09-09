@@ -24,6 +24,7 @@ const attentionPolicyService = require('./attentionPolicyService');
 const userIntegrationService = require('./userIntegrationService');
 const aiService = require('./aiService');
 const eventBusService = require('./eventBusService');
+const { listAccents, legalizeAccent } = require('../utils/ttsAccent');
 const {
     SECTIONS,
     EDITABLE_SECTIONS,
@@ -89,10 +90,11 @@ class UserSettingsService {
 
     /**
      * Read aggregated settings for a user.
-     * @param {Object} params - { userId, gateway }
+     * @param {Object} params - { userId, voice? } (voice: the portal voice
+     *   bridge, used only for its capabilities() report)
      * @returns {Promise<Object>}
      */
-    async getSettings({ userId, gateway = null }) {
+    async getSettings({ userId, voice = null }) {
         if (!userId) {
             throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
         }
@@ -208,24 +210,33 @@ class UserSettingsService {
 
         // --- 3. Voice Section ---
         const voiceSpeed = voiceCurrent.speed != null ? Number(voiceCurrent.speed) : 1.0;
+        let accent = null;
+        try {
+            accent = legalizeAccent(voiceCurrent.accent);
+        } catch { /* stale/unknown id stored before a catalog change */ }
         const voiceSection = {
             revision: revisions.voice || 1,
             scope: SCOPES.PRIVATE,
             values: {
                 voiceId: voiceCurrent.voiceId || null,
                 voiceName: voiceCurrent.voiceName || null,
-                speed: voiceSpeed
+                speed: voiceSpeed,
+                accent: accent?.id || null
             },
             effective: {
                 voiceId: voiceCurrent.voiceId || null,
                 voiceName: voiceCurrent.voiceName || '(Host default voice)',
-                speed: voiceSpeed
+                speed: voiceSpeed,
+                accent: accent?.id || null,
+                accentLabel: accent?.label || null
             },
             sources: {
                 voice: voiceCurrent.voiceId ? 'user-preference' : 'host-default',
-                speed: voiceCurrent.speed != null ? 'user-preference' : 'default'
+                speed: voiceCurrent.speed != null ? 'user-preference' : 'default',
+                accent: accent ? 'user-preference' : 'unset'
             },
-            appliesTo: SECTION_METADATA.voice.appliesTo
+            appliesTo: SECTION_METADATA.voice.appliesTo,
+            accents: listAccents()
         };
 
         // --- 4. Initiative Section ---
@@ -350,17 +361,20 @@ class UserSettingsService {
             appliesTo: SECTION_METADATA.account.appliesTo
         };
 
-        // Capabilities
+        // Capabilities: prefer the portal voice bridge (it knows about the live
+        // TTS stack) and fall back to key presence. Never instantiate the voice
+        // stack from a settings read.
         let voiceCaps = { stt: false, tts: false, liveVoice: false };
         try {
-            const { voiceService } = require('./serviceManager');
-            const hasElevenLabs = Boolean(require('../config/aiConfig').elevenlabs?.apiKey);
-            const hasOpenAi = Boolean(require('../config/aiConfig').openai?.apiKey);
-            voiceCaps = {
-                tts: hasElevenLabs && Boolean(voiceService?.tts && !voiceService.tts.disabled),
-                stt: hasOpenAi || hasElevenLabs,
-                liveVoice: Boolean(voiceService?.hasLiveSupport?.())
-            };
+            if (voice && typeof voice.capabilities === 'function') {
+                const caps = voice.capabilities();
+                voiceCaps = { stt: Boolean(caps.stt), tts: Boolean(caps.tts), liveVoice: Boolean(caps.live) };
+            } else {
+                const aiConfig = require('../config/aiConfig');
+                const hasElevenLabs = Boolean(aiConfig.elevenlabs?.apiKey);
+                const hasOpenAi = Boolean(aiConfig.openai?.apiKey);
+                voiceCaps = { stt: hasOpenAi || hasElevenLabs, tts: hasElevenLabs, liveVoice: hasElevenLabs };
+            }
         } catch { /* best effort */ }
 
         return {
@@ -382,10 +396,12 @@ class UserSettingsService {
     /**
      * Atomically validate, update, increment revision, and invalidate caches
      * for a settings section.
-     * @param {Object} params - { userId, section, changes, expectedRevision }
+     * @param {Object} params - { userId, section, changes, expectedRevision, voiceCatalog? }
+     *   voiceCatalog: optional TTS catalog (resolveVoice) used to validate a
+     *   voice id; defaults to the shared voice stack from serviceManager.
      * @returns {Promise<Object>} updated section and new revision
      */
-    async updateSection({ userId, section, changes = {}, expectedRevision = null }) {
+    async updateSection({ userId, section, changes = {}, expectedRevision = null, voiceCatalog = undefined }) {
         if (!userId) {
             throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
         }
@@ -419,7 +435,7 @@ class UserSettingsService {
         } else if (section === 'chat') {
             commitFn = await this._prepareChatChanges(userId, dmScope, changes);
         } else if (section === 'voice') {
-            commitFn = await this._prepareVoiceChanges(userId, dmScope, changes);
+            commitFn = await this._prepareVoiceChanges(userId, dmScope, changes, voiceCatalog);
         } else if (section === 'initiative') {
             commitFn = await this._prepareInitiativeChanges(userId, changes);
         } else if (section === 'memory') {
@@ -627,7 +643,8 @@ class UserSettingsService {
             case 'voice':
                 return {
                     voiceId: null,
-                    speed: 1.0
+                    speed: 1.0,
+                    accent: null
                 };
             case 'initiative':
                 return {
@@ -812,7 +829,17 @@ class UserSettingsService {
         };
     }
 
-    async _prepareVoiceChanges(userId, dmScope, changes) {
+    _sharedVoiceCatalog() {
+        try {
+            const { voiceService } = require('./serviceManager');
+            const tts = voiceService?.tts;
+            return tts && !tts.disabled ? tts : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async _prepareVoiceChanges(userId, dmScope, changes, voiceCatalog = undefined) {
         const update = {};
 
         if ('voiceId' in changes) {
@@ -821,8 +848,7 @@ class UserSettingsService {
                 update.voiceId = null;
                 update.voiceName = null;
             } else {
-                const { voiceService } = require('./serviceManager');
-                const tts = voiceService?.tts && !voiceService.tts.disabled ? voiceService.tts : null;
+                const tts = voiceCatalog !== undefined ? voiceCatalog : this._sharedVoiceCatalog();
                 if (!tts) {
                     throw new UserSettingsError(503, 'TTS_UNAVAILABLE',
                         'Voice selection needs an ElevenLabs API key on this server.');
@@ -844,6 +870,17 @@ class UserSettingsService {
                 throw new UserSettingsError(400, 'BAD_SPEED', 'Playback speed must be a number between 0.5 and 2.0.');
             }
             update.speed = sVal === 1 ? null : sVal;
+        }
+
+        if ('accent' in changes) {
+            const raw = changes.accent;
+            let resolved;
+            try {
+                resolved = legalizeAccent((raw === null || raw === '') ? null : String(raw));
+            } catch (error) {
+                throw new UserSettingsError(400, 'BAD_ACCENT', error.message);
+            }
+            update.accent = resolved ? resolved.id : null;
         }
 
         return async (tx) => {

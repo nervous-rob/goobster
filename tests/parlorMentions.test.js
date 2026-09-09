@@ -49,8 +49,8 @@ function fakeGateway() {
 }
 
 /** Collect parlor-mention events published while fn runs.
- *  Ignore other kinds: on Postgres the worker shares a LISTEN channel
- *  with earlier suites, and a late web-turn must not fail these tests.
+ *  Ignore other kinds: even with a schema-scoped LISTEN channel, a
+ *  late in-process web-turn from this suite must not fail these tests.
  */
 async function collectEvents(fn) {
     const events = [];

@@ -323,6 +323,14 @@ describe('event bus', () => {
         expect(() => eventBusService.publish('automation-ran', { userId: USER })).not.toThrow();
         unsubscribe();
     });
+
+    test('notificationChannel is a stable identifier (schema-scoped on isolated Postgres)', () => {
+        const name = db.notificationChannel('goobster_events');
+        expect(name).toMatch(/^[a-z_][a-z0-9_]*$/i);
+        expect(name.startsWith('goobster_events')).toBe(true);
+        expect(db.notificationChannel('goobster_events')).toBe(name);
+        expect(() => db.notificationChannel('not a channel')).toThrow(/Bad notification channel/);
+    });
 });
 
 describe('createApiApp', () => {

@@ -226,11 +226,13 @@ class ElevenLabsTTSService extends EventEmitter {
     /**
      * Fetch a streaming MP3 synthesis of `text`.
      * @param {string} text
-     * @param {Object} [opts] - { voiceId }: per-request voice override
-     *   (Parlor Live's per-persona voices); defaults to the configured
-     *   /setvoice voice.
+     * @param {Object} [opts] - { voiceId, modelId }
+     *   voiceId: per-request voice override (Parlor Live's per-persona
+     *   voices); defaults to the configured /setvoice voice.
+     *   modelId: per-request model (portal accents pass `eleven_v3`);
+     *   defaults to the configured Flash model.
      */
-    async fetchStream(text, { voiceId: voiceOverride = null } = {}) {
+    async fetchStream(text, { voiceId: voiceOverride = null, modelId = null } = {}) {
         // A stale/misspelled configured voice must not silence TTS entirely:
         // fall back to the default voice and keep speaking.
         const requested = voiceOverride || this.voiceId;
@@ -241,14 +243,18 @@ class ElevenLabsTTSService extends EventEmitter {
             console.warn(`[TTS] Voice "${requested}" could not be resolved (${error.message}); falling back to the default voice`);
             voiceId = DEFAULT_VOICE_ID;
         }
+        const model = modelId || this.modelId;
         // MP3 streaming endpoint – available on all plans (PCM requires Pro+)
         const url =
             `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream` +
             '?output_format=mp3_44100_128';
         const body = {
             text,
-            model_id: this.modelId,
-            voice_settings: { stability: 0.35, similarity_boost: 0.85 }
+            model_id: model,
+            // v3 reads audio tags more reliably at slightly lower stability.
+            voice_settings: /^eleven_v3/i.test(model)
+                ? { stability: 0.4, similarity_boost: 0.75 }
+                : { stability: 0.35, similarity_boost: 0.85 }
         };
         const res = await fetch(url, {
             method: 'POST',

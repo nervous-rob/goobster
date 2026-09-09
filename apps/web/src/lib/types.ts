@@ -302,7 +302,14 @@ export type UserSettingsResponse = {
             voiceId: string | null;
             voiceName: string | null;
             speed: number;
-        }>;
+            accent: string | null;
+        }, {
+            voiceId: string | null;
+            voiceName: string | null;
+            speed: number;
+            accent: string | null;
+            accentLabel: string | null;
+        }> & { accents?: Array<{ id: string; label: string }> };
         initiative: SettingSection<{
             enabled: boolean;
             initiative: string;

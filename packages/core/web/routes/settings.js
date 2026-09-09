@@ -10,10 +10,10 @@ function mountSettings(app, ctx, h) {
 
     // Read aggregated settings, section revisions, defaults/effective values, and capabilities
     app.get('/api/app/settings', requireAuth, chatRoute(async (req) =>
-        userSettingsService.getSettings({
-            userId: req.webUser.userId,
-            gateway: ctx.gateway
-        })
+            userSettingsService.getSettings({
+                userId: req.webUser.userId,
+                voice: ctx.voice
+            })
     ));
 
     // Atomically validate and save a partial section draft with optimistic concurrency

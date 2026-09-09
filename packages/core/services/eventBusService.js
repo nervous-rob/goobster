@@ -8,8 +8,10 @@
  *  - Always: an in-process EventEmitter, which is the whole story for the
  *    lite single-process deployment (SQLite or Postgres alike).
  *  - On Postgres: publish() additionally pg_notify()s the goobster_events
- *    channel, and the first subscriber starts a LISTEN connection, so
- *    events cross the bot/api process boundary with no new infrastructure.
+ *    channel (suffixed with the test-isolation schema under
+ *    GOOBSTER_PG_TEST_ISOLATE so parallel Jest workers do not share it),
+ *    and the first subscriber starts a LISTEN connection, so events
+ *    cross the bot/api process boundary with no new infrastructure.
  *    Events carry the publishing process id; a process skips its own
  *    notifications (it already delivered them locally).
  *
@@ -77,11 +79,15 @@ emitter.on('event', (event) => {
 let pgListenerStop = null;
 let pgListenerStarted = false;
 
+function pgChannel() {
+    return db.notificationChannel(CHANNEL);
+}
+
 function ensureCrossProcessListener() {
     if (pgListenerStarted) return;
     if (db.engine !== 'postgres') return; // lite: one process, local emitter is complete
     pgListenerStarted = true;
-    pgListenerStop = db.listenNotifications(CHANNEL, (text) => {
+    pgListenerStop = db.listenNotifications(pgChannel(), (text) => {
         let event;
         try {
             event = JSON.parse(text);
@@ -111,7 +117,7 @@ function publish(kind, payload = {}) {
         try {
             const text = JSON.stringify(event);
             if (text.length <= MAX_PAYLOAD_CHARS) {
-                db.rawQuery('SELECT pg_notify($1, $2)', [CHANNEL, text])
+                db.rawQuery('SELECT pg_notify($1, $2)', [pgChannel(), text])
                     .catch(error => logger.warn?.(`[events] pg_notify failed: ${error.message}`));
             }
         } catch (error) {

@@ -29,6 +29,7 @@ const COLUMN_MIGRATIONS = [
     ['guild_settings', 'tts_voice_name', 'tts_voice_name TEXT'],
     ['guild_settings', 'tts_voice_speed',
         'tts_voice_speed REAL CHECK (tts_voice_speed IS NULL OR (tts_voice_speed >= 0.5 AND tts_voice_speed <= 2.0))'],
+    ['guild_settings', 'tts_accent', 'tts_accent TEXT'],
     // Per-user custom instructions (web portal settings dialog)
     ['UserPreferences', 'custom_instructions', 'custom_instructions TEXT'],
     // Web chat branching: a forked conversation points at its source

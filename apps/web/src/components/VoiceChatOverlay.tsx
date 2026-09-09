@@ -59,7 +59,7 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
         return () => window.removeEventListener('keydown', onKey);
     }, [voiceChat]);
 
-    async function saveVoice(fields: { voiceId?: string | null; speed?: number }) {
+    async function saveVoice(fields: { voiceId?: string | null; speed?: number; accent?: string | null }) {
         setSavingVoice(true);
         try {
             const saved = await api.saveVoiceSettings(fields);
@@ -154,6 +154,24 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
                         {voicesQ.isError && <div className="hint">{(voicesQ.error as Error).message}</div>}
                     </div>
                     <div className="field">
+                        <label htmlFor="voice-accent">Spoken accent</label>
+                        <select
+                            id="voice-accent"
+                            className="select"
+                            disabled={savingVoice}
+                            value={settingsQ.data?.accent || ''}
+                            onChange={(e) => void saveVoice({ accent: e.target.value || null })}
+                        >
+                            <option value="">No accent tag</option>
+                            {(settingsQ.data?.accents || []).map((accent) => (
+                                <option key={accent.id} value={accent.id}>
+                                    {accent.label}
+                                </option>
+                            ))}
+                        </select>
+                        <div className="hint">Uses ElevenLabs v3 audio tags on read-aloud. Flash (live Discord voice) ignores them.</div>
+                    </div>
+                    <div className="field">
                         <label>Playback speed</label>
                         <div className="segment voice-speed-segment">
                             {SPEED_STEPS.map((step) => (
@@ -167,7 +185,7 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
                             ))}
                         </div>
                     </div>
-                    <div className="hint">Your voice pick also applies to “Listen” read-alouds. Servers set their own voice with /setvoice.</div>
+                    <div className="hint">Voice, accent, and speed also apply to “Listen” read-alouds. Servers set their own voice with /setvoice.</div>
                 </div>
             )}
 

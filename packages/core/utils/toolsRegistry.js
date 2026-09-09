@@ -33,6 +33,7 @@ const TOOL_ORDER = [
     'playTrack',
     'setNickname',
     'speakMessage',
+    'setSpeechAccent',
     'echoMessage',
     'rememberFact',
     'forgetFact',
@@ -119,6 +120,19 @@ module.exports = {
                 (def.name === 'runCode' || def.name === 'observatory')
                     ? { ...def, description: def.description + note }
                     : def);
+        }
+        // speakMessage / playTrack join a Discord voice channel. The web
+        // portal (and automations) have none — offering them makes accent /
+        // "use a voice" requests call speakMessage with extra voice/style
+        // settings, which then crash on a null member.
+        if (isWeb || isAutomation) {
+            definitions = definitions.filter(def =>
+                def.name !== 'speakMessage' && def.name !== 'playTrack');
+        }
+        // setSpeechAccent writes portal TTS settings (ElevenLabs v3 audio
+        // tags). Discord /voicechat stays on Flash, which ignores those tags.
+        if (!isWeb) {
+            definitions = definitions.filter(def => def.name !== 'setSpeechAccent');
         }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);
