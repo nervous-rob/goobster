@@ -26,6 +26,7 @@ import { DecksRoom } from './rooms/DecksRoom';
 import { ExchangeRoom } from './rooms/ExchangeRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
 import { ObservatoryRoom } from './rooms/ObservatoryRoom';
+import { SettingsRoom } from './rooms/settings/SettingsRoom';
 import './styles.css';
 
 const ConservatoryLayout = lazy(() => import('./music-lab/ConservatoryLayout').then((m) => ({ default: m.ConservatoryLayout })));
@@ -271,6 +272,18 @@ const observatoryEventsRoute = createRoute({
     component: ObservatoryRoom,
 });
 
+const settingsRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/settings',
+    component: SettingsRoom,
+});
+
+const settingsSectionRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/settings/$section',
+    component: SettingsRoom,
+});
+
 const routeTree = rootRoute.addChildren([
     shareShellRoute.addChildren([shareRoute]),
     authedRoute.addChildren([appRoute.addChildren([
@@ -303,6 +316,8 @@ const routeTree = rootRoute.addChildren([
         observatorySearchRoute,
         observatoryPeopleRoute,
         observatoryEventsRoute,
+        settingsRoute,
+        settingsSectionRoute,
     ])]),
 ]);
 

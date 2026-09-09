@@ -2434,3 +2434,28 @@ CREATE INDEX IF NOT EXISTS idx_project_decisions_mission ON project_decisions(mi
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_decisions_one_per_mission
     ON project_decisions(missionId)
     WHERE missionId IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Unified User Settings and Revisions
+-- ---------------------------------------------------------------------------
+
+-- Synced personal preferences. Existing AI/voice/instructions stay in their
+-- authoritative stores (guild_settings, user_nicknames, UserPreferences,
+-- attention_policies); this table stores newly introduced synced preferences.
+CREATE TABLE IF NOT EXISTS user_settings (
+    userId TEXT PRIMARY KEY,
+    schemaVersion INTEGER NOT NULL DEFAULT 1,
+    preferencesJson TEXT NOT NULL DEFAULT '{}',
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Durable per-user, per-section revision records for optimistic concurrency control
+-- across the unified settings facade and multiple authoritative storage tables.
+CREATE TABLE IF NOT EXISTS user_setting_revisions (
+    userId TEXT NOT NULL,
+    section TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (userId, section)
+);
+

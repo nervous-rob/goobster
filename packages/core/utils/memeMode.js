@@ -124,9 +124,18 @@ function getPrompt(userId) {
     return `${basePrompt}${MEME_MODE_PROMPT_SUFFIX}`;
 }
 
+function clearMemeModeCache(userId = null) {
+    if (userId) {
+        memeModeCache.delete(userId);
+    } else {
+        memeModeCache.clear();
+    }
+}
+
 module.exports = {
     isMemeModeEnabled,
     setMemeMode,
     getPrompt,
-    getPromptWithGuildPersonality
+    getPromptWithGuildPersonality,
+    clearMemeModeCache
 };

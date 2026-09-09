@@ -37,7 +37,8 @@ export const keys = {
     spitballNotesRoot: (scope: string) => ['spitball-notes', scope] as const,
     spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,
-    memory: (scope: string, tab: string) => ['memory', scope, tab] as const
+    memory: (scope: string, tab: string) => ['memory', scope, tab] as const,
+    settings: ['settings'] as const
 };
 
 export function createQueryClient(): QueryClient {

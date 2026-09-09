@@ -65,6 +65,12 @@ async function seed() {
     // nicknames, preferences, usage, command log
     await db.run(`INSERT INTO user_nicknames (userId, guildId, nickname) VALUES (@u, @g, 'Robbo')`, { u: USER, g: GUILD });
     await db.run(`INSERT INTO UserPreferences (userId, memeMode) VALUES (@u, 1)`, { u: USER });
+    // unified settings store + per-section revisions (both erased)
+    await db.run(`INSERT INTO user_settings (userId, preferencesJson) VALUES (@u, '{"theme":"light"}')`, { u: USER });
+    await db.run(`INSERT INTO user_settings (userId, preferencesJson) VALUES (@o, '{"theme":"dark"}')`, { o: OTHER });
+    await db.run(`INSERT INTO user_setting_revisions (userId, section, revision) VALUES (@u, 'appearance', 3)`, { u: USER });
+    await db.run(`INSERT INTO user_setting_revisions (userId, section, revision) VALUES (@u, 'profile', 2)`, { u: USER });
+    await db.run(`INSERT INTO user_setting_revisions (userId, section, revision) VALUES (@o, 'profile', 5)`, { o: OTHER });
     await db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
             VALUES (@g, @u, 'openai', 'gpt-test', 'chat', 100, 50)`, { g: GUILD, u: USER });
     await db.run(`INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens)
@@ -241,6 +247,14 @@ describe('forgetUser', () => {
         expect(counts.nicknames).toBe(1);
         expect(counts.preferences).toBe(1);
         expect(counts.profile).toBe(1);
+    });
+
+    test('deletes unified settings and revision records, leaving other users intact', async () => {
+        expect(counts.userSettings).toBe(1);
+        expect(counts.userSettingRevisions).toBe(2);
+        expect(await db.get('SELECT 1 AS x FROM user_settings WHERE userId = @u', { u: USER })).toBeUndefined();
+        expect((await db.get('SELECT preferencesJson FROM user_settings WHERE userId = @o', { o: OTHER })).preferencesJson).toBe('{"theme":"dark"}');
+        expect((await db.get('SELECT revision FROM user_setting_revisions WHERE userId = @o', { o: OTHER })).revision).toBe(5);
     });
 
     test('review pass deletes name-mentions in guild facts, summaries, and followup notes', async () => {

@@ -14,7 +14,14 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 jest.mock('@goobster/core/services/aiService', () => ({
     getProvider: () => 'openai',
     getDefaultModel: () => 'test-default-model',
-    getThoughtfulPreset: () => ({ provider: 'openai', model: 'test-thoughtful-model', reasoningEffort: 'high' })
+    getThoughtfulPreset: () => ({ provider: 'openai', model: 'test-thoughtful-model', reasoningEffort: 'high' }),
+    listProviders: () => [
+        {
+            key: 'openai', name: 'OpenAI', configured: true, isDefault: true,
+            chatModel: 'test-default-model', thoughtfulModel: 'test-thoughtful-model', reasoningEffort: true
+        },
+        { key: 'gemini', name: 'Google Gemini', configured: true, isDefault: false, chatModel: 'gemini-test', reasoningEffort: true }
+    ]
 }));
 
 const db = require('@goobster/core/db');

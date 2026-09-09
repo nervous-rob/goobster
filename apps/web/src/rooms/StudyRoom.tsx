@@ -16,6 +16,7 @@ import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useChatTurn, type LocalTurnMessage } from '../hooks/useChatTurn';
 import { useComposerAutosize } from '../hooks/useComposerAutosize';
 import { useVoiceChat } from '../hooks/useVoiceChat';
+import { useOpenSettings } from '../hooks/useOpenSettings';
 import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
 
 const SUGGESTIONS = [
@@ -39,13 +40,6 @@ function clearRestoreOverlay(api: { end: () => void; reset: () => void }, incogn
 
 const MAX_ATTACH = 4;
 const MAX_TEXT_FILE_BYTES = 200 * 1024;
-const REASONING_OPTIONS = [
-    { value: '', label: 'Default' },
-    { value: 'minimal', label: 'Minimal' },
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' }
-];
 
 type SearchHit = { conversationId: number; messageId: number; title?: string; snippet: string; role?: string };
 type PendingImage = { dataUrl: string; name: string };
@@ -59,10 +53,6 @@ type ChatSettings = {
     customInstructions?: string | null;
     effective?: { providerName?: string; model?: string; reasoningEffort?: string };
     providers?: Array<{ key: string; name: string; configured?: boolean; isDefault?: boolean; chatModel?: string; thoughtfulModel?: string; reasoningEffort?: boolean }>;
-};
-type Integration = {
-    provider: string; name: string; description?: string; connected?: boolean;
-    account?: string; tokenHint?: string; docsUrl?: string;
 };
 type ShareState = { shared?: boolean; url?: string; createdAt?: string };
 type TurnStatus = {
@@ -129,12 +119,10 @@ export function StudyRoom() {
     const [images, setImages] = useState<PendingImage[]>([]);
     const [files, setFiles] = useState<PendingFile[]>([]);
     const turn = useChatTurn();
-    const [settingsOpen, setSettingsOpen] = useState(false);
     const [saveTarget, setSaveTarget] = useState<SaveToProjectTarget | null>(null);
     const [shareOpen, setShareOpen] = useState(false);
-    const [integrationsOpen, setIntegrationsOpen] = useState(false);
-    const [aiSettings, setAiSettings] = useState<ChatSettings | null>(null);
     const chats = useConversationDrawer();
+    const openSettings = useOpenSettings();
     const abortRef = useRef<AbortController | null>(null);
     const attachAbortRef = useRef<AbortController | null>(null);
     const hydratedTurnId = useRef<string | null>(null);
@@ -237,11 +225,7 @@ export function StudyRoom() {
     const display = [...history, ...turn.messages, ...(turn.pending ? [turn.pending] : [])];
     const lastAssistant = [...display].reverse().find((m) => m.role === 'assistant' && !m.draft && !m.typing);
     const lastUser = [...display].reverse().find((m) => m.role === 'user');
-    const settings = aiSettings || settingsQ.data;
-
-    useEffect(() => {
-        if (settingsQ.data) setAiSettings(settingsQ.data);
-    }, [settingsQ.data]);
+    const settings = settingsQ.data;
 
     const resetTurn = turn.reset;
     useEffect(() => {
@@ -417,19 +401,6 @@ export function StudyRoom() {
         goToConversation(null);
         setComposer('');
         chats.close();
-    }
-
-    async function toggleThoughtful() {
-        const next = !settings?.thoughtful;
-        try {
-            const updated = await api.setThoughtful(next) as ChatSettings;
-            setAiSettings(updated);
-            toast(updated.thoughtful
-                ? `Thoughtful Mode on — ${updated.effective?.model || 'deeper reasoning'}.`
-                : 'Thoughtful Mode off — back to the everyday model.');
-        } catch (error) {
-            toast((error as Error).message, true);
-        }
     }
 
     function toggleIncognito() {
@@ -776,7 +747,7 @@ export function StudyRoom() {
                             if (activeId === null) { toast('Say something first — an empty chat has nothing to share.', true); return; }
                             setShareOpen(true);
                         }}>🔗<span className="menu-label">Share</span></button>
-                        <button type="button" className="icon-action" onClick={() => setIntegrationsOpen(true)}>🧩<span className="menu-label">Integrations</span></button>
+                        <button type="button" className="icon-action" onClick={() => openSettings('connections')}>🧩<span className="menu-label">Connections</span></button>
                         </HeaderOverflow>
                     </div>
                 </header>
@@ -886,7 +857,7 @@ export function StudyRoom() {
                                     <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                                 </svg>
                             </button>
-                            <button type="button" className="model-chip composer-model-chip" onClick={() => setSettingsOpen(true)} title="Chat settings — model & reasoning" aria-label="Chat settings">
+                            <button type="button" className="model-chip composer-model-chip" onClick={() => openSettings('chat')} title="Chat settings — model & reasoning" aria-label="Chat settings">
                                 <span className="model-chip-gear" aria-hidden="true">⚙</span>
                                 <span className="model-chip-label wide-only">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
                             </button>
@@ -946,21 +917,8 @@ export function StudyRoom() {
                     <div className="composer-hint hint">{incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : DEFAULT_HINT)}</div>
                 </div>
             </div>
-            {settingsOpen && (
-                <SettingsModal
-                    initial={settings || {}}
-                    thoughtful={Boolean(settings?.thoughtful)}
-                    thoughtfulAvailable={settings?.thoughtfulAvailable !== false}
-                    onToggleThoughtful={() => void toggleThoughtful()}
-                    onClose={() => setSettingsOpen(false)}
-                    onSaved={(next) => { setAiSettings(next); setSettingsOpen(false); }}
-                />
-            )}
             {shareOpen && activeId !== null && (
                 <ShareModal conversationId={activeId} onClose={() => setShareOpen(false)} />
-            )}
-            {integrationsOpen && (
-                <IntegrationsModal onClose={() => setIntegrationsOpen(false)} />
             )}
             {saveTarget && (
                 <SaveToProjectModal
@@ -1033,135 +991,6 @@ function ConvRow({
     );
 }
 
-function SettingsModal({
-    initial, thoughtful, thoughtfulAvailable, onToggleThoughtful, onClose, onSaved
-}: {
-    initial: ChatSettings;
-    thoughtful: boolean;
-    thoughtfulAvailable: boolean;
-    onToggleThoughtful: () => void;
-    onClose: () => void;
-    onSaved: (settings: ChatSettings) => void;
-}) {
-    const toast = useToast();
-    const [provider, setProvider] = useState(initial.provider || '');
-    const [model, setModel] = useState(initial.model || '');
-    const [reasoning, setReasoning] = useState(initial.reasoningEffort || '');
-    const [instructions, setInstructions] = useState(initial.customInstructions || '');
-    const [models, setModels] = useState<string[]>([]);
-    const [busy, setBusy] = useState(false);
-
-    useEffect(() => {
-        let cancelled = false;
-        api.listModels(provider || null).then((result) => {
-            if (cancelled) return;
-            const list = (result as { models?: string[] }).models || [];
-            setModels(list);
-        }).catch(() => {
-            if (!cancelled) setModels([]);
-        });
-        return () => { cancelled = true; };
-    }, [provider]);
-
-    const providers = initial.providers || [];
-    const serverDefault = providers.find((p) => p.isDefault);
-    const entry = providers.find((p) => p.key === (provider || serverDefault?.key));
-    const supportsReasoning = !entry || entry.reasoningEffort;
-
-    return (
-        <Modal onClose={onClose}>
-            <h2>Chat settings</h2>
-            {thoughtfulAvailable && (
-                <div className="field">
-                    <label className="thoughtful-toggle modal-thoughtful" title="Deeper reasoning, slower and pricier">
-                        <span>🧠 Thoughtful Mode — deeper reasoning, slower and pricier</span>
-                        <button
-                            type="button"
-                            className={`toggle${thoughtful ? ' on' : ''}`}
-                            role="switch"
-                            aria-checked={thoughtful}
-                            onClick={onToggleThoughtful}
-                        />
-                    </label>
-                </div>
-            )}
-            <div className="field">
-                <label htmlFor="settings-provider">Model platform</label>
-                <select id="settings-provider" className="select" value={provider} onChange={(e) => { setProvider(e.target.value); setModel(''); }}>
-                    <option value="">Default ({serverDefault?.name || 'auto'})</option>
-                    {providers.map((item) => (
-                        <option key={item.key} value={item.key} disabled={!item.configured}>
-                            {item.configured ? item.name : `${item.name} — not configured`}
-                        </option>
-                    ))}
-                </select>
-            </div>
-            <div className="field">
-                <label htmlFor="settings-model">Model</label>
-                <select id="settings-model" className="select" value={model} onChange={(e) => setModel(e.target.value)}>
-                    <option value="">{entry?.chatModel ? `Provider default (${entry.chatModel})` : 'Provider default'}</option>
-                    {models.map((id) => <option key={id} value={id}>{id}</option>)}
-                </select>
-            </div>
-            <div className="field">
-                <label>Reasoning effort</label>
-                <div className="segment">
-                    {REASONING_OPTIONS.map((option) => (
-                        <button
-                            key={option.value || 'default'}
-                            type="button"
-                            className={`segment-btn${reasoning === option.value ? ' active' : ''}`}
-                            disabled={!supportsReasoning && option.value !== ''}
-                            onClick={() => setReasoning(option.value)}
-                        >{option.label}</button>
-                    ))}
-                </div>
-            </div>
-            <div className="field">
-                <label htmlFor="settings-instructions">Custom instructions</label>
-                <textarea
-                    id="settings-instructions"
-                    className="input"
-                    rows={4}
-                    maxLength={2000}
-                    value={instructions}
-                    onChange={(e) => setInstructions(e.target.value)}
-                    placeholder="How should Goobster respond?"
-                />
-            </div>
-            <div className="hint">
-                {supportsReasoning
-                    ? 'Settings apply to this web chat and your Discord DMs.'
-                    : 'Ollama (local) doesn’t support reasoning effort.'}
-            </div>
-            <div className="modal-actions">
-                <button type="button" className="btn" onClick={onClose}>Cancel</button>
-                <button
-                    type="button"
-                    className="btn primary"
-                    disabled={busy}
-                    onClick={async () => {
-                        setBusy(true);
-                        try {
-                            const saved = await api.saveChatSettings({
-                                provider: provider || null,
-                                model: model || null,
-                                reasoningEffort: reasoning || null,
-                                customInstructions: instructions.trim() || null
-                            }) as ChatSettings;
-                            toast(`Model settings saved — ${saved.effective?.providerName} · ${saved.effective?.model}.`);
-                            onSaved(saved);
-                        } catch (error) {
-                            toast((error as Error).message, true);
-                            setBusy(false);
-                        }
-                    }}
-                >Save</button>
-            </div>
-        </Modal>
-    );
-}
-
 function ShareModal({ conversationId, onClose }: { conversationId: number; onClose: () => void }) {
     const toast = useToast();
     const queryClient = useQueryClient();
@@ -1215,86 +1044,6 @@ function ShareModal({ conversationId, onClose }: { conversationId: number; onClo
                     }}
                 >🔗 Create share link</button>
             )}
-            <div className="modal-actions">
-                <button type="button" className="btn" onClick={onClose}>Close</button>
-            </div>
-        </Modal>
-    );
-}
-
-function IntegrationsModal({ onClose }: { onClose: () => void }) {
-    const toast = useToast();
-    const confirm = useConfirm();
-    const [token, setToken] = useState<Record<string, string>>({});
-    const list = useQuery({
-        queryKey: ['integrations'],
-        queryFn: () => api.integrations() as Promise<{ integrations: Integration[] }>
-    });
-    const icons: Record<string, string> = { github: '🐙', notion: '📓' };
-    return (
-        <Modal onClose={onClose} wide>
-            <h2>Integrations</h2>
-            <p className="hint">Connect your accounts so Goobster can use them in chat — here and in your Discord DMs.</p>
-            {list.isPending && <div className="empty">Loading…</div>}
-            {list.isError && <div className="hint">{(list.error as Error).message}</div>}
-            <div className="integrations-list">
-                {(list.data?.integrations || []).map((item) => (
-                    <div key={item.provider} className="integration-card">
-                        <div className="integration-head">
-                            <div className="integration-title">{icons[item.provider] || '🔌'} {item.name}</div>
-                            <span className={`integration-status${item.connected ? ' connected' : ''}`}>
-                                {item.connected ? `Connected · ${item.account || 'account'}` : 'Not connected'}
-                            </span>
-                        </div>
-                        <div className="hint">{item.description}</div>
-                        {item.connected ? (
-                            <div className="integration-actions">
-                                <button
-                                    type="button"
-                                    className="btn danger"
-                                    onClick={async () => {
-                                        if (!await confirm(`Disconnect ${item.name}? The stored token is deleted.`)) return;
-                                        try {
-                                            await api.disconnectIntegration(item.provider);
-                                            toast(`${item.name} disconnected.`);
-                                            list.refetch();
-                                        } catch (error) { toast((error as Error).message, true); }
-                                    }}
-                                >Disconnect</button>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="hint integration-token-hint">{item.tokenHint}</div>
-                                <div className="integration-actions">
-                                    <input
-                                        className="input integration-token"
-                                        type="password"
-                                        placeholder={`${item.name} token`}
-                                        value={token[item.provider] || ''}
-                                        onChange={(e) => setToken((prev) => ({ ...prev, [item.provider]: e.target.value }))}
-                                    />
-                                    <button
-                                        type="button"
-                                        className="btn primary"
-                                        onClick={async () => {
-                                            const value = (token[item.provider] || '').trim();
-                                            if (!value) return;
-                                            try {
-                                                const result = await api.connectIntegration(item.provider, value) as { account?: string };
-                                                toast(`${item.name} connected as ${result.account || 'account'}.`);
-                                                list.refetch();
-                                            } catch (error) { toast((error as Error).message, true); }
-                                        }}
-                                    >Connect</button>
-                                </div>
-                                {item.docsUrl && (
-                                    <a className="integration-docs" href={item.docsUrl} target="_blank" rel="noreferrer">Where do I get a token? ↗</a>
-                                )}
-                            </>
-                        )}
-                    </div>
-                ))}
-            </div>
             <div className="modal-actions">
                 <button type="button" className="btn" onClick={onClose}>Close</button>
             </div>

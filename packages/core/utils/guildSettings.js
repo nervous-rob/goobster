@@ -593,6 +593,14 @@ async function setUserNickname(userId, guildId, nickname) {
     }
 }
 
+function clearGuildSettingsCache(guildId = null) {
+    if (guildId) {
+        guildSettingsCache.delete(guildId);
+    } else {
+        guildSettingsCache.clear();
+    }
+}
+
 module.exports = {
     THREAD_PREFERENCE,
     SEARCH_APPROVAL,
@@ -623,5 +631,6 @@ module.exports = {
     getBotNickname,
     setBotNickname,
     getUserNickname,
-    setUserNickname
+    setUserNickname,
+    clearGuildSettingsCache
 };

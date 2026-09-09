@@ -13,6 +13,7 @@ import { NoteEditor } from '../components/NoteEditor';
 import { TYPE_COLORS } from '../renderers/graph.js';
 import { facetCounts, filterConstellation, withTagLinks } from '../lib/graphFilter';
 import { MenuButton } from '../shell/MenuButton';
+import { useOpenSettings } from '../hooks/useOpenSettings';
 import type { NoteEvidence, UserNote } from '../lib/types';
 
 type MemoryTab = 'map' | 'notes' | 'expeditions' | 'overview' | 'facts' | 'memories' | 'graph';
@@ -72,15 +73,6 @@ type ReflectionRun = {
     finishedAt?: string | null;
 };
 type ReflectionPayload = { run: ReflectionRun | null };
-
-const RETENTION_OPTIONS = [
-    { value: 0, label: 'Keep forever' },
-    { value: 7, label: 'After 7 days' },
-    { value: 30, label: 'After 30 days' },
-    { value: 90, label: 'After 90 days' },
-    { value: 180, label: 'After 180 days' },
-    { value: 365, label: 'After a year' }
-];
 
 const TYPE_COLOR_MAP = TYPE_COLORS as Record<string, string>;
 
@@ -365,9 +357,8 @@ function ReflectControl({ scope, target }: { scope: string; target: 'personal' |
     );
 }
 
-function RetentionCard({ scope, onChanged }: { scope: string; onChanged: () => void }) {
-    const toast = useToast();
-    const confirm = useConfirm();
+function RetentionCard({ scope }: { scope: string }) {
+    const openSettings = useOpenSettings();
     const retention = useQuery({
         queryKey: keys.memory(scope, 'retention'),
         queryFn: () => api.retention(scope) as Promise<RetentionPayload>,
@@ -375,11 +366,6 @@ function RetentionCard({ scope, onChanged }: { scope: string; onChanged: () => v
     });
     if (retention.isError || !retention.data) return null;
     const days = retention.data.retentionDays ?? 0;
-    const options = [...RETENTION_OPTIONS];
-    if (days && !options.some((o) => o.value === days)) {
-        options.push({ value: days, label: `After ${days} days` });
-        options.sort((a, b) => (a.value || Infinity) - (b.value || Infinity));
-    }
     return (
         <>
             <div className="section-title">Memory retention</div>
@@ -388,38 +374,13 @@ function RetentionCard({ scope, onChanged }: { scope: string; onChanged: () => v
                     <div className="row-body">
                         <strong>Auto-delete memories</strong>
                         <div className="row-meta">
-                            Raw memories from your DMs and web chats older than this window are
-                            deleted automatically (immediately, then nightly). Distilled facts are separate — manage them in the Facts tab.
+                            {days ? `Raw memories older than ${days} days are deleted automatically.` : 'Raw memories are kept forever.'}
+                            {' '}Distilled facts are separate — manage them in the Facts tab.
                         </div>
                     </div>
-                    <select
-                        className="select retention-select"
-                        aria-label="Memory auto-delete window"
-                        defaultValue={String(days)}
-                        onChange={async (event) => {
-                            const chosen = Number(event.target.value);
-                            if (chosen > 0 && !await confirm(
-                                `Auto-delete memories older than ${chosen} days? Anything already past that window is deleted right now.`
-                            )) {
-                                event.target.value = String(days);
-                                return;
-                            }
-                            try {
-                                const result = await api.setRetention(scope, chosen) as RetentionPayload;
-                                toast(result.retentionDays
-                                    ? `Memories now expire after ${result.retentionDays} days${result.purged ? ` — ${result.purged} deleted now` : ''}.`
-                                    : 'Memories are kept forever again.');
-                                onChanged();
-                            } catch (error) {
-                                toast((error as Error).message, true);
-                                event.target.value = String(days);
-                            }
-                        }}
-                    >
-                        {options.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                    </select>
+                    <button type="button" className="btn" onClick={() => openSettings('memory', 'retention')}>
+                        Change in Settings →
+                    </button>
                 </div>
             </div>
         </>
@@ -688,10 +649,7 @@ export function SpitballRoom() {
                                     </>
                                 )}
                                 {scope?.kind === 'dm' && (
-                                    <RetentionCard
-                                        scope={scopeId}
-                                        onChanged={() => queryClient.invalidateQueries({ queryKey: keys.memory(scopeId, 'overview') })}
-                                    />
+                                    <RetentionCard scope={scopeId} />
                                 )}
                             </>
                         )}

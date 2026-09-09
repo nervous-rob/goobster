@@ -3,6 +3,7 @@ const { getGuildAI, setGuildAI } = require('@goobster/core/utils/guildSettings')
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const aiService = require('@goobster/core/services/aiService');
 const aiConfig = require('@goobster/core/config/aiConfig');
+const userSettingsService = require('@goobster/core/services/userSettingsService');
 
 module.exports = {
     // In a DM the overrides are per-user (keyed on the DM scope) -
@@ -68,7 +69,17 @@ module.exports = {
             if (model) updates.model = model;
             if (reasoning) updates.reasoningEffort = reasoning;
 
-            const settings = await setGuildAI(scopeId, updates);
+            let settings;
+            if (!interaction.guildId) {
+                const res = await userSettingsService.updateSection({
+                    userId: interaction.user.id,
+                    section: 'chat',
+                    changes: updates
+                });
+                settings = res.data.values;
+            } else {
+                settings = await setGuildAI(scopeId, updates);
+            }
             await interaction.reply({
                 content: `⚙️ **AI settings updated for ${scopeLabel}:**\n` +
                     `- Provider: ${settings.provider || `(default: ${aiService.getProvider()})`}\n` +
@@ -77,7 +88,14 @@ module.exports = {
                 ephemeral: true
             });
         } else if (subcommand === 'reset') {
-            await setGuildAI(scopeId, { provider: null, model: null, reasoningEffort: null });
+            if (!interaction.guildId) {
+                await userSettingsService.resetSection({
+                    userId: interaction.user.id,
+                    section: 'chat'
+                });
+            } else {
+                await setGuildAI(scopeId, { provider: null, model: null, reasoningEffort: null });
+            }
             await interaction.reply({
                 content: `⚙️ AI settings reset. ${interaction.guildId ? 'This server' : 'Our DM'} now uses the global defaults (${aiService.getProvider()} / ${aiService.getDefaultModel()}).`,
                 ephemeral: true

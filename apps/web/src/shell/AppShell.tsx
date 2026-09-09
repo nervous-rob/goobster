@@ -12,6 +12,7 @@ import { useRoomDrawerClose } from '../hooks/useConversationDrawer';
 import { MenuProvider } from './MenuButton';
 import { ActiveFriends } from './ActiveFriends';
 import type { ParlorMentionEvent } from '../hooks/usePortalEvents';
+import { getStoredTheme, paintTheme, resolveTheme, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
 
 const NAV = [
     { section: 'The house', items: [
@@ -45,7 +46,8 @@ const PATH_ROOM: Record<string, string> = {
     '/noticed': 'noticed',
     '/tasks': 'tasks',
     '/decks': 'decks',
-    '/usage': 'usage'
+    '/usage': 'usage',
+    '/settings': 'settings'
 };
 
 // The shell tolerates a null session (public share pages render inside it):
@@ -57,7 +59,7 @@ export function AppShell() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const pathname = useRouterState({ select: (s) => s.location.pathname });
-    const [theme, setTheme] = useState(() => localStorage.getItem('goobster-theme') === 'light' ? 'light' : 'dark');
+    const [theme, setTheme] = useState<ThemeChoice>(() => getStoredTheme());
     const [drawer, setDrawer] = useState(false);
     const [forgetOpen, setForgetOpen] = useState(false);
     const [mention, setMention] = useState<ParlorMentionEvent | null>(null);
@@ -88,9 +90,20 @@ export function AppShell() {
         const timer = window.setTimeout(() => setMention(null), 12_000);
         return () => window.clearTimeout(timer);
     }, [mention]);
+    // Theme is a device preference (lib/theme). Settings → Appearance and the
+    // footer toggle both go through setStoredTheme; this just mirrors it and
+    // follows the OS when "system" is chosen.
     useEffect(() => {
-        document.body.classList.toggle('light', theme === 'light');
-        localStorage.setItem('goobster-theme', theme);
+        paintTheme(theme);
+        const onChange = (event: Event) => setTheme((event as CustomEvent<ThemeChoice>).detail);
+        window.addEventListener(THEME_EVENT, onChange);
+        const media = window.matchMedia?.('(prefers-color-scheme: light)');
+        const onMedia = () => { if (theme === 'system') paintTheme('system'); };
+        media?.addEventListener?.('change', onMedia);
+        return () => {
+            window.removeEventListener(THEME_EVENT, onChange);
+            media?.removeEventListener?.('change', onMedia);
+        };
     }, [theme]);
 
     useEffect(() => {
@@ -102,7 +115,7 @@ export function AppShell() {
             library: '/spitball', workshop: '/observatory', conservatory: '/conservatory',
             observatory: '/observatory',
             exchange: '/exchange', tasks: '/tasks', noticed: '/noticed', decks: '/decks',
-            usage: '/usage', chat: '/study', memory: '/spitball', mtga: '/decks'
+            usage: '/usage', chat: '/study', memory: '/spitball', mtga: '/decks', settings: '/settings'
         };
         const to = map[name];
         if (to) {
@@ -147,15 +160,21 @@ export function AppShell() {
                     <ActiveFriends />
                 </div>
                 <div className="sidebar-footer">
-                    <button type="button" className="btn subtle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
-                        {theme === 'light' ? '☀️ Theme' : '🌙 Theme'}
+                    <button type="button" className="btn subtle" title="Toggle light/dark (more in Settings → Appearance)"
+                        onClick={() => setStoredTheme(resolveTheme(theme) === 'light' ? 'dark' : 'light')}>
+                        {resolveTheme(theme) === 'light' ? '☀️ Theme' : '🌙 Theme'}
                     </button>
                     {me ? (
                         <>
-                            <div className="user-chip">
+                            <Link to="/settings" className={`nav-btn settings-link${room === 'settings' ? ' active' : ''}`}
+                                onClick={() => setDrawer(false)}>
+                                ⚙️ Settings
+                            </Link>
+                            <Link to="/settings/$section" params={{ section: 'account' }} className="user-chip user-chip-link"
+                                title="Account & devices" onClick={() => setDrawer(false)}>
                                 {me.user.avatar && <img className="avatar" src={me.user.avatar} alt="" />}
                                 <span>{me.user.name || me.user.id}</span>
-                            </div>
+                            </Link>
                             <button type="button" className="btn subtle" onClick={logout}>Log out</button>
                         </>
                     ) : (

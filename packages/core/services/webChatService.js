@@ -917,59 +917,36 @@ class WebChatService {
      * @param {Object} params - { userId, provider?, model?, reasoningEffort? }
      */
     async setAiSettings({ userId, provider, model, reasoningEffort, customInstructions }) {
-        const aiService = require('./aiService');
-        const { setGuildAI } = require('../utils/guildSettings');
-        const updates = {};
-        let instructionsChanged = false;
+        const userSettingsService = require('./userSettingsService');
+        const hasInstructions = customInstructions !== undefined;
+        const hasChat = provider !== undefined || model !== undefined || reasoningEffort !== undefined;
 
-        if (customInstructions !== undefined) {
-            const { setUserInstructions, MAX_INSTRUCTIONS_LENGTH } = require('../utils/userInstructions');
-            const value = customInstructions === null ? '' : String(customInstructions);
-            if (value.trim().length > MAX_INSTRUCTIONS_LENGTH) {
-                throw new WebChatError(400, 'INSTRUCTIONS_TOO_LONG',
-                    `Custom instructions must be at most ${MAX_INSTRUCTIONS_LENGTH} characters.`);
-            }
-            await setUserInstructions(userId, value);
-            instructionsChanged = true;
-        }
-
-        if (provider !== undefined) {
-            const value = provider || null;
-            if (value !== null) {
-                const entry = aiService.listProviders().find(p => p.key === value);
-                if (!entry) {
-                    throw new WebChatError(400, 'BAD_PROVIDER',
-                        `provider must be one of ${aiService.listProviders().map(p => p.key).join(', ')}, or empty for the default.`);
-                }
-                if (!entry.configured) {
-                    throw new WebChatError(400, 'PROVIDER_NOT_CONFIGURED',
-                        `${entry.name} isn't configured on this server (missing API key).`);
-                }
-            }
-            updates.provider = value;
-        }
-        if (model !== undefined) {
-            const value = model ? String(model).trim() : null;
-            if (value !== null && value.length > 100) {
-                throw new WebChatError(400, 'BAD_MODEL', 'model must be at most 100 characters.');
-            }
-            updates.model = value;
-        }
-        if (reasoningEffort !== undefined) {
-            const value = reasoningEffort || null;
-            if (value !== null && !REASONING_EFFORTS.includes(value)) {
-                throw new WebChatError(400, 'BAD_REASONING',
-                    `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')}, or empty for the default.`);
-            }
-            updates.reasoningEffort = value;
-        }
-        if (Object.keys(updates).length === 0 && !instructionsChanged) {
+        if (!hasInstructions && !hasChat) {
             throw new WebChatError(400, 'NO_CHANGES',
                 'Provide provider, model, reasoningEffort, or customInstructions to change.');
         }
 
-        if (Object.keys(updates).length > 0) {
-            await setGuildAI(dmScopeId(userId), updates);
+        try {
+            if (hasInstructions) {
+                await userSettingsService.updateSection({
+                    userId,
+                    section: 'profile',
+                    changes: { customInstructions }
+                });
+            }
+            if (hasChat) {
+                const changes = {};
+                if (provider !== undefined) changes.provider = provider;
+                if (model !== undefined) changes.model = model;
+                if (reasoningEffort !== undefined) changes.reasoningEffort = reasoningEffort;
+                await userSettingsService.updateSection({
+                    userId,
+                    section: 'chat',
+                    changes
+                });
+            }
+        } catch (error) {
+            throw new WebChatError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
         }
         return await this.getAiSettings(userId);
     }
@@ -980,19 +957,15 @@ class WebChatService {
      * @param {Object} params - { userId, thoughtful }
      */
     async setThoughtful({ userId, thoughtful }) {
-        const aiService = require('./aiService');
-        const { getGuildAI, setGuildAI } = require('../utils/guildSettings');
-        const scope = dmScopeId(userId);
-        if (thoughtful) {
-            const current = await getGuildAI(scope);
-            const preset = aiService.getThoughtfulPreset(current.provider || undefined);
-            if (!preset) {
-                throw new WebChatError(400, 'NO_THOUGHTFUL_TIER',
-                    'Thoughtful Mode needs a cloud AI provider (OpenAI, Anthropic, or Gemini).');
-            }
-            await setGuildAI(scope, preset);
-        } else {
-            await setGuildAI(scope, { model: null, reasoningEffort: null });
+        const userSettingsService = require('./userSettingsService');
+        try {
+            await userSettingsService.updateSection({
+                userId,
+                section: 'chat',
+                changes: { thoughtful: Boolean(thoughtful) }
+            });
+        } catch (error) {
+            throw new WebChatError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
         }
         return await this.getAiSettings(userId);
     }

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { isMemeModeEnabled, setMemeMode } = require('@goobster/core/utils/memeMode');
+const { isMemeModeEnabled } = require('@goobster/core/utils/memeMode');
+const userSettingsService = require('@goobster/core/services/userSettingsService');
 
 module.exports = {
     // Registered globally with DM contexts (see deploy-commands.js)
@@ -26,7 +27,11 @@ module.exports = {
 
         if (subcommand === 'toggle') {
             const enabled = interaction.options.getBoolean('enabled');
-            await setMemeMode(interaction.user.id, enabled);
+            await userSettingsService.updateSection({
+                userId: interaction.user.id,
+                section: 'profile',
+                changes: { memeMode: enabled }
+            });
             
             const response = enabled
                 ? "🎭 MEME MODE ACTIVATED! Get ready for some extra spicy responses! 🌶️"

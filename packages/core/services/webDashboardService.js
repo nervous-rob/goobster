@@ -321,14 +321,17 @@ class WebDashboardService {
             throw new WebDashboardError(400, 'BAD_RETENTION',
                 `days must be an integer between 0 (keep forever) and ${RETENTION_MAX_DAYS}.`);
         }
-        const { setMemoryRetentionDays } = require('../utils/guildSettings');
-        const stored = await setMemoryRetentionDays(scope, value);
-        let purged = 0;
-        if (stored) {
-            purged = await memoryService.applyRetention(scope);
-            if (purged > 0) await memoryService.cleanupVecIndex();
+        // Shared write path: the settings facade validates, bumps the memory
+        // section revision, publishes settings-changed, then purges.
+        const userSettingsService = require('./userSettingsService');
+        let result;
+        try {
+            result = await userSettingsService.applyRetention({ userId, days: value || null });
+        } catch (error) {
+            throw new WebDashboardError(error.status || 400, error.code || 'BAD_RETENTION', error.message);
         }
-        return { retentionDays: stored ?? null, purged };
+        const stored = result.data?.values?.retentionDays ?? null;
+        return { retentionDays: stored, purged: result.purged || 0 };
     }
 
     /** Guard: the scope must be the requesting user's own DM scope. */
