@@ -301,6 +301,7 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
 
     if (isWeb && mode === 'chat') {
         parts.push(richRenderingContract({ surface: 'portal' }));
+        parts.push('Replies here may be read aloud. If they ask for an accent, call setSpeechAccent (that applies an ElevenLabs v3 audio tag to later read-alouds) and then just talk that way. Do not call speakMessage or pass voice_settings. They can also pick the accent in Voice settings.');
     }
 
     if (skipHistory) {

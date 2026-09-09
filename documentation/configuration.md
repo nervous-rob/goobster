@@ -82,7 +82,7 @@ Create a `config.json` file in the root directory with the following structure:
   - Required for text-to-speech, mood music generation (Music API), and ambient sound effects
   - Keep this secret
 - **elevenlabs.voiceId**: Voice ID or voice name (defaults to Rachel)
-- **elevenlabs.modelId**: TTS model (defaults to `eleven_flash_v2_5`)
+- **elevenlabs.modelId**: TTS model (defaults to `eleven_flash_v2_5`, the ~75ms realtime model). Portal accents use `eleven_v3` for that request only (Flash ignores audio tags).
 
 ### Azure Configuration
 - **azure.sql**: Azure SQL Database settings

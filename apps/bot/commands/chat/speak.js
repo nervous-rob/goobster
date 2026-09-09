@@ -60,7 +60,7 @@ module.exports = {
             await interaction.deferReply();
 
             // Check if user is in a voice channel
-            const voiceChannel = interaction.member.voice.channel;
+            const voiceChannel = interaction.member?.voice?.channel;
             if (!voiceChannel) {
                 return await interaction.editReply('You need to be in a voice channel to use this command.');
             }

@@ -94,9 +94,23 @@ export const api = {
     voiceList: () =>
         request<{ voices: Array<{ id: string; name: string; category?: string | null }> }>('/api/app/voice/voices'),
     voiceSettings: () =>
-        request<{ voiceId: string | null; voiceName: string | null; speed: number }>('/api/app/voice/settings'),
-    saveVoiceSettings: (fields: { voiceId?: string | null; speed?: number }) =>
-        request<{ voiceId: string | null; voiceName: string | null; speed: number }>(
+        request<{
+            voiceId: string | null;
+            voiceName: string | null;
+            speed: number;
+            accent: string | null;
+            accentLabel: string | null;
+            accents: Array<{ id: string; label: string }>;
+        }>('/api/app/voice/settings'),
+    saveVoiceSettings: (fields: { voiceId?: string | null; speed?: number; accent?: string | null }) =>
+        request<{
+            voiceId: string | null;
+            voiceName: string | null;
+            speed: number;
+            accent: string | null;
+            accentLabel: string | null;
+            accents: Array<{ id: string; label: string }>;
+        }>(
             '/api/app/voice/settings', { method: 'PATCH', body: fields }),
 
     integrations: () => request('/api/app/integrations'),

@@ -29,7 +29,8 @@ function mountVoiceTasks(app, ctx, h) {
         ctx.voice.setVoiceSettings({
             userId: req.webUser.userId,
             voiceId: req.body?.voiceId,
-            speed: req.body?.speed
+            speed: req.body?.speed,
+            accent: req.body?.accent
         })
     ));
 

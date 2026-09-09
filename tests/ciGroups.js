@@ -62,7 +62,8 @@ const GROUPS = [
             'toolsRegistryFollowup',
             'toolsRegistryObservatory',
             'toolsRegistryOrder',
-            'toolsRegistryRunCode'
+            'toolsRegistryRunCode',
+            'toolsRegistryVoiceChannel'
         ])
     },
     {
@@ -169,6 +170,7 @@ const GROUPS = [
             'realtimeVoiceEngine',
             'scribeRealtime',
             'speechText',
+            'ttsAccent',
             'spotdlService',
             'spotifyWebApi',
             'urlPlayService',
