@@ -494,11 +494,15 @@ export const api = {
         request(`/api/app/parlor/conversations/${conversationId}/members/${memberId}`, { method: 'DELETE' })
 };
 
-export async function fetchSpeech(text: string, signal?: AbortSignal | null): Promise<Blob> {
+export async function fetchSpeech(
+    text: string,
+    signal?: AbortSignal | null,
+    opts: { voiceId?: string | null } = {}
+): Promise<Blob> {
     const res = await fetch('/api/app/voice/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(opts.voiceId ? { text, voiceId: opts.voiceId } : { text }),
         signal: signal || undefined
     });
     if (!res.ok) {

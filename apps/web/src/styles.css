@@ -1143,3 +1143,142 @@ a.nav-btn {
 .mention-option:hover, .mention-option.active { background: var(--accent-soft); color: var(--text); }
 .mention-option .persona-dot.small { width: 18px; height: 18px; font-size: 10px; }
 .mention-kind { width: 18px; text-align: center; font-size: 12px; opacity: 0.85; }
+
+/* --- Settings ------------------------------------------------------------- */
+
+.settings-room .pane-header { flex-wrap: wrap; row-gap: 8px; }
+.settings-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.settings-back { flex: none; display: none; }
+.settings-search { position: relative; flex: 1 1 260px; max-width: 460px; }
+.settings-search .input { width: 100%; }
+.settings-search-results {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  list-style: none; margin: 0; padding: 4px;
+  background: var(--bg-raise-2); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45); max-height: 60vh; overflow: auto;
+}
+.settings-search-results li button {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  background: transparent; border: 0; color: var(--text); cursor: pointer;
+  padding: 8px 10px; border-radius: 8px; font: inherit;
+}
+.settings-search-results li button:hover, .settings-search-results li button:focus-visible { background: var(--accent-soft); }
+.settings-hit-label { font-weight: 600; font-size: 14px; }
+.settings-search-empty { padding: 10px 12px; }
+
+.settings-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); }
+.settings-nav {
+  border-right: 1px solid var(--border); overflow: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.settings-nav-item {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) 14px; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 10px; color: var(--text-dim); text-decoration: none;
+  transition: background 160ms, color 160ms;
+}
+.settings-nav-item:hover { background: var(--bg-raise-2); color: var(--text); }
+.settings-nav-item.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 3px 0 0 var(--accent); }
+.settings-nav-icon { font-size: 18px; text-align: center; }
+.settings-nav-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.settings-nav-title { font-weight: 600; font-size: 14.5px; display: flex; align-items: center; gap: 6px; }
+.settings-nav-blurb { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-nav-chevron { color: var(--text-dim); font-size: 18px; }
+.settings-dirty-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn, #ffba5c); display: inline-block; }
+
+.settings-content { overflow: auto; padding: 20px 28px 96px; }
+.settings-section { max-width: 760px; }
+.settings-welcome { max-width: 520px; margin: 40px auto; }
+.settings-section-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
+.settings-section-head h2 { margin: 0 0 4px; font-size: 20px; }
+.settings-section-head .hint { margin: 0; }
+.settings-applies { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.settings-scope { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.settings-effective {
+  background: var(--bg-raise); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 18px; font-size: 14px;
+}
+
+.settings-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 8px 24px;
+  padding: 16px 0; border-top: 1px solid var(--border); scroll-margin-top: 80px;
+  border-radius: 8px; transition: background 400ms;
+}
+.settings-field.is-targeted { background: var(--accent-soft); box-shadow: 0 0 0 6px var(--accent-soft); }
+.settings-field-head label { font-weight: 600; font-size: 14.5px; display: block; margin-bottom: 4px; }
+.settings-field-head .hint { line-height: 1.45; }
+.settings-field-control { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.settings-field-control .input, .settings-field-control .select { width: 100%; }
+.settings-field-control textarea.input { font: inherit; font-size: 14px; resize: vertical; }
+.settings-field.inline { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.settings-field-error { color: var(--danger); font-size: 13px; }
+.settings-counter { text-align: right; }
+.settings-inline-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.settings-inline-row .select { flex: 1 1 180px; width: auto; }
+.settings-mini { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-dim); flex: 1 1 120px; }
+.settings-mini .input { width: 100%; }
+.settings-segment { flex-wrap: wrap; }
+.settings-check { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+.settings-check .narrow-only { display: none; }
+
+.settings-boundaries { padding: 0; }
+.settings-boundary-row {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) 1fr 1fr 1.4fr; gap: 8px; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13.5px;
+}
+.settings-boundary-row:last-child { border-bottom: 0; }
+.settings-boundary-row.head { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
+.settings-boundary-row .select.small { padding: 4px 8px; font-size: 13px; }
+.settings-boundary-name { font-weight: 600; }
+
+.settings-report .list-row { display: flex; justify-content: space-between; align-items: center; }
+.settings-danger { color: var(--danger); }
+.settings-diff { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+.settings-identity { display: flex; align-items: center; gap: 12px; }
+.settings-identity .avatar { width: 40px; height: 40px; }
+
+.settings-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: rgba(255, 186, 92, 0.12); border: 1px solid var(--warn, #ffba5c);
+  border-radius: var(--radius); padding: 10px 14px; margin: 12px 0; font-size: 13.5px;
+}
+.settings-banner.muted { background: var(--bg-raise); border-color: var(--border); color: var(--text-dim); }
+
+.settings-savebar {
+  position: sticky; bottom: 0; margin-top: 18px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: var(--radius);
+  background: var(--bg-raise); border: 1px solid var(--border);
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+.settings-savebar.is-dirty { border-color: var(--accent); box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.25); }
+.settings-savebar-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+
+.user-chip-link { text-decoration: none; border-radius: 8px; }
+.user-chip-link:hover { background: var(--bg-raise-2); color: var(--text); }
+.settings-link { font-size: 14px; padding: 8px 12px; }
+
+@media (max-width: 860px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { border-right: 0; padding: 10px 12px; }
+  .settings-nav-blurb { white-space: normal; }
+  .narrow-hidden { display: none !important; }
+  .settings-room.has-section .settings-back { display: inline-flex; }
+  .settings-content { padding: 16px 14px 110px; }
+  .settings-field { grid-template-columns: 1fr; gap: 8px; }
+  .settings-field.inline { grid-template-columns: minmax(0, 1fr) auto; }
+  .settings-section-head { flex-direction: column; }
+  .settings-search { flex-basis: 100%; max-width: none; }
+  .settings-boundary-row { grid-template-columns: 1fr 1fr; }
+  .settings-boundary-row.head { display: none; }
+  .settings-boundary-name { grid-column: 1 / -1; }
+  .settings-boundary-row .select.small { grid-column: 1 / -1; }
+  .settings-check { justify-content: flex-start; }
+  .settings-check .narrow-only { display: inline; font-size: 13px; color: var(--text-dim); }
+  /* below 16px iOS zooms the page when a control gains focus */
+  .settings-field-control .input, .settings-field-control .select, .settings-search .input { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-field, .settings-nav-item { transition: none; }
+}
+.settings-return { margin-left: auto; white-space: nowrap; }

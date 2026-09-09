@@ -6,6 +6,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
+import { useOpenSettings } from '../hooks/useOpenSettings';
 
 /**
  * The Assistant Inbox: everything Goobster noticed but judged not worth
@@ -84,13 +85,6 @@ type Overview = {
     initiativeLevels: string[];
 };
 
-const INITIATIVE_BLURB: Record<string, string> = {
-    observe: 'Notices and remembers, never reaches out. Everything lands here for you to look at.',
-    nudge: 'May surface things he thinks are useful, including a DM when something warrants one.',
-    assist: 'As nudge, plus reversible read-only work done on your behalf and reported back.',
-    delegate: 'As assist, plus he may start pre-authorized kinds of action without asking first.'
-};
-
 /** A hollow bullet is something he chose not to bother you with. */
 const DISPOSITION_MARK: Record<string, string> = {
     inbox: '○', mention: '◐', dm: '●', urgent: '❗'
@@ -132,7 +126,7 @@ export function NoticedRoom() {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
-    const [settingsOpen, setSettingsOpen] = useState(false);
+    const openSettings = useOpenSettings();
     const [explaining, setExplaining] = useState<Notice | null>(null);
 
     const overview = useQuery({
@@ -194,6 +188,9 @@ export function NoticedRoom() {
                                 invalidate();
                             } catch (error) { toast((error as Error).message, true); }
                         }}>Start paying attention</button>
+                        <div className="hint" style={{ marginTop: 12 }}>
+                            <button type="button" className="btn subtle" onClick={() => openSettings('initiative')}>Set limits first in Settings →</button>
+                        </div>
                     </div>
                 </div>
             </main>
@@ -210,7 +207,7 @@ export function NoticedRoom() {
                     <MenuButton />
                     <h1>Noticed</h1>
                 </div>
-                <button type="button" className="btn" onClick={() => setSettingsOpen(true)}>⚙ Initiative</button>
+                <button type="button" className="btn" onClick={() => openSettings('initiative', 'initiative-level')}>⚙ Initiative</button>
             </header>
             <div className="pane-body">
                 <div className="row-meta" style={{ marginBottom: 14 }}>
@@ -358,14 +355,6 @@ export function NoticedRoom() {
             </div>
 
             {explaining && <ExplainModal notice={explaining} onClose={() => setExplaining(null)} />}
-            {settingsOpen && (
-                <InitiativeModal
-                    policy={policy}
-                    levels={data.initiativeLevels}
-                    onClose={() => setSettingsOpen(false)}
-                    onSaved={() => { setSettingsOpen(false); invalidate(); }}
-                />
-            )}
         </main>
     );
 }
@@ -400,70 +389,6 @@ function ExplainModal({ notice, onClose }: { notice: Notice; onClose: () => void
             </div>
             <div className="modal-actions">
                 <button type="button" className="btn primary" onClick={onClose}>Close</button>
-            </div>
-        </Modal>
-    );
-}
-
-function InitiativeModal({ policy, levels, onClose, onSaved }: {
-    policy: Policy; levels: string[]; onClose: () => void; onSaved: () => void;
-}) {
-    const toast = useToast();
-    const [initiative, setInitiative] = useState(policy.initiative);
-    const [perDay, setPerDay] = useState(String(policy.maxContactsPerDay));
-    const [cooldown, setCooldown] = useState(String(policy.contactCooldownMinutes));
-    const [quietStart, setQuietStart] = useState(
-        policy.quietStartMinute === null ? '' : String(Math.floor(policy.quietStartMinute / 60)));
-    const [quietEnd, setQuietEnd] = useState(
-        policy.quietEndMinute === null ? '' : String(Math.floor(policy.quietEndMinute / 60)));
-    const [saving, setSaving] = useState(false);
-
-    async function save() {
-        setSaving(true);
-        try {
-            await api.attentionUpdatePolicy({
-                initiative,
-                maxContactsPerDay: Number(perDay),
-                contactCooldownMinutes: Number(cooldown),
-                quietStartMinute: quietStart === '' ? null : Number(quietStart) * 60,
-                quietEndMinute: quietEnd === '' ? null : Number(quietEnd) * 60
-            });
-            toast('Initiative updated.');
-            onSaved();
-        } catch (error) {
-            toast((error as Error).message, true);
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    return (
-        <Modal onClose={onClose}>
-            <h2>How much initiative?</h2>
-            <select className="select" value={initiative} onChange={(e) => setInitiative(e.target.value)}>
-                {levels.map((level) => <option key={level} value={level}>{level}</option>)}
-            </select>
-            <div className="row-meta" style={{ margin: '6px 0 14px' }}>{INITIATIVE_BLURB[initiative]}</div>
-
-            <div className="section-title">Contact budget</div>
-            <input className="input" type="number" min={0} max={20} value={perDay}
-                onChange={(e) => setPerDay(e.target.value)} placeholder="Max DMs per day" />
-            <input className="input" type="number" min={5} max={1440} value={cooldown}
-                onChange={(e) => setCooldown(e.target.value)} placeholder="Minutes between DMs" />
-            <div className="row-meta" style={{ marginBottom: 14 }}>
-                Set the daily cap to 0 and he will never DM you — everything stays in this pane.
-            </div>
-
-            <div className="section-title">Quiet hours (UTC)</div>
-            <input className="input" type="number" min={0} max={23} value={quietStart}
-                onChange={(e) => setQuietStart(e.target.value)} placeholder="Start hour (blank for none)" />
-            <input className="input" type="number" min={0} max={23} value={quietEnd}
-                onChange={(e) => setQuietEnd(e.target.value)} placeholder="End hour" />
-            <div className="row-meta">Notices still accumulate during quiet hours; only contact waits.</div>
-
-            <div className="modal-actions">
-                <button type="button" className="btn" onClick={onClose}>Cancel</button>
-                <button type="button" className="btn primary" disabled={saving} onClick={save}>Save</button>
             </div>
         </Modal>
     );

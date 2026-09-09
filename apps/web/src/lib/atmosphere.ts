@@ -12,7 +12,9 @@ const ROOM_CLASS: Record<string, string> = {
     tasks: 'room-tasks',
     noticed: 'room-noticed',
     decks: 'room-decks',
-    usage: 'room-usage'
+    usage: 'room-usage',
+    // Settings is calm and neutral: it borrows the Usage wash
+    settings: 'room-usage'
 };
 
 const ROOM_CLASSES = Object.values(ROOM_CLASS);

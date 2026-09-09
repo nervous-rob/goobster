@@ -647,8 +647,9 @@ class UserSettingsService {
                     accent: null
                 };
             case 'initiative':
+                // Reset never touches enrollment: turning attention on or off
+                // stays an explicit action.
                 return {
-                    enabled: false,
                     initiative: 'nudge',
                     maxContactsPerDay: 3,
                     contactCooldownMinutes: 120,
@@ -971,27 +972,33 @@ class UserSettingsService {
                     endMinute: changes.quietEndMinute ?? null
                 });
             }
-            if ('boundaries' in changes && changes.boundaries) {
-                for (const [category, boundary] of Object.entries(changes.boundaries)) {
+            if ('boundaries' in changes) {
+                const entries = Object.entries(changes.boundaries || {});
+                if (entries.length === 0) {
+                    // Reset semantics: back to the shipped per-category defaults
+                    await attentionPolicyService.clearBoundaries(userId);
+                }
+                for (const [category, boundary] of entries) {
                     await attentionPolicyService.setBoundary({
                         userId,
                         category,
-                        proactiveRead: boundary.proactiveRead,
-                        proactiveCompute: boundary.proactiveCompute,
-                        externalWrite: boundary.externalWrite
+                        proactiveRead: boundary?.proactiveRead,
+                        proactiveCompute: boundary?.proactiveCompute,
+                        externalWrite: boundary?.externalWrite
                     });
                 }
             }
 
-            // Explicitly set enabled status
+            // Enabling/disabling is an explicit user action. Any other edit
+            // leaves enrollment exactly as it was - including a policy row the
+            // helpers above may have just created for a never-enrolled user.
             if ('enabled' in changes) {
                 if (changes.enabled) {
                     await attentionPolicyService.enroll({ userId });
                 } else {
                     await attentionPolicyService.disable(userId);
                 }
-            } else if (existing && !existing.enabled) {
-                // If it was already disabled, ensure it stays disabled
+            } else if (!existing?.enabled) {
                 await attentionPolicyService.disable(userId);
             }
         };

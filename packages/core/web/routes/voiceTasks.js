@@ -48,7 +48,10 @@ function mountVoiceTasks(app, ctx, h) {
         try {
             const { stream, contentType } = await ctx.voice.synthesize({
                 userId: req.webUser.userId,
-                text: req.body?.text
+                text: req.body?.text,
+                // Optional one-off voice override (settings preview); the
+                // saved preference is untouched.
+                voiceId: typeof req.body?.voiceId === 'string' && req.body.voiceId ? req.body.voiceId : undefined
             });
             res.status(200).set({ 'Content-Type': contentType, 'Cache-Control': 'no-store' });
             stream.on('error', () => { try { res.end(); } catch { /* gone */ } });

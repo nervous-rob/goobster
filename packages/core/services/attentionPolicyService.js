@@ -228,6 +228,23 @@ class AttentionPolicyService {
     }
 
     /**
+     * Drop every category override so the shipped defaults apply again.
+     * Leaves enrollment, initiative, budget, and quiet hours untouched.
+     * @param {string} userId
+     * @returns {Promise<Object|null>} the updated policy (null when none exists)
+     */
+    async clearBoundaries(userId) {
+        const existing = await this.get(userId);
+        if (!existing) return null;
+        await db.run(
+            `UPDATE attention_policies
+             SET boundaries = '{}', updatedAt = CURRENT_TIMESTAMP WHERE userId = @userId`,
+            { userId }
+        );
+        return await this.get(userId);
+    }
+
+    /**
      * Set (or clear, with nulls) the do-not-disturb window. Minutes from UTC
      * midnight; a window that wraps past midnight is supported.
      * @param {Object} params - { userId, startMinute, endMinute }

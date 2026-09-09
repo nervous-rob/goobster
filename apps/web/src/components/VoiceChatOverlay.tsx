@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { useToast } from '../hooks/useToast';
+import { useOpenSettings } from '../hooks/useOpenSettings';
 import type { useVoiceChat, VoiceChatStatus } from '../hooks/useVoiceChat';
 
 /**
@@ -26,29 +26,23 @@ const STATUS_LABELS: Record<VoiceChatStatus, string> = {
 const SPEED_STEPS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 
 export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) {
-    const toast = useToast();
-    const queryClient = useQueryClient();
+    const openSettings = useOpenSettings();
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [savingVoice, setSavingVoice] = useState(false);
 
     const settingsQ = useQuery({
         queryKey: ['voice-settings'],
         queryFn: () => api.voiceSettings(),
         staleTime: 60_000
     });
-    const voicesQ = useQuery({
-        queryKey: ['voice-list'],
-        queryFn: () => api.voiceList(),
-        enabled: settingsOpen,
-        staleTime: 5 * 60_000,
-        retry: false
-    });
-
-    // The saved playback speed applies to the session as soon as it's known
-    const speed = settingsQ.data?.speed ?? 1;
+    // The saved playback speed seeds the session; the panel can nudge it for
+    // this call only. Changing the saved default lives in Settings → Voice.
+    const savedSpeed = settingsQ.data?.speed ?? 1;
+    const [sessionOverride, setSessionOverride] = useState<number | null>(null);
+    const sessionSpeed = sessionOverride ?? savedSpeed;
+    const setSessionSpeed = (value: number) => setSessionOverride(value);
     useEffect(() => {
-        voiceChat.setPlaybackSpeed(speed);
-    }, [speed, voiceChat]);
+        voiceChat.setPlaybackSpeed(sessionSpeed);
+    }, [sessionSpeed, voiceChat]);
 
     // Esc ends the session
     useEffect(() => {
@@ -58,19 +52,6 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [voiceChat]);
-
-    async function saveVoice(fields: { voiceId?: string | null; speed?: number; accent?: string | null }) {
-        setSavingVoice(true);
-        try {
-            const saved = await api.saveVoiceSettings(fields);
-            queryClient.setQueryData(['voice-settings'], saved);
-            if (fields.speed !== undefined) voiceChat.setPlaybackSpeed(saved.speed);
-        } catch (error) {
-            toast((error as Error).message, true);
-        } finally {
-            setSavingVoice(false);
-        }
-    }
 
     const { status, level, partial, transcript, speakingText, talking, muted, mode, engine } = voiceChat;
 
@@ -136,56 +117,28 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
             {settingsOpen && (
                 <div className="voice-settings-panel">
                     <div className="field">
-                        <label htmlFor="voice-picker">Goobster's voice</label>
-                        <select
-                            id="voice-picker"
-                            className="select"
-                            disabled={savingVoice || voicesQ.isPending}
-                            value={settingsQ.data?.voiceId || ''}
-                            onChange={(e) => void saveVoice({ voiceId: e.target.value || null })}
-                        >
-                            <option value="">Server default</option>
-                            {(voicesQ.data?.voices || []).map((voice) => (
-                                <option key={voice.id} value={voice.id}>
-                                    {voice.name}{voice.category ? ` · ${voice.category}` : ''}
-                                </option>
-                            ))}
-                        </select>
-                        {voicesQ.isError && <div className="hint">{(voicesQ.error as Error).message}</div>}
-                    </div>
-                    <div className="field">
-                        <label htmlFor="voice-accent">Spoken accent</label>
-                        <select
-                            id="voice-accent"
-                            className="select"
-                            disabled={savingVoice}
-                            value={settingsQ.data?.accent || ''}
-                            onChange={(e) => void saveVoice({ accent: e.target.value || null })}
-                        >
-                            <option value="">No accent tag</option>
-                            {(settingsQ.data?.accents || []).map((accent) => (
-                                <option key={accent.id} value={accent.id}>
-                                    {accent.label}
-                                </option>
-                            ))}
-                        </select>
-                        <div className="hint">Uses ElevenLabs v3 audio tags on read-aloud. Flash (live Discord voice) ignores them.</div>
-                    </div>
-                    <div className="field">
-                        <label>Playback speed</label>
+                        <label>Playback speed for this call</label>
                         <div className="segment voice-speed-segment">
                             {SPEED_STEPS.map((step) => (
                                 <button
                                     key={step}
                                     type="button"
-                                    className={`segment-btn${Math.abs(speed - step) < 0.01 ? ' active' : ''}`}
-                                    disabled={savingVoice}
-                                    onClick={() => void saveVoice({ speed: step })}
+                                    className={`segment-btn${Math.abs(sessionSpeed - step) < 0.01 ? ' active' : ''}`}
+                                    onClick={() => setSessionSpeed(step)}
                                 >{step}×</button>
                             ))}
                         </div>
+                        <div className="hint">Applies to this call only. Your saved default is {savedSpeed}×.</div>
                     </div>
-                    <div className="hint">Voice, accent, and speed also apply to “Listen” read-alouds. Servers set their own voice with /setvoice.</div>
+                    <div className="field">
+                        <div className="hint">
+                            Speaking as <strong>{settingsQ.data?.voiceName || 'the host default voice'}</strong>
+                            {settingsQ.data?.accentLabel ? ` with a ${settingsQ.data.accentLabel} accent` : ''}.
+                        </div>
+                        <button type="button" className="btn" onClick={() => { voiceChat.stop(); openSettings('voice', 'voice-pick'); }}>
+                            Change voice, accent &amp; default speed in Settings → (ends this call)
+                        </button>
+                    </div>
                 </div>
             )}
 
