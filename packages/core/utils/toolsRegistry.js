@@ -33,6 +33,7 @@ const TOOL_ORDER = [
     'playTrack',
     'setNickname',
     'speakMessage',
+    'setSpeechAccent',
     'echoMessage',
     'rememberFact',
     'forgetFact',
@@ -127,6 +128,11 @@ module.exports = {
         if (isWeb || isAutomation) {
             definitions = definitions.filter(def =>
                 def.name !== 'speakMessage' && def.name !== 'playTrack');
+        }
+        // setSpeechAccent writes portal TTS settings (ElevenLabs v3 audio
+        // tags). Discord /voicechat stays on Flash, which ignores those tags.
+        if (!isWeb) {
+            definitions = definitions.filter(def => def.name !== 'setSpeechAccent');
         }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);

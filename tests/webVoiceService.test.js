@@ -208,6 +208,18 @@ describe('synthesize', () => {
         expect(fetchStream).toHaveBeenCalledWith('Say it in my voice.', { voiceId: 'voiceABC123456789012' });
     });
 
+    test('a saved accent prefixes a v3 audio tag and switches the TTS model', async () => {
+        const fetchStream = jest.fn().mockResolvedValue({ body: 'fake-stream' });
+        const userId = '100000000000000043';
+        const service = makeService({ tts: { fetchStream } });
+        await service.setVoiceSettings({ userId, accent: 'british' });
+        await service.synthesize({ userId, text: 'Hello there.' });
+        expect(fetchStream).toHaveBeenCalledWith('[British accent] Hello there.', {
+            voiceId: null,
+            modelId: 'eleven_v3'
+        });
+    });
+
     test('degrades to a direct ElevenLabs call when the shared service is down', async () => {
         const fetchImpl = jest.fn().mockResolvedValue({ ok: true, body: 'direct-stream' });
         const service = makeService({ elevenKey: 'xi-key', fetchImpl });
@@ -243,9 +255,12 @@ describe('voice settings', () => {
         ]) }
     });
 
-    test('defaults: no voice, speed 1', async () => {
+    test('defaults: no voice, speed 1, no accent', async () => {
         const settings = await makeService().getVoiceSettings({ userId: '100000000000000050' });
-        expect(settings).toEqual({ voiceId: null, voiceName: null, speed: 1 });
+        expect(settings).toEqual(expect.objectContaining({
+            voiceId: null, voiceName: null, speed: 1, accent: null, accentLabel: null
+        }));
+        expect(settings.accents).toEqual(expect.arrayContaining([{ id: 'british', label: 'British' }]));
     });
 
     test('set resolves names at save time and persists id + display name', async () => {
@@ -253,7 +268,9 @@ describe('voice settings', () => {
         const service = makeWithCatalog();
         const saved = await service.setVoiceSettings({ userId, voiceId: 'resolved name', speed: 1.25 });
         expect(resolveVoice).toHaveBeenCalledWith('resolved name');
-        expect(saved).toEqual({ voiceId: 'voiceXYZ987654321098', voiceName: 'Resolved Name', speed: 1.25 });
+        expect(saved).toEqual(expect.objectContaining({
+            voiceId: 'voiceXYZ987654321098', voiceName: 'Resolved Name', speed: 1.25, accent: null
+        }));
         // A fresh read comes back identical (persisted, not just echoed)
         expect(await service.getVoiceSettings({ userId })).toEqual(saved);
     });
@@ -263,7 +280,9 @@ describe('voice settings', () => {
         const service = makeWithCatalog();
         await service.setVoiceSettings({ userId, voiceId: 'resolved name', speed: 1.5 });
         const cleared = await service.setVoiceSettings({ userId, voiceId: null });
-        expect(cleared).toEqual({ voiceId: null, voiceName: null, speed: 1.5 });
+        expect(cleared).toEqual(expect.objectContaining({
+            voiceId: null, voiceName: null, speed: 1.5, accent: null
+        }));
     });
 
     test('rejects out-of-range speeds', async () => {
@@ -285,6 +304,19 @@ describe('voice settings', () => {
     test('setting a voice with no TTS anywhere: 503 TTS_UNAVAILABLE', async () => {
         await expect(makeService().setVoiceSettings({ userId: '100000000000000055', voiceId: 'Rachel' }))
             .rejects.toMatchObject({ status: 503, code: 'TTS_UNAVAILABLE' });
+    });
+
+    test('legalizes and persists a spoken accent', async () => {
+        const userId = '100000000000000056';
+        const saved = await makeService().setVoiceSettings({ userId, accent: 'UK' });
+        expect(saved.accent).toBe('british');
+        expect(saved.accentLabel).toBe('British');
+        expect(await makeService().getVoiceSettings({ userId })).toMatchObject({ accent: 'british' });
+    });
+
+    test('rejects an unknown accent as BAD_ACCENT', async () => {
+        await expect(makeService().setVoiceSettings({ userId: '100000000000000057', accent: 'klingon' }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_ACCENT' });
     });
 });
 

@@ -261,6 +261,39 @@ module.exports = {
             }
         }
     },
+    setSpeechAccent: {
+        definition: {
+            name: 'setSpeechAccent',
+            description: 'Set or clear the accent used when this web conversation is read aloud. Applies an ElevenLabs v3 audio tag to later TTS (Study voice and Listen). Does not change the chosen voice. Pass accent "none" to clear. Do not put audio tags in your visible reply.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    accent: {
+                        type: 'string',
+                        description: 'Accent to use (american, british, irish, scottish, australian, indian, french, german, spanish, italian, southern-us) or "none" to clear.'
+                    }
+                },
+                required: ['accent']
+            }
+        },
+        execute: async ({ accent, interactionContext }) => {
+            if (!isWebOrAutomationTurn(interactionContext)) {
+                return '❌ Speech accent is a web-portal setting. In Discord, pick a voice with /setvoice; live voice stays on the fast Flash model.';
+            }
+            const userId = interactionContext?.user?.id;
+            if (!userId) return '❌ I could not tell whose voice settings to change.';
+            const webVoiceService = require('../../services/webVoiceService');
+            try {
+                const saved = await webVoiceService.setVoiceSettings({ userId, accent });
+                if (!saved.accent) {
+                    return '🎙️ Accent cleared. Read-aloud uses the selected voice with no regional tag.';
+                }
+                return `🎙️ Read-aloud accent set to ${saved.accentLabel}. Later spoken replies use ElevenLabs v3 with a ${saved.accentLabel} audio tag.`;
+            } catch (error) {
+                return `❌ ${error.message}`;
+            }
+        }
+    },
     echoMessage: {
         definition: {
             name: 'echoMessage',

@@ -21,8 +21,9 @@ describe('getDefinitions gating', () => {
         expect(offered).toContain('playTrack');
     });
 
-    test('the web app omits Discord voice-channel tools', async () => {
+    test('the web app offers setSpeechAccent instead', async () => {
         const offered = names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }));
+        expect(offered).toContain('setSpeechAccent');
         expect(offered).not.toContain('speakMessage');
         expect(offered).not.toContain('playTrack');
     });
@@ -31,6 +32,11 @@ describe('getDefinitions gating', () => {
         const offered = names(await toolsRegistry.getDefinitions(undefined, { isAutomation: true }));
         expect(offered).not.toContain('speakMessage');
         expect(offered).not.toContain('playTrack');
+        expect(offered).not.toContain('setSpeechAccent');
+    });
+
+    test('Discord text chat does not offer the portal accent tool', async () => {
+        expect(names(await toolsRegistry.getDefinitions())).not.toContain('setSpeechAccent');
     });
 
     test('an explicit allowlist cannot smuggle them onto a web turn', async () => {
@@ -81,5 +87,31 @@ describe('execute refuses without a Discord voice channel', () => {
             }
         });
         expect(result).toMatch(/voice channel/i);
+    });
+
+    test('setSpeechAccent on a web turn saves a legalized accent', async () => {
+        const userId = '100000000000000088';
+        const result = await toolsRegistry.execute('setSpeechAccent', {
+            accent: 'british',
+            interactionContext: {
+                channelId: `web:${userId}:main`,
+                user: { id: userId }
+            }
+        });
+        expect(result).toMatch(/British/);
+        const webVoiceService = require('@goobster/core/services/webVoiceService');
+        expect(await webVoiceService.getVoiceSettings({ userId })).toMatchObject({ accent: 'british' });
+    });
+
+    test('setSpeechAccent on Discord points at Voice settings, not Flash', async () => {
+        const result = await toolsRegistry.execute('setSpeechAccent', {
+            accent: 'british',
+            interactionContext: {
+                guildId: '500000000000000001',
+                user: { id: '100000000000000089' }
+            }
+        });
+        expect(result).toMatch(/web-portal/i);
+        expect(result).toMatch(/Flash/i);
     });
 });

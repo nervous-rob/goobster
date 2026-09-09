@@ -170,6 +170,7 @@ const GROUPS = [
             'realtimeVoiceEngine',
             'scribeRealtime',
             'speechText',
+            'ttsAccent',
             'spotdlService',
             'spotifyWebApi',
             'urlPlayService',

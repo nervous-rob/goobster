@@ -164,8 +164,8 @@ describe('buildConversationalPrompt', () => {
         });
         expect(prompt).toContain('WEB PORTAL:');
         expect(prompt).toContain(MINI_APP_BRIDGE);
-        expect(prompt).toContain('They pick the voice in Voice settings.');
-        expect(prompt).toContain('just do it in your reply');
+        expect(prompt).toContain('setSpeechAccent');
+        expect(prompt).toContain('ElevenLabs v3');
     });
 
     test('an ordinary turn gains no situation block', async () => {
