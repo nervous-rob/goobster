@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getBotNickname, setBotNickname, getUserNickname, setUserNickname } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
+const userSettingsService = require('@goobster/core/services/userSettingsService');
 
 module.exports = {
     // In a DM, nicknames are keyed on the user's DM scope and the DM user
@@ -75,7 +76,15 @@ module.exports = {
             if (subcommand === 'set') {
                 try {
                     const nickname = interaction.options.getString('nickname');
-                    await setBotNickname(guildId, nickname);
+                    if (!interaction.guildId) {
+                        await userSettingsService.updateSection({
+                            userId: interaction.user.id,
+                            section: 'profile',
+                            changes: { callGoobster: nickname }
+                        });
+                    } else {
+                        await setBotNickname(guildId, nickname);
+                    }
                     
                     // Also update the bot's server nickname if possible
                     // (DMs have no member object to rename)
@@ -99,7 +108,15 @@ module.exports = {
                 }
             } else if (subcommand === 'clear') {
                 try {
-                    await setBotNickname(guildId, null);
+                    if (!interaction.guildId) {
+                        await userSettingsService.updateSection({
+                            userId: interaction.user.id,
+                            section: 'profile',
+                            changes: { callGoobster: null }
+                        });
+                    } else {
+                        await setBotNickname(guildId, null);
+                    }
                     
                     // Also clear the bot's server nickname if possible
                     // (DMs have no member object to rename)
@@ -143,7 +160,15 @@ module.exports = {
             if (subcommand === 'set') {
                 try {
                     const nickname = interaction.options.getString('nickname');
-                    await setUserNickname(userId, guildId, nickname);
+                    if (!interaction.guildId) {
+                        await userSettingsService.updateSection({
+                            userId,
+                            section: 'profile',
+                            changes: { callUser: nickname }
+                        });
+                    } else {
+                        await setUserNickname(userId, guildId, nickname);
+                    }
                     await interaction.reply({
                         content: `✅ I'll now refer to you as **${nickname}**!`,
                         ephemeral: true
@@ -157,7 +182,15 @@ module.exports = {
                 }
             } else if (subcommand === 'clear') {
                 try {
-                    await setUserNickname(userId, guildId, null);
+                    if (!interaction.guildId) {
+                        await userSettingsService.updateSection({
+                            userId,
+                            section: 'profile',
+                            changes: { callUser: null }
+                        });
+                    } else {
+                        await setUserNickname(userId, guildId, null);
+                    }
                     await interaction.reply({
                         content: '✅ Your nickname has been cleared! I\'ll use your regular username now.',
                         ephemeral: true

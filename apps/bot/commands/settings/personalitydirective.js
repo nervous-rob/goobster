@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getPersonalityDirective, setPersonalityDirective } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
+const userSettingsService = require('@goobster/core/services/userSettingsService');
 
 module.exports = {
     // In a DM the directive is per-user (the DM user is the "admin" of
@@ -36,7 +37,15 @@ module.exports = {
         if (subcommand === 'set') {
             try {
                 const directive = interaction.options.getString('directive');
-                await setPersonalityDirective(scopeId, directive);
+                if (!interaction.guildId) {
+                    await userSettingsService.updateSection({
+                        userId: interaction.user.id,
+                        section: 'profile',
+                        changes: { personalityDirective: directive }
+                    });
+                } else {
+                    await setPersonalityDirective(scopeId, directive);
+                }
 
                 await interaction.reply({
                     content: `✅ Personality directive has been set! Goobster will now behave according to the new directive ${scopeLabel}.`,
@@ -51,7 +60,15 @@ module.exports = {
             }
         } else if (subcommand === 'clear') {
             try {
-                await setPersonalityDirective(scopeId, null);
+                if (!interaction.guildId) {
+                    await userSettingsService.updateSection({
+                        userId: interaction.user.id,
+                        section: 'profile',
+                        changes: { personalityDirective: null }
+                    });
+                } else {
+                    await setPersonalityDirective(scopeId, null);
+                }
                 
                 await interaction.reply({
                     content: `✅ Personality directive has been cleared. Goobster will now use default behavior ${scopeLabel}.`,

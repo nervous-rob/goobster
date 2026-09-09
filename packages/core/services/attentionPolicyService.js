@@ -101,6 +101,30 @@ class AttentionPolicyService {
     }
 
     /**
+     * Ensure a policy row exists without silently re-enabling a disabled policy.
+     * @private
+     */
+    async _ensurePolicy({ userId, defaultInitiative = 'nudge', defaultEnabled = false } = {}) {
+        if (!userId) throw new AttentionPolicyError('BAD_USER', 'A user id is required.');
+        const existing = await this.get(userId);
+        if (existing) return existing;
+        const level = INITIATIVE_LEVELS.includes(defaultInitiative) ? defaultInitiative : 'nudge';
+        await db.run(
+            `INSERT INTO attention_policies
+                (userId, initiative, maxContactsPerDay, contactCooldownMinutes, enabled)
+             VALUES (@userId, @initiative, @maxContacts, @cooldown, @enabled)`,
+            {
+                userId,
+                initiative: level,
+                maxContacts: HEARTBEAT.maxContactsPerDay,
+                cooldown: HEARTBEAT.contactCooldownMinutes,
+                enabled: defaultEnabled ? 1 : 0
+            }
+        );
+        return await this.get(userId);
+    }
+
+    /**
      * Enroll a person (idempotent). This is the opt-in: until it is called,
      * nothing in the attention system touches them.
      * @param {Object} params - { userId, initiative }
@@ -123,8 +147,8 @@ class AttentionPolicyService {
         }
         await db.run(
             `INSERT INTO attention_policies
-                (userId, initiative, maxContactsPerDay, contactCooldownMinutes)
-             VALUES (@userId, @initiative, @maxContacts, @cooldown)`,
+                (userId, initiative, maxContactsPerDay, contactCooldownMinutes, enabled)
+             VALUES (@userId, @initiative, @maxContacts, @cooldown, 1)`,
             {
                 userId,
                 initiative: level,
@@ -160,7 +184,7 @@ class AttentionPolicyService {
             throw new AttentionPolicyError('BAD_INITIATIVE',
                 `Initiative must be one of: ${INITIATIVE_LEVELS.join(', ')}.`);
         }
-        await this.enroll({ userId, initiative });
+        await this._ensurePolicy({ userId, defaultInitiative: initiative, defaultEnabled: true });
         await db.run(
             `UPDATE attention_policies
              SET initiative = @initiative, updatedAt = CURRENT_TIMESTAMP WHERE userId = @userId`,
@@ -186,7 +210,7 @@ class AttentionPolicyService {
             throw new AttentionPolicyError('BAD_BOUNDARY',
                 'externalWrite must be true, false, "confirm", or "never".');
         }
-        const policy = await this.enroll({ userId });
+        const policy = await this._ensurePolicy({ userId, defaultEnabled: false });
         const boundaries = { ...policy.boundaries };
         const current = boundaries[category] || {};
         boundaries[category] = {
@@ -210,13 +234,13 @@ class AttentionPolicyService {
      * @returns {Promise<Object>}
      */
     async setQuietHours({ userId, startMinute = null, endMinute = null } = {}) {
-        await this.enroll({ userId });
         const start = normalizeMinute(startMinute);
         const end = normalizeMinute(endMinute);
         if ((start === null) !== (end === null)) {
             throw new AttentionPolicyError('BAD_QUIET_HOURS',
                 'Quiet hours need both a start and an end (or neither, to clear them).');
         }
+        await this._ensurePolicy({ userId, defaultEnabled: false });
         await db.run(
             `UPDATE attention_policies
              SET quietStartMinute = @start, quietEndMinute = @end, updatedAt = CURRENT_TIMESTAMP
@@ -232,7 +256,7 @@ class AttentionPolicyService {
      * @returns {Promise<Object>}
      */
     async setBudget({ userId, maxContactsPerDay = null, contactCooldownMinutes = null } = {}) {
-        const policy = await this.enroll({ userId });
+        const policy = await this._ensurePolicy({ userId, defaultEnabled: false });
         const maxContacts = maxContactsPerDay === null
             ? policy.maxContactsPerDay
             : Math.max(0, Math.min(20, Math.trunc(Number(maxContactsPerDay) || 0)));

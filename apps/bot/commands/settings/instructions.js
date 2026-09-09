@@ -1,9 +1,9 @@
 const { SlashCommandBuilder } = require('discord.js');
 const {
     getUserInstructions,
-    setUserInstructions,
     MAX_INSTRUCTIONS_LENGTH
 } = require('@goobster/core/utils/userInstructions');
+const userSettingsService = require('@goobster/core/services/userSettingsService');
 
 /**
  * Per-user custom instructions from Discord - the same setting the web
@@ -50,13 +50,21 @@ module.exports = {
                 });
             } else if (subcommand === 'set') {
                 const text = interaction.options.getString('text');
-                await setUserInstructions(userId, text);
+                await userSettingsService.updateSection({
+                    userId,
+                    section: 'profile',
+                    changes: { customInstructions: text }
+                });
                 await interaction.reply({
                     content: `✅ **Custom instructions saved.** They apply to every chat with you - web, DMs, and servers.\n>>> ${text}`,
                     ephemeral: true
                 });
             } else if (subcommand === 'clear') {
-                await setUserInstructions(userId, null);
+                await userSettingsService.updateSection({
+                    userId,
+                    section: 'profile',
+                    changes: { customInstructions: null }
+                });
                 await interaction.reply({
                     content: '✅ Your custom instructions were removed.',
                     ephemeral: true

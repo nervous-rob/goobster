@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getTtsVoice, setTtsVoice } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const { voiceService } = require('@goobster/core/services/serviceManager');
+const userSettingsService = require('@goobster/core/services/userSettingsService');
 
 module.exports = {
   // In a DM the voice is per-user (it also drives the web portal's voice
@@ -61,7 +62,15 @@ module.exports = {
 
     if (subcommand === 'clear') {
       try {
-        await setTtsVoice(scopeId, { voiceId: null, voiceName: null });
+        if (!interaction.guildId) {
+          await userSettingsService.updateSection({
+            userId: interaction.user.id,
+            section: 'voice',
+            changes: { voiceId: null }
+          });
+        } else {
+          await setTtsVoice(scopeId, { voiceId: null, voiceName: null });
+        }
         await interaction.reply({
           content: `✅ Voice cleared ${scopeLabel} - back to the default voice.`,
           ephemeral: true
@@ -96,7 +105,15 @@ module.exports = {
     }
 
     try {
-      await setTtsVoice(scopeId, { voiceId: resolved.id, voiceName: resolved.name });
+      if (!interaction.guildId) {
+        await userSettingsService.updateSection({
+          userId: interaction.user.id,
+          section: 'voice',
+          changes: { voiceId: resolved.id }
+        });
+      } else {
+        await setTtsVoice(scopeId, { voiceId: resolved.id, voiceName: resolved.name });
+      }
       await interaction.editReply(
         `✅ Goobster now speaks with **${resolved.name || resolved.id}** (\`${resolved.id}\`) ${scopeLabel}. ` +
         'This applies to voice chat and read-aloud immediately.'

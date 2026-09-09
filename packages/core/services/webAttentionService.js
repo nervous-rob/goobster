@@ -77,12 +77,18 @@ class WebAttentionService {
      * @param {Object} params - { userId, initiative }
      */
     async enroll({ userId, initiative = null }) {
+        const userSettingsService = require('./userSettingsService');
         try {
-            return initiative
-                ? { policy: await attentionPolicyService.setInitiative(userId, initiative) }
-                : { policy: await attentionPolicyService.enroll({ userId }) };
+            const changes = { enabled: true };
+            if (initiative) changes.initiative = initiative;
+            await userSettingsService.updateSection({
+                userId,
+                section: 'initiative',
+                changes
+            });
+            return { policy: await attentionPolicyService.get(userId) };
         } catch (error) {
-            throw new WebAttentionError(400, error.code || 'BAD_REQUEST', error.message);
+            throw new WebAttentionError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
         }
     }
 
@@ -92,7 +98,17 @@ class WebAttentionService {
      * @param {Object} params - { userId }
      */
     async disable({ userId }) {
-        return { disabled: await attentionPolicyService.disable(userId) };
+        const userSettingsService = require('./userSettingsService');
+        try {
+            await userSettingsService.updateSection({
+                userId,
+                section: 'initiative',
+                changes: { enabled: false }
+            });
+            return { disabled: true };
+        } catch (error) {
+            throw new WebAttentionError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
+        }
     }
 
     /**
@@ -114,25 +130,24 @@ class WebAttentionService {
             throw new WebAttentionError(409, 'NOT_ENROLLED',
                 'Turn on proactive attention first.');
         }
+        const userSettingsService = require('./userSettingsService');
+        const changes = {};
+        if (initiative) changes.initiative = initiative;
+        if (maxContactsPerDay !== null) changes.maxContactsPerDay = maxContactsPerDay;
+        if (contactCooldownMinutes !== null) changes.contactCooldownMinutes = contactCooldownMinutes;
+        if (quietStartMinute !== undefined) changes.quietStartMinute = quietStartMinute;
+        if (quietEndMinute !== undefined) changes.quietEndMinute = quietEndMinute;
+        if (boundary?.category) {
+            changes.boundaries = { [boundary.category]: boundary };
+        }
         try {
-            if (initiative) await attentionPolicyService.setInitiative(userId, initiative);
-            if (maxContactsPerDay !== null || contactCooldownMinutes !== null) {
-                await attentionPolicyService.setBudget({
-                    userId, maxContactsPerDay, contactCooldownMinutes
-                });
-            }
-            if (quietStartMinute !== undefined || quietEndMinute !== undefined) {
-                await attentionPolicyService.setQuietHours({
-                    userId,
-                    startMinute: quietStartMinute ?? null,
-                    endMinute: quietEndMinute ?? null
-                });
-            }
-            if (boundary?.category) {
-                await attentionPolicyService.setBoundary({ userId, ...boundary });
-            }
+            await userSettingsService.updateSection({
+                userId,
+                section: 'initiative',
+                changes
+            });
         } catch (error) {
-            throw new WebAttentionError(400, error.code || 'BAD_REQUEST', error.message);
+            throw new WebAttentionError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
         }
         return { policy: await attentionPolicyService.get(userId) };
     }

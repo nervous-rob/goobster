@@ -30,6 +30,7 @@ const { mountSpitball } = require('./routes/spitball');
 const { mountWorkspace } = require('./routes/workspace');
 const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
+const { mountSettings } = require('./routes/settings');
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -55,6 +56,7 @@ function createWebAppApp(ctx) {
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountEventsStatic(app, ctx, helpers);
+    mountSettings(app, ctx, helpers);
     return app;
 }
 

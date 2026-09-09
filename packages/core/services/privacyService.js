@@ -707,6 +707,14 @@ class PrivacyService {
                 'DELETE FROM UserPreferences WHERE userId = @userId', { userId }
             )).changes;
 
+            counts.userSettings = (await db.run(
+                'DELETE FROM user_settings WHERE userId = @userId', { userId }
+            )).changes;
+
+            counts.userSettingRevisions = (await db.run(
+                'DELETE FROM user_setting_revisions WHERE userId = @userId', { userId }
+            )).changes;
+
             // Web app sessions: logging the user out everywhere is part of
             // forgetting them.
             counts.webSessions = (await db.run(
@@ -1000,6 +1008,12 @@ class PrivacyService {
             )).c,
             UserPreferences: (await db.get(
                 'SELECT COUNT(*) AS c FROM UserPreferences WHERE userId = @userId', { userId }
+            )).c,
+            user_settings: (await db.get(
+                'SELECT COUNT(*) AS c FROM user_settings WHERE userId = @userId', { userId }
+            )).c,
+            user_setting_revisions: (await db.get(
+                'SELECT COUNT(*) AS c FROM user_setting_revisions WHERE userId = @userId', { userId }
             )).c,
             web_sessions: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @userId', { userId }

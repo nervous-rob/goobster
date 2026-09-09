@@ -216,35 +216,19 @@ class WebVoiceService {
      * @param {Object} params - { userId, voiceId?, speed? }
      */
     async setVoiceSettings({ userId, voiceId, speed }) {
-        const update = {};
-        if (voiceId !== undefined) {
-            if (voiceId === null || voiceId === '') {
-                update.voiceId = null;
-                update.voiceName = null;
-            } else {
-                const tts = this._catalogTts();
-                if (!tts) {
-                    throw new WebVoiceError(503, 'TTS_UNAVAILABLE',
-                        'Voice selection needs an ElevenLabs API key on this server.');
-                }
-                let resolved;
-                try {
-                    resolved = await tts.resolveVoice(String(voiceId));
-                } catch (error) {
-                    throw new WebVoiceError(400, 'BAD_VOICE', error.message);
-                }
-                update.voiceId = resolved.id;
-                update.voiceName = resolved.name;
-            }
+        const changes = {};
+        if (voiceId !== undefined) changes.voiceId = voiceId;
+        if (speed !== undefined) changes.speed = speed;
+        try {
+            const userSettingsService = require('./userSettingsService');
+            await userSettingsService.updateSection({
+                userId,
+                section: 'voice',
+                changes
+            });
+        } catch (error) {
+            throw new WebVoiceError(error.status || 400, error.code || 'BAD_REQUEST', error.message);
         }
-        if (speed !== undefined) {
-            const value = Number(speed);
-            if (!Number.isFinite(value) || value < 0.5 || value > 2.0) {
-                throw new WebVoiceError(400, 'BAD_SPEED', 'Playback speed must be between 0.5 and 2.');
-            }
-            update.speed = value === 1 ? null : value;
-        }
-        await this._guildSettings().setTtsVoice(dmScopeId(userId), update);
         return await this.getVoiceSettings({ userId });
     }
 

@@ -54,11 +54,25 @@ const INVALIDATION_HINTS = {
     // A project asset, trigger, workspace file, or job changed. Scoped
     // hints (project-assets:<slug>, …) ride the payload so the open
     // project page refetches the explorer and version rails.
-    'project-changed': ['observatory']
+    'project-changed': ['observatory'],
+    // User settings changed: invalidates settings and related room caches
+    'settings-changed': ['settings', 'chat-settings', 'voice-settings', 'attention', 'home']
 };
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(0);
+
+emitter.on('event', (event) => {
+    if (event?.kind === 'settings-changed' && event?.payload?.userId) {
+        try {
+            const { dmScopeId } = require('../utils/dmScope');
+            const { clearGuildSettingsCache } = require('../utils/guildSettings');
+            const { clearMemeModeCache } = require('../utils/memeMode');
+            clearGuildSettingsCache(dmScopeId(event.payload.userId));
+            clearMemeModeCache(event.payload.userId);
+        } catch { /* best effort */ }
+    }
+});
 
 let pgListenerStop = null;
 let pgListenerStarted = false;
