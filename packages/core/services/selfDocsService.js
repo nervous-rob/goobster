@@ -176,6 +176,7 @@ function chunkMarkdown(body, { title, chunkChars = config.chunkChars }) {
     const sections = [];
     let current = { path: [], lines: [] };
     let fence = null;
+    let seenH1 = false;
     const stack = []; // [{ level, text }]
 
     const headingPath = () => {
@@ -196,7 +197,10 @@ function chunkMarkdown(body, { title, chunkChars = config.chunkChars }) {
             if (current.lines.some(l => l.trim())) sections.push({ path: headingPath(), lines: current.lines });
             const level = heading[1].length;
             while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
-            stack.push({ level, text: heading[2].replace(/[`*_]/g, '').trim() });
+            // The first H1 is the document itself (its title may differ from
+            // the front-matter title); later H1s are real top-level sections.
+            if (level === 1 && !seenH1) seenH1 = true;
+            else stack.push({ level, text: heading[2].replace(/[`*_]/g, '').trim() });
             current = { path: headingPath(), lines: [line] };
             continue;
         }
@@ -287,6 +291,44 @@ function splitLong(lines, max) {
 }
 
 /**
+ * The text under the first heading whose title contains `needle`
+ * (case-insensitive, or matching on stemmed tokens), up to the next heading
+ * of the same or a higher level. Fenced code is skipped when scanning.
+ * @returns {string|null}
+ */
+function extractSection(text, needle) {
+    const wanted = String(needle || '').toLowerCase().trim();
+    const wantedTokens = tokenize(wanted).join(' ');
+    if (!wanted) return null;
+    const lines = String(text || '').split('\n');
+    let fence = null;
+    let start = -1;
+    let level = 0;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const fenceMatch = line.match(/^\s*(```+|~~~+)/);
+        if (fenceMatch) {
+            if (!fence) fence = fenceMatch[1][0];
+            else if (fenceMatch[1][0] === fence) fence = null;
+            continue;
+        }
+        if (fence) continue;
+        const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+        if (!heading) continue;
+        if (start === -1) {
+            const title = heading[2].replace(/[`*_]/g, '').toLowerCase();
+            if (title.includes(wanted) || (wantedTokens && tokenize(title).join(' ').includes(wantedTokens))) {
+                start = i;
+                level = heading[1].length;
+            }
+        } else if (heading[1].length <= level) {
+            return lines.slice(start, i).join('\n').trim();
+        }
+    }
+    return start === -1 ? null : lines.slice(start).join('\n').trim();
+}
+
+/**
  * Parse one Markdown document into its seedable form.
  * @param {string} text - raw file contents
  * @param {{ relPath: string, chunkChars?: number }} opts
@@ -366,7 +408,13 @@ class SelfDocsService {
             const abs = path.isAbsolute(source) ? source : path.join(workspaceRoot, source);
             let stat;
             try { stat = fs.statSync(abs); } catch { continue; }
-            const rel = path.isAbsolute(source) ? path.relative(workspaceRoot, abs) : source;
+            // Absolute sources inside the workspace keep their repo-relative
+            // path; ones outside it (tests, mounted volumes) use the basename
+            // so slugs never start with "../".
+            const inside = abs.startsWith(workspaceRoot + path.sep);
+            const rel = path.isAbsolute(source)
+                ? (inside ? path.relative(workspaceRoot, abs) : path.basename(abs))
+                : source;
             if (stat.isDirectory()) walk(abs, rel);
             else if (/\.md$/i.test(abs)) add(abs, rel);
         }
@@ -807,7 +855,16 @@ class SelfDocsService {
                 sectionMatched = true;
             }
         }
-        const text = selected.map(c => c.content).join('\n\n');
+        let text = selected.map(c => c.content).join('\n\n');
+        if (section && !sectionMatched) {
+            // Small sections merge into one chunk, so also look for the heading
+            // itself and cut at the next heading of the same or higher level.
+            const cut = extractSection(chunks.map(c => c.content).join('\n\n'), section);
+            if (cut) {
+                text = cut;
+                sectionMatched = true;
+            }
+        }
         return { doc, window: windowLines(text, { offset, limit }), sectionMatched, sections };
     }
 
