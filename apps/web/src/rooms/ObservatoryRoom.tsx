@@ -17,6 +17,7 @@ import { KnowledgeTab } from './observatory/KnowledgeTab';
 import { MissionTab } from './observatory/MissionTab';
 import { AppsTab } from './observatory/AppsTab';
 import { ArtifactGallery } from './observatory/ArtifactGallery';
+import { ToolChip } from '../components/ToolChip';
 import { whenLabel } from './observatory/format';
 
 type Project = {
@@ -87,7 +88,7 @@ type Detail = {
     checkpoint?: string | null;
     totalFiles?: number;
 };
-type ToolChip = { name: string; phase: string; isError?: boolean };
+type CommandChip = { name: string; phase: string; isError?: boolean; argsPreview?: string };
 
 const STATUS_ICONS: Record<string, string> = {
     RUNNING: '🟢', COMPLETED: '✅', FAILED: '❌',
@@ -112,7 +113,7 @@ export function ObservatoryRoom() {
         label: string;
         draft: string;
         error: boolean;
-        chips: ToolChip[];
+        chips: CommandChip[];
     } | null>(null);
 
     const list = useQuery({
@@ -162,11 +163,21 @@ export function ObservatoryRoom() {
                         setCommand((prev) => {
                             if (!prev) return prev;
                             const chips = [...prev.chips];
-                            if (event.phase === 'start') chips.push({ name: event.name, phase: 'start' });
-                            else {
+                            if (event.phase === 'start') {
+                                chips.push({
+                                    name: event.name,
+                                    phase: 'start',
+                                    argsPreview: event.argsPreview
+                                });
+                            } else {
                                 for (let i = chips.length - 1; i >= 0; i--) {
                                     if (chips[i].name === event.name && chips[i].phase === 'start') {
-                                        chips[i] = { name: event.name, phase: 'result', isError: event.isError };
+                                        chips[i] = {
+                                            name: event.name,
+                                            phase: 'result',
+                                            isError: event.isError,
+                                            argsPreview: chips[i].argsPreview ?? event.argsPreview
+                                        };
                                         break;
                                     }
                                 }
@@ -253,14 +264,13 @@ export function ObservatoryRoom() {
                         </div>
                         <div className="obs-command-strip">
                             {command.chips.map((chip, index) => (
-                                <span
+                                <ToolChip
                                     key={`${chip.name}-${index}`}
-                                    className={`tool-chip ${chip.phase === 'start' ? 'running' : chip.isError ? 'failed' : 'done'}`}
-                                >
-                                    {chip.phase === 'start'
-                                        ? <><span className="tool-spinner" /> {chip.name}…</>
-                                        : `${chip.isError ? '⚠' : '✓'} ${chip.name}`}
-                                </span>
+                                    name={chip.name}
+                                    argsPreview={chip.argsPreview}
+                                    running={chip.phase === 'start'}
+                                    isError={chip.isError}
+                                />
                             ))}
                         </div>
                         <div className={`obs-command-reply${command.error ? ' error' : ''}`}>

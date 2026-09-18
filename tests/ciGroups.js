@@ -86,6 +86,7 @@ const GROUPS = [
             'parlorSharing',
             'parlorTool',
             'projectParlor',
+            'toolChipLabel',
             'userSettingsApi',
             'userSettingsService',
             'webAppApi',
