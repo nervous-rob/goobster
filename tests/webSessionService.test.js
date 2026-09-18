@@ -80,6 +80,41 @@ describe('session lifecycle', () => {
     });
 });
 
+describe('list and revoke (AC02)', () => {
+    test('listForUser returns safe metadata and marks the current session', async () => {
+        const a = await webSessionService.create({ userId: USER, userName: 'rob' });
+        await webSessionService.create({ userId: USER, userName: 'tablet' });
+        const listed = await webSessionService.listForUser(USER, { currentToken: a.token });
+        expect(listed).toHaveLength(2);
+        expect(listed.every((row) => row.tokenHash === undefined)).toBe(true);
+        expect(listed.filter((row) => row.current)).toHaveLength(1);
+        expect(listed.find((row) => row.current).userName).toBe('rob');
+    });
+
+    test('revokeForUser refuses the current session and deletes others', async () => {
+        const a = await webSessionService.create({ userId: USER });
+        const b = await webSessionService.create({ userId: USER });
+        const listed = await webSessionService.listForUser(USER, { currentToken: a.token });
+        const other = listed.find((row) => !row.current);
+        await expect(webSessionService.revokeForUser(USER, listed.find((row) => row.current).id, { currentToken: a.token }))
+            .rejects.toMatchObject({ code: 'CURRENT_SESSION' });
+        const revoked = await webSessionService.revokeForUser(USER, other.id, { currentToken: a.token });
+        expect(revoked.revoked).toBe(true);
+        expect(await webSessionService.get(b.token)).toBeNull();
+        expect(await webSessionService.get(a.token)).toBeTruthy();
+    });
+
+    test('revokeOthers keeps only the current token', async () => {
+        const a = await webSessionService.create({ userId: USER });
+        await webSessionService.create({ userId: USER });
+        await webSessionService.create({ userId: OTHER });
+        const result = await webSessionService.revokeOthers(USER, a.token);
+        expect(result.revoked).toBe(1);
+        expect((await db.all('SELECT userId FROM web_sessions ORDER BY userId')).map((r) => r.userId))
+            .toEqual([USER, OTHER]);
+    });
+});
+
 describe('privacy integration', () => {
     test('/forget-me deletes every session for the user and audits clean', async () => {
         await webSessionService.create({ userId: USER });

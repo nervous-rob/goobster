@@ -158,11 +158,20 @@ class WebAttentionService {
      * @param {Object} params - { userId, noticeId, action, snoozeHours }
      */
     async actOnNotice({ userId, noticeId, action, snoozeHours = null }) {
+        let hours = snoozeHours;
+        if (hours === null || hours === undefined) {
+            try {
+                const userSettingsService = require('./userSettingsService');
+                hours = await userSettingsService.getPreference(userId, 'defaultSnoozeHours');
+            } catch {
+                hours = 24;
+            }
+        }
         const notice = await attentionService.actOnNotice({
             userId,
             noticeId,
             action,
-            snoozeHours: snoozeHours ?? 24
+            snoozeHours: hours ?? 24
         });
         if (!notice) {
             throw new WebAttentionError(404, 'NOT_FOUND',

@@ -42,14 +42,17 @@ describe('getSettings', () => {
             expect(section.scope).toMatch(/^(private|account|device)$/);
             expect(Array.isArray(section.appliesTo)).toBe(true);
         }
-        expect(settings.sections.profile.values).toEqual({
-            callGoobster: null, callUser: null, customInstructions: null, personalityDirective: null, memeMode: false
+        expect(settings.sections.profile.values).toMatchObject({
+            callGoobster: null, callUser: null, customInstructions: null, personalityDirective: null, memeMode: false,
+            accountPreferredName: null, answerLength: 'balanced', tone: 'warm', humor: 'light', responseLanguage: null
         });
         expect(settings.sections.profile.effective.callGoobster).toBe('Goobster');
         expect(settings.sections.initiative.values.enabled).toBe(false);
+        expect(settings.sections.initiative.values.presenceVisible).toBe(true);
         expect(settings.sections.memory.values.retentionDays).toBeNull();
-        expect(settings.sections.appearance.values).toEqual({ theme: 'dark', linkByTag: true });
-        expect(settings.sections.voice.values).toEqual({ voiceId: null, voiceName: null, speed: 1, accent: null });
+        expect(settings.sections.memory.values.defaultNewChatPrivacy).toBe('regular');
+        expect(settings.sections.appearance.values).toMatchObject({ theme: 'dark', linkByTag: true, enterToSend: true, startPage: 'home' });
+        expect(settings.sections.voice.values).toMatchObject({ voiceId: null, voiceName: null, speed: 1, accent: null, voiceSendMode: 'auto', autoReadReplies: false });
         expect(settings.sections.voice.accents).toEqual(expect.arrayContaining([{ id: 'british', label: 'British' }]));
         expect(settings.sections.account.values.userId).toBe(userId);
         expect(settings.capabilities).toEqual(expect.objectContaining({ stt: expect.any(Boolean), tts: expect.any(Boolean) }));
@@ -176,7 +179,7 @@ describe('updateSection', () => {
             userId, section: 'voice', changes: { voiceId: 'rachel', speed: 1.25, accent: 'UK' }, voiceCatalog: catalog
         });
         expect(catalog.resolveVoice).toHaveBeenCalledWith('rachel');
-        expect(result.data.values).toEqual({ voiceId: 'voiceXYZ987654321098', voiceName: 'Rachel', speed: 1.25, accent: 'british' });
+        expect(result.data.values).toMatchObject({ voiceId: 'voiceXYZ987654321098', voiceName: 'Rachel', speed: 1.25, accent: 'british' });
         expect(await guildSettings.getTtsVoice(dmScopeId(userId))).toMatchObject({ voiceId: 'voiceXYZ987654321098', accent: 'british' });
     });
 
@@ -187,9 +190,154 @@ describe('updateSection', () => {
         const result = await userSettingsService.updateSection({
             userId, section: 'appearance', changes: { theme: 'light', linkByTag: false }
         });
-        expect(result.data.values).toEqual({ theme: 'light', linkByTag: false });
+        expect(result.data.values).toMatchObject({ theme: 'light', linkByTag: false });
         const row = await db.get('SELECT preferencesJson FROM user_settings WHERE userId = @userId', { userId });
-        expect(JSON.parse(row.preferencesJson)).toEqual({ theme: 'light', linkByTag: false });
+        expect(JSON.parse(row.preferencesJson)).toMatchObject({ theme: 'light', linkByTag: false });
+    });
+});
+
+describe('Phase 2 synced preferences', () => {
+    test('profile style prefs persist, reset, and reject invalid values', async () => {
+        const userId = nextUser();
+        await expect(userSettingsService.updateSection({
+            userId, section: 'profile', changes: { answerLength: 'novella' }
+        })).rejects.toMatchObject({ code: 'BAD_ANSWER_LENGTH' });
+        await expect(userSettingsService.updateSection({
+            userId, section: 'profile', changes: { timezone: 'Not/AZone' }
+        })).rejects.toMatchObject({ code: 'BAD_TIMEZONE' });
+
+        const result = await userSettingsService.updateSection({
+            userId,
+            section: 'profile',
+            changes: {
+                accountPreferredName: 'Robbie',
+                answerLength: 'concise',
+                tone: 'direct',
+                humor: 'off',
+                responseLanguage: 'es',
+                timezone: 'America/New_York',
+                measurementSystem: 'metric',
+                timeFormat: '24'
+            }
+        });
+        expect(result.revision).toBe(2);
+        expect(result.data.values).toMatchObject({
+            accountPreferredName: 'Robbie',
+            answerLength: 'concise',
+            tone: 'direct',
+            humor: 'off',
+            responseLanguage: 'es',
+            timezone: 'America/New_York'
+        });
+        expect(await userSettingsService.getPreference(userId, 'accountPreferredName')).toBe('Robbie');
+
+        await expect(userSettingsService.updateSection({
+            userId, section: 'profile', changes: { tone: 'direct' }, expectedRevision: 1
+        })).rejects.toMatchObject({ status: 409, code: 'SETTINGS_CONFLICT' });
+
+        const preview = await userSettingsService.resetPreview({ userId, section: 'profile' });
+        expect(preview.changes).toMatchObject({ accountPreferredName: null, answerLength: 'balanced', tone: 'warm' });
+        const reset = await userSettingsService.resetSection({ userId, section: 'profile', expectedRevision: 2 });
+        expect(reset.data.values.accountPreferredName).toBeNull();
+        expect(reset.data.values.answerLength).toBe('balanced');
+    });
+
+    test('getPreferredUserName uses the account fallback after a scope nickname', async () => {
+        const userId = nextUser();
+        const { getPreferredUserName } = require('@goobster/core/utils/guildContext');
+        await userSettingsService.updateSection({
+            userId, section: 'profile', changes: { accountPreferredName: 'Fallback' }
+        });
+        await guildSettings.setUserNickname(userId, 'guild-1', 'GuildNick');
+        expect(await getPreferredUserName(userId, 'guild-1', { nickname: 'ServerNick', user: { username: 'raw' } }))
+            .toBe('GuildNick');
+        expect(await getPreferredUserName(userId, 'guild-2', { nickname: 'ServerNick', user: { username: 'raw' } }))
+            .toBe('Fallback');
+        expect(await getPreferredUserName(userId, 'guild-2', { user: { username: 'raw' } }))
+            .toBe('Fallback');
+    });
+
+    test('style block is consumed from preferences and meme mode wins humor', async () => {
+        const userId = nextUser();
+        const { buildUserStyleBlock } = require('@goobster/core/utils/userStylePreferences');
+        expect(await buildUserStyleBlock(userId)).toBeNull();
+        await userSettingsService.updateSection({
+            userId, section: 'profile', changes: { answerLength: 'detailed', humor: 'playful', timezone: 'Europe/Paris' }
+        });
+        const block = await buildUserStyleBlock(userId);
+        expect(block).toMatch(/USER PREFERENCES/);
+        expect(block).toMatch(/detailed/);
+        expect(block).toMatch(/Europe\/Paris/);
+        const memeBlock = await buildUserStyleBlock(userId, { memeMode: true });
+        expect(memeBlock).toMatch(/meme mode is on/);
+    });
+
+    test('voice session prefs and initiative extras validate and persist', async () => {
+        const userId = nextUser();
+        await expect(userSettingsService.updateSection({
+            userId, section: 'voice', changes: { speechPauseMs: 50 }
+        })).rejects.toMatchObject({ code: 'BAD_SPEECH_PAUSE' });
+        const voice = await userSettingsService.updateSection({
+            userId, section: 'voice', changes: {
+                voiceSendMode: 'manual', voiceCaptureEngine: 'batch', speechPauseMs: 900,
+                startVoiceMuted: true, showCaptions: false, autoReadReplies: true
+            }
+        });
+        expect(voice.data.values).toMatchObject({
+            voiceSendMode: 'manual', speechPauseMs: 900, startVoiceMuted: true, autoReadReplies: true
+        });
+
+        await expect(userSettingsService.updateSection({
+            userId, section: 'initiative', changes: { quietHoursTzMode: 'local' }
+        })).rejects.toMatchObject({ code: 'BAD_QUIET_HOURS_MODE' });
+        await userSettingsService.updateSection({
+            userId, section: 'profile', changes: { timezone: 'America/Chicago' }
+        });
+        const init = await userSettingsService.updateSection({
+            userId, section: 'initiative', changes: {
+                quietHoursTzMode: 'local', presenceVisible: false, notifyOutbound: false, defaultSnoozeHours: 6
+            }
+        });
+        expect(init.data.values).toMatchObject({
+            quietHoursTzMode: 'local', presenceVisible: false, notifyOutbound: false, defaultSnoozeHours: 6
+        });
+        const hidden = await userSettingsService.usersHidingPresence([userId, nextUser()]);
+        expect([...hidden]).toEqual([userId]);
+    });
+
+    test('local quiet hours evaluate in the IANA zone without converting stored UTC minutes', () => {
+        const policy = { quietStartMinute: 9 * 60, quietEndMinute: 17 * 60 };
+        const noonUtc = new Date('2026-01-15T16:00:00Z');
+        expect(attentionPolicyService.inQuietHours(policy, noonUtc)).toBe(true);
+        expect(attentionPolicyService.inQuietHours(policy, noonUtc, {
+            mode: 'local', timeZone: 'America/Los_Angeles'
+        })).toBe(false);
+        const july = new Date('2026-07-15T16:00:00Z');
+        expect(attentionPolicyService.inQuietHours(policy, july, {
+            mode: 'local', timeZone: 'America/Los_Angeles'
+        })).toBe(true);
+        expect(attentionPolicyService.inQuietHours(policy, noonUtc, { mode: 'local' })).toBe(true);
+    });
+
+    test('memory section reset clears new-chat privacy and leaves retention alone', async () => {
+        const userId = nextUser();
+        await userSettingsService.updateSection({
+            userId, section: 'memory', changes: { retentionDays: 30, defaultNewChatPrivacy: 'incognito' }
+        });
+        const preview = await userSettingsService.resetPreview({ userId, section: 'memory' });
+        expect(preview.changes).toEqual({ defaultNewChatPrivacy: 'regular' });
+        expect(preview.changes).not.toHaveProperty('retentionDays');
+        const reset = await userSettingsService.resetSection({ userId, section: 'memory' });
+        expect(reset.data.values).toMatchObject({ retentionDays: 30, defaultNewChatPrivacy: 'regular' });
+    });
+
+    test('export omits secrets and lists only owned shares', async () => {
+        const userId = nextUser();
+        const bundle = await userSettingsService.exportUserData({ userId });
+        expect(bundle.settings.sections.profile).toBeTruthy();
+        expect(JSON.stringify(bundle)).not.toMatch(/tokenHash/);
+        const shares = await userSettingsService.listOwnedShares({ userId });
+        expect(shares).toEqual({ conversations: [], projects: [] });
     });
 });
 

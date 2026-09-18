@@ -31,8 +31,8 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Profile',
         icon: '🪪',
         scope: 'Private chats & DMs',
-        blurb: 'What Goobster calls you, what you call him, and standing instructions for private chats.',
-        keywords: ['name', 'nickname', 'call me', 'alias', 'identity', 'instructions', 'personality', 'directive', 'meme']
+        blurb: 'What Goobster calls you, what you call him, standing instructions, and conversation-style defaults.',
+        keywords: ['name', 'nickname', 'call me', 'alias', 'identity', 'instructions', 'personality', 'directive', 'meme', 'tone', 'length', 'language', 'timezone', 'units']
     },
     {
         id: 'chat',
@@ -47,8 +47,8 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Voice',
         icon: '🎙️',
         scope: 'Private chats & DMs',
-        blurb: 'The voice, accent, and playback speed for voice chat and read-alouds.',
-        keywords: ['voice', 'tts', 'speech', 'speaker', 'accent', 'audio', 'speed', 'read aloud', 'listen', 'elevenlabs']
+        blurb: 'The voice, accent, playback, and preferred starting mode for voice chat and read-alouds.',
+        keywords: ['voice', 'tts', 'speech', 'speaker', 'accent', 'audio', 'speed', 'read aloud', 'listen', 'elevenlabs', 'captions', 'mute', 'microphone', 'press to send']
     },
     {
         id: 'initiative',
@@ -56,15 +56,15 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🧭',
         scope: 'Your account',
         blurb: 'How proactive Goobster is allowed to be, how often he may reach out, and when to stay quiet.',
-        keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm']
+        keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm', 'presence', 'snooze']
     },
     {
         id: 'memory',
         title: 'Memory & privacy',
         icon: '🧠',
         scope: 'Private chats & DMs',
-        blurb: 'How long private memories are kept, what Goobster knows about you, and the exits.',
-        keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'delete', 'report', 'what do you know']
+        blurb: 'How long private memories are kept, new-chat privacy, what Goobster knows about you, and the exits.',
+        keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'delete', 'report', 'what do you know', 'incognito', 'export', 'shares']
     },
     {
         id: 'connections',
@@ -78,16 +78,16 @@ export const SECTIONS: SectionMeta[] = [
         id: 'appearance',
         title: 'Appearance',
         icon: '🎨',
-        scope: 'This device',
-        blurb: 'Theme and display options for the portal on this device.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag']
+        scope: 'Your account',
+        blurb: 'Theme, density, keyboard, and working defaults. Theme also keeps a device copy.',
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page']
     },
     {
         id: 'account',
         title: 'Account & devices',
         icon: '👤',
         scope: 'Your account',
-        blurb: 'The Discord identity you are signed in with, and signing out.',
+        blurb: 'The Discord identity you are signed in with, sessions, and signing out.',
         keywords: ['account', 'user', 'discord', 'sign out', 'logout', 'log out', 'session', 'devices']
     }
 ];
@@ -96,10 +96,17 @@ export const SECTION_BY_ID = Object.fromEntries(SECTIONS.map((s) => [s.id, s])) 
 
 export const FIELDS: FieldMeta[] = [
     { section: 'profile', fieldId: 'preferred-name', label: 'What Goobster calls you', keywords: ['name', 'nickname', 'call me', 'alias', 'my name'] },
+    { section: 'profile', fieldId: 'account-name', label: 'Account-wide preferred name', keywords: ['fallback name', 'account name', 'preferred name', 'display name'] },
     { section: 'profile', fieldId: 'bot-name', label: 'What you call Goobster', keywords: ['bot name', 'rename goobster', 'alias', 'call him'] },
-    { section: 'profile', fieldId: 'custom-instructions', label: 'Custom instructions', keywords: ['instructions', 'how to respond', 'style', 'tone', 'prompt'] },
+    { section: 'profile', fieldId: 'custom-instructions', label: 'Custom instructions', keywords: ['instructions', 'how to respond', 'style', 'prompt'] },
     { section: 'profile', fieldId: 'personality-directive', label: 'Personality directive', keywords: ['personality', 'directive', 'character', 'persona'] },
     { section: 'profile', fieldId: 'meme-mode', label: 'Meme mode', keywords: ['meme', 'jokes', 'silly', 'fun'] },
+    { section: 'profile', fieldId: 'answer-length', label: 'Default answer length', keywords: ['length', 'concise', 'detailed', 'brief', 'verbose'] },
+    { section: 'profile', fieldId: 'tone', label: 'Default tone', keywords: ['tone', 'warm', 'direct', 'neutral', 'playful'] },
+    { section: 'profile', fieldId: 'humor', label: 'Humor and emoji', keywords: ['humor', 'emoji', 'jokes', 'funny'] },
+    { section: 'profile', fieldId: 'language', label: 'Preferred response language', keywords: ['language', 'locale', 'english', 'spanish'] },
+    { section: 'profile', fieldId: 'timezone', label: 'Timezone', keywords: ['timezone', 'tz', 'iana', 'local time'] },
+    { section: 'profile', fieldId: 'units', label: 'Units and clock', keywords: ['units', 'metric', 'imperial', '12 hour', '24 hour', 'date'] },
     { section: 'chat', fieldId: 'thoughtful', label: 'Thoughtful Mode', keywords: ['thoughtful', 'thinking', 'deeper', 'reasoning', 'preset'] },
     { section: 'chat', fieldId: 'provider', label: 'Model platform', keywords: ['provider', 'platform', 'openai', 'anthropic', 'claude', 'gemini', 'ollama', 'local'] },
     { section: 'chat', fieldId: 'model', label: 'Model', keywords: ['model', 'gpt', 'claude', 'gemini', 'llama'] },
@@ -107,19 +114,45 @@ export const FIELDS: FieldMeta[] = [
     { section: 'voice', fieldId: 'voice-pick', label: 'Speaking voice', keywords: ['voice', 'speaker', 'tts', 'elevenlabs'] },
     { section: 'voice', fieldId: 'voice-accent', label: 'Spoken accent', keywords: ['accent', 'british', 'american', 'irish', 'australian', 'dialect'] },
     { section: 'voice', fieldId: 'voice-speed', label: 'Playback speed', keywords: ['speed', 'faster', 'slower', 'rate', 'tempo'] },
+    { section: 'voice', fieldId: 'voice-send-mode', label: 'Auto-send vs press-to-send', keywords: ['press to send', 'auto send', 'hands free', 'push to talk'] },
+    { section: 'voice', fieldId: 'voice-engine', label: 'Preferred capture engine', keywords: ['live', 'batch', 'engine', 'transcription'] },
+    { section: 'voice', fieldId: 'speech-pause', label: 'Pause before sending speech', keywords: ['hangover', 'pause', 'silence', 'wait after speaking'] },
+    { section: 'voice', fieldId: 'start-muted', label: 'Start voice sessions muted', keywords: ['mute', 'start muted', 'microphone off'] },
+    { section: 'voice', fieldId: 'captions', label: 'Show live captions', keywords: ['captions', 'transcript', 'subtitles'] },
+    { section: 'voice', fieldId: 'auto-read', label: 'Read replies aloud', keywords: ['read aloud', 'autoplay', 'speak replies'] },
+    { section: 'voice', fieldId: 'preferred-mic', label: 'Preferred microphone', keywords: ['microphone', 'mic', 'input device'] },
+    { section: 'voice', fieldId: 'voice-volume', label: 'Voice volume', keywords: ['volume', 'gain', 'loud'] },
     { section: 'initiative', fieldId: 'attention-enabled', label: 'Pay attention on my behalf', keywords: ['attention', 'enable', 'disable', 'proactive', 'on', 'off'] },
     { section: 'initiative', fieldId: 'initiative-level', label: 'Initiative level', keywords: ['initiative', 'observe', 'nudge', 'assist', 'delegate', 'agency'] },
     { section: 'initiative', fieldId: 'contact-budget', label: 'Contact budget', keywords: ['budget', 'dms per day', 'cooldown', 'how often', 'notifications', 'messages'] },
     { section: 'initiative', fieldId: 'quiet-hours', label: 'Quiet hours', keywords: ['quiet', 'do not disturb', 'dnd', 'night', 'sleep', 'hours'] },
+    { section: 'initiative', fieldId: 'quiet-hours-tz', label: 'Quiet hours timezone', keywords: ['local quiet hours', 'dst', 'timezone quiet'] },
+    { section: 'initiative', fieldId: 'notifications', label: 'Notification channels', keywords: ['notifications', 'sounds', 'banners', 'in-app', 'outbound'] },
+    { section: 'initiative', fieldId: 'presence', label: 'Show me as online', keywords: ['presence', 'online', 'visibility', 'friends'] },
+    { section: 'initiative', fieldId: 'snooze', label: 'Default snooze', keywords: ['snooze', 'later', 'remind'] },
     { section: 'initiative', fieldId: 'boundaries', label: 'Boundaries by category', keywords: ['boundaries', 'permissions', 'read', 'compute', 'write', 'confirm', 'github', 'research'] },
     { section: 'memory', fieldId: 'retention', label: 'Memory retention', keywords: ['retention', 'auto delete', 'expire', 'days', 'purge', 'keep forever'] },
+    { section: 'memory', fieldId: 'new-chat-privacy', label: 'Default new-chat privacy', keywords: ['incognito', 'private chat', 'new chat'] },
+    { section: 'memory', fieldId: 'export', label: 'Export my data', keywords: ['export', 'download', 'backup'] },
+    { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
+    { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
     { section: 'memory', fieldId: 'memory-report', label: 'What Goobster knows about you', keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency'] },
     { section: 'memory', fieldId: 'forget-me', label: 'Forget me', keywords: ['forget', 'erase', 'delete everything', 'wipe', 'gdpr'] },
     { section: 'connections', fieldId: 'github', label: 'GitHub', keywords: ['github', 'git', 'repos', 'pull requests', 'token'] },
     { section: 'connections', fieldId: 'notion', label: 'Notion', keywords: ['notion', 'pages', 'notes', 'token'] },
     { section: 'appearance', fieldId: 'theme', label: 'Theme', keywords: ['theme', 'dark', 'light', 'system', 'color scheme'] },
+    { section: 'appearance', fieldId: 'text-size', label: 'Text size', keywords: ['font', 'text size', 'bigger', 'smaller'] },
+    { section: 'appearance', fieldId: 'reduced-motion', label: 'Reduced motion', keywords: ['motion', 'animation', 'accessibility'] },
+    { section: 'appearance', fieldId: 'density', label: 'Interface density', keywords: ['compact', 'comfortable', 'spacing'] },
+    { section: 'appearance', fieldId: 'enter-to-send', label: 'Enter to send', keywords: ['enter', 'newline', 'keyboard', 'ime'] },
+    { section: 'appearance', fieldId: 'expand-details', label: 'Expand chat details', keywords: ['tools', 'thinking', 'code', 'attachments'] },
+    { section: 'appearance', fieldId: 'start-page', label: 'Start page', keywords: ['home', 'landing', 'default room'] },
+    { section: 'appearance', fieldId: 'exchange-server', label: 'Preferred Exchange server', keywords: ['exchange', 'guild', 'trading'] },
     { section: 'appearance', fieldId: 'link-by-tag', label: 'Link notes by shared tag', keywords: ['tags', 'link by tag', 'map', 'graph', 'spitball'] },
+    { section: 'appearance', fieldId: 'conservatory', label: 'Conservatory library', keywords: ['conservatory', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
+    { section: 'account', fieldId: 'sessions', label: 'Active sessions', keywords: ['devices', 'sessions', 'revoke', 'sign out other'] },
+    { section: 'account', fieldId: 'clear-device', label: 'Clear device-local data', keywords: ['clear', 'local storage', 'this device'] },
     { section: 'account', fieldId: 'sign-out', label: 'Sign out', keywords: ['sign out', 'logout', 'log out', 'leave', 'session'] }
 ];
 

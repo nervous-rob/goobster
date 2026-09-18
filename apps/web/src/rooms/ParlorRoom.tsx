@@ -12,6 +12,7 @@ import { MenuButton } from '../shell/MenuButton';
 import { ParlorConversationView } from '../components/ParlorConversationView';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
 import { useComposerAutosize } from '../hooks/useComposerAutosize';
+import { useUserSettings } from '../hooks/useUserSettings';
 import { useParlorLive } from '../hooks/useParlorLive';
 import { PersonaModal } from './parlor/PersonaModal';
 import { PeopleModal } from './parlor/PeopleModal';
@@ -48,6 +49,8 @@ function liveAvailable(caps: unknown): boolean {
 export function ParlorRoom() {
     const me = useMe();
     const toast = useToast();
+    const settingsQ = useUserSettings();
+    const enterToSend = settingsQ.data?.sections.appearance.values.enterToSend !== false;
     const confirm = useConfirm();
     const queryClient = useQueryClient();
     const params = useParams({ strict: false }) as { conversationId?: string };
@@ -652,7 +655,11 @@ export function ParlorRoom() {
                                             return;
                                         }
                                     }
-                                    if (event.key === 'Enter' && !event.shiftKey) {
+                                    if (event.nativeEvent.isComposing) return;
+                                    const sendCombo = enterToSend
+                                        ? event.key === 'Enter' && !event.shiftKey
+                                        : event.key === 'Enter' && (event.metaKey || event.ctrlKey);
+                                    if (sendCombo) {
                                         event.preventDefault();
                                         void send();
                                     }

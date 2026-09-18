@@ -2141,7 +2141,7 @@ class ParlorService {
         const fromName = actorName || 'Someone';
         const presence = require('./presenceService');
         const eventBus = require('./eventBusService');
-        const online = await presence.onlineIds(targets);
+        const online = await presence.onlineIds(targets, { respectVisibility: true });
         const resolvedGateway = toGateway(gateway);
 
         for (const target of targets) {

@@ -34,6 +34,12 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
         queryFn: () => api.voiceSettings(),
         staleTime: 60_000
     });
+    const accountQ = useQuery({
+        queryKey: ['settings'],
+        queryFn: () => api.settings(),
+        staleTime: 60_000
+    });
+    const showCaptions = accountQ.data?.sections.voice.values.showCaptions !== false;
     // The saved playback speed seeds the session; the panel can nudge it for
     // this call only. Changing the saved default lives in Settings → Voice.
     const savedSpeed = settingsQ.data?.speed ?? 1;
@@ -100,17 +106,20 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
                 </div>
                 {hint && <div className="voice-overlay-hint">{hint}</div>}
 
-                {caption ? (
+                {showCaptions && caption ? (
                     <div className={`voice-caption user${partial ? ' partial' : ''}`}>
                         <span className="voice-caption-who">You</span>
                         {caption}
                     </div>
                 ) : null}
-                {status === 'speaking' && speakingText ? (
+                {showCaptions && status === 'speaking' && speakingText ? (
                     <div className="voice-caption bot">
                         <span className="voice-caption-who">Goobster</span>
                         {speakingText}
                     </div>
+                ) : null}
+                {!showCaptions && (caption || speakingText) ? (
+                    <div className="sr-only" aria-live="polite">{caption || speakingText}</div>
                 ) : null}
             </div>
 

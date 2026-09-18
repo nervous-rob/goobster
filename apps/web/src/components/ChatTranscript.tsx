@@ -16,7 +16,8 @@ export function ChatTranscript({
     requestGrant,
     onSaveToProject,
     renderActions,
-    empty
+    empty,
+    expandDetails = false
 }: {
     messages: LocalTurnMessage[];
     onNotify?: (message: string, isError?: boolean) => void;
@@ -30,6 +31,7 @@ export function ChatTranscript({
     }) => void;
     renderActions?: (message: LocalTurnMessage) => ReactNode;
     empty?: ReactNode;
+    expandDetails?: boolean;
 }) {
     if (messages.length === 0) {
         return empty ? <>{empty}</> : null;
@@ -49,7 +51,7 @@ export function ChatTranscript({
                         </div>
                     )}
                     {message.role === 'assistant' && message.steps && message.steps.length > 0 && (
-                        <ThinkingSteps steps={message.steps} live={Boolean(message.draft)} />
+                        <ThinkingSteps steps={message.steps} live={Boolean(message.draft)} defaultOpen={expandDetails || Boolean(message.draft)} />
                     )}
                     {(message.typing || message.content || message.attachments?.length) ? (
                         <div className="msg-bubble">

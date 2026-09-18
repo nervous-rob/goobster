@@ -18,6 +18,13 @@ type Draft = {
     quietStart: string;
     quietEnd: string;
     boundaries: Record<string, Boundary>;
+    quietHoursTzMode: 'utc' | 'local';
+    notifyInApp: boolean;
+    notifyMentionBanners: boolean;
+    notifyOutbound: boolean;
+    notifySounds: boolean;
+    presenceVisible: boolean;
+    defaultSnoozeHours: string;
 };
 
 const INITIATIVE_BLURB: Record<string, string> = {
@@ -35,7 +42,11 @@ const CATEGORY_LABEL: Record<string, string> = {
 const LABELS: Record<string, string> = {
     enabled: 'Paying attention', initiative: 'Initiative level', maxContactsPerDay: 'DMs per day',
     contactCooldownMinutes: 'Minutes between DMs', quietStartMinute: 'Quiet hours start',
-    quietEndMinute: 'Quiet hours end', boundaries: 'Boundaries'
+    quietEndMinute: 'Quiet hours end', boundaries: 'Boundaries',
+    quietHoursTzMode: 'Quiet hours timezone', notifyInApp: 'In-app notices',
+    notifyMentionBanners: 'Mention banners', notifyOutbound: 'Outbound contact',
+    notifySounds: 'Notification sounds', presenceVisible: 'Show me as online',
+    defaultSnoozeHours: 'Default snooze'
 };
 
 const minuteToTime = (m: number | null) => (m === null || m === undefined ? '' : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
@@ -52,7 +63,14 @@ const toDraft = (v: Values): Draft => ({
     contactCooldownMinutes: String(v.contactCooldownMinutes ?? 120),
     quietStart: minuteToTime(v.quietStartMinute),
     quietEnd: minuteToTime(v.quietEndMinute),
-    boundaries: v.boundaries || {}
+    boundaries: v.boundaries || {},
+    quietHoursTzMode: v.quietHoursTzMode || 'utc',
+    notifyInApp: v.notifyInApp !== false,
+    notifyMentionBanners: v.notifyMentionBanners !== false,
+    notifyOutbound: v.notifyOutbound !== false,
+    notifySounds: Boolean(v.notifySounds),
+    presenceVisible: v.presenceVisible !== false,
+    defaultSnoozeHours: String(v.defaultSnoozeHours ?? 24)
 });
 
 export function InitiativeSection({ section, onDirty }: {
@@ -78,6 +96,13 @@ export function InitiativeSection({ section, onDirty }: {
             out.quietEndMinute = timeToMinute(draft.quietEnd);
         }
         if ('boundaries' in diff) out.boundaries = draft.boundaries;
+        if ('quietHoursTzMode' in diff) out.quietHoursTzMode = draft.quietHoursTzMode;
+        if ('notifyInApp' in diff) out.notifyInApp = draft.notifyInApp;
+        if ('notifyMentionBanners' in diff) out.notifyMentionBanners = draft.notifyMentionBanners;
+        if ('notifyOutbound' in diff) out.notifyOutbound = draft.notifyOutbound;
+        if ('notifySounds' in diff) out.notifySounds = draft.notifySounds;
+        if ('presenceVisible' in diff) out.presenceVisible = draft.presenceVisible;
+        if ('defaultSnoozeHours' in diff) out.defaultSnoozeHours = Number(draft.defaultSnoozeHours);
         return out;
     }, []);
     const d = useSectionDraft('initiative', section, toDraft, toChanges);
@@ -162,8 +187,8 @@ export function InitiativeSection({ section, onDirty }: {
                 </div>
             </Field>
 
-            <Field id="quiet-hours" label="Quiet hours (UTC)"
-                hint="Notices still accumulate; only outbound contact waits. Overnight ranges (e.g. 22:00 → 07:00) are fine. Clear both to disable."
+            <Field id="quiet-hours" label={d.draft.quietHoursTzMode === 'local' ? 'Quiet hours (local)' : 'Quiet hours (UTC)'}
+                hint="Notices still accumulate; only outbound contact waits. Overnight ranges (e.g. 22:00 → 07:00) are fine. Clear both to disable. Existing hours stay UTC until you convert them."
                 error={quietMismatch ? 'Set both a start and an end, or clear both.' : null}>
                 <div className="settings-inline-row">
                     <label className="settings-mini">
@@ -180,6 +205,42 @@ export function InitiativeSection({ section, onDirty }: {
                         <button type="button" className="btn subtle small" onClick={() => d.set({ quietStart: '', quietEnd: '' })}>Clear</button>
                     )}
                 </div>
+            </Field>
+
+            <Field id="quiet-hours-tz" label="Evaluate quiet hours in my timezone" inline scope="Your account"
+                hint="Requires a timezone on Profile. This is an explicit conversion — adding a timezone does not silently reinterpret UTC hours. DST is applied at delivery time.">
+                <button id="quiet-hours-tz-input" type="button" className={`toggle${d.draft.quietHoursTzMode === 'local' ? ' on' : ''}`}
+                    role="switch" aria-checked={d.draft.quietHoursTzMode === 'local'} aria-label="Evaluate quiet hours in my timezone"
+                    onClick={() => d.set({ quietHoursTzMode: d.draft.quietHoursTzMode === 'local' ? 'utc' : 'local' })} />
+            </Field>
+
+            <Field id="notifications" label="Notification channels" scope="Your account"
+                hint="In-app notices, mention banners, and outbound DMs. This does not enable browser push.">
+                <div className="settings-stack" id="notifications-input">
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.notifyInApp}
+                        onChange={(e) => d.set({ notifyInApp: e.target.checked })} /> In-app notices</label>
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.notifyMentionBanners}
+                        onChange={(e) => d.set({ notifyMentionBanners: e.target.checked })} /> Mention banners</label>
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.notifyOutbound}
+                        onChange={(e) => d.set({ notifyOutbound: e.target.checked })} /> Outbound Discord DMs</label>
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.notifySounds}
+                        onChange={(e) => d.set({ notifySounds: e.target.checked })} /> In-app sounds</label>
+                </div>
+            </Field>
+
+            <Field id="presence" label="Show me as online" inline scope="Your account"
+                hint="Friends stop seeing you as online in the portal. Session heartbeats still run so your own tab stays signed in.">
+                <button id="presence-input" type="button" className={`toggle${d.draft.presenceVisible ? ' on' : ''}`}
+                    role="switch" aria-checked={d.draft.presenceVisible} aria-label="Show me as online"
+                    onClick={() => d.set({ presenceVisible: !d.draft.presenceVisible })} />
+            </Field>
+
+            <Field id="snooze" label="Default snooze" scope="Your account"
+                hint="Used for future snooze actions. Already-snoozed notices keep their deadlines.">
+                <input id="snooze-input" className="input" type="number" min={1} max={720}
+                    value={d.draft.defaultSnoozeHours}
+                    onChange={(e) => d.set({ defaultSnoozeHours: e.target.value })} />
+                <div className="hint">Hours (1–720).</div>
             </Field>
 
             <Field id="boundaries" label="Boundaries by category"

@@ -24,7 +24,7 @@ class PresenceService {
      * @param {Array<string>} userIds - Discord user snowflakes
      * @returns {Promise<Set<string>>} the subset currently online
      */
-    async onlineIds(userIds) {
+    async onlineIds(userIds, { respectVisibility = false } = {}) {
         const ids = [...new Set((userIds || []).map(String).filter(Boolean))];
         if (ids.length === 0) return new Set();
         const placeholders = ids.map((_, i) => `@id${i}`).join(', ');
@@ -36,7 +36,14 @@ class PresenceService {
                AND lastSeenAt > datetime('now', '-${ONLINE_WINDOW_SECONDS} seconds')`,
             params
         );
-        return new Set(rows.map(row => String(row.userId)));
+        const online = new Set(rows.map(row => String(row.userId)));
+        if (!respectVisibility || online.size === 0) return online;
+        try {
+            const userSettingsService = require('./userSettingsService');
+            const hidden = await userSettingsService.usersHidingPresence([...online]);
+            for (const id of hidden) online.delete(id);
+        } catch { /* visibility is a display filter; never drop heartbeats */ }
+        return online;
     }
 
     /**

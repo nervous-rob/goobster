@@ -5,6 +5,7 @@ import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { MenuButton } from '../shell/MenuButton';
+import { useUserSettings } from '../hooks/useUserSettings';
 
 type ExchangeTab = 'portfolio' | 'trade' | 'options' | 'orders' | 'leaderboard';
 const GUILD_KEY = 'goobster-exchange-guild';
@@ -697,6 +698,8 @@ function OrdersTab({ guildId }: { guildId: string }) {
 export function ExchangeRoom() {
     const me = useMe();
     const toast = useToast();
+    const settingsQ = useUserSettings();
+    const preferredGuild = settingsQ.data?.sections.appearance.values.preferredExchangeGuild || '';
     const guilds = (me.scopes || []).filter((scope) => scope.kind === 'guild');
     const [guildId, setGuildId] = useState(() => {
         try {
@@ -705,7 +708,12 @@ export function ExchangeRoom() {
         } catch { /* private mode */ }
         return guilds[0]?.id || '';
     });
+    // Account preference (UI09) seeds a first visit; local remembered choice still wins.
     const [tab, setTab] = useState<ExchangeTab>('portfolio');
+    useEffect(() => {
+        if (guildId || !preferredGuild) return;
+        if (guilds.some((g) => g.id === preferredGuild)) setGuildId(preferredGuild);
+    }, [guildId, preferredGuild, guilds]);
 
     const overview = useQuery({
         queryKey: ['exchange-overview', guildId],

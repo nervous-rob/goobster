@@ -1282,3 +1282,20 @@ a.nav-btn {
   .settings-field, .settings-nav-item { transition: none; }
 }
 .settings-return { margin-left: auto; white-space: nowrap; }
+.settings-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-row .input { flex: 1 1 140px; min-width: 0; }
+.settings-stack { display: flex; flex-direction: column; gap: 8px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+html[data-text-size="s"] { font-size: 14.5px; }
+html[data-text-size="l"] { font-size: 17.5px; }
+html[data-density="compact"] .settings-field { gap: 8px; }
+html[data-density="compact"] .list-row { padding-top: 6px; padding-bottom: 6px; }
+html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
+@media (pointer: coarse) {
+  html[data-density="compact"] .btn, html[data-density="compact"] .segment-btn, html[data-density="compact"] .toggle {
+    min-height: 44px;
+  }
+}

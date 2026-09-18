@@ -75,6 +75,10 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
     const mutedRef = useRef(false);
     const modeRef = useRef<VoiceSendMode>('auto');
     const speedRef = useRef(1);
+    const hangoverRef = useRef(SILENCE_HANGOVER_MS);
+    const preferredEngineRef = useRef<'auto' | 'live' | 'batch'>('auto');
+    const micIdRef = useRef<string | null>(null);
+    const volumeRef = useRef(1);
 
     // Live engine
     const liveRef = useRef<VoiceLiveSession | null>(null);
@@ -285,7 +289,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             if (modeRef.current === 'manual') return; // press-to-send decides
             const silenceMs = now - vad.lastVoiceAt;
             const speechMs = vad.lastVoiceAt - vad.speechStartedAt;
-            if (silenceMs >= SILENCE_HANGOVER_MS) {
+            if (silenceMs >= hangoverRef.current) {
                 if (speechMs >= MIN_SPEECH_MS) finalizeUtterance(generation);
                 else beginRecorderSegment(); // a blip, not speech
             }
@@ -298,7 +302,11 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         let stream: MediaStream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true }
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    ...(micIdRef.current ? { deviceId: { exact: micIdRef.current } } : {})
+                }
             });
         } catch {
             onNotifyRef.current?.('Microphone access was denied.', true);
@@ -404,7 +412,9 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         generationRef.current += 1;
         const generation = generationRef.current;
 
-        if (live) {
+        const prefer = preferredEngineRef.current;
+        const useLive = prefer === 'live' ? live : prefer === 'batch' ? false : live;
+        if (useLive) {
             if (!(await startLive(generation))) return;
             setEngine('live');
         } else {
@@ -417,6 +427,10 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             setEngine('batch');
         }
         setModeState(modeRef.current);
+        if (mutedRef.current) {
+            setMutedState(true);
+            if (liveRef.current) liveRef.current.setMuted(true);
+        }
         startListening();
         void acquireWakeLock();
     }, [startLive, startBatch, monitorTick, startListening, acquireWakeLock]);
@@ -450,6 +464,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             playbackElRef.current = audio;
             audio.src = url;
             audio.playbackRate = speedRef.current;
+            audio.volume = volumeRef.current;
             playbackRef.current = { audio, url };
             const finish = () => {
                 if (playbackRef.current?.audio === audio && playbackRef.current.url === url) {
@@ -527,6 +542,30 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         if (audio) audio.playbackRate = speed;
     }, []);
 
+    const applyDefaults = useCallback((opts: {
+        mode?: VoiceSendMode;
+        muted?: boolean;
+        speechPauseMs?: number;
+        engine?: 'auto' | 'live' | 'batch';
+        micId?: string | null;
+        volume?: number;
+    }) => {
+        if (opts.mode) {
+            modeRef.current = opts.mode;
+            setModeState(opts.mode);
+        }
+        if (typeof opts.muted === 'boolean' && statusRef.current === 'idle') {
+            mutedRef.current = opts.muted;
+            setMutedState(opts.muted);
+        }
+        if (typeof opts.speechPauseMs === 'number' && Number.isFinite(opts.speechPauseMs)) {
+            hangoverRef.current = Math.min(4000, Math.max(400, Math.round(opts.speechPauseMs)));
+        }
+        if (opts.engine) preferredEngineRef.current = opts.engine;
+        if (opts.micId !== undefined) micIdRef.current = opts.micId;
+        if (typeof opts.volume === 'number') volumeRef.current = opts.volume;
+    }, []);
+
     return {
         status,
         active: status !== 'idle',
@@ -548,6 +587,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         toggleMute,
         setMode,
         sendNow,
-        setPlaybackSpeed
+        setPlaybackSpeed,
+        applyDefaults
     };
 }

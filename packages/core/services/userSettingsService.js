@@ -32,8 +32,12 @@ const {
     SECTION_METADATA,
     REASONING_EFFORTS,
     INITIATIVE_LEVELS,
-    THEMES,
-    LIMITS
+    LIMITS,
+    PREFERENCE_DEFAULTS,
+    PREFERENCE_KEYS_BY_SECTION,
+    coercePreference,
+    parsePreferences,
+    pickSectionPrefs
 } = require('../config/userSettingsSchema');
 
 class UserSettingsError extends Error {
@@ -131,18 +135,16 @@ class UserSettingsService {
             db.get('SELECT discordUsername, username, avatar FROM users WHERE discordId = @userId', { userId }).catch(() => null)
         ]);
 
-        let customPrefs = {};
-        if (userSettingsRow?.preferencesJson) {
-            try {
-                customPrefs = JSON.parse(userSettingsRow.preferencesJson) || {};
-            } catch {
-                customPrefs = {};
-            }
-        }
+        const customPrefs = parsePreferences(userSettingsRow?.preferencesJson);
+        const profilePrefs = pickSectionPrefs(customPrefs, 'profile');
 
         // --- 1. Profile Section ---
         const effectiveCallGoobster = botNickname || 'Goobster';
-        const effectiveCallUser = userNickname || userAccountRow?.discordUsername || userAccountRow?.username || 'You';
+        const effectiveCallUser = userNickname
+            || customPrefs.accountPreferredName
+            || userAccountRow?.discordUsername
+            || userAccountRow?.username
+            || 'You';
         const profileSection = {
             revision: revisions.profile || 1,
             scope: SCOPES.PRIVATE,
@@ -151,21 +153,26 @@ class UserSettingsService {
                 callUser: userNickname || null,
                 customInstructions: instructions || null,
                 personalityDirective: personalityDirective || null,
-                memeMode: Boolean(isMeme)
+                memeMode: Boolean(isMeme),
+                ...profilePrefs
             },
             effective: {
                 callGoobster: effectiveCallGoobster,
                 callUser: effectiveCallUser,
                 customInstructions: instructions || null,
                 personalityDirective: personalityDirective || null,
-                memeMode: Boolean(isMeme)
+                memeMode: Boolean(isMeme),
+                ...profilePrefs
             },
             sources: {
                 callGoobster: botNickname ? 'user-preference' : 'system-default',
-                callUser: userNickname ? 'user-preference' : 'discord-account',
+                callUser: userNickname
+                    ? 'user-preference'
+                    : (customPrefs.accountPreferredName ? 'account-fallback' : 'discord-account'),
                 customInstructions: instructions ? 'user-preference' : 'unset',
                 personalityDirective: personalityDirective ? 'user-preference' : 'unset',
-                memeMode: isMeme ? 'user-preference' : 'default-disabled'
+                memeMode: isMeme ? 'user-preference' : 'default-disabled',
+                accountPreferredName: customPrefs.accountPreferredName ? 'account-preference' : 'unset'
             },
             appliesTo: SECTION_METADATA.profile.appliesTo
         };
@@ -214,6 +221,7 @@ class UserSettingsService {
         try {
             accent = legalizeAccent(voiceCurrent.accent);
         } catch { /* stale/unknown id stored before a catalog change */ }
+        const voicePrefs = pickSectionPrefs(customPrefs, 'voice');
         const voiceSection = {
             revision: revisions.voice || 1,
             scope: SCOPES.PRIVATE,
@@ -221,14 +229,16 @@ class UserSettingsService {
                 voiceId: voiceCurrent.voiceId || null,
                 voiceName: voiceCurrent.voiceName || null,
                 speed: voiceSpeed,
-                accent: accent?.id || null
+                accent: accent?.id || null,
+                ...voicePrefs
             },
             effective: {
                 voiceId: voiceCurrent.voiceId || null,
                 voiceName: voiceCurrent.voiceName || '(Host default voice)',
                 speed: voiceSpeed,
                 accent: accent?.id || null,
-                accentLabel: accent?.label || null
+                accentLabel: accent?.label || null,
+                ...voicePrefs
             },
             sources: {
                 voice: voiceCurrent.voiceId ? 'user-preference' : 'host-default',
@@ -247,6 +257,7 @@ class UserSettingsService {
             boundaries[cat] = attentionPolicyService.boundariesFor(policy, cat);
         }
 
+        const initiativePrefs = pickSectionPrefs(customPrefs, 'initiative');
         const initiativeSection = {
             revision: revisions.initiative || 1,
             scope: SCOPES.ACCOUNT,
@@ -257,7 +268,8 @@ class UserSettingsService {
                 contactCooldownMinutes: policy?.contactCooldownMinutes ?? 120,
                 quietStartMinute: policy?.quietStartMinute ?? null,
                 quietEndMinute: policy?.quietEndMinute ?? null,
-                boundaries: policy?.boundaries || {}
+                boundaries: policy?.boundaries || {},
+                ...initiativePrefs
             },
             effective: {
                 enabled: initiativeEnabled,
@@ -266,7 +278,9 @@ class UserSettingsService {
                 contactCooldownMinutes: policy?.contactCooldownMinutes ?? 120,
                 quietStartMinute: policy?.quietStartMinute ?? null,
                 quietEndMinute: policy?.quietEndMinute ?? null,
-                boundaries
+                boundaries,
+                timezone: customPrefs.timezone,
+                ...initiativePrefs
             },
             sources: {
                 enabled: policy ? 'user-preference' : 'default-disabled',
@@ -280,38 +294,36 @@ class UserSettingsService {
         };
 
         // --- 5. Memory & Privacy Section ---
+        const memoryPrefs = pickSectionPrefs(customPrefs, 'memory');
         const memorySection = {
             revision: revisions.memory || 1,
             scope: SCOPES.PRIVATE,
             values: {
-                retentionDays: retentionDays ?? null
+                retentionDays: retentionDays ?? null,
+                ...memoryPrefs
             },
             effective: {
-                retentionDays: retentionDays ?? null
+                retentionDays: retentionDays ?? null,
+                ...memoryPrefs
             },
             sources: {
-                retention: retentionDays ? 'user-retention-window' : 'forever'
+                retention: retentionDays ? 'user-retention-window' : 'forever',
+                defaultNewChatPrivacy: customPrefs.defaultNewChatPrivacy !== PREFERENCE_DEFAULTS.defaultNewChatPrivacy
+                    ? 'account-preference' : 'default'
             },
             appliesTo: SECTION_METADATA.memory.appliesTo
         };
 
         // --- 6. Appearance Section ---
-        const themeVal = customPrefs.theme && THEMES.includes(customPrefs.theme) ? customPrefs.theme : 'dark';
-        const linkByTagVal = typeof customPrefs.linkByTag === 'boolean' ? customPrefs.linkByTag : true;
+        const appearancePrefs = pickSectionPrefs(customPrefs, 'appearance');
         const appearanceSection = {
             revision: revisions.appearance || 1,
-            scope: SCOPES.DEVICE,
-            values: {
-                theme: themeVal,
-                linkByTag: linkByTagVal
-            },
-            effective: {
-                theme: themeVal,
-                linkByTag: linkByTagVal
-            },
+            scope: SCOPES.ACCOUNT,
+            values: appearancePrefs,
+            effective: appearancePrefs,
             sources: {
-                theme: customPrefs.theme ? 'account-preference' : 'default',
-                linkByTag: typeof customPrefs.linkByTag === 'boolean' ? 'account-preference' : 'default'
+                theme: customPrefs.theme !== PREFERENCE_DEFAULTS.theme ? 'account-preference' : 'default',
+                linkByTag: customPrefs.linkByTag !== PREFERENCE_DEFAULTS.linkByTag ? 'account-preference' : 'default'
             },
             appliesTo: SECTION_METADATA.appearance.appliesTo
         };
@@ -391,6 +403,220 @@ class UserSettingsService {
             },
             capabilities: voiceCaps
         };
+    }
+
+    /**
+     * Narrow read of one synced preference. Consumers should use this (or
+     * getSettings / getPreferences) instead of querying user_settings directly.
+     * @param {string} userId
+     * @param {string} key
+     */
+    async getPreference(userId, key) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        if (!(key in PREFERENCE_DEFAULTS)) {
+            throw new UserSettingsError(400, 'UNKNOWN_FIELD', `Unknown preference: ${key}`);
+        }
+        const prefs = await this.getPreferences(userId);
+        return prefs[key];
+    }
+
+    /**
+     * All synced preference keys with defaults filled in.
+     * @param {string} userId
+     */
+    async getPreferences(userId) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        return this._loadPreferences(userId);
+    }
+
+    async _loadPreferences(userId) {
+        const row = await db.get(
+            'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
+            { userId }
+        ).catch(() => null);
+        return parsePreferences(row?.preferencesJson);
+    }
+
+    _collectPreferencePatch(section, changes) {
+        const keys = PREFERENCE_KEYS_BY_SECTION[section] || [];
+        const patch = {};
+        for (const key of keys) {
+            if (!(key in changes)) continue;
+            const checked = coercePreference(key, changes[key]);
+            if (!checked.ok) {
+                throw new UserSettingsError(400, checked.code || 'BAD_REQUEST', checked.message || `Invalid ${key}.`);
+            }
+            patch[key] = checked.value;
+        }
+        return patch;
+    }
+
+    async _mergePreferencesTx(tx, userId, patch) {
+        if (!patch || Object.keys(patch).length === 0) return;
+        const handle = tx || db;
+        const row = await handle.get(
+            'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
+            { userId }
+        );
+        const prefs = parsePreferences(row?.preferencesJson);
+        Object.assign(prefs, patch);
+        await handle.run(
+            `INSERT INTO user_settings (userId, schemaVersion, preferencesJson, updatedAt)
+             VALUES (@userId, 1, @preferencesJson, CURRENT_TIMESTAMP)
+             ON CONFLICT(userId) DO UPDATE SET
+                 preferencesJson = @preferencesJson,
+                 updatedAt = CURRENT_TIMESTAMP`,
+            { userId, preferencesJson: JSON.stringify(prefs) }
+        );
+    }
+
+    /**
+     * Users who asked not to appear online to friends. Heartbeats still run.
+     * @param {string[]} userIds
+     * @returns {Promise<Set<string>>}
+     */
+    async usersHidingPresence(userIds) {
+        const ids = [...new Set((userIds || []).map(String).filter(Boolean))];
+        if (ids.length === 0) return new Set();
+        const placeholders = ids.map((_, i) => `@id${i}`).join(', ');
+        const params = Object.fromEntries(ids.map((id, i) => [`id${i}`, id]));
+        const rows = await db.all(
+            `SELECT userId, preferencesJson FROM user_settings WHERE userId IN (${placeholders})`,
+            params
+        );
+        const hidden = new Set();
+        for (const row of rows) {
+            const prefs = parsePreferences(row.preferencesJson);
+            if (prefs.presenceVisible === false) hidden.add(String(row.userId));
+        }
+        return hidden;
+    }
+
+    /**
+     * Safe session list for the signed-in user. Never includes tokenHash.
+     */
+    async listSessions({ userId, currentToken = null }) {
+        const webSessionService = require('./webSessionService');
+        return webSessionService.listForUser(userId, { currentToken });
+    }
+
+    async revokeSession({ userId, sessionId, currentToken = null }) {
+        const webSessionService = require('./webSessionService');
+        return webSessionService.revokeForUser(userId, sessionId, { currentToken });
+    }
+
+    async revokeOtherSessions({ userId, currentToken }) {
+        const webSessionService = require('./webSessionService');
+        return webSessionService.revokeOthers(userId, currentToken);
+    }
+
+    /**
+     * Owner-authorized export of settings plus the transparency report.
+     * Omits secrets, tokens, and session hashes (PR10).
+     */
+    async exportUserData({ userId }) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        const privacyService = require('./privacyService');
+        const settings = await this.getSettings({ userId });
+        const report = await privacyService.buildUserReport({
+            userId,
+            guildId: dmScopeId(userId)
+        });
+        return {
+            exportedAt: new Date().toISOString(),
+            schemaVersion: settings.schemaVersion,
+            settings,
+            report
+        };
+    }
+
+    async listOwnedShares({ userId }) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        const [chats, projects] = await Promise.all([
+            db.all(
+                `SELECT s.id, s.token, s.createdAt, s.conversationId, wc.title
+                 FROM web_share_links s
+                 LEFT JOIN web_conversations wc ON wc.id = s.conversationId
+                 WHERE s.userId = @userId
+                 ORDER BY s.createdAt DESC`,
+                { userId }
+            ).catch(() => []),
+            db.all(
+                `SELECT s.id, s.token, s.createdAt, s.projectId, p.name AS title
+                 FROM observatory_share_links s
+                 LEFT JOIN observatory_projects p ON p.id = s.projectId
+                 WHERE s.userId = @userId
+                 ORDER BY s.createdAt DESC`,
+                { userId }
+            ).catch(() => [])
+        ]);
+        return {
+            conversations: chats.map((row) => ({
+                id: row.id,
+                kind: 'conversation',
+                title: row.title || 'Untitled conversation',
+                conversationId: row.conversationId,
+                createdAt: row.createdAt,
+                path: `/app/share/${row.token}`
+            })),
+            projects: projects.map((row) => ({
+                id: row.id,
+                kind: 'project',
+                title: row.title || 'Untitled project',
+                projectId: row.projectId,
+                createdAt: row.createdAt,
+                path: `/app/observatory/share/${row.token}`
+            }))
+        };
+    }
+
+    async revokeOwnedShare({ userId, kind, id }) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        const table = kind === 'project' ? 'observatory_share_links' : (kind === 'conversation' ? 'web_share_links' : null);
+        if (!table) {
+            throw new UserSettingsError(400, 'BAD_SHARE', 'kind must be conversation or project.');
+        }
+        const result = await db.run(
+            `DELETE FROM ${table} WHERE id = @id AND userId = @userId`,
+            { id: Number(id), userId }
+        );
+        if (!result.changes) {
+            throw new UserSettingsError(404, 'SHARE_NOT_FOUND', 'That share does not exist or is not yours.');
+        }
+        return { revoked: true, kind, id: Number(id) };
+    }
+
+    async listOwnedApplets({ userId }) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        const webAppletService = require('./webAppletService');
+        const listed = await webAppletService.listPinned(userId).catch(() => []);
+        return (listed || []).map((item) => ({
+            id: item.id,
+            title: item.title || item.name || 'Applet',
+            grants: item.grants || {},
+            pinned: true
+        }));
+    }
+
+    async revokeAppletGrants({ userId, appletId }) {
+        if (!userId) {
+            throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        }
+        const webAppletService = require('./webAppletService');
+        await webAppletService.update({ userId, appletId, grants: { observatoryRead: [] } });
+        return { revoked: true, id: appletId };
     }
 
     /**
@@ -632,7 +858,8 @@ class UserSettingsService {
                     callUser: null,
                     customInstructions: null,
                     personalityDirective: null,
-                    memeMode: false
+                    memeMode: false,
+                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'profile')
                 };
             case 'chat':
                 return {
@@ -644,7 +871,8 @@ class UserSettingsService {
                 return {
                     voiceId: null,
                     speed: 1.0,
-                    accent: null
+                    accent: null,
+                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'voice')
                 };
             case 'initiative':
                 // Reset never touches enrollment: turning attention on or off
@@ -655,16 +883,18 @@ class UserSettingsService {
                     contactCooldownMinutes: 120,
                     quietStartMinute: null,
                     quietEndMinute: null,
-                    boundaries: {}
+                    boundaries: {},
+                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'initiative')
                 };
             case 'memory':
+                // Retention is a destructive two-step flow, not a resettable
+                // preference. Reset only clears the new-chat privacy default.
                 return {
-                    retentionDays: null
+                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'memory')
                 };
             case 'appearance':
                 return {
-                    theme: 'dark',
-                    linkByTag: true
+                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'appearance')
                 };
             default:
                 return {};
@@ -749,8 +979,11 @@ class UserSettingsService {
             writes.push((tx) => guildSettings.setUserNickname(userId, guildId, cleanNick || null));
         }
 
+        const prefPatch = this._collectPreferencePatch('profile', changes);
+
         return async (tx) => {
             for (const fn of writes) await fn(tx);
+            await this._mergePreferencesTx(tx, userId, prefPatch);
         };
     }
 
@@ -884,10 +1117,13 @@ class UserSettingsService {
             update.accent = resolved ? resolved.id : null;
         }
 
+        const prefPatch = this._collectPreferencePatch('voice', changes);
+
         return async (tx) => {
             if (Object.keys(update).length > 0) {
                 await guildSettings.setTtsVoice(dmScope, update);
             }
+            await this._mergePreferencesTx(tx, userId, prefPatch);
         };
     }
 
@@ -956,6 +1192,16 @@ class UserSettingsService {
             }
         }
 
+        const prefPatch = this._collectPreferencePatch('initiative', changes);
+        if (prefPatch.quietHoursTzMode === 'local') {
+            const existingPrefs = await this._loadPreferences(userId);
+            const tz = existingPrefs.timezone;
+            if (!tz) {
+                throw new UserSettingsError(400, 'BAD_QUIET_HOURS_MODE',
+                    'Local quiet hours need a timezone on your Profile first. Adding a timezone does not convert existing UTC hours.');
+            }
+        }
+
         return async (tx) => {
             // Apply fields without turning attention on if disabled
             if ('initiative' in changes) {
@@ -1004,6 +1250,7 @@ class UserSettingsService {
             } else if (!existing?.enabled) {
                 await attentionPolicyService.disable(userId);
             }
+            await this._mergePreferencesTx(tx, userId, prefPatch);
         };
     }
 
@@ -1019,44 +1266,22 @@ class UserSettingsService {
             }
         }
 
+        const prefPatch = this._collectPreferencePatch('memory', changes);
+
         return async (tx) => {
             if ('retentionDays' in changes) {
                 const days = changes.retentionDays === null ? null : Number(changes.retentionDays);
                 await guildSettings.setMemoryRetentionDays(dmScope, days);
             }
+            await this._mergePreferencesTx(tx, userId, prefPatch);
         };
     }
 
     async _prepareAppearanceChanges(userId, changes) {
-        if ('theme' in changes) {
-            if (!THEMES.includes(changes.theme)) {
-                throw new UserSettingsError(400, 'BAD_THEME', `theme must be one of: ${THEMES.join(', ')}.`);
-            }
-        }
-        if ('linkByTag' in changes && typeof changes.linkByTag !== 'boolean') {
-            throw new UserSettingsError(400, 'BAD_REQUEST', 'linkByTag must be a boolean.');
-        }
+        const prefPatch = this._collectPreferencePatch('appearance', changes);
 
         return async (tx) => {
-            const row = await (tx || db).get(
-                'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
-                { userId }
-            );
-            let prefs = {};
-            if (row?.preferencesJson) {
-                try { prefs = JSON.parse(row.preferencesJson) || {}; } catch { prefs = {}; }
-            }
-            if ('theme' in changes) prefs.theme = changes.theme;
-            if ('linkByTag' in changes) prefs.linkByTag = changes.linkByTag;
-
-            await (tx || db).run(
-                `INSERT INTO user_settings (userId, schemaVersion, preferencesJson, updatedAt)
-                 VALUES (@userId, 1, @preferencesJson, CURRENT_TIMESTAMP)
-                 ON CONFLICT(userId) DO UPDATE SET
-                     preferencesJson = @preferencesJson,
-                     updatedAt = CURRENT_TIMESTAMP`,
-                { userId, preferencesJson: JSON.stringify(prefs) }
-            );
+            await this._mergePreferencesTx(tx, userId, prefPatch);
         };
     }
 }

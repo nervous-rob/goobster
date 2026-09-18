@@ -118,6 +118,82 @@ class WebSessionService {
     async pruneExpired() {
         await db.run(`DELETE FROM web_sessions WHERE expiresAt <= datetime('now')`);
     }
+
+    /**
+     * Safe metadata for the Account & devices list (AC02). Never returns tokenHash.
+     * @param {string} userId
+     * @param {{ currentToken?: string|null }} [opts]
+     */
+    async listForUser(userId, { currentToken = null } = {}) {
+        await this.pruneExpired();
+        const rows = await db.all(
+            `SELECT id, userName, avatar, createdAt, lastSeenAt, expiresAt, tokenHash
+             FROM web_sessions
+             WHERE userId = @userId AND expiresAt > datetime('now')
+             ORDER BY lastSeenAt DESC, createdAt DESC`,
+            { userId: String(userId) }
+        );
+        const currentHash = currentToken ? hashToken(currentToken) : null;
+        return rows.map((row) => ({
+            id: row.id,
+            userName: row.userName || null,
+            avatar: row.avatar || null,
+            createdAt: row.createdAt,
+            lastSeenAt: row.lastSeenAt,
+            expiresAt: row.expiresAt,
+            current: Boolean(currentHash && row.tokenHash === currentHash)
+        }));
+    }
+
+    /**
+     * Revoke one of the caller's sessions. Refusing to revoke the current
+     * session here keeps "sign out other devices" distinct from logout.
+     */
+    async revokeForUser(userId, sessionId, { currentToken = null } = {}) {
+        const id = Number(sessionId);
+        if (!Number.isInteger(id) || id <= 0) {
+            const error = new Error('Invalid session id.');
+            error.status = 400;
+            error.code = 'BAD_SESSION';
+            throw error;
+        }
+        const row = await db.get(
+            'SELECT id, tokenHash FROM web_sessions WHERE id = @id AND userId = @userId',
+            { id, userId: String(userId) }
+        );
+        if (!row) {
+            const error = new Error('That session is gone or is not yours.');
+            error.status = 404;
+            error.code = 'SESSION_NOT_FOUND';
+            throw error;
+        }
+        if (currentToken && row.tokenHash === hashToken(currentToken)) {
+            const error = new Error('Use Sign out to end the session on this device.');
+            error.status = 400;
+            error.code = 'CURRENT_SESSION';
+            throw error;
+        }
+        const result = await db.run(
+            'DELETE FROM web_sessions WHERE id = @id AND userId = @userId',
+            { id, userId: String(userId) }
+        );
+        return { revoked: result.changes > 0, id };
+    }
+
+    async revokeOthers(userId, currentToken) {
+        if (!currentToken) {
+            const error = new Error('The current session is required to keep you signed in.');
+            error.status = 400;
+            error.code = 'BAD_SESSION';
+            throw error;
+        }
+        const result = await db.run(
+            `DELETE FROM web_sessions
+             WHERE userId = @userId AND tokenHash != @tokenHash`,
+            { userId: String(userId), tokenHash: hashToken(currentToken) }
+        );
+        return { revoked: result.changes };
+    }
 }
 
 module.exports = new WebSessionService();
