@@ -227,6 +227,18 @@ CREATE TABLE project_triggers (
 CREATE INDEX idx_project_triggers_project ON project_triggers(projectId);
 `;
 
+// web_live_turns before the idle-based turn watchdog (no lastActivityAtMs).
+const PRE_IDLE_WATCHDOG = `
+CREATE TABLE IF NOT EXISTS web_live_turns (
+    userId TEXT PRIMARY KEY,
+    turnId TEXT NOT NULL,
+    startedAtMs INTEGER NOT NULL,
+    conversationId INTEGER,
+    aborted INTEGER NOT NULL DEFAULT 0 CHECK (aborted IN (0, 1)),
+    progressJson TEXT
+);
+`;
+
 const PRE_PIPELINE_ROWS = [
     `INSERT INTO observatory_projects (id, userId, slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
     `INSERT INTO project_assets (id, projectId, userId, slug, name) VALUES (7, 1, 'u1', 'fetch', 'Fetch')`,
@@ -512,6 +524,21 @@ describe('SQLite: upgrading an existing database', () => {
             expect(shapeOf(upgraded, table)).toEqual(shapeOf(fresh, table));
         }
     });
+
+    test('a pre-idle-watchdog live-turn row survives and gains lastActivityAtMs', () => {
+        const file = seedDatabase(PRE_IDLE_WATCHDOG, [
+            `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted, progressJson)
+             VALUES ('u1', 'abc', 1700000000000, 5, 0, '{"draft":""}')`
+        ]);
+
+        const database = bootstrap(file);
+
+        expect(database.prepare('SELECT userId, turnId, startedAtMs, aborted, lastActivityAtMs FROM web_live_turns').all())
+            .toEqual([{ userId: 'u1', turnId: 'abc', startedAtMs: 1700000000000, aborted: 0, lastActivityAtMs: null }]);
+        database.prepare('UPDATE web_live_turns SET lastActivityAtMs = 1700000009000 WHERE userId = ?').run('u1');
+        expect(database.prepare('SELECT lastActivityAtMs FROM web_live_turns').get()).toEqual({ lastActivityAtMs: 1700000009000 });
+        expect(shapeOf(database, 'web_live_turns')).toEqual(shapeOf(bootstrap(seedDatabase('')), 'web_live_turns'));
+    });
 });
 
 const describePostgres = process.env.GOOBSTER_DB_URL ? describe : describe.skip;
@@ -716,5 +743,20 @@ describePostgres('Postgres: upgrading an existing database', () => {
         expect(child.rows).toEqual([{ parentJobId: 1, errorCode: 'OUTPUT_CONTRACT_FAILED' }]);
         const filtered = await adapter.rawQuery('SELECT "sourceAssetId", "sourceTriggerId" FROM project_triggers WHERE id = 4');
         expect(filtered.rows).toEqual([{ sourceAssetId: 7, sourceTriggerId: 3 }]);
+    });
+
+    test('a pre-idle-watchdog live-turn row survives and gains lastActivityAtMs', async () => {
+        const schemaName = await seedSchema(PRE_IDLE_WATCHDOG, [
+            `INSERT INTO web_live_turns ("userId", "turnId", "startedAtMs", "conversationId", aborted, "progressJson")
+             VALUES ('u1', 'abc', 1700000000000, 5, 0, '{"draft":""}')`
+        ]);
+
+        const adapter = await bootstrap(schemaName);
+
+        const rows = await adapter.rawQuery('SELECT "userId", "turnId", "startedAtMs", aborted, "lastActivityAtMs" FROM web_live_turns');
+        expect(rows.rows).toEqual([{ userId: 'u1', turnId: 'abc', startedAtMs: 1700000000000, aborted: 0, lastActivityAtMs: null }]);
+        await adapter.rawQuery(`UPDATE web_live_turns SET "lastActivityAtMs" = 1700000009000 WHERE "userId" = 'u1'`);
+        const updated = await adapter.rawQuery('SELECT "lastActivityAtMs" FROM web_live_turns');
+        expect(updated.rows).toEqual([{ lastActivityAtMs: 1700000009000 }]);
     });
 });

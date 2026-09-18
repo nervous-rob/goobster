@@ -46,9 +46,11 @@ const GROUPS = [
         name: 'Chat and AI',
         description: 'Providers, prompts, tools, conversations, message queues',
         files: files([
+            'agentLoopObservatory',
             'agentOrchestrator',
             'aiModelListing',
             'anthropicService',
+            'chatHandlerAgentTurn',
             'dmChat',
             'dmSettings',
             'geminiService',
