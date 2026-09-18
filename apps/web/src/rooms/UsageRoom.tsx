@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
+import { Link } from '@tanstack/react-router';
 import { MenuButton } from '../shell/MenuButton';
 
 type DayRow = { day: string; inputTokens?: number; outputTokens?: number; calls?: number };
@@ -14,6 +15,8 @@ type UsagePayload = {
     byDay: DayRow[];
     byModel: ModelRow[];
     byOperation: OperationRow[];
+    usageAlertTokens?: number | null;
+    overAlert?: boolean;
 };
 
 type DayPoint = {
@@ -168,6 +171,20 @@ export function UsageRoom() {
                 {usage.isError && <div className="empty">{(usage.error as Error).message}</div>}
                 {stats && (
                     <>
+                        {stats.usageAlertTokens ? (
+                            <div className={`list-card${stats.overAlert ? ' settings-danger' : ''}`} role="status">
+                                <div className="list-row">
+                                    <span>
+                                        {stats.overAlert
+                                            ? `Usage is at or above your ${formatTokens(stats.usageAlertTokens)} alert.`
+                                            : `Alert threshold: ${formatTokens(stats.usageAlertTokens)} tokens in this window.`}
+                                    </span>
+                                    <Link className="btn subtle small" to="/settings/$section" params={{ section: 'chat' }} hash="usage-alert">
+                                        Change alert
+                                    </Link>
+                                </div>
+                            </div>
+                        ) : null}
                         <div className="stat-grid">
                             <div className="stat-card">
                                 <div className="stat-label">AI calls</div>

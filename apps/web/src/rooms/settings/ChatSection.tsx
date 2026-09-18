@@ -7,7 +7,38 @@ import { SCOPE_FOR } from './sectionMeta';
 
 type Values = UserSettingsResponse['sections']['chat']['values'];
 type Provider = { key: string; name: string; configured: boolean; isDefault?: boolean; chatModel?: string | null; thoughtfulModel?: string | null; reasoningEffort?: boolean };
-type Draft = { provider: string; model: string; reasoningEffort: string; thoughtful: boolean };
+type Draft = {
+    provider: string;
+    model: string;
+    reasoningEffort: string;
+    thoughtful: boolean;
+    replyMaxTokens: string;
+    temperature: string;
+    topP: string;
+    parlorProvider: string;
+    parlorModel: string;
+    researchProvider: string;
+    researchModel: string;
+    disabledTools: string[];
+    usageAlertTokens: string;
+};
+
+const OPTIONAL_TOOLS: Array<{ name: string; label: string }> = [
+    { name: 'performSearch', label: 'Web search' },
+    { name: 'generateImage', label: 'Image generation' },
+    { name: 'runCode', label: 'Code runner' },
+    { name: 'observatory', label: 'Observatory' },
+    { name: 'requestPythonPackages', label: 'Python packages' },
+    { name: 'playTrack', label: 'Play a track' },
+    { name: 'speakMessage', label: 'Speak a message' },
+    { name: 'launchCursorAgent', label: 'Cursor agent' },
+    { name: 'createGithubIssue', label: 'Create GitHub issue' },
+    { name: 'executePlan', label: 'Execute a plan' },
+    { name: 'searchGithubCode', label: 'Search GitHub code' },
+    { name: 'readGithubFile', label: 'Read GitHub file' },
+    { name: 'searchNotion', label: 'Search Notion' },
+    { name: 'readNotionPage', label: 'Read Notion page' }
+];
 
 const REASONING = [
     { value: '', label: 'Default' },
@@ -21,10 +52,37 @@ const toDraft = (v: Values): Draft => ({
     provider: v.provider || '',
     model: v.model || '',
     reasoningEffort: v.reasoningEffort || '',
-    thoughtful: Boolean(v.thoughtful)
+    thoughtful: Boolean(v.thoughtful),
+    replyMaxTokens: v.replyMaxTokens != null ? String(v.replyMaxTokens) : '',
+    temperature: v.temperature != null ? String(v.temperature) : '',
+    topP: v.topP != null ? String(v.topP) : '',
+    parlorProvider: v.parlorProvider || '',
+    parlorModel: v.parlorModel || '',
+    researchProvider: v.researchProvider || '',
+    researchModel: v.researchModel || '',
+    disabledTools: Array.isArray(v.disabledTools) ? [...v.disabledTools] : [],
+    usageAlertTokens: v.usageAlertTokens != null ? String(v.usageAlertTokens) : ''
 });
 
-const LABELS: Record<string, string> = { provider: 'Model platform', model: 'Model', reasoningEffort: 'Reasoning effort' };
+const LABELS: Record<string, string> = {
+    provider: 'Model platform',
+    model: 'Model',
+    reasoningEffort: 'Reasoning effort',
+    replyMaxTokens: 'Reply length budget',
+    temperature: 'Temperature',
+    topP: 'Top-p',
+    parlorProvider: 'Parlor platform',
+    parlorModel: 'Parlor model',
+    researchProvider: 'Research platform',
+    researchModel: 'Research model',
+    disabledTools: 'Optional tools',
+    usageAlertTokens: 'Usage alert'
+};
+
+function emptyToNull(value: string): string | null {
+    const clean = value.trim();
+    return clean ? clean : null;
+}
 
 export function ChatSection({ section, onDirty }: {
     section: UserSettingsResponse['sections']['chat'];
@@ -40,8 +98,20 @@ export function ChatSection({ section, onDirty }: {
             return out;
         }
         delete diff.thoughtful;
-        for (const key of ['provider', 'model', 'reasoningEffort']) {
-            if (key in diff) diff[key] = String(diff[key] ?? '').trim() || null;
+        for (const key of ['provider', 'model', 'reasoningEffort', 'parlorProvider', 'parlorModel', 'researchProvider', 'researchModel']) {
+            if (key in diff) diff[key] = emptyToNull(String(diff[key] ?? ''));
+        }
+        for (const key of ['replyMaxTokens', 'usageAlertTokens']) {
+            if (key in diff) {
+                const raw = String(draft[key as 'replyMaxTokens' | 'usageAlertTokens']).trim();
+                diff[key] = raw ? Number(raw) : null;
+            }
+        }
+        for (const key of ['temperature', 'topP'] as const) {
+            if (key in diff) {
+                const raw = String(draft[key]).trim();
+                diff[key] = raw ? Number(raw) : null;
+            }
         }
         return diff;
     }, []);
@@ -142,6 +212,93 @@ export function ChatSection({ section, onDirty }: {
                             onClick={() => setManual({ reasoningEffort: option.value })}>{option.label}</button>
                     ))}
                 </div>
+            </Field>
+
+            <Field id="reply-tokens" label="Reply length budget" scope="Private chats & DMs"
+                hint="Advanced visible-answer budget (256–8192 tokens). Hidden reasoning is added separately. Blank uses the host default.">
+                <input id="reply-tokens-input" className="input" type="number" min={256} max={8192} step={1}
+                    value={d.draft.replyMaxTokens} placeholder="Host default"
+                    onChange={(e) => d.set({ replyMaxTokens: e.target.value })} />
+            </Field>
+
+            <Field id="sampling" label="Sampling" scope="Private chats & DMs"
+                hint="Temperature (0–2) and top-p (0–1). Providers that reject sampling drop these instead of failing the turn.">
+                <div className="settings-row" id="sampling-input">
+                    <input className="input" type="number" min={0} max={2} step={0.1} aria-label="Temperature"
+                        value={d.draft.temperature} placeholder="Temperature"
+                        onChange={(e) => d.set({ temperature: e.target.value })} />
+                    <input className="input" type="number" min={0} max={1} step={0.05} aria-label="Top-p"
+                        value={d.draft.topP} placeholder="Top-p"
+                        onChange={(e) => d.set({ topP: e.target.value })} />
+                </div>
+            </Field>
+
+            <Field id="parlor-model" label="Parlor model default" scope="Your account"
+                hint="Used for owned Parlor generation only. Shared personas and existing conversations keep their own configuration.">
+                <div className="settings-row" id="parlor-model-input">
+                    <select className="select" aria-label="Parlor platform" value={d.draft.parlorProvider}
+                        onChange={(e) => d.set({ parlorProvider: e.target.value, parlorModel: '' })}>
+                        <option value="">Host default</option>
+                        {providers.map((p) => (
+                            <option key={p.key} value={p.key} disabled={!p.configured}>
+                                {p.configured ? p.name : `${p.name} — not configured here`}
+                            </option>
+                        ))}
+                    </select>
+                    <input className="input" aria-label="Parlor model id" value={d.draft.parlorModel}
+                        placeholder="Provider default model"
+                        onChange={(e) => d.set({ parlorModel: e.target.value })} />
+                </div>
+            </Field>
+
+            <Field id="research-model" label="Research model default" scope="Your account"
+                hint="Snapshotted into newly created personal research jobs. Existing expeditions keep the model they started with.">
+                <div className="settings-row" id="research-model-input">
+                    <select className="select" aria-label="Research platform" value={d.draft.researchProvider}
+                        onChange={(e) => d.set({ researchProvider: e.target.value, researchModel: '' })}>
+                        <option value="">Host default</option>
+                        {providers.map((p) => (
+                            <option key={p.key} value={p.key} disabled={!p.configured}>
+                                {p.configured ? p.name : `${p.name} — not configured here`}
+                            </option>
+                        ))}
+                    </select>
+                    <input className="input" aria-label="Research model id" value={d.draft.researchModel}
+                        placeholder="Provider default model"
+                        onChange={(e) => d.set({ researchModel: e.target.value })} />
+                </div>
+            </Field>
+
+            <Field id="disabled-tools" label="Optional tools" scope="Your account"
+                hint="Uncheck to prefer skipping that tool in personal work. This cannot grant credentials, skip approval, or override host restrictions.">
+                <div className="settings-tool-list" id="disabled-tools-input">
+                    {OPTIONAL_TOOLS.map((tool) => {
+                        const on = !d.draft.disabledTools.includes(tool.name);
+                        return (
+                            <label key={tool.name} className="settings-check">
+                                <input type="checkbox" checked={on}
+                                    onChange={() => d.set({
+                                        disabledTools: on
+                                            ? [...d.draft.disabledTools, tool.name]
+                                            : d.draft.disabledTools.filter((name) => name !== tool.name)
+                                    })} />
+                                {tool.label}
+                            </label>
+                        );
+                    })}
+                </div>
+            </Field>
+
+            <Field id="usage-alert" label="Usage alert" scope="Your account"
+                hint="Informational threshold on the Usage page. This is not a hard spend cap.">
+                <input id="usage-alert-input" className="input" type="number" min={1000} step={1000}
+                    value={d.draft.usageAlertTokens} placeholder="No alert"
+                    onChange={(e) => d.set({ usageAlertTokens: e.target.value })} />
+            </Field>
+
+            <Field id="byok" label="Personal AI keys" scope="Your account"
+                hint="Bring-your-own provider keys are not stored in Settings. This host uses the operator-configured keys, and missing keys disable that platform above instead of erroring. GitHub and Notion connectors live under Connections.">
+                <p className="hint" id="byok-input">Host keys only — personal BYOK is not available on this host.</p>
             </Field>
 
             <SaveBar section="chat" draft={d} describe={(k) => LABELS[k] || k} />

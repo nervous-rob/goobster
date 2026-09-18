@@ -1,4 +1,4 @@
-import type { AppConfig, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AppConfig, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -91,6 +91,10 @@ export const api = {
         request<RetentionPreviewResponse>('/api/app/settings/memory/retention-preview', { method: 'POST', body: { days } }),
     applyRetention: (days: number | null, expectedRevision?: number | null) =>
         request<SectionUpdateResponse & { purged: number }>('/api/app/settings/memory/retention', { method: 'POST', body: { days, expectedRevision } }),
+    chatHistoryPreview: (days: number | null) =>
+        request<ChatHistoryPreviewResponse>('/api/app/settings/memory/chat-history-preview', { method: 'POST', body: { days } }),
+    applyChatHistoryRetention: (days: number | null, expectedRevision?: number | null) =>
+        request<SectionUpdateResponse & { purged: number }>('/api/app/settings/memory/chat-history', { method: 'POST', body: { days, expectedRevision } }),
     exportSettings: () => request('/api/app/settings/export'),
     listSettingsSessions: () => request<{
         id: number; userName: string | null; avatar: string | null;

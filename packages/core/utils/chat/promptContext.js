@@ -121,7 +121,7 @@ async function retrieveNotes({
 
     const resolvedDepth = ['light', 'medium', 'rich'].includes(depth) ? depth : classifyDepth(query);
     const budget = BUDGETS[mode]?.[resolvedDepth] || BUDGETS.chat.medium;
-    const wantMemories = includeMemories == null ? budget.memories > 0 : includeMemories;
+    let wantMemories = includeMemories == null ? budget.memories > 0 : includeMemories;
     const graphLimit = about === 'server' ? Math.max(budget.graph, 6) : budget.graph;
 
     let graph = null;
@@ -174,6 +174,14 @@ async function retrieveNotes({
     }
 
     let memories = [];
+    if (wantMemories && query && userId) {
+        try {
+            const userSettingsService = require('../../services/userSettingsService');
+            if (await userSettingsService.getPreference(userId, 'useMemories') === false) {
+                wantMemories = false;
+            }
+        } catch { /* default on */ }
+    }
     if (wantMemories && query) {
         memories = await memoryService.recall({
             guildId,

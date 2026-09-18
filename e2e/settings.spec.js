@@ -115,6 +115,33 @@ test('search finds Phase 2 fields and account sessions list this device', async 
     await expect(page.locator('#sessions-input').getByText(/This device/)).toBeVisible();
 });
 
+test('search finds Phase 3 fields and chat-history shows a preview', async ({ page }) => {
+    await login(page);
+    await openSettings(page);
+    const search = page.getByRole('combobox', { name: 'Search settings' });
+    await search.fill('personality preset');
+    await page.getByRole('option').filter({ hasText: 'Personality preset' }).getByRole('button').click();
+    await expect(page).toHaveURL(/\/app\/settings\/profile#personality-preset$/);
+    await page.locator('#personality-preset-input').selectOption('concise-direct');
+    await expect(page.locator('#answer-length-input')).toHaveValue('concise');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText('Profile saved.')).toBeVisible();
+
+    await search.fill('learn memories');
+    await page.getByRole('option').filter({ hasText: 'Learn new long-term memories' }).getByRole('button').click();
+    await expect(page).toHaveURL(/\/app\/settings\/memory#learn-memories$/);
+    await page.locator('#learn-memories-input').click();
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText('Memory & privacy saved.')).toBeVisible();
+
+    await page.locator('#chat-history-input').selectOption('30');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /Expire Study chats after 30 days/ })).toBeVisible();
+    await expect(dialog.getByText('Nothing has been deleted yet.')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.locator('#chat-history-input')).toHaveValue('');
+});
+
 test('room shortcuts open the matching section with a way back', async ({ page }) => {
     await login(page);
     await page.getByRole('navigation', { name: 'Rooms' }).getByRole('link', { name: 'Study' }).click();

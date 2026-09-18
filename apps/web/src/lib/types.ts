@@ -300,18 +300,37 @@ export type UserSettingsResponse = {
             measurementSystem: 'follow-locale' | 'metric' | 'imperial';
             timeFormat: 'follow-locale' | '12' | '24';
             dateLocale: string | null;
+            personalityPreset: 'concise-direct' | 'warm-detailed' | 'playful-brief' | null;
         }>;
         chat: SettingSection<{
             provider: string | null;
             model: string | null;
             reasoningEffort: string | null;
             thoughtful?: boolean;
+            replyMaxTokens: number | null;
+            temperature: number | null;
+            topP: number | null;
+            parlorProvider: string | null;
+            parlorModel: string | null;
+            researchProvider: string | null;
+            researchModel: string | null;
+            disabledTools: string[];
+            usageAlertTokens: number | null;
         }, {
             provider: string | null;
             providerName?: string;
             model: string | null;
             reasoningEffort: string | null;
             thoughtful?: boolean;
+            replyMaxTokens: number | null;
+            temperature: number | null;
+            topP: number | null;
+            parlorProvider: string | null;
+            parlorModel: string | null;
+            researchProvider: string | null;
+            researchModel: string | null;
+            disabledTools: string[];
+            usageAlertTokens: number | null;
         }>;
         voice: SettingSection<{
             voiceId: string | null;
@@ -356,6 +375,9 @@ export type UserSettingsResponse = {
         memory: SettingSection<{
             retentionDays: number | null;
             defaultNewChatPrivacy: 'regular' | 'incognito';
+            learnMemories: boolean;
+            useMemories: boolean;
+            chatHistoryRetentionDays: number | null;
         }>;
         appearance: SettingSection<{
             theme: 'light' | 'dark' | 'system';
@@ -367,8 +389,17 @@ export type UserSettingsResponse = {
             expandChatDetails: boolean;
             startPage: 'home' | 'study' | 'noticed' | 'spitball' | 'parlor' | 'exchange' | 'conservatory';
             preferredExchangeGuild: string | null;
+            expeditionDefaultDepth: 'focused' | 'standard' | 'deep';
+            expeditionDefaultLens: string;
+            parlorDefaultEmoji: string | null;
+            parlorDefaultCharter: string | null;
         }>;
-        connections: SettingSection<Record<string, { connected: boolean; verifiedAccount: string | null }>>;
+        connections: SettingSection<{
+            github: { connected: boolean; verifiedAccount: string | null };
+            notion: { connected: boolean; verifiedAccount: string | null };
+            githubAllowlist: string[];
+            notionAllowlist: string[];
+        }>;
         account: SettingSection<{
             userId: string;
             username: string;
@@ -402,6 +433,15 @@ export type RetentionPreviewResponse = {
     currentRetentionDays: number | null;
     proposedRetentionDays: number | null;
     memoryCount: number;
+    affectedCount: number;
+    dataClasses: string[];
+};
+
+export type ChatHistoryPreviewResponse = {
+    section: 'memory';
+    currentRevision: number;
+    proposedRetentionDays: number | null;
+    conversationCount: number;
     affectedCount: number;
     dataClasses: string[];
 };

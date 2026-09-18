@@ -28,6 +28,10 @@ type Draft = {
     expandChatDetails: boolean;
     startPage: Values['startPage'];
     preferredExchangeGuild: string;
+    expeditionDefaultDepth: Values['expeditionDefaultDepth'];
+    expeditionDefaultLens: string;
+    parlorDefaultEmoji: string;
+    parlorDefaultCharter: string;
 };
 
 const THEMES: Array<{ value: ThemeChoice; label: string; hint: string }> = [
@@ -45,8 +49,22 @@ const LABELS: Record<string, string> = {
     enterToSend: 'Enter to send',
     expandChatDetails: 'Expand chat details',
     startPage: 'Start page',
-    preferredExchangeGuild: 'Preferred Exchange server'
+    preferredExchangeGuild: 'Preferred Exchange server',
+    expeditionDefaultDepth: 'Expedition depth',
+    expeditionDefaultLens: 'Expedition lens',
+    parlorDefaultEmoji: 'New persona emoji',
+    parlorDefaultCharter: 'New persona charter'
 };
+const EXPEDITION_LENSES = [
+    { id: 'general', name: 'General' },
+    { id: 'scientific-literature', name: 'Scientific literature' },
+    { id: 'mathematics', name: 'Mathematics' },
+    { id: 'history', name: 'History' },
+    { id: 'engineering', name: 'Engineering' },
+    { id: 'journalism', name: 'Journalism' },
+    { id: 'storytelling', name: 'Storytelling' },
+    { id: 'philosophy', name: 'Philosophy' }
+];
 const LINK_BY_TAG_KEY = 'goobster.map.linkByTag';
 
 export function AppearanceSection({ section, onDirty }: {
@@ -65,11 +83,17 @@ export function AppearanceSection({ section, onDirty }: {
         enterToSend: v.enterToSend !== false,
         expandChatDetails: Boolean(v.expandChatDetails),
         startPage: v.startPage || 'home',
-        preferredExchangeGuild: v.preferredExchangeGuild || ''
+        preferredExchangeGuild: v.preferredExchangeGuild || '',
+        expeditionDefaultDepth: v.expeditionDefaultDepth || 'standard',
+        expeditionDefaultLens: v.expeditionDefaultLens || 'general',
+        parlorDefaultEmoji: v.parlorDefaultEmoji || '',
+        parlorDefaultCharter: v.parlorDefaultCharter || ''
     }), []);
     const toChanges = useCallback((draft: Draft, baseline: Draft) => {
         const diff = diffKeys(draft as unknown as Record<string, unknown>, baseline as unknown as Record<string, unknown>);
         if ('preferredExchangeGuild' in diff) diff.preferredExchangeGuild = draft.preferredExchangeGuild || null;
+        if ('parlorDefaultEmoji' in diff) diff.parlorDefaultEmoji = draft.parlorDefaultEmoji.trim() || null;
+        if ('parlorDefaultCharter' in diff) diff.parlorDefaultCharter = draft.parlorDefaultCharter.trim() || null;
         return diff;
     }, []);
     const d = useSectionDraft('appearance', section, toDraft, toChanges);
@@ -185,6 +209,34 @@ export function AppearanceSection({ section, onDirty }: {
                     <option value="">Ask each time</option>
                     {guilds.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
+            </Field>
+
+            <Field id="expedition-defaults" label="Defaults for new expeditions" scope="Your account"
+                hint="Snapshotted into newly created personal expeditions. Existing seeds, intents, budgets, and runs stay unchanged.">
+                <div className="settings-row" id="expedition-defaults-input">
+                    <select className="input" aria-label="Expedition depth" value={d.draft.expeditionDefaultDepth}
+                        onChange={(e) => d.set({ expeditionDefaultDepth: e.target.value as Draft['expeditionDefaultDepth'] })}>
+                        <option value="focused">Focused</option>
+                        <option value="standard">Standard</option>
+                        <option value="deep">Deep</option>
+                    </select>
+                    <select className="input" aria-label="Expedition lens" value={d.draft.expeditionDefaultLens}
+                        onChange={(e) => d.set({ expeditionDefaultLens: e.target.value })}>
+                        {EXPEDITION_LENSES.map((lens) => <option key={lens.id} value={lens.id}>{lens.name}</option>)}
+                    </select>
+                </div>
+            </Field>
+
+            <Field id="parlor-defaults" label="Defaults for new personas" scope="Your account"
+                hint="Applied when you create a persona without an emoji or charter. Existing and shared personas are never rewritten.">
+                <div className="settings-stack" id="parlor-defaults-input">
+                    <input className="input" value={d.draft.parlorDefaultEmoji} maxLength={8}
+                        placeholder="Default emoji" aria-label="New persona emoji"
+                        onChange={(e) => d.set({ parlorDefaultEmoji: e.target.value })} />
+                    <textarea className="input" rows={3} value={d.draft.parlorDefaultCharter}
+                        placeholder="Default charter for new personas" aria-label="New persona charter"
+                        onChange={(e) => d.set({ parlorDefaultCharter: e.target.value })} />
+                </div>
             </Field>
 
             <Field id="link-by-tag" label="Link notes by shared tag" inline scope="Your account"

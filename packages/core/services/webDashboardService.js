@@ -274,6 +274,12 @@ class WebDashboardService {
             params
         );
 
+        const used = Number(totals?.inputTokens || 0) + Number(totals?.outputTokens || 0);
+        let usageAlertTokens = null;
+        try {
+            const userSettingsService = require('./userSettingsService');
+            usageAlertTokens = await userSettingsService.getPreference(userId, 'usageAlertTokens');
+        } catch { /* informational only */ }
         return {
             days: bounded,
             totals: {
@@ -283,7 +289,9 @@ class WebDashboardService {
             },
             byModel,
             byOperation,
-            byDay
+            byDay,
+            usageAlertTokens,
+            overAlert: Boolean(usageAlertTokens) && used >= usageAlertTokens
         };
     }
 

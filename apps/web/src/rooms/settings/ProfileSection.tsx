@@ -20,6 +20,7 @@ type Draft = {
     measurementSystem: Values['measurementSystem'];
     timeFormat: Values['timeFormat'];
     dateLocale: string;
+    personalityPreset: string;
 };
 
 const NAME_MAX = 32;
@@ -39,6 +40,12 @@ const LANGUAGES: Array<{ value: string; label: string }> = [
     { value: 'ko', label: 'Korean' },
     { value: 'zh', label: 'Chinese' }
 ];
+const PRESETS: Array<{ value: string; label: string; bake?: { answerLength: Draft['answerLength']; tone: Draft['tone']; humor: Draft['humor'] } }> = [
+    { value: '', label: 'Custom — edit the fields below' },
+    { value: 'concise-direct', label: 'Concise & direct', bake: { answerLength: 'concise', tone: 'direct', humor: 'off' } },
+    { value: 'warm-detailed', label: 'Warm & detailed', bake: { answerLength: 'detailed', tone: 'warm', humor: 'light' } },
+    { value: 'playful-brief', label: 'Playful & brief', bake: { answerLength: 'concise', tone: 'playful', humor: 'playful' } }
+];
 
 const toDraft = (v: Values): Draft => ({
     callUser: v.callUser || '',
@@ -54,7 +61,8 @@ const toDraft = (v: Values): Draft => ({
     timezone: v.timezone || '',
     measurementSystem: v.measurementSystem || 'follow-locale',
     timeFormat: v.timeFormat || 'follow-locale',
-    dateLocale: v.dateLocale || ''
+    dateLocale: v.dateLocale || '',
+    personalityPreset: v.personalityPreset || ''
 });
 
 const LABELS: Record<string, string> = {
@@ -71,7 +79,8 @@ const LABELS: Record<string, string> = {
     timezone: 'Timezone',
     measurementSystem: 'Units',
     timeFormat: 'Clock',
-    dateLocale: 'Date locale'
+    dateLocale: 'Date locale',
+    personalityPreset: 'Personality preset'
 };
 
 const TIMEZONES = (() => {
@@ -88,7 +97,7 @@ export function ProfileSection({ section, onDirty }: {
 }) {
     const toChanges = useCallback((draft: Draft, baseline: Draft) => {
         const diff = diffKeys(draft as unknown as Record<string, unknown>, baseline as unknown as Record<string, unknown>);
-        for (const key of ['callUser', 'accountPreferredName', 'callGoobster', 'customInstructions', 'personalityDirective', 'timezone', 'dateLocale', 'responseLanguage']) {
+        for (const key of ['callUser', 'accountPreferredName', 'callGoobster', 'customInstructions', 'personalityDirective', 'timezone', 'dateLocale', 'responseLanguage', 'personalityPreset']) {
             if (key in diff) diff[key] = String(diff[key]).trim() || null;
         }
         return diff;
@@ -148,6 +157,18 @@ export function ProfileSection({ section, onDirty }: {
                     onChange={(e) => d.set({ personalityDirective: e.target.value })} />
             </Field>
 
+            <Field id="personality-preset" label="Personality preset" scope="Your account"
+                hint="Fills the style fields below with a visible, editable starting point. Changing a field after that leaves Custom.">
+                <select id="personality-preset-input" className="input" value={d.draft.personalityPreset}
+                    onChange={(e) => {
+                        const value = e.target.value;
+                        const bake = PRESETS.find((p) => p.value === value)?.bake;
+                        d.set(bake ? { personalityPreset: value, ...bake } : { personalityPreset: value });
+                    }}>
+                    {PRESETS.map((p) => <option key={p.value || 'custom'} value={p.value}>{p.label}</option>)}
+                </select>
+            </Field>
+
             <Field id="meme-mode" label="Meme mode" inline scope="Your account"
                 hint="Lets him lean into internet humour and references. When this is on, it wins over the structured humor preference below.">
                 <button id="meme-mode-input" type="button" className={`toggle${d.draft.memeMode ? ' on' : ''}`}
@@ -158,7 +179,7 @@ export function ProfileSection({ section, onDirty }: {
             <Field id="answer-length" label="Default answer length" scope="Your account"
                 hint="A soft preference, not a token budget. An explicit request in the current turn wins.">
                 <select id="answer-length-input" className="input" value={d.draft.answerLength}
-                    onChange={(e) => d.set({ answerLength: e.target.value as Draft['answerLength'] })}>
+                    onChange={(e) => d.set({ answerLength: e.target.value as Draft['answerLength'], personalityPreset: '' })}>
                     <option value="concise">Concise</option>
                     <option value="balanced">Balanced</option>
                     <option value="detailed">Detailed</option>
@@ -168,7 +189,7 @@ export function ProfileSection({ section, onDirty }: {
             <Field id="tone" label="Default tone" scope="Your account"
                 hint="Structured tone for regular chat. Custom instructions still win if they conflict.">
                 <select id="tone-input" className="input" value={d.draft.tone}
-                    onChange={(e) => d.set({ tone: e.target.value as Draft['tone'] })}>
+                    onChange={(e) => d.set({ tone: e.target.value as Draft['tone'], personalityPreset: '' })}>
                     <option value="neutral">Neutral</option>
                     <option value="warm">Warm</option>
                     <option value="direct">Direct</option>
@@ -181,7 +202,7 @@ export function ProfileSection({ section, onDirty }: {
                     ? 'Meme mode is on, so it currently wins over this control.'
                     : 'Optional structured preference. Meme mode, if enabled, wins.'}>
                 <select id="humor-input" className="input" value={d.draft.humor}
-                    onChange={(e) => d.set({ humor: e.target.value as Draft['humor'] })}>
+                    onChange={(e) => d.set({ humor: e.target.value as Draft['humor'], personalityPreset: '' })}>
                     <option value="off">Rare</option>
                     <option value="light">Light</option>
                     <option value="playful">Playful</option>
