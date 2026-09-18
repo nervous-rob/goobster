@@ -152,18 +152,20 @@ export function SaveBar<D>({
                 </div>
             )}
             {draft.error && <div className="settings-field-error" role="alert">{draft.error}</div>}
-            <div className={`settings-savebar${draft.dirty ? ' is-dirty' : ''}`}>
+            <div className={`settings-savebar${draft.dirty ? ' is-dirty' : ''}${draft.saving ? ' is-saving' : ''}`}>
                 <span className="hint settings-dirty-note" aria-live="polite">
-                    {draft.saving ? 'Saving…' : draft.dirty ? 'Unsaved changes' : 'All changes saved'}
+                    {draft.saving ? 'Saving…' : draft.dirty ? (
+                        <><span className="settings-dirty-dot" aria-hidden="true" /> Unsaved changes</>
+                    ) : 'All changes saved'}
                 </span>
                 <div className="settings-savebar-actions">
                     {resettable && (
-                        <button type="button" className="btn subtle" disabled={draft.saving || loadingPreview} onClick={openReset}>
+                        <button type="button" className="btn subtle settings-reset-btn" disabled={draft.saving || loadingPreview} onClick={openReset}>
                             {loadingPreview ? 'Checking…' : 'Reset to defaults…'}
                         </button>
                     )}
-                    <button type="button" className="btn" disabled={!draft.dirty || draft.saving} onClick={draft.discard}>Discard</button>
-                    <button type="button" className="btn primary" disabled={!draft.dirty || draft.saving} onClick={save}>Save changes</button>
+                    <button type="button" className="btn settings-discard-btn" disabled={!draft.dirty || draft.saving} onClick={draft.discard}>Discard</button>
+                    <button type="button" className="btn primary settings-save-btn" disabled={!draft.dirty || draft.saving} onClick={save}>Save changes</button>
                 </div>
             </div>
             {preview && (
