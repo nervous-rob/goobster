@@ -631,6 +631,11 @@ unfiltered fan-out info),
 `tests/projectChat.test.js` (conversation binding, manifest truncation,
 turn lock, refetch hints),
 `tests/toolsRegistryObservatory.test.js` (tool gating, `read` windows),
+`tests/agentLoopObservatory.test.js` (the real agent loop driving a
+nine-step pipeline setup — filtered event stage, output contract,
+foreground run, list/audit/inspect — through the real registry under the
+project budget, the conversational budget's handoff, and a bad filter
+recovered as an observation; see `documentation/agent_orchestration.md`),
 `tests/toolResultWindow.test.js` (shared line-window / clip caps),
 `tests/projectParlor.test.js` (the built-in seat, linked-discussion
 lifecycle and guards, PROJECT-scope routing, actor-bound tool context),
