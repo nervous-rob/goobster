@@ -153,6 +153,105 @@ CREATE TABLE project_decisions (
 );
 `;
 
+// Observatory before pipeline reliability landed: jobs had no explicit
+// parent, no frozen output contract, and no stable error code; event
+// triggers were project-wide with no source filters.
+const PRE_PIPELINE = `
+CREATE TABLE observatory_projects (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE project_assets (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'script',
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE observatory_jobs (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    language TEXT NOT NULL,
+    code TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'RUNNING'
+        CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'INTERRUPTED')),
+    segments INTEGER NOT NULL DEFAULT 0,
+    resumeCount INTEGER NOT NULL DEFAULT 0,
+    exitCode INTEGER,
+    stdoutTail TEXT,
+    stderrTail TEXT,
+    checkpointAt TEXT,
+    renderPath TEXT,
+    error TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    finishedAt TEXT,
+    lastHeartbeatAt TEXT,
+    runnerId TEXT,
+    assetVersionId INTEGER,
+    startedBy TEXT,
+    triggerId INTEGER,
+    executionAttemptId TEXT,
+    leaseToken TEXT,
+    cancelRequested INTEGER NOT NULL DEFAULT 0 CHECK (cancelRequested IN (0, 1)),
+    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1))
+);
+CREATE INDEX idx_observatory_jobs_user ON observatory_jobs(userId, status);
+CREATE INDEX idx_observatory_jobs_project ON observatory_jobs(projectId, id);
+CREATE TABLE project_triggers (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('cron', 'event')),
+    schedule TEXT,
+    nextRun TEXT,
+    eventTopic TEXT,
+    action TEXT NOT NULL CHECK (action IN ('run_script', 'render', 'fetch_data', 'agent_prompt')),
+    actionAssetId INTEGER REFERENCES project_assets(id) ON DELETE SET NULL,
+    actionParams TEXT,
+    isEnabled INTEGER NOT NULL DEFAULT 1 CHECK (isEnabled IN (0, 1)),
+    lastRun TEXT,
+    lastOutcome TEXT,
+    createdBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_project_triggers_project ON project_triggers(projectId);
+`;
+
+// web_live_turns before the idle-based turn watchdog (no lastActivityAtMs).
+const PRE_IDLE_WATCHDOG = `
+CREATE TABLE IF NOT EXISTS web_live_turns (
+    userId TEXT PRIMARY KEY,
+    turnId TEXT NOT NULL,
+    startedAtMs INTEGER NOT NULL,
+    conversationId INTEGER,
+    aborted INTEGER NOT NULL DEFAULT 0 CHECK (aborted IN (0, 1)),
+    progressJson TEXT
+);
+`;
+
+const PRE_PIPELINE_ROWS = [
+    `INSERT INTO observatory_projects (id, userId, slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
+    `INSERT INTO project_assets (id, projectId, userId, slug, name) VALUES (7, 1, 'u1', 'fetch', 'Fetch')`,
+    `INSERT INTO observatory_jobs (id, projectId, userId, language, code, status, exitCode, startedBy, triggerId, finishedAt)
+     VALUES (1, 1, 'u1', 'python', 'print(1)', 'COMPLETED', 0, 'trigger', 3, '2026-09-01 01:00:00')`,
+    `INSERT INTO observatory_jobs (id, projectId, userId, language, code, status, exitCode, error, startedBy, finishedAt)
+     VALUES (2, 1, 'u1', 'bash', 'exit 2', 'FAILED', 2, 'exit 2', 'chat', '2026-09-01 02:00:00')`,
+    `INSERT INTO project_triggers (id, projectId, userId, name, kind, schedule, action, actionAssetId, actionParams, lastRun, lastOutcome)
+     VALUES (3, 1, 'u1', 'Nightly', 'cron', '0 1 * * *', 'run_script', 7, '{"background":true}', '2026-09-01 01:00:00', 'ok: job #1')`,
+    `INSERT INTO project_triggers (id, projectId, userId, name, kind, eventTopic, action, lastRun)
+     VALUES (4, 1, 'u1', 'Render after', 'event', 'job_completed', 'render', '2026-09-01 01:00:05')`
+];
+
 describe('SQLite: upgrading an existing database', () => {
     const files = [];
     const opened = [];
@@ -359,6 +458,87 @@ describe('SQLite: upgrading an existing database', () => {
              VALUES (1, 1, 'u1', 'third')`
         ).run()).toThrow(/UNIQUE/);
     });
+
+    test('a pre-pipeline Observatory keeps its jobs and triggers and gains parentage, contracts, and filters', () => {
+        const file = seedDatabase(PRE_PIPELINE, PRE_PIPELINE_ROWS);
+
+        const database = bootstrap(file);
+
+        // Nothing lost; every new column is NULL = legacy behaviour.
+        expect(database.prepare(
+            `SELECT id, status, exitCode, error, startedBy, triggerId, parentJobId,
+                    outputContractJson, outputContractResultJson, errorCode
+             FROM observatory_jobs ORDER BY id`
+        ).all()).toEqual([
+            {
+                id: 1, status: 'COMPLETED', exitCode: 0, error: null, startedBy: 'trigger', triggerId: 3,
+                parentJobId: null, outputContractJson: null, outputContractResultJson: null, errorCode: null
+            },
+            {
+                id: 2, status: 'FAILED', exitCode: 2, error: 'exit 2', startedBy: 'chat', triggerId: null,
+                parentJobId: null, outputContractJson: null, outputContractResultJson: null, errorCode: null
+            }
+        ]);
+        expect(database.prepare(
+            `SELECT id, kind, eventTopic, actionParams, lastRun, lastOutcome, sourceAssetId, sourceTriggerId
+             FROM project_triggers ORDER BY id`
+        ).all()).toEqual([
+            {
+                id: 3, kind: 'cron', eventTopic: null, actionParams: '{"background":true}',
+                lastRun: '2026-09-01 01:00:00', lastOutcome: 'ok: job #1', sourceAssetId: null, sourceTriggerId: null
+            },
+            {
+                id: 4, kind: 'event', eventTopic: 'job_completed', actionParams: null,
+                lastRun: '2026-09-01 01:00:05', lastOutcome: null, sourceAssetId: null, sourceTriggerId: null
+            }
+        ]);
+
+        // The new indexes exist on the upgraded tables.
+        const jobIndexes = database.pragma('index_list(observatory_jobs)').map(i => i.name);
+        expect(jobIndexes).toEqual(expect.arrayContaining([
+            'idx_observatory_jobs_project_finished', 'idx_observatory_jobs_parent'
+        ]));
+
+        // And the new columns are writable in the shapes the services use.
+        database.prepare(
+            `INSERT INTO observatory_jobs (id, projectId, userId, language, code, status, exitCode, startedBy,
+                                           triggerId, parentJobId, outputContractJson, outputContractResultJson, errorCode)
+             VALUES (3, 1, 'u1', 'python', 'print(2)', 'FAILED', 0, 'trigger', 4, 1,
+                     '{"outputs":[{"path":"pipeline/m.json","type":"json"}]}',
+                     '{"ok":false,"checks":[{"path":"pipeline/m.json","ok":false,"reason":"missing"}]}',
+                     'OUTPUT_CONTRACT_FAILED')`
+        ).run();
+        database.prepare('UPDATE project_triggers SET sourceAssetId = 7, sourceTriggerId = 3 WHERE id = 4').run();
+        expect(database.prepare('SELECT parentJobId, errorCode FROM observatory_jobs WHERE id = 3').get())
+            .toEqual({ parentJobId: 1, errorCode: 'OUTPUT_CONTRACT_FAILED' });
+        expect(database.prepare('SELECT sourceAssetId, sourceTriggerId FROM project_triggers WHERE id = 4').get())
+            .toEqual({ sourceAssetId: 7, sourceTriggerId: 3 });
+        expect(database.pragma('foreign_key_check')).toEqual([]);
+    });
+
+    test('an upgraded Observatory has the same job and trigger shape as a fresh one', () => {
+        const upgraded = bootstrap(seedDatabase(PRE_PIPELINE, PRE_PIPELINE_ROWS));
+        const fresh = bootstrap(seedDatabase(''));
+
+        for (const table of ['observatory_jobs', 'project_triggers']) {
+            expect(shapeOf(upgraded, table)).toEqual(shapeOf(fresh, table));
+        }
+    });
+
+    test('a pre-idle-watchdog live-turn row survives and gains lastActivityAtMs', () => {
+        const file = seedDatabase(PRE_IDLE_WATCHDOG, [
+            `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted, progressJson)
+             VALUES ('u1', 'abc', 1700000000000, 5, 0, '{"draft":""}')`
+        ]);
+
+        const database = bootstrap(file);
+
+        expect(database.prepare('SELECT userId, turnId, startedAtMs, aborted, lastActivityAtMs FROM web_live_turns').all())
+            .toEqual([{ userId: 'u1', turnId: 'abc', startedAtMs: 1700000000000, aborted: 0, lastActivityAtMs: null }]);
+        database.prepare('UPDATE web_live_turns SET lastActivityAtMs = 1700000009000 WHERE userId = ?').run('u1');
+        expect(database.prepare('SELECT lastActivityAtMs FROM web_live_turns').get()).toEqual({ lastActivityAtMs: 1700000009000 });
+        expect(shapeOf(database, 'web_live_turns')).toEqual(shapeOf(bootstrap(seedDatabase('')), 'web_live_turns'));
+    });
 });
 
 const describePostgres = process.env.GOOBSTER_DB_URL ? describe : describe.skip;
@@ -513,5 +693,70 @@ describePostgres('Postgres: upgrading an existing database', () => {
             `INSERT INTO project_decisions ("projectId", "missionId", "userId", question)
              VALUES (1, 1, 'u1', 'third')`
         )).rejects.toThrow();
+    });
+
+    test('a pre-pipeline Observatory keeps its jobs and triggers and gains parentage, contracts, and filters', async () => {
+        const schemaName = await seedSchema(PRE_PIPELINE, [
+            `INSERT INTO observatory_projects (id, "userId", slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
+            `INSERT INTO project_assets (id, "projectId", "userId", slug, name) VALUES (7, 1, 'u1', 'fetch', 'Fetch')`,
+            `INSERT INTO observatory_jobs (id, "projectId", "userId", language, code, status, "exitCode", "startedBy", "triggerId", "finishedAt")
+             VALUES (1, 1, 'u1', 'python', 'print(1)', 'COMPLETED', 0, 'trigger', 3, '2026-09-01 01:00:00')`,
+            `INSERT INTO project_triggers (id, "projectId", "userId", name, kind, "eventTopic", action, "lastRun")
+             VALUES (4, 1, 'u1', 'Render after', 'event', 'job_completed', 'render', '2026-09-01 01:00:05')`
+        ]);
+
+        const adapter = await bootstrap(schemaName);
+
+        const jobs = await adapter.rawQuery(
+            `SELECT id, status, "startedBy", "triggerId", "parentJobId", "outputContractJson",
+                    "outputContractResultJson", "errorCode"
+             FROM observatory_jobs ORDER BY id`
+        );
+        expect(jobs.rows).toEqual([{
+            id: 1, status: 'COMPLETED', startedBy: 'trigger', triggerId: 3,
+            parentJobId: null, outputContractJson: null, outputContractResultJson: null, errorCode: null
+        }]);
+        const triggers = await adapter.rawQuery(
+            `SELECT id, kind, "eventTopic", "lastRun", "sourceAssetId", "sourceTriggerId" FROM project_triggers`
+        );
+        expect(triggers.rows).toEqual([{
+            id: 4, kind: 'event', eventTopic: 'job_completed', lastRun: '2026-09-01 01:00:05',
+            sourceAssetId: null, sourceTriggerId: null
+        }]);
+
+        const jobIndexes = await adapter.rawQuery(
+            `SELECT indexname FROM pg_indexes
+             WHERE schemaname = current_schema() AND tablename = 'observatory_jobs'`
+        );
+        expect(jobIndexes.rows.map(r => r.indexname)).toEqual(expect.arrayContaining([
+            'idx_observatory_jobs_project_finished', 'idx_observatory_jobs_parent'
+        ]));
+
+        await adapter.rawQuery(
+            `INSERT INTO observatory_jobs (id, "projectId", "userId", language, code, status, "exitCode", "startedBy",
+                                           "triggerId", "parentJobId", "outputContractJson", "errorCode")
+             VALUES (3, 1, 'u1', 'python', 'print(2)', 'FAILED', 0, 'trigger', 4, 1,
+                     '{"outputs":[{"path":"pipeline/m.json","type":"json"}]}', 'OUTPUT_CONTRACT_FAILED')`
+        );
+        await adapter.rawQuery('UPDATE project_triggers SET "sourceAssetId" = 7, "sourceTriggerId" = 3 WHERE id = 4');
+        const child = await adapter.rawQuery('SELECT "parentJobId", "errorCode" FROM observatory_jobs WHERE id = 3');
+        expect(child.rows).toEqual([{ parentJobId: 1, errorCode: 'OUTPUT_CONTRACT_FAILED' }]);
+        const filtered = await adapter.rawQuery('SELECT "sourceAssetId", "sourceTriggerId" FROM project_triggers WHERE id = 4');
+        expect(filtered.rows).toEqual([{ sourceAssetId: 7, sourceTriggerId: 3 }]);
+    });
+
+    test('a pre-idle-watchdog live-turn row survives and gains lastActivityAtMs', async () => {
+        const schemaName = await seedSchema(PRE_IDLE_WATCHDOG, [
+            `INSERT INTO web_live_turns ("userId", "turnId", "startedAtMs", "conversationId", aborted, "progressJson")
+             VALUES ('u1', 'abc', 1700000000000, 5, 0, '{"draft":""}')`
+        ]);
+
+        const adapter = await bootstrap(schemaName);
+
+        const rows = await adapter.rawQuery('SELECT "userId", "turnId", "startedAtMs", aborted, "lastActivityAtMs" FROM web_live_turns');
+        expect(rows.rows).toEqual([{ userId: 'u1', turnId: 'abc', startedAtMs: 1700000000000, aborted: 0, lastActivityAtMs: null }]);
+        await adapter.rawQuery(`UPDATE web_live_turns SET "lastActivityAtMs" = 1700000009000 WHERE "userId" = 'u1'`);
+        const updated = await adapter.rawQuery('SELECT "lastActivityAtMs" FROM web_live_turns');
+        expect(updated.rows).toEqual([{ lastActivityAtMs: 1700000009000 }]);
     });
 });

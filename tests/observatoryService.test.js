@@ -525,6 +525,7 @@ describe('background jobs', () => {
         const job = await waitForJob(svc, userId, jobId);
         expect(job.status).toBe('FAILED');
         expect(job.exitCode).toBe(3);
+        expect(job.errorCode).toBe('EXIT_NONZERO');
         expect(job.error).toContain('exited with code 3');
         expect(job.stderrTail).toContain('boom');
     }, 20_000);
@@ -561,6 +562,7 @@ describe('background jobs', () => {
         });
         const job = await waitForJob(svc, userId, jobId);
         expect(job.status).toBe('TIMED_OUT');
+        expect(job.errorCode).toBe('TIMED_OUT');
         expect(job.segments).toBe(1);
         expect(job.error).toMatch(/checkpoint\.json/);
     }, 20_000);
@@ -595,6 +597,7 @@ describe('background jobs', () => {
         expect(await svc.cancel({ userId, jobId })).toEqual({ cancelled: true, jobId });
         const job = await waitForJob(svc, userId, jobId);
         expect(job.status).toBe('CANCELLED');
+        expect(job.errorCode).toBe('CANCELLED');
     }, 20_000);
 
     test('the per-user active-job cap holds', async () => {
@@ -1414,6 +1417,191 @@ describe('privacy (/forget-me)', () => {
         expect(audit.byTable.observatory_workspaces).toBe(0);
         expect((await svc.countUserData(userId)).workspaceDirs).toBe(0);
     });
+});
+
+describe('output contracts: exit 0 is necessary, not sufficient', () => {
+    const { resolveOutputContract } = require('@goobster/core/utils/outputContract');
+    const projectTriggerService = require('@goobster/core/services/projectTriggerService');
+    const utcDate = new Date().toISOString().slice(0, 10);
+
+    /** Keep the singleton trigger service from reacting to these settles. */
+    let settleSpy;
+    beforeAll(() => {
+        settleSpy = jest.spyOn(projectTriggerService, 'evaluateJobSettled').mockResolvedValue(0);
+    });
+    afterAll(() => settleSpy.mockRestore());
+
+    function manifestContract(extra = {}) {
+        return resolveOutputContract([
+            { path: 'pipeline/fetch_manifest_{utc_date}.json', type: 'json', minBytes: 2, ...extra }
+        ]);
+    }
+
+    test('an exit-0 background job with every declared output settles COMPLETED', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'contract-ok' });
+        const { jobId } = await svc.run({
+            userId, project: 'contract-ok', language: 'bash', background: true,
+            outputContract: manifestContract(),
+            code: 'mkdir -p "$GOOBSTER_PROJECT_DIR/pipeline"; '
+                + `echo '{"rows": 3}' > "$GOOBSTER_PROJECT_DIR/pipeline/fetch_manifest_${utcDate}.json"`
+        });
+        const job = await waitForJob(svc, userId, jobId);
+        expect(job.status).toBe('COMPLETED');
+        expect(job.exitCode).toBe(0);
+        expect(job.errorCode).toBeNull();
+        expect(job.outputContract.outputs[0].path).toBe(`pipeline/fetch_manifest_${utcDate}.json`);
+        expect(job.outputContractResult.ok).toBe(true);
+        expect(job.outputContractResult.checks).toEqual([
+            expect.objectContaining({ path: `pipeline/fetch_manifest_${utcDate}.json`, ok: true, reason: null })
+        ]);
+    }, 20_000);
+
+    test('an exit-0 job that never writes its handoff file settles FAILED / OUTPUT_CONTRACT_FAILED', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'contract-missing' });
+        const { jobId } = await svc.run({
+            userId, project: 'contract-missing', language: 'bash', background: true,
+            outputContract: manifestContract(),
+            code: 'echo "forgot the manifest"'
+        });
+        const job = await waitForJob(svc, userId, jobId);
+        expect(job.status).toBe('FAILED');
+        expect(job.exitCode).toBe(0);
+        expect(job.errorCode).toBe('OUTPUT_CONTRACT_FAILED');
+        expect(job.error).toBe(`output contract failed — missing pipeline/fetch_manifest_${utcDate}.json`);
+        expect(job.outputContractResult.ok).toBe(false);
+        expect(job.outputContractResult.checks[0]).toMatchObject({ ok: false, reason: 'missing' });
+        expect(job.stdoutTail).toContain('forgot the manifest');
+    }, 20_000);
+
+    test('invalid JSON fails a json requirement and minBytes is enforced', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'contract-shape' });
+        const bad = await svc.run({
+            userId, project: 'contract-shape', language: 'bash', background: true,
+            outputContract: resolveOutputContract([
+                { path: 'out/report.json', type: 'json' },
+                { path: 'out/rows.csv', minBytes: 100 }
+            ]),
+            code: 'mkdir -p "$GOOBSTER_PROJECT_DIR/out"; '
+                + 'echo "{not json" > "$GOOBSTER_PROJECT_DIR/out/report.json"; '
+                + 'echo "a,b" > "$GOOBSTER_PROJECT_DIR/out/rows.csv"'
+        });
+        const job = await waitForJob(svc, userId, bad.jobId);
+        expect(job.status).toBe('FAILED');
+        expect(job.errorCode).toBe('OUTPUT_CONTRACT_FAILED');
+        expect(job.error).toBe('output contract failed — invalid json out/report.json, too small out/rows.csv');
+        expect(job.outputContractResult.checks.map(c => c.reason)).toEqual(['invalid_json', 'too_small']);
+    }, 20_000);
+
+    test('an execution failure is reported as such, not as a contract failure', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'contract-crash' });
+        const { jobId } = await svc.run({
+            userId, project: 'contract-crash', language: 'bash', background: true,
+            outputContract: manifestContract(),
+            code: 'exit 4'
+        });
+        const job = await waitForJob(svc, userId, jobId);
+        expect(job.status).toBe('FAILED');
+        expect(job.errorCode).toBe('EXIT_NONZERO');
+        expect(job.outputContractResult).toBeNull();
+    }, 20_000);
+
+    test('a foreground run returns the contract verdict on its result', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'contract-fg' });
+        const outcome = await svc.run({
+            userId, project: 'contract-fg', language: 'bash', background: false,
+            outputContract: manifestContract(),
+            code: 'echo nothing written'
+        });
+        expect(outcome.mode).toBe('foreground');
+        expect(outcome.result.exitCode).toBe(0);
+        expect(outcome.result.ok).toBe(false);
+        expect(outcome.result.errorCode).toBe('OUTPUT_CONTRACT_FAILED');
+        expect(outcome.result.outputContract.ok).toBe(false);
+        const job = await svc.getJob({ userId, jobId: outcome.jobId });
+        expect(job.status).toBe('FAILED');
+        expect(job.errorCode).toBe('OUTPUT_CONTRACT_FAILED');
+    }, 20_000);
+
+    test('a symlink escaping the workspace never satisfies a declared output', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'contract-symlink' });
+        const outside = path.join(os.tmpdir(), `goobster-outside-${process.pid}.json`);
+        fs.writeFileSync(outside, '{"leaked": true}');
+        fs.mkdirSync(path.join(PROJECTS_ROOT, userId, slug, 'out'), { recursive: true });
+        fs.symlinkSync(outside, path.join(PROJECTS_ROOT, userId, slug, 'out', 'manifest.json'));
+        try {
+            const { jobId } = await svc.run({
+                userId, project: slug, language: 'bash', background: true,
+                outputContract: resolveOutputContract([{ path: 'out/manifest.json', type: 'json' }]),
+                code: 'true'
+            });
+            const job = await waitForJob(svc, userId, jobId);
+            expect(job.status).toBe('FAILED');
+            expect(job.errorCode).toBe('OUTPUT_CONTRACT_FAILED');
+            expect(job.outputContractResult.checks[0].reason).toBe('symlink');
+        } finally {
+            fs.rmSync(outside, { force: true });
+        }
+    }, 20_000);
+
+    test('run() refuses unresolved, absolute, or traversing contract paths and foreign parents', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const other = nextUser();
+        await svc.createProject({ userId, name: 'contract-guard' });
+        await svc.createProject({ userId: other, name: 'elsewhere' });
+        const base = { userId, project: 'contract-guard', language: 'bash', code: 'true', background: false };
+        for (const outputs of [
+            [{ path: '../escape.json' }],
+            [{ path: '/etc/passwd' }],
+            [{ path: 'out/{utc_date}.json' }],
+            [{ path: 'out/ok.json', type: 'yaml' }]
+        ]) {
+            await expectThrow(
+                () => svc.run({ ...base, outputContract: { outputs } }),
+                { code: 'BAD_OUTPUT_CONTRACT', status: 400 }
+            );
+        }
+        const foreign = await svc.run({
+            userId: other, project: 'elsewhere', language: 'bash', code: 'true', background: false
+        });
+        await expectThrow(
+            () => svc.run({ ...base, parentJobId: foreign.jobId }),
+            { code: 'BAD_PARENT_JOB', status: 400 }
+        );
+        expect(await db.get(
+            `SELECT COUNT(*) AS c FROM observatory_jobs j
+             JOIN observatory_projects p ON p.id = j.projectId
+             WHERE p.userId = @userId AND p.slug = 'contract-guard'`,
+            { userId }
+        )).toEqual({ c: 0 });
+    }, 20_000);
+
+    test('jobs without a contract keep their legacy settle behaviour and NULL parentage', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        await svc.createProject({ userId, name: 'legacy-settle' });
+        const { jobId } = await svc.run({
+            userId, project: 'legacy-settle', language: 'bash', background: true, code: 'echo plain'
+        });
+        const job = await waitForJob(svc, userId, jobId);
+        expect(job.status).toBe('COMPLETED');
+        expect(job.errorCode).toBeNull();
+        expect(job.parentJobId).toBeNull();
+        expect(job.outputContract).toBeNull();
+        expect(job.outputContractResult).toBeNull();
+    }, 20_000);
 });
 
 describe('HTTP runner cancel holds the project claim until writes stop', () => {

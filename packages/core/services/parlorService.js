@@ -100,9 +100,13 @@ const BUILTIN_PERSONA_CHARTER =
     + 'you keep the project\'s shared knowledge, run its scripts and jobs when asked, and '
     + 'report honestly on what happened.';
 const PROJECT_SEAT_TOOL_NAMES = [...PERSONA_TOOL_NAMES, 'observatory'];
-// Real project work (run a script, check a job, save an asset) takes more
-// rounds than salon banter, but the seat still shares the table's pace.
-const PROJECT_SEAT_MAX_TOOL_ROUNDS = 5;
+// Real project work (save scripts, run them, read results, wire triggers,
+// audit) is a sequence of steps; a seat cut off at a handful of them
+// leaves the goal undone with no reply explaining why. The seat therefore
+// gets the same project-sized budget as the Study (PROJECT_MAX_TOOL_ROUNDS,
+// resolved where the loop runs - the orchestrator is required lazily
+// there), bounded by the loop's own progress checks rather than the
+// table's pace.
 
 const QUICKSTART_MAX_PROMPT_LENGTH = 2000;
 const QUICKSTART_MIN_PERSONAS = 2;
@@ -2553,7 +2557,7 @@ class ParlorService {
             //    search rides along when the provider supports it.
             const aiService = require('./aiService');
             const toolsRegistry = require('../utils/toolsRegistry');
-            const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
+            const { runAgentLoop, PROJECT_MAX_TOOL_ROUNDS } = require('../utils/chat/agentOrchestrator');
             const functionDefs = await toolsRegistry.getDefinitions(
                 projectSeat ? PROJECT_SEAT_TOOL_NAMES : PERSONA_TOOL_NAMES,
                 { isWeb: true }
@@ -2602,7 +2606,7 @@ class ParlorService {
                     } catch { /* never break the turn */ }
                 },
                 shouldAbort: () => turnState.aborted,
-                maxToolRounds: projectSeat ? PROJECT_SEAT_MAX_TOOL_ROUNDS : PERSONA_MAX_TOOL_ROUNDS
+                maxToolRounds: projectSeat ? PROJECT_MAX_TOOL_ROUNDS : PERSONA_MAX_TOOL_ROUNDS
             });
             // Models sometimes imitate the history's speaker labels; the
             // byline is the interface's job, so strip a self-label prefix.

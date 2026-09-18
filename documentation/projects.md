@@ -134,6 +134,25 @@ started it (`startedBy`: `chat` | `portal` | `trigger` | `resume`). `code`
 stays on the job row — resume needs it verbatim even if the asset is later
 edited or pruned.
 
+Three more columns make a settled job explain itself:
+
+- `parentJobId` — the settled job whose event trigger started this one.
+  Cron, chat, portal, and other root jobs are `NULL`. This is the *only*
+  ancestry the chain-depth guard reads; it never infers a parent from
+  timestamps or nearby ids.
+- `errorCode` — a stable machine reason behind a terminal status:
+  `EXIT_NONZERO`, `TIMED_OUT`, `CANCELLED`, `OUTPUT_CONTRACT_FAILED`,
+  `RUN_ERROR`, `QUOTA_EXCEEDED`, `PROJECT_DELETED`. `NULL` for `COMPLETED`
+  and for rows that predate the column.
+- `outputContractJson` / `outputContractResultJson` — the declared output
+  contract frozen when the job started, and the per-check verdict written
+  at settlement (see [Multi-stage pipelines](#multi-stage-pipelines)).
+
+`parentJobId`, `errorCode`, and the contract verdict appear in job detail
+(`observatory status` / `inspect`, `getJob`, and the `jobs` list on
+`GET /api/app/observatory/projects/:slug`); the public dashboard renders
+only status, exit code, and tails.
+
 ### Triggers
 
 Project-scoped automations with first-class actions, so "run my ingest
@@ -146,14 +165,130 @@ spend:
 - **Event** (`job_completed` | `job_failed` | `job_settled`) evaluates
   from DB state on the job settle path; a startup sweep catches jobs
   settled while the process was down. Events are hints, never the source
-  of truth.
+  of truth. An event trigger is project-wide by default, or narrowed with
+  the optional **source filters** `sourceAssetId` (fire only when the
+  settled job executed a version of that script asset) and
+  `sourceTriggerId` (fire only when that trigger started the settled
+  job); both present means both must match. Filters are validated against
+  the same project at write time and are meaningless on cron triggers.
 - **Actions**: `run_script` (head version at fire time), `render`,
   `fetch_data` (allowlisted hosts only), `agent_prompt` (the Observatory-
   command machinery). Chain-depth and self-chain guards prevent runaway
-  loops.
+  loops. `run_script` may also declare `requiredOutputs` — the workspace
+  files the job must leave behind before it counts as completed.
 
 The guild/channel `automations` table is left alone — it still serves
 scheduled conversational prompts in Discord scopes.
+
+## Multi-stage pipelines
+
+A pipeline is a chain of `run_script` stages where each stage consumes
+what the previous one wrote. Three things make that chain trustworthy;
+none of them is a workflow language.
+
+### Exit 0 is necessary, not sufficient
+
+A script that exits 0 without writing its handoff file used to settle
+`COMPLETED` and fire `job_completed`, so the next stage ran against
+missing input. A `run_script` trigger can now declare what the job must
+produce:
+
+```json
+{
+  "background": true,
+  "requiredOutputs": [
+    { "path": "pipeline/fetch_manifest_{utc_date}.json", "type": "json", "minBytes": 2 }
+  ]
+}
+```
+
+Each entry is a workspace-relative `path` (a bare string is shorthand
+for `{ "path": ... }`), an optional `type` — `file` (exists, regular
+file, size) or `json` (must also parse) — and an optional `minBytes`.
+The only template variable is `{utc_date}` (`YYYY-MM-DD`, UTC, captured
+when the trigger fires). Paths go through the Observatory workspace
+legalizer: absolute paths, traversal, symlinks (including a symlinked
+parent directory), and directories are refused — at write time where the
+shape allows it, and again at settlement, where they fail the check.
+There are no validator commands and no user-supplied code; the check
+list is deliberately closed.
+
+The resolved contract is **frozen onto the job row** when it starts.
+Editing the trigger while the job runs does not change what that job is
+judged against.
+
+Settlement order:
+
+1. The sandbox runs as before (segments, checkpoints, resumes).
+2. Execution failure (non-zero exit, timeout, cancel) settles as before
+   with the matching `errorCode`; the contract is not consulted.
+3. Otherwise the frozen contract is evaluated against the workspace.
+   Every check must pass for the job to settle `COMPLETED`.
+4. A failed check settles `FAILED` with `errorCode =
+   OUTPUT_CONTRACT_FAILED`, a one-line `error` naming the first few
+   offenders (`output contract failed — missing
+   pipeline/fetch_manifest_2026-09-18.json`), and the full per-check
+   verdict in `outputContractResultJson`.
+5. Only then are event triggers evaluated: `job_completed` does **not**
+   fire; `job_failed` and `job_settled` do.
+
+Foreground trigger runs apply the same verdict before recording the
+trigger's `lastOutcome`, so a missing output is `failed: fetch v3 exit 0;
+output contract failed — …`, never `ok: exit 0`. A validated run reads
+`ok: fetch v3 exit 0, 1 required output(s) validated`. Triggers without
+`requiredOutputs` keep the legacy exit-code-only behaviour.
+
+### Filtered events instead of staggered cron
+
+Two cron triggers at 02:00 and 02:30 encode an assumption ("stage 2 is
+done by 02:30") that breaks the first slow night, and an unfiltered
+`job_completed` trigger fans out from *every* successful job in the
+project — a quick chat-started run, a render, an unrelated experiment.
+Filter the downstream trigger to its upstream stage instead:
+
+```text
+Stage 2 — cron run_script "fetch" (asset #12)
+    actionParams: { background: true,
+                    requiredOutputs: ["pipeline/fetch_manifest_{utc_date}.json"] }
+    → COMPLETED only after the manifest exists and parses
+
+Stage 3 — event run_script "build-atlas"
+    eventTopic: job_completed
+    sourceAssetId: 12          (or sourceTrigger: "Stage 2")
+    → fires exactly for a validated Stage 2 run, never for other jobs
+```
+
+Through the tool: `set_trigger` with `sourceAsset: "fetch"` or
+`sourceTrigger: "Stage 2"` (slug/name or id; empty string clears), and
+`requiredOutputs: [...]`. Through the API: `sourceAssetId` /
+`sourceAsset`, `sourceTriggerId` / `sourceTrigger`, and
+`actionParams.requiredOutputs` on `POST`/`PATCH
+/projects/:slug/triggers`; `null` clears a filter. The portal's
+Automations editor exposes the same three fields.
+
+The settle path and the startup catch-up sweep share one matcher
+(`matchesEventTrigger`), so a job either fires a trigger in both or in
+neither. A non-matching job never advances the trigger's `lastRun`, so
+an unrelated job settling after a matching one cannot make catch-up
+skip the match.
+
+### Explicit parentage
+
+When an event trigger starts a `run_script` job, the settled source job
+becomes the child's `parentJobId` (same project enforced). The
+chain-depth guard walks that pointer — stopping at a missing parent and
+refusing to loop on a cycle — so `maxChainDepth` counts real hops and
+`allowSelfChain` gates real self-fires, regardless of how many
+unrelated jobs settled in between.
+
+### What the audit adds
+
+`auditSetup` / the Needs-you board now flag, per trigger: a source
+filter pointing at a deleted asset or trigger (warn — the trigger can
+never fire), an invalid `requiredOutputs` shape or path (warn), and an
+unfiltered `job_completed` `run_script` trigger (info — the fan-out
+footgun above, without failing the audit). It does not infer a DAG from
+filenames.
 
 ## Own-project reads (the applet bridge)
 
@@ -269,8 +404,10 @@ drift from runtime:
 2. Rewrite it as work progresses.
 3. A segment killed at the timeout wall resumes only if the checkpoint
    advanced — up to `maxResumes` times.
-4. Exit 0 completes; non-zero fails; timeout with no checkpoint progress
-   is terminal.
+4. Exit 0 completes — unless the job carries an output contract, in
+   which case every declared file must also validate (see [Multi-stage
+   pipelines](#multi-stage-pipelines)); non-zero fails; timeout with no
+   checkpoint progress is terminal.
 
 `$GOOBSTER_PROJECT_DIR` is the shared project root (inputs and published
 artifacts). Each job owns `runs/<jobId>/`, exposed as `$GOOBSTER_RUN_DIR`
@@ -477,7 +614,15 @@ stays on the erasure path until that table retires.
 `tests/projectAssetService.test.js` / `tests/projectAssetApi.test.js`
 (versioning, pruning, rollback, dedupe, API auth),
 `tests/projectTriggerService.test.js` / `tests/projectTriggerApi.test.js`
-(cron claim, event fire, catch-up, chain-depth),
+(cron claim, event fire, catch-up, source filters and their shared
+matcher, explicit parentage and chain-depth, foreground contract
+outcomes, contract-failure topics, frozen contracts),
+`tests/outputContract.test.js` (contract normalization, `{utc_date}`
+resolution, path refusals, per-check reasons, summaries),
+`tests/observatoryService.test.js` (exit-0 contract verdicts on real
+background runs, symlink escapes, `errorCode` per failure kind),
+`tests/projectSetupAudit.test.js` (dangling filters, invalid contracts,
+unfiltered fan-out info),
 `tests/appletCapabilities.test.js` / `tests/appletCapabilityApi.test.js`
 (own- vs cross-project grant resolution + content route),
 `tests/workshopPinMigration.test.js` (pin → asset migration),
@@ -486,6 +631,11 @@ stays on the erasure path until that table retires.
 `tests/projectChat.test.js` (conversation binding, manifest truncation,
 turn lock, refetch hints),
 `tests/toolsRegistryObservatory.test.js` (tool gating, `read` windows),
+`tests/agentLoopObservatory.test.js` (the real agent loop driving a
+nine-step pipeline setup — filtered event stage, output contract,
+foreground run, list/audit/inspect — through the real registry under the
+project budget, the conversational budget's handoff, and a bad filter
+recovered as an observation; see `documentation/agent_orchestration.md`),
 `tests/toolResultWindow.test.js` (shared line-window / clip caps),
 `tests/projectParlor.test.js` (the built-in seat, linked-discussion
 lifecycle and guards, PROJECT-scope routing, actor-bound tool context),
@@ -499,6 +649,7 @@ approval invalidation, atomic plan revisions, FAILED retry/skip,
 STARTING reconcile + block, concurrent starts, propagated cancellation,
 old-mission deadlines, one decision per completion, evidence assessment,
 settle hooks, attention, erasure, route auth),
-`tests/dbSchemaUpgrade.test.js` (mission unique-index upgrade fixture),
+`tests/dbSchemaUpgrade.test.js` (mission unique-index and pre-pipeline
+Observatory upgrade fixtures, both engines),
 `e2e/journeys.spec.js` (Observatory Mission tab: draft → approve →
 review → complete).

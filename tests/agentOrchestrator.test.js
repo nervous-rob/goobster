@@ -27,9 +27,14 @@ jest.mock('@goobster/core/utils/toolsRegistry', () => ({
 const aiService = require('@goobster/core/services/aiService');
 const {
     runAgentLoop,
+    compactToolHistory,
     buildTranscriptDigest,
+    buildAbortedHandoff,
     buildPriorToolContext,
-    MAX_TOOL_ROUNDS
+    MAX_TOOL_ROUNDS,
+    PROJECT_MAX_TOOL_ROUNDS,
+    MAX_STALLED_ROUNDS,
+    TOOL_HISTORY_BUDGET_CHARS
 } = require('@goobster/core/utils/chat/agentOrchestrator');
 
 const FUNCTION_DEFS = [{ name: 'searchGithubCode', description: 'search', parameters: { type: 'object', properties: {} } }];
@@ -457,6 +462,267 @@ describe('runAgentLoop', () => {
 
     test('exports a sane default round budget', () => {
         expect(MAX_TOOL_ROUNDS).toBeGreaterThanOrEqual(4);
+    });
+});
+
+describe('runAgentLoop: project-length turns never end in silence', () => {
+    // A scripted "model" that keeps planning distinct steps until told to
+    // stop: round n calls the tool with a fresh argument. Any system nudge
+    // makes it write a handoff.
+    const plannerModel = (handoffText = 'Handoff: done A-B, remaining C.') => async (messages) => {
+        const nudged = messages.some(m => m.role === 'system' && /EXHAUSTED|TIME LIMIT|NO PROGRESS|previous reply was empty/.test(m.content));
+        if (nudged) return { content: handoffText, toolCalls: [] };
+        const n = messages.filter(m => m.role === 'tool').length;
+        return { content: '', toolCalls: [toolCall(`c${n}`, 'observatory', { action: 'step', n })] };
+    };
+
+    test('the project budget is a real ceiling for multi-step work, well above the chat default', () => {
+        expect(PROJECT_MAX_TOOL_ROUNDS).toBeGreaterThanOrEqual(20);
+        expect(PROJECT_MAX_TOOL_ROUNDS).toBeGreaterThan(MAX_TOOL_ROUNDS * 3);
+    });
+
+    test('a 15-step project sequence completes under the project budget (the chat budget would have cut it off)', async () => {
+        const STEPS = 15;
+        aiService.chat.mockImplementation(async (messages) => {
+            const n = messages.filter(m => m.role === 'tool').length;
+            if (n >= STEPS) return { content: 'Pipeline wired end to end.', toolCalls: [] };
+            return { content: '', toolCalls: [toolCall(`c${n}`, 'observatory', { action: 'step', n })] };
+        });
+        const executeTool = jest.fn().mockImplementation(async (name, args) => `step ${args.n} ok`);
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: PROJECT_MAX_TOOL_ROUNDS,
+            executeTool
+        });
+
+        expect(result.content).toBe('Pipeline wired end to end.');
+        expect(result.finalized).toBe(false);
+        expect(result.stopReason).toBeNull();
+        expect(executeTool).toHaveBeenCalledTimes(STEPS);
+        expect(STEPS).toBeGreaterThan(MAX_TOOL_ROUNDS);
+    });
+
+    test('budget exhaustion reports stopReason "rounds" and the nudge demands a handoff, not a summary', async () => {
+        aiService.chat.mockImplementation(plannerModel());
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: 3,
+            executeTool: jest.fn().mockResolvedValue('ok')
+        });
+
+        expect(result.stopReason).toBe('rounds');
+        expect(result.finalized).toBe(true);
+        expect(result.content).toBe('Handoff: done A-B, remaining C.');
+        const nudge = aiService.chat.mock.calls.at(-1)[0].findLast(m => m.role === 'system');
+        expect(nudge.content).toMatch(/TOOL BUDGET EXHAUSTED/);
+        expect(nudge.content).toMatch(/what is still left/i);
+        expect(nudge.content).toMatch(/"continue"/);
+        expect(nudge.content).toMatch(/Never claim the goal is finished/);
+    });
+
+    test('a passed deadline stops new tool rounds and finalizes with a time-limit handoff instead of dying', async () => {
+        aiService.chat.mockImplementation(plannerModel('Out of time: fetch stage saved, build stage still to wire.'));
+        const executeTool = jest.fn().mockResolvedValue('ok');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: PROJECT_MAX_TOOL_ROUNDS,
+            deadlineAt: Date.now() - 1, // already past: the first round still runs, then hand off
+            executeTool
+        });
+
+        expect(executeTool).toHaveBeenCalledTimes(1);
+        expect(result.stopReason).toBe('deadline');
+        expect(result.finalized).toBe(true);
+        expect(result.content).toBe('Out of time: fetch stage saved, build stage still to wire.');
+        const nudge = aiService.chat.mock.calls.at(-1)[0].findLast(m => m.role === 'system');
+        expect(nudge.content).toMatch(/TIME LIMIT REACHED/);
+    });
+
+    test('a deadline in the future does not interfere with a normal turn', async () => {
+        aiService.chat.mockImplementation(async (messages) => {
+            const n = messages.filter(m => m.role === 'tool').length;
+            if (n >= 3) return { content: 'done', toolCalls: [] };
+            return { content: '', toolCalls: [toolCall(`c${n}`, 'observatory', { n })] };
+        });
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            deadlineAt: Date.now() + 60 * 60 * 1000,
+            executeTool: jest.fn().mockResolvedValue('ok')
+        });
+        expect(result.content).toBe('done');
+        expect(result.stopReason).toBeNull();
+    });
+
+    test('a model that only repeats cached calls is stopped as stalled instead of burning the whole budget', async () => {
+        const sameCall = () => toolCall('cX', 'observatory', { action: 'status', project: 'sim' });
+        aiService.chat.mockImplementation(async (messages) => {
+            const nudged = messages.some(m => m.role === 'system' && m.content.startsWith('NO PROGRESS'));
+            if (nudged) return { content: 'Status has not changed; the job is still running.', toolCalls: [] };
+            return { content: '', toolCalls: [sameCall()] };
+        });
+        const executeTool = jest.fn().mockResolvedValue('RUNNING');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: PROJECT_MAX_TOOL_ROUNDS,
+            executeTool
+        });
+
+        expect(result.stopReason).toBe('stalled');
+        expect(result.content).toBe('Status has not changed; the job is still running.');
+        expect(executeTool).toHaveBeenCalledTimes(1); // the rest were served from cache
+        // 1 real round + MAX_STALLED_ROUNDS cached rounds + finalization
+        expect(aiService.chat).toHaveBeenCalledTimes(1 + MAX_STALLED_ROUNDS + 1);
+        expect(result.roundsUsed).toBeLessThan(PROJECT_MAX_TOOL_ROUNDS);
+    });
+
+    test('a repeat interleaved with fresh calls is progress, not a stall', async () => {
+        const repeat = () => toolCall('cR', 'observatory', { action: 'status' });
+        aiService.chat.mockImplementation(async (messages) => {
+            const n = messages.filter(m => m.role === 'tool').length;
+            if (n >= 6) return { content: 'done', toolCalls: [] };
+            // Every round re-checks status AND does one new thing
+            return { content: '', toolCalls: [repeat(), toolCall(`c${n}`, 'observatory', { action: 'step', n })] };
+        });
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: PROJECT_MAX_TOOL_ROUNDS,
+            executeTool: jest.fn().mockResolvedValue('ok')
+        });
+        expect(result.stopReason).toBeNull();
+        expect(result.content).toBe('done');
+    });
+
+    test('an abort that surfaces as a rejected provider call returns the transcript instead of throwing', async () => {
+        let aborted = false;
+        aiService.chat
+            .mockResolvedValueOnce({ content: 'Starting the run…', toolCalls: [toolCall('c1', 'observatory', { action: 'run' })] })
+            .mockImplementationOnce(async () => {
+                aborted = true; // the watchdog fired while this request was in flight
+                throw new Error('The operation was aborted');
+            });
+        const executeTool = jest.fn().mockResolvedValue('job #12 RUNNING');
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            executeTool,
+            shouldAbort: () => aborted
+        });
+
+        expect(result.aborted).toBe(true);
+        expect(result.toolTranscript).toHaveLength(1);
+        expect(result.toolTranscript[0].result).toBe('job #12 RUNNING');
+        expect(result.roundTexts).toEqual(['Starting the run…']);
+        expect(result.finalized).toBe(false);
+    });
+
+    test('a provider error without an abort still propagates', async () => {
+        aiService.chat.mockRejectedValueOnce(new Error('502 Bad Gateway'));
+        await expect(runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            shouldAbort: () => false
+        })).rejects.toThrow('502 Bad Gateway');
+    });
+
+    test('older tool results are compacted once the history outgrows its budget; the newest stay intact', async () => {
+        const BIG = 'x'.repeat(60_000);
+        const ROUNDS = 8; // 480k chars of results, budget is 200k
+        const snapshots = [];
+        aiService.chat.mockImplementation(async (messages) => {
+            snapshots.push(messages.filter(m => m.role === 'tool').map(m => m.content.length));
+            const n = messages.filter(m => m.role === 'tool').length;
+            if (n >= ROUNDS) return { content: 'done', toolCalls: [] };
+            return { content: '', toolCalls: [toolCall(`c${n}`, 'observatory', { action: 'read', n })] };
+        });
+
+        const result = await runAgentLoop({
+            messages: baseMessages(),
+            functionDefs: FUNCTION_DEFS,
+            maxToolRounds: PROJECT_MAX_TOOL_ROUNDS,
+            executeTool: jest.fn().mockResolvedValue(BIG)
+        });
+
+        expect(result.content).toBe('done');
+        expect(result.compactedResults).toBeGreaterThan(0);
+        const finalSizes = snapshots.at(-1);
+        expect(finalSizes).toHaveLength(ROUNDS);
+        // The tail the model is about to use is verbatim
+        expect(finalSizes.slice(-4).every(size => size === BIG.length)).toBe(true);
+        // The head was stubbed
+        expect(finalSizes[0]).toBeLessThan(1000);
+        expect(finalSizes.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(TOOL_HISTORY_BUDGET_CHARS + 4 * BIG.length);
+        // The persisted transcript keeps the full results regardless
+        expect(result.toolTranscript.every(t => t.result.length === BIG.length)).toBe(true);
+    });
+});
+
+describe('compactToolHistory', () => {
+    const toolMsg = (id, size) => ({ role: 'tool', toolCallId: id, name: 'observatory', content: 'r'.repeat(size) });
+
+    test('does nothing under budget', () => {
+        const messages = [toolMsg('a', 100), toolMsg('b', 100)];
+        expect(compactToolHistory(messages, { budgetChars: 1000 })).toBe(0);
+        expect(messages[0].content).toHaveLength(100);
+    });
+
+    test('stubs oldest first, keeps the recent window, pairs and ids intact, compacts each once', () => {
+        const messages = [
+            { role: 'system', content: 'sys' },
+            { role: 'assistant', content: '', toolCalls: [{ id: 'a' }] },
+            toolMsg('a', 5000),
+            { role: 'assistant', content: '', toolCalls: [{ id: 'b' }] },
+            toolMsg('b', 5000),
+            { role: 'assistant', content: '', toolCalls: [{ id: 'c' }] },
+            toolMsg('c', 5000)
+        ];
+        expect(compactToolHistory(messages, { budgetChars: 6000, keepRecent: 1 })).toBe(2);
+        expect(messages[2].content).toMatch(/trimmed to save context/);
+        expect(messages[2].content).toMatch(/Call the tool again/);
+        expect(messages[2].toolCallId).toBe('a');
+        expect(messages[2].role).toBe('tool');
+        expect(messages[4].content).toMatch(/trimmed/);
+        expect(messages[6].content).toHaveLength(5000); // the recent one survives
+        expect(messages).toHaveLength(7);
+        // Idempotent on already-compacted rows
+        expect(compactToolHistory(messages, { budgetChars: 100, keepRecent: 1 })).toBe(0);
+    });
+});
+
+describe('buildAbortedHandoff', () => {
+    test('names the system stop, the elapsed time, the narration, and every step - never silence', () => {
+        const text = buildAbortedHandoff({
+            transcript: [
+                { name: 'observatory', result: 'Saved script "fetch" v1', isError: false },
+                { name: 'observatory', result: 'Error: BAD_FILTER', isError: true }
+            ],
+            roundTexts: ['Setting up the fetch stage first.'],
+            elapsedMs: 125_000,
+            reason: 'watchdog'
+        });
+        expect(text).toMatch(/could not finish/);
+        expect(text).toMatch(/watchdog/);
+        expect(text).toMatch(/2m 5s/);
+        expect(text).toMatch(/"continue"/);
+        expect(text).toContain('Setting up the fetch stage first.');
+        expect(text).toContain('✅ **observatory**');
+        expect(text).toContain('❌ **observatory**');
+        expect(text).toContain('Steps completed before the stop (2)');
+    });
+
+    test('works with nothing but a transcript', () => {
+        const text = buildAbortedHandoff({ transcript: [{ name: 'runCode', result: 'ok', isError: false }] });
+        expect(text).toMatch(/this reply was stopped/);
+        expect(text).toContain('runCode');
     });
 });
 

@@ -38,7 +38,13 @@ const {
     trackMessage
 } = require('./chat/chatDb');
 const { getContextWithSummary } = require('./chat/chatContext');
-const { runAgentLoop, buildPriorToolContext } = require('./chat/agentOrchestrator');
+const {
+    runAgentLoop,
+    buildPriorToolContext,
+    buildAbortedHandoff,
+    MAX_TOOL_ROUNDS,
+    PROJECT_MAX_TOOL_ROUNDS
+} = require('./chat/agentOrchestrator');
 const {
     pendingImageGenerations,
     handleAIResponse,
@@ -582,8 +588,14 @@ async function handleChatInteraction(interaction, thread = null) {
 
             // Bounded agent loop: the model chains tool calls across rounds
             // (each step sees the results of the previous ones) and is forced
-            // to produce a user-facing answer when the round budget runs out.
-            const { content: responseContent, toolTranscript, steps: turnSteps, aborted } = await runAgentLoop({
+            // to produce a user-facing answer when the loop stops. Project
+            // work (the Observatory tool is offered) gets the project-sized
+            // budget: a multi-step task cut off at a handful of steps leaves
+            // the goal undone. The loop is bounded by progress and by the
+            // surface's turn deadline, not by that ceiling.
+            const projectCapable = functionDefs.some(def => def.name === 'observatory');
+            const turnDeadlineAt = Number.isFinite(interaction.turnDeadlineAt) ? interaction.turnDeadlineAt : null;
+            const loopResult = await runAgentLoop({
                 messages: apiMessages,
                 chatOptions,
                 functionDefs,
@@ -600,29 +612,54 @@ async function handleChatInteraction(interaction, thread = null) {
                 // Web chat's tool-activity chips (Discord interactions never set this)
                 onToolEvent: typeof interaction.onToolEvent === 'function'
                     ? interaction.onToolEvent
-                    : null
+                    : null,
+                maxToolRounds: projectCapable ? PROJECT_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
+                deadlineAt: turnDeadlineAt
             });
+            let { content: responseContent } = loopResult;
+            const { toolTranscript, steps: turnSteps, aborted, stopReason, roundTexts } = loopResult;
+            if (stopReason) {
+                console.log(`Agent loop handed off (${stopReason}) after ${loopResult.roundsUsed} rounds, ` +
+                    `${toolTranscript.length} tool calls${loopResult.compactedResults ? `, ${loopResult.compactedResults} results compacted` : ''}`);
+            }
 
             // Let any in-flight streamed edit settle before the final reply
             await streamEditChain;
 
-            // The user stopped generation before any reply text existed:
-            // keep their message in history so the conversation holds its
-            // place, and end quietly - no fallback nudge, no delivery.
+            // Generation stopped before any reply text existed. Two very
+            // different cases share that shape:
+            //  - the user pressed Stop: keep their message in history so the
+            //    conversation holds its place, and end quietly - no fallback
+            //    nudge, no delivery;
+            //  - the system stopped it (turn watchdog) while tools were
+            //    running: silence here is the "tools ran, then nothing"
+            //    failure, so deliver a handoff naming what ran instead.
             if (aborted && (!responseContent || responseContent.trim() === '')) {
-                userResponseSent = true;
-                if (!skipHistory) {
-                    try {
-                        await db.run(
-                            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
-                             VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
-                            { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
-                        );
-                    } catch (storeError) {
-                        console.error('Failed to store message for aborted turn:', storeError.message);
+                const abortReason = typeof interaction.abortReason === 'function'
+                    ? interaction.abortReason()
+                    : null;
+                const userStopped = abortReason === 'stop' || abortReason == null;
+                if (userStopped || toolTranscript.length === 0) {
+                    userResponseSent = true;
+                    if (!skipHistory) {
+                        try {
+                            await db.run(
+                                `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot, metadata)
+                                 VALUES (@conversationId, @guildConvId, @createdBy, @message, 0, @metadata)`,
+                                { conversationId, guildConvId, createdBy: userId, message: trimmedMessage, metadata: userMessageMetadata }
+                            );
+                        } catch (storeError) {
+                            console.error('Failed to store message for aborted turn:', storeError.message);
+                        }
                     }
+                    return;
                 }
-                return;
+                responseContent = buildAbortedHandoff({
+                    transcript: toolTranscript,
+                    roundTexts,
+                    elapsedMs: Number.isFinite(interaction.turnStartedAt) ? Date.now() - interaction.turnStartedAt : null,
+                    reason: abortReason
+                });
             }
             // An abort with partial text falls through: the partial reply is
             // delivered and stored, exactly like stopping ChatGPT mid-answer.

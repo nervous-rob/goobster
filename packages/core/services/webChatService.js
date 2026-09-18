@@ -21,6 +21,7 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const { toGateway } = require('../gateway');
 const { handleChatInteraction } = require('../utils/chatHandler');
+const sandboxConfig = require('../config/sandboxConfig');
 const { dmScopeId } = require('../utils/dmScope');
 const { createPlaceholderThreadId, getOrCreateConversation } = require('../utils/chat/chatDb');
 const eventBus = require('./eventBusService');
@@ -52,11 +53,24 @@ const HISTORY_PAGE_LIMIT = 200;
 const CONVERSATION_LIST_LIMIT = 100;
 const RATE_LIMIT_TURNS = 10;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-// Watchdog: a turn older than this is considered wedged (e.g. a provider
-// stream that stalled mid-flight and never resolved). It is force-aborted
-// and its lock released, so one bad turn can never lock the user out of
-// the portal until the next bot restart.
-const TURN_MAX_AGE_MS = 15 * 60 * 1000;
+// Watchdog. A turn is wedged when it has shown no progress (no token, tool
+// start/result, or typing) for TURN_IDLE_MAX_MS - e.g. a provider stream
+// that stalled mid-flight and never resolved. It is force-aborted and its
+// lock released, so one bad turn can never lock the user out of the portal
+// until the next bot restart. Age alone is not the test: a project turn
+// that is on its fifteenth tool call is working, not wedged, and killing
+// it mid-sequence is exactly the "tools ran, then silence" failure.
+// A single foreground sandbox run emits nothing between its start and
+// result, so the idle window is never shorter than that run's time limit.
+// TURN_MAX_AGE_MS is the absolute ceiling for a turn that keeps making
+// progress; the agent loop is handed a deadline TURN_DEADLINE_MARGIN_MS
+// before it so it hands off gracefully instead of being cut off.
+const TURN_IDLE_MAX_MS = Math.max(
+    15 * 60 * 1000,
+    Number(sandboxConfig.timeoutMs || 0) + 60 * 1000
+);
+const TURN_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const TURN_DEADLINE_MARGIN_MS = 5 * 60 * 1000;
 const FILE_TTL_MS = 6 * 60 * 60 * 1000;
 // Incognito conversations are transient by definition: an in-memory window
 // (an allowed exception to the SQLite rule) that is never persisted. The
@@ -113,10 +127,32 @@ class WebChatService {
     }
 
     /**
-     * The user's in-flight turn, or null. Watchdog built in: a turn past
-     * TURN_MAX_AGE_MS is treated as wedged - it gets aborted (cancelling
-     * its in-flight provider request via the abort signal) and evicted, so
-     * a stalled stream can never hold the per-user lock forever.
+     * Why a turn counts as wedged, or null while it is healthy: quiet for
+     * TURN_IDLE_MAX_MS, or older than the absolute TURN_MAX_AGE_MS ceiling.
+     * @param {{ startedAt: number, lastActivityAt?: number|null }} turn
+     * @param {number} [now]
+     * @returns {string|null}
+     */
+    _wedgedReason(turn, now = Date.now()) {
+        const startedAt = Number(turn.startedAt) || now;
+        if (now - startedAt > TURN_MAX_AGE_MS) {
+            return `ran for over ${Math.round(TURN_MAX_AGE_MS / 60000)} minutes`;
+        }
+        const lastActivityAt = Number(turn.lastActivityAt) || startedAt;
+        if (now - lastActivityAt > TURN_IDLE_MAX_MS) {
+            return `showed no progress for ${Math.round(TURN_IDLE_MAX_MS / 60000)} minutes`;
+        }
+        return null;
+    }
+
+    /**
+     * The user's in-flight turn, or null. Watchdog built in: a turn that
+     * has gone quiet for TURN_IDLE_MAX_MS (or past the absolute age
+     * ceiling) is treated as wedged - it gets aborted (cancelling its
+     * in-flight provider request via the abort signal) and evicted, so a
+     * stalled stream can never hold the per-user lock forever. A turn that
+     * keeps producing tokens or tool events is left alone however long it
+     * has been running.
      *
      * Local replica: `_activeTurns` holds the AbortController. Other
      * replicas read `web_live_turns` so a second api process 409s instead
@@ -126,9 +162,10 @@ class WebChatService {
     async _liveTurn(userId) {
         const local = this._activeTurns.get(userId);
         if (local) {
-            if (Date.now() - local.startedAt > TURN_MAX_AGE_MS) {
-                console.warn(`[WebChat] Turn for user ${userId} exceeded ${TURN_MAX_AGE_MS / 60000} minutes - aborting it and releasing the lock`);
-                try { local.abort(); } catch { /* eviction must never throw */ }
+            const wedged = this._wedgedReason(local);
+            if (wedged) {
+                console.warn(`[WebChat] Turn for user ${userId} ${wedged} - aborting it and releasing the lock`);
+                try { local.abort('watchdog'); } catch { /* eviction must never throw */ }
                 if (local.abortPoll) {
                     clearInterval(local.abortPoll);
                     local.abortPoll = null;
@@ -151,11 +188,12 @@ class WebChatService {
             return local;
         }
         const row = await db.get(
-            'SELECT turnId, startedAtMs, conversationId, aborted, progressJson FROM web_live_turns WHERE userId = @userId',
+            `SELECT turnId, startedAtMs, conversationId, aborted, progressJson, lastActivityAtMs
+             FROM web_live_turns WHERE userId = @userId`,
             { userId }
         );
         if (!row) return null;
-        if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
+        if (this._wedgedReason({ startedAt: Number(row.startedAtMs), lastActivityAt: row.lastActivityAtMs })) {
             await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
             void this._kickQueue(userId);
             return null;
@@ -164,6 +202,7 @@ class WebChatService {
             remote: true,
             turnId: row.turnId,
             startedAt: Number(row.startedAtMs),
+            lastActivityAt: row.lastActivityAtMs != null ? Number(row.lastActivityAtMs) : null,
             conversationId: row.conversationId ?? null,
             aborted: Number(row.aborted) === 1,
             progress: parseProgress(row.progressJson),
@@ -223,15 +262,19 @@ class WebChatService {
     _emitTurnEvent(turnState, kind, payload) {
         if (!turnState) return;
         turnState.progress = applyProgressEvent(turnState.progress || emptyProgress(), kind, payload);
+        // Every event is proof of life for the idle watchdog.
+        turnState.lastActivityAt = Date.now();
         // Incognito progress stays in `_activeTurns` only — writing the
         // prompt/draft/tools into progressJson would persist the thing
         // incognito opted out of, even if the lock row is later deleted.
-        if (!turnState.incognito) {
-            if (kind === 'tool' || kind === 'message' || kind === 'typing') {
-                this._persistProgress(turnState);
-            } else {
-                this._schedulePersistProgress(turnState);
-            }
+        // The activity timestamp carries no content, so it is written for
+        // incognito too - other replicas judge wedged-ness from it.
+        if (turnState.incognito) {
+            this._schedulePersistProgress(turnState);
+        } else if (kind === 'tool' || kind === 'message' || kind === 'typing') {
+            this._persistProgress(turnState);
+        } else {
+            this._schedulePersistProgress(turnState);
         }
         for (const listener of turnState.listeners || []) {
             try {
@@ -253,12 +296,21 @@ class WebChatService {
     }
 
     _persistProgress(turnState) {
-        if (!turnState?.turnId || !turnState.userId || turnState.incognito) return;
+        if (!turnState?.turnId || !turnState.userId) return;
+        const lastActivityAtMs = turnState.lastActivityAt || Date.now();
+        if (turnState.incognito) {
+            db.run(
+                `UPDATE web_live_turns SET lastActivityAtMs = @lastActivityAtMs
+                 WHERE userId = @userId AND turnId = @turnId`,
+                { userId: turnState.userId, turnId: turnState.turnId, lastActivityAtMs }
+            ).catch(() => {});
+            return;
+        }
         const json = JSON.stringify(turnState.progress || emptyProgress());
         db.run(
-            `UPDATE web_live_turns SET progressJson = @progressJson
+            `UPDATE web_live_turns SET progressJson = @progressJson, lastActivityAtMs = @lastActivityAtMs
              WHERE userId = @userId AND turnId = @turnId`,
-            { userId: turnState.userId, turnId: turnState.turnId, progressJson: json }
+            { userId: turnState.userId, turnId: turnState.turnId, progressJson: json, lastActivityAtMs }
         ).catch(() => {});
     }
 
@@ -1374,7 +1426,7 @@ class WebChatService {
     async stopTurn(userId) {
         const active = this._activeTurns.get(userId);
         if (active) {
-            active.abort();
+            active.abort('stop');
             await db.run(
                 'UPDATE web_live_turns SET aborted = 1 WHERE userId = @userId',
                 { userId }
@@ -1382,11 +1434,11 @@ class WebChatService {
             return true;
         }
         const row = await db.get(
-            'SELECT startedAtMs FROM web_live_turns WHERE userId = @userId',
+            'SELECT startedAtMs, lastActivityAtMs FROM web_live_turns WHERE userId = @userId',
             { userId }
         );
         if (!row) return false;
-        if (Date.now() - Number(row.startedAtMs) > TURN_MAX_AGE_MS) {
+        if (this._wedgedReason({ startedAt: Number(row.startedAtMs), lastActivityAt: row.lastActivityAtMs })) {
             await db.run('DELETE FROM web_live_turns WHERE userId = @userId', { userId }).catch(() => {});
             return false;
         }
@@ -1495,14 +1547,15 @@ class WebChatService {
         const controller = new AbortController();
         const turnId = crypto.randomBytes(8).toString('hex');
         const initialProgress = emptyProgress(text);
+        const startedAtMs = Date.now();
         try {
             await db.run(
-                `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted, progressJson)
-                 VALUES (@userId, @turnId, @startedAtMs, @conversationId, 0, @progressJson)`,
+                `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted, progressJson, lastActivityAtMs)
+                 VALUES (@userId, @turnId, @startedAtMs, @conversationId, 0, @progressJson, @startedAtMs)`,
                 {
                     userId,
                     turnId,
-                    startedAtMs: Date.now(),
+                    startedAtMs,
                     conversationId: conversation?.id ?? null,
                     // Lock metadata only for incognito — the prompt/draft live
                     // on turnState.progress in memory (same rule as the window).
@@ -1517,17 +1570,26 @@ class WebChatService {
         }
         const turnState = {
             aborted: false,
+            // 'stop' (the user asked) or 'watchdog' (the turn was evicted):
+            // the chat pipeline ends quietly for the former and delivers a
+            // handoff for the latter.
+            abortReason: null,
             turnId,
             userId,
             incognito: Boolean(incognito),
-            startedAt: Date.now(),
+            startedAt: startedAtMs,
+            lastActivityAt: startedAtMs,
+            // The agent loop stops starting tool rounds here and hands off,
+            // well before the absolute watchdog ceiling would cut it off.
+            deadlineAt: startedAtMs + TURN_MAX_AGE_MS - TURN_DEADLINE_MARGIN_MS,
             // Lets turnStatus point the browser at the conversation that is
             // holding the per-user lock (null for incognito turns).
             conversationId: conversation?.id ?? null,
             signal: controller.signal,
             listeners: new Set(),
             progress: initialProgress,
-            abort: () => {
+            abort: (reason = 'stop') => {
+                if (!turnState.aborted) turnState.abortReason = reason;
                 turnState.aborted = true;
                 try { controller.abort(); } catch { /* double-abort is fine */ }
             }
@@ -1540,7 +1602,7 @@ class WebChatService {
                 'SELECT aborted FROM web_live_turns WHERE userId = @userId AND turnId = @turnId',
                 { userId, turnId }
             ).then((row) => {
-                if (Number(row?.aborted) === 1) turnState.abort();
+                if (Number(row?.aborted) === 1) turnState.abort('stop');
             }).catch(() => {});
         }, 1000);
         abortPoll.unref?.();
@@ -1733,6 +1795,12 @@ class WebChatService {
             // Web capabilities the chat pipeline understands
             maxInputLength: Math.max(MAX_INPUT_LENGTH, text.length),
             shouldAbort: () => turnState.aborted,
+            // 'stop' vs 'watchdog': only a user Stop ends the turn quietly.
+            abortReason: () => turnState.abortReason,
+            // The agent loop finalizes (hands off) once this passes, so the
+            // watchdog ceiling is never what ends a working turn.
+            turnDeadlineAt: turnState.deadlineAt,
+            turnStartedAt: turnState.startedAt,
             // Hard-cancels the in-flight provider request/stream on Stop or
             // watchdog eviction (see chatHandler's chatOptions.signal).
             abortSignal: turnState.signal,
@@ -2096,3 +2164,6 @@ class WebChatService {
 
 module.exports = new WebChatService();
 module.exports.WebChatError = WebChatError;
+module.exports.TURN_IDLE_MAX_MS = TURN_IDLE_MAX_MS;
+module.exports.TURN_MAX_AGE_MS = TURN_MAX_AGE_MS;
+module.exports.TURN_DEADLINE_MARGIN_MS = TURN_DEADLINE_MARGIN_MS;
