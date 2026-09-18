@@ -23,6 +23,7 @@ const {
     FALLBACK_PERSONALITY,
     SLASH_PROTOCOL_BAN,
     richRenderingContract,
+    spokenReplyContract,
     personalityDirectiveBlock
 } = require('./promptFragments');
 
@@ -235,9 +236,11 @@ function conversationalContract({ mode, canLookup }) {
     if (mode === 'voice') {
         return `HOW TO TALK:
 You are in a live voice conversation. Replies are spoken aloud.
-Keep them short (1–3 sentences unless they asked for detail). No markdown, emojis, lists, links, or code.
+Keep them short (1–3 sentences unless they asked for detail).
 Answer the whole thought, not just the last sentence. Use tools when you need a fact or an action, then say the outcome in plain speech — never read raw results or URLs.
-${lookupLine}`.trim();
+${lookupLine}
+
+${spokenReplyContract()}`.trim();
     }
     return `HOW TO TALK:
 Talk like a person in this conversation — warm, specific, and brief unless they asked for depth.
@@ -273,7 +276,8 @@ async function buildConversationalPrompt({
     incomingAttachments = null,
     excludeContents = [],
     hasTextChannel = false,
-    canLookup = true
+    canLookup = true,
+    spoken = false
 } = {}) {
     const depth = classifyDepth(query);
     const budget = BUDGETS[mode]?.[depth] || BUDGETS.chat.medium;
@@ -307,7 +311,13 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
         parts.push('You can also generate images, schedule follow-ups, and manage automations; those land in the linked text channel.');
     }
 
-    if (isWeb && mode === 'chat') {
+    if (isWeb && mode === 'chat' && spoken) {
+        // Portal voice chat: the reply is synthesized and shown as a caption,
+        // so the rich-rendering pitch (Markdown, LaTeX, mini-apps) would only
+        // teach the model to write things that read as noise.
+        parts.push(spokenReplyContract({ captioned: true }));
+        parts.push('If they ask for an accent, call setSpeechAccent (that applies an ElevenLabs v3 audio tag to later read-alouds) and then just talk that way. Do not call speakMessage or pass voice_settings.');
+    } else if (isWeb && mode === 'chat') {
         parts.push(richRenderingContract({ surface: 'portal' }));
         parts.push('Replies here may be read aloud. If they ask for an accent, call setSpeechAccent (that applies an ElevenLabs v3 audio tag to later read-alouds) and then just talk that way. Do not call speakMessage or pass voice_settings. They can also pick the accent in Voice settings.');
     }

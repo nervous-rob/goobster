@@ -157,6 +157,24 @@ describe('speechTextFromMarkdown', () => {
         expect(text).not.toContain('#');
     });
 
+    test('numbered lists read as prose and tables are announced once', () => {
+        const text = speechTextFromMarkdown([
+            'Here you go:',
+            '',
+            '1. **Fetch** the data',
+            '2. Process it',
+            '10) Publish',
+            '',
+            '| planet | mass |',
+            '|---|---|',
+            '| Earth | 1 |',
+            '| Mars | 0.1 |',
+            '',
+            'That is the gist.'
+        ].join('\n'));
+        expect(text).toBe('Here you go: Fetch the data Process it Publish (table omitted) That is the gist.');
+    });
+
     test('caps speech length at a sentence boundary', () => {
         const long = Array.from({ length: 400 }, (_, i) => `Sentence number ${i} is here.`).join(' ');
         const text = speechTextFromMarkdown(long);

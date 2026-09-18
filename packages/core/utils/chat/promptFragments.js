@@ -38,6 +38,27 @@ function richRenderingContract({ surface = 'portal' } = {}) {
 }
 
 /**
+ * How to write a reply that is about to be read aloud by text-to-speech.
+ * Shared by every voiced surface (Discord voice channels, the portal's
+ * voice chat, Parlor Live) so they cannot drift: the post-hoc sanitizers in
+ * services/voice/speechText.js are a safety net, not the plan - a table or a
+ * URL that never gets written is the only one that reads well.
+ *
+ * `captioned` surfaces also show the text on screen, so the model is told
+ * the words are read as written (no hidden formatting to lean on).
+ * @param {{ captioned?: boolean }} [opts]
+ * @returns {string}
+ */
+function spokenReplyContract({ captioned = false } = {}) {
+    return `SPOKEN REPLY: This reply is read aloud by text-to-speech${captioned ? ' (the same words appear as a caption)' : ''}. Write for the ear, not the eye:
+- Plain conversational prose only. No markdown, headings, bullet or numbered lists, tables, code blocks, emojis, or symbols - they are spoken as noise. Say "first... then..." or fold the options into one sentence instead of listing them.
+- Never speak a URL, file path, email address, or identifier. Name the site, page, or file instead ("the JWST page on NASA's site", "your fetch script") and offer to put the link in the chat if they want it.
+- No tabular data. Give the one or two figures that matter in a sentence, and offer to write the full table down in text.
+- Long lists, exact spellings, and code do not survive speech. Summarize, then offer to write them out.
+- Keep it short - a few sentences unless they asked for depth. Say numbers, dates, times, and units the way a person would ("about three and a half kilometres", "March fourth").`;
+}
+
+/**
  * Operator/user personality overlay. Chat, voice, and leftover command
  * paths must use the same SERVER vs DM label (DM scope is not a guild).
  * @param {{ isGuild?: boolean, directive?: string|null }} opts
@@ -107,6 +128,7 @@ module.exports = {
     MINI_APP_BRIDGE,
     CRON_FROM_NL_SYSTEM,
     richRenderingContract,
+    spokenReplyContract,
     personalityDirectiveBlock,
     groundedRecallPrompt
 };

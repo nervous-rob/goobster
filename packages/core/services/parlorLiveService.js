@@ -642,15 +642,20 @@ class ParlorLiveService {
         let turn;
         try {
             const parlor = this._parlor();
+            // Every reply in a live session is voiced, so personas are told
+            // to write for speech (spokenReplyContract) rather than rely on
+            // the post-hoc sanitizer to strip links and tables.
             turn = item.nudgePersonaId
                 ? await parlor.startPersonaTurn({
                     userId: item.userId, userName: item.userName,
-                    conversationId: session.conversationId, personaId: item.nudgePersonaId
+                    conversationId: session.conversationId, personaId: item.nudgePersonaId,
+                    spoken: true
                 })
                 : await parlor.startTurn({
                     gateway: session.gateway,
                     userId: item.userId, userName: item.userName,
-                    conversationId: session.conversationId, message: item.text
+                    conversationId: session.conversationId, message: item.text,
+                    spoken: true
                 });
         } catch (error) {
             session.turnRunning = false;

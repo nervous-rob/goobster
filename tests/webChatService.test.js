@@ -562,7 +562,25 @@ describe('the web pseudo-interaction', () => {
         expect(typeof interaction.sendFullResponse).toBe('function');
         expect(typeof interaction.shouldAbort).toBe('function');
         expect(interaction.sourceDescription).toContain('web chat');
+        expect(interaction.sourceDescription).toContain('Markdown is fully supported');
+        expect(interaction.spoken).toBe(false);
         expect(interaction.options.getString()).toBe('hello');
+    });
+
+    test('a voice-chat turn is marked spoken and described as one', async () => {
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hello', spoken: true });
+        const interaction = handleChatInteraction.mock.calls[0][0];
+        expect(interaction.spoken).toBe(true);
+        expect(interaction.sourceDescription).toContain('VOICE CHAT');
+        expect(interaction.sourceDescription).toContain('read aloud');
+        expect(interaction.sourceDescription).not.toContain('Markdown is fully supported');
+        // Voice + incognito compose: still spoken, still a temporary chat.
+        handleChatInteraction.mockClear();
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hello', spoken: true, incognito: true });
+        const incognito = handleChatInteraction.mock.calls[0][0];
+        expect(incognito.spoken).toBe(true);
+        expect(incognito.sourceDescription).toContain('VOICE CHAT');
+        expect(incognito.sourceDescription).toContain('INCOGNITO MODE');
     });
 
     test('streams deltas and full responses to the event sink', async () => {

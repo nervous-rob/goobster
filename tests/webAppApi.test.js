@@ -336,8 +336,27 @@ describe('chat routes', () => {
         expect(events[4].data.text).toBe('Hel');
         expect(events[6].data.content).toBe('Hello!');
         expect(fakeChat.startTurn).toHaveBeenCalledWith(expect.objectContaining({
-            userId: USER, userName: 'rob', message: 'hi there', conversationId: 7
+            userId: USER, userName: 'rob', message: 'hi there', conversationId: 7, spoken: false
         }));
+    });
+
+    test('a voice-chat turn passes the spoken flag through (strictly boolean)', async () => {
+        const cookie = await login();
+        await request({
+            method: 'POST',
+            reqPath: '/api/app/chat',
+            headers: { Cookie: cookie },
+            body: { message: 'read this to me', conversationId: 7, spoken: true }
+        });
+        expect(fakeChat.startTurn).toHaveBeenLastCalledWith(expect.objectContaining({ spoken: true }));
+
+        await request({
+            method: 'POST',
+            reqPath: '/api/app/chat',
+            headers: { Cookie: cookie },
+            body: { message: 'typed', conversationId: 7, spoken: 'yes' }
+        });
+        expect(fakeChat.startTurn).toHaveBeenLastCalledWith(expect.objectContaining({ spoken: false }));
     });
 
     test('conversation CRUD routes delegate with the session user', async () => {

@@ -9,9 +9,25 @@ const {
     MINI_APP_BRIDGE,
     CRON_FROM_NL_SYSTEM,
     richRenderingContract,
+    spokenReplyContract,
     personalityDirectiveBlock,
     groundedRecallPrompt
 } = require('@goobster/core/utils/chat/promptFragments');
+
+describe('spoken reply contract', () => {
+    test('names the things TTS cannot carry: URLs, tables, lists, code, markdown', () => {
+        const text = spokenReplyContract();
+        for (const rule of ['URL', 'tabular', 'lists', 'code', 'markdown', 'Keep it short']) {
+            expect(text).toContain(rule);
+        }
+        expect(text).toContain('SPOKEN REPLY:');
+        expect(text).not.toContain('caption');
+    });
+
+    test('captioned surfaces are told the words also appear on screen', () => {
+        expect(spokenReplyContract({ captioned: true })).toContain('appear as a caption');
+    });
+});
 
 describe('rich rendering contract', () => {
     test('portal and parlor share the Observatory mini-app bridge', () => {

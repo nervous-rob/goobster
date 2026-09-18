@@ -489,6 +489,18 @@ describe('the live voice pipeline', () => {
 
         await client.waitFor('turn_done');
 
+        // A live turn is voiced, so the persona is briefed to write for
+        // speech instead of the parlor's rich-rendering pitch.
+        const systemPrompts = mockAi.chat.mock.calls
+            .map(([messages]) => messages?.find?.(m => m.role === 'system')?.content)
+            .filter(Boolean);
+        expect(systemPrompts.length).toBeGreaterThan(0);
+        for (const system of systemPrompts) {
+            expect(system).toContain('SPOKEN REPLY:');
+            expect(system).not.toContain('RENDERING (the parlor renders rich replies)');
+            expect(system).not.toContain('Markdown is supported');
+        }
+
         // The realtime STT got the audio (energy gate crossed) and closed
         expect(fakeScribes).toHaveLength(1);
         expect(fakeScribes[0].sent.length).toBeGreaterThanOrEqual(2);

@@ -1466,12 +1466,14 @@ class WebChatService {
      * @param {string[]} [params.images] - vision attachments (data URLs)
      * @param {Array<{name,content}>} [params.files] - text attachments
      * @param {boolean} [params.incognito] - transient turn: no history, no memory
+     * @param {boolean} [params.spoken] - the reply will be read aloud (portal
+     *   voice chat): the prompt asks for speech-shaped prose, no Markdown/URLs/tables
      * @returns {{ run: (events?: Object) => Promise<void>, release: () => Promise<void>, abort: () => void, conversationId: number|null }}
      */
     async startTurn({
         client, gateway, userId, userName, message, conversationId = null,
         images = null, files = null, incognito = false,
-        isAutomation = false, sourceDescription = null
+        isAutomation = false, sourceDescription = null, spoken = false
     }) {
         // Resolve the bot identity through whichever seam this process has:
         // the live client (bot / lite), or the gateway (the api service).
@@ -1708,7 +1710,8 @@ class WebChatService {
                         incomingAttachments,
                         events: effectiveEvents,
                         isAutomation,
-                        sourceDescription
+                        sourceDescription,
+                        spoken
                     });
                     await handleChatInteraction(interaction);
                     if (incognito) {
@@ -1732,11 +1735,11 @@ class WebChatService {
     async runTurn({
         client, gateway, userId, userName, message, conversationId = null,
         images = null, files = null, incognito = false, events = {},
-        isAutomation = false, sourceDescription = null
+        isAutomation = false, sourceDescription = null, spoken = false
     }) {
         const turn = await this.startTurn({
             client, gateway, userId, userName, message, conversationId, images, files, incognito,
-            isAutomation, sourceDescription
+            isAutomation, sourceDescription, spoken
         });
         await turn.run(events);
     }
@@ -1745,10 +1748,32 @@ class WebChatService {
      * The web-shaped pseudo-interaction fed to handleChatInteraction.
      * @param {Object} params - { client, userId, userName, text, channelId, imageUrls, turnState, incognito, events }
      */
+    /**
+     * The SITUATION line for a portal turn: which surface the words came
+     * through and how the reply will be consumed. Voice chat replaces the
+     * "Markdown is fully supported" pitch - a spoken reply has no rendering.
+     */
+    _defaultSourceDescription({ userName, incognito = false, spoken = false }) {
+        const who = userName || 'the user';
+        const surface = spoken
+            ? `You are talking with ${who} through Goobster's web VOICE CHAT (a browser app, not Discord): ` +
+              'they spoke into a microphone, their words were transcribed, and your reply is read aloud to them ' +
+              'by text-to-speech while the same words show as a caption.'
+            : `You are chatting with ${who} through Goobster's private web chat interface (a browser app, not Discord).`;
+        const memory = incognito
+            ? 'This is INCOGNITO MODE - a temporary conversation that is not stored and leaves no memory.'
+            : 'It is a one-on-one conversation that shares long-term memory with their Discord DMs.';
+        const format = spoken
+            ? 'Keep the conversation personal and conversational, the way you would speak on a call.'
+            : 'Markdown is fully supported and there is no message length limit - keep the conversation personal and conversational.';
+        return `${surface} ${memory} ${format}`;
+    }
+
     _buildInteraction({
         client, gateway = null, botUser = null, userId, userName, text, channelId,
         imageUrls, turnState, incognito = false, userAttachments = null,
-        incomingAttachments = null, events, isAutomation = false, sourceDescription = null
+        incomingAttachments = null, events, isAutomation = false, sourceDescription = null,
+        spoken = false
     }) {
         const service = this;
         const botUserId = botUser?.id || client?.user?.id;
@@ -1806,20 +1831,15 @@ class WebChatService {
             abortSignal: turnState.signal,
             skipHistory: incognito,
             isAutomation: isAutomation === true,
+            // Voice chat: the reply is synthesized, so chatHandler asks the
+            // model for speech-shaped prose (see spokenReplyContract).
+            spoken: spoken === true,
             // Tool-activity chips: per-tool progress streamed to the browser
             onToolEvent: (event) => {
                 try { events.onTool?.(event); } catch { /* never break the turn */ }
             },
             sourceDescription: sourceDescription
-                || (incognito
-                    ? `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
-                      `(a browser app, not Discord), in INCOGNITO MODE - a temporary conversation that is not stored ` +
-                      `and leaves no memory. Markdown is fully supported and there is no message length limit - ` +
-                      `keep the conversation personal and conversational.`
-                    : `You are chatting with ${userName || 'the user'} through Goobster's private web chat interface ` +
-                      `(a browser app, not Discord). It is a one-on-one conversation that shares long-term memory with ` +
-                      `their Discord DMs. Markdown is fully supported and there is no message length limit - ` +
-                      `keep the conversation personal and conversational.`),
+                || service._defaultSourceDescription({ userName, incognito, spoken }),
             onStreamDelta: (delta) => {
                 try { events.onDelta?.(delta); } catch { /* never break the turn */ }
             },

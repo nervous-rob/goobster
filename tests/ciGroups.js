@@ -77,6 +77,7 @@ const GROUPS = [
             'appletCapabilityApi',
             'appStream',
             'friendService',
+            'markdownRenderer',
             'panelServer',
             'panelService',
             'parlorLiveService',
