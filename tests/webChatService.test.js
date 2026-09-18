@@ -249,12 +249,19 @@ describe('turn validation', () => {
             expect(attached.turnId).toBe(status.turnId);
             expect(attached.snapshot.steps[0].content).toBe('Hello');
             attached.unsubscribe();
-            const row = await db.get(
-                'SELECT progressJson FROM web_live_turns WHERE userId = @userId',
-                { userId: USER }
-            );
-            expect(JSON.parse(row.progressJson).userContent).toBe('look this up');
-            expect(JSON.parse(row.progressJson).steps[0].content).toBe('Hello');
+            // The snapshot write is best-effort and un-awaited; wait for it
+            // instead of assuming it landed before this read (Postgres).
+            const storedProgress = async () => {
+                const row = await db.get(
+                    'SELECT progressJson FROM web_live_turns WHERE userId = @userId',
+                    { userId: USER }
+                );
+                return row?.progressJson ? JSON.parse(row.progressJson) : null;
+            };
+            expect(await waitUntil(async () => (await storedProgress())?.steps?.[0]?.content === 'Hello')).toBe(true);
+            const stored = await storedProgress();
+            expect(stored.userContent).toBe('look this up');
+            expect(stored.steps[0].content).toBe('Hello');
         } finally {
             releaseHold();
             await running;
@@ -373,15 +380,22 @@ describe('turn validation', () => {
     test('turn events refresh the activity clock the idle watchdog reads', async () => {
         const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         const state = webChatService._activeTurns.get(USER);
-        state.lastActivityAt = Date.now() - TURN_IDLE_MAX_MS - 1000;
+        const stale = Date.now() - TURN_IDLE_MAX_MS - 1000;
+        state.lastActivityAt = stale;
+        await db.run('UPDATE web_live_turns SET lastActivityAtMs = @stale WHERE userId = @userId', { stale, userId: USER });
 
+        const before = Date.now();
         webChatService._emitTurnEvent(state, 'tool', { phase: 'start', id: 0, name: 'observatory' });
-        expect(Date.now() - state.lastActivityAt).toBeLessThan(5000);
+        expect(state.lastActivityAt).toBeGreaterThanOrEqual(before);
         expect(await webChatService._liveTurn(USER)).toBe(state);
 
-        // Persisted for other replicas too
-        const row = await db.get('SELECT lastActivityAtMs FROM web_live_turns WHERE userId = @userId', { userId: USER });
-        expect(Number(row.lastActivityAtMs)).toBe(state.lastActivityAt);
+        // Persisted for other replicas too (a best-effort snapshot write,
+        // so wait for it rather than assume ordering)
+        const persisted = async () => Number((await db.get(
+            'SELECT lastActivityAtMs FROM web_live_turns WHERE userId = @userId', { userId: USER }
+        )).lastActivityAtMs);
+        await waitUntil(async () => (await persisted()) >= before);
+        expect(await persisted()).toBeGreaterThanOrEqual(before);
         await turn.release();
     });
 
