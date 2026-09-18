@@ -107,7 +107,7 @@ module.exports = {
                     kind: {
                         type: 'string',
                         enum: KINDS,
-                        description: 'search / list: restrict to one kind. skill = your skill guides; guide = setup and how-to; reference = feature docs; standards = engineering conventions; decision = architecture decision records.'
+                        description: 'search / list: restrict to one kind. Leave unset on a first search (feature docs are "reference", not "guide"). skill = your skill guides; guide = setup and deployment how-tos; reference = feature docs; standards = engineering conventions; decision = architecture decision records and plans.'
                     },
                     limit: { type: 'integer', description: 'search: max results (default 5, max 8). read: max lines (default 400, max 800).' },
                     offset: { type: 'integer', description: 'read: 1-based line to start at (continue a long document).' }

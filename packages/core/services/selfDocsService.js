@@ -587,7 +587,16 @@ class SelfDocsService {
      * @param {{ batchSize?: number, maxBatches?: number }} [opts]
      * @returns {Promise<{ embedded: number, remaining: number, model: string|null, error: string|null }>}
      */
-    async backfillEmbeddings({ batchSize = 32, maxBatches = 200 } = {}) {
+    async backfillEmbeddings(opts = {}) {
+        // One backfill at a time per process: a second call (a re-seed while
+        // the first is still embedding) joins it instead of double-paying.
+        if (!this._backfill) {
+            this._backfill = this._backfillEmbeddings(opts).finally(() => { this._backfill = null; });
+        }
+        return this._backfill;
+    }
+
+    async _backfillEmbeddings({ batchSize = 32, maxBatches = 200 } = {}) {
         const embeddingService = require('./embeddingService');
         let model;
         try {
