@@ -361,6 +361,9 @@ class WebChatService {
                     .toISOString().slice(0, 19).replace('T', ' ');
             }
         } catch { /* no extra filter */ }
+        const cutoffClause = cutoff
+            ? 'AND COALESCE(wc.lastMessageAt, wc.createdAt) >= @cutoff'
+            : '';
         return await db.all(
             `SELECT wc.id, wc.title, wc.createdAt, wc.lastMessageAt,
                     wc.parentConversationId, wc.branchedFromMessageId,
@@ -370,10 +373,12 @@ class WebChatService {
                     EXISTS (SELECT 1 FROM web_share_links s WHERE s.conversationId = wc.id) AS shared
              FROM web_conversations wc
              WHERE wc.userId = @userId
-               AND (@cutoff IS NULL OR COALESCE(wc.lastMessageAt, wc.createdAt) >= @cutoff)
+               ${cutoffClause}
              ORDER BY COALESCE(wc.lastMessageAt, wc.createdAt) DESC, wc.id DESC
              LIMIT @limit`,
-            { userId, scope: dmScopeId(userId), limit: CONVERSATION_LIST_LIMIT, cutoff }
+            cutoff
+                ? { userId, scope: dmScopeId(userId), limit: CONVERSATION_LIST_LIMIT, cutoff }
+                : { userId, scope: dmScopeId(userId), limit: CONVERSATION_LIST_LIMIT }
         );
     }
 
