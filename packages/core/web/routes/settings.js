@@ -99,6 +99,21 @@ function mountSettings(app, ctx, h) {
         })
     ));
 
+    app.post('/api/app/settings/memory/chat-history-preview', requireAuth, chatRoute(async (req) =>
+        userSettingsService.chatHistoryPreview({
+            userId: req.webUser.userId,
+            days: req.body?.days ?? null
+        })
+    ));
+
+    app.post('/api/app/settings/memory/chat-history', requireAuth, chatRoute(async (req) =>
+        userSettingsService.applyChatHistoryRetention({
+            userId: req.webUser.userId,
+            days: req.body?.days ?? null,
+            expectedRevision: req.body?.expectedRevision ?? null
+        })
+    ));
+
     // Return the exact preference changes a section reset would make (preview only; no mutation)
     app.post('/api/app/settings/:section/reset-preview', requireAuth, chatRoute(async (req) =>
         userSettingsService.resetPreview({

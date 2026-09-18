@@ -158,6 +158,21 @@ class SpitballExpeditionService {
         const cleanSeed = clampText(seed, caps.maxSeedLength);
         if (!cleanSeed) throw new SpitballError(400, 'SEED_REQUIRED', 'An expedition needs a topic to research.');
 
+        if ((lensId == null || String(lensId).trim() === '') && userId) {
+            try {
+                const userSettingsService = require('./userSettingsService');
+                const pref = await userSettingsService.getPreference(userId, 'expeditionDefaultLens');
+                if (pref) lensId = pref;
+            } catch { /* keep lens default */ }
+        }
+        if ((depth == null || depth === '') && userId) {
+            try {
+                const userSettingsService = require('./userSettingsService');
+                const pref = await userSettingsService.getPreference(userId, 'expeditionDefaultDepth');
+                if (pref) depth = pref;
+            } catch { /* keep depth default */ }
+        }
+
         let cleanLensId = lensConfig.DEFAULT_LENS_ID;
         if (lensId !== null && lensId !== undefined && String(lensId).trim() !== '') {
             if (!lensConfig.isValidLensId(lensId)) {

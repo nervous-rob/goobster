@@ -274,3 +274,57 @@ describe('Phase 2 routes', () => {
         expect(shares.json.conversations).toEqual([]);
     });
 });
+
+describe('Phase 3 routes', () => {
+    test('PATCH later prefs and chat-history preview/apply', async () => {
+        const chat = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/chat',
+            body: { changes: { replyMaxTokens: 2048, disabledTools: ['performSearch'], usageAlertTokens: 25000 } }
+        });
+        expect(chat.status).toBe(200);
+        expect(chat.json.data.values).toMatchObject({
+            replyMaxTokens: 2048, disabledTools: ['performSearch'], usageAlertTokens: 25000
+        });
+
+        const invalid = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/chat',
+            body: { changes: { temperature: 12 } }
+        });
+        expect(invalid.status).toBe(400);
+
+        const memory = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/memory',
+            body: { changes: { learnMemories: false, useMemories: false } }
+        });
+        expect(memory.status).toBe(200);
+        expect(memory.json.data.values).toMatchObject({ learnMemories: false, useMemories: false });
+
+        const connections = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/connections',
+            body: { changes: { githubAllowlist: ['acme/bot'] } }
+        });
+        expect(connections.status).toBe(200);
+        expect(connections.json.data.values.githubAllowlist).toEqual(['acme/bot']);
+
+        const old = new Date(Date.now() - 200 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+        await db.run(
+            `INSERT INTO web_conversations (userId, channelId, title, createdAt, lastMessageAt)
+             VALUES (@u, @ch, 'stale', @old, @old)`,
+            { u: USER, ch: `web:${USER}:stale`, old }
+        );
+        const preview = await authed({
+            method: 'POST', reqPath: '/api/app/settings/memory/chat-history-preview',
+            body: { days: 90 }
+        });
+        expect(preview.status).toBe(200);
+        expect(preview.json.affectedCount).toBeGreaterThanOrEqual(1);
+
+        const apply = await authed({
+            method: 'POST', reqPath: '/api/app/settings/memory/chat-history',
+            body: { days: 90, expectedRevision: memory.json.revision }
+        });
+        expect(apply.status).toBe(200);
+        expect(apply.json.purged).toBeGreaterThanOrEqual(1);
+        expect(apply.json.data.values.chatHistoryRetentionDays).toBe(90);
+    });
+});

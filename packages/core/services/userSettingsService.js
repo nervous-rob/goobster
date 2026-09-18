@@ -37,7 +37,8 @@ const {
     PREFERENCE_KEYS_BY_SECTION,
     coercePreference,
     parsePreferences,
-    pickSectionPrefs
+    pickSectionPrefs,
+    PERSONALITY_PRESETS
 } = require('../config/userSettingsSchema');
 
 class UserSettingsError extends Error {
@@ -196,14 +197,16 @@ class UserSettingsService {
                 provider: aiCurrent.provider || null,
                 model: aiCurrent.model || null,
                 reasoningEffort: aiCurrent.reasoningEffort || null,
-                thoughtful: isThoughtful
+                thoughtful: isThoughtful,
+                ...pickSectionPrefs(customPrefs, 'chat')
             },
             effective: {
                 provider: effectiveProviderKey,
                 providerName: effectiveProviderEntry?.name || effectiveProviderKey,
                 model: effectiveModel,
                 reasoningEffort: effectiveReasoning,
-                thoughtful: isThoughtful
+                thoughtful: isThoughtful,
+                ...pickSectionPrefs(customPrefs, 'chat')
             },
             sources: {
                 provider: aiCurrent.provider ? 'user-override' : 'host-default',
@@ -341,11 +344,13 @@ class UserSettingsService {
                 };
             }
         }
+        const connectionPrefs = pickSectionPrefs(customPrefs, 'connections');
+        const connectionsValues = { ...connectionsMap, ...connectionPrefs };
         const connectionsSection = {
             revision: revisions.connections || 1,
             scope: SCOPES.ACCOUNT,
-            values: connectionsMap,
-            effective: connectionsMap,
+            values: connectionsValues,
+            effective: connectionsValues,
             sources: {
                 github: connectionsMap.github.connected ? 'user-integration' : 'disconnected',
                 notion: connectionsMap.notion.connected ? 'user-integration' : 'disconnected'
@@ -668,6 +673,8 @@ class UserSettingsService {
             commitFn = await this._prepareMemoryChanges(userId, dmScope, changes);
         } else if (section === 'appearance') {
             commitFn = await this._prepareAppearanceChanges(userId, changes);
+        } else if (section === 'connections') {
+            commitFn = await this._prepareConnectionsChanges(userId, changes);
         }
 
         // Run updates and revision increment atomically
@@ -820,6 +827,67 @@ class UserSettingsService {
      * @param {Object} params - { userId, days, expectedRevision }
      * @returns {Promise<Object>}
      */
+    async chatHistoryPreview({ userId, days }) {
+        if (!userId) throw new UserSettingsError(400, 'BAD_USER', 'User ID is required.');
+        const proposed = days === null || days === undefined || days === ''
+            ? null
+            : this._normalizeRetentionDays(days);
+        const cutoff = proposed
+            ? new Date(Date.now() - proposed * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ')
+            : null;
+        const total = await db.get(
+            'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId',
+            { userId }
+        );
+        let affected = 0;
+        if (cutoff) {
+            const row = await db.get(
+                `SELECT COUNT(*) AS c FROM web_conversations
+                 WHERE userId = @userId AND COALESCE(lastMessageAt, createdAt) < @cutoff`,
+                { userId, cutoff }
+            );
+            affected = Number(row?.c || 0);
+        }
+        return {
+            section: 'memory',
+            currentRevision: await this.getRevision(userId, 'memory'),
+            proposedRetentionDays: proposed,
+            conversationCount: Number(total?.c || 0),
+            affectedCount: affected,
+            dataClasses: ['study-conversations']
+        };
+    }
+
+    async applyChatHistoryRetention({ userId, days, expectedRevision = null }) {
+        const proposed = days === null || days === undefined || days === ''
+            ? null
+            : this._normalizeRetentionDays(days);
+        const result = await this.updateSection({
+            userId,
+            section: 'memory',
+            changes: { chatHistoryRetentionDays: proposed },
+            expectedRevision
+        });
+        let purged = 0;
+        if (proposed) {
+            const cutoff = new Date(Date.now() - proposed * 24 * 60 * 60 * 1000)
+                .toISOString().slice(0, 19).replace('T', ' ');
+            const stale = await db.all(
+                `SELECT id FROM web_conversations
+                 WHERE userId = @userId AND COALESCE(lastMessageAt, createdAt) < @cutoff`,
+                { userId, cutoff }
+            );
+            const webChatService = require('./webChatService');
+            for (const row of stale) {
+                try {
+                    await webChatService.deleteConversation({ userId, conversationId: row.id });
+                    purged += 1;
+                } catch { /* already gone */ }
+            }
+        }
+        return { ...result, purged };
+    }
+
     async applyRetention({ userId, days, expectedRevision = null }) {
         const proposed = this._normalizeRetentionDays(days);
         const result = await this.updateSection({
@@ -861,12 +929,17 @@ class UserSettingsService {
                     memeMode: false,
                     ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'profile')
                 };
-            case 'chat':
+            case 'chat': {
+                const chatPrefs = pickSectionPrefs(PREFERENCE_DEFAULTS, 'chat');
+                // Reset must not re-enable tools the user turned off.
+                delete chatPrefs.disabledTools;
                 return {
                     provider: null,
                     model: null,
-                    reasoningEffort: null
+                    reasoningEffort: null,
+                    ...chatPrefs
                 };
+            }
             case 'voice':
                 return {
                     voiceId: null,
@@ -887,14 +960,19 @@ class UserSettingsService {
                     ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'initiative')
                 };
             case 'memory':
-                // Retention is a destructive two-step flow, not a resettable
-                // preference. Reset only clears the new-chat privacy default.
+                // Retention and chat-history windows are two-step flows, not
+                // resettable preferences. Learn/recall toggles stay put so a
+                // reset cannot broaden memory permissions.
                 return {
-                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'memory')
+                    defaultNewChatPrivacy: PREFERENCE_DEFAULTS.defaultNewChatPrivacy
                 };
             case 'appearance':
                 return {
                     ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'appearance')
+                };
+            case 'connections':
+                return {
+                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'connections')
                 };
             default:
                 return {};
@@ -980,6 +1058,12 @@ class UserSettingsService {
         }
 
         const prefPatch = this._collectPreferencePatch('profile', changes);
+        if (prefPatch.personalityPreset && PERSONALITY_PRESETS[prefPatch.personalityPreset]) {
+            const baked = PERSONALITY_PRESETS[prefPatch.personalityPreset];
+            for (const [key, value] of Object.entries(baked)) {
+                if (!(key in changes)) prefPatch[key] = value;
+            }
+        }
 
         return async (tx) => {
             for (const fn of writes) await fn(tx);
@@ -1056,10 +1140,13 @@ class UserSettingsService {
             }
         }
 
+        const prefPatch = this._collectPreferencePatch('chat', changes);
+
         return async (tx) => {
             if (Object.keys(updates).length > 0) {
                 await guildSettings.setGuildAI(dmScope, updates);
             }
+            await this._mergePreferencesTx(tx, userId, prefPatch);
         };
     }
 
@@ -1280,6 +1367,13 @@ class UserSettingsService {
     async _prepareAppearanceChanges(userId, changes) {
         const prefPatch = this._collectPreferencePatch('appearance', changes);
 
+        return async (tx) => {
+            await this._mergePreferencesTx(tx, userId, prefPatch);
+        };
+    }
+
+    async _prepareConnectionsChanges(userId, changes) {
+        const prefPatch = this._collectPreferencePatch('connections', changes);
         return async (tx) => {
             await this._mergePreferencesTx(tx, userId, prefPatch);
         };

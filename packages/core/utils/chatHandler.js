@@ -501,6 +501,14 @@ async function handleChatInteraction(interaction, thread = null) {
             if (skipHistory) {
                 functionDefs = functionDefs.filter(def => def.name !== 'rememberFact');
             }
+            try {
+                const userSettingsService = require('../services/userSettingsService');
+                const disabled = await userSettingsService.getPreference(interaction.user?.id, 'disabledTools');
+                if (Array.isArray(disabled) && disabled.length > 0) {
+                    const blocked = new Set(disabled);
+                    functionDefs = functionDefs.filter((def) => !blocked.has(def.name));
+                }
+            } catch { /* optional tools stay available */ }
 
             // Progressive streaming: edit the deferred reply as text arrives.
             // Edits are throttled and chained so they never interleave.
@@ -540,6 +548,20 @@ async function handleChatInteraction(interaction, thread = null) {
                 max_tokens: 4096,
                 usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
             };
+            try {
+                const userSettingsService = require('../services/userSettingsService');
+                const actorId = interaction.user?.id;
+                if (actorId) {
+                    const [replyMax, temperature, topP] = await Promise.all([
+                        userSettingsService.getPreference(actorId, 'replyMaxTokens'),
+                        userSettingsService.getPreference(actorId, 'temperature'),
+                        userSettingsService.getPreference(actorId, 'topP')
+                    ]);
+                    if (replyMax) chatOptions.max_tokens = replyMax;
+                    if (temperature != null) chatOptions.temperature = temperature;
+                    if (topP != null) chatOptions.top_p = topP;
+                }
+            } catch { /* host defaults remain */ }
 
             // Hard-cancel capability (web turns): a Stop press or the turn
             // watchdog aborts the in-flight provider request/stream, so a
@@ -773,21 +795,28 @@ async function handleChatInteraction(interaction, thread = null) {
             // Long-term memory: embed both sides asynchronously (never blocks
             // the reply). DM turns land in the user's own DM scope.
             {
-                const channelId = interaction.channel?.id || interaction.channelId;
-                memoryService.remember({
-                    guildId: conversationScopeId,
-                    channelId,
-                    authorId: interaction.user.id,
-                    authorName: interaction.member?.displayName || interaction.user.username,
-                    content: trimmedMessage
-                }).catch(() => {});
-                memoryService.remember({
-                    guildId: conversationScopeId,
-                    channelId,
-                    authorId: interaction.client.user.id,
-                    authorName: 'Goobster',
-                    content: processedResponse
-                }).catch(() => {});
+                let learn = true;
+                try {
+                    const userSettingsService = require('../services/userSettingsService');
+                    learn = await userSettingsService.getPreference(interaction.user.id, 'learnMemories') !== false;
+                } catch { /* default on */ }
+                if (learn) {
+                    const channelId = interaction.channel?.id || interaction.channelId;
+                    memoryService.remember({
+                        guildId: conversationScopeId,
+                        channelId,
+                        authorId: interaction.user.id,
+                        authorName: interaction.member?.displayName || interaction.user.username,
+                        content: trimmedMessage
+                    }).catch(() => {});
+                    memoryService.remember({
+                        guildId: conversationScopeId,
+                        channelId,
+                        authorId: interaction.client.user.id,
+                        authorName: 'Goobster',
+                        content: processedResponse
+                    }).catch(() => {});
+                }
             }
             
         } catch (error) {

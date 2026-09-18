@@ -250,6 +250,17 @@ class ParlorService {
      * @param {Object} params - { ownerId, name, emoji, color, charter }
      */
     async createPersona({ ownerId, name, emoji, color, charter }) {
+        if ((emoji == null || emoji === '') || (charter == null || charter === '')) {
+            try {
+                const userSettingsService = require('./userSettingsService');
+                if (emoji == null || emoji === '') {
+                    emoji = await userSettingsService.getPreference(ownerId, 'parlorDefaultEmoji');
+                }
+                if (charter == null || charter === '') {
+                    charter = await userSettingsService.getPreference(ownerId, 'parlorDefaultCharter');
+                }
+            } catch { /* creation defaults are optional */ }
+        }
         const fields = this._cleanPersonaFields({ name, emoji: emoji ?? null, color: color ?? null, charter });
         // The built-in Goobster seat never crowds out a user's own cast
         const count = (await db.get(
@@ -2552,13 +2563,23 @@ class ParlorService {
                 persona, ownerName, history, retrieved,
                 hasTools: functionDefs.length > 0, projectSeat
             });
+            const chatOptions = {
+                max_tokens: REPLY_MAX_TOKENS,
+                webSearch: aiService.supportsNativeWebSearch(),
+                usageContext: { guildId: dmScopeId(ownerId), userId: ownerId }
+            };
+            try {
+                const userSettingsService = require('./userSettingsService');
+                const [provider, model] = await Promise.all([
+                    userSettingsService.getPreference(ownerId, 'parlorProvider'),
+                    userSettingsService.getPreference(ownerId, 'parlorModel')
+                ]);
+                if (provider) chatOptions.provider = provider;
+                if (model) chatOptions.model = model;
+            } catch { /* inherit host / Study defaults */ }
             const result = await runAgentLoop({
                 messages,
-                chatOptions: {
-                    max_tokens: REPLY_MAX_TOKENS,
-                    webSearch: aiService.supportsNativeWebSearch(),
-                    usageContext: { guildId: dmScopeId(ownerId), userId: ownerId }
-                },
+                chatOptions,
                 functionDefs,
                 interactionContext: this._buildPersonaToolContext({
                     ownerId, ownerName, conversationId, collector,

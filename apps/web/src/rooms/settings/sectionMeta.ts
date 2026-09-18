@@ -32,7 +32,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🪪',
         scope: 'Private chats & DMs',
         blurb: 'What Goobster calls you, what you call him, standing instructions, and conversation-style defaults.',
-        keywords: ['name', 'nickname', 'call me', 'alias', 'identity', 'instructions', 'personality', 'directive', 'meme', 'tone', 'length', 'language', 'timezone', 'units']
+        keywords: ['name', 'nickname', 'call me', 'alias', 'identity', 'instructions', 'personality', 'directive', 'meme', 'tone', 'length', 'language', 'timezone', 'units', 'preset']
     },
     {
         id: 'chat',
@@ -40,7 +40,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '💬',
         scope: 'Private chats & DMs',
         blurb: 'Which AI platform and model answers in the Study and your DMs, and how hard it thinks.',
-        keywords: ['ai', 'model', 'provider', 'platform', 'openai', 'anthropic', 'gemini', 'ollama', 'reasoning', 'thinking', 'thoughtful']
+        keywords: ['ai', 'model', 'provider', 'platform', 'openai', 'anthropic', 'gemini', 'ollama', 'reasoning', 'thinking', 'thoughtful', 'temperature', 'tokens', 'tools', 'usage', 'parlor', 'research']
     },
     {
         id: 'voice',
@@ -64,7 +64,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🧠',
         scope: 'Private chats & DMs',
         blurb: 'How long private memories are kept, new-chat privacy, what Goobster knows about you, and the exits.',
-        keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'delete', 'report', 'what do you know', 'incognito', 'export', 'shares']
+        keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'delete', 'report', 'what do you know', 'incognito', 'export', 'shares', 'learn', 'recall']
     },
     {
         id: 'connections',
@@ -72,7 +72,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🔗',
         scope: 'Your account',
         blurb: 'Developer accounts Goobster may act through on your behalf.',
-        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat']
+        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat', 'allowlist', 'repos', 'pages']
     },
     {
         id: 'appearance',
@@ -80,7 +80,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🎨',
         scope: 'Your account',
         blurb: 'Theme, density, keyboard, and working defaults. Theme also keeps a device copy.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'expedition', 'parlor']
     },
     {
         id: 'account',
@@ -107,10 +107,18 @@ export const FIELDS: FieldMeta[] = [
     { section: 'profile', fieldId: 'language', label: 'Preferred response language', keywords: ['language', 'locale', 'english', 'spanish'] },
     { section: 'profile', fieldId: 'timezone', label: 'Timezone', keywords: ['timezone', 'tz', 'iana', 'local time'] },
     { section: 'profile', fieldId: 'units', label: 'Units and clock', keywords: ['units', 'metric', 'imperial', '12 hour', '24 hour', 'date'] },
+    { section: 'profile', fieldId: 'personality-preset', label: 'Personality preset', keywords: ['preset', 'personality pack', 'style preset', 'concise direct', 'warm detailed'] },
     { section: 'chat', fieldId: 'thoughtful', label: 'Thoughtful Mode', keywords: ['thoughtful', 'thinking', 'deeper', 'reasoning', 'preset'] },
     { section: 'chat', fieldId: 'provider', label: 'Model platform', keywords: ['provider', 'platform', 'openai', 'anthropic', 'claude', 'gemini', 'ollama', 'local'] },
     { section: 'chat', fieldId: 'model', label: 'Model', keywords: ['model', 'gpt', 'claude', 'gemini', 'llama'] },
     { section: 'chat', fieldId: 'reasoning', label: 'Reasoning effort', keywords: ['reasoning', 'effort', 'thinking', 'minimal', 'low', 'medium', 'high'] },
+    { section: 'chat', fieldId: 'reply-tokens', label: 'Reply length budget', keywords: ['tokens', 'max tokens', 'reply length', 'budget'] },
+    { section: 'chat', fieldId: 'sampling', label: 'Sampling', keywords: ['temperature', 'top p', 'sampling', 'creativity'] },
+    { section: 'chat', fieldId: 'parlor-model', label: 'Parlor model default', keywords: ['parlor', 'persona model', 'private parlor'] },
+    { section: 'chat', fieldId: 'research-model', label: 'Research model default', keywords: ['research', 'expedition model', 'spitball model'] },
+    { section: 'chat', fieldId: 'disabled-tools', label: 'Optional tools', keywords: ['tools', 'disable tools', 'search', 'image', 'code'] },
+    { section: 'chat', fieldId: 'usage-alert', label: 'Usage alert', keywords: ['usage', 'budget', 'tokens alert', 'spend'] },
+    { section: 'chat', fieldId: 'byok', label: 'Personal AI keys', keywords: ['byok', 'api key', 'own key', 'bring your own'] },
     { section: 'voice', fieldId: 'voice-pick', label: 'Speaking voice', keywords: ['voice', 'speaker', 'tts', 'elevenlabs'] },
     { section: 'voice', fieldId: 'voice-accent', label: 'Spoken accent', keywords: ['accent', 'british', 'american', 'irish', 'australian', 'dialect'] },
     { section: 'voice', fieldId: 'voice-speed', label: 'Playback speed', keywords: ['speed', 'faster', 'slower', 'rate', 'tempo'] },
@@ -133,6 +141,9 @@ export const FIELDS: FieldMeta[] = [
     { section: 'initiative', fieldId: 'boundaries', label: 'Boundaries by category', keywords: ['boundaries', 'permissions', 'read', 'compute', 'write', 'confirm', 'github', 'research'] },
     { section: 'memory', fieldId: 'retention', label: 'Memory retention', keywords: ['retention', 'auto delete', 'expire', 'days', 'purge', 'keep forever'] },
     { section: 'memory', fieldId: 'new-chat-privacy', label: 'Default new-chat privacy', keywords: ['incognito', 'private chat', 'new chat'] },
+    { section: 'memory', fieldId: 'learn-memories', label: 'Learn new long-term memories', keywords: ['learn', 'extract memories', 'write memories'] },
+    { section: 'memory', fieldId: 'use-memories', label: 'Use existing memories', keywords: ['recall', 'use memories', 'read memories'] },
+    { section: 'memory', fieldId: 'chat-history', label: 'Study chat-history retention', keywords: ['chat history', 'transcripts', 'conversation expiry'] },
     { section: 'memory', fieldId: 'export', label: 'Export my data', keywords: ['export', 'download', 'backup'] },
     { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
     { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
@@ -140,6 +151,8 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'forget-me', label: 'Forget me', keywords: ['forget', 'erase', 'delete everything', 'wipe', 'gdpr'] },
     { section: 'connections', fieldId: 'github', label: 'GitHub', keywords: ['github', 'git', 'repos', 'pull requests', 'token'] },
     { section: 'connections', fieldId: 'notion', label: 'Notion', keywords: ['notion', 'pages', 'notes', 'token'] },
+    { section: 'connections', fieldId: 'github-allowlist', label: 'GitHub repos Goobster may use', keywords: ['allowlist', 'repos', 'github repos'] },
+    { section: 'connections', fieldId: 'notion-allowlist', label: 'Notion pages Goobster may use', keywords: ['allowlist', 'pages', 'notion pages'] },
     { section: 'appearance', fieldId: 'theme', label: 'Theme', keywords: ['theme', 'dark', 'light', 'system', 'color scheme'] },
     { section: 'appearance', fieldId: 'text-size', label: 'Text size', keywords: ['font', 'text size', 'bigger', 'smaller'] },
     { section: 'appearance', fieldId: 'reduced-motion', label: 'Reduced motion', keywords: ['motion', 'animation', 'accessibility'] },
@@ -149,6 +162,8 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'start-page', label: 'Start page', keywords: ['home', 'landing', 'default room'] },
     { section: 'appearance', fieldId: 'exchange-server', label: 'Preferred Exchange server', keywords: ['exchange', 'guild', 'trading'] },
     { section: 'appearance', fieldId: 'link-by-tag', label: 'Link notes by shared tag', keywords: ['tags', 'link by tag', 'map', 'graph', 'spitball'] },
+    { section: 'appearance', fieldId: 'expedition-defaults', label: 'Defaults for new expeditions', keywords: ['expedition', 'depth', 'lens', 'spitball defaults'] },
+    { section: 'appearance', fieldId: 'parlor-defaults', label: 'Defaults for new personas', keywords: ['parlor', 'persona defaults', 'charter', 'emoji'] },
     { section: 'appearance', fieldId: 'conservatory', label: 'Conservatory library', keywords: ['conservatory', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
     { section: 'account', fieldId: 'sessions', label: 'Active sessions', keywords: ['devices', 'sessions', 'revoke', 'sign out other'] },

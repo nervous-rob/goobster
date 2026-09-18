@@ -1,5 +1,5 @@
 /**
- * Unified User Settings Schema and Constants (spec §5, §7, §8, Phase 2 V2).
+ * Unified User Settings Schema and Constants (spec §5, §7, §8, Phase 2–3).
  *
  * Defines the canonical sections, field constraints, scopes, default values,
  * and search metadata across Goobster's personal settings.
@@ -28,7 +28,8 @@ const EDITABLE_SECTIONS = [
     'voice',
     'initiative',
     'memory',
-    'appearance'
+    'appearance',
+    'connections'
 ];
 
 const SCOPES = {
@@ -44,7 +45,7 @@ const SECTION_METADATA = {
         scope: SCOPES.PRIVATE,
         description: 'How Goobster identifies and addresses you in private conversations, plus your custom instructions and conversation-style defaults.',
         appliesTo: ['study', 'discord-dm'],
-        keywords: ['name', 'nickname', 'call me', 'alias', 'who am i', 'instructions', 'custom instructions', 'personality', 'directive', 'meme', 'meme mode', 'tone', 'length', 'language', 'timezone', 'units']
+        keywords: ['name', 'nickname', 'call me', 'alias', 'who am i', 'instructions', 'custom instructions', 'personality', 'directive', 'meme', 'meme mode', 'tone', 'length', 'language', 'timezone', 'units', 'preset']
     },
     chat: {
         id: 'chat',
@@ -52,7 +53,7 @@ const SECTION_METADATA = {
         scope: SCOPES.PRIVATE,
         description: 'AI model, provider, reasoning depth, and Thoughtful Mode presets for private conversations.',
         appliesTo: ['study', 'discord-dm'],
-        keywords: ['ai', 'model', 'provider', 'openai', 'anthropic', 'gemini', 'ollama', 'reasoning', 'thinking', 'thoughtful', 'thoughtful mode']
+        keywords: ['ai', 'model', 'provider', 'openai', 'anthropic', 'gemini', 'ollama', 'reasoning', 'thinking', 'thoughtful', 'thoughtful mode', 'temperature', 'tokens', 'tools', 'usage']
     },
     voice: {
         id: 'voice',
@@ -76,7 +77,7 @@ const SECTION_METADATA = {
         scope: SCOPES.PRIVATE,
         description: 'Memory retention window, new-chat privacy, transparency reports, and personal data management.',
         appliesTo: ['study-memory', 'discord-dm-memory'],
-        keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'incognito', 'export', 'shares']
+        keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'incognito', 'export', 'shares', 'learn', 'recall']
     },
     appearance: {
         id: 'appearance',
@@ -84,7 +85,7 @@ const SECTION_METADATA = {
         scope: SCOPES.ACCOUNT,
         description: 'Visual theme, density, keyboard, and working defaults for the web portal.',
         appliesTo: ['web-portal'],
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'expedition', 'parlor']
     },
     connections: {
         id: 'connections',
@@ -92,7 +93,7 @@ const SECTION_METADATA = {
         scope: SCOPES.ACCOUNT,
         description: 'Connected developer accounts and platform credentials.',
         appliesTo: ['account'],
-        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens']
+        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'allowlist', 'repos', 'pages']
     },
     account: {
         id: 'account',
@@ -120,6 +121,18 @@ const TEXT_SIZES = ['s', 'm', 'l'];
 const START_PAGES = ['home', 'study', 'noticed', 'spitball', 'parlor', 'exchange', 'conservatory'];
 const NEW_CHAT_PRIVACY = ['regular', 'incognito'];
 const QUIET_HOURS_TZ_MODES = ['utc', 'local'];
+const PERSONALITY_PRESETS = {
+    'concise-direct': { answerLength: 'concise', tone: 'direct', humor: 'off' },
+    'warm-detailed': { answerLength: 'detailed', tone: 'warm', humor: 'light' },
+    'playful-brief': { answerLength: 'concise', tone: 'playful', humor: 'playful' }
+};
+const PERSONALITY_PRESET_IDS = [null, ...Object.keys(PERSONALITY_PRESETS)];
+const EXPEDITION_DEPTHS = ['focused', 'standard', 'deep'];
+const OPTIONAL_PERSONAL_TOOLS = [
+    'performSearch', 'generateImage', 'runCode', 'observatory', 'requestPythonPackages',
+    'playTrack', 'speakMessage', 'launchCursorAgent', 'createGithubIssue', 'executePlan',
+    'searchGithubCode', 'readGithubFile', 'searchNotion', 'readNotionPage'
+];
 const RESPONSE_LANGUAGES = [
     null,
     'en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'ko', 'zh'
@@ -144,7 +157,18 @@ const LIMITS = {
     SPEECH_PAUSE_MS_DEFAULT: 1300,
     SNOOZE_HOURS_MIN: 1,
     SNOOZE_HOURS_MAX: 720,
-    SNOOZE_HOURS_DEFAULT: 24
+    SNOOZE_HOURS_DEFAULT: 24,
+    REPLY_TOKENS_MIN: 256,
+    REPLY_TOKENS_MAX: 8192,
+    TEMPERATURE_MIN: 0,
+    TEMPERATURE_MAX: 2,
+    TOP_P_MIN: 0,
+    TOP_P_MAX: 1,
+    USAGE_ALERT_MIN: 1000,
+    USAGE_ALERT_MAX: 100000000,
+    ALLOWLIST_MAX_ITEMS: 40,
+    ALLOWLIST_ITEM_MAX: 128,
+    DISABLED_TOOLS_MAX: 24
 };
 
 /**
@@ -183,13 +207,37 @@ const PREFERENCE_DEFAULTS = {
     enterToSend: true,
     expandChatDetails: false,
     startPage: 'home',
-    preferredExchangeGuild: null
+    preferredExchangeGuild: null,
+    personalityPreset: null,
+    replyMaxTokens: null,
+    temperature: null,
+    topP: null,
+    parlorProvider: null,
+    parlorModel: null,
+    researchProvider: null,
+    researchModel: null,
+    disabledTools: [],
+    usageAlertTokens: null,
+    learnMemories: true,
+    useMemories: true,
+    chatHistoryRetentionDays: null,
+    githubAllowlist: [],
+    notionAllowlist: [],
+    expeditionDefaultDepth: 'standard',
+    expeditionDefaultLens: 'general',
+    parlorDefaultEmoji: null,
+    parlorDefaultCharter: null
 };
 
 const PREFERENCE_KEYS_BY_SECTION = {
     profile: [
         'accountPreferredName', 'answerLength', 'tone', 'humor', 'responseLanguage',
-        'timezone', 'measurementSystem', 'timeFormat', 'dateLocale'
+        'timezone', 'measurementSystem', 'timeFormat', 'dateLocale', 'personalityPreset'
+    ],
+    chat: [
+        'replyMaxTokens', 'temperature', 'topP',
+        'parlorProvider', 'parlorModel', 'researchProvider', 'researchModel',
+        'disabledTools', 'usageAlertTokens'
     ],
     voice: [
         'voiceSendMode', 'voiceCaptureEngine', 'speechPauseMs',
@@ -199,17 +247,20 @@ const PREFERENCE_KEYS_BY_SECTION = {
         'notifyInApp', 'notifyMentionBanners', 'notifyOutbound', 'notifySounds',
         'presenceVisible', 'defaultSnoozeHours', 'quietHoursTzMode'
     ],
-    memory: ['defaultNewChatPrivacy'],
+    memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
     appearance: [
         'theme', 'linkByTag', 'textSize', 'reducedMotion', 'density',
-        'enterToSend', 'expandChatDetails', 'startPage', 'preferredExchangeGuild'
-    ]
+        'enterToSend', 'expandChatDetails', 'startPage', 'preferredExchangeGuild',
+        'expeditionDefaultDepth', 'expeditionDefaultLens', 'parlorDefaultEmoji', 'parlorDefaultCharter'
+    ],
+    connections: ['githubAllowlist', 'notionAllowlist']
 };
 
 const BOOLEAN_PREF_KEYS = new Set([
     'startVoiceMuted', 'showCaptions', 'autoReadReplies',
     'notifyInApp', 'notifyMentionBanners', 'notifyOutbound', 'notifySounds',
-    'presenceVisible', 'linkByTag', 'enterToSend', 'expandChatDetails'
+    'presenceVisible', 'linkByTag', 'enterToSend', 'expandChatDetails',
+    'learnMemories', 'useMemories'
 ]);
 
 function isValidTimeZone(value) {
@@ -365,6 +416,129 @@ function coercePreference(key, raw) {
                 return { ok: false, code: 'BAD_START_PAGE', message: `startPage must be one of: ${START_PAGES.join(', ')}.` };
             }
             return { ok: true, value: raw };
+        case 'personalityPreset': {
+            if (raw === null || raw === '' || raw === 'custom') return { ok: true, value: null };
+            if (!PERSONALITY_PRESET_IDS.includes(raw)) {
+                return { ok: false, code: 'BAD_PRESET', message: `personalityPreset must be one of: ${Object.keys(PERSONALITY_PRESETS).join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        }
+        case 'replyMaxTokens': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const n = Number(raw);
+            if (!Number.isInteger(n) || n < LIMITS.REPLY_TOKENS_MIN || n > LIMITS.REPLY_TOKENS_MAX) {
+                return {
+                    ok: false,
+                    code: 'BAD_REPLY_TOKENS',
+                    message: `replyMaxTokens must be an integer between ${LIMITS.REPLY_TOKENS_MIN} and ${LIMITS.REPLY_TOKENS_MAX}, or null.`
+                };
+            }
+            return { ok: true, value: n };
+        }
+        case 'temperature': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const n = Number(raw);
+            if (!Number.isFinite(n) || n < LIMITS.TEMPERATURE_MIN || n > LIMITS.TEMPERATURE_MAX) {
+                return { ok: false, code: 'BAD_TEMPERATURE', message: 'temperature must be a number between 0 and 2, or null.' };
+            }
+            return { ok: true, value: n };
+        }
+        case 'topP': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const n = Number(raw);
+            if (!Number.isFinite(n) || n < LIMITS.TOP_P_MIN || n > LIMITS.TOP_P_MAX) {
+                return { ok: false, code: 'BAD_TOP_P', message: 'topP must be a number between 0 and 1, or null.' };
+            }
+            return { ok: true, value: n };
+        }
+        case 'parlorProvider':
+        case 'researchProvider': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const v = String(raw).trim().toLowerCase();
+            if (!['openai', 'anthropic', 'gemini', 'ollama'].includes(v)) {
+                return { ok: false, code: 'BAD_PROVIDER', message: `${key} must be openai, anthropic, gemini, ollama, or null.` };
+            }
+            return { ok: true, value: v };
+        }
+        case 'parlorModel':
+        case 'researchModel': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const v = String(raw).trim();
+            if (v.length > LIMITS.MODEL_MAX_LENGTH) {
+                return { ok: false, code: 'BAD_MODEL', message: `${key} must be at most ${LIMITS.MODEL_MAX_LENGTH} characters.` };
+            }
+            return { ok: true, value: v };
+        }
+        case 'disabledTools': {
+            if (raw == null || raw === '') return { ok: true, value: [] };
+            const list = Array.isArray(raw) ? raw : String(raw).split(',');
+            const clean = [...new Set(list.map((item) => String(item).trim()).filter(Boolean))];
+            if (clean.length > LIMITS.DISABLED_TOOLS_MAX) {
+                return { ok: false, code: 'BAD_TOOLS', message: `disabledTools accepts at most ${LIMITS.DISABLED_TOOLS_MAX} names.` };
+            }
+            for (const name of clean) {
+                if (!OPTIONAL_PERSONAL_TOOLS.includes(name)) {
+                    return { ok: false, code: 'BAD_TOOLS', message: `${name} is not an optional personal tool.` };
+                }
+            }
+            return { ok: true, value: clean };
+        }
+        case 'usageAlertTokens': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const n = Number(raw);
+            if (!Number.isInteger(n) || n < LIMITS.USAGE_ALERT_MIN || n > LIMITS.USAGE_ALERT_MAX) {
+                return { ok: false, code: 'BAD_USAGE_ALERT', message: 'usageAlertTokens must be an integer threshold, or null.' };
+            }
+            return { ok: true, value: n };
+        }
+        case 'chatHistoryRetentionDays': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const n = Number(raw);
+            if (!Number.isInteger(n) || n < LIMITS.RETENTION_DAYS_MIN || n > LIMITS.RETENTION_DAYS_MAX) {
+                return { ok: false, code: 'BAD_CHAT_RETENTION', message: 'chatHistoryRetentionDays must be 1–3650, or null for forever.' };
+            }
+            return { ok: true, value: n };
+        }
+        case 'githubAllowlist':
+        case 'notionAllowlist': {
+            if (raw == null || raw === '') return { ok: true, value: [] };
+            const list = Array.isArray(raw) ? raw : String(raw).split(/[\n,]/);
+            const clean = [...new Set(list.map((item) => String(item).trim()).filter(Boolean))];
+            if (clean.length > LIMITS.ALLOWLIST_MAX_ITEMS) {
+                return { ok: false, code: 'BAD_ALLOWLIST', message: `${key} accepts at most ${LIMITS.ALLOWLIST_MAX_ITEMS} entries.` };
+            }
+            if (clean.some((item) => item.length > LIMITS.ALLOWLIST_ITEM_MAX)) {
+                return { ok: false, code: 'BAD_ALLOWLIST', message: `${key} entries must be at most ${LIMITS.ALLOWLIST_ITEM_MAX} characters.` };
+            }
+            return { ok: true, value: clean };
+        }
+        case 'expeditionDefaultDepth':
+            if (!EXPEDITION_DEPTHS.includes(raw)) {
+                return { ok: false, code: 'BAD_DEPTH', message: `expeditionDefaultDepth must be one of: ${EXPEDITION_DEPTHS.join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        case 'expeditionDefaultLens': {
+            if (raw === null || raw === '') return { ok: true, value: 'general' };
+            const id = String(raw).trim();
+            if (id.length > 40) {
+                return { ok: false, code: 'BAD_LENS', message: 'expeditionDefaultLens is too long.' };
+            }
+            return { ok: true, value: id };
+        }
+        case 'parlorDefaultEmoji': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const v = String(raw).trim();
+            if (v.length > 8) return { ok: false, code: 'BAD_EMOJI', message: 'parlorDefaultEmoji must be at most 8 characters.' };
+            return { ok: true, value: v };
+        }
+        case 'parlorDefaultCharter': {
+            if (raw === null || raw === '') return { ok: true, value: null };
+            const v = String(raw).trim();
+            if (v.length > LIMITS.DIRECTIVE_MAX_LENGTH) {
+                return { ok: false, code: 'BAD_CHARTER', message: `parlorDefaultCharter must be at most ${LIMITS.DIRECTIVE_MAX_LENGTH} characters.` };
+            }
+            return { ok: true, value: v };
+        }
         case 'preferredExchangeGuild': {
             if (raw === null || raw === '') return { ok: true, value: null };
             const id = String(raw).trim();
@@ -434,6 +608,10 @@ module.exports = {
     START_PAGES,
     NEW_CHAT_PRIVACY,
     QUIET_HOURS_TZ_MODES,
+    PERSONALITY_PRESETS,
+    PERSONALITY_PRESET_IDS,
+    EXPEDITION_DEPTHS,
+    OPTIONAL_PERSONAL_TOOLS,
     RESPONSE_LANGUAGES,
     LIMITS,
     PREFERENCE_DEFAULTS,
