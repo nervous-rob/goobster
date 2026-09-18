@@ -103,7 +103,7 @@ test('search finds Phase 2 fields and account sessions list this device', async 
     await openSettings(page);
     const search = page.getByRole('combobox', { name: 'Search settings' });
     await search.fill('timezone');
-    await page.getByRole('option').filter({ hasText: 'Timezone' }).getByRole('button').click();
+    await page.getByRole('option').filter({ hasText: /^Timezone/ }).getByRole('button').click();
     await expect(page).toHaveURL(/\/app\/settings\/profile#timezone$/);
     await expect(page.locator('#timezone-input')).toBeVisible();
     await page.locator('#timezone-input').selectOption('America/New_York');
@@ -112,7 +112,7 @@ test('search finds Phase 2 fields and account sessions list this device', async 
 
     await page.getByRole('link', { name: /Account/ }).click();
     await expect(page.locator('#sessions-input')).toBeVisible();
-    await expect(page.getByText('This device')).toBeVisible();
+    await expect(page.locator('#sessions-input').getByText(/This device/)).toBeVisible();
 });
 
 test('room shortcuts open the matching section with a way back', async ({ page }) => {
