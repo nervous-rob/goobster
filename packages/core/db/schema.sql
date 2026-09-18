@@ -1909,7 +1909,11 @@ CREATE TABLE IF NOT EXISTS web_live_turns (
     -- Snapshot of the in-flight reply (draft + thinking/tool steps) so a
     -- browser that left and came back can restore progress without waiting
     -- for the turn to settle.
-    progressJson TEXT
+    progressJson TEXT,
+    -- Last time the turn showed progress (token, tool start/result,
+    -- typing). The watchdog evicts a turn that has gone quiet, not one
+    -- that is merely old: a long project turn is still working.
+    lastActivityAtMs INTEGER
 );
 
 -- Follow-up Study messages waiting for the current in-flight turn to

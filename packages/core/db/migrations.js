@@ -148,6 +148,8 @@ const COLUMN_MIGRATIONS = [
     ['sandbox_requests', 'claimedAt', 'claimedAt TEXT'],
     // Live Study progress snapshot (thoughts / tools / draft) for reconnect.
     ['web_live_turns', 'progressJson', 'progressJson TEXT'],
+    // Idle-based turn watchdog: evict quiet turns, not long ones.
+    ['web_live_turns', 'lastActivityAtMs', 'lastActivityAtMs INTEGER'],
     // Observatory pipelines: explicit event parentage, frozen output
     // contracts + verdicts, and a stable failure reason on jobs; event
     // source filters on triggers. Existing rows stay NULL (legacy behaviour).
