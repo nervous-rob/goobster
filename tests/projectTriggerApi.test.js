@@ -34,6 +34,7 @@ const ProjectTriggerError = class extends Error {
 const fakeTriggers = {
     list: jest.fn(),
     get: jest.fn(),
+    listDeliveries: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn()
@@ -112,6 +113,7 @@ describe('project trigger API auth', () => {
             { method: 'GET', reqPath: '/api/app/projects/lab/triggers' },
             { method: 'POST', reqPath: '/api/app/projects/lab/triggers', body: { name: 'x' } },
             { method: 'GET', reqPath: '/api/app/projects/lab/triggers/1' },
+            { method: 'GET', reqPath: '/api/app/projects/lab/triggers/1/deliveries' },
             { method: 'PATCH', reqPath: '/api/app/projects/lab/triggers/1', body: { isEnabled: false } },
             { method: 'DELETE', reqPath: '/api/app/projects/lab/triggers/1' }
         ];
@@ -121,7 +123,24 @@ describe('project trigger API auth', () => {
             expect(res.json.error.code).toBe('UNAUTHENTICATED');
         }
         expect(fakeTriggers.list).not.toHaveBeenCalled();
+        expect(fakeTriggers.listDeliveries).not.toHaveBeenCalled();
         expect(fakeTriggers.create).not.toHaveBeenCalled();
+    });
+
+    test('delivery records are scoped to the session user and the named trigger', async () => {
+        fakeTriggers.listDeliveries.mockResolvedValue([
+            { id: 3, sourceJobId: 12, status: 'RETRYABLE', attempts: 2, childJobId: null, detail: 'Project already has a running job.' }
+        ]);
+        const cookie = await login();
+        const res = await request({
+            reqPath: '/api/app/projects/lab/triggers/Stage%203/deliveries?limit=5',
+            headers: { Cookie: cookie }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.deliveries).toEqual([expect.objectContaining({ sourceJobId: 12, status: 'RETRYABLE' })]);
+        expect(fakeTriggers.listDeliveries).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER, project: 'lab', trigger: 'Stage 3', limit: '5'
+        }));
     });
 
     test('authenticated list and create pass the session userId', async () => {

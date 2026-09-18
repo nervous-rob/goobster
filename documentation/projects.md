@@ -238,6 +238,11 @@ output contract failed — …`, never `ok: exit 0`. A validated run reads
 `ok: fetch v3 exit 0, 1 required output(s) validated`. Triggers without
 `requiredOutputs` keep the legacy exit-code-only behaviour.
 
+In the portal, a job with an error code, a parent, a trigger, or a
+contract gets an expandable detail row: the code, who started it, the
+source job it reacted to, and every required output with its per-check
+verdict (missing / too small / invalid JSON / …).
+
 ### Filtered events instead of staggered cron
 
 Two cron triggers at 02:00 and 02:30 encode an assumption ("stage 2 is
@@ -271,6 +276,56 @@ The settle path and the startup catch-up sweep share one matcher
 neither. A non-matching job never advances the trigger's `lastRun`, so
 an unrelated job settling after a matching one cannot make catch-up
 skip the match.
+
+### Exactly-once delivery records
+
+An event is the pair **(trigger, settled source job)**, and each one has
+a durable row in `project_trigger_deliveries` with a unique constraint
+on that pair. The claim is the `INSERT`: the settle path and the catch-up
+sweep (or two bot replicas) race for the same row and exactly one wins.
+That replaces the old "advance `lastRun` past `finishedAt`" cursor, which
+collapsed two jobs finishing in the same second into one event and
+treated an older job examined after a newer one as already consumed.
+`lastRun` is still written (newest finish seen) but only as a display
+cursor and the lower bound of the catch-up scan.
+
+A delivery moves through explicit states:
+
+| status      | meaning                                                                                     |
+|-------------|---------------------------------------------------------------------------------------------|
+| `STARTED`   | claimed, dispatch in flight (a row a crash left here is retried after a 10-minute lease)    |
+| `DELIVERED` | the action ran; for `run_script` the child job row exists (`childJobId`)                    |
+| `RETRYABLE` | the project or sandbox was busy or the active-job cap was hit — re-dispatched after backoff |
+| `FAILED`    | permanent: gone project, script with no head, bad contract shape, or retries exhausted      |
+| `SKIPPED`   | the chain guard (self-chain / max depth) or the fetch allowlist declined it                 |
+
+"Delivered" is only recorded once the downstream job has actually been
+created. A transient refusal — `PROJECT_BUSY`, sandbox `BUSY`,
+`TOO_MANY_JOBS` — leaves the row `RETRYABLE` with exponential backoff
+(1, 2, 4 … capped at 15 minutes); `retryEventDeliveries` re-dispatches
+due rows from the same automation minute loop as cron. After ten
+attempts the row becomes `FAILED`, the trigger's `lastOutcome` reads
+`failed: gave up after 10 attempts: …`, and the owner is told — a
+validated Stage 2 whose Stage 3 never started is never silent.
+
+Triggers that predate the table are back-filled once on the first
+catch-up: every matching job with `finishedAt <= lastRun` is recorded as
+`DELIVERED` (`legacy: …`), so upgrading does not replay history.
+
+Inspect deliveries with the tool (`list_deliveries` with the trigger
+name), the API (`GET /projects/:slug/triggers/:trigger/deliveries`), or
+the **deliveries** expander on an event trigger in the portal.
+
+### Dispatch is not completion
+
+A background `run_script` action records `started: job #123 (fetch v3),
+awaiting settlement` — the job was launched, nothing more. When that job
+settles, the trigger that started it gets a separate `lastJobOutcome`:
+`ok: job #123 completed, 1 required output(s) validated`, or `failed:
+job #123 exit 0; output contract failed — missing …`, or `failed: job
+#123 timed out`. The portal shows both lines (`dispatch:` / `stage:`),
+the tool's `list_triggers` labels them the same way, and neither ever
+says `ok` for a stage that has not finished.
 
 ### Explicit parentage
 
@@ -616,7 +671,12 @@ stays on the erasure path until that table retires.
 `tests/projectTriggerService.test.js` / `tests/projectTriggerApi.test.js`
 (cron claim, event fire, catch-up, source filters and their shared
 matcher, explicit parentage and chain-depth, foreground contract
-outcomes, contract-failure topics, frozen contracts),
+outcomes, contract-failure topics, frozen contracts, per-event delivery
+records — same-second and out-of-order settles, RETRYABLE busy
+dispatch and its retry, give-up after max attempts, crash-lease reaping,
+legacy back-fill, `lastJobOutcome` — and the two-stage scenario:
+missing manifest never relays, valid manifest relays exactly one child,
+a busy project retries instead of dropping the event),
 `tests/outputContract.test.js` (contract normalization, `{utc_date}`
 resolution, path refusals, per-check reasons, summaries),
 `tests/observatoryService.test.js` (exit-0 contract verdicts on real

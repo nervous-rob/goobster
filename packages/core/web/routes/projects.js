@@ -600,6 +600,18 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // Per-event delivery records: which settled source job relayed as
+    // which child job, or why it did not (RETRYABLE / FAILED / SKIPPED).
+    app.get('/api/app/projects/:slug/triggers/:trigger/deliveries', requireAuth, chatRoute(async (req) => ({
+        deliveries: await ctx.projectTriggers.listDeliveries({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            trigger: req.params.trigger,
+            limit: req.query?.limit
+        })
+    })));
+
     app.post('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => {
         return ctx.projectTriggers.create({
             userId: req.webUser.userId,

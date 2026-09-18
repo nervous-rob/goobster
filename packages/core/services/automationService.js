@@ -88,6 +88,9 @@ class AutomationService {
             const projectTriggerService = require('./projectTriggerService');
             await projectTriggerService.fireDueCronTriggers({ client: this.client });
             await projectTriggerService.catchUpEventTriggers({ client: this.client });
+            // Event deliveries a busy sandbox/project deferred get re-dispatched
+            // here, so a validated upstream stage always relays downstream.
+            await projectTriggerService.retryEventDeliveries({ client: this.client });
         } catch (error) {
             console.error('[Automation] Project trigger poll failed:', error);
         }

@@ -159,6 +159,11 @@ const COLUMN_MIGRATIONS = [
     ['observatory_jobs', 'errorCode', 'errorCode TEXT'],
     ['project_triggers', 'sourceAssetId', 'sourceAssetId INTEGER'],
     ['project_triggers', 'sourceTriggerId', 'sourceTriggerId INTEGER'],
+    // Dispatch outcome (lastOutcome) vs. how the started stage settled.
+    // The per-event delivery table (project_trigger_deliveries) is a new
+    // table, created by schema.sql on open; legacy triggers are back-filled
+    // lazily by projectTriggerService.catchUpEventTriggers.
+    ['project_triggers', 'lastJobOutcome', 'lastJobOutcome TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

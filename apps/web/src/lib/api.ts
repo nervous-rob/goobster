@@ -412,6 +412,8 @@ export const api = {
     updateProjectTrigger: (project: string, trigger: string | number, body: Record<string, unknown>, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}${ownerQs(owner)}`,
             { method: 'PATCH', body: owner ? { ...body, owner } : body }),
+    projectTriggerDeliveries: (project: string, trigger: string | number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}/deliveries${ownerQs(owner)}`),
     deleteProjectTrigger: (project: string, trigger: string | number, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/triggers/${encodeURIComponent(String(trigger))}${ownerQs(owner)}`,
             { method: 'DELETE' }),

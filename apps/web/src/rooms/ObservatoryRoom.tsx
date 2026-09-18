@@ -41,6 +41,15 @@ type ProjectInvite = {
     inviterName?: string | null;
     inviterId?: string;
 };
+type ContractCheck = {
+    path: string;
+    type?: string;
+    minBytes?: number;
+    ok: boolean;
+    reason?: string | null;
+    sizeBytes?: number | null;
+};
+type ContractResult = { ok: boolean; checkedAt?: string; checks: ContractCheck[] };
 type Job = {
     id: number;
     status: string;
@@ -52,6 +61,14 @@ type Job = {
     finishedAt?: string;
     lastHeartbeatAt?: string;
     error?: string | null;
+    // Stable failure reason (EXIT_NONZERO, TIMED_OUT, CANCELLED, OUTPUT_CONTRACT_FAILED, ...)
+    errorCode?: string | null;
+    // Provenance: who started it and, for event-chained stages, the settled job it reacted to.
+    startedBy?: string | null;
+    triggerId?: number | null;
+    parentJobId?: number | null;
+    // Frozen output-contract verdict (null when the job declared no required outputs).
+    outputContractResult?: ContractResult | null;
     stdoutTail?: string;
     stderrTail?: string;
 };
@@ -557,6 +574,17 @@ function DetailView({
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
+    // Trigger names for job provenance ("started by trigger X"); shares the
+    // Automations tab's cache entry.
+    const triggersQ = useQuery({
+        queryKey: keys.projectTriggers(p.slug, ownerId),
+        queryFn: () => api.projectTriggers(p.slug, ownerId) as Promise<{ triggers: Trigger[] }>,
+        retry: false,
+        enabled: detail.jobs.some((j) => j.triggerId != null)
+    });
+    const triggerNames = new Map<number, string>(
+        (triggersQ.data?.triggers || []).map((t) => [t.id, t.name] as const)
+    );
     const completed = detail.jobs.filter((j) => j.status === 'COMPLETED').length;
     const failed = detail.jobs.filter((j) => j.status === 'FAILED' || j.status === 'TIMED_OUT').length;
     const quotaPct = Math.min(100, Math.round(((p.sizeMb || 0) / Math.max(p.quotaMb || 1, 1)) * 100));
@@ -681,6 +709,7 @@ function DetailView({
                                                         .filter(Boolean).join(' · ')}
                                                 </div>
                                                 {job.error ? <div className="row-meta obs-error">{job.error}</div> : null}
+                                                <JobProvenance job={job} triggers={triggerNames} />
                                                 {job.stdoutTail?.trim() ? (
                                                     <details className="obs-tail"><summary>stdout tail</summary><pre>{job.stdoutTail}</pre></details>
                                                 ) : null}
@@ -717,6 +746,78 @@ function DetailView({
                 </div>
             )}
         </>
+    );
+}
+
+const CONTRACT_REASONS: Record<string, string> = {
+    missing: 'missing',
+    too_small: 'too small',
+    invalid_json: 'invalid JSON',
+    directory: 'is a directory',
+    not_a_file: 'not a regular file',
+    illegal_path: 'illegal path'
+};
+
+/**
+ * Expandable diagnostics for one job: stable error code, who started it
+ * (and the upstream job an event stage reacted to), and the per-output
+ * verdict of its frozen contract. Renders nothing for a plain ad-hoc job
+ * with no contract, so the list stays quiet in the common case.
+ */
+function JobProvenance({ job, triggers }: { job: Job; triggers: Map<number, string> }) {
+    const contract = job.outputContractResult;
+    const hasContract = Boolean(contract && Array.isArray(contract.checks) && contract.checks.length);
+    const interesting = Boolean(
+        (job.errorCode && job.errorCode !== 'EXIT_NONZERO')
+        || job.parentJobId != null
+        || job.triggerId != null
+        || hasContract
+    );
+    if (!interesting) return null;
+    const startedBy = job.startedBy === 'trigger' && job.triggerId != null
+        ? `trigger “${triggers.get(job.triggerId) || `#${job.triggerId}`}”`
+        : (job.startedBy || 'unknown');
+    const failedChecks = hasContract ? contract!.checks.filter((c) => !c.ok).length : 0;
+    const summaryBits = [
+        job.errorCode && job.errorCode !== 'EXIT_NONZERO' ? job.errorCode : null,
+        job.parentJobId != null ? `after job #${job.parentJobId}` : null,
+        hasContract
+            ? (contract!.ok
+                ? `${contract!.checks.length} output(s) validated`
+                : `${failedChecks} of ${contract!.checks.length} output(s) failed`)
+            : null
+    ].filter(Boolean);
+    return (
+        <details className="obs-tail obs-job-detail" data-testid={`job-detail-${job.id}`}>
+            <summary>{summaryBits.length ? summaryBits.join(' · ') : 'details'}</summary>
+            <dl className="obs-kv">
+                {job.errorCode ? (<><dt>Error code</dt><dd><code>{job.errorCode}</code></dd></>) : null}
+                <dt>Started by</dt><dd>{startedBy}</dd>
+                {job.parentJobId != null ? (
+                    <><dt>Source job</dt><dd>#{job.parentJobId} (this stage reacted to its settlement)</dd></>
+                ) : null}
+                {hasContract ? (
+                    <>
+                        <dt>Required outputs</dt>
+                        <dd>
+                            <ul className="obs-contract">
+                                {contract!.checks.map((check) => (
+                                    <li key={check.path} className={check.ok ? 'ok' : 'failed'}>
+                                        {check.ok ? '✅' : '❌'} <code>{check.path}</code>
+                                        {check.type && check.type !== 'file' ? ` · ${check.type}` : ''}
+                                        {check.minBytes ? ` · ≥ ${check.minBytes} B` : ''}
+                                        {check.ok
+                                            ? (check.sizeBytes != null ? ` · ${check.sizeBytes} B` : '')
+                                            : ` · ${CONTRACT_REASONS[check.reason || ''] || check.reason || 'failed'}`}
+                                    </li>
+                                ))}
+                            </ul>
+                            {contract!.checkedAt ? <div className="hint">checked {whenLabel(contract!.checkedAt)}</div> : null}
+                        </dd>
+                    </>
+                ) : null}
+            </dl>
+        </details>
     );
 }
 
@@ -771,7 +872,25 @@ type Trigger = {
     actionParams?: Record<string, unknown>;
     isEnabled: boolean;
     lastRun?: string | null;
+    // Dispatch result ("started: job #12, awaiting settlement") ...
     lastOutcome?: string | null;
+    // ... vs. how the most recently started stage actually settled.
+    lastJobOutcome?: string | null;
+};
+
+type Delivery = {
+    id: number;
+    sourceJobId: number;
+    sourceStatus?: string | null;
+    sourceFinishedAt?: string | null;
+    status: 'STARTED' | 'DELIVERED' | 'RETRYABLE' | 'FAILED' | 'SKIPPED';
+    attempts: number;
+    childJobId?: number | null;
+    childStatus?: string | null;
+    childErrorCode?: string | null;
+    detail?: string | null;
+    nextAttemptAt?: string | null;
+    updatedAt: string;
 };
 
 type ScriptAsset = { id: number; slug: string; name: string; currentVersion?: number | null };
@@ -901,6 +1020,60 @@ function describeFilters(trigger: Trigger, scripts: ScriptAsset[], triggers: Tri
     return parts.length ? `from ${parts.join(' + ')}` : null;
 }
 
+const DELIVERY_ICONS: Record<Delivery['status'], string> = {
+    STARTED: '⏳', DELIVERED: '📬', RETRYABLE: '🔁', FAILED: '❌', SKIPPED: '⏭️'
+};
+
+/**
+ * Per-event delivery records of an event trigger, loaded when expanded:
+ * which settled source job relayed as which child job, or why it has not
+ * (busy project = RETRYABLE with a next attempt; FAILED / SKIPPED with a reason).
+ */
+function TriggerDeliveries({ slug, ownerId, trigger }: { slug: string; ownerId?: string | null; trigger: Trigger }) {
+    const [open, setOpen] = useState(false);
+    const q = useQuery({
+        queryKey: [...keys.projectTriggers(slug, ownerId), 'deliveries', trigger.id],
+        queryFn: () => api.projectTriggerDeliveries(slug, trigger.id, ownerId) as Promise<{ deliveries: Delivery[] }>,
+        enabled: open,
+        retry: false
+    });
+    const deliveries = q.data?.deliveries || [];
+    return (
+        <details
+            className="obs-tail obs-deliveries"
+            data-testid={`trigger-deliveries-${trigger.id}`}
+            onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+        >
+            <summary>deliveries</summary>
+            {!open ? null : q.isLoading
+                ? <div className="hint">Loading…</div>
+                : q.error
+                    ? <div className="row-meta obs-error">{(q.error as Error).message}</div>
+                    : deliveries.length === 0
+                        ? <div className="hint">No matching job has settled yet.</div>
+                        : (
+                            <ul className="obs-delivery-list">
+                                {deliveries.map((d) => (
+                                    <li key={d.id} className={`delivery-${d.status.toLowerCase()}`}>
+                                        <span className="badge">{DELIVERY_ICONS[d.status]} {d.status}</span>
+                                        {' '}source job #{d.sourceJobId}{d.sourceStatus ? ` (${d.sourceStatus})` : ''}
+                                        {d.childJobId ? <> → child job #{d.childJobId}{d.childStatus ? ` ${d.childStatus}` : ''}{d.childErrorCode ? ` (${d.childErrorCode})` : ''}</> : null}
+                                        <div className="row-meta">
+                                            {[
+                                                `${d.attempts} attempt(s)`,
+                                                d.nextAttemptAt ? `next ${whenLabel(d.nextAttemptAt)}` : null,
+                                                d.detail || null,
+                                                whenLabel(d.updatedAt)
+                                            ].filter(Boolean).join(' · ')}
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+        </details>
+    );
+}
+
 function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: string | null; role?: string }) {
     const toast = useToast();
     const confirm = useConfirm();
@@ -1004,10 +1177,18 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                                 && trigger.actionParams.requiredOutputs.length
                                                 ? `${trigger.actionParams.requiredOutputs.length} required output(s)`
                                                 : null,
-                                            trigger.lastRun ? `last ${whenLabel(trigger.lastRun)}` : 'never ran',
-                                            trigger.lastOutcome || null
+                                            trigger.lastRun ? `last ${whenLabel(trigger.lastRun)}` : 'never ran'
                                         ].filter(Boolean).join(' · ')}
                                     </div>
+                                    {trigger.lastOutcome || trigger.lastJobOutcome ? (
+                                        <div className="row-meta obs-outcomes">
+                                            {trigger.lastOutcome ? <span>dispatch: {trigger.lastOutcome}</span> : null}
+                                            {trigger.lastJobOutcome ? <span>stage: {trigger.lastJobOutcome}</span> : null}
+                                        </div>
+                                    ) : null}
+                                    {trigger.kind === 'event' ? (
+                                        <TriggerDeliveries slug={slug} ownerId={ownerId} trigger={trigger} />
+                                    ) : null}
                                 </div>
                                 <button type="button" className="btn" onClick={() => void toggleEnabled(trigger)}>
                                     {trigger.isEnabled ? 'Pause' : 'Enable'}

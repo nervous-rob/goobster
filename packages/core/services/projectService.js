@@ -3032,30 +3032,34 @@ class ObservatoryService {
     async listJobs({ userId, project = null, includeTails = false, owner = null }) {
         await this._requireEnabled();
         const projectRow = project ? await this._requireProject(userId, project, owner) : null;
-        if (projectRow) {
-            return await db.all(
-                `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
-                        j.checkpointAt, j.renderPath, j.error, j.errorCode, j.parentJobId,
-                        j.createdAt, j.finishedAt,
-                        j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
-                        ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
+        // Provenance (startedBy / triggerId / parentJobId), the failure code,
+        // and the per-output contract verdict ride every listing so the
+        // portal can explain a FAILED stage without a second request.
+        const columns = `j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
+                    j.checkpointAt, j.renderPath, j.error, j.errorCode, j.parentJobId,
+                    j.startedBy, j.triggerId, j.outputContractResultJson,
+                    j.createdAt, j.finishedAt,
+                    j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
+                    ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}`;
+        const rows = projectRow
+            ? await db.all(
+                `SELECT ${columns}
                  FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
                  WHERE j.projectId = @projectId
                  ORDER BY j.id DESC LIMIT 25`,
                 { projectId: projectRow.id }
+            )
+            : await db.all(
+                `SELECT ${columns}
+                 FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
+                 WHERE j.userId = @userId
+                 ORDER BY j.id DESC LIMIT 25`,
+                { userId }
             );
-        }
-        return await db.all(
-            `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
-                    j.checkpointAt, j.renderPath, j.error, j.errorCode, j.parentJobId,
-                    j.createdAt, j.finishedAt,
-                    j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
-                    ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
-             FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
-             WHERE j.userId = @userId
-             ORDER BY j.id DESC LIMIT 25`,
-            { userId }
-        );
+        return rows.map(({ outputContractResultJson, ...job }) => ({
+            ...job,
+            outputContractResult: parseStoredJson(outputContractResultJson)
+        }));
     }
 
     /**
