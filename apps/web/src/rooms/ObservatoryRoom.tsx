@@ -764,6 +764,8 @@ type Trigger = {
     schedule?: string | null;
     nextRun?: string | null;
     eventTopic?: string | null;
+    sourceAssetId?: number | null;
+    sourceTriggerId?: number | null;
     action: 'run_script' | 'render' | 'fetch_data' | 'agent_prompt';
     actionAssetId?: number | null;
     actionParams?: Record<string, unknown>;
@@ -779,9 +781,12 @@ type TriggerDraft = {
     kind: 'cron' | 'event';
     schedule: string;
     eventTopic: 'job_completed' | 'job_failed' | 'job_settled';
+    sourceAssetId: string;
+    sourceTriggerId: string;
     action: Trigger['action'];
     actionAssetId: string;
     background: boolean;
+    requiredOutputs: string;
     fps: string;
     url: string;
     filename: string;
@@ -796,9 +801,12 @@ const EMPTY_DRAFT: TriggerDraft = {
     kind: 'cron',
     schedule: '0 2 * * *',
     eventTopic: 'job_settled',
+    sourceAssetId: '',
+    sourceTriggerId: '',
     action: 'run_script',
     actionAssetId: '',
     background: true,
+    requiredOutputs: '',
     fps: '',
     url: '',
     filename: '',
@@ -815,9 +823,14 @@ function draftFromTrigger(trigger: Trigger): TriggerDraft {
         kind: trigger.kind,
         schedule: trigger.schedule || '0 2 * * *',
         eventTopic: (trigger.eventTopic as TriggerDraft['eventTopic']) || 'job_settled',
+        sourceAssetId: trigger.sourceAssetId != null ? String(trigger.sourceAssetId) : '',
+        sourceTriggerId: trigger.sourceTriggerId != null ? String(trigger.sourceTriggerId) : '',
         action: trigger.action,
         actionAssetId: trigger.actionAssetId != null ? String(trigger.actionAssetId) : '',
         background: params.background !== false && params.background !== 0,
+        requiredOutputs: Array.isArray(params.requiredOutputs) && params.requiredOutputs.length
+            ? JSON.stringify(params.requiredOutputs, null, 2)
+            : '',
         fps: params.fps != null ? String(params.fps) : '',
         url: typeof params.url === 'string' ? params.url : '',
         filename: typeof params.filename === 'string' ? params.filename : '',
@@ -828,9 +841,27 @@ function draftFromTrigger(trigger: Trigger): TriggerDraft {
     };
 }
 
+/** Parse the required-outputs textarea: empty clears; otherwise a JSON array. */
+function parseRequiredOutputs(text: string): unknown[] | null {
+    const raw = text.trim();
+    if (!raw) return null;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        throw new Error('Required outputs must be a JSON array like [{ "path": "out/{utc_date}.json", "type": "json" }].');
+    }
+    if (!Array.isArray(parsed)) throw new Error('Required outputs must be a JSON array.');
+    return parsed;
+}
+
 function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
     const actionParams: Record<string, unknown> = {};
-    if (draft.action === 'run_script') actionParams.background = draft.background;
+    if (draft.action === 'run_script') {
+        actionParams.background = draft.background;
+        // null drops a previously stored contract (the API merges params).
+        actionParams.requiredOutputs = parseRequiredOutputs(draft.requiredOutputs);
+    }
     if (draft.action === 'render' && draft.fps.trim()) actionParams.fps = Number(draft.fps);
     if (draft.action === 'fetch_data') {
         actionParams.url = draft.url.trim();
@@ -844,6 +875,8 @@ function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
         kind: draft.kind,
         schedule: draft.kind === 'cron' ? draft.schedule.trim() : null,
         eventTopic: draft.kind === 'event' ? draft.eventTopic : null,
+        sourceAssetId: draft.kind === 'event' && draft.sourceAssetId ? Number(draft.sourceAssetId) : null,
+        sourceTriggerId: draft.kind === 'event' && draft.sourceTriggerId ? Number(draft.sourceTriggerId) : null,
         action: draft.action,
         actionAssetId: draft.action === 'run_script' && draft.actionAssetId
             ? Number(draft.actionAssetId)
@@ -851,6 +884,21 @@ function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
         actionParams,
         isEnabled: draft.isEnabled
     };
+}
+
+/** "from ingest" / "from trigger Nightly" for the automation row meta. */
+function describeFilters(trigger: Trigger, scripts: ScriptAsset[], triggers: Trigger[]): string | null {
+    if (trigger.kind !== 'event') return null;
+    const parts: string[] = [];
+    if (trigger.sourceAssetId != null) {
+        const asset = scripts.find((s) => s.id === trigger.sourceAssetId);
+        parts.push(asset ? asset.slug : `asset #${trigger.sourceAssetId}`);
+    }
+    if (trigger.sourceTriggerId != null) {
+        const source = triggers.find((t) => t.id === trigger.sourceTriggerId);
+        parts.push(source ? `trigger "${source.name}"` : `trigger #${trigger.sourceTriggerId}`);
+    }
+    return parts.length ? `from ${parts.join(' + ')}` : null;
 }
 
 function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: string | null; role?: string }) {
@@ -950,7 +998,12 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                             trigger.kind === 'cron'
                                                 ? `cron ${trigger.schedule}`
                                                 : trigger.eventTopic,
+                                            describeFilters(trigger, scriptAssets, triggers),
                                             trigger.action,
+                                            Array.isArray(trigger.actionParams?.requiredOutputs)
+                                                && trigger.actionParams.requiredOutputs.length
+                                                ? `${trigger.actionParams.requiredOutputs.length} required output(s)`
+                                                : null,
                                             trigger.lastRun ? `last ${whenLabel(trigger.lastRun)}` : 'never ran',
                                             trigger.lastOutcome || null
                                         ].filter(Boolean).join(' · ')}
@@ -1038,6 +1091,44 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                     </select>
                                 </label>
                             )}
+                        {editor.draft.kind === 'event' && (
+                            <>
+                                <label className="field">
+                                    <span className="hint">Only jobs from script (upstream stage, optional)</span>
+                                    <select
+                                        className="select"
+                                        value={editor.draft.sourceAssetId}
+                                        onChange={(e) => setEditor({
+                                            ...editor, draft: { ...editor.draft, sourceAssetId: e.target.value }
+                                        })}
+                                    >
+                                        <option value="">Any job in the project</option>
+                                        {scriptAssets.map((asset) => (
+                                            <option key={asset.id} value={asset.id}>
+                                                {asset.name} ({asset.slug})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="field">
+                                    <span className="hint">Only jobs started by trigger (optional)</span>
+                                    <select
+                                        className="select"
+                                        value={editor.draft.sourceTriggerId}
+                                        onChange={(e) => setEditor({
+                                            ...editor, draft: { ...editor.draft, sourceTriggerId: e.target.value }
+                                        })}
+                                    >
+                                        <option value="">Any trigger or manual run</option>
+                                        {triggers
+                                            .filter((t) => editor.mode !== 'edit' || t.id !== editor.id)
+                                            .map((t) => (
+                                                <option key={t.id} value={t.id}>{t.name}</option>
+                                            ))}
+                                    </select>
+                                </label>
+                            </>
+                        )}
                         <label className="field">
                             <span className="hint">Action</span>
                             <select
@@ -1083,6 +1174,20 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                         })}
                                     />
                                     <span>Background job (records provenance, can chain)</span>
+                                </label>
+                                <label className="field">
+                                    <span className="hint">
+                                        Required outputs (optional JSON; exit 0 without them settles FAILED)
+                                    </span>
+                                    <textarea
+                                        className="input"
+                                        rows={3}
+                                        value={editor.draft.requiredOutputs}
+                                        onChange={(e) => setEditor({
+                                            ...editor, draft: { ...editor.draft, requiredOutputs: e.target.value }
+                                        })}
+                                        placeholder={'[{ "path": "pipeline/manifest_{utc_date}.json", "type": "json", "minBytes": 2 }]'}
+                                    />
                                 </label>
                             </>
                         )}

@@ -60,6 +60,28 @@ const {
     auditProjectSetup,
     formatSetupAuditText
 } = require('../utils/projectSetupContract');
+const {
+    OUTPUT_CONTRACT_FAILED,
+    normalizeFrozenContract,
+    evaluateOutputContract,
+    summarizeContractFailure,
+    parseStoredJson
+} = require('../utils/outputContract');
+
+/**
+ * Stable machine reasons behind a terminal job status (observatory_jobs.
+ * errorCode). Status alone cannot tell "exit 3" from "exit 0 but the
+ * declared outputs are missing"; this can.
+ */
+const JOB_ERROR_CODES = Object.freeze({
+    EXIT_NONZERO: 'EXIT_NONZERO',
+    TIMED_OUT: 'TIMED_OUT',
+    CANCELLED: 'CANCELLED',
+    OUTPUT_CONTRACT_FAILED,
+    RUN_ERROR: 'RUN_ERROR',
+    QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
+    PROJECT_DELETED: 'PROJECT_DELETED'
+});
 
 /** How long a live owner has to observe cancelRequested after a stale reap. */
 const STOP_ACK_MS = 1500;
@@ -1449,6 +1471,8 @@ class ObservatoryService {
             let line = `#${job.id} [${job.status}] ${job.language} · `
                 + `${job.segments} seg, ${job.resumeCount} resume(s)`
                 + `${job.exitCode != null ? ` · exit ${job.exitCode}` : ''}`
+                + `${job.errorCode && job.errorCode !== 'EXIT_NONZERO' ? ` · ${job.errorCode}` : ''}`
+                + `${job.parentJobId ? ` · parent #${job.parentJobId}` : ''}`
                 + `${job.renderPath ? ' · video' : ''}`
                 + `${job.error ? ` · ${clip(job.error, 120)}` : ''}`
                 + `${job.checkpointAt ? ` · ckpt ${job.checkpointAt}` : ''}`;
@@ -1585,6 +1609,12 @@ class ObservatoryService {
              WHERE projectId = @projectId ORDER BY id DESC LIMIT 50`,
             { projectId: row.id }
         );
+        const triggers = await db.all(
+            `SELECT id, name, kind, eventTopic, action, actionAssetId, actionParams,
+                    sourceAssetId, sourceTriggerId, isEnabled
+             FROM project_triggers WHERE projectId = @projectId ORDER BY id ASC`,
+            { projectId: row.id }
+        );
 
         const audited = auditProjectSetup({
             rootNames,
@@ -1592,7 +1622,9 @@ class ObservatoryService {
             hasRootFrames,
             runCheckpointCount,
             jobs,
-            scripts
+            scripts,
+            triggers,
+            assetIds: assets.map(a => a.id)
         });
         return {
             ok: audited.ok,
@@ -2135,17 +2167,17 @@ class ObservatoryService {
      */
     async _insertRunningJob({
         projectId, userId, language, code, assetVersionId, startedBy,
-        triggerId, executionAttemptId, leaseToken
+        triggerId, executionAttemptId, leaseToken, parentJobId = null, outputContract = null
     }) {
         try {
             return await db.get(
                 `INSERT INTO observatory_jobs
                     (projectId, userId, language, code, lastHeartbeatAt, runnerId,
                      assetVersionId, startedBy, triggerId, executionAttemptId,
-                     leaseToken, cancelRequested, legacyWorkspace)
+                     leaseToken, cancelRequested, legacyWorkspace, parentJobId, outputContractJson)
                  VALUES (@projectId, @userId, @language, @code, datetime('now'), @runnerId,
                          @assetVersionId, @startedBy, @triggerId, @executionAttemptId,
-                         @leaseToken, 0, 0)
+                         @leaseToken, 0, 0, @parentJobId, @outputContractJson)
                  RETURNING id`,
                 {
                     projectId,
@@ -2157,7 +2189,9 @@ class ObservatoryService {
                     startedBy: startedBy || null,
                     triggerId: triggerId == null ? null : Number(triggerId),
                     executionAttemptId: executionAttemptId || null,
-                    leaseToken
+                    leaseToken,
+                    parentJobId: parentJobId == null ? null : Number(parentJobId),
+                    outputContractJson: outputContract ? JSON.stringify(outputContract) : null
                 }
             );
         } catch (error) {
@@ -2193,15 +2227,22 @@ class ObservatoryService {
      *   job executed (NULL for ad-hoc inline code).
      * @param {string|null} [params.startedBy] - 'chat' | 'portal' | 'trigger' | 'resume'
      * @param {number|null} [params.triggerId] - project_triggers.id when startedBy='trigger'
+     * @param {number|null} [params.parentJobId] - the settled job whose event trigger
+     *   started this one (must belong to the same project); NULL for root jobs
+     * @param {object|null} [params.outputContract] - a resolved output contract
+     *   (utils/outputContract.js resolveOutputContract) frozen onto the job; an
+     *   exit-0 run only settles COMPLETED when every declared output validates
      */
     async run({
         userId, project, language, code, stdin = '', background = false, client = null, signal = null,
         assetVersionId = null, startedBy = null, triggerId = null, owner = null,
-        executionAttemptId = null
+        executionAttemptId = null, parentJobId = null, outputContract = null
     }) {
         await this._requireEnabled();
         const row = await this._requireProject(userId, project, owner);
         this._checkQuota(row.dir);
+        const frozenContract = this._legalizeOutputContract(outputContract);
+        const parentId = await this._legalizeParentJob(parentJobId, row.id);
 
         if (!background) {
             const langKey = this.sandbox._normalizeLanguage(language);
@@ -2222,7 +2263,9 @@ class ObservatoryService {
                 startedBy: startedBy || 'foreground',
                 triggerId,
                 executionAttemptId,
-                leaseToken
+                leaseToken,
+                parentJobId: parentId,
+                outputContract: frozenContract
             });
             const handle = await this._registerJobHandle(job.id, leaseToken);
             try {
@@ -2240,28 +2283,46 @@ class ObservatoryService {
                 if (result.aborted || handle.controller.signal.aborted) {
                     await this._finishJob(job.id, 'CANCELLED', {
                         exitCode: result.exitCode,
-                        error: 'Cancelled'
+                        error: 'Cancelled',
+                        errorCode: JOB_ERROR_CODES.CANCELLED
                     }, leaseToken, { silent: true });
                     await this._touchProject(row.id);
                     return { mode: 'foreground', project: row.slug, result };
                 }
-                const status = result.ok
-                    ? 'COMPLETED'
-                    : (result.timedOut ? 'TIMED_OUT' : 'FAILED');
-                await this._finishJob(job.id, status, {
+                // Exit 0 is necessary, not sufficient: the frozen output
+                // contract decides whether the run counts as COMPLETED.
+                const verdict = this._settleVerdict(result, frozenContract, row.dir);
+                await this._finishJob(job.id, verdict.status, {
                     exitCode: result.exitCode,
-                    error: result.ok ? null : (result.stderr || result.error || null)
+                    error: verdict.error,
+                    errorCode: verdict.errorCode,
+                    contractResult: verdict.contractResult
                 }, leaseToken, { silent: true });
                 await this._touchProject(row.id);
                 await this._refreshDashboard(userId, row.slug, row.ownerId);
-                return { mode: 'foreground', project: row.slug, result };
+                return {
+                    mode: 'foreground',
+                    project: row.slug,
+                    jobId: job.id,
+                    result: verdict.contractResult
+                        ? {
+                            ...result,
+                            ok: verdict.status === 'COMPLETED',
+                            errorCode: verdict.errorCode,
+                            outputContract: verdict.contractResult
+                        }
+                        : result
+                };
             } catch (error) {
                 if (await this._ownsLease(job.id, leaseToken)) {
                     const cancelled = handle.controller.signal.aborted || error.code === 'ABORTED';
                     await this._finishJob(
                         job.id,
                         cancelled ? 'CANCELLED' : 'FAILED',
-                        { error: error.message },
+                        {
+                            error: error.message,
+                            errorCode: cancelled ? JOB_ERROR_CODES.CANCELLED : JOB_ERROR_CODES.RUN_ERROR
+                        },
                         leaseToken,
                         { silent: true }
                     );
@@ -2312,7 +2373,9 @@ class ObservatoryService {
             startedBy: startedBy || null,
             triggerId,
             executionAttemptId,
-            leaseToken
+            leaseToken,
+            parentJobId: parentId,
+            outputContract: frozenContract
         });
         this._ensureRunDir(row.dir, job.id);
         await this._touchProject(row.id);
@@ -2325,6 +2388,87 @@ class ObservatoryService {
             status: 'RUNNING',
             maxResumes: this.config.maxResumes
         };
+    }
+
+    /** Accept a resolved contract for a new job, or refuse it with BAD_OUTPUT_CONTRACT. */
+    _legalizeOutputContract(outputContract) {
+        if (outputContract === null || outputContract === undefined) return null;
+        try {
+            return normalizeFrozenContract(outputContract);
+        } catch (error) {
+            throw new ObservatoryError(400, 'BAD_OUTPUT_CONTRACT', error.message);
+        }
+    }
+
+    /**
+     * A child job may only descend from a job in the same project. The
+     * parent must exist and be settled-or-running here, never elsewhere.
+     */
+    async _legalizeParentJob(parentJobId, projectId) {
+        if (parentJobId === null || parentJobId === undefined || parentJobId === '') return null;
+        const id = Number(parentJobId);
+        if (!Number.isInteger(id) || id <= 0) {
+            throw new ObservatoryError(400, 'BAD_PARENT_JOB', 'parentJobId must be a job id.');
+        }
+        const parent = await db.get(
+            'SELECT id, projectId FROM observatory_jobs WHERE id = @id',
+            { id }
+        );
+        if (!parent || Number(parent.projectId) !== Number(projectId)) {
+            throw new ObservatoryError(400, 'BAD_PARENT_JOB',
+                `Parent job #${id} does not belong to this project.`);
+        }
+        return id;
+    }
+
+    /**
+     * Turn a sandbox result plus the job's frozen contract into the terminal
+     * status. Runs the contract only when execution itself succeeded, so an
+     * exit-3 job is reported as an execution failure, not a missing output.
+     * @returns {{ status: string, error: string|null, errorCode: string|null, contractResult: object|null }}
+     */
+    _settleVerdict(result, frozenContract, workspaceDir) {
+        if (result.ok) {
+            if (!frozenContract) {
+                return { status: 'COMPLETED', error: null, errorCode: null, contractResult: null };
+            }
+            const contractResult = evaluateOutputContract(frozenContract, { workspaceDir });
+            if (contractResult.ok) {
+                return { status: 'COMPLETED', error: null, errorCode: null, contractResult };
+            }
+            return {
+                status: 'FAILED',
+                error: summarizeContractFailure(contractResult),
+                errorCode: JOB_ERROR_CODES.OUTPUT_CONTRACT_FAILED,
+                contractResult
+            };
+        }
+        if (result.timedOut) {
+            return {
+                status: 'TIMED_OUT',
+                error: result.stderr || result.error || 'The run hit the time limit.',
+                errorCode: JOB_ERROR_CODES.TIMED_OUT,
+                contractResult: null
+            };
+        }
+        return {
+            status: 'FAILED',
+            error: result.stderr || result.error || null,
+            errorCode: JOB_ERROR_CODES.EXIT_NONZERO,
+            contractResult: null
+        };
+    }
+
+    /**
+     * The job's frozen contract, parsed. NULL when none was declared; a
+     * declared-but-unreadable contract throws so the job cannot pass by
+     * accident.
+     */
+    _frozenContractOf(job) {
+        if (!job?.outputContractJson) return null;
+        const stored = parseStoredJson(job.outputContractJson);
+        if (!stored) throw new Error('stored output contract is unreadable');
+        return normalizeFrozenContract(stored);
     }
 
     async _touchLease(jobId, leaseToken) {
@@ -2449,14 +2593,29 @@ class ObservatoryService {
      * Mark a job terminal. Requires the attempt's lease token so a
      * recovered stalled worker cannot finish a job another process stole.
      */
-    async _finishJob(jobId, status, { exitCode = null, error = null } = {}, leaseToken = null, { silent = false } = {}) {
+    async _finishJob(
+        jobId,
+        status,
+        { exitCode = null, error = null, errorCode = null, contractResult = null } = {},
+        leaseToken = null,
+        { silent = false } = {}
+    ) {
         if (!leaseToken) return false;
         const finished = (await db.run(
             `UPDATE observatory_jobs
-             SET status = @status, exitCode = @exitCode, error = @error,
+             SET status = @status, exitCode = @exitCode, error = @error, errorCode = @errorCode,
+                 outputContractResultJson = @contractResultJson,
                  finishedAt = datetime('now'), lastHeartbeatAt = datetime('now')
              WHERE id = @jobId AND status = 'RUNNING' AND leaseToken = @leaseToken`,
-            { jobId, status, exitCode, error, leaseToken }
+            {
+                jobId,
+                status,
+                exitCode,
+                error,
+                errorCode: status === 'COMPLETED' ? null : (errorCode || null),
+                contractResultJson: contractResult ? JSON.stringify(contractResult) : null,
+                leaseToken
+            }
         )).changes > 0;
         if (finished && !silent) await this._publishJobEvent(jobId, status);
         return finished;
@@ -2521,7 +2680,7 @@ class ObservatoryService {
             const job = await db.get('SELECT * FROM observatory_jobs WHERE id = @jobId', { jobId });
             if (!job || job.status !== 'RUNNING' || job.leaseToken !== leaseToken) return;
             if (Number(job.cancelRequested) === 1) {
-                await this._finishJob(jobId, 'CANCELLED', {}, leaseToken);
+                await this._finishJob(jobId, 'CANCELLED', { errorCode: JOB_ERROR_CODES.CANCELLED }, leaseToken);
                 return;
             }
             const projectRow = await db.get(
@@ -2529,7 +2688,10 @@ class ObservatoryService {
                 { projectId: job.projectId }
             );
             if (!projectRow) {
-                await this._finishJob(jobId, 'FAILED', { error: 'The project was deleted mid-job.' }, leaseToken);
+                await this._finishJob(jobId, 'FAILED', {
+                    error: 'The project was deleted mid-job.',
+                    errorCode: JOB_ERROR_CODES.PROJECT_DELETED
+                }, leaseToken);
                 return;
             }
             const dir = this._projectDir(projectRow.userId, projectRow.slug);
@@ -2538,7 +2700,10 @@ class ObservatoryService {
             try {
                 this._checkQuota(dir);
             } catch (error) {
-                await this._finishJob(jobId, 'FAILED', { error: error.message }, leaseToken);
+                await this._finishJob(jobId, 'FAILED', {
+                    error: error.message,
+                    errorCode: JOB_ERROR_CODES.QUOTA_EXCEEDED
+                }, leaseToken);
                 break;
             }
 
@@ -2552,7 +2717,10 @@ class ObservatoryService {
                 await this._finishJob(
                     jobId,
                     cancelled ? 'CANCELLED' : 'FAILED',
-                    { error: error.message },
+                    {
+                        error: error.message,
+                        errorCode: cancelled ? JOB_ERROR_CODES.CANCELLED : JOB_ERROR_CODES.RUN_ERROR
+                    },
                     leaseToken
                 );
                 break;
@@ -2582,12 +2750,37 @@ class ObservatoryService {
                     { jobId }
                 );
                 if (Number(latest?.cancelRequested) === 1 || result.aborted || controller.signal.aborted) {
-                    await this._finishJob(jobId, 'CANCELLED', { exitCode: result.exitCode }, leaseToken);
+                    await this._finishJob(jobId, 'CANCELLED', {
+                        exitCode: result.exitCode,
+                        errorCode: JOB_ERROR_CODES.CANCELLED
+                    }, leaseToken);
                 }
                 break;
             }
             if (result.ok) {
-                await this._finishJob(jobId, 'COMPLETED', { exitCode: 0 }, leaseToken);
+                // Settlement order: execution succeeded → evaluate the frozen
+                // contract → only then flip the status (which publishes the
+                // domain event and lets project triggers see the job). A
+                // contract failure is FAILED/OUTPUT_CONTRACT_FAILED, so
+                // job_completed never fires for it.
+                let frozen;
+                try {
+                    frozen = this._frozenContractOf(job);
+                } catch (error) {
+                    await this._finishJob(jobId, 'FAILED', {
+                        exitCode: 0,
+                        error: `output contract failed — ${error.message}`,
+                        errorCode: JOB_ERROR_CODES.OUTPUT_CONTRACT_FAILED
+                    }, leaseToken);
+                    break;
+                }
+                const verdict = this._settleVerdict(result, frozen, dir);
+                await this._finishJob(jobId, verdict.status, {
+                    exitCode: 0,
+                    error: verdict.error,
+                    errorCode: verdict.errorCode,
+                    contractResult: verdict.contractResult
+                }, leaseToken);
                 break;
             }
             if (result.timedOut) {
@@ -2604,6 +2797,7 @@ class ObservatoryService {
                 }
                 await this._finishJob(jobId, 'TIMED_OUT', {
                     exitCode: result.exitCode,
+                    errorCode: JOB_ERROR_CODES.TIMED_OUT,
                     error: progressed
                         ? `Out of resume budget (${this.config.maxResumes}).`
                         : 'The run hit the time limit without writing a new checkpoint.json, so it cannot be resumed.'
@@ -2612,6 +2806,7 @@ class ObservatoryService {
             }
             await this._finishJob(jobId, 'FAILED', {
                 exitCode: result.exitCode,
+                errorCode: JOB_ERROR_CODES.EXIT_NONZERO,
                 error: `The code exited with code ${result.exitCode}${result.signal ? ` (signal ${result.signal})` : ''}.`
             }, leaseToken);
             break;
@@ -2769,13 +2964,15 @@ class ObservatoryService {
             channelId = await gateway.resolveDmChannelId(job.userId);
         } catch { /* gateway unreachable - the job record stays the status surface */ }
         if (!channelId) return; // DMs closed - the portal/status action still has the record
-        const outcome = {
-            COMPLETED: 'finished successfully',
-            FAILED: 'failed',
-            TIMED_OUT: 'stopped at its time/resume budget',
-            CANCELLED: 'was cancelled',
-            INTERRUPTED: 'was interrupted by a restart'
-        }[job.status] || job.status;
+        const outcome = job.errorCode === JOB_ERROR_CODES.OUTPUT_CONTRACT_FAILED
+            ? 'exited 0 but failed its output contract'
+            : {
+                COMPLETED: 'finished successfully',
+                FAILED: 'failed',
+                TIMED_OUT: 'stopped at its time/resume budget',
+                CANCELLED: 'was cancelled',
+                INTERRUPTED: 'was interrupted by a restart'
+            }[job.status] || job.status;
         const note = (`Observatory job #${job.id} in project "${job.projectName}" ${outcome} `
             + `after ${job.segments} segment(s) (${job.resumeCount} checkpoint resume(s)).`
             + `${job.renderPath ? ' A rendered video is waiting in the project workspace.' : ''}`
@@ -2796,8 +2993,10 @@ class ObservatoryService {
         const job = await db.get(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.stdoutTail, j.stderrTail, j.checkpointAt, j.renderPath, j.error,
-                    j.createdAt, j.finishedAt, j.lastHeartbeatAt, j.userId AS actorId,
+                    j.errorCode, j.createdAt, j.finishedAt, j.lastHeartbeatAt, j.userId AS actorId,
                     j.leaseToken, j.cancelRequested, j.legacyWorkspace,
+                    j.startedBy, j.triggerId, j.assetVersionId, j.parentJobId,
+                    j.outputContractJson, j.outputContractResultJson,
                     p.slug AS project, p.name AS projectName, p.userId AS ownerId
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
              WHERE j.id = @jobId`,
@@ -2816,7 +3015,12 @@ class ObservatoryService {
             }
             throw error;
         }
-        return job;
+        const { outputContractJson, outputContractResultJson, ...rest } = job;
+        return {
+            ...rest,
+            outputContract: parseStoredJson(outputContractJson),
+            outputContractResult: parseStoredJson(outputContractResultJson)
+        };
     }
 
     /**
@@ -2831,7 +3035,8 @@ class ObservatoryService {
         if (projectRow) {
             return await db.all(
                 `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
-                        j.checkpointAt, j.renderPath, j.error, j.createdAt, j.finishedAt,
+                        j.checkpointAt, j.renderPath, j.error, j.errorCode, j.parentJobId,
+                        j.createdAt, j.finishedAt,
                         j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
                         ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
                  FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
@@ -2842,7 +3047,8 @@ class ObservatoryService {
         }
         return await db.all(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
-                    j.checkpointAt, j.renderPath, j.error, j.createdAt, j.finishedAt,
+                    j.checkpointAt, j.renderPath, j.error, j.errorCode, j.parentJobId,
+                    j.createdAt, j.finishedAt,
                     j.lastHeartbeatAt, j.userId AS actorId, p.slug AS project
                     ${includeTails ? ', j.stdoutTail, j.stderrTail' : ''}
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
@@ -2914,7 +3120,8 @@ class ObservatoryService {
         const leaseToken = makeLeaseToken();
         const claimed = (await db.run(
             `UPDATE observatory_jobs
-             SET status = 'RUNNING', error = NULL, finishedAt = NULL,
+             SET status = 'RUNNING', error = NULL, errorCode = NULL,
+                 outputContractResultJson = NULL, finishedAt = NULL,
                  lastHeartbeatAt = datetime('now'), startedBy = 'resume',
                  runnerId = @runnerId, leaseToken = @leaseToken, cancelRequested = 0
                  ${job.status === 'TIMED_OUT' ? ', resumeCount = resumeCount + 1' : ''}
@@ -3474,6 +3681,7 @@ module.exports.WORKSHOP_SLUG = WORKSHOP_SLUG;
 module.exports.WORKSHOP_NAME = WORKSHOP_NAME;
 module.exports.legalizeWorkspacePath = legalizeWorkspacePath;
 module.exports.normalizeWorkspaceRelPath = normalizeWorkspaceRelPath;
+module.exports.JOB_ERROR_CODES = JOB_ERROR_CODES;
 module.exports.MANIFEST_MAX_ASSETS = MANIFEST_MAX_ASSETS;
 module.exports.MANIFEST_MAX_TRIGGERS = MANIFEST_MAX_TRIGGERS;
 module.exports.MANIFEST_MAX_FILES = MANIFEST_MAX_FILES;

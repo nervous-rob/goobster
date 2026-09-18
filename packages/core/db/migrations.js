@@ -148,6 +148,15 @@ const COLUMN_MIGRATIONS = [
     ['sandbox_requests', 'claimedAt', 'claimedAt TEXT'],
     // Live Study progress snapshot (thoughts / tools / draft) for reconnect.
     ['web_live_turns', 'progressJson', 'progressJson TEXT'],
+    // Observatory pipelines: explicit event parentage, frozen output
+    // contracts + verdicts, and a stable failure reason on jobs; event
+    // source filters on triggers. Existing rows stay NULL (legacy behaviour).
+    ['observatory_jobs', 'parentJobId', 'parentJobId INTEGER'],
+    ['observatory_jobs', 'outputContractJson', 'outputContractJson TEXT'],
+    ['observatory_jobs', 'outputContractResultJson', 'outputContractResultJson TEXT'],
+    ['observatory_jobs', 'errorCode', 'errorCode TEXT'],
+    ['project_triggers', 'sourceAssetId', 'sourceAssetId INTEGER'],
+    ['project_triggers', 'sourceTriggerId', 'sourceTriggerId INTEGER'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

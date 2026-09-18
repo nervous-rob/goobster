@@ -142,6 +142,80 @@ function scanCheckpointUsage(source) {
     return { usesRunDir, usesProjectCheckpoint };
 }
 
+function parseParams(raw) {
+    if (raw && typeof raw === 'object') return raw;
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+/**
+ * Trigger-level findings: dangling event source filters, malformed
+ * output contracts, and (informational) unfiltered run_script fan-out.
+ * Never infers a pipeline from filenames — it only checks what the
+ * trigger rows declare. Never throws: a broken row is a finding.
+ * @param {Array<object>} triggers
+ * @param {{ assetIds: Set<number>, triggerIds: Set<number> }} refs
+ * @returns {Array<{ code: string, severity: string, message: string, triggerId?: number }>}
+ */
+function auditTriggers(triggers, { assetIds, triggerIds }) {
+    const findings = [];
+    for (const trigger of triggers) {
+        if (!trigger || typeof trigger !== 'object') continue;
+        const label = `Trigger "${trigger.name || trigger.id}"`;
+        const isEvent = trigger.kind === 'event';
+        if (isEvent && trigger.sourceAssetId != null && !assetIds.has(Number(trigger.sourceAssetId))) {
+            findings.push({
+                code: 'trigger_source_asset_missing',
+                severity: 'warn',
+                triggerId: trigger.id,
+                message: `${label} filters on script asset #${trigger.sourceAssetId}, which no longer exists — `
+                    + 'it can never fire. Point it at the current stage script or clear the filter.'
+            });
+        }
+        if (isEvent && trigger.sourceTriggerId != null && !triggerIds.has(Number(trigger.sourceTriggerId))) {
+            findings.push({
+                code: 'trigger_source_trigger_missing',
+                severity: 'warn',
+                triggerId: trigger.id,
+                message: `${label} filters on trigger #${trigger.sourceTriggerId}, which no longer exists — `
+                    + 'it can never fire. Point it at the upstream trigger or clear the filter.'
+            });
+        }
+        if (trigger.action === 'run_script') {
+            const params = parseParams(trigger.actionParams);
+            if (params.requiredOutputs !== undefined && params.requiredOutputs !== null) {
+                try {
+                    require('./outputContract').normalizeRequiredOutputs(params.requiredOutputs);
+                } catch (error) {
+                    findings.push({
+                        code: 'trigger_output_contract_invalid',
+                        severity: 'warn',
+                        triggerId: trigger.id,
+                        message: `${label} declares an invalid output contract: ${error.message}`
+                    });
+                }
+            }
+            if (isEvent && trigger.eventTopic === 'job_completed'
+                && trigger.sourceAssetId == null && trigger.sourceTriggerId == null) {
+                findings.push({
+                    code: 'trigger_unfiltered_fanout',
+                    severity: 'info',
+                    triggerId: trigger.id,
+                    message: `${label} runs a script on every job_completed in the project. `
+                        + 'For a multi-stage pipeline, filter it to the upstream stage '
+                        + '(sourceAsset / sourceTrigger) so unrelated jobs do not fan out.'
+                });
+            }
+        }
+    }
+    return findings;
+}
+
 /**
  * Pure setup-contract auditor. Recomputes findings from disk + job/asset
  * metadata — no durable finding rows.
@@ -152,7 +226,11 @@ function scanCheckpointUsage(source) {
  *   hasRootFrames?: boolean,
  *   runCheckpointCount?: number,
  *   jobs?: Array<{ id?: number, legacyWorkspace?: number|boolean }>,
- *   scripts?: Array<{ slug: string, source?: string }>
+ *   scripts?: Array<{ slug: string, source?: string }>,
+ *   triggers?: Array<{ id: number, name: string, kind: string, eventTopic?: string|null,
+ *     action: string, actionAssetId?: number|null, actionParams?: string|object|null,
+ *     sourceAssetId?: number|null, sourceTriggerId?: number|null }>,
+ *   assetIds?: number[]
  * }} input
  * @returns {{ ok: boolean, findings: Array<{ code: string, severity: string, message: string }> }}
  */
@@ -168,6 +246,9 @@ function auditProjectSetup(input = {}) {
     const runCheckpointCount = Number(input.runCheckpointCount) || 0;
     const jobs = Array.isArray(input.jobs) ? input.jobs : [];
     const scripts = Array.isArray(input.scripts) ? input.scripts : [];
+    const triggers = Array.isArray(input.triggers) ? input.triggers : [];
+    const assetIds = new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map(Number));
+    const triggerIds = new Set(triggers.map(t => Number(t.id)));
     const legacyJobs = jobs.filter(j => Number(j.legacyWorkspace));
 
     if (hasRootCheckpoint) {
@@ -214,6 +295,7 @@ function auditProjectSetup(input = {}) {
             });
         }
     }
+    for (const finding of auditTriggers(triggers, { assetIds, triggerIds })) findings.push(finding);
     if (runCheckpointCount > 0 && !hasRootCheckpoint) {
         findings.push({
             code: 'run_dir_checkpoints_ok',
@@ -272,6 +354,7 @@ module.exports = {
     backgroundJobHint,
     layoutReminder,
     scanCheckpointUsage,
+    auditTriggers,
     auditProjectSetup,
     formatSetupAuditText
 };

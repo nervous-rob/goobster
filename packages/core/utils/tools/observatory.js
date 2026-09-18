@@ -24,6 +24,39 @@ const {
     createProjectResponse,
     backgroundJobHint
 } = require('../projectSetupContract');
+const { OUTPUT_CONTRACT_FAILED } = require('../outputContract');
+
+/** " (from asset #3, trigger #7)" for an event trigger's source filters. */
+function describeTriggerFilters(trigger) {
+    const parts = [];
+    if (trigger?.sourceAssetId != null) parts.push(`asset #${trigger.sourceAssetId}`);
+    if (trigger?.sourceTriggerId != null) parts.push(`trigger #${trigger.sourceTriggerId}`);
+    return parts.length ? ` (from ${parts.join(', ')})` : '';
+}
+
+/**
+ * Suffix for a job's status badge so FAILED can be read at a glance:
+ * "[FAILED: output contract]" vs "[FAILED: exit 3]" vs "[TIMED_OUT]".
+ */
+function describeJobReason(job) {
+    if (!job?.errorCode || job.status === 'COMPLETED') return '';
+    if (job.errorCode === OUTPUT_CONTRACT_FAILED) return ': output contract';
+    if (job.errorCode === 'EXIT_NONZERO') return job.exitCode != null ? `: exit ${job.exitCode}` : '';
+    if (job.status === 'TIMED_OUT' || job.status === 'CANCELLED') return '';
+    return `: ${job.errorCode.toLowerCase().replace(/_/g, ' ')}`;
+}
+
+/** Compact per-check summary of a stored contract result (status action). */
+function describeContractResult(result) {
+    if (!result || !Array.isArray(result.checks) || result.checks.length === 0) return null;
+    const passed = result.checks.filter(c => c.ok).length;
+    const head = result.ok
+        ? `Output contract: ${passed}/${result.checks.length} required output(s) validated.`
+        : `Output contract: ${passed}/${result.checks.length} passed.`;
+    const failed = result.checks.filter(c => !c.ok).slice(0, 8)
+        .map(c => `  ✗ ${c.path} — ${String(c.reason || 'failed').replace(/_/g, ' ')}`);
+    return [head, ...failed].join('\n');
+}
 
 module.exports = {
     runCode: {
@@ -176,7 +209,11 @@ module.exports = {
                 + '(run a stored script asset, foreground or background, recording which version ran), '
                 + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
                 + 'job_completed/job_failed/job_settled events that run a script, render, fetch an '
-                + 'allowlisted URL, or fire an agent prompt), "invite_user" / "list_members" / '
+                + 'allowlisted URL, or fire an agent prompt. For multi-stage pipelines chain stages with '
+                + 'FILTERED event triggers — sourceAsset=<upstream script slug> and/or sourceTrigger=<upstream '
+                + 'trigger> — instead of staggered cron guesses, and declare requiredOutputs on run_script so a '
+                + 'job that exits 0 without writing its handoff files settles FAILED (OUTPUT_CONTRACT_FAILED) '
+                + 'and does not fire job_completed), "invite_user" / "list_members" / '
                 + '"remove_member" (collaborators; only the owner invites or removes others), '
                 + '"note_knowledge" (store a distilled note with optional tags/edges in the '
                 + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), '
@@ -234,6 +271,21 @@ module.exports = {
                     enabled: { type: 'boolean', description: 'set_trigger: whether the trigger is armed (default true)' },
                     allowSelfChain: { type: 'boolean', description: 'set_trigger: allow an event trigger to fire on a job it started (default false)' },
                     maxChainDepth: { type: 'integer', description: 'set_trigger: max event-trigger hops from one root job (default 3)' },
+                    sourceAsset: { type: 'string', description: 'set_trigger (kind=event): only fire for jobs that ran this script asset (slug or id) — the upstream pipeline stage. Empty string clears the filter.' },
+                    sourceTrigger: { type: 'string', description: 'set_trigger (kind=event): only fire for jobs started by this trigger (name or id). Empty string clears the filter.' },
+                    requiredOutputs: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                path: { type: 'string', description: 'Workspace-relative file the job must leave behind; {utc_date} = YYYY-MM-DD of the fire date' },
+                                type: { type: 'string', enum: ['file', 'json'], description: 'file = exists (default); json = must parse as JSON' },
+                                minBytes: { type: 'integer', description: 'Optional minimum size in bytes' }
+                            },
+                            required: ['path']
+                        },
+                        description: 'set_trigger run_script: declared outputs the job must produce to count as COMPLETED (exit 0 alone is not enough). Empty array clears.'
+                    },
                     missionAction: {
                         type: 'string',
                         enum: ['propose', 'get', 'update', 'add_step',
@@ -274,7 +326,8 @@ module.exports = {
         execute: async ({
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
-            allowSelfChain, maxChainDepth, owner, inviteeId, label, content, tags, query, related,
+            allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
+            owner, inviteeId, label, content, tags, query, related,
             relation, path: workspacePath, offset, limit, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
@@ -310,9 +363,10 @@ module.exports = {
                 for (const p of paths) interactionContext.generatedFiles.push(p);
             };
 
-            const jobLine = (job) => `#${job.id} [${job.status}] ${job.project} · ${job.language} · `
+            const jobLine = (job) => `#${job.id} [${job.status}${describeJobReason(job)}] ${job.project} · ${job.language} · `
                 + `${job.segments} segment(s), ${job.resumeCount} resume(s)`
                 + `${job.exitCode !== null && job.exitCode !== undefined ? ` · exit ${job.exitCode}` : ''}`
+                + `${job.parentJobId ? ` · parent #${job.parentJobId}` : ''}`
                 + `${job.renderPath ? ' · 🎬 video rendered' : ''}`
                 + `${job.error ? ` · ${job.error}` : ''}`;
 
@@ -480,6 +534,8 @@ module.exports = {
                                 `Started ${job.createdAt}${job.finishedAt ? `, finished ${job.finishedAt}` : `, last heartbeat ${job.lastHeartbeatAt}`}.`
                             ];
                             if (job.checkpointAt) parts.push(`Latest checkpoint: ${job.checkpointAt}.`);
+                            const contractLine = describeContractResult(job.outputContractResult);
+                            if (contractLine) parts.push(contractLine);
                             if (job.stdoutTail?.trim()) parts.push(`stdout tail:\n\`\`\`\n${job.stdoutTail}\n\`\`\``);
                             if (job.stderrTail?.trim() && job.status !== 'COMPLETED') {
                                 parts.push(`stderr tail:\n\`\`\`\n${job.stderrTail}\n\`\`\``);
@@ -627,6 +683,9 @@ module.exports = {
                                 + `For long work, rerun with background=true. ${backgroundJobHint()}.`);
                         } else if (result.ok) {
                             lines.push(`✅ Ran "${script.slug}" v${script.version} (${script.language}) in "${outcome.project}" (${result.durationMs} ms).`);
+                        } else if (result.errorCode === OUTPUT_CONTRACT_FAILED) {
+                            lines.push(`⚠️ "${script.slug}" v${script.version} exited 0 but failed its output contract: `
+                                + `${describeContractResult(result.outputContract) || 'declared outputs missing'}`);
                         } else {
                             lines.push(`⚠️ "${script.slug}" v${script.version} exited with code ${result.exitCode}`
                                 + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);
@@ -647,6 +706,12 @@ module.exports = {
                         if (prompt !== undefined) actionParams.prompt = prompt;
                         if (allowSelfChain !== undefined) actionParams.allowSelfChain = allowSelfChain;
                         if (maxChainDepth !== undefined) actionParams.maxChainDepth = maxChainDepth;
+                        if (requiredOutputs !== undefined) {
+                            // An empty array clears; the service normalizes the shape.
+                            actionParams.requiredOutputs = Array.isArray(requiredOutputs) && requiredOutputs.length === 0
+                                ? null
+                                : requiredOutputs;
+                        }
                         const saved = await projectTriggerService.set({
                             userId,
                             project,
@@ -655,6 +720,8 @@ module.exports = {
                             kind: triggerKind || undefined,
                             schedule,
                             eventTopic,
+                            sourceAsset,
+                            sourceTrigger,
                             action: triggerAction,
                             actionAsset: slug || undefined,
                             actionParams,
@@ -662,10 +729,13 @@ module.exports = {
                         });
                         const when = saved.kind === 'cron'
                             ? `cron \`${saved.schedule}\` (next ${saved.nextRun} UTC)`
-                            : `on ${saved.eventTopic}`;
+                            : `on ${saved.eventTopic}${describeTriggerFilters(saved)}`;
+                        const contract = saved.actionParams?.requiredOutputs?.length
+                            ? ` · requires ${saved.actionParams.requiredOutputs.map(o => o.path).join(', ')}`
+                            : '';
                         return `⏰ ${saved.isEnabled ? 'Armed' : 'Saved (paused)'} trigger "${saved.name}" in "${saved.project}": `
                             + `${when} → ${saved.action}`
-                            + `${saved.actionAssetId ? ` (asset #${saved.actionAssetId})` : ''}.`;
+                            + `${saved.actionAssetId ? ` (asset #${saved.actionAssetId})` : ''}${contract}.`;
                     }
                     case 'list_triggers': {
                         const triggers = await projectTriggerService.list({ userId, project, owner });
@@ -673,8 +743,9 @@ module.exports = {
                             return `⏰ No triggers in "${project}" yet — set one with set_trigger.`;
                         }
                         return `⏰ Triggers in "${project}":\n` + triggers.map(t =>
-                            `- ${t.isEnabled ? '🟢' : '⏸️'} "${t.name}" · ${t.kind === 'cron' ? `cron ${t.schedule}` : t.eventTopic}`
+                            `- ${t.isEnabled ? '🟢' : '⏸️'} "${t.name}" · ${t.kind === 'cron' ? `cron ${t.schedule}` : `${t.eventTopic}${describeTriggerFilters(t)}`}`
                             + ` → ${t.action}`
+                            + `${t.actionParams?.requiredOutputs?.length ? ` · ${t.actionParams.requiredOutputs.length} required output(s)` : ''}`
                             + `${t.lastRun ? ` · last ${t.lastRun}` : ''}`
                             + `${t.lastOutcome ? ` · ${t.lastOutcome}` : ''}`
                         ).join('\n');

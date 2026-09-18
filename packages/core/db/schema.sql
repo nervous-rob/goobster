@@ -1561,13 +1561,35 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     cancelRequested INTEGER NOT NULL DEFAULT 0 CHECK (cancelRequested IN (0, 1)),
     -- Only jobs that existed before per-run dirs may read project-root
     -- checkpoint.json / frames/. New inserts always store 0.
-    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1))
+    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1)),
+    -- Explicit event parentage (COLUMN_MIGRATIONS back-fills existing rows
+    -- with NULL): the settled job whose event trigger started this one.
+    -- Cron, chat, portal, and other root jobs are NULL. Chain-depth walks
+    -- this instead of guessing ancestry from timestamps.
+    parentJobId INTEGER,
+    -- Declared output contract frozen at insert (utils/outputContract.js):
+    -- { resolvedAt, variables, outputs: [{ path, type, minBytes? }] }.
+    -- NULL when the run declared nothing. Never re-read from the trigger.
+    outputContractJson TEXT,
+    -- Structured per-check verdict written at settlement:
+    -- { ok, checkedAt, checks: [{ path, type, ok, reason, sizeBytes }] }
+    outputContractResultJson TEXT,
+    -- Stable machine reason behind a terminal status: EXIT_NONZERO,
+    -- TIMED_OUT, CANCELLED, OUTPUT_CONTRACT_FAILED, RUN_ERROR,
+    -- QUOTA_EXCEEDED, PROJECT_DELETED. NULL for COMPLETED and legacy rows.
+    errorCode TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_execution_attempt
     ON observatory_jobs(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
+-- Event catch-up scans a project's settled jobs by finishedAt.
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project_finished
+    ON observatory_jobs(projectId, finishedAt);
+-- Parent traversal (chain depth) and "children of job N" lookups.
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_parent
+    ON observatory_jobs(parentJobId) WHERE parentJobId IS NOT NULL;
 -- One live execution per project. Duplicate RUNNING rows are parked as
 -- INTERRUPTED in repairObservatoryJobs before this index is created.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_observatory_jobs_one_active
@@ -1677,6 +1699,15 @@ CREATE TABLE IF NOT EXISTS project_triggers (
     -- more than maxChainDepth times per root job.
     -- Actor who created the row (userId stays the owner; fire uses owner).
     createdBy TEXT,
+    -- Event source filters (kind='event' only; COLUMN_MIGRATIONS back-fills
+    -- NULL = legacy project-wide behaviour). sourceAssetId: fire only when
+    -- the settled job executed a version of this script asset.
+    -- sourceTriggerId: fire only when the settled job was started by this
+    -- trigger. Both present = both must match. Deliberately no FK: a
+    -- deleted target leaves the trigger inert (the audit flags it) instead
+    -- of silently widening it back to project-wide.
+    sourceAssetId INTEGER,
+    sourceTriggerId INTEGER,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
