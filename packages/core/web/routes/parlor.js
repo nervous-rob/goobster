@@ -198,7 +198,7 @@ function mountParlor(app, ctx, h) {
     // keeps the caller's own session warm (requireAuth touches lastSeenAt).
     app.get('/api/app/friends', requireAuth, parlorRoute(async (req) => {
         const friends = await ctx.friends.listFriends(req.webUser.userId);
-        const online = await ctx.presence.onlineIds(friends.map(friend => friend.id));
+        const online = await ctx.presence.onlineIds(friends.map(friend => friend.id), { respectVisibility: true });
         return {
             friends: friends.map(friend => ({ ...friend, online: online.has(friend.id) })),
             syncedAt: await ctx.friends.lastSyncedAt(req.webUser.userId)

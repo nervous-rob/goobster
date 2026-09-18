@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import type { RetentionPreviewResponse, UserSettingsResponse } from '../../lib/types';
-import { useApplySectionResult } from '../../hooks/useUserSettings';
+import { diffKeys, useApplySectionResult, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { useToast } from '../../hooks/useToast';
 import { Modal } from '../../components/Modal';
-import { Field, SectionHeader } from './SectionFrame';
+import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { useForgetOpener } from '../../shell/AppShell';
 
@@ -27,14 +27,16 @@ const RETENTION_OPTIONS: Array<{ value: number | null; label: string }> = [
     { value: 365, label: 'After a year' }
 ];
 
+type PrivacyDraft = { defaultNewChatPrivacy: 'regular' | 'incognito' };
+
 /**
- * Memory & privacy has no Save bar on purpose: every control here is either
- * read-only or destructive, and destructive actions get their own flow with
- * a read-only preview, an explicit confirm, and a real result count.
+ * Retention, forget-me, export, and revoke stay on dedicated action flows.
+ * The one regular preference (new-chat privacy) uses the section Save bar.
  */
-export function MemorySection({ section, userId }: {
+export function MemorySection({ section, userId, onDirty }: {
     section: UserSettingsResponse['sections']['memory'];
     userId: string;
+    onDirty: (dirty: boolean) => void;
 }) {
     const toast = useToast();
     const queryClient = useQueryClient();
@@ -52,6 +54,13 @@ export function MemorySection({ section, userId }: {
     const [preview, setPreview] = useState<RetentionPreviewResponse | null>(null);
     const [busy, setBusy] = useState(false);
     const [pending, setPending] = useState<number | null>(current);
+    const toDraft = useCallback((v: UserSettingsResponse['sections']['memory']['values']): PrivacyDraft => ({
+        defaultNewChatPrivacy: v.defaultNewChatPrivacy === 'incognito' ? 'incognito' : 'regular'
+    }), []);
+    const toChanges = useCallback((draft: PrivacyDraft, baseline: PrivacyDraft) =>
+        diffKeys(draft as unknown as Record<string, unknown>, baseline as unknown as Record<string, unknown>), []);
+    const d = useSectionDraft('memory', section, toDraft, toChanges);
+    useReportDirty(onDirty, d.dirty);
 
     const report = useQuery({
         queryKey: keys.memory(scope, 'overview'),
@@ -99,6 +108,18 @@ export function MemorySection({ section, userId }: {
     return (
         <section className="settings-section" aria-labelledby="settings-memory-title">
             <SectionHeader id="memory" scope={SCOPE_FOR[section.scope]} appliesTo={section.appliesTo} />
+
+            <Field id="new-chat-privacy" label="Default new-chat privacy" scope="Your account"
+                hint="Applies to newly created Study chats only. Existing transcripts are never converted silently.">
+                <select id="new-chat-privacy-input" className="select" value={d.draft.defaultNewChatPrivacy}
+                    onChange={(e) => d.set({ defaultNewChatPrivacy: e.target.value as PrivacyDraft['defaultNewChatPrivacy'] })}>
+                    <option value="regular">Regular (saved)</option>
+                    <option value="incognito">Incognito (not saved)</option>
+                </select>
+            </Field>
+            <SaveBar section="memory" draft={d} describe={() => 'Default new-chat privacy'} />
+
+            <SharesAndExport busy={busy} setBusy={setBusy} />
 
             <Field id="retention" label="Auto-delete memories"
                 hint="Raw memories from your DMs and Study chats older than this window are deleted — immediately when you shorten it, then nightly. Distilled facts and chat transcripts are separate and are not affected. Servers set their own window with /privacy.">
@@ -159,5 +180,81 @@ export function MemorySection({ section, userId }: {
                 </Modal>
             )}
         </section>
+    );
+}
+
+function SharesAndExport({ busy, setBusy }: { busy: boolean; setBusy: (v: boolean) => void }) {
+    const toast = useToast();
+    const shares = useQuery({ queryKey: ['settings-shares'], queryFn: () => api.listSettingsShares() });
+    const applets = useQuery({ queryKey: ['settings-applets'], queryFn: () => api.listSettingsApplets() });
+
+    async function exportData() {
+        setBusy(true);
+        try {
+            const bundle = await api.exportSettings();
+            const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `goobster-export-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <>
+            <Field id="export" label="Export my data" scope="Your account"
+                hint="Downloads your current settings and transparency report. Secrets and session tokens are omitted.">
+                <button id="export-input" type="button" className="btn" disabled={busy} onClick={() => void exportData()}>
+                    Download export
+                </button>
+            </Field>
+
+            <Field id="shares" label="Shared links" scope="Your account"
+                hint="Active conversation and project links you created. Revoking kills the URL immediately.">
+                <div className="list-card" id="shares-input">
+                    {shares.isPending && <div className="list-row"><span className="hint">Loading…</span></div>}
+                    {shares.data && [...shares.data.conversations, ...shares.data.projects].length === 0 && (
+                        <div className="list-row"><span className="hint">No active shares.</span></div>
+                    )}
+                    {shares.data?.conversations.map((item) => (
+                        <div key={`c-${item.id}`} className="list-row">
+                            <span>Chat · {item.title}</span>
+                            <button type="button" className="btn subtle small" disabled={busy}
+                                onClick={() => void api.revokeSettingsShare('conversation', item.id).then(() => shares.refetch())}>Revoke</button>
+                        </div>
+                    ))}
+                    {shares.data?.projects.map((item) => (
+                        <div key={`p-${item.id}`} className="list-row">
+                            <span>Project · {item.title}</span>
+                            <button type="button" className="btn subtle small" disabled={busy}
+                                onClick={() => void api.revokeSettingsShare('project', item.id).then(() => shares.refetch())}>Revoke</button>
+                        </div>
+                    ))}
+                </div>
+            </Field>
+
+            <Field id="applets" label="Applet access" scope="Your account"
+                hint="Revoke Observatory grants on pinned Workshop applets. Only your own grants.">
+                <div className="list-card" id="applets-input">
+                    {applets.isPending && <div className="list-row"><span className="hint">Loading…</span></div>}
+                    {applets.data && applets.data.length === 0 && (
+                        <div className="list-row"><span className="hint">No pinned applets.</span></div>
+                    )}
+                    {applets.data?.map((item) => (
+                        <div key={item.id} className="list-row">
+                            <span>{item.title}{(item.grants?.observatoryRead || []).length ? ` · ${item.grants.observatoryRead?.length} grant(s)` : ''}</span>
+                            <button type="button" className="btn subtle small" disabled={busy}
+                                onClick={() => void api.revokeAppletGrants(item.id).then(() => applets.refetch())}>Revoke grants</button>
+                        </div>
+                    ))}
+                </div>
+            </Field>
+        </>
     );
 }

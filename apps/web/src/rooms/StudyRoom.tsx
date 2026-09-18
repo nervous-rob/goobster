@@ -17,6 +17,8 @@ import { useChatTurn, type LocalTurnMessage } from '../hooks/useChatTurn';
 import { useComposerAutosize } from '../hooks/useComposerAutosize';
 import { useVoiceChat } from '../hooks/useVoiceChat';
 import { useOpenSettings } from '../hooks/useOpenSettings';
+import { useUserSettings } from '../hooks/useUserSettings';
+import { getStoredMicId, getStoredVoiceVolume } from '../lib/appearance';
 import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
 
 const SUGGESTIONS = [
@@ -134,10 +136,26 @@ export function StudyRoom() {
     const composerRef = useRef<HTMLTextAreaElement>(null);
     useComposerAutosize(composerRef, composer);
     const speechRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
+    const settingsQ = useUserSettings();
+    const enterToSend = settingsQ.data?.sections.appearance.values.enterToSend !== false;
+    const defaultIncognito = settingsQ.data?.sections.memory.values.defaultNewChatPrivacy === 'incognito';
+    const autoReadReplies = Boolean(settingsQ.data?.sections.voice.values.autoReadReplies);
     const voiceChat = useVoiceChat({
         onUtterance: (text) => void sendMessage(text),
         onNotify: toast
     });
+    useEffect(() => {
+        const voice = settingsQ.data?.sections.voice.values;
+        if (!voice) return;
+        voiceChat.applyDefaults?.({
+            mode: voice.voiceSendMode,
+            muted: voice.startVoiceMuted,
+            speechPauseMs: voice.speechPauseMs,
+            engine: voice.voiceCaptureEngine,
+            micId: getStoredMicId(),
+            volume: getStoredVoiceVolume()
+        });
+    }, [settingsQ.data?.sections.voice.values, voiceChat]);
 
     const convs = useQuery({
         queryKey: keys.conversations,
@@ -401,6 +419,10 @@ export function StudyRoom() {
         goToConversation(null);
         setComposer('');
         chats.close();
+        if (defaultIncognito && !incognito) {
+            setIncognito(true);
+            toast('New chat starts incognito — this chat won’t be saved.');
+        }
     }
 
     function toggleIncognito() {
@@ -594,6 +616,12 @@ export function StudyRoom() {
                     if (voiceChat.isActive()) {
                         if (message.content && !message.isError) void voiceChat.speak(message.content);
                         else voiceChat.resume();
+                    } else if (autoReadReplies && message.content && !message.isError) {
+                        fetchSpeech(message.content).then(async (blob) => {
+                            const audio = new Audio(URL.createObjectURL(blob));
+                            audio.volume = getStoredVoiceVolume();
+                            await audio.play();
+                        }).catch(() => { /* autoplay blocked — leave the text reply */ });
                     }
                 },
                 onError: (error) => {
@@ -773,6 +801,7 @@ export function StudyRoom() {
                 <div className="chat-scroll" ref={logRef}>
                     <ChatTranscript
                         messages={display}
+                        expandDetails={Boolean(settingsQ.data?.sections.appearance.values.expandChatDetails)}
                         onNotify={toast}
                         requestGrant={confirm}
                         onSaveToProject={me.features?.observatory
@@ -895,11 +924,15 @@ export function StudyRoom() {
                             rows={1}
                             value={composer}
                             onChange={(e) => setComposer(e.target.value)}
-                            placeholder="Message Goobster… (Enter to send, Shift+Enter for a new line)"
+                            placeholder={enterToSend ? 'Message Goobster… (Enter to send, Shift+Enter for a new line)' : 'Message Goobster… (Enter for a new line, Ctrl/Cmd+Enter to send)'}
                             aria-label="Message Goobster"
                             maxLength={me.maxInputLength || undefined}
                             onKeyDown={(event) => {
-                                if (event.key === 'Enter' && !event.shiftKey) {
+                                if (event.nativeEvent.isComposing) return;
+                                const sendCombo = enterToSend
+                                    ? event.key === 'Enter' && !event.shiftKey
+                                    : event.key === 'Enter' && (event.metaKey || event.ctrlKey);
+                                if (sendCombo) {
                                     event.preventDefault();
                                     void sendMessage();
                                 }

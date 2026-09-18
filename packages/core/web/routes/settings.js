@@ -16,6 +16,55 @@ function mountSettings(app, ctx, h) {
             })
     ));
 
+    app.get('/api/app/settings/export', requireAuth, chatRoute(async (req) =>
+        userSettingsService.exportUserData({ userId: req.webUser.userId })
+    ));
+
+    app.get('/api/app/settings/account/sessions', requireAuth, chatRoute(async (req) =>
+        userSettingsService.listSessions({
+            userId: req.webUser.userId,
+            currentToken: req.webSessionToken
+        })
+    ));
+
+    app.delete('/api/app/settings/account/sessions/:id', requireAuth, chatRoute(async (req) =>
+        userSettingsService.revokeSession({
+            userId: req.webUser.userId,
+            sessionId: req.params.id,
+            currentToken: req.webSessionToken
+        })
+    ));
+
+    app.post('/api/app/settings/account/sessions/revoke-others', requireAuth, chatRoute(async (req) =>
+        userSettingsService.revokeOtherSessions({
+            userId: req.webUser.userId,
+            currentToken: req.webSessionToken
+        })
+    ));
+
+    app.get('/api/app/settings/shares', requireAuth, chatRoute(async (req) =>
+        userSettingsService.listOwnedShares({ userId: req.webUser.userId })
+    ));
+
+    app.delete('/api/app/settings/shares/:kind/:id', requireAuth, chatRoute(async (req) =>
+        userSettingsService.revokeOwnedShare({
+            userId: req.webUser.userId,
+            kind: req.params.kind,
+            id: req.params.id
+        })
+    ));
+
+    app.get('/api/app/settings/applets', requireAuth, chatRoute(async (req) =>
+        userSettingsService.listOwnedApplets({ userId: req.webUser.userId })
+    ));
+
+    app.post('/api/app/settings/applets/:id/revoke-grants', requireAuth, chatRoute(async (req) =>
+        userSettingsService.revokeAppletGrants({
+            userId: req.webUser.userId,
+            appletId: req.params.id
+        })
+    ));
+
     // Atomically validate and save a partial section draft with optimistic concurrency
     app.patch('/api/app/settings/:section', requireAuth, chatRoute(async (req) => {
         const body = req.body || {};

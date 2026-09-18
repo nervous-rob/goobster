@@ -291,6 +291,15 @@ export type UserSettingsResponse = {
             customInstructions: string | null;
             personalityDirective: string | null;
             memeMode: boolean;
+            accountPreferredName: string | null;
+            answerLength: 'concise' | 'balanced' | 'detailed';
+            tone: 'neutral' | 'warm' | 'direct' | 'playful';
+            humor: 'off' | 'light' | 'playful';
+            responseLanguage: string | null;
+            timezone: string | null;
+            measurementSystem: 'follow-locale' | 'metric' | 'imperial';
+            timeFormat: 'follow-locale' | '12' | '24';
+            dateLocale: string | null;
         }>;
         chat: SettingSection<{
             provider: string | null;
@@ -303,12 +312,24 @@ export type UserSettingsResponse = {
             voiceName: string | null;
             speed: number;
             accent: string | null;
+            voiceSendMode: 'auto' | 'manual';
+            voiceCaptureEngine: 'auto' | 'live' | 'batch';
+            speechPauseMs: number;
+            startVoiceMuted: boolean;
+            showCaptions: boolean;
+            autoReadReplies: boolean;
         }, {
             voiceId: string | null;
             voiceName: string | null;
             speed: number;
             accent: string | null;
             accentLabel: string | null;
+            voiceSendMode: 'auto' | 'manual';
+            voiceCaptureEngine: 'auto' | 'live' | 'batch';
+            speechPauseMs: number;
+            startVoiceMuted: boolean;
+            showCaptions: boolean;
+            autoReadReplies: boolean;
         }> & { accents?: Array<{ id: string; label: string }> };
         initiative: SettingSection<{
             enabled: boolean;
@@ -318,13 +339,28 @@ export type UserSettingsResponse = {
             quietStartMinute: number | null;
             quietEndMinute: number | null;
             boundaries: Record<string, { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean }>;
+            notifyInApp: boolean;
+            notifyMentionBanners: boolean;
+            notifyOutbound: boolean;
+            notifySounds: boolean;
+            presenceVisible: boolean;
+            defaultSnoozeHours: number;
+            quietHoursTzMode: 'utc' | 'local';
         }>;
         memory: SettingSection<{
             retentionDays: number | null;
+            defaultNewChatPrivacy: 'regular' | 'incognito';
         }>;
         appearance: SettingSection<{
             theme: 'light' | 'dark' | 'system';
             linkByTag: boolean;
+            textSize: 's' | 'm' | 'l';
+            reducedMotion: 'system' | 'on' | 'off';
+            density: 'comfortable' | 'compact';
+            enterToSend: boolean;
+            expandChatDetails: boolean;
+            startPage: 'home' | 'study' | 'noticed' | 'spitball' | 'parlor' | 'exchange' | 'conservatory';
+            preferredExchangeGuild: string | null;
         }>;
         connections: SettingSection<Record<string, { connected: boolean; verifiedAccount: string | null }>>;
         account: SettingSection<{

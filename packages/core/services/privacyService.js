@@ -154,6 +154,14 @@ class PrivacyService {
             'SELECT memeMode, personality_preset, custom_instructions FROM UserPreferences WHERE userId = @userId',
             { userId }
         );
+        const settingsRow = await db.get(
+            'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
+            { userId }
+        );
+        let settingsPreferences = null;
+        if (settingsRow?.preferencesJson) {
+            try { settingsPreferences = JSON.parse(settingsRow.preferencesJson); } catch { settingsPreferences = null; }
+        }
 
         const userRow = await db.get('SELECT id, joinedAt FROM users WHERE discordId = @userId', { userId });
         const conversations = userRow
@@ -358,6 +366,7 @@ class PrivacyService {
             shareLinks: shareLinks?.c || 0,
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
+            settingsPreferences,
             profile: userRow ? { joinedAt: userRow.joinedAt } : null,
             conversations: {
                 count: conversations?.conversationCount || 0,

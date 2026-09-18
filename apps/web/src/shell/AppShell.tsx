@@ -13,6 +13,8 @@ import { MenuProvider } from './MenuButton';
 import { ActiveFriends } from './ActiveFriends';
 import type { ParlorMentionEvent } from '../hooks/usePortalEvents';
 import { getStoredTheme, paintTheme, resolveTheme, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
+import { paintAppearance, persistAppearance } from '../lib/appearance';
+import { useQuery } from '@tanstack/react-query';
 
 const NAV = [
     { section: 'The house', items: [
@@ -66,6 +68,17 @@ export function AppShell() {
     const closeRooms = useCallback(() => setDrawer(false), []);
     useRoomDrawerClose(closeRooms);
     usePortalEvents(Boolean(me));
+    const settingsQ = useQuery({
+        queryKey: keys.settings,
+        queryFn: () => api.settings(),
+        enabled: Boolean(me),
+        staleTime: 30_000
+    });
+    const appearance = settingsQ.data?.sections.appearance.values;
+    const mentionBanners = settingsQ.data?.sections.initiative.values.notifyMentionBanners !== false;
+    const notifyInApp = settingsQ.data?.sections.initiative.values.notifyInApp !== false;
+    const notifySounds = Boolean(settingsQ.data?.sections.initiative.values.notifySounds);
+    const [attentionPing, setAttentionPing] = useState(false);
 
     const room = Object.entries(PATH_ROOM).find(([path]) => pathname === path || pathname.startsWith(`${path}/`))?.[1]
         || (pathname.startsWith('/study') ? 'study' : pathname.startsWith('/parlor') ? 'parlor' : 'home');
@@ -79,17 +92,46 @@ export function AppShell() {
     // Someone @-mentioned this user in a shared parlor discussion while
     // they were here - show a clickable notice that deep-links to the chat.
     useEffect(() => {
+        function playPing() {
+            if (!notifySounds) return;
+            try {
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.frequency.value = 880;
+                gain.gain.value = 0.04;
+                osc.connect(gain).connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.12);
+            } catch { /* autoplay / reduced motion */ }
+        }
         const onMention = (event: Event) => {
+            if (!mentionBanners) return;
             setMention((event as CustomEvent<ParlorMentionEvent>).detail || {});
+            playPing();
+        };
+        const onNoticed = () => {
+            if (!notifyInApp) return;
+            setAttentionPing(true);
+            playPing();
         };
         window.addEventListener('goobster-parlor-mention', onMention);
-        return () => window.removeEventListener('goobster-parlor-mention', onMention);
-    }, []);
+        window.addEventListener('goobster-attention-noticed', onNoticed);
+        return () => {
+            window.removeEventListener('goobster-parlor-mention', onMention);
+            window.removeEventListener('goobster-attention-noticed', onNoticed);
+        };
+    }, [mentionBanners, notifyInApp, notifySounds]);
     useEffect(() => {
         if (!mention) return;
         const timer = window.setTimeout(() => setMention(null), 12_000);
         return () => window.clearTimeout(timer);
     }, [mention]);
+    useEffect(() => {
+        if (!attentionPing) return;
+        const timer = window.setTimeout(() => setAttentionPing(false), 12_000);
+        return () => window.clearTimeout(timer);
+    }, [attentionPing]);
     // Theme is a device preference (lib/theme). Settings → Appearance and the
     // footer toggle both go through setStoredTheme; this just mirrors it and
     // follows the OS when "system" is chosen.
@@ -105,6 +147,41 @@ export function AppShell() {
             media?.removeEventListener?.('change', onMedia);
         };
     }, [theme]);
+
+    useEffect(() => {
+        if (!appearance) return;
+        if (!localStorage.getItem('goobster-theme')) setStoredTheme(appearance.theme);
+        persistAppearance({
+            textSize: appearance.textSize,
+            density: appearance.density,
+            reducedMotion: appearance.reducedMotion
+        });
+        paintAppearance({
+            textSize: appearance.textSize,
+            density: appearance.density,
+            reducedMotion: appearance.reducedMotion
+        });
+        if (appearance.linkByTag !== undefined && localStorage.getItem('goobster.map.linkByTag') === null) {
+            try { localStorage.setItem('goobster.map.linkByTag', appearance.linkByTag ? '1' : '0'); } catch { /* private mode */ }
+        }
+        if (appearance.preferredExchangeGuild && !localStorage.getItem('goobster-exchange-guild')) {
+            try { localStorage.setItem('goobster-exchange-guild', appearance.preferredExchangeGuild); } catch { /* private mode */ }
+        }
+    }, [appearance]);
+
+    useEffect(() => {
+        if (!me || !appearance?.startPage || appearance.startPage === 'home') return;
+        if (pathname !== '/') return;
+        if (sessionStorage.getItem('goobster-start-page-applied')) return;
+        const dest: Record<string, string> = {
+            study: '/study', noticed: '/noticed', spitball: '/spitball',
+            parlor: '/parlor', exchange: '/exchange', conservatory: '/conservatory'
+        };
+        const to = dest[appearance.startPage];
+        if (!to) return;
+        sessionStorage.setItem('goobster-start-page-applied', '1');
+        navigate({ to: to as never, replace: true });
+    }, [appearance, me, navigate, pathname]);
 
     useEffect(() => {
         const raw = (window.location.hash || '').replace(/^#/, '');
@@ -208,6 +285,27 @@ export function AppShell() {
                         className="mention-toast-dismiss"
                         aria-label="Dismiss"
                         onClick={() => setMention(null)}
+                    >✕</button>
+                </div>
+            )}
+            {attentionPing && (
+                <div className="mention-toast" role="status">
+                    <button
+                        type="button"
+                        className="mention-toast-body"
+                        onClick={() => {
+                            setAttentionPing(false);
+                            navigate({ to: '/noticed' });
+                        }}
+                    >
+                        🧭 Something new in <strong>Noticed</strong>
+                        <span className="mention-toast-open">Open the inbox →</span>
+                    </button>
+                    <button
+                        type="button"
+                        className="mention-toast-dismiss"
+                        aria-label="Dismiss"
+                        onClick={() => setAttentionPing(false)}
                     >✕</button>
                 </div>
             )}

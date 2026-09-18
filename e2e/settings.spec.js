@@ -98,6 +98,23 @@ test('retention shows a read-only impact preview before applying', async ({ page
     await expect(page.getByText(/Currently:/)).toContainText('after 30 days');
 });
 
+test('search finds Phase 2 fields and account sessions list this device', async ({ page }) => {
+    await login(page);
+    await openSettings(page);
+    const search = page.getByRole('combobox', { name: 'Search settings' });
+    await search.fill('timezone');
+    await page.getByRole('option').filter({ hasText: 'Timezone' }).getByRole('button').click();
+    await expect(page).toHaveURL(/\/app\/settings\/profile#timezone$/);
+    await expect(page.locator('#timezone-input')).toBeVisible();
+    await page.locator('#timezone-input').selectOption('America/New_York');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText('Profile saved.')).toBeVisible();
+
+    await page.getByRole('link', { name: /Account/ }).click();
+    await expect(page.locator('#sessions-input')).toBeVisible();
+    await expect(page.getByText('This device')).toBeVisible();
+});
+
 test('room shortcuts open the matching section with a way back', async ({ page }) => {
     await login(page);
     await page.getByRole('navigation', { name: 'Rooms' }).getByRole('link', { name: 'Study' }).click();

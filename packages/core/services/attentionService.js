@@ -596,7 +596,12 @@ class AttentionService {
         const contactable = summary.notices.filter(
             notice => notice.disposition === 'dm' || notice.disposition === 'urgent'
         );
-        if (deliver && contactable.length > 0 && !pressure.blocked) {
+        let outboundOk = true;
+        try {
+            const userSettingsService = require('./userSettingsService');
+            outboundOk = await userSettingsService.getPreference(userId, 'notifyOutbound') !== false;
+        } catch { /* default on */ }
+        if (deliver && outboundOk && contactable.length > 0 && !pressure.blocked) {
             const message = triage?.message || this._composeFallback(contactable);
             summary.contacted = await this._contact({
                 userId, gateway, notices: contactable, message,
@@ -1042,7 +1047,16 @@ Respond with ONLY JSON:
         const lastContact = utcMs(contacts?.last);
         const cooldownMs = (policy.contactCooldownMinutes || HEARTBEAT.contactCooldownMinutes) * 60_000;
         const withinCooldown = lastContact !== null && now - lastContact < cooldownMs;
-        const quietHours = attentionPolicyService.inQuietHours(policy, new Date(now));
+        let quietOpts = {};
+        try {
+            const userSettingsService = require('./userSettingsService');
+            const [mode, timeZone] = await Promise.all([
+                userSettingsService.getPreference(userId, 'quietHoursTzMode'),
+                userSettingsService.getPreference(userId, 'timezone')
+            ]);
+            if (mode === 'local' && timeZone) quietOpts = { mode: 'local', timeZone };
+        } catch { /* keep UTC evaluation for legacy rows */ }
+        const quietHours = attentionPolicyService.inQuietHours(policy, new Date(now), quietOpts);
         return {
             recentNotices: recent?.c || 0,
             withinCooldown,

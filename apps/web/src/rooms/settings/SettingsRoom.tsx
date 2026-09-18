@@ -168,7 +168,7 @@ export function SettingsRoom() {
                     {data && active === 'chat' && <ChatSection section={data.sections.chat} onDirty={markDirty('chat')} />}
                     {data && active === 'voice' && <VoiceSection section={data.sections.voice} capabilities={data.capabilities} onDirty={markDirty('voice')} />}
                     {data && active === 'initiative' && <InitiativeSection section={data.sections.initiative} onDirty={markDirty('initiative')} />}
-                    {data && active === 'memory' && <MemorySection section={data.sections.memory} userId={me.user.id} />}
+                    {data && active === 'memory' && <MemorySection section={data.sections.memory} userId={me.user.id} onDirty={markDirty('memory')} />}
                     {data && active === 'connections' && <ConnectionsSection section={data.sections.connections} />}
                     {data && active === 'appearance' && <AppearanceSection section={data.sections.appearance} onDirty={markDirty('appearance')} />}
                     {data && active === 'account' && <AccountSection section={data.sections.account} />}

@@ -88,19 +88,21 @@ async function getGuildContext(guild) {
  */
 async function getPreferredUserName(userId, guildId, member) {
     try {
-        // If no guildId (in DMs), just use the username
-        if (!guildId) {
-            return member?.user?.username || 'User';
+        // Explicit nickname for this scope (DM or guild) wins.
+        if (guildId) {
+            const customNick = await getUserNickname(userId, guildId);
+            if (customNick) return customNick;
         }
 
-        // First check if user has set a custom nickname through our command
-        const customNick = await getUserNickname(userId, guildId);
-        if (customNick) return customNick;
+        // Account-wide fallback (spec ID03) before Discord server nick / username.
+        try {
+            const { getAccountPreferredName } = require('./userStylePreferences');
+            const fallback = await getAccountPreferredName(userId);
+            if (fallback) return fallback;
+        } catch { /* best-effort; never fail a turn on a missing prefs row */ }
 
-        // Then check if user has a server nickname
         if (member?.nickname) return member.nickname;
 
-        // Finally fall back to their username
         return member?.user?.username || 'User';
     } catch (error) {
         console.error('Error getting preferred user name:', error);

@@ -91,6 +91,24 @@ export const api = {
         request<RetentionPreviewResponse>('/api/app/settings/memory/retention-preview', { method: 'POST', body: { days } }),
     applyRetention: (days: number | null, expectedRevision?: number | null) =>
         request<SectionUpdateResponse & { purged: number }>('/api/app/settings/memory/retention', { method: 'POST', body: { days, expectedRevision } }),
+    exportSettings: () => request('/api/app/settings/export'),
+    listSettingsSessions: () => request<{
+        id: number; userName: string | null; avatar: string | null;
+        createdAt: string; lastSeenAt: string | null; expiresAt: string; current: boolean;
+    }[]>('/api/app/settings/account/sessions'),
+    revokeSettingsSession: (id: number) =>
+        request(`/api/app/settings/account/sessions/${id}`, { method: 'DELETE' }),
+    revokeOtherSessions: () =>
+        request<{ revoked: number }>('/api/app/settings/account/sessions/revoke-others', { method: 'POST' }),
+    listSettingsShares: () => request<{
+        conversations: Array<{ id: number; kind: 'conversation'; title: string; conversationId: number; createdAt: string; path: string }>;
+        projects: Array<{ id: number; kind: 'project'; title: string; projectId: number; createdAt: string; path: string }>;
+    }>('/api/app/settings/shares'),
+    revokeSettingsShare: (kind: 'conversation' | 'project', id: number) =>
+        request(`/api/app/settings/shares/${kind}/${id}`, { method: 'DELETE' }),
+    listSettingsApplets: () => request<Array<{ id: number; title: string; grants: { observatoryRead?: string[] }; pinned: boolean }>>('/api/app/settings/applets'),
+    revokeAppletGrants: (id: number) =>
+        request(`/api/app/settings/applets/${id}/revoke-grants`, { method: 'POST' }),
     listModels: (provider?: string | null) =>
         request(`/api/app/chat/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
     setThoughtful: (thoughtful: boolean) =>

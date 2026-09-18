@@ -48,10 +48,10 @@ function chipTitle(step: TurnStep): string | undefined {
     return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
-export function ThinkingSteps({ steps, live = false }: { steps: TurnStep[]; live?: boolean }) {
+export function ThinkingSteps({ steps, live = false, defaultOpen }: { steps: TurnStep[]; live?: boolean; defaultOpen?: boolean }) {
     // Starts expanded while the turn is streaming, collapsed for settled
     // messages; the reader can toggle either way at any time.
-    const [open, setOpen] = useState(live);
+    const [open, setOpen] = useState(defaultOpen ?? live);
     if (steps.length === 0) return null;
 
     const runningStep = steps.find((step) => step.type === 'tool' && step.running);

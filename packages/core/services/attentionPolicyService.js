@@ -364,11 +364,23 @@ class AttentionPolicyService {
      * @param {Date} [now]
      * @returns {boolean}
      */
-    inQuietHours(policy, now = new Date()) {
+    inQuietHours(policy, now = new Date(), opts = {}) {
         const start = policy?.quietStartMinute;
         const end = policy?.quietEndMinute;
         if (start === null || start === undefined || end === null || end === undefined) return false;
-        const minute = now.getUTCHours() * 60 + now.getUTCMinutes();
+        const mode = opts.mode || 'utc';
+        const timeZone = opts.timeZone || null;
+        let minute;
+        if (mode === 'local' && timeZone) {
+            try {
+                const { localMinuteInZone } = require('../config/userSettingsSchema');
+                minute = localMinuteInZone(now, timeZone);
+            } catch {
+                minute = now.getUTCHours() * 60 + now.getUTCMinutes();
+            }
+        } else {
+            minute = now.getUTCHours() * 60 + now.getUTCMinutes();
+        }
         if (start === end) return false;
         // Half-open [start, end). Minutes only go to 1439, so a same-day
         // window that ends at 23:59 would otherwise never cover 23:59 itself

@@ -366,7 +366,13 @@ async function handleChatInteraction(interaction, thread = null) {
         let userInstructions = null;
         try {
             const { buildInstructionsBlock } = require('./userInstructions');
-            userInstructions = await buildInstructionsBlock(interaction.user.id);
+            const { buildUserStyleBlock } = require('./userStylePreferences');
+            const memeMode = require('./memeMode');
+            const instructions = await buildInstructionsBlock(interaction.user.id);
+            let memeOn = false;
+            try { memeOn = await memeMode.isMemeModeEnabled(interaction.user.id); } catch { /* optional */ }
+            const style = await buildUserStyleBlock(interaction.user.id, { memeMode: memeOn });
+            userInstructions = [instructions, style].filter(Boolean).join('\n\n') || null;
         } catch (instructionsError) {
             console.warn('Failed to load user instructions:', instructionsError.message);
         }

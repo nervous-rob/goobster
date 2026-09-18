@@ -32,6 +32,9 @@ export function usePortalEvents(enabled: boolean): void {
                     'goobster-parlor-mention', { detail: data as ParlorMentionEvent }
                 ));
             }
+            if (event.type === 'attention-noticed') {
+                window.dispatchEvent(new CustomEvent('goobster-attention-noticed', { detail: data }));
+            }
         };
         for (const kind of KINDS) source.addEventListener(kind, onEvent as EventListener);
         return () => {

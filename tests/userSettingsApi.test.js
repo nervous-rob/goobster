@@ -235,3 +235,42 @@ describe('retention flow', () => {
         expect(res.json.error.code).toBe('BAD_RETENTION');
     });
 });
+
+describe('Phase 2 routes', () => {
+    test('PATCH persists new prefs and GET/export/sessions never leak hashes', async () => {
+        const patch = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/profile',
+            body: { expectedRevision: 3, changes: { accountPreferredName: 'Rob', answerLength: 'concise' } }
+        });
+        expect(patch.status).toBe(200);
+        expect(patch.json.data.values).toMatchObject({ accountPreferredName: 'Rob', answerLength: 'concise' });
+
+        const invalid = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/voice',
+            body: { changes: { speechPauseMs: 10 } }
+        });
+        expect(invalid.status).toBe(400);
+
+        const voice = await authed({
+            method: 'PATCH', reqPath: '/api/app/settings/voice',
+            body: { changes: { voiceSendMode: 'manual', autoReadReplies: true } }
+        });
+        expect(voice.status).toBe(200);
+        expect(voice.json.data.values.voiceSendMode).toBe('manual');
+
+        const exported = await authed({ reqPath: '/api/app/settings/export' });
+        expect(exported.status).toBe(200);
+        expect(exported.json.settings.sections.profile.values.accountPreferredName).toBe('Rob');
+        expect(JSON.stringify(exported.json)).not.toMatch(/tokenHash/);
+
+        const sessions = await authed({ reqPath: '/api/app/settings/account/sessions' });
+        expect(sessions.status).toBe(200);
+        expect(Array.isArray(sessions.json)).toBe(true);
+        expect(sessions.json.some((row) => row.current)).toBe(true);
+        expect(JSON.stringify(sessions.json)).not.toMatch(/tokenHash/);
+
+        const shares = await authed({ reqPath: '/api/app/settings/shares' });
+        expect(shares.status).toBe(200);
+        expect(shares.json.conversations).toEqual([]);
+    });
+});
