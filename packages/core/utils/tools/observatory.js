@@ -213,7 +213,12 @@ module.exports = {
                 + 'FILTERED event triggers — sourceAsset=<upstream script slug> and/or sourceTrigger=<upstream '
                 + 'trigger> — instead of staggered cron guesses, and declare requiredOutputs on run_script so a '
                 + 'job that exits 0 without writing its handoff files settles FAILED (OUTPUT_CONTRACT_FAILED) '
-                + 'and does not fire job_completed), "invite_user" / "list_members" / '
+                + 'and does not fire job_completed. A trigger\'s lastOutcome is the DISPATCH result — "started: '
+                + 'job #N, awaiting settlement" means launched, not finished — and lastJobOutcome is how that '
+                + 'stage actually settled), "list_deliveries" (per-event delivery records of one event trigger: '
+                + 'which settled source job was DELIVERED as which child job, or is RETRYABLE because the project '
+                + 'was busy, or FAILED/SKIPPED and why — use it when a downstream stage did not start), '
+                + '"invite_user" / "list_members" / '
                 + '"remove_member" (collaborators; only the owner invites or removes others), '
                 + '"note_knowledge" (store a distilled note with optional tags/edges in the '
                 + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), '
@@ -234,11 +239,11 @@ module.exports = {
                             'files', 'read', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
-                            'delete_trigger', 'invite_user', 'list_members', 'remove_member',
+                            'list_deliveries', 'delete_trigger', 'invite_user', 'list_members', 'remove_member',
                             'note_knowledge', 'recall_knowledge', 'mission'],
                         description: 'What to do. Prefer "inspect" for overview; "audit" for setup-contract review; "needs-you" for the human decision board.'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
+                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/list_deliveries/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
                     path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
                     offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
                     limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
@@ -250,7 +255,7 @@ module.exports = {
                     relation: { type: 'string', description: 'note_knowledge: relation to the related node (default relates_to)' },
                     owner: { type: 'string', description: 'Owner user id qualifier when two accessible projects share a slug' },
                     inviteeId: { type: 'string', description: 'invite_user / remove_member: Discord user id of the collaborator' },
-                    name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / delete_trigger)' },
+                    name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / list_deliveries / delete_trigger)' },
                     slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
                     code: { type: 'string', description: 'Source code for run or save_*' },
@@ -747,7 +752,23 @@ module.exports = {
                             + ` → ${t.action}`
                             + `${t.actionParams?.requiredOutputs?.length ? ` · ${t.actionParams.requiredOutputs.length} required output(s)` : ''}`
                             + `${t.lastRun ? ` · last ${t.lastRun}` : ''}`
-                            + `${t.lastOutcome ? ` · ${t.lastOutcome}` : ''}`
+                            + `${t.lastOutcome ? ` · dispatch ${t.lastOutcome}` : ''}`
+                            + `${t.lastJobOutcome ? ` · stage ${t.lastJobOutcome}` : ''}`
+                        ).join('\n');
+                    }
+                    case 'list_deliveries': {
+                        const deliveries = await projectTriggerService.listDeliveries({
+                            userId, project, owner, trigger: name || slug, limit: 15
+                        });
+                        if (deliveries.length === 0) {
+                            return `📬 No event deliveries for trigger "${name || slug}" yet — nothing matching has settled.`;
+                        }
+                        return `📬 Event deliveries for trigger "${name || slug}" (newest first):\n` + deliveries.map(d =>
+                            `- source job #${d.sourceJobId}${d.sourceStatus ? ` (${d.sourceStatus})` : ''} → ${d.status}`
+                            + `${d.childJobId ? ` child job #${d.childJobId}${d.childStatus ? ` ${d.childStatus}` : ''}${d.childErrorCode ? ` (${d.childErrorCode})` : ''}` : ''}`
+                            + ` · ${d.attempts} attempt(s)`
+                            + `${d.nextAttemptAt ? ` · next ${d.nextAttemptAt}` : ''}`
+                            + `${d.detail ? ` · ${d.detail}` : ''}`
                         ).join('\n');
                     }
                     case 'delete_trigger': {

@@ -480,18 +480,42 @@ describe('SQLite: upgrading an existing database', () => {
             }
         ]);
         expect(database.prepare(
-            `SELECT id, kind, eventTopic, actionParams, lastRun, lastOutcome, sourceAssetId, sourceTriggerId
+            `SELECT id, kind, eventTopic, actionParams, lastRun, lastOutcome, lastJobOutcome,
+                    sourceAssetId, sourceTriggerId
              FROM project_triggers ORDER BY id`
         ).all()).toEqual([
             {
                 id: 3, kind: 'cron', eventTopic: null, actionParams: '{"background":true}',
-                lastRun: '2026-09-01 01:00:00', lastOutcome: 'ok: job #1', sourceAssetId: null, sourceTriggerId: null
+                lastRun: '2026-09-01 01:00:00', lastOutcome: 'ok: job #1', lastJobOutcome: null,
+                sourceAssetId: null, sourceTriggerId: null
             },
             {
                 id: 4, kind: 'event', eventTopic: 'job_completed', actionParams: null,
-                lastRun: '2026-09-01 01:00:05', lastOutcome: null, sourceAssetId: null, sourceTriggerId: null
+                lastRun: '2026-09-01 01:00:05', lastOutcome: null, lastJobOutcome: null,
+                sourceAssetId: null, sourceTriggerId: null
             }
         ]);
+
+        // The per-event delivery table arrives empty (legacy triggers are
+        // back-filled lazily by the service) with its exactly-once constraint.
+        expect(database.prepare('SELECT COUNT(*) AS c FROM project_trigger_deliveries').get().c).toBe(0);
+        database.prepare(
+            `INSERT INTO project_trigger_deliveries (triggerId, sourceJobId, projectId, status, attempts)
+             VALUES (4, 1, 1, 'DELIVERED', 1)`
+        ).run();
+        expect(() => database.prepare(
+            `INSERT INTO project_trigger_deliveries (triggerId, sourceJobId, projectId, status, attempts)
+             VALUES (4, 1, 1, 'STARTED', 1)`
+        ).run()).toThrow(/UNIQUE/);
+        expect(() => database.prepare(
+            `INSERT INTO project_trigger_deliveries (triggerId, sourceJobId, projectId, status, attempts)
+             VALUES (4, 2, 1, 'PENDING', 1)`
+        ).run()).toThrow(/CHECK/);
+        const deliveryIndexes = database.pragma('index_list(project_trigger_deliveries)').map(i => i.name);
+        expect(deliveryIndexes).toEqual(expect.arrayContaining([
+            'idx_project_trigger_deliveries_retry', 'idx_project_trigger_deliveries_child',
+            'idx_project_trigger_deliveries_project'
+        ]));
 
         // The new indexes exist on the upgraded tables.
         const jobIndexes = database.pragma('index_list(observatory_jobs)').map(i => i.name);
@@ -520,7 +544,7 @@ describe('SQLite: upgrading an existing database', () => {
         const upgraded = bootstrap(seedDatabase(PRE_PIPELINE, PRE_PIPELINE_ROWS));
         const fresh = bootstrap(seedDatabase(''));
 
-        for (const table of ['observatory_jobs', 'project_triggers']) {
+        for (const table of ['observatory_jobs', 'project_triggers', 'project_trigger_deliveries']) {
             expect(shapeOf(upgraded, table)).toEqual(shapeOf(fresh, table));
         }
     });
@@ -743,6 +767,28 @@ describePostgres('Postgres: upgrading an existing database', () => {
         expect(child.rows).toEqual([{ parentJobId: 1, errorCode: 'OUTPUT_CONTRACT_FAILED' }]);
         const filtered = await adapter.rawQuery('SELECT "sourceAssetId", "sourceTriggerId" FROM project_triggers WHERE id = 4');
         expect(filtered.rows).toEqual([{ sourceAssetId: 7, sourceTriggerId: 3 }]);
+
+        // Delivery records: lastJobOutcome gained, the table exists empty, and
+        // the (triggerId, sourceJobId) identity is enforced.
+        const outcome = await adapter.rawQuery('SELECT "lastJobOutcome" FROM project_triggers WHERE id = 4');
+        expect(outcome.rows).toEqual([{ lastJobOutcome: null }]);
+        const empty = await adapter.rawQuery('SELECT COUNT(*)::int AS c FROM project_trigger_deliveries');
+        expect(empty.rows).toEqual([{ c: 0 }]);
+        await adapter.rawQuery(
+            `INSERT INTO project_trigger_deliveries ("triggerId", "sourceJobId", "projectId", status, attempts)
+             VALUES (4, 1, 1, 'DELIVERED', 1)`
+        );
+        await expect(adapter.rawQuery(
+            `INSERT INTO project_trigger_deliveries ("triggerId", "sourceJobId", "projectId", status, attempts)
+             VALUES (4, 1, 1, 'STARTED', 1)`
+        )).rejects.toThrow();
+        const deliveryIdx = await adapter.rawQuery(
+            `SELECT indexname FROM pg_indexes
+             WHERE schemaname = current_schema() AND tablename = 'project_trigger_deliveries'`
+        );
+        expect(deliveryIdx.rows.map(r => r.indexname)).toEqual(expect.arrayContaining([
+            'idx_project_trigger_deliveries_retry', 'idx_project_trigger_deliveries_child'
+        ]));
     });
 
     test('a pre-idle-watchdog live-turn row survives and gains lastActivityAtMs', async () => {

@@ -1708,6 +1708,11 @@ CREATE TABLE IF NOT EXISTS project_triggers (
     -- of silently widening it back to project-wide.
     sourceAssetId INTEGER,
     sourceTriggerId INTEGER,
+    -- Settlement of the most recent job this trigger STARTED (a run_script
+    -- child), written when that job settles. lastOutcome says whether the
+    -- dispatch worked ("started: job #12, awaiting settlement"); this says
+    -- how the stage itself ended - the two are deliberately separate.
+    lastJobOutcome TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1715,6 +1720,41 @@ CREATE TABLE IF NOT EXISTS project_triggers (
 CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(projectId);
 CREATE INDEX IF NOT EXISTS idx_project_triggers_next_run ON project_triggers(nextRun);
 CREATE INDEX IF NOT EXISTS idx_project_triggers_user ON project_triggers(userId);
+
+-- One row per (event trigger, settled source job): the identity of a
+-- processed event. The settle path and startup catch-up both claim by
+-- inserting here, so two matching jobs that finished in the same second
+-- are two events (not one), and an older job examined after a newer one
+-- is still delivered. project_triggers.lastRun stays a display cursor.
+--
+-- status: STARTED (claimed, dispatch in flight) -> DELIVERED (the child
+-- job row exists / the action ran) | RETRYABLE (sandbox busy, active-job
+-- cap: re-dispatched by retryEventDeliveries after nextAttemptAt, up to
+-- MAX_DELIVERY_ATTEMPTS) | FAILED (permanent: bad script, gone project,
+-- attempts exhausted) | SKIPPED (chain guard, allowlist). A STARTED row
+-- left behind by a crash is reaped as RETRYABLE after a lease window.
+CREATE TABLE IF NOT EXISTS project_trigger_deliveries (
+    id INTEGER PRIMARY KEY,
+    triggerId INTEGER NOT NULL REFERENCES project_triggers(id) ON DELETE CASCADE,
+    sourceJobId INTEGER NOT NULL REFERENCES observatory_jobs(id) ON DELETE CASCADE,
+    projectId INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('STARTED', 'DELIVERED', 'RETRYABLE', 'FAILED', 'SKIPPED')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    -- The downstream job a run_script action created (DELIVERED only).
+    childJobId INTEGER,
+    detail TEXT,
+    nextAttemptAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (triggerId, sourceJobId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_trigger_deliveries_retry
+    ON project_trigger_deliveries(status, nextAttemptAt);
+CREATE INDEX IF NOT EXISTS idx_project_trigger_deliveries_child
+    ON project_trigger_deliveries(childJobId);
+CREATE INDEX IF NOT EXISTS idx_project_trigger_deliveries_project
+    ON project_trigger_deliveries(projectId, updatedAt);
 
 -- Accepted collaborators. The owner is observatory_projects.userId and
 -- never has a row here; role exists for forward-compat (all rows are

@@ -1573,6 +1573,22 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px; overflow: auto; font-size: 12.5px; max-height: 280px; margin: 6px 0 0;
 }
+.obs-kv {
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px;
+  margin: 8px 0 0; font-size: 12.5px;
+}
+.obs-kv dt { color: var(--text-dim); }
+.obs-kv dd { margin: 0; }
+.obs-contract, .obs-delivery-list { list-style: none; margin: 0; padding: 0; }
+.obs-contract li { padding: 2px 0; }
+.obs-contract li.failed { color: var(--danger); }
+.obs-outcomes { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.obs-delivery-list li {
+  padding: 6px 0; border-top: 1px solid var(--border); font-size: 12.5px;
+}
+.obs-delivery-list li:first-child { border-top: 0; }
+.obs-delivery-list li.delivery-retryable .badge { color: var(--warn, #d9a441); }
+.obs-delivery-list li.delivery-failed .badge { color: var(--danger); }
 .obs-checkpoint summary { font-size: 15px; font-weight: 700; margin: 20px 0 4px; color: var(--text); }
 .obs-gallery {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));

@@ -108,9 +108,11 @@ describe('getDefinitions gating', () => {
             'inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
             'files', 'render', 'delete-project',
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
-            'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
+            'rollback_asset', 'run_script', 'set_trigger', 'list_triggers', 'list_deliveries',
             'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read', 'mission'
         ]));
+        expect(def.description).toMatch(/awaiting settlement/);
+        expect(def.description).toMatch(/list_deliveries/);
         expect(def.description).toMatch(/GOOBSTER_PROJECT_DIR/);
         expect(def.description).toMatch(/GOOBSTER_RUN_DIR/);
         expect(def.description).toMatch(/checkpoint\.json/);
@@ -344,6 +346,25 @@ describe('execute happy path (through the registry)', () => {
             interactionContext: webContext()
         });
         expect(triggerList).toContain('Nightly');
+
+        // Delivery records are per event trigger; an event stage that has
+        // seen no matching settle yet says so instead of erroring.
+        const stage = await toolsRegistry.execute('observatory', {
+            action: 'set_trigger', project: 'asset-tool-lab', name: 'After ingest',
+            kind: 'event', eventTopic: 'job_completed', sourceAsset: 'ingest',
+            triggerAction: 'run_script', slug: 'ingest', background: true,
+            interactionContext: webContext()
+        });
+        expect(stage).toMatch(/Armed trigger "After ingest"/);
+        const deliveries = await toolsRegistry.execute('observatory', {
+            action: 'list_deliveries', project: 'asset-tool-lab', name: 'After ingest',
+            interactionContext: webContext()
+        });
+        expect(deliveries).toMatch(/No event deliveries for trigger "After ingest" yet/);
+        await toolsRegistry.execute('observatory', {
+            action: 'delete_trigger', project: 'asset-tool-lab', name: 'After ingest',
+            interactionContext: webContext()
+        });
 
         const gone = await toolsRegistry.execute('observatory', {
             action: 'delete_trigger', project: 'asset-tool-lab', name: 'Nightly',
