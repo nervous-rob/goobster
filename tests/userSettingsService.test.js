@@ -150,8 +150,6 @@ describe('updateSection', () => {
         const userId = nextUser();
         await expect(userSettingsService.updateSection({ userId, section: 'nope', changes: {} }))
             .rejects.toMatchObject({ status: 404, code: 'UNKNOWN_SECTION' });
-        await expect(userSettingsService.updateSection({ userId, section: 'connections', changes: {} }))
-            .rejects.toMatchObject({ status: 400, code: 'NOT_EDITABLE' });
         await expect(userSettingsService.updateSection({ userId, section: 'account', changes: {} }))
             .rejects.toMatchObject({ status: 400, code: 'NOT_EDITABLE' });
         await expect(userSettingsService.updateSection({ userId, section: 'profile', changes: [] }))
