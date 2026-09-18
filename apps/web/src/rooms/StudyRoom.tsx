@@ -587,7 +587,10 @@ export function StudyRoom() {
                 conversationId: incognito ? null : conversationId,
                 images: pendingImages.map((image) => image.dataUrl),
                 files: pendingFiles,
-                incognito
+                incognito,
+                // The reply is about to be read aloud: ask for speech-shaped
+                // prose (no links, tables, or lists) instead of Markdown.
+                spoken: voiceChat.isActive()
             }, {
                 onTyping: turn.onTyping,
                 onDelta: turn.onDelta,

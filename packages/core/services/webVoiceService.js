@@ -81,15 +81,18 @@ function speechTextFromMarkdown(markdown) {
     text = text.replace(/\\\([\s\S]*?\\\)/g, ' ');
     // Markdown images: keep the alt text
     text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
+    // Tables: a run of pipe rows is announced once rather than read cell by
+    // cell (or silently dropped, which left the listener with a hole).
+    text = text.replace(/(?:^\s*\|.*\|\s*$\n?)+/gm, ' (table omitted) ');
+    text = text.replace(/^[-=_]{3,}\s*$/gm, ' ');   // rules / table separators
     // Inline markup: keep the content, drop the syntax
     text = text.replace(/`([^`\n]+)`/g, '$1');
     text = text.replace(/^#{1,6}\s+/gm, '');
     text = text.replace(/^\s*[-*+]\s+/gm, '');
+    text = text.replace(/^\s*\d{1,3}[.)]\s+/gm, '');   // numbered items
     text = text.replace(/^\s*>\s?/gm, '');
     text = text.replace(/(\*\*|__)(.*?)\1/g, '$2');
     text = text.replace(/(\*|_)([^*_\n]+)\1/g, '$2');
-    text = text.replace(/^\s*\|.*\|\s*$/gm, ' ');   // table rows
-    text = text.replace(/^[-=_]{3,}\s*$/gm, ' ');   // rules / table separators
     // The voice-stack invariant: spoken text never contains URLs
     text = stripUrlsForSpeech(text);
     text = text.replace(/\s+/g, ' ').trim();

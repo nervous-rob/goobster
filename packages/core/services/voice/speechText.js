@@ -4,7 +4,13 @@
  * URLs must never be narrated - a spoken reply reading out
  * "aitch tee tee pee ess colon slash slash..." is useless noise. Markdown
  * links keep their label; bare URLs (http(s)://, www., and Discord's
- * <url> embed-suppressed form) are removed entirely.
+ * <url> embed-suppressed form) are removed entirely. Markdown syntax
+ * (bold markers, backticks, heading hashes, list bullets) is dropped too,
+ * keeping the words.
+ *
+ * This is the safety net. The plan is upstream: every voiced surface puts
+ * spokenReplyContract (utils/chat/promptFragments) in its prompt so the
+ * model does not write links, tables, or lists in the first place.
  */
 
 // [label](https://...) -> label
@@ -37,6 +43,32 @@ function stripUrlsForSpeech(text) {
     return stripUrls(text).replace(/ +([,.!?;:])/g, '$1').trim();
 }
 
+// Inline Markdown markers a TTS voice would otherwise pronounce ("asterisk
+// asterisk"). Content is kept, only the syntax goes.
+const INLINE_MARKUP_REGEX = /\*\*|__|~~|`/g;
+// Block prefixes that only make sense at the start of a line: headings,
+// bullets, numbered items, blockquotes. Numbered markers are matched
+// conservatively (1-3 digits) so a sentence like "in 1999. Then" survives.
+const LINE_PREFIX_REGEX = /^[ \t]*(?:#{1,6}[ \t]+|[-*+][ \t]+|\d{1,3}[.)][ \t]+|>[ \t]?)/;
+
+/**
+ * Drop Markdown syntax from text that is about to be spoken, keeping the
+ * words. `atLineStart` says whether the chunk begins a line - the streamed
+ * TTS feed splits at whitespace, so a mid-sentence "3. " must not be
+ * mistaken for a list marker.
+ * @param {string} text
+ * @param {{ atLineStart?: boolean }} [opts]
+ * @returns {string}
+ */
+function stripMarkupForSpeech(text, { atLineStart = true } = {}) {
+    if (!text) return '';
+    let out = String(text);
+    if (atLineStart) out = out.replace(LINE_PREFIX_REGEX, '');
+    // Prefixes after an embedded newline are always real line starts.
+    out = out.replace(/\n[ \t]*(?:#{1,6}[ \t]+|[-*+][ \t]+|\d{1,3}[.)][ \t]+|>[ \t]?)/g, '\n');
+    return out.replace(INLINE_MARKUP_REGEX, '');
+}
+
 /**
  * Stateful URL stripper for streamed TTS text (the realtime engine feeds
  * LLM deltas straight into the TTS socket, and a URL can arrive split
@@ -49,12 +81,18 @@ function stripUrlsForSpeech(text) {
 function createStreamingUrlStripper() {
     let pending = '';
     let emitted = false;
+    // Whether the next chunk begins a line (nothing emitted yet, or the
+    // previous chunk ended with a newline) - the only place a list marker
+    // or heading hash can legitimately be one.
+    let atLineStart = true;
 
     // Emissions from write() always end at a whitespace split, so leading
     // whitespace on a later emission (e.g. the space left behind by a
     // stripped URL) is always a duplicate and safe to drop.
     const emit = (text) => {
-        let out = stripUrls(text);
+        if (!text) return '';
+        let out = stripMarkupForSpeech(stripUrls(text), { atLineStart });
+        if (text.trim()) atLineStart = /\n[ \t]*$/.test(text);
         if (emitted) out = out.replace(/^[ \t]+/, '');
         if (out) emitted = true;
         return out;
@@ -88,5 +126,6 @@ function createStreamingUrlStripper() {
 
 module.exports = {
     stripUrlsForSpeech,
+    stripMarkupForSpeech,
     createStreamingUrlStripper
 };

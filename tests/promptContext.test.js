@@ -168,6 +168,41 @@ describe('buildConversationalPrompt', () => {
         expect(prompt).toContain('ElevenLabs v3');
     });
 
+    test('a spoken web turn asks for speech-shaped prose instead of rich rendering', async () => {
+        const base = {
+            mode: 'chat',
+            basePrompt: 'You are Goobster.',
+            query: 'compare the three biggest moons for me',
+            guildId: SCOPE,
+            userId: USER,
+            userName: 'Rob',
+            botName: 'Goobster',
+            isGuild: false,
+            isWeb: true
+        };
+        const spoken = (await buildConversationalPrompt({ ...base, spoken: true })).prompt;
+        expect(spoken).toContain('SPOKEN REPLY:');
+        expect(spoken).toContain('caption');
+        expect(spoken).toContain('Never speak a URL');
+        expect(spoken).toContain('No tabular data');
+        expect(spoken).not.toContain('WEB PORTAL:');
+        expect(spoken).not.toContain(MINI_APP_BRIDGE);
+        // The accent tool still exists on the voiced surface.
+        expect(spoken).toContain('setSpeechAccent');
+
+        const typed = (await buildConversationalPrompt({ ...base, spoken: false })).prompt;
+        expect(typed).not.toContain('SPOKEN REPLY:');
+        expect(typed).toContain('WEB PORTAL:');
+    });
+
+    test('the Discord voice contract carries the shared spoken-reply rules', () => {
+        const voice = conversationalContract({ mode: 'voice', canLookup: true });
+        expect(voice).toContain('SPOKEN REPLY:');
+        expect(voice).toContain('Never speak a URL');
+        expect(voice).toContain('No tabular data');
+        expect(voice).not.toContain('caption');
+    });
+
     test('an ordinary turn gains no situation block', async () => {
         const { prompt } = await buildConversationalPrompt({
             mode: 'chat',

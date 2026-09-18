@@ -443,6 +443,9 @@ async function handleChatInteraction(interaction, thread = null) {
             isGuild: Boolean(interaction.guildId),
             guildName: interaction.guild?.name,
             isWeb: isWebInteraction,
+            // Portal voice chat: the reply is about to be read aloud, so the
+            // prompt asks for speech-shaped prose instead of rich Markdown.
+            spoken: interaction.spoken === true,
             // Why this turn is happening: set by unattended surfaces (a
             // scheduled automation, a watch firing on a condition) and by the
             // web portal. A watch's description carries the evidence it woke
