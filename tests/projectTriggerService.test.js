@@ -19,12 +19,23 @@ const {
 } = require('@goobster/core/services/projectTriggerService');
 const { ProjectAssetService } = require('@goobster/core/services/projectAssetService');
 const { ObservatoryService } = require('@goobster/core/services/observatoryService');
+const { PROJECTS_ROOT } = require('@goobster/core/services/projectService');
 const projectTriggerService = require('@goobster/core/services/projectTriggerService');
 
 let userSeq = 0;
+const createdUsers = [];
 function nextUser() {
-    return `trig-user-${process.pid}-${userSeq++}`;
+    const userId = `trig-user-${process.pid}-${userSeq++}`;
+    createdUsers.push(userId);
+    return userId;
 }
+
+// Real-Observatory runs materialize workspaces under data/; do not leave them behind.
+afterAll(() => {
+    for (const userId of createdUsers) {
+        try { fs.rmSync(path.join(PROJECTS_ROOT, userId), { recursive: true, force: true }); } catch { /* */ }
+    }
+});
 
 const ALLOWLIST_CFG = { fetchAllowedHosts: ['example.com', 'data.example.org'] };
 
