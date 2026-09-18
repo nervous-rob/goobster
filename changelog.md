@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-18
+
+### Changed
+- **Observatory/project tool chips show their target without hovering.** Study (and Observatory Command) chips used to read “Working: observatory” with the action, file, and project only in a `title` tooltip — unreadable on a phone. The chip header now carries that context (`Read` + `notes.md · jwst-atlas`), and the live thinking summary does too. Jest: `toolChipLabel`; Playwright: `studyToolChips`.
+
 ## 2026-09-08
 
 ### Added
