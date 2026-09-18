@@ -222,6 +222,16 @@ async function resolveGithubAccess(interactionContext, githubService, repo) {
     if (!token) {
         return { error: '❌ No GitHub account connected. Connect one in the web portal (Integrations) to use GitHub tools here.' };
     }
+    try {
+        const userSettingsService = require('../../services/userSettingsService');
+        const allow = await userSettingsService.getPreference(userId, 'githubAllowlist');
+        if (Array.isArray(allow) && allow.length > 0) {
+            const ok = allow.some((item) => String(item).toLowerCase() === String(parsed).toLowerCase());
+            if (!ok) {
+                return { error: `❌ ${parsed} is not on your personal GitHub allowlist. Add it in Settings → Connections.` };
+            }
+        }
+    } catch { /* allowlist is optional */ }
     return { service: githubService.withToken(token), parsed };
 }
 

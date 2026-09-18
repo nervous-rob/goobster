@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
-import type { RetentionPreviewResponse, UserSettingsResponse } from '../../lib/types';
+import type { ChatHistoryPreviewResponse, RetentionPreviewResponse, UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useApplySectionResult, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { useToast } from '../../hooks/useToast';
 import { Modal } from '../../components/Modal';
@@ -27,7 +27,11 @@ const RETENTION_OPTIONS: Array<{ value: number | null; label: string }> = [
     { value: 365, label: 'After a year' }
 ];
 
-type PrivacyDraft = { defaultNewChatPrivacy: 'regular' | 'incognito' };
+type PrivacyDraft = {
+    defaultNewChatPrivacy: 'regular' | 'incognito';
+    learnMemories: boolean;
+    useMemories: boolean;
+};
 
 /**
  * Retention, forget-me, export, and revoke stay on dedicated action flows.
@@ -46,16 +50,23 @@ export function MemorySection({ section, userId, onDirty }: {
 
     const current = section.values.retentionDays ?? null;
     const options = [...RETENTION_OPTIONS];
-    if (current && !options.some((o) => o.value === current)) {
-        options.push({ value: current, label: `After ${current} days` });
-        options.sort((a, b) => (a.value ?? Infinity) - (b.value ?? Infinity));
+    for (const extra of [current, section.values.chatHistoryRetentionDays ?? null]) {
+        if (extra && !options.some((o) => o.value === extra)) {
+            options.push({ value: extra, label: `After ${extra} days` });
+        }
     }
+    options.sort((a, b) => (a.value ?? Infinity) - (b.value ?? Infinity));
 
     const [preview, setPreview] = useState<RetentionPreviewResponse | null>(null);
+    const [historyPreview, setHistoryPreview] = useState<ChatHistoryPreviewResponse | null>(null);
     const [busy, setBusy] = useState(false);
     const [pending, setPending] = useState<number | null>(current);
+    const historyCurrent = section.values.chatHistoryRetentionDays ?? null;
+    const [historyPending, setHistoryPending] = useState<number | null>(historyCurrent);
     const toDraft = useCallback((v: UserSettingsResponse['sections']['memory']['values']): PrivacyDraft => ({
-        defaultNewChatPrivacy: v.defaultNewChatPrivacy === 'incognito' ? 'incognito' : 'regular'
+        defaultNewChatPrivacy: v.defaultNewChatPrivacy === 'incognito' ? 'incognito' : 'regular',
+        learnMemories: v.learnMemories !== false,
+        useMemories: v.useMemories !== false
     }), []);
     const toChanges = useCallback((draft: PrivacyDraft, baseline: PrivacyDraft) =>
         diffKeys(draft as unknown as Record<string, unknown>, baseline as unknown as Record<string, unknown>), []);
@@ -84,6 +95,43 @@ export function MemorySection({ section, userId, onDirty }: {
     function cancelPreview() {
         setPreview(null);
         setPending(current);
+    }
+
+    async function chooseHistory(value: number | null) {
+        setHistoryPending(value);
+        if (value === historyCurrent) return;
+        setBusy(true);
+        try {
+            setHistoryPreview(await api.chatHistoryPreview(value));
+        } catch (error) {
+            toast((error as Error).message, true);
+            setHistoryPending(historyCurrent);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    function cancelHistoryPreview() {
+        setHistoryPreview(null);
+        setHistoryPending(historyCurrent);
+    }
+
+    async function applyHistory() {
+        if (!historyPreview) return;
+        setBusy(true);
+        try {
+            const result = await api.applyChatHistoryRetention(historyPreview.proposedRetentionDays, historyPreview.currentRevision);
+            applyResult(result);
+            setHistoryPreview(null);
+            toast(result.data.values.chatHistoryRetentionDays
+                ? `Study chats now expire after ${result.data.values.chatHistoryRetentionDays} days${result.purged ? ` — ${result.purged} deleted now` : ''}.`
+                : 'Study chats are kept forever again.');
+        } catch (error) {
+            toast((error as Error).message, true);
+            setHistoryPending(historyCurrent);
+        } finally {
+            setBusy(false);
+        }
     }
 
     async function applyRetention() {
@@ -117,7 +165,23 @@ export function MemorySection({ section, userId, onDirty }: {
                     <option value="incognito">Incognito (not saved)</option>
                 </select>
             </Field>
-            <SaveBar section="memory" draft={d} describe={() => 'Default new-chat privacy'} />
+            <Field id="learn-memories" label="Learn new long-term memories" inline scope="Private chats & DMs"
+                hint="Independent of the retention window. Off stops extraction and background write jobs; existing memories stay.">
+                <button id="learn-memories-input" type="button" className={`toggle${d.draft.learnMemories ? ' on' : ''}`}
+                    role="switch" aria-checked={d.draft.learnMemories} aria-label="Learn new long-term memories"
+                    onClick={() => d.set({ learnMemories: !d.draft.learnMemories })} />
+            </Field>
+            <Field id="use-memories" label="Use existing memories in responses" inline scope="Private chats & DMs"
+                hint="Independent read preference. Off skips recall without deleting anything.">
+                <button id="use-memories-input" type="button" className={`toggle${d.draft.useMemories ? ' on' : ''}`}
+                    role="switch" aria-checked={d.draft.useMemories} aria-label="Use existing memories in responses"
+                    onClick={() => d.set({ useMemories: !d.draft.useMemories })} />
+            </Field>
+            <SaveBar section="memory" draft={d} describe={(k) => ({
+                defaultNewChatPrivacy: 'Default new-chat privacy',
+                learnMemories: 'Learn new memories',
+                useMemories: 'Use existing memories'
+            }[k] || k)} />
 
             <SharesAndExport busy={busy} setBusy={setBusy} />
 
@@ -128,6 +192,15 @@ export function MemorySection({ section, userId, onDirty }: {
                     {options.map((o) => <option key={o.value ?? 'forever'} value={o.value ?? ''}>{o.label}</option>)}
                 </select>
                 <div className="hint">Currently: <strong>{current ? `after ${current} days` : 'kept forever'}</strong>.</div>
+            </Field>
+
+            <Field id="chat-history" label="Study chat-history retention"
+                hint="Separate from memory embeddings. Shortening this can delete old Study conversations, their attachments, and their share links. It does not erase long-term memories.">
+                <select id="chat-history-input" className="select" value={historyPending === null ? '' : String(historyPending)} disabled={busy}
+                    onChange={(e) => void chooseHistory(e.target.value === '' ? null : Number(e.target.value))}>
+                    {options.map((o) => <option key={o.value ?? 'forever'} value={o.value ?? ''}>{o.label}</option>)}
+                </select>
+                <div className="hint">Currently: <strong>{historyCurrent ? `after ${historyCurrent} days` : 'kept forever'}</strong>.</div>
             </Field>
 
             <Field id="memory-report" label="What Goobster knows about you"
@@ -153,6 +226,32 @@ export function MemorySection({ section, userId, onDirty }: {
                 hint="Erases every row Goobster has about you — memories, facts, chats, settings, sessions — and signs you out. This is separate from resetting preferences and cannot be undone.">
                 <button id="forget-me-input" type="button" className="btn danger" onClick={openForget}>Forget me…</button>
             </Field>
+
+            {historyPreview && (
+                <Modal onClose={cancelHistoryPreview}>
+                    <h2>{historyPreview.proposedRetentionDays ? `Expire Study chats after ${historyPreview.proposedRetentionDays} days?` : 'Keep Study chats forever?'}</h2>
+                    {historyPreview.proposedRetentionDays ? (
+                        <>
+                            <p className="hint">
+                                Affects <strong>Study conversations</strong> only — attachments, shares, and search for those chats go with them. Memories stay.
+                            </p>
+                            <div className="list-card">
+                                <div className="list-row"><span>Study chats you have</span><strong>{historyPreview.conversationCount}</strong></div>
+                                <div className="list-row"><span>Deleted right now</span><strong className={historyPreview.affectedCount ? 'settings-danger' : ''}>{historyPreview.affectedCount}</strong></div>
+                            </div>
+                            <p className="hint">Nothing has been deleted yet. Cancel keeps everything as it is.</p>
+                        </>
+                    ) : (
+                        <p className="hint">Nothing is deleted; older Study chats simply stay in the sidebar.</p>
+                    )}
+                    <div className="modal-actions">
+                        <button type="button" className="btn" onClick={cancelHistoryPreview} disabled={busy}>Cancel</button>
+                        <button type="button" className={`btn ${historyPreview.affectedCount ? 'danger' : 'primary'}`} onClick={applyHistory} disabled={busy}>
+                            {busy ? 'Applying…' : historyPreview.affectedCount ? `Delete ${historyPreview.affectedCount} and apply` : 'Apply'}
+                        </button>
+                    </div>
+                </Modal>
+            )}
 
             {preview && (
                 <Modal onClose={cancelPreview}>

@@ -147,6 +147,23 @@ class SpitballResearchPipeline {
         this.config = config;
     }
 
+    async _generate(prompt, opts = {}) {
+        const next = { ...opts };
+        const userId = opts.usageContext?.userId;
+        if (userId) {
+            try {
+                const userSettingsService = require('./userSettingsService');
+                const [provider, model] = await Promise.all([
+                    userSettingsService.getPreference(userId, 'researchProvider'),
+                    userSettingsService.getPreference(userId, 'researchModel')
+                ]);
+                if (provider) next.provider = provider;
+                if (model) next.model = model;
+            } catch { /* host default */ }
+        }
+        return this.ai.generateText(prompt, next);
+    }
+
     /**
      * Run one full research cycle. See the module doc for the stage list.
      * @param {Object} params - { expedition, cycle, frontierInput, checkpoint }
@@ -379,7 +396,7 @@ class SpitballResearchPipeline {
                     'For "the most important figures that led to modern physics", list 12–20 distinct people across eras, not two famous names.',
                     'Do not include the seed phrase itself as a unit. Spread across the roster; do not cluster on the most famous entry.'
                 ].join('\n');
-                const response = await this.ai.generateText(prompt, { max_tokens: 900, usageContext });
+                const response = await this._generate(prompt, { max_tokens: 900, usageContext });
                 const parsed = parseJsonBlock(response);
                 if (parsed) {
                     const enriched = clampResearchBrief({
@@ -450,7 +467,7 @@ class SpitballResearchPipeline {
 
         let plan = null;
         try {
-            const response = await this.ai.generateText(parts.join('\n'), { max_tokens: 900, usageContext });
+            const response = await this._generate(parts.join('\n'), { max_tokens: 900, usageContext });
             plan = clampPlan(parseJsonBlock(response), caps);
         } catch (error) {
             logger.warn?.(`[spitball] Plan generation failed (deterministic fallback): ${error.message}`);
@@ -757,7 +774,7 @@ class SpitballResearchPipeline {
                 'SOURCES:',
                 ...lines
             ].filter(Boolean).join('\n');
-            const response = await this.ai.generateText(prompt, { max_tokens: 800, usageContext });
+            const response = await this._generate(prompt, { max_tokens: 800, usageContext });
             reviews = clampSourceReview(parseJsonBlock(response), {
                 validSourceIds: new Set(accepted.map(source => source.id))
             });
@@ -868,7 +885,7 @@ class SpitballResearchPipeline {
 
             let extracted = [];
             try {
-                const response = await this.ai.generateText(prompt, { max_tokens: 1000, usageContext });
+                const response = await this._generate(prompt, { max_tokens: 1000, usageContext });
                 extracted = clampClaims(parseJsonBlock(response), caps);
             } catch (error) {
                 logger.warn?.(`[spitball] Claim extraction failed for source #${source.id}: ${error.message}`);
@@ -930,7 +947,7 @@ class SpitballResearchPipeline {
                 'CLAIMS:',
                 ...claims.slice(0, 40).map(claim => `[claim ${claim.id}] ${claim.text}`)
             ].filter(Boolean).join('\n');
-            const response = await this.ai.generateText(prompt, { max_tokens: 400, usageContext });
+            const response = await this._generate(prompt, { max_tokens: 400, usageContext });
             drop = clampClaimReview(parseJsonBlock(response), {
                 validClaimIds: new Set(claims.map(claim => claim.id))
             });
@@ -1018,7 +1035,7 @@ class SpitballResearchPipeline {
 
         let proposals = null;
         try {
-            const response = await this.ai.generateText(prompt, { max_tokens: 1600, usageContext });
+            const response = await this._generate(prompt, { max_tokens: 1600, usageContext });
             proposals = clampKnowledgeProposals(parseJsonBlock(response), {
                 validClaimIds: new Set(claims.map(claim => claim.id)),
                 claimDetails,
@@ -1100,7 +1117,7 @@ class SpitballResearchPipeline {
         let coverage;
         let leads;
         try {
-            const response = await this.ai.generateText(prompt, { max_tokens: 1400, usageContext });
+            const response = await this._generate(prompt, { max_tokens: 1400, usageContext });
             const parsed = parseJsonBlock(response);
             if (parsed) {
                 coverage = clampCoverage(parsed.coverage || parsed, caps);

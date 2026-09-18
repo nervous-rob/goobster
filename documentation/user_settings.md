@@ -22,14 +22,16 @@ all go through it.
 | `updateSection({ userId, section, changes, expectedRevision })` | Atomic validated write + revision bump |
 | `resetPreview` / `resetSection` | Reviewable reset; never reconnects integrations, enrolls attention, or erases content |
 | `retentionPreview` / `applyRetention` | Destructive memory window; separate from a normal Save |
+| `chatHistoryPreview` / `applyChatHistoryRetention` | Destructive Study-chat window; separate from PR01 |
 | `exportUserData` | Settings + transparency report; no secrets or session tokens |
 | `listSessions` / `revokeSession` / `revokeOtherSessions` | Safe session metadata only |
 | `listOwnedShares` / `revokeOwnedShare` | Conversation and Observatory share links |
 | `listOwnedApplets` / `revokeAppletGrants` | Owner-authorized applet grants |
 
 **Sections:** `profile`, `chat`, `voice`, `initiative`, `memory`, `appearance`,
-`connections`, `account`. Editable: the first six. Connections and account
-actions use dedicated endpoints.
+`connections`, `account`. Editable: the first seven. Account actions and
+connect/disconnect still use dedicated endpoints; Connections now also saves
+resource allowlists through `updateSection`.
 
 **Scopes:** `private` (Study + Discord DMs), `account` (follows the person),
 `device` (this browser / hardware). Product copy: Private chats & DMs / Your
@@ -90,12 +92,32 @@ never a one-off migration script.
 | AC02–AC03 | Sessions / sign out other devices; clear device-local prefs | `web_sessions` + browser keys |
 | UI01 V2–UI09, UI12 | System theme + account sync, text size, motion, density, Enter-to-send, detail expansion, start page, Exchange server, Conservatory link | prefs + device paint |
 
-**Not Phase 2 (spec Later / Phase 3):** ID08 personality presets, AI06–AI11,
-VO06/VO08, PR07–PR09, CN03, UI10–UI11. Guild settings stay in §4.
+### Phase 3 (Later runtime policies)
+
+| ID | Control | Store / consumer |
+| --- | --- | --- |
+| ID08 | Personality presets | `preferencesJson.personalityPreset` bakes `answerLength` / `tone` / `humor`; style block is the consumer |
+| AI06 | Reply-length token budget | `replyMaxTokens` → `chatHandler` `max_tokens` (thinking headroom still added separately) |
+| AI07 | Sampling | `temperature` / `topP` → chat options; providers drop incompatible params |
+| AI08 | Per-feature model defaults | `parlorProvider`/`parlorModel` → owned Parlor generation; `researchProvider`/`researchModel` → expedition `_generate` |
+| AI09 | Optional tool preferences | `disabledTools` filters `functionDefs` in personal turns; cannot grant credentials |
+| AI10 | Usage alert | `usageAlertTokens` → Usage payload `overAlert` (informational) |
+| AI11 | Personal AI keys | Not stored. Settings explains host-key-only; missing keys stay disabled |
+| PR07 | Learn new long-term memories | `learnMemories` gates extraction/write in `chatHandler` |
+| PR08 | Use existing memories | `useMemories` gates recall in `promptContext` |
+| PR09 | Study chat-history retention | two-step preview/apply + list filter in `webChatService.listConversations` |
+| CN03 | Connected-resource allowlists | `githubAllowlist` / `notionAllowlist` enforced in GitHub/Notion tools; empty = no extra restriction |
+| UI10 | New-expedition defaults | `expeditionDefaultDepth` / `expeditionDefaultLens` snapshotted at create |
+| UI11 | New-persona defaults | `parlorDefaultEmoji` / `parlorDefaultCharter` used only when create omits them |
+
+Reset still cannot reconnect integrations, enroll attention, re-enable disabled tools, turn learning/recall back on, or erase content. Guild settings stay in spec §4.
+
+**Still later (not this phase):** VO06 microphone sensitivity, VO08 preferred audio output.
 
 ## Portal
 
 `/settings/:section#field`. Search synonyms live in
 `apps/web/src/rooms/settings/sectionMeta.ts`. Every control has a
 `ScopeBadge`. Destructive flows (retention, forget-me, revoke, sign-out)
-never ride a normal section Save.
+never ride a normal section Save. Chat-history retention uses the same
+preview → confirm pattern as memory retention.

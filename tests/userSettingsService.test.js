@@ -51,6 +51,12 @@ describe('getSettings', () => {
         expect(settings.sections.initiative.values.presenceVisible).toBe(true);
         expect(settings.sections.memory.values.retentionDays).toBeNull();
         expect(settings.sections.memory.values.defaultNewChatPrivacy).toBe('regular');
+        expect(settings.sections.memory.values).toMatchObject({ learnMemories: true, useMemories: true, chatHistoryRetentionDays: null });
+        expect(settings.sections.chat.values).toMatchObject({
+            replyMaxTokens: null, temperature: null, disabledTools: [], usageAlertTokens: null
+        });
+        expect(settings.sections.profile.values.personalityPreset).toBeNull();
+        expect(settings.sections.connections.values).toMatchObject({ githubAllowlist: [], notionAllowlist: [] });
         expect(settings.sections.appearance.values).toMatchObject({ theme: 'dark', linkByTag: true, enterToSend: true, startPage: 'home' });
         expect(settings.sections.voice.values).toMatchObject({ voiceId: null, voiceName: null, speed: 1, accent: null, voiceSendMode: 'auto', autoReadReplies: false });
         expect(settings.sections.voice.accents).toEqual(expect.arrayContaining([{ id: 'british', label: 'British' }]));
@@ -144,8 +150,6 @@ describe('updateSection', () => {
         const userId = nextUser();
         await expect(userSettingsService.updateSection({ userId, section: 'nope', changes: {} }))
             .rejects.toMatchObject({ status: 404, code: 'UNKNOWN_SECTION' });
-        await expect(userSettingsService.updateSection({ userId, section: 'connections', changes: {} }))
-            .rejects.toMatchObject({ status: 400, code: 'NOT_EDITABLE' });
         await expect(userSettingsService.updateSection({ userId, section: 'account', changes: {} }))
             .rejects.toMatchObject({ status: 400, code: 'NOT_EDITABLE' });
         await expect(userSettingsService.updateSection({ userId, section: 'profile', changes: [] }))
@@ -435,7 +439,7 @@ describe('reset flow', () => {
     });
 
     test('read-only sections cannot be reset', async () => {
-        await expect(userSettingsService.resetPreview({ userId: nextUser(), section: 'connections' }))
+        await expect(userSettingsService.resetPreview({ userId: nextUser(), section: 'account' }))
             .rejects.toMatchObject({ code: 'NOT_EDITABLE' });
     });
 });
@@ -493,6 +497,168 @@ describe('retention flow', () => {
             .rejects.toMatchObject({ code: 'BAD_RETENTION' });
         await expect(userSettingsService.applyRetention({ userId: nextUser(), days: -1 }))
             .rejects.toMatchObject({ code: 'BAD_RETENTION' });
+    });
+});
+
+describe('Phase 3 later policies', () => {
+    test('personality preset bakes style fields unless they are also in the patch', async () => {
+        const userId = nextUser();
+        const baked = await userSettingsService.updateSection({
+            userId, section: 'profile', changes: { personalityPreset: 'concise-direct' }
+        });
+        expect(baked.data.values).toMatchObject({
+            personalityPreset: 'concise-direct', answerLength: 'concise', tone: 'direct', humor: 'off'
+        });
+        const override = await userSettingsService.updateSection({
+            userId, section: 'profile', changes: { personalityPreset: 'warm-detailed', tone: 'direct' }
+        });
+        expect(override.data.values).toMatchObject({
+            personalityPreset: 'warm-detailed', answerLength: 'detailed', tone: 'direct', humor: 'light'
+        });
+        await expect(userSettingsService.updateSection({
+            userId, section: 'profile', changes: { personalityPreset: 'noir' }
+        })).rejects.toMatchObject({ code: 'BAD_PRESET' });
+    });
+
+    test('chat sampling, tools, and feature models validate and persist', async () => {
+        const userId = nextUser();
+        await expect(userSettingsService.updateSection({
+            userId, section: 'chat', changes: { replyMaxTokens: 10 }
+        })).rejects.toMatchObject({ code: 'BAD_REPLY_TOKENS' });
+        await expect(userSettingsService.updateSection({
+            userId, section: 'chat', changes: { temperature: 9 }
+        })).rejects.toMatchObject({ code: 'BAD_TEMPERATURE' });
+        await expect(userSettingsService.updateSection({
+            userId, section: 'chat', changes: { disabledTools: ['notATool'] }
+        })).rejects.toMatchObject({ code: 'BAD_TOOLS' });
+
+        const result = await userSettingsService.updateSection({
+            userId,
+            section: 'chat',
+            changes: {
+                replyMaxTokens: 1024,
+                temperature: 0.4,
+                topP: 0.8,
+                parlorProvider: 'openai',
+                parlorModel: 'gpt-test',
+                researchProvider: 'anthropic',
+                researchModel: 'claude-test',
+                disabledTools: ['performSearch', 'generateImage'],
+                usageAlertTokens: 50000
+            }
+        });
+        expect(result.revision).toBe(2);
+        expect(result.data.values).toMatchObject({
+            replyMaxTokens: 1024,
+            temperature: 0.4,
+            topP: 0.8,
+            parlorModel: 'gpt-test',
+            researchModel: 'claude-test',
+            disabledTools: ['performSearch', 'generateImage'],
+            usageAlertTokens: 50000
+        });
+        expect(await userSettingsService.getPreference(userId, 'disabledTools'))
+            .toEqual(['performSearch', 'generateImage']);
+
+        await expect(userSettingsService.updateSection({
+            userId, section: 'chat', changes: { topP: 0.1 }, expectedRevision: 1
+        })).rejects.toMatchObject({ status: 409, code: 'SETTINGS_CONFLICT' });
+
+        const preview = await userSettingsService.resetPreview({ userId, section: 'chat' });
+        expect(preview.changes).toMatchObject({ replyMaxTokens: null, temperature: null, usageAlertTokens: null });
+        expect(preview.changes).not.toHaveProperty('disabledTools');
+        const reset = await userSettingsService.resetSection({ userId, section: 'chat', expectedRevision: 2 });
+        expect(reset.data.values.replyMaxTokens).toBeNull();
+        expect(reset.data.values.disabledTools).toEqual(['performSearch', 'generateImage']);
+    });
+
+    test('memory learn/recall persist and reset leaves them and chat-history alone', async () => {
+        const userId = nextUser();
+        await userSettingsService.updateSection({
+            userId,
+            section: 'memory',
+            changes: {
+                defaultNewChatPrivacy: 'incognito',
+                learnMemories: false,
+                useMemories: false,
+                chatHistoryRetentionDays: 30
+            }
+        });
+        const preview = await userSettingsService.resetPreview({ userId, section: 'memory' });
+        expect(preview.changes).toEqual({ defaultNewChatPrivacy: 'regular' });
+        expect(preview.changes).not.toHaveProperty('learnMemories');
+        expect(preview.changes).not.toHaveProperty('chatHistoryRetentionDays');
+        const reset = await userSettingsService.resetSection({ userId, section: 'memory' });
+        expect(reset.data.values).toMatchObject({
+            defaultNewChatPrivacy: 'regular',
+            learnMemories: false,
+            useMemories: false,
+            chatHistoryRetentionDays: 30
+        });
+    });
+
+    test('chat-history preview counts without deleting; apply purges stale Study chats', async () => {
+        const userId = nextUser();
+        const old = new Date(Date.now() - 100 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+        await db.run(
+            `INSERT INTO web_conversations (userId, channelId, title, createdAt, lastMessageAt)
+             VALUES (@userId, @oldCh, 'old', @old, @old)`,
+            { userId, oldCh: `web:${userId}:old`, old }
+        );
+        await db.run(
+            `INSERT INTO web_conversations (userId, channelId, title)
+             VALUES (@userId, @freshCh, 'fresh')`,
+            { userId, freshCh: `web:${userId}:fresh` }
+        );
+        const preview = await userSettingsService.chatHistoryPreview({ userId, days: 30 });
+        expect(preview).toMatchObject({
+            proposedRetentionDays: 30, conversationCount: 2, affectedCount: 1, dataClasses: ['study-conversations']
+        });
+        expect((await db.get('SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId })).c).toBe(2);
+
+        const applied = await userSettingsService.applyChatHistoryRetention({ userId, days: 30, expectedRevision: 1 });
+        expect(applied.purged).toBe(1);
+        expect(applied.data.values.chatHistoryRetentionDays).toBe(30);
+        const titles = (await db.all('SELECT title FROM web_conversations WHERE userId = @userId', { userId }))
+            .map((row) => row.title);
+        expect(titles).toEqual(['fresh']);
+    });
+
+    test('connections allowlists and appearance creation defaults persist', async () => {
+        const userId = nextUser();
+        await expect(userSettingsService.updateSection({
+            userId, section: 'connections', changes: { githubAllowlist: ['x'.repeat(200)] }
+        })).rejects.toMatchObject({ code: 'BAD_ALLOWLIST' });
+        const connections = await userSettingsService.updateSection({
+            userId,
+            section: 'connections',
+            changes: { githubAllowlist: ['acme/api'], notionAllowlist: ['Research'] }
+        });
+        expect(connections.data.values).toMatchObject({
+            githubAllowlist: ['acme/api'],
+            notionAllowlist: ['Research']
+        });
+
+        const appearance = await userSettingsService.updateSection({
+            userId,
+            section: 'appearance',
+            changes: {
+                expeditionDefaultDepth: 'deep',
+                expeditionDefaultLens: 'history',
+                parlorDefaultEmoji: '🦊',
+                parlorDefaultCharter: 'Dry, brief, curious.'
+            }
+        });
+        expect(appearance.data.values).toMatchObject({
+            expeditionDefaultDepth: 'deep',
+            expeditionDefaultLens: 'history',
+            parlorDefaultEmoji: '🦊'
+        });
+        expect(await userSettingsService.getPreference(userId, 'parlorDefaultCharter')).toBe('Dry, brief, curious.');
+
+        const parlorService = require('@goobster/core/services/parlorService');
+        const persona = await parlorService.createPersona({ ownerId: userId, name: 'Defaulted' });
+        expect(persona).toMatchObject({ emoji: '🦊', charter: 'Dry, brief, curious.' });
     });
 });
 

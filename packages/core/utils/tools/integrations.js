@@ -388,7 +388,24 @@ module.exports = {
             try {
                 const results = await notionService.search(token, query);
                 if (!results.length) return `No Notion matches for "${query}" (pages must be shared with the integration).`;
-                return 'Notion matches:\n' + results.map(item =>
+                let filtered = results;
+                try {
+                    const userSettingsService = require('../../services/userSettingsService');
+                    const userId = interactionContext?.user?.id;
+                    const allow = userId ? await userSettingsService.getPreference(userId, 'notionAllowlist') : [];
+                    if (Array.isArray(allow) && allow.length > 0) {
+                        const needles = allow.map((item) => String(item).toLowerCase());
+                        filtered = results.filter((item) => needles.some((n) =>
+                            String(item.id || '').toLowerCase().includes(n)
+                            || String(item.title || '').toLowerCase().includes(n)
+                            || String(item.url || '').toLowerCase().includes(n)
+                        ));
+                        if (!filtered.length) {
+                            return 'No Notion matches on your personal page allowlist. Add pages in Settings → Connections.';
+                        }
+                    }
+                } catch { /* allowlist is optional */ }
+                return 'Notion matches:\n' + filtered.map(item =>
                     `- [${item.kind}] ${item.title} (id: ${item.id})${item.lastEdited ? ` last edited ${item.lastEdited}` : ''}`
                 ).join('\n');
             } catch (error) {
@@ -414,6 +431,20 @@ module.exports = {
             const notionService = require('../../services/notionService');
             const { token, error } = await resolveNotionAccess(interactionContext);
             if (error) return error;
+            try {
+                const userId = interactionContext?.user?.id;
+                if (userId) {
+                    const userSettingsService = require('../../services/userSettingsService');
+                    const allow = await userSettingsService.getPreference(userId, 'notionAllowlist');
+                    if (Array.isArray(allow) && allow.length > 0) {
+                        const needle = String(page).toLowerCase();
+                        const ok = allow.some((item) => needle.includes(String(item).toLowerCase()));
+                        if (!ok) {
+                            return '❌ That Notion page is not on your personal allowlist. Add it in Settings → Connections.';
+                        }
+                    }
+                }
+            } catch { /* allowlist is optional */ }
             try {
                 const result = await notionService.getPageText(token, page);
                 const body = `${result.title ? `# ${result.title}\n` : ''}${result.url ? `${result.url}\n\n` : '\n'}${result.content || '(empty page)'}`;
