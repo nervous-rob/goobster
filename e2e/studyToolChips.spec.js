@@ -113,7 +113,9 @@ test.describe('Study observatory chips', () => {
         await page.goto(`/app/study/${CONV_ID}`);
 
         await expect(page.getByText('Read the project notes')).toBeVisible();
-        await page.getByRole('button', { name: /Thinking · 1 step/ }).click();
+        const summary = page.getByRole('button', { name: /Read · notes\.md · jwst-atlas/ });
+        await expect(summary).toBeVisible();
+        await summary.click();
 
         const chip = page.locator('.tool-chip').first();
         await expect(chip).toContainText('Read');

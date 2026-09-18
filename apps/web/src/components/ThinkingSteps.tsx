@@ -12,11 +12,17 @@ import type { TurnStep } from '../lib/types';
  */
 
 function thinkingHeader(steps: TurnStep[], live: boolean): string {
-    const runningStep = steps.find((step) => step.type === 'tool' && step.running);
+    const toolSteps = steps.filter((step) => step.type === 'tool');
+    const runningStep = toolSteps.find((step) => step.running);
     if (live) {
         if (!runningStep) return 'Thinking…';
         const { header } = describeToolChip(runningStep.name || '', runningStep.argsPreview, { done: false });
         return `${header}…`;
+    }
+    // A single observatory/project call is the whole story — put its
+    // target in the collapsed header so a phone never has to hover.
+    if (toolSteps.length === 1 && toolSteps[0].name === 'observatory') {
+        return describeToolChip('observatory', toolSteps[0].argsPreview, { done: true }).header;
     }
     return `Thinking · ${steps.length} step${steps.length === 1 ? '' : 's'}`;
 }
