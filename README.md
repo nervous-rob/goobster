@@ -100,6 +100,11 @@ These stay first-class; they are no longer the shape of the product.
   confirmation-gated writes (`documentation/github_cursor_integration.md`).
 - **Music and voice:** SpotDL/yt-dlp, playlists, ElevenLabs TTS/music/
   ambience, `/voicechat`.
+- **Self-knowledge:** Goobster reads his own documentation. The Markdown
+  in this repository is seeded into the database on every start and
+  consulted through the `consultDocs` tool - including skill guides for
+  troubleshooting, project examples, and working guidelines
+  (`documentation/self_knowledge.md`).
 - **Deployment:** lite (one process, SQLite) or full (Postgres +
   pgvector + bot + api + nginx). npm workspaces; core never imports an
   app.
@@ -120,6 +125,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Continuous deploy | `documentation/continuous_deployment.md` |
 | Docker | `documentation/docker_deployment.md` |
 | Architecture | `documentation/architecture.md` |
+| Self-knowledge (`consultDocs`) | `documentation/self_knowledge.md` |
 
 ## Prerequisites
 
@@ -326,6 +332,7 @@ npm run test:e2e:install  # download Chromium once
 npm run test:coverage     # 80% gate on utils + slash commands only
 npm run lint
 npm run smoke             # every module must require() cleanly
+npm run docs:check        # every doc parses for the self-knowledge corpus
 npm run typecheck:web && npm run build:web
 ```
 
