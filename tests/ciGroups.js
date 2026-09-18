@@ -140,6 +140,7 @@ const GROUPS = [
             'manageAutomationsTool',
             'observatoryConfig',
             'observatoryService',
+            'outputContract',
             'projectAssetApi',
             'projectAssetService',
             'projectChat',

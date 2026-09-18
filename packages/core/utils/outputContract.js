@@ -191,9 +191,10 @@ function normalizeFrozenContract(raw) {
     if (list.length > MAX_REQUIRED_OUTPUTS) {
         throw new OutputContractError(`outputContract lists too many files (max ${MAX_REQUIRED_OUTPUTS}).`);
     }
-    const outputs = list.map((entry, index) => {
-        if (!entry || typeof entry !== 'object') {
-            throw new OutputContractError(`outputContract.outputs[${index}] must be an object.`);
+    const outputs = list.map((raw, index) => {
+        const entry = typeof raw === 'string' ? { path: raw } : raw;
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            throw new OutputContractError(`outputContract.outputs[${index}] must be an object with a "path".`);
         }
         const rel = String(entry.path ?? '');
         if (/[{}]/.test(rel)) {

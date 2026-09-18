@@ -248,7 +248,7 @@ function auditProjectSetup(input = {}) {
     const scripts = Array.isArray(input.scripts) ? input.scripts : [];
     const triggers = Array.isArray(input.triggers) ? input.triggers : [];
     const assetIds = new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map(Number));
-    const triggerIds = new Set(triggers.map(t => Number(t.id)));
+    const triggerIds = new Set(triggers.filter(t => t && t.id != null).map(t => Number(t.id)));
     const legacyJobs = jobs.filter(j => Number(j.legacyWorkspace));
 
     if (hasRootCheckpoint) {
