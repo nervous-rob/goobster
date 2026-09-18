@@ -88,14 +88,14 @@ test('saving initiative limits leaves the attention switch alone', async ({ page
 test('retention shows a read-only impact preview before applying', async ({ page }) => {
     await login(page);
     await page.goto('/app/settings/memory');
-    await expect(page.getByText(/Currently:/)).toContainText('kept forever');
+    await expect(page.locator('#retention').getByText(/Currently:/)).toContainText('kept forever');
     await page.locator('#retention-input').selectOption('30');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Auto-delete after 30 days?' })).toBeVisible();
     await expect(dialog.getByText('Nothing has been deleted yet.')).toBeVisible();
     await dialog.getByRole('button', { name: /Apply/ }).click();
     await expect(page.getByText('Memories now expire after 30 days')).toBeVisible();
-    await expect(page.getByText(/Currently:/)).toContainText('after 30 days');
+    await expect(page.locator('#retention').getByText(/Currently:/)).toContainText('after 30 days');
 });
 
 test('search finds Phase 2 fields and account sessions list this device', async ({ page }) => {
