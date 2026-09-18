@@ -20,6 +20,8 @@
     "start": "npm run deploy-commands && node apps/bot/index.js",
     "dev": "nodemon apps/bot/index.js",
     "db-init": "node scripts/initDb.js",
+    "docs:seed": "node scripts/seed-self-docs.js",
+    "docs:check": "node scripts/seed-self-docs.js --check",
     "migrate-to-postgres": "node scripts/migrate-to-postgres.js",
     "sandbox-python": "node scripts/setup-sandbox-python.js",
     "lint": "eslint . --max-warnings 60",

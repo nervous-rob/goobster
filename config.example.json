@@ -69,6 +69,14 @@
         "ffmpegCommand": "ffmpeg"
     },
 
+    "selfDocs": {
+        "enabled": true,
+        "seedOnStartup": true,
+        "embeddings": true,
+        "sources": ["README.md", "documentation"],
+        "operatorDir": ""
+    },
+
     "ai": {
         "provider": "",
         "openai": {

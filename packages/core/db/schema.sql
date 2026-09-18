@@ -2436,6 +2436,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_project_decisions_one_per_mission
     WHERE missionId IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
+-- Self-knowledge: Goobster's own documentation, seeded from the repository
+-- (documentation/**/*.md, README.md, operator docs under data/self-docs/).
+-- One row per chunk of a document; the seeder is idempotent on contentHash.
+-- Not per-user data: no privacy erasure path needed.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS self_docs (
+    id INTEGER PRIMARY KEY,
+    -- Stable document id derived from the repo-relative path, e.g.
+    -- documentation/code_sandbox or documentation/skills/troubleshooting
+    slug TEXT NOT NULL,
+    relPath TEXT NOT NULL,
+    title TEXT NOT NULL,
+    -- guide | reference | standards | decision | skill
+    kind TEXT NOT NULL DEFAULT 'reference',
+    summary TEXT,
+    -- Skill docs: one line saying when the procedure applies (front matter)
+    useWhen TEXT,
+    -- JSON array of lowercase tags (front matter)
+    tags TEXT,
+    chunkIndex INTEGER NOT NULL,
+    -- Title > Section > Subsection breadcrumb for the chunk
+    headingPath TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    contentHash TEXT NOT NULL,
+    -- Optional semantic-search vector (same tagging rule as memory_embeddings:
+    -- vectors are only compared when produced by the same model)
+    embedding BLOB,
+    dims INTEGER,
+    model TEXT,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (slug, chunkIndex)
+);
+
+CREATE INDEX IF NOT EXISTS idx_self_docs_kind ON self_docs(kind);
+
+-- ---------------------------------------------------------------------------
 -- Unified User Settings and Revisions
 -- ---------------------------------------------------------------------------
 

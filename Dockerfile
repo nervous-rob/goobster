@@ -64,6 +64,11 @@ RUN if [ "$(uname -m)" = "aarch64" ]; then export CFLAGS="-DOPUS_ARM_MAY_HAVE_NE
 COPY . .
 COPY --from=web /app/apps/web/dist /app/apps/web/dist
 
+# Goobster's own documentation ships in the image (documentation/**/*.md +
+# README.md) and is seeded into the database on every start. Validate the
+# corpus at build time so a malformed doc fails here, not at runtime.
+RUN node scripts/seed-self-docs.js --check
+
 # Runtime directories
 RUN mkdir -p data/music data/ambience data/images data/playlists cache/music logs
 
