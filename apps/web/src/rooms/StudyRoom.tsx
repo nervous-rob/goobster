@@ -46,16 +46,6 @@ const MAX_TEXT_FILE_BYTES = 200 * 1024;
 type SearchHit = { conversationId: number; messageId: number; title?: string; snippet: string; role?: string };
 type PendingImage = { dataUrl: string; name: string };
 type PendingFile = { name: string; content: string };
-type ChatSettings = {
-    thoughtful?: boolean;
-    thoughtfulAvailable?: boolean;
-    provider?: string | null;
-    model?: string | null;
-    reasoningEffort?: string | null;
-    customInstructions?: string | null;
-    effective?: { providerName?: string; model?: string; reasoningEffort?: string };
-    providers?: Array<{ key: string; name: string; configured?: boolean; isDefault?: boolean; chatModel?: string; thoughtfulModel?: string; reasoningEffort?: boolean }>;
-};
 type ShareState = { shared?: boolean; url?: string; createdAt?: string };
 type TurnStatus = {
     inFlight: boolean;
@@ -182,10 +172,6 @@ export function StudyRoom() {
         queryFn: () => api.voiceCapabilities(),
         retry: false
     });
-    const settingsQ = useQuery({
-        queryKey: ['chat-settings'],
-        queryFn: () => api.chatSettings() as Promise<ChatSettings>
-    });
     // The server keeps generating even when the browser disconnects, so on
     // load (or after a refresh) ask whether a turn is still in flight. The
     // web-turn portal event invalidates this key when the turn settles; the
@@ -243,7 +229,7 @@ export function StudyRoom() {
     const display = [...history, ...turn.messages, ...(turn.pending ? [turn.pending] : [])];
     const lastAssistant = [...display].reverse().find((m) => m.role === 'assistant' && !m.draft && !m.typing);
     const lastUser = [...display].reverse().find((m) => m.role === 'user');
-    const settings = settingsQ.data;
+    const settings = settingsQ.data?.sections.chat;
 
     const resetTurn = turn.reset;
     useEffect(() => {

@@ -306,6 +306,12 @@ export type UserSettingsResponse = {
             model: string | null;
             reasoningEffort: string | null;
             thoughtful?: boolean;
+        }, {
+            provider: string | null;
+            providerName?: string;
+            model: string | null;
+            reasoningEffort: string | null;
+            thoughtful?: boolean;
         }>;
         voice: SettingSection<{
             voiceId: string | null;
