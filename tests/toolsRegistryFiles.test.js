@@ -248,8 +248,10 @@ describe('showSavedFiles', () => {
 });
 
 describe('portal plumbing', () => {
-    test('_emitMessage forwards caption / sourceUrl / kind from the send payload', async () => {
-        const filePath = path.join(tmpRoot, 'emit.png');
+    test('_emitMessage forwards name / caption / sourceUrl / kind from the send payload', async () => {
+        // Artifact storage prefixes the on-disk name with a content hash;
+        // the portal must show the sender's name.
+        const filePath = path.join(tmpRoot, '4ada7eeadf12-emit.png');
         fs.writeFileSync(filePath, PNG);
         const messages = [];
         await webChatService._emitMessage({ onMessage: (m) => messages.push(m) }, {
@@ -271,7 +273,7 @@ describe('portal plumbing', () => {
     });
 
     test('_attachmentsFromMetadata restores the hints the chat pipeline persisted', async () => {
-        const filePath = path.join(tmpRoot, 'hist.csv');
+        const filePath = path.join(tmpRoot, 'deadbeef-hist.csv');
         fs.writeFileSync(filePath, CSV);
         const attachments = await webChatService._attachmentsFromMetadata(JSON.stringify({
             attachments: [

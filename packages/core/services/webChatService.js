@@ -89,6 +89,9 @@ class WebChatError extends Error {
  */
 function decorateAttachment(registered, hints = {}) {
     const out = { ...registered };
+    // The registry names a file by its on-disk basename (artifact storage
+    // prefixes a content hash); the sender's name is the one to show.
+    if (typeof hints?.name === 'string' && hints.name.trim()) out.name = hints.name.trim().slice(0, 200);
     if (typeof hints?.caption === 'string' && hints.caption.trim()) out.caption = hints.caption.trim().slice(0, 400);
     if (typeof hints?.sourceUrl === 'string' && /^https?:\/\//i.test(hints.sourceUrl)) out.sourceUrl = hints.sourceUrl.slice(0, 2000);
     if (typeof hints?.kind === 'string' && /^[a-z]{1,16}$/.test(hints.kind)) out.kind = hints.kind;
@@ -1815,6 +1818,7 @@ class WebChatService {
                     // text; the files tools also pass sourceUrl/kind, which
                     // discord.js ignores and the portal renders as captions.
                     attachments.push(decorateAttachment(registered, {
+                        name: typeof file === 'object' ? file.name : null,
                         caption: typeof file === 'object' ? file.description : null,
                         sourceUrl: typeof file === 'object' ? file.sourceUrl : null,
                         kind: typeof file === 'object' ? file.kind : null

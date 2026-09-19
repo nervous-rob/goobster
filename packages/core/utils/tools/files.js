@@ -116,6 +116,7 @@ module.exports = {
 
             const shown = [];
             const skipped = [];
+            const shownUrls = new Set();
             const baseLabel = String(label || clean).trim().slice(0, 100);
             for (const cand of candidates) {
                 if (shown.length >= want) break;
@@ -153,6 +154,7 @@ module.exports = {
                     });
                     const delivered = await deliverFile(interactionContext, saved);
                     shown.push({ saved, duplicate, delivered });
+                    shownUrls.add(cand.imageUrl);
                 } catch (error) {
                     skipped.push(`${cand.title || cand.imageUrl}: ${error?.message || 'download failed'}`);
                 }
@@ -162,7 +164,7 @@ module.exports = {
                 return `Found ${candidates.length} candidate image(s) for "${clean}" but none could be downloaded:\n- ${skipped.join('\n- ')}`;
             }
             const alternates = candidates
-                .filter(c => !shown.some(s => s.saved.sourceUrl === c.pageUrl || s.saved.metadata?.sourceUrl === c.imageUrl))
+                .filter(c => !shownUrls.has(c.imageUrl) && !skipped.some(line => line.startsWith(`${c.title || c.imageUrl}:`)))
                 .slice(0, 4)
                 .map(c => `- ${c.title || 'untitled'}${c.license ? ` (${c.license})` : ''}: ${c.imageUrl}`);
             return [

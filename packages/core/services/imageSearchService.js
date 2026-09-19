@@ -181,7 +181,7 @@ class ImageSearchService {
         const images = await this.perplexity.searchImages(query);
         return images.map(img => ({
             title: null,
-            imageUrl: img.imageUrl,
+            imageUrl: stripTracking(img.imageUrl),
             pageUrl: img.pageUrl,
             width: img.width,
             height: img.height,
