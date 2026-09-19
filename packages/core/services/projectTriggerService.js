@@ -99,6 +99,10 @@ function retryDelayMs(attempts) {
     return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ** exp));
 }
 
+function eventExecutionAttemptId(trigger, sourceJob) {
+    return `project-trigger:${trigger.id}:source-job:${sourceJob.id}`;
+}
+
 class ProjectTriggerError extends Error {
     constructor(status, code, message) {
         super(message);
@@ -975,11 +979,12 @@ class ProjectTriggerService {
      */
     async _finishDelivery(trigger, job, dispatch, { client = null } = {}) {
         const row = await db.get(
-            `SELECT id, attempts FROM project_trigger_deliveries
+            `SELECT id, attempts, status FROM project_trigger_deliveries
              WHERE triggerId = @triggerId AND sourceJobId = @sourceJobId`,
             { triggerId: trigger.id, sourceJobId: job.id }
         );
         if (!row) return null;
+        if (row.status === DELIVERY.DELIVERED) return DELIVERY.DELIVERED;
         const detail = dispatch.detail ? String(dispatch.detail).slice(0, MAX_OUTCOME) : null;
         let status;
         let nextAttemptAt = null;
@@ -993,11 +998,11 @@ class ProjectTriggerService {
         } else {
             status = DELIVERY.FAILED;
         }
-        await db.run(
+        const updated = await db.run(
             `UPDATE project_trigger_deliveries
              SET status = @status, detail = @detail, childJobId = @childJobId,
                  nextAttemptAt = @nextAttemptAt, updatedAt = datetime('now')
-             WHERE id = @id`,
+             WHERE id = @id AND status <> 'DELIVERED'`,
             {
                 id: row.id,
                 status,
@@ -1006,6 +1011,12 @@ class ProjectTriggerService {
                 nextAttemptAt
             }
         );
+        // A reclaimed lease may finish before its original dispatcher.
+        // Never let that late dispatcher undo an acknowledged child.
+        if (!updated.changes) {
+            const current = await db.get('SELECT status FROM project_trigger_deliveries WHERE id = @id', { id: row.id });
+            return current?.status ?? null;
+        }
         if (status === DELIVERY.FAILED && dispatch.status === DISPATCH.RETRYABLE) {
             const gaveUp = `gave up after ${row.attempts} attempts: ${detail || 'still busy'}`;
             await this._recordOutcome(trigger.id, outcomeText('failed', gaveUp));
@@ -1407,6 +1418,10 @@ class ProjectTriggerService {
             await this._recordOutcome(trigger.id, outcomeText(label, detail));
             return { status, detail, childJobId: extra.childJobId ?? null };
         };
+        // Reconcile before validating today's asset/config: an existing
+        // child already froze its code and contract at the original fire.
+        const recovered = await this._recoverEventChild(trigger, sourceJob, report);
+        if (recovered) return recovered;
         const projectRow = await db.get(
             'SELECT id, slug, name, userId FROM observatory_projects WHERE id = @id',
             { id: trigger.projectId }
@@ -1461,12 +1476,40 @@ class ProjectTriggerService {
             }
             return await report(DISPATCH.FAILED, `unknown action ${trigger.action}`);
         } catch (error) {
+            // Another dispatcher may have inserted the same attempt after
+            // our initial lookup. The unique DB key prevents a second job;
+            // adopt the winner even if it has already finished.
+            const racedChild = await this._recoverEventChild(trigger, sourceJob, report);
+            if (racedChild) return racedChild;
             if (TRANSIENT_CODES.has(error?.code)) {
                 return await report(DISPATCH.RETRYABLE,
                     `${error.message || 'sandbox busy'} — ${sourceJob ? 'will retry' : 'next scheduled run'}`);
             }
             throw error;
         }
+    }
+
+    async _recoverEventChild(trigger, sourceJob, report) {
+        if (!sourceJob || trigger.action !== 'run_script') return null;
+        const child = await db.get(
+            `SELECT * FROM observatory_jobs
+             WHERE projectId = @projectId AND userId = @userId
+               AND startedBy = 'trigger' AND triggerId = @triggerId AND parentJobId = @parentJobId
+               AND (executionAttemptId = @attemptId OR executionAttemptId IS NULL)
+             ORDER BY id ASC LIMIT 1`,
+            {
+                projectId: trigger.projectId, userId: trigger.userId,
+                triggerId: trigger.id, parentJobId: sourceJob.id,
+                attemptId: eventExecutionAttemptId(trigger, sourceJob)
+            }
+        );
+        if (!child) return null;
+        // NULL attempt keys cover jobs launched before this fix. Their
+        // explicit trigger + parent provenance identifies the same event.
+        if (child.finishedAt) await this._recordStartedJobSettled(child);
+        return await report(DISPATCH.DELIVERED,
+            `job #${child.id}; recovered existing dispatch; stage ${child.status}`,
+            { label: 'recovered', childJobId: child.id });
     }
 
     /**
@@ -1510,6 +1553,7 @@ class ProjectTriggerService {
             assetVersionId: head.id,
             startedBy: 'trigger',
             triggerId: trigger.id,
+            executionAttemptId: sourceJob ? eventExecutionAttemptId(trigger, sourceJob) : null,
             parentJobId: sourceJob?.id ?? null,
             outputContract
         });

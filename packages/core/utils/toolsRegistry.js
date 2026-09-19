@@ -17,6 +17,7 @@ const integrationTools = require('./tools/integrations');
 const fileTools = require('./tools/files');
 const selfDocsTools = require('./tools/selfDocs');
 const selfDocsConfig = require('../config/selfDocsConfig');
+const { isIncognitoToolBlocked } = require('./toolPrivacy');
 
 const catalog = {
     ...observatoryTools,
@@ -155,6 +156,9 @@ module.exports = {
 
     async execute(name, args) {
         if (!tools[name]) throw new Error(`Unknown tool: ${name}`);
+        if (isIncognitoToolBlocked(name, args?.interactionContext)) {
+            return '❌ Saving memories and files is disabled in incognito. Use a regular chat to save this content.';
+        }
         return tools[name].execute(args || {});
     },
 

@@ -46,6 +46,7 @@ class FileDiscoveryError extends Error {
 const DISPLAY_KINDS = ['image', 'csv', 'markdown', 'code', 'document', 'pdf', 'other'];
 
 const CSV_EXTENSIONS = new Set(['csv', 'tsv']);
+const ACTIVE_DOCUMENT_EXTENSIONS = new Set(['html', 'htm', 'xhtml', 'xht', 'svg', 'svgz']);
 
 function sniffImageMime(buffer) {
     if (!buffer || buffer.length < 12) return null;
@@ -244,6 +245,11 @@ class FileDiscoveryService {
         if (!extensionOf(baseName) || (sniffed && extensionOf(baseName) !== wantedExt
             && !(wantedExt === 'jpg' && extensionOf(baseName) === 'jpeg'))) {
             baseName = `${baseName.replace(/\.[^.]+$/, '') || 'file'}.${wantedExt}`;
+        }
+        // A text/plain body can contain HTML fragments that the prefix
+        // checks cannot identify. Keep it inert when opened after download.
+        if (ACTIVE_DOCUMENT_EXTENSIONS.has(extensionOf(baseName))) {
+            baseName = `${(baseName.replace(/\.[^.]+$/, '') || 'file').slice(0, 116)}.txt`;
         }
         const fileName = sanitizeFilename(baseName);
         const artifactKind = classifyArtifactKind({ name: fileName, mimeType });

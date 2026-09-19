@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const axios = require('axios');
 const { DISCORD_API, SESSION_COOKIE, STATE_COOKIE } = require('../appHelpers');
 const { streamWebChatTurn, streamLiveTurnProgress } = require('../appStream');
+const { safeFileResponseHeaders } = require('../../utils/safeFileResponse');
 
 function mountAuthChat(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, parseCookies, cookieAttributes } = h;
@@ -402,9 +403,8 @@ function mountAuthChat(app, ctx, h) {
             sendError(res, 404, 'NOT_FOUND', 'File not found (it may have expired).');
             return;
         }
-        // Files here may have come from the open web (fetchWebFile): the
-        // browser must trust the declared type, never sniff a script out of it.
-        res.setHeader('X-Content-Type-Options', 'nosniff');
+        // Applies to previously saved files too, regardless of their name.
+        res.set(safeFileResponseHeaders(file.path));
         res.sendFile(file.path);
     });
 }

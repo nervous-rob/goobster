@@ -1587,6 +1587,11 @@ CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId,
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_execution_attempt
     ON observatory_jobs(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
+-- Event-trigger retries share a stable attempt key even after the child
+-- settles. Legacy event jobs have NULL keys and remain valid on upgrade.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_observatory_jobs_event_attempt
+    ON observatory_jobs(executionAttemptId)
+    WHERE startedBy = 'trigger' AND parentJobId IS NOT NULL AND executionAttemptId IS NOT NULL;
 -- Event catch-up scans a project's settled jobs by finishedAt.
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project_finished
     ON observatory_jobs(projectId, finishedAt);

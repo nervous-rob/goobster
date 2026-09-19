@@ -198,3 +198,13 @@ describe('stopped mid-sequence', () => {
         expect(toolsRegistry.execute).toHaveBeenCalledTimes(1);
     });
 });
+
+
+test('incognito does not offer durable memory or file-saving tools', async () => {
+    const names = ['rememberFact', 'saveArtifact', 'findImages', 'fetchWebFile', 'lookupNotes', 'performSearch'];
+    toolsRegistry.getDefinitions.mockResolvedValue(names.map(name => ({ name, parameters: { type: 'object', properties: {} } })));
+    aiService.chat.mockResolvedValue({ content: 'Hello.', toolCalls: [] });
+    await handleChatInteraction(webInteraction().interaction);
+    expect(orchestrator.runAgentLoop.mock.calls[0][0].functionDefs.map(d => d.name))
+        .toEqual(['lookupNotes', 'performSearch']);
+});

@@ -285,3 +285,25 @@ describe('portal plumbing', () => {
         expect(attachments).toEqual([expect.objectContaining({ name: 'hist.csv', caption: 'Rain', sourceUrl: 'https://data.example.org/a.csv', kind: 'csv' })]);
     });
 });
+
+
+describe('incognito execution boundary', () => {
+    test.each(['findImages', 'fetchWebFile', 'saveArtifact', 'rememberFact'])('%s refuses a stale/direct call without saving content', async (name) => {
+        const search = jest.spyOn(imageSearchService, 'search');
+        const download = jest.spyOn(fileDiscoveryService, 'download');
+        const before = await db.get('SELECT COUNT(*) AS count FROM kg_nodes');
+        const { interaction, sent } = fakeInteraction();
+        interaction.skipHistory = true;
+        const result = await toolsRegistry.execute(name, {
+            query: 'private topic', url: 'https://example.org/private.txt',
+            label: 'private-file', notes: 'private conversation detail',
+            fact: 'private conversation detail', confirm: true, interactionContext: interaction
+        });
+        expect(result).toMatch(/disabled in incognito/);
+        expect(search).not.toHaveBeenCalled();
+        expect(download).not.toHaveBeenCalled();
+        expect(await db.get('SELECT COUNT(*) AS count FROM kg_nodes')).toEqual(before);
+        expect(sent).toEqual([]);
+        expect(interaction.generatedFiles).toBeUndefined();
+    });
+});

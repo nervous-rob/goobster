@@ -21,6 +21,7 @@ const path = require('path');
 const { getPreferredUserName, getBotPreferredName } = require('./guildContext');
 const { getConversationScopeId } = require('./dmScope');
 const toolsRegistry = require('./toolsRegistry');
+const { isIncognitoToolBlocked } = require('./toolPrivacy');
 const { TOOL_RESULT_CHARS } = require('./toolResultWindow');
 const memoryService = require('../services/memoryService');
 const { classifyDepth, buildConversationalPrompt } = require('./chat/promptContext');
@@ -505,11 +506,8 @@ async function handleChatInteraction(interaction, thread = null) {
                 isWeb: isWebInteraction,
                 isAutomation: interaction.isAutomation === true
             });
-            // Incognito: nothing may be persisted, so the durable-memory
-            // tool is off the table for this turn.
-            if (skipHistory) {
-                functionDefs = functionDefs.filter(def => def.name !== 'rememberFact');
-            }
+            // The registry also enforces this at execution for stale calls.
+            functionDefs = functionDefs.filter(def => !isIncognitoToolBlocked(def.name, interaction));
             try {
                 const userSettingsService = require('../services/userSettingsService');
                 const disabled = await userSettingsService.getPreference(interaction.user?.id, 'disabledTools');
