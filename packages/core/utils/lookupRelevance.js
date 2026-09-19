@@ -132,15 +132,27 @@ function scoreCandidate({
 
     // Coverage separates "matches every word" from "shares one word"; the
     // label bonus prefers a term hit in the title over one buried in a
-    // long document; salience and confidence only order otherwise-equal
-    // candidates.
+    // long document; tightness prefers the label the query covers best
+    // ("M1943 field jacket" over "M1943 field jacket (2)"); salience and
+    // confidence only order otherwise-equal candidates.
     const labelHits = qTerms.filter(term => containsWord(nLabel, term) || containsWord(nFile, term)).length;
     const score = TIER_SCORE[tier]
         + Math.round(coverage * 200)
         + labelHits * 25
+        + Math.round(labelTightness(nLabel, qTerms) * 20)
         + clamp01(salience) * 10
         + clamp01(confidence) * 2;
     return { score, tier, coverage, matchedTerms };
+}
+
+/** Share of the label's characters covered by query terms (0 when none hit). */
+function labelTightness(nLabel, qTerms) {
+    if (!nLabel) return 0;
+    let covered = 0;
+    for (const term of qTerms) {
+        if (containsWord(nLabel, term)) covered += term.length;
+    }
+    return Math.min(1, covered / nLabel.length);
 }
 
 function clamp01(value) {
@@ -151,14 +163,18 @@ function clamp01(value) {
 
 /**
  * Sort by score, then salience, then recency (updatedAt text sorts
- * lexically as UTC). Stable for equal keys.
+ * lexically as UTC), then lowest id. The id tie-break keeps the order
+ * identical on SQLite and Postgres: rows that tie on every other key come
+ * back from Postgres in whatever physical order the planner chose.
  */
 function compareRanked(a, b) {
     if (b.relevance !== a.relevance) return b.relevance - a.relevance;
     const sa = Number(a.salience) || 0;
     const sb = Number(b.salience) || 0;
     if (sb !== sa) return sb - sa;
-    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    const byTime = String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    if (byTime !== 0) return byTime;
+    return (Number(a.id) || 0) - (Number(b.id) || 0);
 }
 
 /**

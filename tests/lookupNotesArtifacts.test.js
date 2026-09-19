@@ -114,6 +114,20 @@ describe('lookupRelevance (pure ranking helpers)', () => {
         expect(relevant.score).toBeGreaterThan(salient.score);
     });
 
+    test('ties resolve deterministically: tighter label first, then lowest id', () => {
+        // Two images saved by one findImages call share every ranking key
+        // except how much of the label the query covers; Postgres returned
+        // them in a different physical order than SQLite (CI regression).
+        const first = lookupRelevance.scoreCandidate({ query: 'M1943 jacket', label: 'M1943 field jacket', fileName: 'M1943_Field_Jacket.png', salience: 0.5 });
+        const second = lookupRelevance.scoreCandidate({ query: 'M1943 jacket', label: 'M1943 field jacket (2)', fileName: '1024px-cap.jpg', salience: 0.5 });
+        expect(first.tier).toBe(second.tier);
+        expect(first.score).toBeGreaterThan(second.score);
+
+        const same = { relevance: 5, salience: 0.5, updatedAt: '2026-01-01 00:00:00' };
+        const rows = [{ ...same, id: 9 }, { ...same, id: 3 }, { ...same, id: 7 }];
+        expect(rows.sort(lookupRelevance.compareRanked).map(r => r.id)).toEqual([3, 7, 9]);
+    });
+
     test('excerptAround is bounded and centred on the match', () => {
         const filler = 'alpha beta gamma delta epsilon '.repeat(120);
         const text = `${filler}the needle phrase sits here ${filler}`;

@@ -324,7 +324,7 @@ class KnowledgeGraphService {
             sql += ` AND n.type <> @x${i}`;
             params[`x${i}`] = t;
         });
-        sql += ' ORDER BY phraseHit DESC, termHits DESC, n.salience DESC, n.updatedAt DESC LIMIT @fetch';
+        sql += ' ORDER BY phraseHit DESC, termHits DESC, n.salience DESC, n.updatedAt DESC, n.id ASC LIMIT @fetch';
         const rows = await db.all(sql, params);
 
         const ranked = rows.map(row => {
