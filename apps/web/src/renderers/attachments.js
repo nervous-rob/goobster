@@ -15,6 +15,18 @@
  * cells and code are text nodes, Markdown goes through the escape-first
  * renderer. Every preview is bounded (rows, characters) so a large file
  * stays cheap to open.
+ *
+ * Rendering is a reconciliation, not an append: `renderAttachments` keys
+ * every card by a durable attachment id (the file id in the URL, else
+ * URL + name) and keeps an existing card whose attachment is unchanged.
+ * A parent rerender - a new array instance, a changed callback, a
+ * streaming update - therefore never refetches, never duplicates a card
+ * or a toggle, and never loses a collapse or sort choice. UI state
+ * (collapsed, sort column) lives in a module-level store keyed the same
+ * way, so it also survives the card being rebuilt after a history reload.
+ * In-flight fetches carry an AbortController: a card that is replaced or
+ * unmounted aborts its request, and a late response can never write into
+ * a card it does not belong to.
  */
 
 import { renderMarkdown } from './markdown.js';
@@ -30,6 +42,13 @@ const MAX_TABLE_COLS = 40;
 const MAX_PREVIEW_CHARS = 12_000;
 const MAX_FETCH_BYTES = 6 * 1024 * 1024;
 
+/**
+ * A text/Markdown preview is "long" - and starts collapsed - past either
+ * bound. Short files open expanded so a config snippet is readable at once.
+ */
+export const LONG_PREVIEW_LINES = 40;
+export const LONG_PREVIEW_CHARS = 2_500;
+
 const LANG_BY_EXT = {
     js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
     py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java', kt: 'kotlin', swift: 'swift',
@@ -38,6 +57,8 @@ const LANG_BY_EXT = {
     yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'html', css: 'css', scss: 'css', less: 'css', ini: 'ini', cfg: 'ini',
     conf: 'ini', env: 'bash', txt: '', log: '', rst: '', tex: ''
 };
+
+const FILE_ROUTE = /\/api\/app\/files\/([^/?#]+)/;
 
 function extensionOf(name) {
     const base = String(name || '').split(/[/\\]/).pop() || '';
@@ -54,6 +75,78 @@ export function attachmentKind(file) {
     if (file?.kind === 'code' || file?.kind === 'document' || TEXT_EXT.test(name)) return 'text';
     return 'file';
 }
+
+/**
+ * Durable identity of an attachment: the file id from the owner-bound
+ * route when present, else URL + name. Never the array or object identity.
+ * @param {{ url?: string, name?: string }} file
+ * @returns {string}
+ */
+export function attachmentKey(file) {
+    const url = String(file?.url || '');
+    const match = FILE_ROUTE.exec(url);
+    if (match) return `file:${match[1]}`;
+    return `url:${url}|${String(file?.name || '')}`;
+}
+
+/** Everything that, if changed, means the card must be rebuilt. */
+export function attachmentSignature(file) {
+    return [file?.url, file?.name, file?.caption, file?.sourceUrl, file?.kind]
+        .map(v => String(v ?? ''))
+        .join('\u0001');
+}
+
+/** Signature of a whole list - a cheap effect dependency for React callers. */
+export function attachmentsSignature(attachments) {
+    return (Array.isArray(attachments) ? attachments : [])
+        .filter(f => f?.url)
+        .map(f => `${attachmentKey(f)}\u0002${attachmentSignature(f)}`)
+        .join('\u0003');
+}
+
+// ---------------------------------------------------------------------------
+// Per-attachment UI state (collapsed, sort) - outside the disposable DOM.
+
+const uiState = new Map();
+
+function stateFor(key) {
+    let state = uiState.get(key);
+    if (!state) {
+        state = {};
+        uiState.set(key, state);
+    }
+    return state;
+}
+
+/** Forget remembered collapse/sort choices (tests, sign-out). */
+export function resetAttachmentState() {
+    uiState.clear();
+}
+
+/** Read-only peek at the remembered state of one attachment (tests). */
+export function peekAttachmentState(file) {
+    const state = uiState.get(attachmentKey(file));
+    return state ? { ...state } : null;
+}
+
+// ---------------------------------------------------------------------------
+// In-flight fetch bookkeeping per card element.
+
+const controllers = new WeakMap();
+
+function abortCard(card) {
+    const controller = controllers.get(card);
+    if (controller) {
+        controller.abort();
+        controllers.delete(card);
+    }
+}
+
+function isAbort(error) {
+    return error?.name === 'AbortError';
+}
+
+// ---------------------------------------------------------------------------
 
 function hostOf(url) {
     try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -97,21 +190,20 @@ function captionNode(file) {
     return cap;
 }
 
-function renderImage(bubble, file) {
+function renderImage(file) {
     const img = document.createElement('img');
     img.className = 'attachment';
     img.src = file.url;
     img.alt = file.caption || file.name || 'attachment';
     img.loading = 'lazy';
     const caption = captionNode(file);
-    if (!caption) {
-        bubble.appendChild(img);
-        return;
-    }
+    if (!caption) return img;
     const figure = el('figure', 'attachment-figure');
     figure.append(img, caption);
-    bubble.appendChild(figure);
+    return figure;
 }
+
+let cardSeq = 0;
 
 /** Card frame shared by the table and preview renderers. */
 function fileCard(file, icon, subtitle) {
@@ -128,18 +220,40 @@ function fileCard(file, icon, subtitle) {
     actions.append(downloadLink(file));
     head.append(actions);
     const body = el('div', 'file-card-body');
+    body.id = `file-card-body-${++cardSeq}`;
     body.append(el('div', 'file-card-loading', 'Loading…'));
     card.append(head, body);
     if (file.caption) card.append(el('div', 'file-card-caption', file.caption));
-    return { card, head, body, title };
+    return { card, head, body, title, actions };
 }
 
-async function fetchText(url) {
-    const response = await fetch(url, { credentials: 'same-origin' });
+async function fetchText(url, { signal } = {}) {
+    const response = await fetch(url, { credentials: 'same-origin', signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const length = Number(response.headers.get('content-length') || 0);
     if (length > MAX_FETCH_BYTES) throw new Error('too large to preview');
     return await response.text();
+}
+
+/**
+ * Start the card's fetch. Resolves to the text, or to null when the card
+ * was replaced/unmounted meanwhile (the caller then does nothing) - a
+ * genuine failure renders the error. Aborts are never shown as errors.
+ */
+async function loadCardText(card, body, url) {
+    const controller = new AbortController();
+    controllers.set(card, controller);
+    try {
+        const text = await fetchText(url, { signal: controller.signal });
+        if (controller.signal.aborted || controllers.get(card) !== controller) return null;
+        return text;
+    } catch (error) {
+        if (isAbort(error) || controller.signal.aborted || controllers.get(card) !== controller) return null;
+        body.replaceChildren(el('div', 'file-card-error', `Could not load the preview (${error.message}).`));
+        return null;
+    } finally {
+        if (controllers.get(card) === controller) controllers.delete(card);
+    }
 }
 
 /** RFC 4180-ish parser: quoted fields, doubled quotes, CRLF, bounded rows. */
@@ -218,112 +332,184 @@ function buildTable(header, rows, onSort, sortState) {
     return table;
 }
 
-async function renderCsv(bubble, file) {
+function renderCsv(file) {
     const delimiter = extensionOf(file.name) === 'tsv' ? '\t' : ',';
     const { card, body, title } = fileCard(file, '▦', null);
-    bubble.appendChild(card);
-    let text;
-    try {
-        text = await fetchText(file.url);
-    } catch (error) {
-        body.replaceChildren(el('div', 'file-card-error', `Could not load the table (${error.message}).`));
-        return;
-    }
-    const { rows } = parseDelimited(text, delimiter, MAX_TABLE_ROWS + 1);
-    if (rows.length === 0) {
-        body.replaceChildren(el('div', 'file-card-error', 'The file is empty.'));
-        return;
-    }
-    const totalRows = countDataRows(text);
-    const header = rows[0].slice(0, MAX_TABLE_COLS);
-    const data = rows.slice(1, MAX_TABLE_ROWS + 1).map(r => r.slice(0, MAX_TABLE_COLS));
-    const shownRows = data.length;
-    const colNote = rows[0].length > MAX_TABLE_COLS ? `, first ${MAX_TABLE_COLS} of ${rows[0].length} columns` : `, ${header.length} column${header.length === 1 ? '' : 's'}`;
-    title.append(el('span', 'file-card-sub',
-        `${totalRows.toLocaleString()} row${totalRows === 1 ? '' : 's'}${colNote}`));
-
-    const sortState = { col: -1, dir: 'asc' };
-    const draw = () => {
-        const sorted = sortState.col < 0 ? data : [...data].sort((a, b) => {
-            const cmp = compareCells(a[sortState.col] ?? '', b[sortState.col] ?? '');
-            return sortState.dir === 'asc' ? cmp : -cmp;
-        });
-        const wrap = el('div', 'csv-scroll');
-        wrap.appendChild(buildTable(header, sorted, (col) => {
-            if (sortState.col === col) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
-            else { sortState.col = col; sortState.dir = 'asc'; }
-            draw();
-        }, sortState));
-        const children = [wrap];
-        if (totalRows > shownRows) {
-            children.push(el('div', 'file-card-note', `Showing the first ${shownRows} of ${totalRows.toLocaleString()} rows - download for the rest.`));
+    const state = stateFor(attachmentKey(file));
+    void (async () => {
+        const text = await loadCardText(card, body, file.url);
+        if (text == null) return;
+        const { rows } = parseDelimited(text, delimiter, MAX_TABLE_ROWS + 1);
+        if (rows.length === 0) {
+            body.replaceChildren(el('div', 'file-card-error', 'The file is empty.'));
+            return;
         }
-        body.replaceChildren(...children);
-    };
-    draw();
+        const totalRows = countDataRows(text);
+        const header = rows[0].slice(0, MAX_TABLE_COLS);
+        const data = rows.slice(1, MAX_TABLE_ROWS + 1).map(r => r.slice(0, MAX_TABLE_COLS));
+        const shownRows = data.length;
+        const colNote = rows[0].length > MAX_TABLE_COLS ? `, first ${MAX_TABLE_COLS} of ${rows[0].length} columns` : `, ${header.length} column${header.length === 1 ? '' : 's'}`;
+        title.append(el('span', 'file-card-sub',
+            `${totalRows.toLocaleString()} row${totalRows === 1 ? '' : 's'}${colNote}`));
+
+        // Sort choice persists in the attachment state, so a rebuilt card
+        // (history reload) and an untouched card (parent rerender) agree.
+        if (!state.sort || state.sort.col >= header.length) state.sort = { col: -1, dir: 'asc' };
+        const draw = () => {
+            const sortState = state.sort;
+            const sorted = sortState.col < 0 ? data : [...data].sort((a, b) => {
+                const cmp = compareCells(a[sortState.col] ?? '', b[sortState.col] ?? '');
+                return sortState.dir === 'asc' ? cmp : -cmp;
+            });
+            const wrap = el('div', 'csv-scroll');
+            wrap.appendChild(buildTable(header, sorted, (col) => {
+                if (sortState.col === col) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+                else { sortState.col = col; sortState.dir = 'asc'; }
+                draw();
+            }, sortState));
+            const children = [wrap];
+            if (totalRows > shownRows) {
+                children.push(el('div', 'file-card-note', `Showing the first ${shownRows} of ${totalRows.toLocaleString()} rows - download for the rest.`));
+            }
+            body.replaceChildren(...children);
+        };
+        draw();
+    })();
+    return card;
 }
 
-async function renderTextPreview(bubble, file, kind) {
+/** Whether a text preview should start collapsed. */
+export function isLongPreview(text) {
+    const value = String(text || '');
+    if (value.length > LONG_PREVIEW_CHARS) return true;
+    let lines = 1;
+    for (let i = 0; i < value.length; i++) {
+        if (value.charCodeAt(i) === 10 && ++lines > LONG_PREVIEW_LINES) return true;
+    }
+    return false;
+}
+
+function applyCollapsed(card, toggle, collapsed) {
+    card.classList.toggle('collapsed', collapsed);
+    toggle.textContent = collapsed ? 'Expand' : 'Collapse';
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+}
+
+function renderTextPreview(file, kind) {
     const ext = extensionOf(file.name);
-    const { card, body, title } = fileCard(file, kind === 'markdown' ? '📝' : '📄', null);
-    bubble.appendChild(card);
-    let text;
-    try {
-        text = await fetchText(file.url);
-    } catch (error) {
-        body.replaceChildren(el('div', 'file-card-error', `Could not load the preview (${error.message}).`));
-        return;
-    }
-    const lines = text.split('\n').length;
-    title.append(el('span', 'file-card-sub', `${lines.toLocaleString()} line${lines === 1 ? '' : 's'}`));
-    const truncated = text.length > MAX_PREVIEW_CHARS;
-    const shown = truncated ? text.slice(0, MAX_PREVIEW_CHARS) : text;
-    const content = el('div', 'file-card-preview');
-    if (kind === 'markdown') {
-        content.classList.add('file-card-markdown');
-        content.innerHTML = renderMarkdown(shown);
-    } else {
-        const pre = document.createElement('pre');
-        const code = document.createElement('code');
-        code.innerHTML = highlight(shown, LANG_BY_EXT[ext] ?? '');
-        pre.appendChild(code);
-        content.appendChild(pre);
-    }
-    const children = [content];
-    if (truncated) children.push(el('div', 'file-card-note', 'Preview truncated - download for the full file.'));
-    body.replaceChildren(...children);
+    const { card, body, title, actions } = fileCard(file, kind === 'markdown' ? '📝' : '📄', null);
+    const state = stateFor(attachmentKey(file));
+    void (async () => {
+        const text = await loadCardText(card, body, file.url);
+        if (text == null) return;
+        const lines = text.split('\n').length;
+        title.append(el('span', 'file-card-sub', `${lines.toLocaleString()} line${lines === 1 ? '' : 's'}`));
+        const truncated = text.length > MAX_PREVIEW_CHARS;
+        const shown = truncated ? text.slice(0, MAX_PREVIEW_CHARS) : text;
+        const content = el('div', 'file-card-preview');
+        if (kind === 'markdown') {
+            content.classList.add('file-card-markdown');
+            content.innerHTML = renderMarkdown(shown);
+        } else {
+            const pre = document.createElement('pre');
+            const code = document.createElement('code');
+            code.innerHTML = highlight(shown, LANG_BY_EXT[ext] ?? '');
+            pre.appendChild(code);
+            content.appendChild(pre);
+        }
+        const children = [content];
+        if (truncated) children.push(el('div', 'file-card-note', 'Preview truncated - download for the full file.'));
 
-    // Collapse/expand: long previews start collapsed to a scrollable height.
-    const toggle = el('button', 'file-card-action', 'Collapse');
-    toggle.type = 'button';
-    toggle.addEventListener('click', () => {
-        const collapsed = card.classList.toggle('collapsed');
-        toggle.textContent = collapsed ? 'Expand' : 'Collapse';
-    });
-    card.querySelector('.file-card-actions')?.prepend(toggle);
+        // Decide the initial state (remembered choice, else long → collapsed)
+        // and apply it BEFORE the content is exposed, so a large document is
+        // never painted expanded and folded a frame later.
+        if (typeof state.collapsed !== 'boolean') state.collapsed = isLongPreview(text);
+        const toggle = el('button', 'file-card-action file-card-toggle');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-controls', body.id);
+        toggle.setAttribute('aria-label', `Toggle preview of ${file.name || 'file'}`);
+        toggle.addEventListener('click', () => {
+            state.collapsed = !card.classList.contains('collapsed');
+            applyCollapsed(card, toggle, state.collapsed);
+        });
+        applyCollapsed(card, toggle, state.collapsed);
+        actions.prepend(toggle);
+        body.replaceChildren(...children);
+    })();
+    return card;
 }
 
-function renderChip(bubble, file) {
+function renderChip(file) {
     const link = el('a', 'file-chip', `⬇ ${file.name}`);
     link.href = file.url;
     link.download = file.name;
-    bubble.appendChild(link);
+    return link;
+}
+
+function buildAttachment(file) {
+    const kind = attachmentKind(file);
+    let node;
+    if (kind === 'image') node = renderImage(file);
+    else if (kind === 'csv') node = renderCsv(file);
+    else if (kind === 'markdown' || kind === 'text') node = renderTextPreview(file, kind);
+    else node = renderChip(file);
+    node.dataset.attachmentKey = attachmentKey(file);
+    node.dataset.attachmentSig = attachmentSignature(file);
+    return node;
 }
 
 /**
- * Append the attachments of one message to its bubble.
- * @param {HTMLElement} bubble
+ * Reconcile the attachments of one message into `container`: keep cards
+ * whose attachment is unchanged (same key and signature), build the new
+ * ones, drop - and abort - the rest, and put them in list order. Safe to
+ * call on every parent render.
+ *
+ * @param {HTMLElement} container
  * @param {Array<{ url: string, name?: string, caption?: string, sourceUrl?: string, kind?: string }>} attachments
  */
-export function renderAttachments(bubble, attachments = []) {
-    for (const file of attachments) {
+export function renderAttachments(container, attachments = []) {
+    const wanted = [];
+    const seen = new Set();
+    for (const file of Array.isArray(attachments) ? attachments : []) {
         if (!file?.url) continue;
-        // No name means an older registration - assume image (the only
-        // kind that existed before download chips).
-        const kind = attachmentKind(file);
-        if (kind === 'image') renderImage(bubble, file);
-        else if (kind === 'csv') void renderCsv(bubble, file);
-        else if (kind === 'markdown' || kind === 'text') void renderTextPreview(bubble, file, kind);
-        else renderChip(bubble, file);
+        const key = attachmentKey(file);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        wanted.push({ key, sig: attachmentSignature(file), file });
     }
+
+    const existing = new Map();
+    for (const child of Array.from(container.children)) {
+        const key = child.dataset?.attachmentKey;
+        if (key && !existing.has(key)) existing.set(key, child);
+        else disposeNode(child);
+    }
+
+    const ordered = wanted.map(({ key, sig, file }) => {
+        const current = existing.get(key);
+        existing.delete(key);
+        if (current && current.dataset.attachmentSig === sig) return current;
+        if (current) disposeNode(current);
+        return buildAttachment(file);
+    });
+    for (const stale of existing.values()) disposeNode(stale);
+
+    // Move only what is out of place: an untouched card keeps its scroll
+    // position, sort table, and focus.
+    ordered.forEach((node, index) => {
+        if (container.children[index] !== node) {
+            container.insertBefore(node, container.children[index] || null);
+        }
+    });
+}
+
+function disposeNode(node) {
+    abortCard(node);
+    node.remove();
+}
+
+/** Abort every in-flight fetch under `container` and empty it (unmount). */
+export function disposeAttachments(container) {
+    if (!container) return;
+    for (const child of Array.from(container.children)) disposeNode(child);
 }

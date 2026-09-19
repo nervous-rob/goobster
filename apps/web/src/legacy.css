@@ -479,7 +479,10 @@ body.applet-open { overflow: hidden; }
 }
 .msg-bubble .file-chip:hover { border-color: var(--accent); }
 
-/* Found-on-the-web attachments: captioned images, CSV tables, file previews */
+/* Found-on-the-web attachments: captioned images, CSV tables, file previews.
+   They live in their own container after the rendered Markdown so a body
+   re-render never rebuilds them. */
+.msg-attachments:empty { display: none; }
 .msg-bubble .attachment-figure { margin: 8px 0 0; }
 .msg-bubble .attachment-figure img.attachment { margin-top: 0; }
 .msg-bubble .attachment-caption {
