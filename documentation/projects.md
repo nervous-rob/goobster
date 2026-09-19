@@ -277,7 +277,7 @@ neither. A non-matching job never advances the trigger's `lastRun`, so
 an unrelated job settling after a matching one cannot make catch-up
 skip the match.
 
-### Exactly-once delivery records
+### Event delivery records
 
 An event is the pair **(trigger, settled source job)**, and each one has
 a durable row in `project_trigger_deliveries` with a unique constraint
@@ -315,6 +315,23 @@ catch-up: every matching job with `finishedAt <= lastRun` is recorded as
 Inspect deliveries with the tool (`list_deliveries` with the trigger
 name), the API (`GET /projects/:slug/triggers/:trigger/deliveries`), or
 the **deliveries** expander on an event trigger in the portal.
+
+### Recovering an event-trigger dispatch
+
+Each event-fired `run_script` passes a stable execution-attempt ID derived
+from the trigger and source-job IDs. A partial unique index on event job
+attempts prevents a second child even when two dispatchers race after a
+lease expires. Before retrying, the trigger service adopts any existing
+child, including a running, failed, or completed job. Legacy children
+without an attempt ID are matched by their project, owner, trigger, and
+parent-job provenance. Code and output-contract edits do not rerun an
+already-created child. `DELIVERED` means that the child was created; its
+stage status remains separate. A late dispatcher cannot downgrade an
+already-delivered record.
+
+This prevents duplicate child creation after a lost dispatch acknowledgement.
+It does not promise exactly-once external effects inside a script or for
+other trigger actions (`render`, `fetch_data`, `agent_prompt`).
 
 ### Dispatch is not completion
 

@@ -328,3 +328,15 @@ describe('parseDelimited', () => {
         expect(parseDelimited('a\tb\n1\t2\n', { delimiter: '\t' })[1]).toEqual(['1', '2']);
     });
 });
+
+
+describe('untrusted active filenames', () => {
+    test.each(['html', 'htm', 'xhtml', 'xht', 'svg', 'svgz'])('normalizes a text/plain .%s fragment to .txt', (ext) => {
+        const svc = new FileDiscoveryService();
+        const result = svc.classify({
+            url: `https://example.org/report.${ext}`, contentType: 'text/plain',
+            buffer: Buffer.from('<script>window.marker = true;</script>')
+        });
+        expect(result).toMatchObject({ fileName: 'report.txt', mimeType: 'text/plain', artifactKind: 'document' });
+    });
+});

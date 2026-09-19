@@ -520,7 +520,8 @@ describe('SQLite: upgrading an existing database', () => {
         // The new indexes exist on the upgraded tables.
         const jobIndexes = database.pragma('index_list(observatory_jobs)').map(i => i.name);
         expect(jobIndexes).toEqual(expect.arrayContaining([
-            'idx_observatory_jobs_project_finished', 'idx_observatory_jobs_parent'
+            'idx_observatory_jobs_project_finished', 'idx_observatory_jobs_parent',
+            'uq_observatory_jobs_event_attempt'
         ]));
 
         // And the new columns are writable in the shapes the services use.
@@ -753,7 +754,8 @@ describePostgres('Postgres: upgrading an existing database', () => {
              WHERE schemaname = current_schema() AND tablename = 'observatory_jobs'`
         );
         expect(jobIndexes.rows.map(r => r.indexname)).toEqual(expect.arrayContaining([
-            'idx_observatory_jobs_project_finished', 'idx_observatory_jobs_parent'
+            'idx_observatory_jobs_project_finished', 'idx_observatory_jobs_parent',
+            'uq_observatory_jobs_event_attempt'
         ]));
 
         await adapter.rawQuery(

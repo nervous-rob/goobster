@@ -1454,3 +1454,49 @@ describe('friends route', () => {
         expect(res.json).toEqual({ friends: [], syncedAt: null });
     });
 });
+
+
+describe('safe generated-file responses', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-safe-files-'));
+    afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+    afterEach(() => fakeChat.getFile.mockReset().mockReturnValue(null));
+
+    test.each(['html', 'svg', 'xml', 'js', 'md', 'csv', 'json'])('serves existing .%s files as inert text', async (ext) => {
+        const filePath = path.join(dir, `old-file.${ext}`);
+        const body = '<script>window.marker = true;</script>';
+        fs.writeFileSync(filePath, body);
+        fakeChat.getFile.mockResolvedValue({ path: filePath });
+        const cookie = await login();
+        const res = await request({ reqPath: '/api/app/files/old-file', headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toBe('text/plain; charset=utf-8');
+        expect(res.headers['content-disposition']).toMatch(/^attachment/);
+        expect(res.headers['content-security-policy']).toContain('sandbox');
+        expect(res.headers['x-content-type-options']).toBe('nosniff');
+        expect(res.raw).toBe(body);
+        expect(fakeChat.getFile).toHaveBeenCalledWith('old-file', USER);
+    });
+
+    test.each([['png', 'image/png'], ['mp3', 'audio/mpeg'], ['mp4', 'video/mp4']])('preserves inline %s media', async (ext, mime) => {
+        const filePath = path.join(dir, `media.${ext}`);
+        fs.writeFileSync(filePath, 'fixture');
+        fakeChat.getFile.mockResolvedValue({ path: filePath });
+        const cookie = await login();
+        const res = await request({ reqPath: '/api/app/files/media', headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toBe(mime);
+        expect(res.headers['content-disposition']).toBe('inline');
+    });
+
+    test('unknown file types download as opaque bytes and still require authentication', async () => {
+        const filePath = path.join(dir, 'file.bin');
+        fs.writeFileSync(filePath, 'bytes');
+        fakeChat.getFile.mockResolvedValue({ path: filePath });
+        expect((await request({ reqPath: '/api/app/files/file' })).status).toBe(401);
+        expect(fakeChat.getFile).not.toHaveBeenCalled();
+        const cookie = await login();
+        const res = await request({ reqPath: '/api/app/files/file', headers: { Cookie: cookie } });
+        expect(res.headers['content-type']).toBe('application/octet-stream');
+        expect(res.headers['content-disposition']).toMatch(/^attachment/);
+    });
+});

@@ -1625,3 +1625,124 @@ describe('erasure', () => {
         expect(await svc.countUser(OTHER)).toBe(1);
     });
 });
+
+describe('event child recovery after a lost acknowledgement', () => {
+    let settleSpy;
+    beforeEach(() => {
+        settleSpy = jest.spyOn(projectTriggerService, 'evaluateJobSettled').mockResolvedValue(0);
+    });
+    afterEach(() => settleSpy.mockRestore());
+
+    async function fixture({ background = false, sandboxRun = async () => okSandboxResult } = {}) {
+        const userId = nextUser();
+        const obs = makeRealObservatory(sandboxRun);
+        await seedProject(userId);
+        const script = await seedScript(userId);
+        const svc = makeService({ observatory: obs });
+        const created = await svc.create({
+            userId, project: 'lab', name: 'Recover stage', kind: 'event',
+            eventTopic: 'job_completed', action: 'run_script', actionAssetId: script.id,
+            actionParams: { background }
+        });
+        const trigger = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: created.id });
+        const source = await insertSettledJob(userId, 'lab');
+        await svc.claimEventFire(trigger, source);
+        return { userId, obs, svc, trigger, source };
+    }
+
+    async function expireClaim(trigger) {
+        await db.run('UPDATE project_trigger_deliveries SET updatedAt = @old WHERE triggerId = @id',
+            { old: utcAgo({ minutes: 30 }), id: trigger.id });
+    }
+
+    async function children(trigger, source) {
+        return await db.all('SELECT * FROM observatory_jobs WHERE triggerId = @id AND parentJobId = @parent',
+            { id: trigger.id, parent: source.id });
+    }
+
+    test.each([false, true])('adopts a completed child after lost acknowledgement (background=%s)', async (background) => {
+        const sandboxRun = jest.fn(async () => okSandboxResult);
+        const { svc, trigger, source } = await fixture({ background, sandboxRun });
+        const dispatch = await svc._executeAction(trigger, { sourceJob: source });
+        await waitForSettled(dispatch.childJobId);
+        // Crash after execution, before _finishDelivery. Even deleting the
+        // script head must not prevent adoption of the already-started job.
+        await db.run('UPDATE project_assets SET currentVersionId = NULL WHERE id = @id', { id: trigger.actionAssetId });
+        await expireClaim(trigger);
+        await svc.retryEventDeliveries();
+        const jobs = await children(trigger, source);
+        expect(jobs).toHaveLength(1);
+        expect(jobs[0]).toMatchObject({ id: dispatch.childJobId, status: 'COMPLETED' });
+        expect(jobs[0].executionAttemptId).toBe(`project-trigger:${trigger.id}:source-job:${source.id}`);
+        expect(sandboxRun).toHaveBeenCalledTimes(1);
+        const delivery = await db.get('SELECT * FROM project_trigger_deliveries WHERE triggerId = @id', { id: trigger.id });
+        expect(delivery).toMatchObject({ status: 'DELIVERED', childJobId: dispatch.childJobId, attempts: 2 });
+    });
+
+    test('adopts a still-running child when its dispatch lease expires', async () => {
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        const sandboxRun = jest.fn(async () => { await gate; return okSandboxResult; });
+        const { svc, trigger, source } = await fixture({ background: true, sandboxRun });
+        const dispatch = await svc._executeAction(trigger, { sourceJob: source });
+        try {
+            await expireClaim(trigger);
+            await svc.retryEventDeliveries();
+            expect(await children(trigger, source)).toHaveLength(1);
+            const delivery = await db.get('SELECT * FROM project_trigger_deliveries WHERE triggerId = @id', { id: trigger.id });
+            expect(delivery).toMatchObject({ status: 'DELIVERED', childJobId: dispatch.childJobId });
+            expect(delivery.detail).toContain('stage RUNNING');
+        } finally {
+            release();
+            await waitForSettled(dispatch.childJobId);
+        }
+        expect(sandboxRun).toHaveBeenCalledTimes(1);
+    });
+
+    test('adopts a failed legacy child without a new attempt key', async () => {
+        const sandboxRun = jest.fn(async () => okSandboxResult);
+        const { userId, svc, trigger, source } = await fixture({ sandboxRun });
+        const child = await insertSettledJob(userId, 'lab', {
+            status: 'FAILED', startedBy: 'trigger', triggerId: trigger.id, parentJobId: source.id
+        });
+        await expireClaim(trigger);
+        await svc.retryEventDeliveries();
+        expect(await children(trigger, source)).toHaveLength(1);
+        expect(sandboxRun).not.toHaveBeenCalled();
+        const delivery = await db.get('SELECT * FROM project_trigger_deliveries WHERE triggerId = @id', { id: trigger.id });
+        expect(delivery).toMatchObject({ status: 'DELIVERED', childJobId: child.id });
+        expect(delivery.detail).toContain('stage FAILED');
+    });
+
+    test('two dispatchers racing past the lookup still execute only one child', async () => {
+        const sandboxRun = jest.fn(async () => okSandboxResult);
+        const { obs, svc, trigger, source } = await fixture({ sandboxRun });
+        const originalRun = obs.run.bind(obs);
+        let release;
+        let reached;
+        const gate = new Promise(resolve => { release = resolve; });
+        const paused = new Promise(resolve => { reached = resolve; });
+        let calls = 0;
+        const runSpy = jest.spyOn(obs, 'run').mockImplementation(async (opts) => {
+            if (++calls === 1) { reached(); await gate; }
+            return await originalRun(opts);
+        });
+        const first = svc._executeAction(trigger, { sourceJob: source });
+        await paused;
+        let second;
+        try {
+            second = await svc._executeAction(trigger, { sourceJob: source });
+            await svc._finishDelivery(trigger, source, second);
+        } finally { release(); }
+        const recovered = await first;
+        runSpy.mockRestore();
+        expect(recovered).toMatchObject({ status: 'delivered', childJobId: second.childJobId });
+        expect(await children(trigger, source)).toHaveLength(1);
+        expect(sandboxRun).toHaveBeenCalledTimes(1);
+        // A stale dispatcher must not downgrade a delivery acknowledged by
+        // the winning lease, even if it reports an unrelated late failure.
+        await svc._finishDelivery(trigger, source, { status: 'failed', detail: 'late dispatcher error' });
+        expect(await db.get('SELECT status, childJobId FROM project_trigger_deliveries WHERE triggerId = @id', { id: trigger.id }))
+            .toEqual({ status: 'DELIVERED', childJobId: second.childJobId });
+    });
+});

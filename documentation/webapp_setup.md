@@ -296,3 +296,18 @@ use a real member's id (for example the guild owner's) to exercise them.
 Headless portal journeys (no Discord token) live in `e2e/`. After
 `npm run build:web` and `npm run test:e2e:install`, `npm run test:e2e`
 mounts the same `createWebAppApp` / `devMode` stack Playwright clicks.
+
+### File response and incognito boundaries
+
+`/api/app/files/:fileId` keeps owner authentication and serves only raster
+images, audio, and video inline. Text/code (including existing HTML, SVG,
+and XML artifacts) is served as `text/plain` with attachment disposition;
+other files use `application/octet-stream`. Every file response includes
+`nosniff`, a sandbox CSP, and private/no-store caching. Browser attachment
+previews still fetch and render text through the existing safe renderers.
+New web downloads with active document extensions are named `.txt`.
+
+Incognito does not offer `rememberFact`, `saveArtifact`, `findImages`, or
+`fetchWebFile`. The tool registry rejects stale calls to those tools before
+network requests or storage writes. Read-only lookup remains available.
+Use a regular chat to save memories or fetch files into Spitball.
