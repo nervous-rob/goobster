@@ -82,6 +82,19 @@ class WebChatError extends Error {
     }
 }
 
+/**
+ * Attach the optional display hints (caption, source link, renderer kind)
+ * a stored/sent file carries to its registered { url, name }. Only string
+ * values are forwarded and bounded so metadata can never bloat an SSE event.
+ */
+function decorateAttachment(registered, hints = {}) {
+    const out = { ...registered };
+    if (typeof hints?.caption === 'string' && hints.caption.trim()) out.caption = hints.caption.trim().slice(0, 400);
+    if (typeof hints?.sourceUrl === 'string' && /^https?:\/\//i.test(hints.sourceUrl)) out.sourceUrl = hints.sourceUrl.slice(0, 2000);
+    if (typeof hints?.kind === 'string' && /^[a-z]{1,16}$/.test(hints.kind)) out.kind = hints.kind;
+    return out;
+}
+
 /** "4m 12s" / "37s" - for user-facing in-flight turn messages. */
 function formatElapsed(ms) {
     const totalSeconds = Math.max(0, Math.round(ms / 1000));
@@ -644,7 +657,7 @@ class WebChatService {
         for (const file of Array.isArray(parsed?.attachments) ? parsed.attachments : []) {
             if (typeof file?.path !== 'string') continue;
             const registered = await this._registerFile(file.path, userId);
-            if (registered) attachments.push(registered);
+            if (registered) attachments.push(decorateAttachment(registered, file));
         }
         return attachments;
     }
@@ -1797,7 +1810,16 @@ class WebChatService {
                 const filePath = typeof file === 'string' ? file : file?.attachment;
                 if (typeof filePath !== 'string') continue;
                 const registered = await this._registerFile(filePath, userId);
-                if (registered) attachments.push(registered);
+                if (registered) {
+                    // Discord's AttachmentPayload `description` is the alt
+                    // text; the files tools also pass sourceUrl/kind, which
+                    // discord.js ignores and the portal renders as captions.
+                    attachments.push(decorateAttachment(registered, {
+                        caption: typeof file === 'object' ? file.description : null,
+                        sourceUrl: typeof file === 'object' ? file.sourceUrl : null,
+                        kind: typeof file === 'object' ? file.kind : null
+                    }));
+                }
             }
         }
 

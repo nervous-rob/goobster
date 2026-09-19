@@ -126,6 +126,7 @@ class KgArtifactService {
         confidence = 0.85,
         channelId = null,
         messageId = null,
+        metadata = null,
         confirm = false
     } = {}) {
         if (!confirm) {
@@ -180,13 +181,16 @@ class KgArtifactService {
         });
         if (!node) throw new KgArtifactError('NODE', 'Could not create artifact node.');
 
+        // A re-saved label replaces the previous file row (upsertNode kept
+        // the node), so a repeated "find pictures of X" never orphans rows.
+        await db.run('DELETE FROM kg_artifacts WHERE nodeId = @nodeId', { nodeId: node.id });
         const artifactId = await db.insert(
             `INSERT INTO kg_artifacts (
                 nodeId, guildId, scopeKey, authorId, originalName, mimeType, artifactKind,
-                relativePath, sizeBytes, contentHash, extractedText, channelId, messageId
+                relativePath, sizeBytes, contentHash, extractedText, metadataJson, channelId, messageId
              ) VALUES (
                 @nodeId, @guildId, @scopeKey, @authorId, @originalName, @mimeType, @artifactKind,
-                @relativePath, @sizeBytes, @contentHash, @extractedText, @channelId, @messageId
+                @relativePath, @sizeBytes, @contentHash, @extractedText, @metadataJson, @channelId, @messageId
              )`,
             {
                 nodeId: node.id,
@@ -200,6 +204,7 @@ class KgArtifactService {
                 sizeBytes: stored.sizeBytes,
                 contentHash: stored.contentHash,
                 extractedText: payload.content,
+                metadataJson: metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null,
                 channelId,
                 messageId
             }
@@ -230,7 +235,11 @@ class KgArtifactService {
             artifactId: Number(artifactId),
             label: cleanLabel,
             fileName: payload.name,
-            artifactKind: payload.artifactKind
+            artifactKind: payload.artifactKind,
+            mimeType: payload.mimeType,
+            sizeBytes: stored.sizeBytes,
+            relativePath: stored.relativePath,
+            absolutePath: stored.absolutePath
         };
     }
 
@@ -265,7 +274,7 @@ class KgArtifactService {
     /**
      * Search artifact nodes by label, summary, or extracted text.
      */
-    async searchArtifacts({ guildId, scopeKey, query, limit = 6 }) {
+    async searchArtifacts({ guildId, scopeKey, query, limit = 6, kind = null }) {
         const terms = String(query || '')
             .toLowerCase()
             .split(/[^\p{L}\p{N}]+/u)
@@ -276,17 +285,72 @@ class KgArtifactService {
         const clauses = terms.map((_, i) => `(n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i})`);
         const params = { guildId, scopeKey, limit };
         terms.forEach((t, i) => { params[`t${i}`] = `%${t}%`; });
+        let kindClause = '';
+        if (kind) {
+            kindClause = ' AND a.artifactKind = @kind';
+            params.kind = kind;
+        }
+
+        // Rank by how many query terms hit, so "M43 jacket" prefers the
+        // artifact matching both words over one that only mentions jackets.
+        const hitCount = terms
+            .map((_, i) => `(CASE WHEN n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i} THEN 1 ELSE 0 END)`)
+            .join(' + ');
 
         return await db.all(
-            `SELECT n.*, a.originalName, a.artifactKind, a.extractedText, a.relativePath
+            `SELECT n.*, a.originalName, a.artifactKind, a.mimeType, a.sizeBytes,
+                    a.extractedText, a.relativePath, a.metadataJson,
+                    (${hitCount}) AS termHits
              FROM kg_nodes n
              JOIN kg_artifacts a ON a.nodeId = n.id
              WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact'
-               AND (${clauses.join(' OR ')})
-             ORDER BY n.salience DESC, n.updatedAt DESC
+               AND (${clauses.join(' OR ')})${kindClause}
+             ORDER BY termHits DESC, n.salience DESC, n.updatedAt DESC
              LIMIT @limit`,
             params
         );
+    }
+
+    /**
+     * Most recent artifacts in a scope (optionally one kind) - the browse
+     * path behind "show me the files you saved".
+     */
+    async listArtifacts({ guildId, scopeKey, limit = 6, kind = null }) {
+        const params = { guildId, scopeKey, limit };
+        let kindClause = '';
+        if (kind) {
+            kindClause = ' AND a.artifactKind = @kind';
+            params.kind = kind;
+        }
+        return await db.all(
+            `SELECT n.*, a.originalName, a.artifactKind, a.mimeType, a.sizeBytes,
+                    a.extractedText, a.relativePath, a.metadataJson
+             FROM kg_nodes n
+             JOIN kg_artifacts a ON a.nodeId = n.id
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact'${kindClause}
+             ORDER BY a.createdAt DESC, n.id DESC
+             LIMIT @limit`,
+            params
+        );
+    }
+
+    /** Parse the stored origin metadata of an artifact row (never throws). */
+    parseMetadata(row) {
+        if (!row?.metadataJson) return null;
+        try {
+            const parsed = JSON.parse(row.metadataJson);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** Absolute on-disk path for an artifact row, or null when the file is gone. */
+    resolvePath(row) {
+        const abs = artifactStorage.resolveRelativePath(row?.relativePath);
+        if (!abs) return null;
+        const fs = require('node:fs');
+        return fs.existsSync(abs) ? abs : null;
     }
 
     formatArtifactLines(rows, { maxChars = 1200 } = {}) {

@@ -400,6 +400,9 @@ function mountAuthChat(app, ctx, h) {
             sendError(res, 404, 'NOT_FOUND', 'File not found (it may have expired).');
             return;
         }
+        // Files here may have come from the open web (fetchWebFile): the
+        // browser must trust the declared type, never sniff a script out of it.
+        res.setHeader('X-Content-Type-Options', 'nosniff');
         res.sendFile(file.path);
     });
 }

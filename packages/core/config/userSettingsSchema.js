@@ -130,6 +130,7 @@ const PERSONALITY_PRESET_IDS = [null, ...Object.keys(PERSONALITY_PRESETS)];
 const EXPEDITION_DEPTHS = ['focused', 'standard', 'deep'];
 const OPTIONAL_PERSONAL_TOOLS = [
     'performSearch', 'generateImage', 'runCode', 'observatory', 'requestPythonPackages',
+    'findImages', 'fetchWebFile',
     'playTrack', 'speakMessage', 'launchCursorAgent', 'createGithubIssue', 'executePlan',
     'searchGithubCode', 'readGithubFile', 'searchNotion', 'readNotionPage'
 ];

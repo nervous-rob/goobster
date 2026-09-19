@@ -476,6 +476,58 @@ body.applet-open { overflow: hidden; }
   text-decoration: none;
 }
 .msg-bubble .file-chip:hover { border-color: var(--accent); }
+
+/* Found-on-the-web attachments: captioned images, CSV tables, file previews */
+.msg-bubble .attachment-figure { margin: 8px 0 0; }
+.msg-bubble .attachment-figure img.attachment { margin-top: 0; }
+.msg-bubble .attachment-caption {
+  font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.4;
+}
+.msg-bubble .attachment-caption a { color: var(--text-dim); text-decoration: underline dotted; }
+.msg-bubble .file-card {
+  margin-top: 10px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-raise-2); overflow: hidden; font-size: 13px;
+}
+.msg-bubble .file-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 12px; border-bottom: 1px solid var(--border); background: rgba(124,140,255,0.06);
+}
+.msg-bubble .file-card-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.msg-bubble .file-card-icon { flex: none; }
+.msg-bubble .file-card-name { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.msg-bubble .file-card-sub { color: var(--text-dim); font-size: 12px; }
+.msg-bubble .file-card-actions { display: flex; gap: 6px; flex: none; }
+.msg-bubble .file-card-action {
+  border: 1px solid var(--border); border-radius: 14px; padding: 2px 10px; font-size: 12px;
+  background: transparent; color: var(--text-dim); text-decoration: none; cursor: pointer; font: inherit; font-size: 12px;
+}
+.msg-bubble .file-card-action:hover { border-color: var(--accent); color: var(--text); }
+.msg-bubble .file-card-body { max-height: 420px; overflow: auto; }
+.msg-bubble .file-card.collapsed .file-card-body { max-height: 0; overflow: hidden; }
+.msg-bubble .file-card-loading, .msg-bubble .file-card-error, .msg-bubble .file-card-note {
+  padding: 8px 12px; color: var(--text-dim); font-size: 12px;
+}
+.msg-bubble .file-card-error { color: var(--danger); }
+.msg-bubble .file-card-note { border-top: 1px solid var(--border); }
+.msg-bubble .file-card-caption { padding: 6px 12px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 12px; }
+.msg-bubble .csv-scroll { overflow: auto; }
+.msg-bubble table.csv-table { margin: 0; width: max-content; min-width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+.msg-bubble table.csv-table th, .msg-bubble table.csv-table td {
+  border: 0; border-bottom: 1px solid var(--border); padding: 4px 10px; text-align: left; white-space: nowrap;
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+}
+.msg-bubble table.csv-table thead th { position: sticky; top: 0; background: var(--bg-raise-2); z-index: 1; padding: 0; }
+.msg-bubble table.csv-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+.msg-bubble .csv-sort {
+  all: unset; display: block; width: 100%; box-sizing: border-box; padding: 6px 10px; cursor: pointer;
+  font-weight: 600; color: var(--text); white-space: nowrap;
+}
+.msg-bubble .csv-sort:hover { color: var(--accent); }
+.msg-bubble .csv-sort[data-dir='asc']::after { content: ' ▲'; font-size: 10px; color: var(--accent); }
+.msg-bubble .csv-sort[data-dir='desc']::after { content: ' ▼'; font-size: 10px; color: var(--accent); }
+.msg-bubble .file-card-preview pre { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; white-space: pre; }
+.msg-bubble .file-card-markdown { padding: 8px 12px; }
+.msg-bubble .file-card-markdown > :first-child { margin-top: 0; }
 .msg-bubble table { border-collapse: collapse; margin: 0.55em 0; }
 .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 4px 10px; }
 

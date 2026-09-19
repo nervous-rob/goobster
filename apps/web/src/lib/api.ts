@@ -1,4 +1,4 @@
-import type { AppConfig, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AppConfig, ChatAttachment, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -542,7 +542,7 @@ type ChatHandlers = {
     onTyping?: () => void;
     onDelta?: (text: string) => void;
     onTool?: (data: ToolEvent) => void;
-    onMessage?: (data: { content: string; attachments?: Array<{ url: string; name?: string }>; isError?: boolean }) => void;
+    onMessage?: (data: { content: string; attachments?: ChatAttachment[]; isError?: boolean }) => void;
     onError?: (data: { code?: string; message?: string }) => void;
     onDone?: (data: { ok?: boolean; conversationId?: number }) => void;
 };

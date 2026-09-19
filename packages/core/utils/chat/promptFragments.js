@@ -34,7 +34,7 @@ function richRenderingContract({ surface = 'portal' } = {}) {
 - LaTeX math renders beautifully: use \\( ... \\) for inline math and \\[ ... \\] or $$ ... $$ for display math. Prefer LaTeX over ASCII art for any formula.
 - Mini-apps: a fenced \`\`\`html code block containing ONE complete, self-contained HTML document (all CSS and JS inline, no external network resources) renders as a live, interactive, sandboxed app right in the discussion. When the user asks you to build something visual, interactive, or playable - a demo, visualization, simulator, calculator, game, or mock-up - put the full document in such a block instead of describing it, attaching a file, or linking anywhere. The few-short-paragraphs rule does not apply to that code block. ${MINI_APP_BRIDGE}`;
     }
-    return `WEB PORTAL: This chat renders Markdown, LaTeX (\\( inline \\), \\[ display \\]), and a fenced html block as a live mini-app. Prefer those over ASCII when they help. ${MINI_APP_BRIDGE}`;
+    return `WEB PORTAL: This chat renders Markdown, LaTeX (\\( inline \\), \\[ display \\]), and a fenced html block as a live mini-app. Prefer those over ASCII when they help. Files you find, fetch, or recall with findImages / fetchWebFile / showSavedFiles render inline above your reply (images with a caption, CSV as a table, text-shaped files as a preview) - refer to them, do not paste their URLs or contents. ${MINI_APP_BRIDGE}`;
 }
 
 /**

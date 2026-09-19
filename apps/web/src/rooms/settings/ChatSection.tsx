@@ -29,6 +29,8 @@ const OPTIONAL_TOOLS: Array<{ name: string; label: string }> = [
     { name: 'runCode', label: 'Code runner' },
     { name: 'observatory', label: 'Observatory' },
     { name: 'requestPythonPackages', label: 'Python packages' },
+    { name: 'findImages', label: 'Find images on the web' },
+    { name: 'fetchWebFile', label: 'Fetch files from the web' },
     { name: 'playTrack', label: 'Play a track' },
     { name: 'speakMessage', label: 'Speak a message' },
     { name: 'launchCursorAgent', label: 'Cursor agent' },

@@ -52,6 +52,7 @@ const GROUPS = [
             'dmChat',
             'dmSettings',
             'geminiService',
+            'imageSearchService',
             'promptContext',
             'promptFragments',
             'replyDetection',
@@ -59,6 +60,7 @@ const GROUPS = [
             'toolResultWindow',
             'toolsRegistryEconomy',
             'toolsRegistryExchange',
+            'toolsRegistryFiles',
             'toolsRegistryFollowup',
             'toolsRegistryObservatory',
             'toolsRegistryOrder',
@@ -106,6 +108,7 @@ const GROUPS = [
         name: 'Knowledge and memory',
         description: 'Spitball, graphs, memory, research expeditions',
         files: files([
+            'fileDiscoveryService',
             'graphClusters',
             'graphFilter',
             'kgArtifactService',

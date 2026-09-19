@@ -176,6 +176,15 @@ describe('fetchToFile (loopback server, http transport injected)', () => {
         expect(fs.existsSync(dest('redir.bin'))).toBe(false);
     });
 
+    test('reportRedirects hands the Location back instead of following it', async () => {
+        // The caller must re-run the new URL through assessUrl + resolvePinned;
+        // the transfer itself never connects anywhere the redirect points.
+        const result = await fetchToFile(opts('/redirect', 'redir2.bin', { reportRedirects: true }));
+        expect(result.redirectTo).toBe('http://169.254.169.254/latest/');
+        expect(result.bytes).toBe(0);
+        expect(fs.existsSync(dest('redir2.bin'))).toBe(false);
+    });
+
     test('caps RECEIVED bytes, not the Content-Length the server claims', async () => {
         await expect(fetchToFile(opts('/big', 'big.bin', { maxBytes: 4096 })))
             .rejects.toMatchObject({ code: 'TOO_LARGE' });

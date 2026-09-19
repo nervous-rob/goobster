@@ -14,7 +14,7 @@ export function Markdown({
 }: {
     source: string;
     className?: string;
-    attachments?: Array<{ url: string; name?: string }>;
+    attachments?: Array<{ url: string; name?: string; caption?: string; sourceUrl?: string; kind?: string }>;
     onNotify?: (message: string, isError?: boolean) => void;
     onPin?: (info: { source: string; language: string; title?: string; grants?: { observatoryRead: string[] } }) => void;
     onSaveToProject?: (info: { source: string; language: string; title?: string; grants?: { observatoryRead: string[] } }) => void;

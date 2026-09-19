@@ -14,6 +14,7 @@ const tavernTools = require('./tools/tavern');
 const parlorTools = require('./tools/parlor');
 const attentionTools = require('./tools/attention');
 const integrationTools = require('./tools/integrations');
+const fileTools = require('./tools/files');
 
 const catalog = {
     ...observatoryTools,
@@ -21,7 +22,8 @@ const catalog = {
     ...tavernTools,
     ...parlorTools,
     ...attentionTools,
-    ...integrationTools
+    ...integrationTools,
+    ...fileTools
 };
 
 const TOOL_ORDER = [
@@ -30,6 +32,9 @@ const TOOL_ORDER = [
     'runCode',
     'observatory',
     'requestPythonPackages',
+    'findImages',
+    'fetchWebFile',
+    'showSavedFiles',
     'playTrack',
     'setNickname',
     'speakMessage',
