@@ -1,3 +1,4 @@
+import { openMicrophone } from './microphone';
 /**
  * Voice-chat live transcription session: one WebSocket to
  * /api/app/voice/live, one mic worklet (16kHz mono PCM - the Parlor Live
@@ -74,13 +75,13 @@ export class VoiceLiveSession {
         return this.mode;
     }
 
-    async start(hooks: VoiceLiveHooks = {}, { mode = 'auto' as VoiceSendMode } = {}): Promise<void> {
+    async start(hooks: VoiceLiveHooks = {}, { mode = 'auto' as VoiceSendMode, micId = null as string | null, onMicFallback = undefined as (() => void) | undefined } = {}): Promise<void> {
         this.hooks = hooks;
         this.mode = mode;
         this.muted = false;
         this.paused = false;
 
-        await this.startMicrophone();
+        await this.startMicrophone(micId, onMicFallback);
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${protocol}//${window.location.host}/api/app/voice/live`);
@@ -209,10 +210,8 @@ export class VoiceLiveSession {
         this.gate.push(samples, performance.now());
     }
 
-    private async startMicrophone(): Promise<void> {
-        this.micStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
+    private async startMicrophone(micId: string | null, onFallback?: () => void): Promise<void> {
+        this.micStream = await openMicrophone(micId, onFallback);
         const Ctx = window.AudioContext
             || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         this.audioCtx = new Ctx();

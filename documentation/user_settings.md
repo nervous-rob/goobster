@@ -23,7 +23,7 @@ all go through it.
 | `resetPreview` / `resetSection` | Reviewable reset; never reconnects integrations, enrolls attention, or erases content |
 | `retentionPreview` / `applyRetention` | Destructive memory window; separate from a normal Save |
 | `chatHistoryPreview` / `applyChatHistoryRetention` | Destructive Study-chat window; separate from PR01 |
-| `exportUserData` | Settings + transparency report; no secrets or session tokens |
+| `exportUserData` | Explicitly labeled settings + transparency report export; no secrets or session tokens |
 | `listSessions` / `revokeSession` / `revokeOtherSessions` | Safe session metadata only |
 | `listOwnedShares` / `revokeOwnedShare` | Conversation and Observatory share links |
 | `listOwnedApplets` / `revokeAppletGrants` | Owner-authorized applet grants |
@@ -44,8 +44,8 @@ out-of-range numbers are rejected, not clamped.
 
 **Events:** after commit, `settings-changed` on `eventBusService` carries
 `userId`, `section`, `revision`. No instructions, names, transcripts, or
-credentials. Every process clears `guild_settings` / meme-mode caches from
-that event.
+credentials. Bot and API startup explicitly start the Postgres listener before any browser
+connects. Every process clears `guild_settings` / meme-mode caches from that event.
 
 **Storage:** existing AI/voice/instructions/attention values stay in their
 authoritative tables. New synced prefs live in `user_settings.preferencesJson`
@@ -99,14 +99,14 @@ never a one-off migration script.
 | ID08 | Personality presets | `preferencesJson.personalityPreset` bakes `answerLength` / `tone` / `humor`; style block is the consumer |
 | AI06 | Reply-length token budget | `replyMaxTokens` → `chatHandler` `max_tokens` (thinking headroom still added separately) |
 | AI07 | Sampling | `temperature` / `topP` → chat options; providers drop incompatible params |
-| AI08 | Per-feature model defaults | `parlorProvider`/`parlorModel` → owned Parlor generation; `researchProvider`/`researchModel` → expedition `_generate` |
-| AI09 | Optional tool preferences | `disabledTools` filters `functionDefs` in personal turns; cannot grant credentials |
+| AI08 | Per-feature model defaults | `parlorProvider`/`parlorModel` → new private conversation model snapshot; `researchProvider`/`researchModel` → new personal expedition snapshot |
+| AI09 | Optional tool preferences | `disabledTools` filters personal turn definitions and is enforced again at execution; search also gates native provider search |
 | AI10 | Usage alert | `usageAlertTokens` → Usage payload `overAlert` (informational) |
 | AI11 | Personal AI keys | Not stored. Settings explains host-key-only; missing keys stay disabled |
-| PR07 | Learn new long-term memories | `learnMemories` gates extraction/write in `chatHandler` |
-| PR08 | Use existing memories | `useMemories` gates recall in `promptContext` |
-| PR09 | Study chat-history retention | two-step preview/apply + list filter in `webChatService.listConversations` |
-| CN03 | Connected-resource allowlists | `githubAllowlist` / `notionAllowlist` enforced in GitHub/Notion tools; empty = no extra restriction |
+| PR07 | Learn new long-term memories | `learnMemories` gates private embeddings, model facts, durable-memory tools and consolidation; manual data editors remain explicit user actions |
+| PR08 | Use existing memories | `useMemories` gates private graph/artifact/vector retrieval and recall tools |
+| PR09 | Study chat-history retention | two-step preview/apply + hourly purge + access-time expiry across history, search, shares and file URLs |
+| CN03 | Connected-resource allowlists | `githubAllowlist` / canonical Notion page IDs enforced on tools; policy lookup fails closed; empty = no extra restriction |
 | UI10 | New-expedition defaults | `expeditionDefaultDepth` / `expeditionDefaultLens` snapshotted at create |
 | UI11 | New-persona defaults | `parlorDefaultEmoji` / `parlorDefaultCharter` used only when create omits them |
 
@@ -121,3 +121,24 @@ Reset still cannot reconnect integrations, enroll attention, re-enable disabled 
 `ScopeBadge`. Destructive flows (retention, forget-me, revoke, sign-out)
 never ride a normal section Save. Chat-history retention uses the same
 preview → confirm pattern as memory retention.
+
+## Runtime policy and upgrade notes
+
+- Private token/sampling and memory preferences never change guild behavior.
+- Newly created personal expeditions and private Parlor discussions snapshot provider
+  and model in `modelConfigJson`. Existing rows with no snapshot retain host behavior;
+  current account choices are never injected into existing/shared objects. A discussion
+  later shared with others keeps its original snapshot. Project expeditions use host
+  choices. Creation defaults are visible and editable in the portal forms.
+- Notion allowlists now require full page IDs or URLs, normalized to IDs. Existing title
+  entries remain stored but grant no access; replace them in Connections. Resetting a
+  connection policy must not broaden access.
+- Retention uses the conversation's last activity, not each message's age. Active turns
+  are skipped until they settle. Deletion clears transcript, summary, queue and shares,
+  revokes orphan file registrations, and deletes unreferenced user-upload bytes.
+  Saved knowledge artifacts and project files retain their independent lifecycles.
+- Preferred microphone selection applies to batch and live capture. A removed device
+  retries with the system mic and reports the fallback; permission denial does not retry.
+- Export currently contains settings and the transparency report, as its label states.
+  A complete portable account archive (including owned content and asset bytes) remains
+  a separate unshipped part of PR10; this download does not claim to provide it.

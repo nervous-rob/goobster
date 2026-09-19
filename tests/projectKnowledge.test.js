@@ -18,6 +18,7 @@ jest.mock('@goobster/core/services/embeddingService', () => ({
 }));
 
 jest.mock('@goobster/core/services/aiService', () => ({
+    listProviders: () => [{ key: 'openai', isDefault: true, chatModel: 'test-model' }],
     generateText: jest.fn(async () => JSON.stringify({
         mutations: {
             upsert: [{

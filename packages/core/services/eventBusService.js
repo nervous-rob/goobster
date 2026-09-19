@@ -10,7 +10,7 @@
  *  - On Postgres: publish() additionally pg_notify()s the goobster_events
  *    channel (suffixed with the test-isolation schema under
  *    GOOBSTER_PG_TEST_ISOLATE so parallel Jest workers do not share it),
- *    and the first subscriber starts a LISTEN connection, so events
+ *    and service startup (or the first subscriber) starts LISTEN, so events
  *    cross the bot/api process boundary with no new infrastructure.
  *    Events carry the publishing process id; a process skips its own
  *    notifications (it already delivered them locally).
@@ -241,4 +241,4 @@ async function close() {
     if (stop) await stop();
 }
 
-module.exports = { publish, subscribe, invalidationHints, publishProjectChange, close, CHANNEL };
+module.exports = { start: ensureCrossProcessListener, publish, subscribe, invalidationHints, publishProjectChange, close, CHANNEL };

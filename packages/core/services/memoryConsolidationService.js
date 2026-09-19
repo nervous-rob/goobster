@@ -89,6 +89,7 @@ class MemoryConsolidationService {
     }
 
     async consolidateGuild(guildId) {
+        if (!await require('./personalPolicyService').memoryAllowed(guildId, 'learnMemories')) return 0;
         const memories = await db.all(
             `SELECT id, authorName, authorId, content, createdAt, channelId FROM memory_embeddings
              WHERE guildId = @guildId AND createdAt >= datetime('now', '-1 day')
@@ -175,6 +176,7 @@ class MemoryConsolidationService {
             const parsed = this._parseResponse(response);
             if (!parsed) continue;
 
+            if (!await require('./personalPolicyService').memoryAllowed(guildId, 'learnMemories')) return totalApplied;
             const memoryIds = batch.map(m => m.id);
 
             if (parsed.mutations) {

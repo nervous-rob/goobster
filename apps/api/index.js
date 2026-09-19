@@ -54,6 +54,8 @@ if (!process.env.GOOBSTER_INTERNAL_TOKEN) {
 async function main() {
     logger.info('Starting Goobster api service...');
     await getConnection(); // applies schema + migrations before serving
+    eventBusService.start();
+    require('@goobster/core/services/chatHistoryRetentionService').start();
 
     try {
         const projectMissionService = require('@goobster/core/services/projectMissionService');
@@ -91,6 +93,7 @@ async function main() {
         logger.info('api: shutting down...');
         try {
             await new Promise(resolve => server.close(resolve));
+            await require('@goobster/core/services/chatHistoryRetentionService').stop();
             await eventBusService.close();
             await closeConnection();
         } catch (error) {

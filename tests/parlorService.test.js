@@ -35,6 +35,7 @@ const mockEmbedding = {
 jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = {
+    listProviders: () => [{ key: 'openai', isDefault: true, chatModel: 'test-model' }],
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: () => false
@@ -986,4 +987,33 @@ describe('privacy (/forget-me)', () => {
         }
         expect((await parlorService.listPersonas(OTHER)).map(p => p.id)).toEqual([otherPersona.id]);
     });
+});
+
+test('new private Parlor snapshots model and persona defaults; later edits affect only new objects', async () => {
+    const settings = require('@goobster/core/services/userSettingsService');
+    const ownerId = '940000000000000001';
+    await settings._mergePreferencesTx(db, ownerId, { parlorDefaultEmoji: '🔬', parlorDefaultCharter: 'Follow the evidence.' });
+    await settings._mergePreferencesTx(db, ownerId, { parlorProvider: 'openai', parlorModel: 'first-model', disabledTools: ['performSearch'] });
+    const persona = await parlorService.createPersona({ ownerId, name: 'Scientist' });
+    expect(persona).toMatchObject({ emoji: '🔬', charter: 'Follow the evidence.' });
+    const conversation = await parlorService.createConversation({ ownerId, personaIds: [persona.id] });
+    await settings._mergePreferencesTx(db, ownerId, { parlorModel: 'second-model' });
+    mockAi.chat.mockResolvedValue({ content: 'A considered reply.', toolCalls: [] });
+    const turn = await parlorService.startPersonaTurn({ userId: ownerId, userName: 'Rob', conversationId: conversation.id, personaId: persona.id });
+    await turn.run();
+    expect(mockAi.chat).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ model: 'first-model', provider: 'openai', webSearch: false }));
+    const next = await parlorService.createConversation({ ownerId, personaIds: [persona.id] });
+    const stored = await db.get('SELECT modelConfigJson FROM parlor_conversations WHERE id = @id', { id: next.id });
+    expect(JSON.parse(stored.modelConfigJson).model).toBe('second-model');
+    // A shared discussion still uses the persona owner's tool policy,
+    // matching the actor handed to tool execution, even if a guest speaks.
+    const nativeSearch = jest.spyOn(mockAi, 'supportsNativeWebSearch').mockReturnValue(true);
+    try {
+        mockAi.chat.mockClear();
+        await parlorService._runPersonaTurn({
+            ownerId, ownerName: 'Rob', conversationId: conversation.id, personaId: persona.id,
+            turnState: { aborted: false, startedBy: OTHER }, events: {}, forced: true
+        });
+        expect(mockAi.chat).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ webSearch: false }));
+    } finally { nativeSearch.mockRestore(); }
 });

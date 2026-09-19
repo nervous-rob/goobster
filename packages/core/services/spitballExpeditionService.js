@@ -220,13 +220,14 @@ class SpitballExpeditionService {
             clampText(intent, caps.maxIntentLength),
             cleanDepth
         );
+        const modelConfigJson = JSON.stringify(await require('./personalPolicyService').snapshotModel(userId, 'research', { personal: !cleanProjectId && cleanGuildId === dmScopeId(userId) }));
         const id = await db.insert(
             `INSERT INTO spitball_expeditions
                 (userId, guildId, scopeKey, seed, lensId, lensText, intent, depth, status,
-                 maxCycles, maxSources, maxNotes, researchBriefJson, projectId, executionAttemptId)
+                 maxCycles, maxSources, maxNotes, researchBriefJson, projectId, executionAttemptId, modelConfigJson)
              VALUES
                 (@userId, @guildId, @scopeKey, @seed, @lensId, @lensText, @intent, @depth, @status,
-                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson, @projectId, @executionAttemptId)`,
+                 @maxCycles, @maxSources, @maxNotes, @researchBriefJson, @projectId, @executionAttemptId, @modelConfigJson)`,
             {
                 userId,
                 guildId: cleanGuildId,
@@ -241,6 +242,7 @@ class SpitballExpeditionService {
                 maxSources: preset.maxSources,
                 maxNotes: preset.maxNotes,
                 researchBriefJson: JSON.stringify(brief),
+                modelConfigJson,
                 projectId: cleanProjectId,
                 executionAttemptId: executionAttemptId || null
             }
@@ -1216,9 +1218,10 @@ class SpitballExpeditionService {
     // --- Shaping ---------------------------------------------------------------
 
     _shapeExpedition(row) {
-        const { researchBriefJson, continuationProposalJson, ...rest } = row;
+        const { researchBriefJson, continuationProposalJson, modelConfigJson, ...rest } = row;
         return {
             ...rest,
+            modelConfig: parseJson(modelConfigJson),
             lens: row.lensId ? lensConfig.getLens(row.lensId) : null,
             researchBrief: parseJson(researchBriefJson),
             continuationProposal: parseJson(continuationProposalJson)

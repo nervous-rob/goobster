@@ -420,18 +420,7 @@ class WebChatService {
      */
     async listConversations(userId) {
         await this._adoptLegacyConversation(userId);
-        let cutoff = null;
-        try {
-            const userSettingsService = require('./userSettingsService');
-            const days = await userSettingsService.getPreference(userId, 'chatHistoryRetentionDays');
-            if (days) {
-                cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-                    .toISOString().slice(0, 19).replace('T', ' ');
-            }
-        } catch { /* no extra filter */ }
-        const cutoffClause = cutoff
-            ? 'AND COALESCE(wc.lastMessageAt, wc.createdAt) >= @cutoff'
-            : '';
+        await this.purgeExpiredConversations(userId);
         return await db.all(
             `SELECT wc.id, wc.title, wc.createdAt, wc.lastMessageAt,
                     wc.parentConversationId, wc.branchedFromMessageId,
@@ -441,12 +430,9 @@ class WebChatService {
                     EXISTS (SELECT 1 FROM web_share_links s WHERE s.conversationId = wc.id) AS shared
              FROM web_conversations wc
              WHERE wc.userId = @userId
-               ${cutoffClause}
              ORDER BY COALESCE(wc.lastMessageAt, wc.createdAt) DESC, wc.id DESC
              LIMIT @limit`,
-            cutoff
-                ? { userId, scope: dmScopeId(userId), limit: CONVERSATION_LIST_LIMIT, cutoff }
-                : { userId, scope: dmScopeId(userId), limit: CONVERSATION_LIST_LIMIT }
+            { userId, scope: dmScopeId(userId), limit: CONVERSATION_LIST_LIMIT }
         );
     }
 
@@ -473,7 +459,8 @@ class WebChatService {
      * @param {number|null} conversationId
      * @returns {{id:number, channelId:string, title:string|null}}
      */
-    async _requireConversation(userId, conversationId = null) {
+    async _requireConversation(userId, conversationId = null, allowExpired = false) {
+        if (!allowExpired) await this.purgeExpiredConversations(userId);
         if (conversationId !== null && conversationId !== undefined) {
             const row = await db.get(
                 `SELECT id, channelId, title FROM web_conversations
@@ -515,15 +502,55 @@ class WebChatService {
         return { id: conversation.id, title: clean };
     }
 
+    /** Purge expired, inactive Study conversations for one owner. */
+    async purgeExpiredConversations(userId) {
+        const days = await require('./userSettingsService').getPreference(userId, 'chatHistoryRetentionDays');
+        if (!days) return 0;
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+        const rows = await db.all(
+            `SELECT id FROM web_conversations WHERE userId = @userId
+             AND COALESCE(lastMessageAt, createdAt) < @cutoff
+             AND NOT EXISTS (SELECT 1 FROM web_live_turns t WHERE t.conversationId = web_conversations.id
+                 AND t.lastActivityAtMs > @liveAfter)`,
+            { userId, cutoff, liveAfter: Date.now() - TURN_MAX_AGE_MS }
+        );
+        let purged = 0;
+        for (const row of rows) {
+            try { await this.deleteConversation({ userId, conversationId: row.id }); purged++; }
+            catch (error) { if (error.code !== 'NO_SUCH_CONVERSATION') throw error; }
+        }
+        return purged;
+    }
+
+    async _removeOrphanAttachments(userId, candidates) {
+        if (!candidates.size) return;
+        const remaining = await db.all('SELECT metadata FROM messages WHERE metadata IS NOT NULL');
+        const referenced = new Set();
+        for (const row of remaining) {
+            try { for (const file of JSON.parse(row.metadata)?.attachments || []) {
+                if (file.path) referenced.add(path.resolve(file.path));
+            } } catch { /* legacy metadata */ }
+        }
+        const uploadDir = path.resolve(require('../utils/webUploads').userUploadDir(userId));
+        for (const file of candidates) {
+            const resolved = path.resolve(file);
+            if (referenced.has(resolved)) continue;
+            await db.run('DELETE FROM web_generated_files WHERE userId = @userId AND path = @path', { userId, path: resolved });
+            // Saved artifacts/projects have their own lifecycles. Never unlink their bytes.
+            if (path.dirname(resolved) === uploadDir) await fs.promises.rm(resolved, { force: true });
+        }
+    }
+
     /**
      * Delete a conversation and everything in it (messages, summaries, the
      * chat containers, and the sidebar row) in one transaction.
      * @param {Object} params - { userId, conversationId }
      */
     async deleteConversation({ userId, conversationId }) {
-        const conversation = await this._requireConversation(userId, conversationId);
+        const conversation = await this._requireConversation(userId, conversationId, true);
         const scope = dmScopeId(userId);
-        return await db.transaction(async () => {
+        const attachmentPaths = new Set();
+        const result = await db.transaction(async () => {
             const guildConv = await db.get(
                 `SELECT id FROM guild_conversations
                  WHERE guildId = @scope AND channelId = @channelId`,
@@ -531,6 +558,12 @@ class WebChatService {
             );
             let deletedMessages = 0;
             if (guildConv) {
+                const metadataRows = await db.all('SELECT metadata FROM messages WHERE guildConversationId = @id', { id: guildConv.id });
+                for (const row of metadataRows) {
+                    try { for (const file of JSON.parse(row.metadata)?.attachments || []) {
+                        if (typeof file.path === 'string') attachmentPaths.add(file.path);
+                    } } catch { /* legacy metadata */ }
+                }
                 deletedMessages = (await db.run(
                     'DELETE FROM messages WHERE guildConversationId = @id', { id: guildConv.id }
                 )).changes;
@@ -538,6 +571,8 @@ class WebChatService {
                 await db.run('DELETE FROM conversations WHERE guildConversationId = @id', { id: guildConv.id });
                 await db.run('DELETE FROM guild_conversations WHERE id = @id', { id: guildConv.id });
             }
+            await db.run('DELETE FROM web_chat_queue WHERE userId = @userId AND conversationId = @id',
+                { userId, id: conversation.id });
             // A deleted conversation must stop being shareable immediately
             await db.run('DELETE FROM web_share_links WHERE conversationId = @id', { id: conversation.id });
             // Branch children survive but lose the dangling lineage pointer
@@ -548,6 +583,8 @@ class WebChatService {
             await db.run('DELETE FROM web_conversations WHERE id = @id', { id: conversation.id });
             return { deleted: true, deletedMessages };
         });
+        await this._removeOrphanAttachments(userId, attachmentPaths);
+        return result;
     }
 
     /**
@@ -655,6 +692,7 @@ class WebChatService {
      * @returns {Array<{conversationId:number, title:string|null, messageId:number, role:string, snippet:string, createdAt:string}>}
      */
     async searchMessages({ userId, query, limit = 20 }) {
+        await this.purgeExpiredConversations(userId);
         const clean = String(query ?? '').trim();
         if (clean.length < 2) return [];
         const bounded = Math.max(1, Math.min(Number(limit) || 20, 50));
@@ -909,7 +947,7 @@ class WebChatService {
         if (!SHARE_TOKEN_PATTERN.test(clean)) {
             throw new WebChatError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
         }
-        const link = await db.get(
+        let link = await db.get(
             `SELECT s.createdAt AS sharedAt, wc.title, wc.channelId, wc.userId
              FROM web_share_links s
              JOIN web_conversations wc ON wc.id = s.conversationId
@@ -919,6 +957,13 @@ class WebChatService {
         if (!link) {
             throw new WebChatError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
         }
+        await this.purgeExpiredConversations(link.userId);
+        link = await db.get(
+            `SELECT s.createdAt AS sharedAt, wc.title, wc.channelId, wc.userId
+             FROM web_share_links s JOIN web_conversations wc ON wc.id = s.conversationId
+             WHERE s.token = @token`, { token: clean }
+        );
+        if (!link) throw new WebChatError(404, 'NOT_FOUND', 'This share link has expired.');
         const guildConvId = await this._guildConvIdFor(link.userId, link.channelId);
         const rows = guildConvId
             ? await db.all(
@@ -1120,6 +1165,7 @@ class WebChatService {
      * @returns {Promise<{ path: string, name: string }|null>}
      */
     async getFile(fileId, userId) {
+        await this.purgeExpiredConversations(userId);
         const id = String(fileId);
         if (!/^[0-9a-f]{32}$/i.test(id)) return null;
         const entry = await db.get(

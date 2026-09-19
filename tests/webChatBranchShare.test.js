@@ -284,3 +284,43 @@ describe('privacy coverage', () => {
         expect(after.total).toBe(0);
     });
 });
+
+describe('continuous history retention', () => {
+    test.each(['list', 'history', 'search', 'share', 'file'])('%s enforces expiry after the original save', async (entryPoint) => {
+        const userId = '930000000000000001';
+        const settings = require('@goobster/core/services/userSettingsService');
+        await settings._mergePreferencesTx(db, userId, { chatHistoryRetentionDays: 1 });
+        const id = await seedConversation(userId, [['user', 'private expired text']]);
+        const share = await webChatService.createShareLink({ userId, conversationId: id });
+        const upload = require('@goobster/core/utils/webUploads').saveDataUrlImage(userId, 'data:image/png;base64,aGVsbG8=');
+        const conversation = await db.get('SELECT channelId FROM web_conversations WHERE id = @id', { id });
+        const gc = await webChatService._guildConvIdFor(userId, conversation.channelId);
+        await db.run('UPDATE messages SET metadata = @metadata WHERE guildConversationId = @gc', {
+            gc, metadata: JSON.stringify({ attachments: [upload] })
+        });
+        const file = await webChatService.registerFile(upload.path, userId);
+        const fileId = file.url.split('/').pop();
+        await db.run("UPDATE web_conversations SET createdAt = '2001-01-01 00:00:00', lastMessageAt = '2001-01-01 00:00:00' WHERE id = @id", { id });
+        if (entryPoint === 'list') expect(await webChatService.listConversations(userId)).toEqual([]);
+        if (entryPoint === 'history') await expect(webChatService.getHistory({ userId, conversationId: id })).rejects.toMatchObject({ status: 404 });
+        if (entryPoint === 'search') expect(await webChatService.searchMessages({ userId, query: 'private expired' })).toEqual([]);
+        if (entryPoint === 'share') await expect(webChatService.getSharedConversation(share.token)).rejects.toMatchObject({ status: 404 });
+        if (entryPoint === 'file') expect(await webChatService.getFile(fileId, userId)).toBeNull();
+        expect(await db.get('SELECT id FROM web_conversations WHERE id = @id', { id })).toBeUndefined();
+        expect(await db.get('SELECT id FROM web_share_links WHERE conversationId = @id', { id })).toBeUndefined();
+        expect(await db.get('SELECT id FROM messages WHERE guildConversationId = @id', { id: gc })).toBeUndefined();
+        expect(fs.existsSync(upload.path)).toBe(false);
+    });
+
+    test('periodic sweep expires unused accounts without deleting fresh conversations', async () => {
+        const userId = '930000000000000002';
+        const settings = require('@goobster/core/services/userSettingsService');
+        await settings._mergePreferencesTx(db, userId, { chatHistoryRetentionDays: 1 });
+        const old = await seedConversation(userId, [['user', 'old']]);
+        const fresh = await seedConversation(userId, [['user', 'fresh']]);
+        await db.run("UPDATE web_conversations SET createdAt = '2001-01-01 00:00:00' WHERE id = @id", { id: old });
+        await require('@goobster/core/services/chatHistoryRetentionService').sweep();
+        expect(await db.get('SELECT id FROM web_conversations WHERE id = @id', { id: old })).toBeUndefined();
+        expect(await db.get('SELECT id FROM web_conversations WHERE id = @id', { id: fresh })).toBeDefined();
+    });
+});

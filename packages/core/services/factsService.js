@@ -13,6 +13,7 @@ const DOSSIER_LIMIT = 12;
  */
 class FactsService {
     async addFact({ guildId, subjectType, subjectId = null, content, source = 'model' }) {
+        if (source !== 'user' && !await require('./personalPolicyService').memoryAllowed(guildId, 'learnMemories')) return null;
         const trimmed = String(content || '').trim();
         if (!guildId || !trimmed || trimmed.length > 500) return null;
 

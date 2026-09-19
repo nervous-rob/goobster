@@ -1,3 +1,4 @@
+import { useDateLabel } from '../hooks/useDateLabel';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -15,12 +16,7 @@ const CRON_LABELS = new Map([
     ['0 9 1 * *', 'Monthly (1st)']
 ]);
 
-function whenLabel(iso?: string) {
-    if (!iso) return '';
-    const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return iso;
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
+
 
 type Automation = {
     id: number; name: string; prompt: string; enabled: boolean;
@@ -33,6 +29,7 @@ type Followup = {
 };
 
 export function TasksRoom() {
+    const whenLabel = useDateLabel();
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();

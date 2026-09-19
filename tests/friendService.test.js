@@ -20,6 +20,7 @@ jest.mock('@goobster/core/services/embeddingService', () => ({
     cosineSimilarity: () => 1
 }));
 jest.mock('@goobster/core/services/aiService', () => ({
+    listProviders: () => [{ key: 'openai', isDefault: true, chatModel: 'test-model' }],
     chat: jest.fn(async () => ({ content: 'ok', toolCalls: [] })),
     generateText: jest.fn(async () => '{"notes": []}'),
     supportsNativeWebSearch: () => false

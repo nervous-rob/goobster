@@ -208,3 +208,33 @@ test('incognito does not offer durable memory or file-saving tools', async () =>
     expect(orchestrator.runAgentLoop.mock.calls[0][0].functionDefs.map(d => d.name))
         .toEqual(['lookupNotes', 'performSearch']);
 });
+
+test.each(['portal', 'discord-dm', 'guild'])('private runtime preferences stay scoped on %s turns', async (surface) => {
+    const db = require('@goobster/core/db');
+    const settings = require('@goobster/core/services/userSettingsService');
+    await settings._mergePreferencesTx(db, USER, { replyMaxTokens: 768, temperature: 0.3, topP: 0.8, disabledTools: ['performSearch'] });
+    aiService.supportsNativeWebSearch.mockReturnValue(true);
+    aiService.chat.mockResolvedValue({ content: 'Hello.', toolCalls: [] });
+    toolsRegistry.getDefinitions.mockResolvedValue([SEARCH_DEF]);
+    const { interaction } = webInteraction();
+    if (surface !== 'portal') {
+        interaction.channelId = '950000000000000001';
+        interaction.channel.id = interaction.channelId;
+    }
+    if (surface === 'guild') {
+        interaction.guildId = '960000000000000001';
+        interaction.guild = { id: interaction.guildId, name: 'A server' };
+    }
+    await handleChatInteraction(interaction);
+    const params = orchestrator.runAgentLoop.mock.calls[0][0];
+    if (surface === 'guild') {
+        expect(params.chatOptions.max_tokens).toBe(4096);
+        expect(params.chatOptions.temperature).toBeUndefined();
+        expect(params.chatOptions.webSearch).toBe(true);
+        expect(params.functionDefs.map(d => d.name)).toContain('performSearch');
+    } else {
+        expect(params.chatOptions).toMatchObject({ max_tokens: 768, temperature: 0.3, top_p: 0.8 });
+        expect(params.chatOptions.webSearch).not.toBe(true);
+        expect(params.functionDefs).toEqual([]);
+    }
+});

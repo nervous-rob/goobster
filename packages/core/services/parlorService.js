@@ -958,11 +958,12 @@ class ParlorService {
                 `At most ${MAX_PARTICIPANTS_PER_CONVERSATION} personas per discussion.`);
         }
         const personas = await Promise.all(ids.map(async id => await this._requirePersona(ownerId, id)));
+        const modelConfigJson = JSON.stringify(await require('./personalPolicyService').snapshotModel(ownerId, 'parlor'));
         const conversation = await db.transaction(async () => {
             const row = await db.get(
-                `INSERT INTO parlor_conversations (ownerId) VALUES (@ownerId)
+                `INSERT INTO parlor_conversations (ownerId, modelConfigJson) VALUES (@ownerId, @modelConfigJson)
                  RETURNING id, title, createdAt, lastMessageAt`,
-                { ownerId }
+                { ownerId, modelConfigJson }
             );
             for (const persona of personas) {
                 await db.run(
@@ -2572,26 +2573,26 @@ class ParlorService {
                 webSearch: aiService.supportsNativeWebSearch(),
                 usageContext: { guildId: dmScopeId(ownerId), userId: ownerId }
             };
-            try {
-                const userSettingsService = require('./userSettingsService');
-                const [provider, model] = await Promise.all([
-                    userSettingsService.getPreference(ownerId, 'parlorProvider'),
-                    userSettingsService.getPreference(ownerId, 'parlorModel')
-                ]);
-                if (provider) chatOptions.provider = provider;
-                if (model) chatOptions.model = model;
-            } catch { /* inherit host / Study defaults */ }
+            const conversationConfig = await db.get(
+                'SELECT modelConfigJson FROM parlor_conversations WHERE id = @id', { id: conversationId }
+            );
+            const modelConfig = JSON.parse(conversationConfig?.modelConfigJson || '{}');
+            if (modelConfig.provider) chatOptions.provider = modelConfig.provider;
+            if (modelConfig.model) chatOptions.model = modelConfig.model;
+            const interactionContext = this._buildPersonaToolContext({
+                ownerId, ownerName, conversationId, collector,
+                // The seat acts as whoever spoke; owner-reserved project
+                // actions stay refused by actor resolution over there.
+                actorId: projectSeat ? (turnState.startedBy || ownerId) : null,
+                actorName: projectSeat ? (turnState.startedByName || null) : null
+            });
+            const toolPolicy = await require('./personalPolicyService').toolPolicy(interactionContext);
+            chatOptions.webSearch = toolPolicy.webSearch && aiService.supportsNativeWebSearch(chatOptions.provider);
             const result = await runAgentLoop({
                 messages,
                 chatOptions,
-                functionDefs,
-                interactionContext: this._buildPersonaToolContext({
-                    ownerId, ownerName, conversationId, collector,
-                    // The seat acts as whoever spoke; owner-reserved project
-                    // actions stay refused by actor resolution over there.
-                    actorId: projectSeat ? (turnState.startedBy || ownerId) : null,
-                    actorName: projectSeat ? (turnState.startedByName || null) : null
-                }),
+                functionDefs: functionDefs.filter(def => toolPolicy.allows(def.name)),
+                interactionContext,
                 onDelta: (delta) => {
                     try { events.onDelta?.(delta); } catch { /* never break the turn */ }
                 },

@@ -91,6 +91,7 @@ const GROUPS = [
             'toolChipLabel',
             'userSettingsApi',
             'userSettingsService',
+            'settingsRuntimePolicy',
             'webAppApi',
             'webAppletService',
             'webChatBranchShare',

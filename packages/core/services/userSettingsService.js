@@ -442,7 +442,7 @@ class UserSettingsService {
         const row = await db.get(
             'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
             { userId }
-        ).catch(() => null);
+        );
         return parsePreferences(row?.preferencesJson);
     }
 
@@ -454,6 +454,13 @@ class UserSettingsService {
             const checked = coercePreference(key, changes[key]);
             if (!checked.ok) {
                 throw new UserSettingsError(400, checked.code || 'BAD_REQUEST', checked.message || `Invalid ${key}.`);
+            }
+            if (key === 'notionAllowlist') {
+                try {
+                    checked.value = [...new Set(checked.value.map(require('./notionService').normalizePageId))];
+                } catch {
+                    throw new UserSettingsError(400, 'BAD_ALLOWLIST', 'Use complete Notion page IDs or URLs; titles and URL fragments are not access boundaries.');
+                }
             }
             patch[key] = checked.value;
         }
@@ -868,23 +875,7 @@ class UserSettingsService {
             changes: { chatHistoryRetentionDays: proposed },
             expectedRevision
         });
-        let purged = 0;
-        if (proposed) {
-            const cutoff = new Date(Date.now() - proposed * 24 * 60 * 60 * 1000)
-                .toISOString().slice(0, 19).replace('T', ' ');
-            const stale = await db.all(
-                `SELECT id FROM web_conversations
-                 WHERE userId = @userId AND COALESCE(lastMessageAt, createdAt) < @cutoff`,
-                { userId, cutoff }
-            );
-            const webChatService = require('./webChatService');
-            for (const row of stale) {
-                try {
-                    await webChatService.deleteConversation({ userId, conversationId: row.id });
-                    purged += 1;
-                } catch { /* already gone */ }
-            }
-        }
+        const purged = await require('./webChatService').purgeExpiredConversations(userId);
         return { ...result, purged };
     }
 
@@ -971,9 +962,8 @@ class UserSettingsService {
                     ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'appearance')
                 };
             case 'connections':
-                return {
-                    ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'connections')
-                };
+                // Reset must not turn restricted access into unrestricted access.
+                return {};
             default:
                 return {};
         }

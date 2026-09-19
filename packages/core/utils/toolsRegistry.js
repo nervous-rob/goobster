@@ -159,6 +159,8 @@ module.exports = {
         if (isIncognitoToolBlocked(name, args?.interactionContext)) {
             return '❌ Saving memories and files is disabled in incognito. Use a regular chat to save this content.';
         }
+        const policy = await require('../services/personalPolicyService').toolPolicy(args?.interactionContext);
+        if (!policy.allows(name)) return '❌ This tool is disabled by your personal settings.';
         return tools[name].execute(args || {});
     },
 

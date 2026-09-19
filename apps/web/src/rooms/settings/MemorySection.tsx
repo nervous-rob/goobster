@@ -307,7 +307,7 @@ function SharesAndExport({ busy, setBusy }: { busy: boolean; setBusy: (v: boolea
 
     return (
         <>
-            <Field id="export" label="Export my data" scope="Your account"
+            <Field id="export" label="Export settings and report" scope="Your account"
                 hint="Downloads your current settings and transparency report. Secrets and session tokens are omitted.">
                 <button id="export-input" type="button" className="btn" disabled={busy} onClick={() => void exportData()}>
                     Download export

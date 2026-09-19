@@ -632,11 +632,11 @@ describe('Phase 3 later policies', () => {
         const connections = await userSettingsService.updateSection({
             userId,
             section: 'connections',
-            changes: { githubAllowlist: ['acme/api'], notionAllowlist: ['Research'] }
+            changes: { githubAllowlist: ['acme/api'], notionAllowlist: ['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'] }
         });
         expect(connections.data.values).toMatchObject({
             githubAllowlist: ['acme/api'],
-            notionAllowlist: ['Research']
+            notionAllowlist: ['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']
         });
 
         const appearance = await userSettingsService.updateSection({

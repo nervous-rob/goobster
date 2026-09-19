@@ -23,7 +23,8 @@ const mockEmbedding = {
 };
 jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
-const mockAi = { chat: jest.fn(), generateText: jest.fn() };
+const mockAi = {
+    listProviders: () => [{ key: 'openai', isDefault: true, chatModel: 'test-model' }], chat: jest.fn(), generateText: jest.fn() };
 jest.mock('@goobster/core/services/aiService', () => mockAi);
 
 const db = require('@goobster/core/db');

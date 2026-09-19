@@ -1,3 +1,4 @@
+import { useDateLabel } from '../hooks/useDateLabel';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -94,12 +95,7 @@ const STATE_MARK: Record<string, string> = {
     candidate: '○', corroborated: '◐', active: '●'
 };
 
-function whenLabel(stamp?: string | null) {
-    if (!stamp) return '';
-    const date = new Date(stamp.includes('T') ? stamp : `${stamp.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return stamp;
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
+
 
 /** Hours inside two days, days beyond — the granularity notices use. */
 function deadlineLabel(stamp: string | null) {
@@ -123,6 +119,7 @@ function hourLabel(minute: number | null) {
 }
 
 export function NoticedRoom() {
+    const whenLabel = useDateLabel();
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
