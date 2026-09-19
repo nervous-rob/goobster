@@ -106,10 +106,6 @@ function formatClock(now = new Date()) {
 }
 
 /**
- * Ranked notes for a speaker (and optionally shared server graph).
- * @returns {Promise<{graph: string|null, memories: Array, chars: number}>}
- */
-/**
  * Characters the ARTIFACTS block may take out of the pack. A file the query
  * names outright (exact/strong label or file-name match) earns the larger
  * share; otherwise artifacts are a minority of the slice so ordinary notes
@@ -122,6 +118,11 @@ function artifactBudget(budget, artifacts) {
     return Math.floor(total * (strong ? 0.6 : 0.4));
 }
 
+/**
+ * Ranked notes for a speaker (and optionally shared server graph): graph
+ * nodes, saved artifacts (their own budget slice, lexical), and memories.
+ * @returns {Promise<{graph: string|null, memories: Array, artifacts: Array, chars: number}>}
+ */
 async function retrieveNotes({
     guildId,
     userId = null,
