@@ -26,7 +26,9 @@ npm run test:e2e                  # Playwright portal journeys (needs build:web 
 npm run test:e2e:install          # npx playwright install --with-deps chromium
 npm run dev                       # nodemon apps/bot/index.js (does NOT deploy slash commands)
 npm start                         # deploy-commands then apps/bot/index.js
-npm run db-init                   # creates data/goobster.sqlite (schema is also applied on every DB open)
+npm run db-init                   # creates data/goobster.sqlite (schema is also applied on every DB open) and seeds self-docs
+npm run docs:seed                 # seed documentation/** + README.md into self_docs (-- --embed also waits for embeddings)
+npm run docs:check                # parse-only corpus validation, no DB (also runs at Docker image build)
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck:web, build:web, then the Jest matrix as **named groups** (`tests/ciGroups.js`) twice — once on SQLite and once on Postgres (`GOOBSTER_DB_URL` set, pgvector image). A change must pass on **both engines**. A separate `test (playwright)` job runs `npm run test:e2e`. Optional live provider tests run on trusted `main` pushes and `workflow_dispatch` only; missing secrets skip, they do not drop mocked coverage. See `documentation/adr/0007-ci-test-groups.md`.
@@ -76,6 +78,9 @@ Routes between OpenAI, Anthropic, Gemini, and Ollama (local fallback; auto-detec
 
 ### Memory and privacy
 `memoryService` stores embeddings in `memory_embeddings`, mirrored into per-dimension `vec0` virtual tables via **sqlite-vec** (pgvector on Postgres), with brute-force fallback when the extension can't load. **Every deletion path for memories must clean orphaned vectors** (`memoryService.cleanupVecIndex()`) — derived embeddings never outlive their memories. Privacy commands (`/forget-me`, `/what-do-you-know-about-me`, retention windows) are load-bearing features; new per-user data stores must be reachable by the erasure path (`privacyService`).
+
+### Self-knowledge (`services/selfDocsService.js`, the `consultDocs` tool)
+`documentation/**/*.md` and `README.md` are chunked and seeded into `self_docs` on every bot start (idempotent, hash-compared; `withSingletonLock('self_docs_seed')`), from `db-init`, and from `npm run docs:seed`. The model reads them with `consultDocs` (`search` = BM25 + optional embeddings fused by RRF, `read` = line-windowed doc/section, `list` = index; `kind=skill` lists the authored procedures under `documentation/skills/`). Retrieval must keep working with no keys; embeddings are an enhancement. The corpus is public docs, not user data (no privacy path). **Ship every feature with its doc and keep tool/command/config names in docs accurate** — the docs are what Goobster knows about himself. Spec: `documentation/self_knowledge.md`.
 
 ### DM scope rule
 Everything keyed on `guildId` uses the synthetic scope `dm:<userId>` (`utils/dmScope.js`) in DMs. Never store DM data under a NULL or shared guild id.

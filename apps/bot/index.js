@@ -303,6 +303,23 @@ client.once(Events.ClientReady, async readyClient => {
 		// Continue startup even if database fails - some features will be disabled
 	}
 	
+	// Seed Goobster's own documentation into self_docs (idempotent, hash
+	// compared; embeddings backfill in the background when a backend exists)
+	try {
+		const selfDocsService = require('@goobster/core/services/selfDocsService');
+		const seeded = await selfDocsService.seedOnStartup({ logger });
+		if (seeded?.acquired) {
+			const changed = seeded.inserted + seeded.updated + seeded.deleted;
+			logger.info(`Self-docs: ${seeded.docs} document(s), ${seeded.chunks} chunk(s)`
+				+ (changed > 0
+					? ` (${seeded.inserted} new, ${seeded.updated} updated, ${seeded.deleted} removed)`
+					: ' (unchanged)'));
+		}
+	} catch (error) {
+		logger.error('Failed to seed self-documentation:', error);
+		logger.info('Bot will continue; consultDocs seeds lazily on first use');
+	}
+
 	// Initialize shared voice service (optional - bot continues without voice)
 	try {
 		logger.info('Initializing shared voice service...');

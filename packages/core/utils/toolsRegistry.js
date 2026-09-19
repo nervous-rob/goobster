@@ -14,6 +14,8 @@ const tavernTools = require('./tools/tavern');
 const parlorTools = require('./tools/parlor');
 const attentionTools = require('./tools/attention');
 const integrationTools = require('./tools/integrations');
+const selfDocsTools = require('./tools/selfDocs');
+const selfDocsConfig = require('../config/selfDocsConfig');
 
 const catalog = {
     ...observatoryTools,
@@ -21,7 +23,8 @@ const catalog = {
     ...tavernTools,
     ...parlorTools,
     ...attentionTools,
-    ...integrationTools
+    ...integrationTools,
+    ...selfDocsTools
 };
 
 const TOOL_ORDER = [
@@ -39,6 +42,7 @@ const TOOL_ORDER = [
     'forgetFact',
     'saveArtifact',
     'lookupNotes',
+    'consultDocs',
     'checkPoints',
     'gamblePoints',
     'tavernInfo',
@@ -113,6 +117,11 @@ module.exports = {
             && (observatoryConfig.scope === 'everywhere' || trustedSurface);
         if (!observatoryOffered) {
             definitions = definitions.filter(def => def.name !== 'observatory');
+        }
+        // Self-documentation is on by default and needs no credentials; an
+        // operator can still switch the corpus (and the tool) off entirely.
+        if (!selfDocsConfig.enabled) {
+            definitions = definitions.filter(def => def.name !== 'consultDocs');
         }
         if (sandboxOffered || observatoryOffered) {
             const note = ` ${await sandboxService.pythonEnvironmentNote()}`;

@@ -119,6 +119,7 @@ const GROUPS = [
             'monologueService',
             'projectKnowledge',
             'researchBrief',
+            'selfDocs',
             'spitballAttention',
             'spitballExpeditionService',
             'spitballResearchPipeline',

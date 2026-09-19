@@ -23,6 +23,23 @@ function formatToolDocs(functions) {
 const NOTES_GUIDANCE = `**PERSONAL / SERVER NOTES:**
 The prompt only includes a small relevant slice. If you need a detail about this person or this server that is not there, call lookupNotes (about="me" or about="server") instead of guessing. Remember new durable facts with rememberFact. When they share a file worth keeping (code, docs, PDFs), save it with saveArtifact — ask first if unsure, then confirm=true. lookupNotes can recall saved artifact contents later.`;
 
+// Guidance shared by every provider about Goobster's own documentation.
+// The model is the software the docs describe, so questions about how it
+// works, how to configure it, and why one of its features misbehaves are
+// answered from the manual, not from a guess.
+const SELF_DOCS_GUIDANCE = `**YOUR OWN DOCUMENTATION:**
+You are Goobster, and your documentation is available through consultDocs. When someone asks how you work, what a command/feature/room does, how to set up or configure you (config.json, environment variables, Raspberry Pi, Docker, Postgres, the portal, voice, music), or when one of your own tools fails or a feature is disabled or unavailable, call consultDocs (action="search") before answering and cite the doc title. Your skill guides (consultDocs action="list", kind="skill") are step-by-step procedures - troubleshooting tactics, project examples, working guidelines - read the relevant one in full before doing that kind of job. Never invent configuration keys, commands, or behaviour: if the docs do not cover something, say so.`;
+
+/** The self-docs block, or nothing when the operator disabled the corpus (the tool is absent too). */
+function selfDocsGuidance() {
+    try {
+        if (!require('../config/selfDocsConfig').enabled) return '';
+    } catch {
+        return '';
+    }
+    return `${SELF_DOCS_GUIDANCE}\n\n`;
+}
+
 // Guidance shared by every provider about routing scheduling requests.
 // Recurring work must land on durable automations (restart-safe, repeat
 // until cancelled) - a chain of one-time follow-ups is never a schedule.
@@ -90,7 +107,7 @@ function buildNativeToolGuidance() {
 
 ${NOTES_GUIDANCE}
 
-${SCHEDULING_GUIDANCE}
+${selfDocsGuidance()}${SCHEDULING_GUIDANCE}
 
 ${EXECUTE_PLAN_GUIDANCE}`;
 }
@@ -125,7 +142,7 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 
 ${NOTES_GUIDANCE}
 
-${SCHEDULING_GUIDANCE}
+${selfDocsGuidance()}${SCHEDULING_GUIDANCE}
 
 ${EXECUTE_PLAN_GUIDANCE}
 
