@@ -172,7 +172,7 @@ module.exports = {
     lookupNotes: {
         definition: {
             name: 'lookupNotes',
-            description: 'Look up distilled notes and memories you already have. Use when a personal or server detail is missing from the prompt and guessing would be wrong. about="me" is this speaker; about="server" is shared server knowledge (not another person\'s private dossier).',
+            description: 'Look up distilled notes, memories, and saved files you already have. Use when a personal or server detail is missing from the prompt and guessing would be wrong, or to check whether a file (saved with saveArtifact, fetchWebFile, or findImages) exists before showing it again with showSavedFiles. Saved files match on label, file name, notes, and extracted text and come back as bounded excerpts. about="me" is this speaker; about="server" is shared server knowledge (not another person\'s private dossier).',
             parameters: {
                 type: 'object',
                 properties: {
@@ -200,6 +200,10 @@ module.exports = {
             const scopeAbout = (!interactionContext?.guildId || isDmScopeId(guildId))
                 ? 'me'
                 : about;
+            // One ranked pass: graph notes, saved artifacts (lexical - no
+            // embeddings needed, visible the moment a file is saved), and
+            // memories, each with its own slice of the budget so a strong
+            // artifact match is never clipped off by high-salience notes.
             const result = await retrieveNotes({
                 guildId,
                 userId,
@@ -207,37 +211,15 @@ module.exports = {
                 depth: 'rich',
                 mode: 'chat',
                 about: scopeAbout,
-                includeMemories: true
+                includeMemories: true,
+                graphFallback: false,
+                maxChars: 3200,
+                artifactLimit: 5,
+                artifactExcerptChars: 360,
+                artifactTopExcerptChars: 900
             });
             const block = formatRetrievedBlock(result, { heading: 'LOOKUP' });
             if (block) return block;
-
-            const kgArtifactService = require('../../services/kgArtifactService');
-            const knowledgeGraphService = require('../../services/knowledgeGraphService');
-            const scopeKey = knowledgeGraphService.resolveScopeKey({
-                subjectType: 'USER',
-                subjectId: userId
-            });
-            const artifacts = await kgArtifactService.searchArtifacts({
-                guildId,
-                scopeKey,
-                query,
-                limit: 3
-            });
-            const artifactBlock = kgArtifactService.formatArtifactLines(artifacts, { maxChars: 2500 });
-            if (artifactBlock) {
-                const details = [];
-                for (const row of artifacts.slice(0, 2)) {
-                    const body = await kgArtifactService.readArtifactContent({
-                        guildId,
-                        scopeKey,
-                        label: row.label,
-                        maxChars: 1200
-                    });
-                    if (body) details.push(`--- ${row.label} (${row.originalName || 'file'}) ---\n${body}`);
-                }
-                return `LOOKUP — ARTIFACTS:\n${artifactBlock}${details.length ? `\n\n${details.join('\n\n')}` : ''}`;
-            }
 
             return 'Nothing on file for that. Do not invent a personal detail; ask or use a web search if it is public knowledge.';
         }

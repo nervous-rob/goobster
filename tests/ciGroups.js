@@ -118,6 +118,7 @@ const GROUPS = [
             'kgArtifactService',
             'knowledgeGraphService',
             'knowledgeReflectionService',
+            'lookupNotesArtifacts',
             'memoryVecIndex',
             'monologueService',
             'projectKnowledge',

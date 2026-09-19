@@ -18,6 +18,7 @@
 
 const knowledgeGraphService = require('../../services/knowledgeGraphService');
 const memoryService = require('../../services/memoryService');
+const lookupRelevance = require('../lookupRelevance');
 const { isDmScopeId } = require('../dmScope');
 const {
     FALLBACK_PERSONALITY,
@@ -108,6 +109,19 @@ function formatClock(now = new Date()) {
  * Ranked notes for a speaker (and optionally shared server graph).
  * @returns {Promise<{graph: string|null, memories: Array, chars: number}>}
  */
+/**
+ * Characters the ARTIFACTS block may take out of the pack. A file the query
+ * names outright (exact/strong label or file-name match) earns the larger
+ * share; otherwise artifacts are a minority of the slice so ordinary notes
+ * are not squeezed out by long documents.
+ */
+function artifactBudget(budget, artifacts) {
+    const total = budget.maxChars || 2000;
+    if (!artifacts?.length) return 0;
+    const strong = artifacts[0]?.relevanceTier >= lookupRelevance.TIER.strong;
+    return Math.floor(total * (strong ? 0.6 : 0.4));
+}
+
 async function retrieveNotes({
     guildId,
     userId = null,
@@ -116,17 +130,24 @@ async function retrieveNotes({
     mode = 'chat',
     about = 'me',
     excludeContents = [],
-    includeMemories = null
+    includeMemories = null,
+    maxChars = null,
+    graphFallback = true,
+    artifactLimit = 4,
+    artifactExcerptChars = 320,
+    artifactTopExcerptChars = null
 } = {}) {
-    if (!guildId) return { graph: null, memories: [], chars: 0 };
+    if (!guildId) return { graph: null, memories: [], artifacts: [], chars: 0 };
 
     const resolvedDepth = ['light', 'medium', 'rich'].includes(depth) ? depth : classifyDepth(query);
-    const budget = BUDGETS[mode]?.[resolvedDepth] || BUDGETS.chat.medium;
+    const baseBudget = BUDGETS[mode]?.[resolvedDepth] || BUDGETS.chat.medium;
+    const budget = maxChars ? { ...baseBudget, maxChars: Number(maxChars) } : baseBudget;
     let wantMemories = includeMemories == null ? budget.memories > 0 : includeMemories;
     const graphLimit = about === 'server' ? Math.max(budget.graph, 6) : budget.graph;
 
     let graph = null;
     let artifactBlock = null;
+    let artifacts = [];
     if (graphLimit > 0 && searchTerms(query).length > 0) {
         const userScope = userId
             ? knowledgeGraphService.resolveScopeKey({ subjectType: 'USER', subjectId: userId })
@@ -134,32 +155,47 @@ async function retrieveNotes({
         const scopeKey = about === 'server'
             ? (userId ? 'GUILD' : '')
             : userScope;
+        // Artifact nodes are described by the ARTIFACTS block below (with
+        // file name, notes, and a match-centred excerpt), so the graph
+        // slice is spent on ordinary notes.
         graph = await knowledgeGraphService.describeForPrompt({
             guildId,
             scopeKey: about === 'server' ? '' : scopeKey,
             query,
-            limit: graphLimit
+            limit: graphLimit,
+            excludeTypes: ['artifact'],
+            fallbackToTop: graphFallback
         });
         if (about === 'server' && !graph) {
             graph = await knowledgeGraphService.describeForPrompt({
                 guildId,
                 scopeKey: 'GUILD',
                 query,
-                limit: graphLimit
+                limit: graphLimit,
+                excludeTypes: ['artifact'],
+                fallbackToTop: graphFallback
             });
         }
+        // Saved files live only under the speaker's USER scope; a server
+        // lookup searches the (always empty) guild scope so personal files
+        // never surface in shared context.
         const kgArtifactService = require('../../services/kgArtifactService');
         const artifactScope = about === 'server'
             ? (scopeKey === '' ? 'GUILD' : scopeKey)
             : userScope;
-        const artifactRows = await kgArtifactService.searchArtifacts({
-            guildId,
-            scopeKey: artifactScope,
+        artifacts = artifactScope
+            ? await kgArtifactService.searchArtifacts({
+                guildId,
+                scopeKey: artifactScope,
+                query,
+                limit: Math.min(artifactLimit, Math.max(2, graphLimit))
+            })
+            : [];
+        artifactBlock = kgArtifactService.formatArtifactLines(artifacts, {
             query,
-            limit: Math.min(4, graphLimit)
-        });
-        artifactBlock = kgArtifactService.formatArtifactLines(artifactRows, {
-            maxChars: Math.floor((budget.maxChars || 2000) / 2)
+            maxChars: artifactBudget(budget, artifacts),
+            excerptChars: artifactExcerptChars,
+            topExcerptChars: artifactTopExcerptChars
         });
     } else if (graphLimit > 0 && about === 'me' && userId && resolvedDepth === 'rich') {
         const scopeKey = knowledgeGraphService.resolveScopeKey({
@@ -193,13 +229,21 @@ async function retrieveNotes({
         });
     }
 
-    const graphParts = [];
-    if (graph) graphParts.push(graph);
-    if (artifactBlock) graphParts.push(`ARTIFACTS:\n${artifactBlock}`);
-    const graphText = graphParts.length > 0
-        ? clip(graphParts.join('\n'), budget.maxChars || 2000)
+    // Each block is clipped on its own: a long graph slice can no longer
+    // truncate the ARTIFACTS block off the end of the pack. A file the query
+    // names outright leads; otherwise ordinary notes come first.
+    const total = budget.maxChars || 2000;
+    const artifactText = artifactBlock ? clip(`ARTIFACTS (saved files):\n${artifactBlock}`, artifactBudget(budget, artifacts)) : null;
+    const graphText = graph
+        ? clip(graph, Math.max(200, total - (artifactText ? artifactText.length : 0)))
         : null;
-    let chars = graphText ? graphText.length : 0;
+    const artifactsLead = artifactText && artifacts[0]?.relevanceTier >= lookupRelevance.TIER.phrase;
+    const graphParts = artifactsLead
+        ? [artifactText, graphText]
+        : [graphText, artifactText];
+    const combined = graphParts.filter(Boolean).join('\n');
+    const packedGraph = combined || null;
+    let chars = packedGraph ? packedGraph.length : 0;
     const keptMemories = [];
     const memoryBudget = Math.max(0, (budget.maxChars || 2000) - chars);
     let used = 0;
@@ -211,7 +255,7 @@ async function retrieveNotes({
     }
     chars += used;
 
-    return { graph: graphText, memories: keptMemories, chars, depth: resolvedDepth, about };
+    return { graph: packedGraph, memories: keptMemories, artifacts, chars, depth: resolvedDepth, about };
 }
 
 function formatRetrievedBlock({ graph, memories }, { heading = 'THINGS YOU ALREADY KNOW' } = {}) {

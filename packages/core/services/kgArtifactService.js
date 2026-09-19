@@ -6,6 +6,7 @@
 const db = require('../db');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const artifactStorage = require('../utils/kgArtifactStorage');
+const lookupRelevance = require('../utils/lookupRelevance');
 const {
     MAX_ARTIFACT_BYTES,
     MAX_EXTRACTED_TEXT,
@@ -13,6 +14,13 @@ const {
     classifyArtifactKind,
     sanitizeFilename
 } = require('../config/kgArtifactConfig');
+
+/** metadataJson keys a lookup may match on and show (never URLs or paths). */
+const SEARCHABLE_METADATA_FIELDS = ['title', 'description', 'credit', 'license', 'provider'];
+
+/** Default excerpt budget when a lookup describes an artifact. */
+const LOOKUP_EXCERPT_CHARS = 320;
+const LOOKUP_NOTES_CHARS = 240;
 
 class KgArtifactError extends Error {
     constructor(code, message) {
@@ -272,18 +280,45 @@ class KgArtifactService {
     }
 
     /**
-     * Search artifact nodes by label, summary, or extracted text.
+     * The intentionally searchable origin fields of a found file (title,
+     * description, credit, license, provider). URLs, paths, and timestamps
+     * in metadataJson are deliberately not part of this text.
+     * @param {Object} row - artifact row with metadataJson
+     * @returns {string}
+     */
+    searchableMetadata(row) {
+        const meta = this.parseMetadata(row);
+        if (!meta) return '';
+        return SEARCHABLE_METADATA_FIELDS
+            .map(key => meta[key])
+            .filter(v => typeof v === 'string' && v.trim())
+            .join('\n');
+    }
+
+    /**
+     * Search artifact nodes by label, notes, file name, extracted text, and
+     * the searchable origin metadata of found files. Purely lexical (works
+     * with no embedding backend and the moment a file is saved); ranked by
+     * query relevance first (exact label/file name > strong label match >
+     * whole phrase / every term > partial), salience second.
+     *
+     * Returned rows carry `relevance`, `relevanceTier`, and `matchedTerms`.
      */
     async searchArtifacts({ guildId, scopeKey, query, limit = 6, kind = null }) {
-        const terms = String(query || '')
-            .toLowerCase()
-            .split(/[^\p{L}\p{N}]+/u)
-            .filter(t => t.length >= 3)
-            .slice(0, 8);
-        if (terms.length === 0) return [];
+        const terms = lookupRelevance.queryTerms(query);
+        const phrase = lookupRelevance.normalizeText(query);
+        if (terms.length === 0 && phrase.length < 2) return [];
 
-        const clauses = terms.map((_, i) => `(n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i})`);
-        const params = { guildId, scopeKey, limit };
+        const hit = (i) => `(n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i} OR a.metadataJson LIKE @t${i})`;
+        const clauses = terms.map((_, i) => hit(i));
+        // A short query ("go.md", "q3") has no 3-letter term; the phrase
+        // clause still lets an exact file name or label resolve.
+        clauses.push('(n.label LIKE @phrase OR a.originalName LIKE @phrase)');
+        const termHits = terms.length > 0
+            ? terms.map((_, i) => `(CASE WHEN ${hit(i)} THEN 1 ELSE 0 END)`).join(' + ')
+            : '0';
+        const cap = Math.max(1, Number(limit) || 6);
+        const params = { guildId, scopeKey, fetch: Math.min(120, Math.max(cap * 6, 30)), phrase: `%${phrase}%` };
         terms.forEach((t, i) => { params[`t${i}`] = `%${t}%`; });
         let kindClause = '';
         if (kind) {
@@ -291,24 +326,41 @@ class KgArtifactService {
             params.kind = kind;
         }
 
-        // Rank by how many query terms hit, so "M43 jacket" prefers the
-        // artifact matching both words over one that only mentions jackets.
-        const hitCount = terms
-            .map((_, i) => `(CASE WHEN n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i} THEN 1 ELSE 0 END)`)
-            .join(' + ');
-
-        return await db.all(
+        const rows = await db.all(
             `SELECT n.*, a.originalName, a.artifactKind, a.mimeType, a.sizeBytes,
                     a.extractedText, a.relativePath, a.metadataJson,
-                    (${hitCount}) AS termHits
+                    (CASE WHEN n.label LIKE @phrase OR a.originalName LIKE @phrase THEN 1 ELSE 0 END) AS phraseHit,
+                    (${termHits}) AS termHits
              FROM kg_nodes n
              JOIN kg_artifacts a ON a.nodeId = n.id
              WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact'
                AND (${clauses.join(' OR ')})${kindClause}
-             ORDER BY termHits DESC, n.salience DESC, n.updatedAt DESC
-             LIMIT @limit`,
+             ORDER BY phraseHit DESC, termHits DESC, n.salience DESC, n.updatedAt DESC
+             LIMIT @fetch`,
             params
         );
+
+        const ranked = [];
+        for (const row of rows) {
+            const { score, tier, matchedTerms } = lookupRelevance.scoreCandidate({
+                query,
+                terms,
+                label: row.label,
+                fileName: row.originalName,
+                texts: [row.content, row.extractedText, this.searchableMetadata(row)],
+                salience: row.salience,
+                confidence: row.confidence
+            });
+            // A row that only matched inside a URL or timestamp of the
+            // metadata JSON is noise, not a hit.
+            if (score <= 0) continue;
+            const out = { ...row, relevance: score, relevanceTier: tier, matchedTerms };
+            delete out.phraseHit;
+            delete out.termHits;
+            ranked.push(out);
+        }
+        ranked.sort(lookupRelevance.compareRanked);
+        return ranked.slice(0, cap);
     }
 
     /**
@@ -353,22 +405,62 @@ class KgArtifactService {
         return fs.existsSync(abs) ? abs : null;
     }
 
-    formatArtifactLines(rows, { maxChars = 1200 } = {}) {
+    /**
+     * One bounded, model-facing line per artifact for a lookup result:
+     * label, file name and kind, the notes, an excerpt of the extracted
+     * text centred on the query terms, and the exact `showSavedFiles`
+     * query that re-displays it. Never the whole document, never a path.
+     *
+     * @param {Array<Object>} rows - searchArtifacts()/listArtifacts() rows
+     * @param {{ query?: string, maxChars?: number, excerptChars?: number,
+     *   topExcerptChars?: number }} [opts]
+     * @returns {string|null}
+     */
+    formatArtifactLines(rows, {
+        query = '',
+        maxChars = 1200,
+        excerptChars = LOOKUP_EXCERPT_CHARS,
+        topExcerptChars = null
+    } = {}) {
         if (!rows?.length) return null;
+        const terms = lookupRelevance.queryTerms(query);
         let used = 0;
         const lines = [];
-        for (const row of rows) {
-            const excerptSource = row.extractedText || row.content || '';
-            const excerpt = excerptSource
-                ? clipText(excerptSource, Math.min(400, maxChars - used))
-                : '';
-            const fileBit = row.originalName ? ` file=${row.originalName}` : '';
-            const line = `- [artifact/${row.artifactKind || 'file'}] "${row.label}"${fileBit}${excerpt ? `: ${excerpt}` : ''}`;
-            if (used + line.length > maxChars && lines.length > 0) break;
+        rows.forEach((row, index) => {
+            const line = this.describeArtifactLine(row, {
+                query,
+                terms,
+                excerptChars: index === 0 && topExcerptChars ? topExcerptChars : excerptChars
+            });
+            if (used + line.length > maxChars && lines.length > 0) return;
             lines.push(line);
             used += line.length;
-        }
+        });
         return lines.join('\n');
+    }
+
+    describeArtifactLine(row, { query = '', terms = null, excerptChars = LOOKUP_EXCERPT_CHARS } = {}) {
+        const notes = String(row.content || '').trim();
+        const extracted = String(row.extractedText || '').trim();
+        // With no summary the node body is just the head of the extracted
+        // text (and a found image's text IS its notes) - show it once.
+        const notesAreText = Boolean(notes) && Boolean(extracted)
+            && (extracted === notes || extracted.startsWith(notes.replace(/\n?… \[truncated\]$/, '')));
+        const summary = !notesAreText && notes
+            ? lookupRelevance.excerptAround(notes, { query, terms, maxChars: LOOKUP_NOTES_CHARS })
+            : '';
+        const excerpt = extracted
+            ? lookupRelevance.excerptAround(extracted, { query, terms, maxChars: excerptChars })
+            : '';
+
+        const kind = row.artifactKind || 'file';
+        const fileBit = row.originalName ? `, file ${row.originalName}` : '';
+        const idBit = row.id != null ? `, id ${row.id}` : '';
+        const parts = [`- [saved artifact/${kind}] "${row.label}" (${kind}${fileBit}${idBit})`];
+        if (summary) parts.push(`notes: ${summary}`);
+        if (excerpt) parts.push(`${kind === 'image' ? 'about' : 'excerpt'}: ${excerpt}`);
+        parts.push(`show again with showSavedFiles(query="${String(row.label).replace(/"/g, '\'')}")`);
+        return parts.join(' — ');
     }
 
     async deleteAuthorFiles(guildId, authorId) {
