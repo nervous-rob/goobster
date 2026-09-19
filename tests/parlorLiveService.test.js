@@ -31,6 +31,7 @@ const mockEmbedding = {
 jest.mock('@goobster/core/services/embeddingService', () => mockEmbedding);
 
 const mockAi = {
+    listProviders: () => [{ key: 'openai', isDefault: true, chatModel: 'test-model' }],
     chat: jest.fn(),
     generateText: jest.fn(),
     supportsNativeWebSearch: () => false

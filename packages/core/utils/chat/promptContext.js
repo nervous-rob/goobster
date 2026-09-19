@@ -140,10 +140,14 @@ async function retrieveNotes({
 } = {}) {
     if (!guildId) return { graph: null, memories: [], artifacts: [], chars: 0 };
 
+    if (!await require('../../services/personalPolicyService').memoryAllowed(guildId, 'useMemories')) {
+        return { graph: null, memories: [], artifacts: [], chars: 0 };
+    }
+
     const resolvedDepth = ['light', 'medium', 'rich'].includes(depth) ? depth : classifyDepth(query);
     const baseBudget = BUDGETS[mode]?.[resolvedDepth] || BUDGETS.chat.medium;
     const budget = maxChars ? { ...baseBudget, maxChars: Number(maxChars) } : baseBudget;
-    let wantMemories = includeMemories == null ? budget.memories > 0 : includeMemories;
+    const wantMemories = includeMemories == null ? budget.memories > 0 : includeMemories;
     const graphLimit = about === 'server' ? Math.max(budget.graph, 6) : budget.graph;
 
     let graph = null;
@@ -212,14 +216,6 @@ async function retrieveNotes({
     }
 
     let memories = [];
-    if (wantMemories && query && userId) {
-        try {
-            const userSettingsService = require('../../services/userSettingsService');
-            if (await userSettingsService.getPreference(userId, 'useMemories') === false) {
-                wantMemories = false;
-            }
-        } catch { /* default on */ }
-    }
     if (wantMemories && query) {
         memories = await memoryService.recall({
             guildId,

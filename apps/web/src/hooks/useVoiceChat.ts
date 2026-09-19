@@ -1,3 +1,4 @@
+import { openMicrophone } from '../lib/microphone';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fetchSpeech } from '../lib/api';
 import { VoiceLiveSession, type VoiceSendMode } from '../lib/voiceLiveSession';
@@ -301,12 +302,8 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
     const startBatch = useCallback(async (generation: number) => {
         let stream: MediaStream;
         try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    ...(micIdRef.current ? { deviceId: { exact: micIdRef.current } } : {})
-                }
+            stream = await openMicrophone(micIdRef.current, () => {
+                onNotifyRef.current?.('Preferred microphone is unavailable. Using the system microphone.');
             });
         } catch {
             onNotifyRef.current?.('Microphone access was denied.', true);
@@ -379,7 +376,7 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
                     onNotifyRef.current?.('The live transcription connection closed.', true);
                     stop();
                 }
-            }, { mode: modeRef.current });
+            }, { mode: modeRef.current, micId: micIdRef.current, onMicFallback: () => onNotifyRef.current?.('Preferred microphone is unavailable. Using the system microphone.') });
         } catch (error) {
             try { session.stop(); } catch { /* already gone */ }
             const message = (error as Error).message || '';

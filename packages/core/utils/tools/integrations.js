@@ -388,23 +388,13 @@ module.exports = {
             try {
                 const results = await notionService.search(token, query);
                 if (!results.length) return `No Notion matches for "${query}" (pages must be shared with the integration).`;
-                let filtered = results;
-                try {
-                    const userSettingsService = require('../../services/userSettingsService');
-                    const userId = interactionContext?.user?.id;
-                    const allow = userId ? await userSettingsService.getPreference(userId, 'notionAllowlist') : [];
-                    if (Array.isArray(allow) && allow.length > 0) {
-                        const needles = allow.map((item) => String(item).toLowerCase());
-                        filtered = results.filter((item) => needles.some((n) =>
-                            String(item.id || '').toLowerCase().includes(n)
-                            || String(item.title || '').toLowerCase().includes(n)
-                            || String(item.url || '').toLowerCase().includes(n)
-                        ));
-                        if (!filtered.length) {
-                            return 'No Notion matches on your personal page allowlist. Add pages in Settings → Connections.';
-                        }
-                    }
-                } catch { /* allowlist is optional */ }
+                const allow = await require('../../services/userSettingsService')
+                    .getPreference(interactionContext.user.id, 'notionAllowlist');
+                const allowedIds = new Set(allow.map(item => {
+                    try { return notionService.normalizePageId(item); } catch { return null; }
+                }).filter(Boolean));
+                const filtered = allow.length ? results.filter(item => allowedIds.has(notionService.normalizePageId(item.id))) : results;
+                if (!filtered.length) return 'No Notion matches on your personal page allowlist. Use page IDs or URLs in Settings → Connections.';
                 return 'Notion matches:\n' + filtered.map(item =>
                     `- [${item.kind}] ${item.title} (id: ${item.id})${item.lastEdited ? ` last edited ${item.lastEdited}` : ''}`
                 ).join('\n');
@@ -432,21 +422,16 @@ module.exports = {
             const { token, error } = await resolveNotionAccess(interactionContext);
             if (error) return error;
             try {
-                const userId = interactionContext?.user?.id;
-                if (userId) {
-                    const userSettingsService = require('../../services/userSettingsService');
-                    const allow = await userSettingsService.getPreference(userId, 'notionAllowlist');
-                    if (Array.isArray(allow) && allow.length > 0) {
-                        const needle = String(page).toLowerCase();
-                        const ok = allow.some((item) => needle.includes(String(item).toLowerCase()));
-                        if (!ok) {
-                            return '❌ That Notion page is not on your personal allowlist. Add it in Settings → Connections.';
-                        }
-                    }
+                const pageId = notionService.normalizePageId(page);
+                const allow = await require('../../services/userSettingsService')
+                    .getPreference(interactionContext.user.id, 'notionAllowlist');
+                const allowedIds = new Set(allow.map(item => {
+                    try { return notionService.normalizePageId(item); } catch { return null; }
+                }).filter(Boolean));
+                if (allow.length && !allowedIds.has(pageId)) {
+                    return '❌ That Notion page is not on your personal allowlist. Use page IDs or URLs in Settings → Connections.';
                 }
-            } catch { /* allowlist is optional */ }
-            try {
-                const result = await notionService.getPageText(token, page);
+                const result = await notionService.getPageText(token, pageId);
                 const body = `${result.title ? `# ${result.title}\n` : ''}${result.url ? `${result.url}\n\n` : '\n'}${result.content || '(empty page)'}`;
                 const win = windowLines(body, { offset, limit });
                 const formatted = formatTextWindow({

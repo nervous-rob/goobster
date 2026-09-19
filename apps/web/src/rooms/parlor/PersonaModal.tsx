@@ -1,3 +1,4 @@
+import { useUserSettings } from '../../hooks/useUserSettings';
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -35,9 +36,12 @@ export function PersonaModal({
     const toast = useToast();
     const confirm = useConfirm();
     const [name, setName] = useState(persona?.name || '');
-    const [emoji, setEmoji] = useState(persona?.emoji || '');
+    const settingsQ = useUserSettings();
+    const [emojiDraft, setEmoji] = useState<string | null>(persona ? (persona.emoji || '') : null);
+    const emoji = emojiDraft ?? settingsQ.data?.sections.appearance.values.parlorDefaultEmoji ?? '';
     const [color, setColor] = useState(persona?.color || defaultColor);
-    const [charter, setCharter] = useState(persona?.charter || '');
+    const [charterDraft, setCharter] = useState<string | null>(persona ? (persona.charter || '') : null);
+    const charter = charterDraft ?? settingsQ.data?.sections.appearance.values.parlorDefaultCharter ?? '';
     const [voice, setVoice] = useState(persona?.voiceId || '');
 
     // The ElevenLabs voice library; an error (no key, old server) simply
@@ -139,7 +143,7 @@ export function PersonaModal({
                 <button
                     type="button"
                     className="btn primary"
-                    disabled={save.isPending || !name.trim() || !charter.trim()}
+                    disabled={(!persona && settingsQ.isPending) || save.isPending || !name.trim() || !charter.trim()}
                     onClick={() => save.mutate()}
                 >{persona ? 'Save' : 'Create'}</button>
             </div>

@@ -13,6 +13,8 @@
  */
 
 const COLUMN_MIGRATIONS = [
+    ['parlor_conversations', 'modelConfigJson', 'modelConfigJson TEXT'],
+    ['spitball_expeditions', 'modelConfigJson', 'modelConfigJson TEXT'],
     ['guild_settings', 'proactive_mode',
         `proactive_mode TEXT NOT NULL DEFAULT 'DISABLED' CHECK (proactive_mode IN ('ENABLED', 'DISABLED'))`],
     ['guild_settings', 'monologue_mode',

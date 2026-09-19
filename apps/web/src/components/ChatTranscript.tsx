@@ -1,14 +1,8 @@
+import { useDateLabel } from '../hooks/useDateLabel';
 import type { ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import { ThinkingSteps } from './ThinkingSteps';
 import type { LocalTurnMessage } from '../hooks/useChatTurn';
-
-function timeLabel(iso?: string): string {
-    if (!iso) return '';
-    const date = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return iso;
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 export function ChatTranscript({
     messages,
@@ -33,6 +27,7 @@ export function ChatTranscript({
     empty?: ReactNode;
     expandDetails?: boolean;
 }) {
+    const timeLabel = useDateLabel(true);
     if (messages.length === 0) {
         return empty ? <>{empty}</> : null;
     }

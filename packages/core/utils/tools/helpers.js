@@ -231,7 +231,7 @@ async function resolveGithubAccess(interactionContext, githubService, repo) {
                 return { error: `❌ ${parsed} is not on your personal GitHub allowlist. Add it in Settings → Connections.` };
             }
         }
-    } catch { /* allowlist is optional */ }
+    } catch { return { error: '❌ Could not verify your GitHub resource policy. Try again later.' }; }
     return { service: githubService.withToken(token), parsed };
 }
 

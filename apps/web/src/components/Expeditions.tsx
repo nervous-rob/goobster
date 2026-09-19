@@ -1,3 +1,4 @@
+import { useUserSettings } from '../hooks/useUserSettings';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -164,8 +165,10 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
     const [projectId, setProjectId] = useState<string>('');
 
     const lenses = lensesQuery.data?.lenses || [];
-    const effectiveLens = lensId ?? lensesQuery.data?.defaultLensId ?? 'general';
-    const effectiveDepth = depth ?? lensesQuery.data?.defaultDepth ?? 'standard';
+    const settingsQ = useUserSettings();
+    const defaults = settingsQ.data?.sections.appearance.values;
+    const effectiveLens = lensId ?? defaults?.expeditionDefaultLens ?? lensesQuery.data?.defaultLensId ?? 'general';
+    const effectiveDepth = depth ?? defaults?.expeditionDefaultDepth ?? lensesQuery.data?.defaultDepth ?? 'standard';
     const budgets = lensesQuery.data?.depths?.[effectiveDepth];
 
     const create = useMutation({
@@ -329,7 +332,7 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
                 <button
                     type="button"
                     className="btn primary"
-                    disabled={create.isPending || seed.trim().length === 0}
+                    disabled={settingsQ.isPending || create.isPending || seed.trim().length === 0}
                     onClick={() => create.mutate()}
                 >
                     {create.isPending ? 'Starting…' : 'Start expedition'}

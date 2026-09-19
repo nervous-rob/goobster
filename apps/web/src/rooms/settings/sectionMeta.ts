@@ -144,7 +144,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'learn-memories', label: 'Learn new long-term memories', keywords: ['learn', 'extract memories', 'write memories'] },
     { section: 'memory', fieldId: 'use-memories', label: 'Use existing memories', keywords: ['recall', 'use memories', 'read memories'] },
     { section: 'memory', fieldId: 'chat-history', label: 'Study chat-history retention', keywords: ['chat history', 'transcripts', 'conversation expiry'] },
-    { section: 'memory', fieldId: 'export', label: 'Export my data', keywords: ['export', 'download', 'backup'] },
+    { section: 'memory', fieldId: 'export', label: 'Export settings and report', keywords: ['export', 'download', 'backup'] },
     { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
     { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
     { section: 'memory', fieldId: 'memory-report', label: 'What Goobster knows about you', keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency'] },

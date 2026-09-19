@@ -185,6 +185,7 @@ class MemoryService {
      * @returns {Promise<boolean>} whether the memory was stored
      */
     async remember({ guildId, channelId, authorId, authorName, content }) {
+        if (!await require('./personalPolicyService').memoryAllowed(guildId, 'learnMemories')) return null;
         try {
             if (!this.isEnabled() || !guildId || !content) return false;
             if (channelId && await this.isChannelExcluded(guildId, channelId)) return false;
@@ -203,6 +204,7 @@ class MemoryService {
 
             const { vector, model } = await embeddingService.embed(trimmed);
 
+            if (!await require('./personalPolicyService').memoryAllowed(guildId, 'learnMemories')) return false;
             const lastInsertRowid = await db.insert(
                 `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
                  VALUES (@guildId, @channelId, @authorId, @authorName, @content, @embedding, @dims, @model)`,
@@ -354,6 +356,7 @@ class MemoryService {
      * @returns {Promise<Array<{content, authorName, createdAt, similarity}>>}
      */
     async recall({ guildId, query, limit, minSimilarity, excludeContents = [], authorId = null }) {
+        if (!await require('./personalPolicyService').memoryAllowed(guildId, 'useMemories')) return [];
         try {
             if (!this.isEnabled() || !guildId || !query) return [];
 

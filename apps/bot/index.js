@@ -297,6 +297,8 @@ client.once(Events.ClientReady, async readyClient => {
 	try {
 		logger.info('Initializing database connection...');
 		await getConnection();
+		require('@goobster/core/services/eventBusService').start();
+		require('@goobster/core/services/chatHistoryRetentionService').start();
 		logger.info('Database connection initialized successfully');
 	} catch (error) {
 		logger.error('Failed to initialize database connection:', error);
@@ -766,6 +768,8 @@ const shutdown = async () => {
 		// Close database connection
 		logger.debug('Closing database connection...');
 		try {
+			await require('@goobster/core/services/chatHistoryRetentionService').stop();
+			await require('@goobster/core/services/eventBusService').close();
 			await closeConnection();
 			logger.debug('Database connection closed successfully');
 		} catch (dbError) {

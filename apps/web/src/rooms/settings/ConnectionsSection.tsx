@@ -50,10 +50,10 @@ export function ConnectionsSection({ section, onDirty }: {
                     onChange={(e) => d.set({ githubAllowlist: e.target.value })} />
             </Field>
             <Field id="notion-allowlist" label="Notion pages Goobster may use" scope="Your account"
-                hint="Optional titles, page ids, or URL fragments. Empty means every page shared with the integration. Search and read both honor this list.">
+                hint="Complete page IDs or URLs only. Replace any older title entries; they no longer grant access. Empty means every page shared with the integration.">
                 <textarea id="notion-allowlist-input" className="input" rows={3}
                     value={d.draft.notionAllowlist}
-                    placeholder="Page title or id, one per line"
+                    placeholder="Page ID or URL, one per line"
                     onChange={(e) => d.set({ notionAllowlist: e.target.value })} />
             </Field>
             <SaveBar section="connections" draft={d} describe={(k) => ({

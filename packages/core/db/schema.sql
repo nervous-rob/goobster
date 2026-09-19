@@ -1403,6 +1403,7 @@ CREATE INDEX IF NOT EXISTS idx_parlor_note_tags_tag ON parlor_note_tags(tagId);
 
 CREATE TABLE IF NOT EXISTS parlor_conversations (
     id INTEGER PRIMARY KEY,
+    modelConfigJson TEXT,
     ownerId TEXT NOT NULL,
     title TEXT,
     -- Project parlor: the linked project's row id (one discussion per
@@ -2193,6 +2194,7 @@ CREATE TABLE IF NOT EXISTS attention_state (
 
 CREATE TABLE IF NOT EXISTS spitball_expeditions (
     id INTEGER PRIMARY KEY,
+    modelConfigJson TEXT,
     userId TEXT NOT NULL,
     -- Where generated knowledge is written. A personal expedition targets the
     -- user's personal graph: guildId 'dm:<userId>' (portal default) or a real

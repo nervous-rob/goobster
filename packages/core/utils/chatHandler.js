@@ -508,14 +508,8 @@ async function handleChatInteraction(interaction, thread = null) {
             });
             // The registry also enforces this at execution for stale calls.
             functionDefs = functionDefs.filter(def => !isIncognitoToolBlocked(def.name, interaction));
-            try {
-                const userSettingsService = require('../services/userSettingsService');
-                const disabled = await userSettingsService.getPreference(interaction.user?.id, 'disabledTools');
-                if (Array.isArray(disabled) && disabled.length > 0) {
-                    const blocked = new Set(disabled);
-                    functionDefs = functionDefs.filter((def) => !blocked.has(def.name));
-                }
-            } catch { /* optional tools stay available */ }
+            const personalPolicy = await require('../services/personalPolicyService').toolPolicy(interaction);
+            functionDefs = functionDefs.filter(def => personalPolicy.allows(def.name));
 
             // Progressive streaming: edit the deferred reply as text arrives.
             // Edits are throttled and chained so they never interleave.
@@ -558,7 +552,7 @@ async function handleChatInteraction(interaction, thread = null) {
             try {
                 const userSettingsService = require('../services/userSettingsService');
                 const actorId = interaction.user?.id;
-                if (actorId) {
+                if (require('../services/personalPolicyService').privateActor(interaction)) {
                     const [replyMax, temperature, topP] = await Promise.all([
                         userSettingsService.getPreference(actorId, 'replyMaxTokens'),
                         userSettingsService.getPreference(actorId, 'temperature'),
@@ -583,7 +577,7 @@ async function handleChatInteraction(interaction, thread = null) {
             if (guildAI.reasoningEffort) chatOptions.reasoning_effort = guildAI.reasoningEffort;
 
             // Let the model search the web natively when the provider supports it
-            if (aiService.supportsNativeWebSearch(guildAI.provider || undefined)) {
+            if (personalPolicy.webSearch && aiService.supportsNativeWebSearch(guildAI.provider || undefined)) {
                 chatOptions.webSearch = true;
             }
 
@@ -841,11 +835,8 @@ async function handleChatInteraction(interaction, thread = null) {
             // Long-term memory: embed both sides asynchronously (never blocks
             // the reply). DM turns land in the user's own DM scope.
             {
-                let learn = true;
-                try {
-                    const userSettingsService = require('../services/userSettingsService');
-                    learn = await userSettingsService.getPreference(interaction.user.id, 'learnMemories') !== false;
-                } catch { /* default on */ }
+                const learn = await require('../services/personalPolicyService')
+                    .memoryAllowed(conversationScopeId, 'learnMemories');
                 if (learn) {
                     const channelId = interaction.channel?.id || interaction.channelId;
                     memoryService.remember({
