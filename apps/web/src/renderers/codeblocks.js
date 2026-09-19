@@ -7,15 +7,20 @@
  * through a MessageChannel capability bridge the parent owns. Cards get
  * Preview/Code tabs, restart,
  * fullscreen, and download - and tool-generated file attachments render
- * as inline images or download chips. There is deliberately no "open in
+ * inline (see attachments.js). There is deliberately no "open in
  * new tab" blob URL for mini-apps - a blob document would inherit the
  * app origin.
  */
 
 import { attachAppletBridge, withBridgeScript, appletTitleFromSource } from './appletBridge.js';
+import { renderAttachments } from './attachments.js';
+
+// Attachment rendering (images with captions, CSV tables, text previews,
+// download chips) lives in attachments.js; re-exported so existing imports
+// keep working.
+export { renderAttachments };
 
 const APPLET_LANGS = new Set(['html', 'svg']);
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif)$/i;
 
 async function copyText(text, notify, label) {
     try {
@@ -165,36 +170,6 @@ export function decorateCodeBlocks(root, notify = () => {}, options = {}) {
         head.append(lang, copyBtn);
         pre.replaceWith(wrap);
         wrap.append(head, pre);
-    }
-}
-
-/**
- * Render tool-generated attachments ({ url, name }) into a bubble:
- * images inline, everything else (e.g. an .html file a persona's sandbox
- * run wrote) as a download chip instead of a broken <img>.
- * @param {HTMLElement} bubble
- * @param {Array<{url: string, name?: string}>} attachments
- */
-export function renderAttachments(bubble, attachments = []) {
-    for (const file of attachments) {
-        if (!file?.url) continue;
-        // No name means an older registration - assume image (the only
-        // kind that existed before download chips).
-        if (!file.name || IMAGE_EXT.test(file.name)) {
-            const img = document.createElement('img');
-            img.className = 'attachment';
-            img.src = file.url;
-            img.alt = file.name || 'attachment';
-            img.loading = 'lazy';
-            bubble.appendChild(img);
-        } else {
-            const link = document.createElement('a');
-            link.className = 'file-chip';
-            link.href = file.url;
-            link.download = file.name;
-            link.textContent = `⬇ ${file.name}`;
-            bubble.appendChild(link);
-        }
     }
 }
 

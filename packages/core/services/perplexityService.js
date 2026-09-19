@@ -84,6 +84,48 @@ class PerplexityService {
             throw new Error('Failed to get search results: ' + (error.response?.data?.error?.message || error.message), { cause: error });
         }
     }
+
+    /**
+     * Image results for a query via `return_images`. Perplexity only
+     * returns the `images` array on plans that include it, so an empty
+     * list is a normal answer here, never an error - callers treat this
+     * adapter as opportunistic (imageSearchService).
+     * @param {string} query
+     * @returns {Promise<Array<{imageUrl: string, pageUrl: string|null, width: number|null, height: number|null}>>}
+     */
+    async searchImages(query) {
+        if (!this.apiKey) return [];
+        try {
+            const response = await axios.post(
+                `${this.baseURL}/chat/completions`,
+                {
+                    model: this.model,
+                    messages: [{ role: 'user', content: `Show pictures of ${query}` }],
+                    return_images: true,
+                    max_tokens: 64
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 20_000
+                }
+            );
+            const images = Array.isArray(response.data?.images) ? response.data.images : [];
+            return images
+                .map(img => ({
+                    imageUrl: typeof img?.image_url === 'string' ? img.image_url : null,
+                    pageUrl: typeof img?.origin_url === 'string' ? img.origin_url : null,
+                    width: Number.isFinite(img?.width) ? img.width : null,
+                    height: Number.isFinite(img?.height) ? img.height : null
+                }))
+                .filter(img => img.imageUrl);
+        } catch (error) {
+            console.warn('Perplexity image search failed:', error.response?.data?.error?.message || error.message);
+            return [];
+        }
+    }
 }
 
 module.exports = new PerplexityService(); 

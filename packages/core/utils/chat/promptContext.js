@@ -231,7 +231,7 @@ ${parts.join('\n')}`;
 
 function conversationalContract({ mode, canLookup }) {
     const lookupLine = canLookup
-        ? 'If you need a detail that is not here, call lookupNotes before guessing about this person or this server. Saved files (code, docs, PDFs) live as artifact nodes — lookupNotes can recall their contents.'
+        ? 'If you need a detail that is not here, call lookupNotes before guessing about this person or this server. Saved files (code, docs, PDFs, pictures) live as artifact nodes — lookupNotes can recall their contents, and showSavedFiles displays them in the chat again.'
         : '';
     if (mode === 'voice') {
         return `HOW TO TALK:

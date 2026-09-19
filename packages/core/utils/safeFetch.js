@@ -180,9 +180,18 @@ async function resolvePinned(host, { lookup = dns.promises.lookup } = {}) {
  * @param {string[]} [params.allowedContentTypes] - prefix allowlist
  *   (e.g. ['text/', 'application/json']); empty = any type
  * @param {object} [params.transport] - injectable http(s) module (tests)
- * @returns {Promise<{ bytes: number, contentType: string|null }>}
+ * @param {boolean} [params.reportRedirects] - instead of failing on a 3xx,
+ *   resolve `{ redirectTo }` with the raw Location header so the CALLER can
+ *   run the new URL back through assessUrl + resolvePinned. The transfer
+ *   never follows a redirect on its own.
+ * @param {Object<string,string>} [params.headers] - extra request headers
+ *   (User-Agent override for APIs with identification policies)
+ * @returns {Promise<{ bytes: number, contentType: string|null, redirectTo?: string }>}
  */
-function fetchToFile({ url, address, destPath, maxBytes, timeoutMs = 60_000, allowedContentTypes = [], transport = https }) {
+function fetchToFile({
+    url, address, destPath, maxBytes, timeoutMs = 60_000, allowedContentTypes = [],
+    transport = https, reportRedirects = false, headers = {}
+}) {
     return new Promise((resolve, reject) => {
         let settled = false;
         const fail = (error, request, response) => {
@@ -199,11 +208,25 @@ function fetchToFile({ url, address, destPath, maxBytes, timeoutMs = 60_000, all
             port: url.port || (transport === https ? 443 : 80),
             path: url.pathname + url.search,
             method: 'GET',
-            headers: { Host: url.hostname, 'User-Agent': 'Goobster-DataFetch/1.0', Accept: '*/*' },
+            headers: { 'User-Agent': 'Goobster-DataFetch/1.0', Accept: '*/*', ...headers, Host: url.hostname },
             timeout: timeoutMs
         }, (response) => {
             const status = response.statusCode || 0;
             if (status >= 300 && status < 400) {
+                const location = response.headers.location;
+                if (reportRedirects && typeof location === 'string' && location) {
+                    if (settled) return;
+                    settled = true;
+                    try { response.destroy(); } catch { /* already gone */ }
+                    let redirectTo;
+                    try {
+                        redirectTo = new URL(location, url).toString();
+                    } catch {
+                        return fail(new SafeFetchError(502, 'REDIRECT_REFUSED',
+                            `The server answered with a redirect (${status}) to an unusable location.`), request);
+                    }
+                    return resolve({ bytes: 0, contentType: null, redirectTo });
+                }
                 return fail(new SafeFetchError(502, 'REDIRECT_REFUSED',
                     `The server answered with a redirect (${status}); redirects are refused - `
                     + 'propose the final URL directly.'), request, response);

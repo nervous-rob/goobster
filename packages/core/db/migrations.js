@@ -90,6 +90,9 @@ const COLUMN_MIGRATIONS = [
     ['kg_nodes', 'subjectType', `subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD'))`],
     ['kg_nodes', 'subjectId', 'subjectId TEXT'],
     ['kg_edges', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
+    // Found-on-the-web artifacts carry their origin (source URL, credit,
+    // license) so recall can caption and attribute them.
+    ['kg_artifacts', 'metadataJson', 'metadataJson TEXT'],
     ['kg_edges', 'relationKind', `relationKind TEXT CHECK (relationKind IS NULL OR relationKind IN ('causal', 'logical', 'associative', 'temporal', 'social'))`],
     // Spitball Expeditions: run ownership as durable state (which process
     // claimed the run), part of the heartbeat lease that orphan detection

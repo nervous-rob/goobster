@@ -11,13 +11,14 @@ describe('toolsRegistry catalog', () => {
         expect(TOOL_ORDER[1]).toBe('generateImage');
         expect(TOOL_ORDER[2]).toBe('runCode');
         expect(TOOL_ORDER[3]).toBe('observatory');
+        expect(TOOL_ORDER.slice(5, 8)).toEqual(['findImages', 'fetchWebFile', 'showSavedFiles']);
         expect(TOOL_ORDER).toContain('manageParlor');
         expect(TOOL_ORDER).toContain('tavernInfo');
         expect(TOOL_ORDER).toContain('setSpeechAccent');
         expect(TOOL_ORDER[TOOL_ORDER.length - 1]).toBe('executePlan');
         expect(TOOL_ORDER).toContain('consultDocs');
-        expect(TOOL_ORDER).toHaveLength(50);
-        expect(new Set(TOOL_ORDER).size).toBe(50);
+        expect(TOOL_ORDER).toHaveLength(53);
+        expect(new Set(TOOL_ORDER).size).toBe(53);
     });
 
     test('getDefinitions preserves that order after gating', async () => {

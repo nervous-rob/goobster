@@ -797,11 +797,19 @@ async function handleChatInteraction(interaction, thread = null) {
                 // Files generated mid-turn (the generateImage tool): persist
                 // their local paths so history can re-serve them - the web
                 // portal rebuilds messages from SQLite after every turn.
+                // Entries are plain paths (generateImage, runCode) or objects
+                // carrying a caption/origin (the files tools).
                 if (Array.isArray(interaction.generatedFiles) && interaction.generatedFiles.length > 0) {
-                    metadataPayload.attachments = interaction.generatedFiles.map(filePath => ({
-                        path: filePath,
-                        name: path.basename(filePath)
-                    }));
+                    metadataPayload.attachments = interaction.generatedFiles
+                        .map(entry => (typeof entry === 'string' ? { path: entry } : entry))
+                        .filter(entry => entry && typeof entry.path === 'string')
+                        .map(entry => ({
+                            path: entry.path,
+                            name: entry.name || path.basename(entry.path),
+                            ...(entry.caption ? { caption: String(entry.caption) } : {}),
+                            ...(entry.sourceUrl ? { sourceUrl: String(entry.sourceUrl) } : {}),
+                            ...(entry.kind ? { kind: String(entry.kind) } : {})
+                        }));
                 }
                 const botMessageMetadata = Object.keys(metadataPayload).length > 0
                     ? JSON.stringify(metadataPayload)

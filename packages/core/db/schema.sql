@@ -408,6 +408,9 @@ CREATE TABLE IF NOT EXISTS kg_artifacts (
     sizeBytes INTEGER NOT NULL DEFAULT 0,
     contentHash TEXT,
     extractedText TEXT,
+    -- Origin of a file found on the web (sourceUrl, pageUrl, credit,
+    -- license, provider) - JSON, NULL for user uploads.
+    metadataJson TEXT,
     channelId TEXT,
     messageId TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -2,7 +2,13 @@
 
 ## 2026-09-18
 
+### Added
+- **Goobster can find pictures and files on the web, keep them, and show them.** Ask "what does an M1943 field jacket look like?" and the new `findImages` tool searches Wikimedia Commons / Wikipedia (keyless; Perplexity `return_images` joins in when a key is configured and the free providers come up short), downloads the best matches, saves them into your knowledge base as artifact notes (your topic notes + credit, license, and source), and displays them in the chat right away. `fetchWebFile` does the same for one specific https URL of any accepted type - image, CSV/TSV, JSON, Markdown, text, code, or PDF (8 MB cap; web pages and SVG refused) - and hands the model a preview (CSV columns + first rows, text head, PDF excerpt) to talk about. `showSavedFiles` brings anything saved back into the conversation later ("show me that jacket picture again", "pull up the rainfall CSV"). Downloads go through the SSRF-hardened `safeFetch` stages with every redirect hop re-vetted; bytes are sniffed, never trusted. Both network tools can be switched off in Settings → Chat. Services: `fileDiscoveryService`, `imageSearchService`; caps in `config/fileDiscoveryConfig.js`. Jest: `fileDiscoveryService`, `imageSearchService`, `toolsRegistryFiles`.
+- **Study attachments render by kind.** Images now carry a caption line (credit / license / source link); `.csv`/`.tsv` files open as a sortable table card with row count and download; Markdown renders as a preview; JSON/text/code show a highlighted, collapsible preview. Everything else keeps the download chip. Shared with the Parlor and history reloads (`apps/web/src/renderers/attachments.js`).
+
 ### Changed
+- `kg_artifacts` gained `metadataJson` (column migration) for the origin of found files; `kgArtifactService.searchArtifacts` accepts a `kind` filter and ranks by how many query terms hit; re-saving a label replaces its file row instead of failing on the unique node constraint.
+- The `/api/app/files/:id` route sends `X-Content-Type-Options: nosniff`.
 - **Observatory/project tool chips show their target without hovering.** Study (and Observatory Command) chips used to read “Working: observatory” with the action, file, and project only in a `title` tooltip — unreadable on a phone. The chip header now carries that context (`Read` + `notes.md · jwst-atlas`), and the live thinking summary does too. Jest: `toolChipLabel`; Playwright: `studyToolChips`.
 
 ## 2026-09-08

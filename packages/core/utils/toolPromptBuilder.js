@@ -21,7 +21,12 @@ function formatToolDocs(functions) {
 }
 
 const NOTES_GUIDANCE = `**PERSONAL / SERVER NOTES:**
-The prompt only includes a small relevant slice. If you need a detail about this person or this server that is not there, call lookupNotes (about="me" or about="server") instead of guessing. Remember new durable facts with rememberFact. When they share a file worth keeping (code, docs, PDFs), save it with saveArtifact — ask first if unsure, then confirm=true. lookupNotes can recall saved artifact contents later.`;
+The prompt only includes a small relevant slice. If you need a detail about this person or this server that is not there, call lookupNotes (about="me" or about="server") instead of guessing. Remember new durable facts with rememberFact. When they share a file worth keeping (code, docs, PDFs), save it with saveArtifact — ask first if unsure, then confirm=true. lookupNotes can recall saved artifact contents later.
+
+**PICTURES AND FILES FROM THE WEB:**
+- "What does X look like?" / "show me a Y" → call findImages with the full formal name; it searches the web, saves the pictures into their knowledge base with your notes, and displays them in the chat. Then describe what is shown and credit the source briefly — never paste image URLs.
+- A specific file URL (an image, CSV, JSON, Markdown, text, code, or PDF) → call fetchWebFile; it saves the file and displays it (CSV renders as a table, text as a preview). Use the preview in the result to discuss the contents.
+- "Show me that picture/file again" → call showSavedFiles; saved files appear in the notes as [artifact/...] entries. Never describe a saved image from memory when you can display it.`;
 
 // Guidance shared by every provider about Goobster's own documentation.
 // The model is the software the docs describe, so questions about how it

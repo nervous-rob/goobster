@@ -252,12 +252,25 @@ export type ToolEvent = {
     durationMs?: number;
 };
 
+/**
+ * A file the bot attached to a reply: served through the owner-bound files
+ * route; the optional hints drive the inline renderer (caption/source for
+ * found-on-the-web files, kind when the extension is not enough).
+ */
+export type ChatAttachment = {
+    url: string;
+    name?: string;
+    caption?: string;
+    sourceUrl?: string;
+    kind?: string;
+};
+
 export type ChatMessage = {
     id: number;
     role: 'user' | 'assistant' | 'system';
     content: string;
     createdAt: string;
-    attachments?: Array<{ url: string; name?: string }>;
+    attachments?: ChatAttachment[];
     isError?: boolean;
     steps?: TurnStep[];
 };
