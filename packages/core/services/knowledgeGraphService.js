@@ -1,6 +1,7 @@
 const db = require('../db');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const logger = require('../utils/logger');
+const lookupRelevance = require('../utils/lookupRelevance');
 const KnowledgeGraphLegalizer = require('./knowledgeGraphLegalizer');
 
 /** Bounded per-node revision history (spec: spitball_expeditions.md §27). */
@@ -281,37 +282,83 @@ class KnowledgeGraphService {
         )).changes;
     }
 
-    async searchNodes({ guildId, scopeKey = '', query, type = null, limit = 10 }) {
+    /**
+     * Keyword search over a scope, ranked by query relevance first
+     * (utils/lookupRelevance.js) and salience/recency second, so a node the
+     * query names outright is never displaced by an unrelated 0.99-salience
+     * concept that shares one word. Candidates come from LIKE hits over
+     * label, content, and (for artifacts) file name and extracted text.
+     *
+     * @param {{ guildId: string, scopeKey?: string, query: string, type?: string|null,
+     *   excludeTypes?: string[], limit?: number }} params
+     */
+    async searchNodes({ guildId, scopeKey = '', query, type = null, excludeTypes = [], limit = 10 }) {
         if (!guildId) return [];
-        const terms = String(query || '')
-            .toLowerCase()
-            .split(/[^\p{L}\p{N}]+/u)
-            .filter(t => t.length >= 3)
-            .slice(0, 12);
+        const terms = lookupRelevance.queryTerms(query);
         if (terms.length === 0) return [];
+        const phrase = lookupRelevance.normalizeText(query);
 
-        const clauses = terms.map((_, i) => `(n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i})`);
-        const params = { guildId, scopeKey, limit };
+        const hit = (i) => `(n.label LIKE @t${i} OR n.content LIKE @t${i} OR a.extractedText LIKE @t${i} OR a.originalName LIKE @t${i})`;
+        const clauses = terms.map((_, i) => hit(i));
+        const termHits = terms.map((_, i) => `(CASE WHEN ${hit(i)} THEN 1 ELSE 0 END)`).join(' + ');
+        const cap = Math.max(1, Number(limit) || 10);
+        // Over-fetch so the JS ranker sees enough of the long tail; the SQL
+        // order already puts whole-phrase and multi-term hits first, so the
+        // exact match is inside the window even when one common word also
+        // appears in hundreds of higher-salience nodes.
+        const params = { guildId, scopeKey, fetch: Math.min(200, Math.max(cap * 6, 40)), phrase: `%${phrase}%` };
         terms.forEach((t, i) => { params[`t${i}`] = `%${t}%`; });
 
-        let sql = `SELECT DISTINCT n.* FROM kg_nodes n
+        let sql = `SELECT n.*, a.originalName, a.artifactKind, a.extractedText,
+                          (CASE WHEN n.label LIKE @phrase OR a.originalName LIKE @phrase THEN 1 ELSE 0 END) AS phraseHit,
+                          (${termHits}) AS termHits
+                   FROM kg_nodes n
                    LEFT JOIN kg_artifacts a ON a.nodeId = n.id
                    WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND (${clauses.join(' OR ')})`;
         if (type && NODE_TYPES.includes(type)) {
             sql += ' AND n.type = @type';
             params.type = type;
         }
-        sql += ' ORDER BY n.salience DESC, n.updatedAt DESC LIMIT @limit';
-        return await db.all(sql, params);
+        const excluded = (Array.isArray(excludeTypes) ? excludeTypes : []).filter(t => NODE_TYPES.includes(t));
+        excluded.forEach((t, i) => {
+            sql += ` AND n.type <> @x${i}`;
+            params[`x${i}`] = t;
+        });
+        sql += ' ORDER BY phraseHit DESC, termHits DESC, n.salience DESC, n.updatedAt DESC, n.id ASC LIMIT @fetch';
+        const rows = await db.all(sql, params);
+
+        const ranked = rows.map(row => {
+            const { score, tier } = lookupRelevance.scoreCandidate({
+                query,
+                terms,
+                label: row.label,
+                fileName: row.originalName,
+                texts: [row.content, row.extractedText],
+                salience: row.salience,
+                confidence: row.confidence
+            });
+            const node = { ...row, relevance: score, relevanceTier: tier };
+            delete node.phraseHit;
+            delete node.termHits;
+            delete node.extractedText;
+            return node;
+        });
+        ranked.sort(lookupRelevance.compareRanked);
+        return ranked.slice(0, cap);
     }
 
-    async topNodes(guildId, scopeKey = '', limit = 10) {
-        return await db.all(
-            `SELECT * FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey
-             ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
-            { guildId, scopeKey, limit }
-        );
+    async topNodes(guildId, scopeKey = '', limit = 10, excludeTypes = []) {
+        const params = { guildId, scopeKey, limit };
+        let sql = `SELECT * FROM kg_nodes
+                   WHERE guildId = @guildId AND scopeKey = @scopeKey`;
+        (Array.isArray(excludeTypes) ? excludeTypes : [])
+            .filter(t => NODE_TYPES.includes(t))
+            .forEach((t, i) => {
+                sql += ` AND type <> @x${i}`;
+                params[`x${i}`] = t;
+            });
+        sql += ' ORDER BY salience DESC, updatedAt DESC LIMIT @limit';
+        return await db.all(sql, params);
     }
 
     async link({
@@ -479,12 +526,20 @@ class KnowledgeGraphService {
         return lines.join('\n');
     }
 
-    async describeForPrompt({ guildId, scopeKey = '', query = null, limit = 10 } = {}) {
+    /**
+     * Prompt-ready excerpt of a scope: keyword hits for `query`, else (when
+     * `fallbackToTop`) the highest-salience nodes. An explicit lookup passes
+     * `fallbackToTop: false` so "nothing matched" is reported as such rather
+     * than answered with unrelated high-salience notes.
+     */
+    async describeForPrompt({
+        guildId, scopeKey = '', query = null, limit = 10, excludeTypes = [], fallbackToTop = true
+    } = {}) {
         let nodes = query
-            ? await this.searchNodes({ guildId, scopeKey, query, limit })
+            ? await this.searchNodes({ guildId, scopeKey, query, limit, excludeTypes })
             : [];
-        if (nodes.length === 0) {
-            nodes = await this.topNodes(guildId, scopeKey, limit);
+        if (nodes.length === 0 && (fallbackToTop || !query)) {
+            nodes = await this.topNodes(guildId, scopeKey, limit, excludeTypes);
         }
         if (nodes.length === 0) return null;
 

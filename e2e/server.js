@@ -287,6 +287,52 @@ async function seedAttention(userId) {
     });
 }
 
+/**
+ * Renderer harness for attachment specs: serves apps/web/src/renderers as
+ * raw ES modules (the CommonJS Markdown parser gets a one-line wrapper) plus
+ * a blank page, so a spec can drive `renderAttachments` directly - new
+ * array instances, replaced files, disposal - outside the React tree.
+ */
+const RENDERERS_DIR = path.join(ROOT, 'apps/web/src/renderers');
+const HARNESS_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>attachments harness</title>
+<style>
+  body { font: 14px system-ui; margin: 20px; }
+  .file-card { border: 1px solid #999; border-radius: 10px; margin-top: 10px; overflow: hidden; max-width: 640px; }
+  .file-card-body { max-height: 420px; overflow: auto; }
+  .file-card.collapsed .file-card-body { max-height: 0; overflow: hidden; }
+  .file-card-head { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #ccc; }
+  .file-card-actions { display: flex; gap: 6px; }
+</style></head>
+<body>
+<div id="bubble" class="msg-bubble"><div id="attachments" class="msg-attachments"></div></div>
+<script type="module">
+  import * as att from '/e2e/renderers/attachments.js';
+  window.__att = att;
+  window.__container = document.getElementById('attachments');
+  window.__ready = true;
+</script>
+</body></html>`;
+
+function mountRendererHarness(app) {
+    app.get('/e2e/renderers/:file', (req, res) => {
+        const file = path.basename(req.params.file);
+        const abs = path.join(RENDERERS_DIR, file);
+        if (!/\.(c?js)$/.test(file) || !fs.existsSync(abs)) {
+            res.status(404).end();
+            return;
+        }
+        let source = fs.readFileSync(abs, 'utf8');
+        if (file.endsWith('.cjs')) {
+            source = `const module = { exports: {} };\n${source}\nexport default module.exports;\n`;
+        }
+        res.type('application/javascript').send(source);
+    });
+    app.get('/e2e/attachments-harness', (_req, res) => {
+        res.type('html').send(HARNESS_HTML);
+    });
+}
+
 async function seed() {
     const observatory = makeObservatory();
     await seedExpedition(C.OWNER);
@@ -314,6 +360,7 @@ async function main() {
     app.get('/health', (_req, res) => {
         res.json({ ok: true, db: DB_PATH });
     });
+    mountRendererHarness(app);
     app.use(createWebAppApp(ctx));
 
     const server = http.createServer(app);

@@ -68,6 +68,8 @@ through them in that order and say which one it was.
 | `/recall`, `lookupNotes`, or memory recall return nothing | No embedding backend (needs an OpenAI key or Ollama with `nomic-embed-text`); or the channel is excluded via `/privacy exclude`; or retention purged it; or nothing was ever said there | `/memory stats`, `/memory test`; see *Development Standards → Long-term memory* |
 | A fact you were told is gone | `/forget-me`, retention window, or the per-guild cap (default 5000 memories) | *Privacy controls* |
 | Knowledge graph looks empty | Consolidation runs nightly; reflection can be run from the Library's Reflect button | *User knowledge graph* |
+| A file saved with `fetchWebFile` / `findImages` / `saveArtifact` is not found by `lookupNotes` | Artifact lookup is lexical and immediate (no embeddings, no nightly pass) and matches label, notes, file name, extracted text, and image title/credit/provider - so a miss means a scope mismatch: files live only under the author's personal scope of the server or DM where they were saved; `about="server"` and other users never see them | `lookupNotes` with the label or file name, `about="me"`, in the same server/DM; `showSavedFiles` with no query lists the most recent saved files |
+| A Markdown/CSV preview in the portal keeps collapsing, reloading, or duplicating | Fixed: previews are reconciled by file id and keep their collapse/sort state across rerenders; long previews (> 40 lines or 2,500 chars) start collapsed by design - use Expand | Reload the portal to pick up a new build |
 
 Vectors from different embedding models are never compared - after an operator
 switches embedding model, old memories are effectively invisible until they are

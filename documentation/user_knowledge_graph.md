@@ -100,6 +100,24 @@ Files the user shares — code, markdown, PDFs, configs, images — can be store
 
 Incoming attachments are listed in the prompt as `ATTACHMENTS THIS TURN` with indices for `saveArtifact(attachmentIndex=…)`. Text/PDF content is extracted for search (`extractedText`); uploaded images keep the summary only, while found images store their title, description, notes, and attribution as the searchable text so "that jacket photo" resolves by words. Identical bytes already in the scope (content hash) are re-shown rather than saved twice.
 
+### How `lookupNotes` finds an artifact
+
+Artifact retrieval is **lexical** (`kgArtifactService.searchArtifacts` + `utils/lookupRelevance.js`): it needs no embedding backend, no consolidation or reflection pass, and sees a file the moment `saveArtifact` / `fetchWebFile` / `findImages` returns. Searchable fields, as available:
+
+| Field | Source |
+|-------|--------|
+| Label | `kg_nodes.label` |
+| Notes / summary | `kg_nodes.content` |
+| Original file name | `kg_artifacts.originalName` |
+| Extracted text | `kg_artifacts.extractedText` (text, code, Markdown, PDF; for found images the title + description + notes + attribution) |
+| Origin metadata | `kg_artifacts.metadataJson` — `title`, `description`, `credit`, `license`, `provider` only (URLs, paths, and timestamps are never matched or shown) |
+
+Ranking is relevance first, salience second: exact normalized label or file name → strong label/file-name match → the whole query phrase (or every term) in the text → partial term coverage; salience, confidence, and recency only order otherwise-equal hits. Ordinary graph nodes are ranked the same way (`knowledgeGraphService.searchNodes`), so an unrelated 0.99-salience concept sharing one word no longer outranks the file the user named.
+
+`retrieveNotes` merges artifacts into the pack as their own `ARTIFACTS (saved files)` block with a separate character budget (a long graph slice cannot truncate it; it leads the pack on a phrase-or-better match). Each line is bounded: `[saved artifact/<kind>] "label" (kind, file name, id)`, the notes, an excerpt of the extracted text centred on the matching terms (never the whole document), and the `showSavedFiles(query="label")` call that re-displays it. `lookupNotes` runs that one pass with the top-nodes fallback disabled, so a query that matches nothing says so.
+
+Scope is the same as `showSavedFiles` and the graph: artifacts live only under the author's `USER:<id>` scope in the guild or `dm:<userId>` where they were saved, `about="server"` searches the (artifact-free) guild scope, another user's lookup never sees them, and deleting the node (`/forget-me`, orphan pruning, `deleteNode`) cascades to `kg_artifacts` so a deleted file cannot be recalled. No reindexing is needed for existing rows - lookup reads the stored label, content, `extractedText`, and metadata directly.
+
 Privacy: `/forget-me` deletes the user's artifact rows (cascade with nodes) and removes their files from disk.
 
 ## Storage caps (per scopeKey within a guildId)
@@ -173,7 +191,7 @@ Order is owned by `utils/chat/promptContext.js` (text, web, automations, and voi
 
 1. **Stable identity** — clock, where, names, a short “talk like a person” contract. No guild census.
 2. **Depth-aware retrieval** — `light` (greetings): nothing retrieved, no embedding call. `medium`: keyword graph hits only. `rich` (remember / last time / long turns): graph + undistilled memories.
-3. **`lookupNotes` tool** — if the first slice missed a personal or server detail, the agent fetches more instead of guessing. Saved **artifacts** (code, docs, PDFs) return summaries and extracted text here too. `about=me` is the speaker; `about=server` is shared guild graph (never another user’s private dossier).
+3. **`lookupNotes` tool** — if the first slice missed a personal or server detail, the agent fetches more instead of guessing. Saved **artifacts** (code, docs, PDFs, found images) are searched in the same ranked pass and return bounded, match-centred excerpts (see *How `lookupNotes` finds an artifact*). `about=me` is the speaker; `about=server` is shared guild graph (never another user’s private dossier).
 4. **`saveArtifact` tool** — when the user shares a file worth keeping, save it into the graph (ask first if unsure; `confirm=true` to write).
 5. Inner life / mood / screen / prior tools only on medium/rich turns.
 
