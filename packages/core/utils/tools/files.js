@@ -71,7 +71,7 @@ function describeSaved(saved, { duplicate = false } = {}) {
     return bits.join(' — ');
 }
 
-const DISPLAY_NOTE = 'The file(s) are already displayed in the chat above your reply - do not paste image URLs or repeat the contents; describe or discuss them and credit the source/license briefly.';
+const DISPLAY_NOTE = 'The file(s) are already displayed in the chat alongside your reply (do not say "above" or "below") - do not paste image URLs or repeat the contents; describe or discuss them and credit the source/license briefly.';
 
 module.exports = {
     findImages: {
@@ -217,8 +217,6 @@ module.exports = {
                 return `❌ Could not fetch that file (${error?.code || 'FETCH_FAILED'}): ${error?.message || 'download failed'}`;
             }
 
-            let pageHost = null;
-            try { pageHost = new URL(downloaded.finalUrl).hostname.replace(/^www\./, ''); } catch { /* keep null */ }
             let result;
             try {
                 result = await fileDiscoveryService.saveFound({
@@ -233,7 +231,6 @@ module.exports = {
                         sourceUrl: downloaded.finalUrl,
                         pageUrl: downloaded.finalUrl,
                         title: cleanLabel,
-                        credit: pageHost,
                         provider: null
                     },
                     channelId: interactionContext.channelId || interactionContext.channel?.id || null,

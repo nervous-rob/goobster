@@ -204,7 +204,8 @@ describe('fetchWebFile', () => {
         );
         expect(row.artifactKind).toBe('document');
         expect(row.extractedText).toContain('2023,905');
-        expect(JSON.parse(row.metadataJson)).toMatchObject({ displayKind: 'csv', credit: 'data.example.org' });
+        expect(JSON.parse(row.metadataJson)).toMatchObject({ displayKind: 'csv', credit: null, sourceUrl: 'https://data.example.org/rain/annual.csv' });
+        expect(sent[0].files[0].description).toBe('Annual rainfall — via data.example.org');
     });
 
     test('download and classification failures come back as observations with the error code', async () => {

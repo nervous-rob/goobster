@@ -377,6 +377,8 @@ button.brand-home:hover { color: var(--text); }
   padding: 10px 15px; border-radius: 16px; overflow-wrap: break-word; min-width: 0; max-width: 100%;
 }
 .msg.user .msg-bubble { background: var(--accent); color: #0d1020; border-bottom-right-radius: 5px; white-space: pre-wrap; }
+/* Links the user pasted must not vanish into the accent background */
+.msg.user .msg-bubble a { color: inherit; text-decoration: underline; word-break: break-all; }
 body.light .msg.user .msg-bubble { color: #ffffff; }
 .msg.assistant .msg-bubble { background: var(--bg-raise); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
 .msg.error .msg-bubble { border-color: var(--danger); }
