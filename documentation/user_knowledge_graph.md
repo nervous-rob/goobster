@@ -94,9 +94,11 @@ Files the user shares — code, markdown, PDFs, configs, images — can be store
 | `kg_nodes` (`type = artifact`) | Short label + contextual summary (what it is, why it matters) |
 | `kg_artifacts` | File metadata + `relativePath` under `data/kg-artifacts/<guildId>/<userId>/` |
 | `saveArtifact` tool | Model saves when clearly requested or after asking; requires `confirm=true` |
+| `findImages` / `fetchWebFile` tools | Files Goobster finds on the web for the user (pictures of a thing, a CSV/JSON/Markdown/PDF at a URL); saved automatically with the model's notes, origin in `kg_artifacts.metadataJson` (source URL, credit, license, provider) |
+| `showSavedFiles` tool | Re-displays saved files in the chat (images with captions, CSV as a table, text previews) |
 | `lookupNotes` | Recalls artifact summaries and extracted text when the user refers back |
 
-Incoming attachments are listed in the prompt as `ATTACHMENTS THIS TURN` with indices for `saveArtifact(attachmentIndex=…)`. Text/PDF content is extracted for search (`extractedText`); images keep the summary only.
+Incoming attachments are listed in the prompt as `ATTACHMENTS THIS TURN` with indices for `saveArtifact(attachmentIndex=…)`. Text/PDF content is extracted for search (`extractedText`); uploaded images keep the summary only, while found images store their title, description, notes, and attribution as the searchable text so "that jacket photo" resolves by words. Identical bytes already in the scope (content hash) are re-shown rather than saved twice.
 
 Privacy: `/forget-me` deletes the user's artifact rows (cascade with nodes) and removes their files from disk.
 
