@@ -53,6 +53,20 @@ async function initDb() {
     for (const table of tables) {
         console.log(`  - ${table}`);
     }
+
+    // Goobster's own documentation (the consultDocs corpus). Idempotent;
+    // the bot repeats it on every start, so a failure here is not fatal.
+    try {
+        const selfDocsService = require('@goobster/core/services/selfDocsService');
+        if (selfDocsService.enabled) {
+            const seeded = await selfDocsService.seed();
+            if (seeded.acquired) {
+                console.log(`Seeded self-documentation: ${seeded.docs} document(s), ${seeded.chunks} chunk(s)`);
+            }
+        }
+    } catch (error) {
+        console.warn('Self-documentation seeding skipped:', error.message);
+    }
 }
 
 if (require.main === module) {

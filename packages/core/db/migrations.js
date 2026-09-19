@@ -151,6 +151,22 @@ const COLUMN_MIGRATIONS = [
     ['sandbox_requests', 'claimedAt', 'claimedAt TEXT'],
     // Live Study progress snapshot (thoughts / tools / draft) for reconnect.
     ['web_live_turns', 'progressJson', 'progressJson TEXT'],
+    // Idle-based turn watchdog: evict quiet turns, not long ones.
+    ['web_live_turns', 'lastActivityAtMs', 'lastActivityAtMs INTEGER'],
+    // Observatory pipelines: explicit event parentage, frozen output
+    // contracts + verdicts, and a stable failure reason on jobs; event
+    // source filters on triggers. Existing rows stay NULL (legacy behaviour).
+    ['observatory_jobs', 'parentJobId', 'parentJobId INTEGER'],
+    ['observatory_jobs', 'outputContractJson', 'outputContractJson TEXT'],
+    ['observatory_jobs', 'outputContractResultJson', 'outputContractResultJson TEXT'],
+    ['observatory_jobs', 'errorCode', 'errorCode TEXT'],
+    ['project_triggers', 'sourceAssetId', 'sourceAssetId INTEGER'],
+    ['project_triggers', 'sourceTriggerId', 'sourceTriggerId INTEGER'],
+    // Dispatch outcome (lastOutcome) vs. how the started stage settled.
+    // The per-event delivery table (project_trigger_deliveries) is a new
+    // table, created by schema.sql on open; legacy triggers are back-filled
+    // lazily by projectTriggerService.catchUpEventTriggers.
+    ['project_triggers', 'lastJobOutcome', 'lastJobOutcome TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

@@ -48,6 +48,7 @@ const db = require('@goobster/core/db');
 const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
 const aiService = require('@goobster/core/services/aiService');
 const webChatService = require('@goobster/core/services/webChatService');
+const { TURN_IDLE_MAX_MS, TURN_MAX_AGE_MS, TURN_DEADLINE_MARGIN_MS } = webChatService;
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const USER = '100000000000000001';
@@ -248,12 +249,19 @@ describe('turn validation', () => {
             expect(attached.turnId).toBe(status.turnId);
             expect(attached.snapshot.steps[0].content).toBe('Hello');
             attached.unsubscribe();
-            const row = await db.get(
-                'SELECT progressJson FROM web_live_turns WHERE userId = @userId',
-                { userId: USER }
-            );
-            expect(JSON.parse(row.progressJson).userContent).toBe('look this up');
-            expect(JSON.parse(row.progressJson).steps[0].content).toBe('Hello');
+            // The snapshot write is best-effort and un-awaited; wait for it
+            // instead of assuming it landed before this read (Postgres).
+            const storedProgress = async () => {
+                const row = await db.get(
+                    'SELECT progressJson FROM web_live_turns WHERE userId = @userId',
+                    { userId: USER }
+                );
+                return row?.progressJson ? JSON.parse(row.progressJson) : null;
+            };
+            expect(await waitUntil(async () => (await storedProgress())?.steps?.[0]?.content === 'Hello')).toBe(true);
+            const stored = await storedProgress();
+            expect(stored.userContent).toBe('look this up');
+            expect(stored.steps[0].content).toBe('Hello');
         } finally {
             releaseHold();
             await running;
@@ -321,20 +329,24 @@ describe('turn validation', () => {
         }
     });
 
-    test('turnStatus itself evicts a wedged turn past the watchdog TTL', async () => {
+    test('turnStatus itself evicts a wedged turn past the idle watchdog window', async () => {
         await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         const staleState = webChatService._activeTurns.get(USER);
-        staleState.startedAt = Date.now() - 16 * 60 * 1000;
+        // A provider stream that stalled: started long ago, no progress since.
+        staleState.startedAt = Date.now() - TURN_IDLE_MAX_MS - 60 * 1000;
+        staleState.lastActivityAt = staleState.startedAt;
 
         expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
         expect(staleState.aborted).toBe(true);
+        expect(staleState.abortReason).toBe('watchdog');
     });
 
-    test('a wedged turn past the watchdog TTL is force-aborted and its lock released', async () => {
+    test('a wedged turn past the idle window is force-aborted and its lock released', async () => {
         const stale = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
         const staleState = webChatService._activeTurns.get(USER);
-        // Simulate a provider stream that stalled 16 minutes ago and never settled
-        staleState.startedAt = Date.now() - 16 * 60 * 1000;
+        // Simulate a provider stream that stalled and never settled
+        staleState.startedAt = Date.now() - TURN_IDLE_MAX_MS - 60 * 1000;
+        staleState.lastActivityAt = staleState.startedAt;
 
         // The next message takes over instead of 409ing until the next restart
         const next = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hello?' });
@@ -346,6 +358,84 @@ describe('turn validation', () => {
         await expect((async () => await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'third' }))())
             .rejects.toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
         await next.release();
+    });
+
+    test('a long-running turn that is still making progress is NOT evicted', async () => {
+        // The failure this guards: a project turn on its fifteenth tool call,
+        // older than the old 15-minute age limit, killed mid-sequence so the
+        // user saw tools run and then nothing.
+        const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'build the pipeline' });
+        const state = webChatService._activeTurns.get(USER);
+        state.startedAt = Date.now() - 40 * 60 * 1000;
+        state.lastActivityAt = Date.now() - 2 * 60 * 1000; // a tool result two minutes ago
+
+        const status = await webChatService.turnStatus(USER);
+        expect(status.inFlight).toBe(true);
+        expect(state.aborted).toBe(false);
+        await expect((async () => await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'again' }))())
+            .rejects.toThrow(expect.objectContaining({ status: 409, code: 'TURN_IN_FLIGHT' }));
+        await turn.release();
+    });
+
+    test('turn events refresh the activity clock the idle watchdog reads', async () => {
+        const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        const state = webChatService._activeTurns.get(USER);
+        const stale = Date.now() - TURN_IDLE_MAX_MS - 1000;
+        state.lastActivityAt = stale;
+        await db.run('UPDATE web_live_turns SET lastActivityAtMs = @stale WHERE userId = @userId', { stale, userId: USER });
+
+        const before = Date.now();
+        webChatService._emitTurnEvent(state, 'tool', { phase: 'start', id: 0, name: 'observatory' });
+        expect(state.lastActivityAt).toBeGreaterThanOrEqual(before);
+        expect(await webChatService._liveTurn(USER)).toBe(state);
+
+        // Persisted for other replicas too (a best-effort snapshot write,
+        // so wait for it rather than assume ordering)
+        const persisted = async () => Number((await db.get(
+            'SELECT lastActivityAtMs FROM web_live_turns WHERE userId = @userId', { userId: USER }
+        )).lastActivityAtMs);
+        await waitUntil(async () => (await persisted()) >= before);
+        expect(await persisted()).toBeGreaterThanOrEqual(before);
+        await turn.release();
+    });
+
+    test('the absolute age ceiling still evicts a turn that never stops', async () => {
+        await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        const state = webChatService._activeTurns.get(USER);
+        state.startedAt = Date.now() - TURN_MAX_AGE_MS - 60 * 1000;
+        state.lastActivityAt = Date.now(); // busy right now, but far past the ceiling
+
+        expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+        expect(state.aborted).toBe(true);
+        expect(state.abortReason).toBe('watchdog');
+    });
+
+    test('a remote replica row is judged by its activity, not its age', async () => {
+        const startedAtMs = Date.now() - 40 * 60 * 1000;
+        await db.run(
+            `INSERT INTO web_live_turns (userId, turnId, startedAtMs, conversationId, aborted, lastActivityAtMs)
+             VALUES (@userId, 'remoteactive', @startedAtMs, 7, 0, @lastActivityAtMs)`,
+            { userId: USER, startedAtMs, lastActivityAtMs: Date.now() - 60 * 1000 }
+        );
+        expect((await webChatService.turnStatus(USER)).inFlight).toBe(true);
+
+        await db.run('UPDATE web_live_turns SET lastActivityAtMs = @idle WHERE userId = @userId',
+            { userId: USER, idle: Date.now() - TURN_IDLE_MAX_MS - 1000 });
+        expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+        expect(await db.get('SELECT 1 AS x FROM web_live_turns WHERE userId = @userId', { userId: USER })).toBeUndefined();
+    });
+
+    test('Stop and the watchdog leave distinguishable abort reasons', async () => {
+        const turn = await webChatService.startTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        const state = webChatService._activeTurns.get(USER);
+        expect(state.abortReason).toBeNull();
+        await webChatService.stopTurn(USER);
+        expect(state.aborted).toBe(true);
+        expect(state.abortReason).toBe('stop');
+        // A later watchdog pass must not rewrite the user's reason
+        state.abort('watchdog');
+        expect(state.abortReason).toBe('stop');
+        await turn.release();
     });
 
     test('rate limits after 10 turns in a minute with 429', async () => {
@@ -472,7 +562,25 @@ describe('the web pseudo-interaction', () => {
         expect(typeof interaction.sendFullResponse).toBe('function');
         expect(typeof interaction.shouldAbort).toBe('function');
         expect(interaction.sourceDescription).toContain('web chat');
+        expect(interaction.sourceDescription).toContain('Markdown is fully supported');
+        expect(interaction.spoken).toBe(false);
         expect(interaction.options.getString()).toBe('hello');
+    });
+
+    test('a voice-chat turn is marked spoken and described as one', async () => {
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hello', spoken: true });
+        const interaction = handleChatInteraction.mock.calls[0][0];
+        expect(interaction.spoken).toBe(true);
+        expect(interaction.sourceDescription).toContain('VOICE CHAT');
+        expect(interaction.sourceDescription).toContain('read aloud');
+        expect(interaction.sourceDescription).not.toContain('Markdown is fully supported');
+        // Voice + incognito compose: still spoken, still a temporary chat.
+        handleChatInteraction.mockClear();
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hello', spoken: true, incognito: true });
+        const incognito = handleChatInteraction.mock.calls[0][0];
+        expect(incognito.spoken).toBe(true);
+        expect(incognito.sourceDescription).toContain('VOICE CHAT');
+        expect(incognito.sourceDescription).toContain('INCOGNITO MODE');
     });
 
     test('streams deltas and full responses to the event sink', async () => {
@@ -504,6 +612,27 @@ describe('the web pseudo-interaction', () => {
         expect(observed).toBe(true);
         // No active turn afterwards
         expect(await webChatService.stopTurn(USER)).toBe(false);
+    });
+
+    test('the interaction carries the turn deadline and the abort reason for the agent loop', async () => {
+        let seen;
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            seen = {
+                deadlineAt: interaction.turnDeadlineAt,
+                startedAt: interaction.turnStartedAt,
+                reasonBefore: interaction.abortReason()
+            };
+            await webChatService.stopTurn(USER);
+            seen.reasonAfter = interaction.abortReason();
+        });
+        const before = Date.now();
+        await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+        // Hands off a margin before the absolute ceiling, never at it
+        expect(seen.deadlineAt).toBeGreaterThan(before + TURN_MAX_AGE_MS - TURN_DEADLINE_MARGIN_MS - 5000);
+        expect(seen.deadlineAt).toBeLessThan(before + TURN_MAX_AGE_MS);
+        expect(seen.startedAt).toBeGreaterThanOrEqual(before);
+        expect(seen.reasonBefore).toBeNull();
+        expect(seen.reasonAfter).toBe('stop');
     });
 
     test('stopTurn also fires the abort signal (hard-cancels the provider stream)', async () => {

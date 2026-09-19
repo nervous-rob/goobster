@@ -34,6 +34,46 @@ test('search lands on the control and Save persists a profile change', async ({ 
     await expect(page.getByText(/Currently\s+Captain/)).toBeVisible();
 });
 
+test('mobile savebar layout and interaction on narrow screens', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page);
+    await page.goto('/app/settings/profile');
+
+    // Initially clean state: static in document flow at the end of section
+    const cleanNote = page.getByText('All changes saved');
+    await expect(cleanNote).toBeVisible();
+    const cleanBar = page.locator('.settings-savebar');
+    await expect(cleanBar).not.toHaveClass(/is-dirty/);
+    await expect(cleanBar.locator('.settings-save-btn')).toBeHidden();
+
+    // Make an edit to a field that differs from the saved baseline
+    const directiveInput = page.locator('#personality-directive-input');
+    await directiveInput.fill('Dry wit, warm underneath.');
+    await expect(page.getByText('Unsaved changes')).toBeVisible();
+    await expect(cleanBar).toHaveClass(/is-dirty/);
+    await expect(cleanBar.locator('.settings-save-btn')).toBeVisible();
+
+    const savebarBox = await cleanBar.boundingBox();
+    // Should be docked at bottom of viewport (y + height around 844)
+    expect(savebarBox.y + savebarBox.height).toBeCloseTo(844, -1);
+    // Height should be compact (<= 60px)
+    expect(savebarBox.height).toBeLessThanOrEqual(60);
+
+    await page.screenshot({ path: '/opt/cursor/artifacts/mobile_settings_savebar_dirty.png' });
+
+    await page.locator('.settings-content').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await page.screenshot({ path: '/opt/cursor/artifacts/mobile_settings_savebar_dirty_bottom.png' });
+
+    // Discard restores clean state
+    await page.getByRole('button', { name: 'Discard' }).click();
+    await expect(directiveInput).toHaveValue('');
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    await expect(cleanBar).not.toHaveClass(/is-dirty/);
+
+    await page.locator('.settings-content').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await page.screenshot({ path: '/opt/cursor/artifacts/mobile_settings_savebar_clean.png' });
+});
+
 test('Discard restores the saved value and leaving with edits asks first', async ({ page }) => {
     await login(page);
     await page.goto('/app/settings/profile');

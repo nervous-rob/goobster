@@ -379,7 +379,9 @@ function mountAuthChat(app, ctx, h) {
                 conversationId: req.body?.conversationId ?? null,
                 images: req.body?.images ?? null,
                 files,
-                incognito: req.body?.incognito === true
+                incognito: req.body?.incognito === true,
+                // Voice chat marks its turns so the reply is written for speech.
+                spoken: req.body?.spoken === true
             });
         } catch (error) {
             // Validation failures happen before the stream starts, so they

@@ -3,7 +3,11 @@
  * narrated by TTS, whether the reply arrives whole (classic engine) or as
  * streamed deltas that may split a URL anywhere (realtime engine).
  */
-const { stripUrlsForSpeech, createStreamingUrlStripper } = require('@goobster/core/services/voice/speechText');
+const {
+    stripUrlsForSpeech,
+    stripMarkupForSpeech,
+    createStreamingUrlStripper
+} = require('@goobster/core/services/voice/speechText');
 
 describe('stripUrlsForSpeech', () => {
     test('removes bare http/https URLs', () => {
@@ -84,5 +88,40 @@ describe('createStreamingUrlStripper', () => {
         expect(stripper.write('wor')).toBe('');
         expect(stripper.write('ld')).toBe('');
         expect(stripper.flush()).toBe('world'); // flush releases the held tail
+    });
+
+    test('markdown markers split across deltas are never spoken', () => {
+        expect(run(['**Two', ' things**:\n', '- first', ' item\n', '2. second', ' `item`']))
+            .toBe('Two things:\nfirst item\nsecond item');
+    });
+
+    test('a mid-sentence number followed by a period is not a list marker', () => {
+        expect(run(['It happened in', ' 1999. Then', ' 3. more']))
+            .toBe('It happened in 1999. Then 3. more');
+    });
+
+    test('a heading hash at the very start of the stream is dropped', () => {
+        expect(run(['## Summary\n', 'All good.'])).toBe('Summary\nAll good.');
+    });
+});
+
+describe('stripMarkupForSpeech', () => {
+    test('drops inline markers but keeps the words', () => {
+        expect(stripMarkupForSpeech('**bold** and __also__ and ~~gone~~ and `code`'))
+            .toBe('bold and also and gone and code');
+    });
+
+    test('strips list, heading, and quote prefixes at line starts', () => {
+        expect(stripMarkupForSpeech('# Title\n- one\n2) two\n> quoted'))
+            .toBe('Title\none\ntwo\nquoted');
+    });
+
+    test('respects atLineStart=false for the first chunk', () => {
+        expect(stripMarkupForSpeech('3. Then', { atLineStart: false })).toBe('3. Then');
+        expect(stripMarkupForSpeech('3. Then', { atLineStart: true })).toBe('Then');
+    });
+
+    test('leaves a four-digit year alone even at a line start', () => {
+        expect(stripMarkupForSpeech('1999. A good year')).toBe('1999. A good year');
     });
 });

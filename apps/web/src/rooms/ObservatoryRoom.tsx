@@ -17,6 +17,7 @@ import { KnowledgeTab } from './observatory/KnowledgeTab';
 import { MissionTab } from './observatory/MissionTab';
 import { AppsTab } from './observatory/AppsTab';
 import { ArtifactGallery } from './observatory/ArtifactGallery';
+import { ToolChip } from '../components/ToolChip';
 import { whenLabel } from './observatory/format';
 
 type Project = {
@@ -41,6 +42,15 @@ type ProjectInvite = {
     inviterName?: string | null;
     inviterId?: string;
 };
+type ContractCheck = {
+    path: string;
+    type?: string;
+    minBytes?: number;
+    ok: boolean;
+    reason?: string | null;
+    sizeBytes?: number | null;
+};
+type ContractResult = { ok: boolean; checkedAt?: string; checks: ContractCheck[] };
 type Job = {
     id: number;
     status: string;
@@ -52,6 +62,14 @@ type Job = {
     finishedAt?: string;
     lastHeartbeatAt?: string;
     error?: string | null;
+    // Stable failure reason (EXIT_NONZERO, TIMED_OUT, CANCELLED, OUTPUT_CONTRACT_FAILED, ...)
+    errorCode?: string | null;
+    // Provenance: who started it and, for event-chained stages, the settled job it reacted to.
+    startedBy?: string | null;
+    triggerId?: number | null;
+    parentJobId?: number | null;
+    // Frozen output-contract verdict (null when the job declared no required outputs).
+    outputContractResult?: ContractResult | null;
     stdoutTail?: string;
     stderrTail?: string;
 };
@@ -70,7 +88,7 @@ type Detail = {
     checkpoint?: string | null;
     totalFiles?: number;
 };
-type ToolChip = { name: string; phase: string; isError?: boolean };
+type CommandChip = { name: string; phase: string; isError?: boolean; argsPreview?: string };
 
 const STATUS_ICONS: Record<string, string> = {
     RUNNING: '🟢', COMPLETED: '✅', FAILED: '❌',
@@ -95,7 +113,7 @@ export function ObservatoryRoom() {
         label: string;
         draft: string;
         error: boolean;
-        chips: ToolChip[];
+        chips: CommandChip[];
     } | null>(null);
 
     const list = useQuery({
@@ -145,11 +163,21 @@ export function ObservatoryRoom() {
                         setCommand((prev) => {
                             if (!prev) return prev;
                             const chips = [...prev.chips];
-                            if (event.phase === 'start') chips.push({ name: event.name, phase: 'start' });
-                            else {
+                            if (event.phase === 'start') {
+                                chips.push({
+                                    name: event.name,
+                                    phase: 'start',
+                                    argsPreview: event.argsPreview
+                                });
+                            } else {
                                 for (let i = chips.length - 1; i >= 0; i--) {
                                     if (chips[i].name === event.name && chips[i].phase === 'start') {
-                                        chips[i] = { name: event.name, phase: 'result', isError: event.isError };
+                                        chips[i] = {
+                                            name: event.name,
+                                            phase: 'result',
+                                            isError: event.isError,
+                                            argsPreview: chips[i].argsPreview ?? event.argsPreview
+                                        };
                                         break;
                                     }
                                 }
@@ -236,14 +264,13 @@ export function ObservatoryRoom() {
                         </div>
                         <div className="obs-command-strip">
                             {command.chips.map((chip, index) => (
-                                <span
+                                <ToolChip
                                     key={`${chip.name}-${index}`}
-                                    className={`tool-chip ${chip.phase === 'start' ? 'running' : chip.isError ? 'failed' : 'done'}`}
-                                >
-                                    {chip.phase === 'start'
-                                        ? <><span className="tool-spinner" /> {chip.name}…</>
-                                        : `${chip.isError ? '⚠' : '✓'} ${chip.name}`}
-                                </span>
+                                    name={chip.name}
+                                    argsPreview={chip.argsPreview}
+                                    running={chip.phase === 'start'}
+                                    isError={chip.isError}
+                                />
                             ))}
                         </div>
                         <div className={`obs-command-reply${command.error ? ' error' : ''}`}>
@@ -557,6 +584,17 @@ function DetailView({
     const toast = useToast();
     const confirm = useConfirm();
     const p = detail.project;
+    // Trigger names for job provenance ("started by trigger X"); shares the
+    // Automations tab's cache entry.
+    const triggersQ = useQuery({
+        queryKey: keys.projectTriggers(p.slug, ownerId),
+        queryFn: () => api.projectTriggers(p.slug, ownerId) as Promise<{ triggers: Trigger[] }>,
+        retry: false,
+        enabled: detail.jobs.some((j) => j.triggerId != null)
+    });
+    const triggerNames = new Map<number, string>(
+        (triggersQ.data?.triggers || []).map((t) => [t.id, t.name] as const)
+    );
     const completed = detail.jobs.filter((j) => j.status === 'COMPLETED').length;
     const failed = detail.jobs.filter((j) => j.status === 'FAILED' || j.status === 'TIMED_OUT').length;
     const quotaPct = Math.min(100, Math.round(((p.sizeMb || 0) / Math.max(p.quotaMb || 1, 1)) * 100));
@@ -681,6 +719,7 @@ function DetailView({
                                                         .filter(Boolean).join(' · ')}
                                                 </div>
                                                 {job.error ? <div className="row-meta obs-error">{job.error}</div> : null}
+                                                <JobProvenance job={job} triggers={triggerNames} />
                                                 {job.stdoutTail?.trim() ? (
                                                     <details className="obs-tail"><summary>stdout tail</summary><pre>{job.stdoutTail}</pre></details>
                                                 ) : null}
@@ -717,6 +756,78 @@ function DetailView({
                 </div>
             )}
         </>
+    );
+}
+
+const CONTRACT_REASONS: Record<string, string> = {
+    missing: 'missing',
+    too_small: 'too small',
+    invalid_json: 'invalid JSON',
+    directory: 'is a directory',
+    not_a_file: 'not a regular file',
+    illegal_path: 'illegal path'
+};
+
+/**
+ * Expandable diagnostics for one job: stable error code, who started it
+ * (and the upstream job an event stage reacted to), and the per-output
+ * verdict of its frozen contract. Renders nothing for a plain ad-hoc job
+ * with no contract, so the list stays quiet in the common case.
+ */
+function JobProvenance({ job, triggers }: { job: Job; triggers: Map<number, string> }) {
+    const contract = job.outputContractResult;
+    const hasContract = Boolean(contract && Array.isArray(contract.checks) && contract.checks.length);
+    const interesting = Boolean(
+        (job.errorCode && job.errorCode !== 'EXIT_NONZERO')
+        || job.parentJobId != null
+        || job.triggerId != null
+        || hasContract
+    );
+    if (!interesting) return null;
+    const startedBy = job.startedBy === 'trigger' && job.triggerId != null
+        ? `trigger “${triggers.get(job.triggerId) || `#${job.triggerId}`}”`
+        : (job.startedBy || 'unknown');
+    const failedChecks = hasContract ? contract!.checks.filter((c) => !c.ok).length : 0;
+    const summaryBits = [
+        job.errorCode && job.errorCode !== 'EXIT_NONZERO' ? job.errorCode : null,
+        job.parentJobId != null ? `after job #${job.parentJobId}` : null,
+        hasContract
+            ? (contract!.ok
+                ? `${contract!.checks.length} output(s) validated`
+                : `${failedChecks} of ${contract!.checks.length} output(s) failed`)
+            : null
+    ].filter(Boolean);
+    return (
+        <details className="obs-tail obs-job-detail" data-testid={`job-detail-${job.id}`}>
+            <summary>{summaryBits.length ? summaryBits.join(' · ') : 'details'}</summary>
+            <dl className="obs-kv">
+                {job.errorCode ? (<><dt>Error code</dt><dd><code>{job.errorCode}</code></dd></>) : null}
+                <dt>Started by</dt><dd>{startedBy}</dd>
+                {job.parentJobId != null ? (
+                    <><dt>Source job</dt><dd>#{job.parentJobId} (this stage reacted to its settlement)</dd></>
+                ) : null}
+                {hasContract ? (
+                    <>
+                        <dt>Required outputs</dt>
+                        <dd>
+                            <ul className="obs-contract">
+                                {contract!.checks.map((check) => (
+                                    <li key={check.path} className={check.ok ? 'ok' : 'failed'}>
+                                        {check.ok ? '✅' : '❌'} <code>{check.path}</code>
+                                        {check.type && check.type !== 'file' ? ` · ${check.type}` : ''}
+                                        {check.minBytes ? ` · ≥ ${check.minBytes} B` : ''}
+                                        {check.ok
+                                            ? (check.sizeBytes != null ? ` · ${check.sizeBytes} B` : '')
+                                            : ` · ${CONTRACT_REASONS[check.reason || ''] || check.reason || 'failed'}`}
+                                    </li>
+                                ))}
+                            </ul>
+                            {contract!.checkedAt ? <div className="hint">checked {whenLabel(contract!.checkedAt)}</div> : null}
+                        </dd>
+                    </>
+                ) : null}
+            </dl>
+        </details>
     );
 }
 
@@ -764,12 +875,32 @@ type Trigger = {
     schedule?: string | null;
     nextRun?: string | null;
     eventTopic?: string | null;
+    sourceAssetId?: number | null;
+    sourceTriggerId?: number | null;
     action: 'run_script' | 'render' | 'fetch_data' | 'agent_prompt';
     actionAssetId?: number | null;
     actionParams?: Record<string, unknown>;
     isEnabled: boolean;
     lastRun?: string | null;
+    // Dispatch result ("started: job #12, awaiting settlement") ...
     lastOutcome?: string | null;
+    // ... vs. how the most recently started stage actually settled.
+    lastJobOutcome?: string | null;
+};
+
+type Delivery = {
+    id: number;
+    sourceJobId: number;
+    sourceStatus?: string | null;
+    sourceFinishedAt?: string | null;
+    status: 'STARTED' | 'DELIVERED' | 'RETRYABLE' | 'FAILED' | 'SKIPPED';
+    attempts: number;
+    childJobId?: number | null;
+    childStatus?: string | null;
+    childErrorCode?: string | null;
+    detail?: string | null;
+    nextAttemptAt?: string | null;
+    updatedAt: string;
 };
 
 type ScriptAsset = { id: number; slug: string; name: string; currentVersion?: number | null };
@@ -779,9 +910,12 @@ type TriggerDraft = {
     kind: 'cron' | 'event';
     schedule: string;
     eventTopic: 'job_completed' | 'job_failed' | 'job_settled';
+    sourceAssetId: string;
+    sourceTriggerId: string;
     action: Trigger['action'];
     actionAssetId: string;
     background: boolean;
+    requiredOutputs: string;
     fps: string;
     url: string;
     filename: string;
@@ -796,9 +930,12 @@ const EMPTY_DRAFT: TriggerDraft = {
     kind: 'cron',
     schedule: '0 2 * * *',
     eventTopic: 'job_settled',
+    sourceAssetId: '',
+    sourceTriggerId: '',
     action: 'run_script',
     actionAssetId: '',
     background: true,
+    requiredOutputs: '',
     fps: '',
     url: '',
     filename: '',
@@ -815,9 +952,14 @@ function draftFromTrigger(trigger: Trigger): TriggerDraft {
         kind: trigger.kind,
         schedule: trigger.schedule || '0 2 * * *',
         eventTopic: (trigger.eventTopic as TriggerDraft['eventTopic']) || 'job_settled',
+        sourceAssetId: trigger.sourceAssetId != null ? String(trigger.sourceAssetId) : '',
+        sourceTriggerId: trigger.sourceTriggerId != null ? String(trigger.sourceTriggerId) : '',
         action: trigger.action,
         actionAssetId: trigger.actionAssetId != null ? String(trigger.actionAssetId) : '',
         background: params.background !== false && params.background !== 0,
+        requiredOutputs: Array.isArray(params.requiredOutputs) && params.requiredOutputs.length
+            ? JSON.stringify(params.requiredOutputs, null, 2)
+            : '',
         fps: params.fps != null ? String(params.fps) : '',
         url: typeof params.url === 'string' ? params.url : '',
         filename: typeof params.filename === 'string' ? params.filename : '',
@@ -828,9 +970,27 @@ function draftFromTrigger(trigger: Trigger): TriggerDraft {
     };
 }
 
+/** Parse the required-outputs textarea: empty clears; otherwise a JSON array. */
+function parseRequiredOutputs(text: string): unknown[] | null {
+    const raw = text.trim();
+    if (!raw) return null;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        throw new Error('Required outputs must be a JSON array like [{ "path": "out/{utc_date}.json", "type": "json" }].');
+    }
+    if (!Array.isArray(parsed)) throw new Error('Required outputs must be a JSON array.');
+    return parsed;
+}
+
 function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
     const actionParams: Record<string, unknown> = {};
-    if (draft.action === 'run_script') actionParams.background = draft.background;
+    if (draft.action === 'run_script') {
+        actionParams.background = draft.background;
+        // null drops a previously stored contract (the API merges params).
+        actionParams.requiredOutputs = parseRequiredOutputs(draft.requiredOutputs);
+    }
     if (draft.action === 'render' && draft.fps.trim()) actionParams.fps = Number(draft.fps);
     if (draft.action === 'fetch_data') {
         actionParams.url = draft.url.trim();
@@ -844,6 +1004,8 @@ function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
         kind: draft.kind,
         schedule: draft.kind === 'cron' ? draft.schedule.trim() : null,
         eventTopic: draft.kind === 'event' ? draft.eventTopic : null,
+        sourceAssetId: draft.kind === 'event' && draft.sourceAssetId ? Number(draft.sourceAssetId) : null,
+        sourceTriggerId: draft.kind === 'event' && draft.sourceTriggerId ? Number(draft.sourceTriggerId) : null,
         action: draft.action,
         actionAssetId: draft.action === 'run_script' && draft.actionAssetId
             ? Number(draft.actionAssetId)
@@ -851,6 +1013,75 @@ function payloadFromDraft(draft: TriggerDraft): Record<string, unknown> {
         actionParams,
         isEnabled: draft.isEnabled
     };
+}
+
+/** "from ingest" / "from trigger Nightly" for the automation row meta. */
+function describeFilters(trigger: Trigger, scripts: ScriptAsset[], triggers: Trigger[]): string | null {
+    if (trigger.kind !== 'event') return null;
+    const parts: string[] = [];
+    if (trigger.sourceAssetId != null) {
+        const asset = scripts.find((s) => s.id === trigger.sourceAssetId);
+        parts.push(asset ? asset.slug : `asset #${trigger.sourceAssetId}`);
+    }
+    if (trigger.sourceTriggerId != null) {
+        const source = triggers.find((t) => t.id === trigger.sourceTriggerId);
+        parts.push(source ? `trigger "${source.name}"` : `trigger #${trigger.sourceTriggerId}`);
+    }
+    return parts.length ? `from ${parts.join(' + ')}` : null;
+}
+
+const DELIVERY_ICONS: Record<Delivery['status'], string> = {
+    STARTED: '⏳', DELIVERED: '📬', RETRYABLE: '🔁', FAILED: '❌', SKIPPED: '⏭️'
+};
+
+/**
+ * Per-event delivery records of an event trigger, loaded when expanded:
+ * which settled source job relayed as which child job, or why it has not
+ * (busy project = RETRYABLE with a next attempt; FAILED / SKIPPED with a reason).
+ */
+function TriggerDeliveries({ slug, ownerId, trigger }: { slug: string; ownerId?: string | null; trigger: Trigger }) {
+    const [open, setOpen] = useState(false);
+    const q = useQuery({
+        queryKey: [...keys.projectTriggers(slug, ownerId), 'deliveries', trigger.id],
+        queryFn: () => api.projectTriggerDeliveries(slug, trigger.id, ownerId) as Promise<{ deliveries: Delivery[] }>,
+        enabled: open,
+        retry: false
+    });
+    const deliveries = q.data?.deliveries || [];
+    return (
+        <details
+            className="obs-tail obs-deliveries"
+            data-testid={`trigger-deliveries-${trigger.id}`}
+            onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+        >
+            <summary>deliveries</summary>
+            {!open ? null : q.isLoading
+                ? <div className="hint">Loading…</div>
+                : q.error
+                    ? <div className="row-meta obs-error">{(q.error as Error).message}</div>
+                    : deliveries.length === 0
+                        ? <div className="hint">No matching job has settled yet.</div>
+                        : (
+                            <ul className="obs-delivery-list">
+                                {deliveries.map((d) => (
+                                    <li key={d.id} className={`delivery-${d.status.toLowerCase()}`}>
+                                        <span className="badge">{DELIVERY_ICONS[d.status]} {d.status}</span>
+                                        {' '}source job #{d.sourceJobId}{d.sourceStatus ? ` (${d.sourceStatus})` : ''}
+                                        {d.childJobId ? <> → child job #{d.childJobId}{d.childStatus ? ` ${d.childStatus}` : ''}{d.childErrorCode ? ` (${d.childErrorCode})` : ''}</> : null}
+                                        <div className="row-meta">
+                                            {[
+                                                `${d.attempts} attempt(s)`,
+                                                d.nextAttemptAt ? `next ${whenLabel(d.nextAttemptAt)}` : null,
+                                                d.detail || null,
+                                                whenLabel(d.updatedAt)
+                                            ].filter(Boolean).join(' · ')}
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+        </details>
+    );
 }
 
 function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: string | null; role?: string }) {
@@ -950,11 +1181,24 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                             trigger.kind === 'cron'
                                                 ? `cron ${trigger.schedule}`
                                                 : trigger.eventTopic,
+                                            describeFilters(trigger, scriptAssets, triggers),
                                             trigger.action,
-                                            trigger.lastRun ? `last ${whenLabel(trigger.lastRun)}` : 'never ran',
-                                            trigger.lastOutcome || null
+                                            Array.isArray(trigger.actionParams?.requiredOutputs)
+                                                && trigger.actionParams.requiredOutputs.length
+                                                ? `${trigger.actionParams.requiredOutputs.length} required output(s)`
+                                                : null,
+                                            trigger.lastRun ? `last ${whenLabel(trigger.lastRun)}` : 'never ran'
                                         ].filter(Boolean).join(' · ')}
                                     </div>
+                                    {trigger.lastOutcome || trigger.lastJobOutcome ? (
+                                        <div className="row-meta obs-outcomes">
+                                            {trigger.lastOutcome ? <span>dispatch: {trigger.lastOutcome}</span> : null}
+                                            {trigger.lastJobOutcome ? <span>stage: {trigger.lastJobOutcome}</span> : null}
+                                        </div>
+                                    ) : null}
+                                    {trigger.kind === 'event' ? (
+                                        <TriggerDeliveries slug={slug} ownerId={ownerId} trigger={trigger} />
+                                    ) : null}
                                 </div>
                                 <button type="button" className="btn" onClick={() => void toggleEnabled(trigger)}>
                                     {trigger.isEnabled ? 'Pause' : 'Enable'}
@@ -1038,6 +1282,44 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                     </select>
                                 </label>
                             )}
+                        {editor.draft.kind === 'event' && (
+                            <>
+                                <label className="field">
+                                    <span className="hint">Only jobs from script (upstream stage, optional)</span>
+                                    <select
+                                        className="select"
+                                        value={editor.draft.sourceAssetId}
+                                        onChange={(e) => setEditor({
+                                            ...editor, draft: { ...editor.draft, sourceAssetId: e.target.value }
+                                        })}
+                                    >
+                                        <option value="">Any job in the project</option>
+                                        {scriptAssets.map((asset) => (
+                                            <option key={asset.id} value={asset.id}>
+                                                {asset.name} ({asset.slug})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="field">
+                                    <span className="hint">Only jobs started by trigger (optional)</span>
+                                    <select
+                                        className="select"
+                                        value={editor.draft.sourceTriggerId}
+                                        onChange={(e) => setEditor({
+                                            ...editor, draft: { ...editor.draft, sourceTriggerId: e.target.value }
+                                        })}
+                                    >
+                                        <option value="">Any trigger or manual run</option>
+                                        {triggers
+                                            .filter((t) => editor.mode !== 'edit' || t.id !== editor.id)
+                                            .map((t) => (
+                                                <option key={t.id} value={t.id}>{t.name}</option>
+                                            ))}
+                                    </select>
+                                </label>
+                            </>
+                        )}
                         <label className="field">
                             <span className="hint">Action</span>
                             <select
@@ -1083,6 +1365,20 @@ function AutomationsTab({ slug, ownerId, role }: { slug: string; ownerId?: strin
                                         })}
                                     />
                                     <span>Background job (records provenance, can chain)</span>
+                                </label>
+                                <label className="field">
+                                    <span className="hint">
+                                        Required outputs (optional JSON; exit 0 without them settles FAILED)
+                                    </span>
+                                    <textarea
+                                        className="input"
+                                        rows={3}
+                                        value={editor.draft.requiredOutputs}
+                                        onChange={(e) => setEditor({
+                                            ...editor, draft: { ...editor.draft, requiredOutputs: e.target.value }
+                                        })}
+                                        placeholder={'[{ "path": "pipeline/manifest_{utc_date}.json", "type": "json", "minBytes": 2 }]'}
+                                    />
                                 </label>
                             </>
                         )}

@@ -41,7 +41,7 @@ const { toGateway, isGatewayUnavailable } = require('../gateway');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const { withTagLinks } = require('../utils/graphFilter');
-const { richRenderingContract } = require('../utils/chat/promptFragments');
+const { richRenderingContract, spokenReplyContract } = require('../utils/chat/promptFragments');
 
 const MAX_PERSONAS_PER_USER = 12;
 const MAX_PERSONA_NAME_LENGTH = 48;
@@ -100,9 +100,13 @@ const BUILTIN_PERSONA_CHARTER =
     + 'you keep the project\'s shared knowledge, run its scripts and jobs when asked, and '
     + 'report honestly on what happened.';
 const PROJECT_SEAT_TOOL_NAMES = [...PERSONA_TOOL_NAMES, 'observatory'];
-// Real project work (run a script, check a job, save an asset) takes more
-// rounds than salon banter, but the seat still shares the table's pace.
-const PROJECT_SEAT_MAX_TOOL_ROUNDS = 5;
+// Real project work (save scripts, run them, read results, wire triggers,
+// audit) is a sequence of steps; a seat cut off at a handful of them
+// leaves the goal undone with no reply explaining why. The seat therefore
+// gets the same project-sized budget as the Study (PROJECT_MAX_TOOL_ROUNDS,
+// resolved where the loop runs - the orchestrator is required lazily
+// there), bounded by the loop's own progress checks rather than the
+// table's pace.
 
 const QUICKSTART_MAX_PROMPT_LENGTH = 2000;
 const QUICKSTART_MIN_PERSONAS = 2;
@@ -2009,7 +2013,7 @@ class ParlorService {
      * @param {Object} params - { userId, userName, conversationId, message, gateway? }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number }}
      */
-    async startTurn({ userId, userName, conversationId, message, gateway = null, client = null }) {
+    async startTurn({ userId, userName, conversationId, message, gateway = null, client = null, spoken = false }) {
         const text = String(message ?? '').trim();
         if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
         if (text.length > MAX_MESSAGE_LENGTH) {
@@ -2085,7 +2089,7 @@ class ParlorService {
                             ownerId, ownerName: userName,
                             conversationId: conversation.id,
                             personaId: participant.id,
-                            turnState, events, repliedIds
+                            turnState, events, repliedIds, spoken
                         });
                         if (outcome !== 'passed') {
                             anySpoke = true;
@@ -2101,7 +2105,7 @@ class ParlorService {
                             ownerId, ownerName: userName,
                             conversationId: conversation.id,
                             personaId: participants[0].id,
-                            turnState, events, forced: true
+                            turnState, events, forced: true, spoken
                         });
                     }
                 } finally {
@@ -2286,7 +2290,7 @@ class ParlorService {
      * @param {Object} params - { userId, userName, conversationId, personaId }
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number, persona: Object }}
      */
-    async startPersonaTurn({ userId, userName, conversationId, personaId }) {
+    async startPersonaTurn({ userId, userName, conversationId, personaId, spoken = false }) {
         const conversation = await this._requireConversationAccess(userId, conversationId);
         const ownerId = conversation.ownerId;
         const persona = await this._requirePersona(ownerId, personaId);
@@ -2321,7 +2325,7 @@ class ParlorService {
                         ownerId, ownerName: userName,
                         conversationId: conversation.id,
                         personaId: persona.id,
-                        turnState, events, forced: true
+                        turnState, events, forced: true, spoken
                     });
                 } finally {
                     this._activeTurns.delete(conversation.id);
@@ -2478,7 +2482,7 @@ class ParlorService {
      * persona - one bad generation never kills the whole salon.
      * @returns {Promise<'replied'|'passed'|'error'>}
      */
-    async _runPersonaTurn({ ownerId, ownerName, conversationId, personaId, turnState, events, forced = false, repliedIds = new Set() }) {
+    async _runPersonaTurn({ ownerId, ownerName, conversationId, personaId, turnState, events, forced = false, repliedIds = new Set(), spoken = false }) {
         const persona = await this._requirePersona(ownerId, personaId);
         try { events.onPersonaStart?.({ id: persona.id, name: persona.name, emoji: persona.emoji, color: persona.color, voiceId: persona.voiceId }); } catch { /* ignore */ }
 
@@ -2553,7 +2557,7 @@ class ParlorService {
             //    search rides along when the provider supports it.
             const aiService = require('./aiService');
             const toolsRegistry = require('../utils/toolsRegistry');
-            const { runAgentLoop } = require('../utils/chat/agentOrchestrator');
+            const { runAgentLoop, PROJECT_MAX_TOOL_ROUNDS } = require('../utils/chat/agentOrchestrator');
             const functionDefs = await toolsRegistry.getDefinitions(
                 projectSeat ? PROJECT_SEAT_TOOL_NAMES : PERSONA_TOOL_NAMES,
                 { isWeb: true }
@@ -2561,7 +2565,7 @@ class ParlorService {
             const collector = { files: [] };
             const messages = this._buildPersonaMessages({
                 persona, ownerName, history, retrieved,
-                hasTools: functionDefs.length > 0, projectSeat
+                hasTools: functionDefs.length > 0, projectSeat, spoken
             });
             const chatOptions = {
                 max_tokens: REPLY_MAX_TOKENS,
@@ -2602,7 +2606,7 @@ class ParlorService {
                     } catch { /* never break the turn */ }
                 },
                 shouldAbort: () => turnState.aborted,
-                maxToolRounds: projectSeat ? PROJECT_SEAT_MAX_TOOL_ROUNDS : PERSONA_MAX_TOOL_ROUNDS
+                maxToolRounds: projectSeat ? PROJECT_MAX_TOOL_ROUNDS : PERSONA_MAX_TOOL_ROUNDS
             });
             // Models sometimes imitate the history's speaker labels; the
             // byline is the interface's job, so strip a self-label prefix.
@@ -2675,7 +2679,7 @@ class ParlorService {
      * context as the system prompt, the discussion window as user/assistant
      * turns (other speakers arrive as labeled user messages).
      */
-    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false }) {
+    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false, spoken = false }) {
         const workspaceBlock = retrieved.length > 0
             ? retrieved.map(note =>
                 `[note #${note.id}] ${note.title}` +
@@ -2702,9 +2706,13 @@ class ParlorService {
             '- Other personas may also reply in this discussion (their messages are labeled). Engage with what they said; disagree freely - distinct perspectives are the point of the parlor.',
             '- Several humans may share this discussion (each labeled by name). Address people by name when it helps, and treat every one of them as your host.',
             '- Write your reply directly - never prefix it with your own name or a [Name]: label (the interface already shows who is speaking).',
-            '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
+            spoken
+                ? '- Keep replies focused: a few short paragraphs at most.'
+                : '- Keep replies focused: a few short paragraphs at most. Markdown is supported.',
             '',
-            richRenderingContract({ surface: 'parlor' }),
+            // Parlor Live voices every reply: speech-shaped prose instead of
+            // the rich-rendering pitch (Markdown, LaTeX, mini-apps).
+            spoken ? spokenReplyContract({ captioned: true }) : richRenderingContract({ surface: 'parlor' }),
             ...(hasTools ? [
                 '',
                 projectSeat

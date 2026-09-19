@@ -1564,13 +1564,35 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     cancelRequested INTEGER NOT NULL DEFAULT 0 CHECK (cancelRequested IN (0, 1)),
     -- Only jobs that existed before per-run dirs may read project-root
     -- checkpoint.json / frames/. New inserts always store 0.
-    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1))
+    legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1)),
+    -- Explicit event parentage (COLUMN_MIGRATIONS back-fills existing rows
+    -- with NULL): the settled job whose event trigger started this one.
+    -- Cron, chat, portal, and other root jobs are NULL. Chain-depth walks
+    -- this instead of guessing ancestry from timestamps.
+    parentJobId INTEGER,
+    -- Declared output contract frozen at insert (utils/outputContract.js):
+    -- { resolvedAt, variables, outputs: [{ path, type, minBytes? }] }.
+    -- NULL when the run declared nothing. Never re-read from the trigger.
+    outputContractJson TEXT,
+    -- Structured per-check verdict written at settlement:
+    -- { ok, checkedAt, checks: [{ path, type, ok, reason, sizeBytes }] }
+    outputContractResultJson TEXT,
+    -- Stable machine reason behind a terminal status: EXIT_NONZERO,
+    -- TIMED_OUT, CANCELLED, OUTPUT_CONTRACT_FAILED, RUN_ERROR,
+    -- QUOTA_EXCEEDED, PROJECT_DELETED. NULL for COMPLETED and legacy rows.
+    errorCode TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_user ON observatory_jobs(userId, status);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project ON observatory_jobs(projectId, id);
 CREATE INDEX IF NOT EXISTS idx_observatory_jobs_execution_attempt
     ON observatory_jobs(executionAttemptId) WHERE executionAttemptId IS NOT NULL;
+-- Event catch-up scans a project's settled jobs by finishedAt.
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_project_finished
+    ON observatory_jobs(projectId, finishedAt);
+-- Parent traversal (chain depth) and "children of job N" lookups.
+CREATE INDEX IF NOT EXISTS idx_observatory_jobs_parent
+    ON observatory_jobs(parentJobId) WHERE parentJobId IS NOT NULL;
 -- One live execution per project. Duplicate RUNNING rows are parked as
 -- INTERRUPTED in repairObservatoryJobs before this index is created.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_observatory_jobs_one_active
@@ -1680,6 +1702,20 @@ CREATE TABLE IF NOT EXISTS project_triggers (
     -- more than maxChainDepth times per root job.
     -- Actor who created the row (userId stays the owner; fire uses owner).
     createdBy TEXT,
+    -- Event source filters (kind='event' only; COLUMN_MIGRATIONS back-fills
+    -- NULL = legacy project-wide behaviour). sourceAssetId: fire only when
+    -- the settled job executed a version of this script asset.
+    -- sourceTriggerId: fire only when the settled job was started by this
+    -- trigger. Both present = both must match. Deliberately no FK: a
+    -- deleted target leaves the trigger inert (the audit flags it) instead
+    -- of silently widening it back to project-wide.
+    sourceAssetId INTEGER,
+    sourceTriggerId INTEGER,
+    -- Settlement of the most recent job this trigger STARTED (a run_script
+    -- child), written when that job settles. lastOutcome says whether the
+    -- dispatch worked ("started: job #12, awaiting settlement"); this says
+    -- how the stage itself ended - the two are deliberately separate.
+    lastJobOutcome TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1687,6 +1723,41 @@ CREATE TABLE IF NOT EXISTS project_triggers (
 CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(projectId);
 CREATE INDEX IF NOT EXISTS idx_project_triggers_next_run ON project_triggers(nextRun);
 CREATE INDEX IF NOT EXISTS idx_project_triggers_user ON project_triggers(userId);
+
+-- One row per (event trigger, settled source job): the identity of a
+-- processed event. The settle path and startup catch-up both claim by
+-- inserting here, so two matching jobs that finished in the same second
+-- are two events (not one), and an older job examined after a newer one
+-- is still delivered. project_triggers.lastRun stays a display cursor.
+--
+-- status: STARTED (claimed, dispatch in flight) -> DELIVERED (the child
+-- job row exists / the action ran) | RETRYABLE (sandbox busy, active-job
+-- cap: re-dispatched by retryEventDeliveries after nextAttemptAt, up to
+-- MAX_DELIVERY_ATTEMPTS) | FAILED (permanent: bad script, gone project,
+-- attempts exhausted) | SKIPPED (chain guard, allowlist). A STARTED row
+-- left behind by a crash is reaped as RETRYABLE after a lease window.
+CREATE TABLE IF NOT EXISTS project_trigger_deliveries (
+    id INTEGER PRIMARY KEY,
+    triggerId INTEGER NOT NULL REFERENCES project_triggers(id) ON DELETE CASCADE,
+    sourceJobId INTEGER NOT NULL REFERENCES observatory_jobs(id) ON DELETE CASCADE,
+    projectId INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('STARTED', 'DELIVERED', 'RETRYABLE', 'FAILED', 'SKIPPED')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    -- The downstream job a run_script action created (DELIVERED only).
+    childJobId INTEGER,
+    detail TEXT,
+    nextAttemptAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (triggerId, sourceJobId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_trigger_deliveries_retry
+    ON project_trigger_deliveries(status, nextAttemptAt);
+CREATE INDEX IF NOT EXISTS idx_project_trigger_deliveries_child
+    ON project_trigger_deliveries(childJobId);
+CREATE INDEX IF NOT EXISTS idx_project_trigger_deliveries_project
+    ON project_trigger_deliveries(projectId, updatedAt);
 
 -- Accepted collaborators. The owner is observatory_projects.userId and
 -- never has a row here; role exists for forward-compat (all rows are
@@ -1881,7 +1952,11 @@ CREATE TABLE IF NOT EXISTS web_live_turns (
     -- Snapshot of the in-flight reply (draft + thinking/tool steps) so a
     -- browser that left and came back can restore progress without waiting
     -- for the turn to settle.
-    progressJson TEXT
+    progressJson TEXT,
+    -- Last time the turn showed progress (token, tool start/result,
+    -- typing). The watchdog evicts a turn that has gone quiet, not one
+    -- that is merely old: a long project turn is still working.
+    lastActivityAtMs INTEGER
 );
 
 -- Follow-up Study messages waiting for the current in-flight turn to
@@ -2437,6 +2512,43 @@ CREATE INDEX IF NOT EXISTS idx_project_decisions_mission ON project_decisions(mi
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_decisions_one_per_mission
     ON project_decisions(missionId)
     WHERE missionId IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Self-knowledge: Goobster's own documentation, seeded from the repository
+-- (documentation/**/*.md, README.md, operator docs under data/self-docs/).
+-- One row per chunk of a document; the seeder is idempotent on contentHash.
+-- Not per-user data: no privacy erasure path needed.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS self_docs (
+    id INTEGER PRIMARY KEY,
+    -- Stable document id derived from the repo-relative path, e.g.
+    -- documentation/code_sandbox or documentation/skills/troubleshooting
+    slug TEXT NOT NULL,
+    relPath TEXT NOT NULL,
+    title TEXT NOT NULL,
+    -- guide | reference | standards | decision | skill
+    kind TEXT NOT NULL DEFAULT 'reference',
+    summary TEXT,
+    -- Skill docs: one line saying when the procedure applies (front matter)
+    useWhen TEXT,
+    -- JSON array of lowercase tags (front matter)
+    tags TEXT,
+    chunkIndex INTEGER NOT NULL,
+    -- Title > Section > Subsection breadcrumb for the chunk
+    headingPath TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    contentHash TEXT NOT NULL,
+    -- Optional semantic-search vector (same tagging rule as memory_embeddings:
+    -- vectors are only compared when produced by the same model)
+    embedding BLOB,
+    dims INTEGER,
+    model TEXT,
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (slug, chunkIndex)
+);
+
+CREATE INDEX IF NOT EXISTS idx_self_docs_kind ON self_docs(kind);
 
 -- ---------------------------------------------------------------------------
 -- Unified User Settings and Revisions

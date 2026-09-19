@@ -600,6 +600,18 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // Per-event delivery records: which settled source job relayed as
+    // which child job, or why it did not (RETRYABLE / FAILED / SKIPPED).
+    app.get('/api/app/projects/:slug/triggers/:trigger/deliveries', requireAuth, chatRoute(async (req) => ({
+        deliveries: await ctx.projectTriggers.listDeliveries({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            trigger: req.params.trigger,
+            limit: req.query?.limit
+        })
+    })));
+
     app.post('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => {
         return ctx.projectTriggers.create({
             userId: req.webUser.userId,
@@ -609,6 +621,10 @@ function mountProjects(app, ctx, h) {
             kind: req.body?.kind,
             schedule: req.body?.schedule,
             eventTopic: req.body?.eventTopic,
+            sourceAssetId: req.body?.sourceAssetId,
+            sourceAsset: req.body?.sourceAsset,
+            sourceTriggerId: req.body?.sourceTriggerId,
+            sourceTrigger: req.body?.sourceTrigger,
             action: req.body?.action,
             actionAssetId: req.body?.actionAssetId,
             actionAsset: req.body?.actionAsset,
@@ -627,6 +643,10 @@ function mountProjects(app, ctx, h) {
             kind: req.body?.kind,
             schedule: req.body?.schedule,
             eventTopic: req.body?.eventTopic,
+            sourceAssetId: req.body?.sourceAssetId,
+            sourceAsset: req.body?.sourceAsset,
+            sourceTriggerId: req.body?.sourceTriggerId,
+            sourceTrigger: req.body?.sourceTrigger,
             action: req.body?.action,
             actionAssetId: req.body?.actionAssetId,
             actionAsset: req.body?.actionAsset,

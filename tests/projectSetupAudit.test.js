@@ -9,6 +9,7 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-setup-audit-${pr
 
 const {
     auditProjectSetup,
+    auditTriggers,
     formatSetupAuditText,
     scanCheckpointUsage,
     RUN_DIR_ENV,
@@ -74,6 +75,86 @@ describe('auditProjectSetup (pure)', () => {
             `p=os.environ['${PROJECT_DIR_ENV}']; open(p+'/${CHECKPOINT_FILE}','w')`
         ).usesProjectCheckpoint).toBe(true);
     });
+
+    test('flags dangling event filters and malformed output contracts as warnings', () => {
+        const audited = auditProjectSetup({
+            scripts: [{ slug: 'fetch', source: 'print(1)' }],
+            assetIds: [10],
+            triggers: [
+                {
+                    id: 1, name: 'After deleted fetch', kind: 'event', eventTopic: 'job_completed',
+                    action: 'run_script', actionAssetId: 10, sourceAssetId: 99, sourceTriggerId: null
+                },
+                {
+                    id: 2, name: 'After deleted cron', kind: 'event', eventTopic: 'job_completed',
+                    action: 'render', sourceAssetId: null, sourceTriggerId: 777
+                },
+                {
+                    id: 3, name: 'Escaping contract', kind: 'cron', schedule: '0 1 * * *',
+                    action: 'run_script', actionAssetId: 10,
+                    actionParams: JSON.stringify({ requiredOutputs: [{ path: '../escape.json' }] })
+                },
+                {
+                    id: 4, name: 'Unknown template', kind: 'cron', schedule: '0 2 * * *',
+                    action: 'run_script', actionAssetId: 10,
+                    actionParams: { requiredOutputs: ['out/{when}.json'] }
+                },
+                {
+                    id: 5, name: 'Corrupt params', kind: 'cron', schedule: '0 3 * * *',
+                    action: 'run_script', actionAssetId: 10, actionParams: '{not json'
+                },
+                null
+            ]
+        });
+        expect(audited.ok).toBe(false);
+        const byCode = {};
+        for (const finding of audited.findings) (byCode[finding.code] ||= []).push(finding);
+        expect(byCode.trigger_source_asset_missing.map(f => f.triggerId)).toEqual([1]);
+        expect(byCode.trigger_source_trigger_missing.map(f => f.triggerId)).toEqual([2]);
+        expect(byCode.trigger_output_contract_invalid.map(f => f.triggerId)).toEqual([3, 4]);
+        expect(byCode.trigger_output_contract_invalid[0].message).toMatch(/requiredOutputs\[0\]\.path/);
+        expect(byCode.trigger_output_contract_invalid[1].message).toMatch(/Unsupported template variable "\{when\}"/);
+        expect(byCode.trigger_source_asset_missing[0].message).toMatch(/script asset #99/);
+        expect(byCode.trigger_source_trigger_missing[0].message).toMatch(/trigger #777/);
+        expect(byCode.trigger_unfiltered_fanout).toBeUndefined();
+        expect(formatSetupAuditText(audited)).toMatch(/\[warn\] Trigger "After deleted fetch"/);
+    });
+
+    test('an unfiltered job_completed run_script trigger is informational and keeps the audit ok', () => {
+        const audited = auditProjectSetup({
+            scripts: [{ slug: 'fetch', source: 'print(1)' }],
+            assetIds: [10, 11],
+            triggers: [
+                {
+                    id: 1, name: 'Fan-out', kind: 'event', eventTopic: 'job_completed',
+                    action: 'run_script', actionAssetId: 11,
+                    actionParams: { background: true, requiredOutputs: ['pipeline/manifest_{utc_date}.json'] }
+                },
+                // Filtered, other topics, or non-script actions are not fan-out.
+                {
+                    id: 2, name: 'Filtered', kind: 'event', eventTopic: 'job_completed',
+                    action: 'run_script', actionAssetId: 11, sourceAssetId: 10
+                },
+                { id: 3, name: 'On failure', kind: 'event', eventTopic: 'job_failed', action: 'run_script', actionAssetId: 11 },
+                { id: 4, name: 'Render all', kind: 'event', eventTopic: 'job_completed', action: 'render' }
+            ]
+        });
+        expect(audited.ok).toBe(true);
+        const fanout = audited.findings.filter(f => f.code === 'trigger_unfiltered_fanout');
+        expect(fanout).toEqual([expect.objectContaining({ severity: 'info', triggerId: 1 })]);
+        expect(fanout[0].message).toMatch(/sourceAsset \/ sourceTrigger/);
+        expect(audited.findings.some(f => f.code === 'trigger_output_contract_invalid')).toBe(false);
+        expect(audited.findings.some(f => f.code === 'setup_ok')).toBe(false);
+    });
+
+    test('auditTriggers tolerates missing inputs', () => {
+        expect(auditTriggers([], { assetIds: new Set(), triggerIds: new Set() })).toEqual([]);
+        expect(auditProjectSetup({ triggers: 'nope', assetIds: null }).findings.map(f => f.code))
+            .toEqual(['no_script_asset']);
+        expect(auditProjectSetup({
+            scripts: [{ slug: 'ok', source: 'print(1)' }], triggers: [null, undefined, 'junk'], assetIds: null
+        })).toEqual({ ok: true, findings: [expect.objectContaining({ code: 'setup_ok' })] });
+    });
 });
 
 describe('auditSetup + needs-you board', () => {
@@ -94,6 +175,55 @@ describe('auditSetup + needs-you board', () => {
         expect(audited.ok).toBe(false);
         expect(audited.findings.some(f => f.code === 'legacy_root_checkpoint')).toBe(true);
         expect(audited.text).toContain('Legacy Lab');
+    });
+
+    test('auditSetup surfaces a trigger whose source asset was deleted and a bad stored contract', async () => {
+        const svc = makeService();
+        const db = require('@goobster/core/db');
+        const projectAssetService = require('@goobster/core/services/projectAssetService');
+        const userId = `audit-triggers-${process.pid}`;
+        users.push(userId);
+        const { slug } = await svc.createProject({ userId, name: 'Pipeline Lab' });
+        const project = await db.get(
+            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug', { userId, slug }
+        );
+        const stage = await projectAssetService.save({
+            userId, project: slug, name: 'Stage 3', kind: 'script',
+            language: 'python', source: 'print("stage 3")', origin: 'portal'
+        });
+        // Rows written directly: the service refuses these shapes at write
+        // time, but an asset deleted later (or an older install) leaves them.
+        await db.insert(
+            `INSERT INTO project_triggers (projectId, userId, name, kind, eventTopic, action, actionAssetId,
+                                           actionParams, sourceAssetId, sourceTriggerId)
+             VALUES (@projectId, @userId, 'After fetch', 'event', 'job_completed', 'run_script', @assetId,
+                     '{"background":true}', 424242, NULL)`,
+            { projectId: project.id, userId, assetId: stage.id }
+        );
+        await db.insert(
+            `INSERT INTO project_triggers (projectId, userId, name, kind, schedule, action, actionAssetId, actionParams)
+             VALUES (@projectId, @userId, 'Nightly', 'cron', '0 1 * * *', 'run_script', @assetId,
+                     '{"requiredOutputs":[{"path":"/tmp/absolute.json"}]}')`,
+            { projectId: project.id, userId, assetId: stage.id }
+        );
+        await db.insert(
+            `INSERT INTO project_triggers (projectId, userId, name, kind, eventTopic, action, actionAssetId,
+                                           actionParams, sourceAssetId)
+             VALUES (@projectId, @userId, 'Healthy', 'event', 'job_completed', 'run_script', @assetId,
+                     '{"requiredOutputs":["pipeline/manifest_{utc_date}.json"]}', @assetId)`,
+            { projectId: project.id, userId, assetId: stage.id }
+        );
+
+        const audited = await svc.auditSetup({ userId, project: slug });
+        expect(audited.ok).toBe(false);
+        const codes = audited.findings.map(f => f.code);
+        expect(codes).toContain('trigger_source_asset_missing');
+        expect(codes).toContain('trigger_output_contract_invalid');
+        expect(codes).not.toContain('trigger_source_trigger_missing');
+        expect(codes).not.toContain('trigger_unfiltered_fanout');
+        expect(audited.findings.filter(f => f.triggerId != null)).toHaveLength(2);
+        expect(audited.text).toMatch(/Trigger "After fetch" filters on script asset #424242/);
+        expect(audited.text).toMatch(/Trigger "Nightly" declares an invalid output contract/);
     });
 
     test('human step choices legalize and completeStep requires a selection', async () => {
