@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
@@ -11,6 +11,21 @@ type Outcome =
     | { state: 'verified'; address: string }
     | { state: 'failed'; message: string };
 
+type Result = Awaited<ReturnType<typeof api.verifyEmail>>;
+
+// The token is single-use, so the POST must happen exactly once per page
+// load even if the component remounts (the session query flipping to
+// signed-in re-renders the route tree). One promise per token, shared.
+const inflight = new Map<string, Promise<Result>>();
+function verifyOnce(token: string): Promise<Result> {
+    let promise = inflight.get(token);
+    if (!promise) {
+        promise = api.verifyEmail(token);
+        inflight.set(token, promise);
+    }
+    return promise;
+}
+
 /**
  * /app/verify-email?token=… - the landing page for both kinds of
  * verification link. A sign-up's link creates the account and signs the
@@ -22,26 +37,29 @@ export function VerifyEmailPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [outcome, setOutcome] = useState<Outcome>(token ? { state: 'working' } : { state: 'failed', message: 'This link is missing its token.' });
-    const started = useRef(false);
 
     useEffect(() => {
-        if (!token || started.current) return;
-        started.current = true;
+        if (!token) return;
+        let cancelled = false;
         (async () => {
             try {
-                const result = await api.verifyEmail(token);
+                const result = await verifyOnce(token);
+                if (cancelled) return;
                 if (result.kind === 'registration') {
-                    await queryClient.invalidateQueries({ queryKey: keys.me });
                     setOutcome({ state: 'registered', name: result.user.name, loginName: result.user.loginName });
-                    window.setTimeout(() => { void navigate({ to: '/' }); }, 1800);
+                    window.setTimeout(() => {
+                        void queryClient.invalidateQueries({ queryKey: keys.me });
+                        void navigate({ to: '/' });
+                    }, 1800);
                 } else {
                     await queryClient.invalidateQueries({ queryKey: keys.me });
-                    setOutcome({ state: 'verified', address: result.address });
+                    if (!cancelled) setOutcome({ state: 'verified', address: result.address });
                 }
             } catch (err) {
-                setOutcome({ state: 'failed', message: (err as ApiError).message });
+                if (!cancelled) setOutcome({ state: 'failed', message: (err as ApiError).message });
             }
         })();
+        return () => { cancelled = true; };
     }, [token, navigate, queryClient]);
 
     return (
