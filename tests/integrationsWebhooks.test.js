@@ -22,6 +22,21 @@ const GUILD = '600000000000000001';
 const CHANNEL = '600000000000000002';
 const USER = '600000000000000003';
 const GITHUB_SECRET = 'github-webhook-secret-for-tests-1234';
+
+/**
+ * Receivers ACK with 202 and process afterwards, so assertions about the
+ * outcome must wait for it rather than sleep a fixed interval - on a busy
+ * CI runner (Postgres job, several Jest workers) 100 ms is not a guarantee.
+ */
+async function waitFor(predicate, { timeoutMs = 5000, stepMs = 20 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        const value = await predicate();
+        if (value) return value;
+        if (Date.now() >= deadline) return value;
+        await new Promise(resolve => setTimeout(resolve, stepMs));
+    }
+}
 const CURSOR_SECRET = 'cursor-webhook-secret-for-tests-5678';
 
 function sign(secret, body) {
@@ -190,7 +205,7 @@ describe('webhook receivers (HTTP end-to-end)', () => {
         expect(good.status).toBe(202);
 
         // Delivery is async after the 202 ACK.
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await waitFor(() => fakeClient.sent.length >= 1);
         expect(fakeClient.sent).toHaveLength(1);
         expect(fakeClient.sent[0].embeds[0].data.title).toContain('Issue opened');
     });
@@ -218,8 +233,10 @@ describe('webhook receivers (HTTP end-to-end)', () => {
         });
         expect(response.status).toBe(202);
 
-        await new Promise(resolve => setTimeout(resolve, 100));
-        const row = await db.get('SELECT * FROM agent_runs WHERE agentId = @agentId', { agentId: 'bc-test-1' });
+        const row = await waitFor(async () => {
+            const current = await db.get('SELECT * FROM agent_runs WHERE agentId = @agentId', { agentId: 'bc-test-1' });
+            return current?.status === 'FINISHED' && fakeClient.sent.length >= 1 ? current : null;
+        });
         expect(row.status).toBe('FINISHED');
         expect(row.prUrl).toBe('https://github.com/o/r/pull/42');
         expect(row.summary).toBe('Fixed the bug and added a test.');

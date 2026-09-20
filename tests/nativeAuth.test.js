@@ -131,7 +131,9 @@ afterAll(async () => {
 beforeEach(async () => {
     identityConfig.requireAccount = false;
     identityConfig.nativeLogin = true;
-    identityConfig.passwordCostLog2 = 14;
+    // Cheap scrypt (4 MiB) so this suite does not starve its Jest neighbours
+    // of CPU on a small CI runner; the hashing primitives are covered below.
+    identityConfig.passwordCostLog2 = 12;
     identityConfig.passwordMinLength = 15;
     for (const table of TABLES) await db.run(`DELETE FROM ${table}`);
 });
