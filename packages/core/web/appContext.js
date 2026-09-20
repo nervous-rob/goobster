@@ -8,6 +8,7 @@
 const { toGateway } = require('../gateway');
 const eventBusService = require('../services/eventBusService');
 const webSessionService = require('../services/webSessionService');
+const identityService = require('../services/identityService');
 const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
@@ -50,6 +51,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         publicUrl,
         secureCookies: Boolean(publicUrl && publicUrl.startsWith('https://')),
         sessions: deps.sessions || webSessionService,
+        identity: deps.identity || identityService,
         chat: deps.chat || webChatService,
         dashboard: deps.dashboard || webDashboardService,
         parlor: deps.parlor || parlorService,

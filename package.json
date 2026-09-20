@@ -22,6 +22,7 @@
     "db-init": "node scripts/initDb.js",
     "docs:seed": "node scripts/seed-self-docs.js",
     "docs:check": "node scripts/seed-self-docs.js --check",
+    "identity:report": "node scripts/identity-report.js",
     "migrate-to-postgres": "node scripts/migrate-to-postgres.js",
     "sandbox-python": "node scripts/setup-sandbox-python.js",
     "lint": "eslint . --max-warnings 60",

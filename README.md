@@ -126,12 +126,15 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Docker | `documentation/docker_deployment.md` |
 | Architecture | `documentation/architecture.md` |
 | Self-knowledge (`consultDocs`) | `documentation/self_knowledge.md` |
+| Application identity (principals, accounts) | `documentation/identity.md` |
 
 ### Planned product work
 
 The [shared-instance product plan](documentation/shared_instance_product_spec.md)
 defines the next invitation-only multi-user release: clearer navigation,
 Discord-independent accounts, private data boundaries, and shared resource limits.
+Its first increment (application identity: principals, accounts, the
+`identity:report` migration tooling) has shipped; see `documentation/identity.md`.
 The [guided tutorial spec](documentation/guided_tutorials_spec.md) covers each
 room's demonstrations and independent skip, resume, and reset behavior.
 [Naming exploration](documentation/product_naming_exploration.md) records

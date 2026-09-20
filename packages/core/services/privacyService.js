@@ -345,7 +345,25 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        // Application identity: the principal row, the account entitlement
+        // (role/status, never credentials), and which external identities
+        // are linked - provider and subject only.
+        const principal = await db.get(
+            'SELECT id, displayName, createdAt FROM principals WHERE id = @userId', { userId }
+        );
+        const account = await db.get(
+            'SELECT status, role, entitlement, createdAt FROM app_accounts WHERE principalId = @userId', { userId }
+        );
+        const linkedIdentities = await db.all(
+            'SELECT provider, subject FROM auth_identities WHERE principalId = @userId ORDER BY id', { userId }
+        );
+
         return {
+            identity: {
+                principal: principal ? { id: principal.id, displayName: principal.displayName, createdAt: principal.createdAt } : null,
+                account: account || null,
+                linkedIdentities
+            },
             facts,
             knowledgeGraph: {
                 nodes: kgStats?.nodes || 0,
@@ -730,6 +748,15 @@ class PrivacyService {
                 'DELETE FROM web_sessions WHERE userId = @userId', { userId }
             )).changes;
 
+            // The application identity itself: principal, linked external
+            // identities, and the account entitlement. A forgotten user has
+            // to be re-invited; nothing here is kept for convenience.
+            const identityService = require('./identityService');
+            const identity = await identityService.erasePrincipal(userId, db);
+            counts.principals = identity.principals;
+            counts.authIdentities = identity.authIdentities;
+            counts.appAccounts = identity.accounts;
+
             // Share links go before their conversations: a forgotten user's
             // transcripts must stop being publicly readable.
             counts.webShareLinks = (await db.run(
@@ -1026,6 +1053,15 @@ class PrivacyService {
             )).c,
             web_sessions: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @userId', { userId }
+            )).c,
+            principals: (await db.get(
+                'SELECT COUNT(*) AS c FROM principals WHERE id = @userId', { userId }
+            )).c,
+            auth_identities: (await db.get(
+                'SELECT COUNT(*) AS c FROM auth_identities WHERE principalId = @userId', { userId }
+            )).c,
+            app_accounts: (await db.get(
+                'SELECT COUNT(*) AS c FROM app_accounts WHERE principalId = @userId', { userId }
             )).c,
             web_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }
