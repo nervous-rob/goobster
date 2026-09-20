@@ -178,6 +178,17 @@ body {
 .login-card h1 { margin: 0; font-size: 28px; }
 .login-sub { margin: 0 0 8px; color: var(--text-dim); }
 .dev-login { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 8px; }
+.native-login { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; }
+.native-login .btn { margin-top: 6px; }
+.native-login .hint { margin-top: 2px; }
+.login-or { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+.login-error { color: var(--danger); font-size: 13px; text-align: left; }
+.host-body { display: flex; flex-direction: column; gap: 22px; max-width: 900px; }
+.host-invite-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+.host-invite-form .input { min-width: 180px; }
+.badge.state-open { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
+.badge.state-redeemed { background: rgba(124, 140, 255, 0.16); }
+.badge.state-revoked, .badge.state-expired { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
 
 /* ---------- app shell ---------- */
 

@@ -1,4 +1,4 @@
-import type { AppConfig, ChatAttachment, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -46,6 +46,35 @@ export const api = {
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),
     devSession: (userId: string, name: string) =>
         request('/api/app/auth/dev-session', { method: 'POST', body: { userId, name } }),
+
+    // Native sign-in (release-gated server-side by identity.nativeLogin)
+    nativeLogin: (loginName: string, password: string) =>
+        request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/native-login', { method: 'POST', body: { loginName, password } }),
+    inspectInvite: (token: string) => request<InvitePreview>(`/api/app/auth/invite/${encodeURIComponent(token)}`),
+    register: (body: { token: string; loginName: string; password: string; displayName?: string }) =>
+        request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/register', { method: 'POST', body }),
+    recover: (body: { token: string; password: string; loginName?: string }) =>
+        request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/recover', { method: 'POST', body }),
+    reauth: (password: string) => request<{ ok: true }>('/api/app/auth/reauth', { method: 'POST', body: { password } }),
+    account: () => request<AccountSummary>('/api/app/account'),
+    setCredentials: (body: { loginName?: string; currentPassword?: string; newPassword: string }) =>
+        request<{ ok: true; loginName: string }>('/api/app/account/credentials', { method: 'PUT', body }),
+    disconnectIdentity: (provider: 'discord') =>
+        request<{ ok: true }>(`/api/app/account/identities/${provider}`, { method: 'DELETE' }),
+
+    // Installation administration (operators)
+    adminInvites: () => request<{ invites: Invite[]; nativeLogin: boolean; defaultTtlHours: number }>('/api/app/admin/invites'),
+    adminCreateInvite: (body: { role: 'member' | 'operator'; ttlHours?: number; note?: string }) =>
+        request<{ invite: Invite; url: string }>('/api/app/admin/invites', { method: 'POST', body }),
+    adminRevokeInvite: (id: number) => request<{ invite: Invite }>(`/api/app/admin/invites/${id}`, { method: 'DELETE' }),
+    adminAccounts: () => request<{ accounts: AdminAccount[]; requireAccount: boolean }>('/api/app/admin/accounts'),
+    adminGrantAccount: (principalId: string, role: 'member' | 'operator' = 'member') =>
+        request<{ account: AdminAccount; created: boolean }>('/api/app/admin/accounts', { method: 'POST', body: { principalId, role } }),
+    adminUpdateAccount: (principalId: string, body: { status?: 'active' | 'disabled'; role?: 'member' | 'operator' }) =>
+        request<{ account: AdminAccount }>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}`, { method: 'PATCH', body }),
+    adminIssueRecovery: (principalId: string) =>
+        request<{ url: string; expiresAt: string; loginName: string | null }>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/recovery`, { method: 'POST' }),
+    adminIdentityReport: () => request<MigrationReport>('/api/app/admin/identity/report'),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),
     chatSuggestions: () =>

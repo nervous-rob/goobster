@@ -15,6 +15,9 @@ import { ToastProvider } from './hooks/useToast';
 import { ConfirmProvider } from './hooks/useConfirm';
 import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
+import { InvitePage } from './shell/InvitePage';
+import { RecoverPage } from './shell/RecoverPage';
+import { HostRoom } from './rooms/HostRoom';
 import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
@@ -90,6 +93,20 @@ const shareRoute = createRoute({
     component: SharePage,
 });
 
+// Invitation and password-reset landing pages are public by design: the
+// token in the query string is the only capability they need.
+const inviteRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/invite',
+    component: InvitePage,
+});
+
+const recoverRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/recover',
+    component: RecoverPage,
+});
+
 // Everything else lives behind the login gate.
 const authedRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -144,6 +161,12 @@ const noticedRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/noticed',
     component: NoticedRoom,
+});
+
+const hostRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/host',
+    component: HostRoom,
 });
 
 const usageRoute = createRoute({
@@ -286,8 +309,11 @@ const settingsSectionRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
     shareShellRoute.addChildren([shareRoute]),
+    inviteRoute,
+    recoverRoute,
     authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
+        hostRoute,
         studyRoute,
         studyIdRoute,
         spitballRoute,

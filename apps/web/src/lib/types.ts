@@ -9,10 +9,86 @@ export type Scope = {
 
 export type Me = {
     user: { id: string; name: string; avatar: string | null };
+    /** Application identity (shared-instance): entitlement and sign-in surface. */
+    identity?: {
+        installationId: string | null;
+        installationName?: string;
+        account: { role: 'member' | 'operator'; status: 'active' | 'disabled'; entitlement: 'invite' | 'migration' | 'bootstrap' } | null;
+        discordLinked: boolean;
+        operator: boolean;
+        nativeLogin: boolean;
+    };
     bot: { id: string; name: string } | null;
     scopes: Scope[];
     maxInputLength: number;
     features: { observatory?: boolean; spitball?: boolean };
+};
+
+/** GET /api/app/account - the signed-in person's sign-in methods (safe metadata only). */
+export type AccountSummary = {
+    principalId: string;
+    kind: 'legacy' | 'native';
+    displayName: string | null;
+    account: { role: string; status: string; entitlement: string; loginName: string | null } | null;
+    nativeLogin: boolean;
+    hasPassword: boolean;
+    passwordMinLength: number;
+    discord: {
+        linked: boolean;
+        subject: string | null;
+        linkedAt: string | null;
+        canDisconnect: boolean;
+        canConnect: boolean;
+    };
+    recentAuth: boolean;
+    recentAuthMinutes: number;
+    discordLoginAvailable: boolean;
+};
+
+export type InviteState = 'open' | 'redeemed' | 'revoked' | 'expired';
+
+export type Invite = {
+    id: number;
+    role: 'member' | 'operator';
+    note: string | null;
+    issuedBy: string;
+    expiresAt: string;
+    createdAt: string;
+    consumedAt: string | null;
+    consumedBy: string | null;
+    revokedAt: string | null;
+    state: InviteState;
+};
+
+export type InvitePreview = {
+    role: 'member' | 'operator';
+    expiresAt: string;
+    installation: { id: string; name: string };
+    passwordMinLength: number;
+};
+
+export type AdminAccount = {
+    principalId: string;
+    displayName: string | null;
+    loginName: string | null;
+    status: 'active' | 'disabled';
+    role: 'member' | 'operator';
+    entitlement: 'invite' | 'migration' | 'bootstrap';
+    hasPassword: boolean;
+    discordLinked: boolean;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type MigrationReport = {
+    generatedAt: string;
+    installationId: string;
+    requireAccount: boolean;
+    tables: Array<{ table: string; column: string; rows: number; owners: number }>;
+    owners: { total: number; snowflake: number; native: number; unresolved: number; withPrincipal: number; withAccount: number };
+    unresolved: Array<{ id: string; rows: number; tables: string[] }>;
+    principals: { total: number };
+    accounts: { total: number; active: number; disabled: number; operators: number };
 };
 
 /** Spitball Expeditions (autonomous research runs) */
@@ -187,6 +263,9 @@ export type AppConfig = {
     clientId: string;
     devMode: boolean;
     loginAvailable: boolean;
+    nativeLogin: boolean;
+    installationName: string;
+    passwordMinLength: number;
     maxInputLength: number;
 };
 

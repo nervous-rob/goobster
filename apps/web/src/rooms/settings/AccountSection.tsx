@@ -8,6 +8,7 @@ import { useToast } from '../../hooks/useToast';
 import { Field, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { clearDeviceLocalData, previewDeviceClear } from '../../lib/appearance';
+import { SignInMethods } from './SignInMethods';
 
 export function AccountSection({ section }: { section: UserSettingsResponse['sections']['account'] }) {
     const me = useSession();
@@ -17,6 +18,7 @@ export function AccountSection({ section }: { section: UserSettingsResponse['sec
     const [busy, setBusy] = useState(false);
     const name = me?.user.name || section.values.username;
     const avatar = me?.user.avatar || section.values.avatar;
+    const isNative = String(section.values.userId || '').startsWith('usr_');
     const sessions = useQuery({
         queryKey: ['settings-sessions'],
         queryFn: () => api.listSettingsSessions()
@@ -69,15 +71,20 @@ export function AccountSection({ section }: { section: UserSettingsResponse['sec
             <SectionHeader id="account" scope={SCOPE_FOR[section.scope]} appliesTo={section.appliesTo} />
 
             <Field id="identity" label="Signed in as"
-                hint="Your Discord identity is the account. Changing what Goobster calls you (Profile) never changes this.">
+                hint="Your account id never changes. Changing what Goobster calls you (Profile) never changes this.">
                 <div className="settings-identity" id="identity-input">
                     {avatar && <img className="avatar" src={avatar} alt="" width={40} height={40} />}
                     <div>
                         <div><strong>{name}</strong></div>
-                        <div className="hint">Discord user id <code>{section.values.userId}</code></div>
+                        <div className="hint">
+                            {isNative ? 'Account id' : 'Discord user id'} <code>{section.values.userId}</code>
+                            {me?.identity?.account && <> · {me.identity.account.role}{me.identity.installationName ? ` at ${me.identity.installationName}` : ''}</>}
+                        </div>
                     </div>
                 </div>
             </Field>
+
+            <SignInMethods />
 
             <Field id="sessions" label="Active sessions" scope="Your account"
                 hint="Safe metadata only — token hashes never appear. Sign out other devices is distinct from hiding your online presence.">

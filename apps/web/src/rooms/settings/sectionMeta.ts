@@ -84,11 +84,11 @@ export const SECTIONS: SectionMeta[] = [
     },
     {
         id: 'account',
-        title: 'Account & devices',
+        title: 'Account & sign-in',
         icon: '👤',
         scope: 'Your account',
-        blurb: 'The Discord identity you are signed in with, sessions, and signing out.',
-        keywords: ['account', 'user', 'discord', 'sign out', 'logout', 'log out', 'session', 'devices']
+        blurb: 'Who you are signed in as, your login name and password, Discord connection, sessions, and signing out.',
+        keywords: ['account', 'user', 'discord', 'sign out', 'logout', 'log out', 'session', 'devices', 'password', 'login', 'connect', 'disconnect']
     }
 ];
 
@@ -166,6 +166,8 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'parlor-defaults', label: 'Defaults for new personas', keywords: ['parlor', 'persona defaults', 'charter', 'emoji'] },
     { section: 'appearance', fieldId: 'conservatory', label: 'Conservatory library', keywords: ['conservatory', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
+    { section: 'account', fieldId: 'sign-in-password', label: 'Login name & password', keywords: ['password', 'passphrase', 'login name', 'username', 'change password', 'sign in without discord'] },
+    { section: 'account', fieldId: 'sign-in-discord', label: 'Discord connection', keywords: ['discord', 'connect', 'disconnect', 'link', 'unlink'] },
     { section: 'account', fieldId: 'sessions', label: 'Active sessions', keywords: ['devices', 'sessions', 'revoke', 'sign out other'] },
     { section: 'account', fieldId: 'clear-device', label: 'Clear device-local data', keywords: ['clear', 'local storage', 'this device'] },
     { section: 'account', fieldId: 'sign-out', label: 'Sign out', keywords: ['sign out', 'logout', 'log out', 'leave', 'session'] }

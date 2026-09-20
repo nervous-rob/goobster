@@ -30,7 +30,8 @@ const NAV = [
         { to: '/noticed', label: '🧭 Noticed', room: 'noticed' },
         { to: '/tasks', label: '🗓️ Tasks', room: 'tasks' },
         { to: '/decks', label: '🃏 Decks', room: 'decks' },
-        { to: '/usage', label: '📈 Usage', room: 'usage' }
+        { to: '/usage', label: '📈 Usage', room: 'usage' },
+        { to: '/host', label: '🗝️ Host', room: 'host', operator: true }
     ] }
 ];
 
@@ -49,6 +50,7 @@ const PATH_ROOM: Record<string, string> = {
     '/tasks': 'tasks',
     '/decks': 'decks',
     '/usage': 'usage',
+    '/host': 'host',
     '/settings': 'settings'
 };
 
@@ -222,7 +224,8 @@ export function AppShell() {
                             <div key={group.section}>
                                 <div className="nav-section">{group.section}</div>
                                 {group.items.map((item) => {
-                                    if (item.feature && !me?.features?.[item.feature]) return null;
+                                    if ('feature' in item && item.feature && !me?.features?.[item.feature]) return null;
+                                    if ('operator' in item && item.operator && !me?.identity?.operator) return null;
                                     const active = room === item.room;
                                     return (
                                         <Link key={item.to} to={item.to} className={`nav-btn${active ? ' active' : ''}`}
