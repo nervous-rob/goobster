@@ -10,6 +10,7 @@ import { MenuButton } from '../shell/MenuButton';
 const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
 const REPORT_KEY = ['admin-identity-report'];
+const INSTALLATION_KEY = ['admin-installation'];
 
 function absolute(url: string): string {
     return url.startsWith('http') ? url : `${window.location.origin}${url}`;
@@ -212,6 +213,9 @@ function AccountsPanel() {
                                 <div className="hint">
                                     <code>{account.principalId}</code>
                                     {account.discordLinked ? ' · Discord' : ''}{account.hasPassword ? ' · password' : ' · no password'}
+                                    {account.email && (
+                                        <> · {account.email.address} <span className={`badge ${account.email.verified ? 'state-verified' : 'state-unverified'}`}>{account.email.verified ? 'verified' : 'unverified'}</span></>
+                                    )}
                                 </div>
                             </span>
                             <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -227,6 +231,77 @@ function AccountsPanel() {
                     );
                 })}
             </div>
+        </section>
+    );
+}
+
+function SignupPanel() {
+    const toast = useToast();
+    const view = useQuery({ queryKey: INSTALLATION_KEY, queryFn: () => api.adminInstallation() });
+    const [testTo, setTestTo] = useState('');
+    const [busy, setBusy] = useState(false);
+    const data = view.data;
+
+    async function sendTest(event: FormEvent) {
+        event.preventDefault();
+        setBusy(true);
+        try {
+            const result = await api.adminTestMail(testTo.trim());
+            toast(`Test message handed to ${result.provider}. Check the inbox (and the spam folder).`);
+        } catch (error) {
+            toast((error as ApiError).message, true);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <section className="settings-section" aria-labelledby="host-signup-title">
+            <h2 id="host-signup-title">Sign-up &amp; mail</h2>
+            <p className="hint">
+                How people get in, and whether this installation can send email. Both are set in <code>config.json</code> or the environment
+                (<code>identity.registration</code>, <code>mail.*</code>, <code>webapp.publicUrl</code>); this panel shows what is in effect.
+            </p>
+            {view.isPending && <div className="hint">Loading…</div>}
+            {data && (
+                <div className="list-card">
+                    <div className="list-row">
+                        <span>Registration</span>
+                        <span>
+                            <strong>{data.registration.effective === 'open' ? 'Open sign-up' : 'Invitation only'}</strong>
+                            {data.registration.configured !== data.registration.effective && (
+                                <span className="hint"> · configured <code>{data.registration.configured}</code>, but {data.mail.reason?.replace(/\.$/, '').toLowerCase() || 'mail is off'}</span>
+                            )}
+                        </span>
+                    </div>
+                    <div className="list-row">
+                        <span>Outbound mail</span>
+                        <span>
+                            {data.mail.enabled
+                                ? <><strong>On</strong> · {data.mail.provider} · from <code>{data.mail.from}</code></>
+                                : <><strong>Off</strong>{data.mail.reason && <span className="hint"> · {data.mail.reason}</span>}</>}
+                        </span>
+                    </div>
+                    <div className="list-row">
+                        <span>Emailed links</span>
+                        <span>
+                            {data.mail.linksEnabled
+                                ? <>Verification and password reset by email are available · <code>{data.publicUrl}</code></>
+                                : <><strong>Unavailable</strong>{data.mail.reason && <span className="hint"> · {data.mail.reason}</span>}</>}
+                        </span>
+                    </div>
+                    <div className="list-row">
+                        <span className="hint">Verification links last {Math.round(data.emailVerifyTtlMinutes / 60)} h · reset links {data.recoveryTtlMinutes} min</span>
+                    </div>
+                </div>
+            )}
+            {data?.mail.linksEnabled && (
+                <form className="host-invite-form" onSubmit={sendTest}>
+                    <input className="input" type="email" placeholder="Send a test message to…" value={testTo}
+                        onChange={(e) => setTestTo(e.target.value)} aria-label="Test recipient" style={{ flex: 1 }} required />
+                    <button type="submit" className="btn" disabled={busy || !testTo.trim()}>Send test</button>
+                </form>
+            )}
         </section>
     );
 }
@@ -269,6 +344,7 @@ export function HostRoom() {
                 {!operator && <div className="empty">Only the host of this installation can open this room.</div>}
                 {operator && (
                     <>
+                        <SignupPanel />
                         <InvitesPanel />
                         <AccountsPanel />
                         <ReportPanel />

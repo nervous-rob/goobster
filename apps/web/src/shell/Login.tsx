@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
@@ -54,7 +55,7 @@ export function Login() {
                 <p className="login-sub">Come in. Same brain as Discord — memory, parlor, and the tools he built you.</p>
                 {cfg?.nativeLogin && (
                     <form className="native-login" onSubmit={onNative} aria-label="Sign in with a login name and password">
-                        <label className="hint" htmlFor="login-name">Login name</label>
+                        <label className="hint" htmlFor="login-name">{cfg.emailRecovery ? 'Login name or email' : 'Login name'}</label>
                         <input id="login-name" className="input" autoComplete="username" autoCapitalize="none" spellCheck={false}
                             required value={loginName} onChange={(e) => setLoginName(e.target.value)} />
                         <label className="hint" htmlFor="login-password">Password</label>
@@ -64,7 +65,12 @@ export function Login() {
                         <button className="btn primary big" type="submit" disabled={busy || !loginName.trim() || !password}>
                             {busy ? 'Signing in…' : 'Sign in'}
                         </button>
-                        <div className="hint">Forgot your password? Ask the host of this installation for a reset link.</div>
+                        <div className="hint login-links">
+                            {cfg.emailRecovery
+                                ? <Link to="/forgot">Forgot your password?</Link>
+                                : <span>Forgot your password? Ask the host of this installation for a reset link.</span>}
+                            {cfg.registration === 'open' && <Link to="/register">Create an account</Link>}
+                        </div>
                     </form>
                 )}
                 {cfg?.loginAvailable && (

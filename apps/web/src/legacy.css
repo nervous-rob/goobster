@@ -189,6 +189,10 @@ body {
 .badge.state-open { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
 .badge.state-redeemed { background: rgba(124, 140, 255, 0.16); }
 .badge.state-revoked, .badge.state-expired { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
+.badge.state-verified { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
+.badge.state-unverified { background: rgba(255, 190, 92, 0.18); color: #e0a94a; }
+.login-links { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.login-links a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---------- app shell ---------- */
 

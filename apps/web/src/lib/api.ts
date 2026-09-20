@@ -1,4 +1,4 @@
-import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -56,9 +56,21 @@ export const api = {
     recover: (body: { token: string; password: string; loginName?: string }) =>
         request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/recover', { method: 'POST', body }),
     reauth: (password: string) => request<{ ok: true }>('/api/app/auth/reauth', { method: 'POST', body: { password } }),
+    // Email-backed flows (hidden by the server unless mail is configured)
+    signup: (body: { loginName: string; password: string; email: string; displayName?: string }) =>
+        request<{ ok: true }>('/api/app/auth/signup', { method: 'POST', body }),
+    verifyEmail: (token: string) =>
+        request<{ kind: 'registration'; user: { id: string; name: string; loginName: string } } | { kind: 'verified'; address: string }>(
+            '/api/app/auth/verify-email', { method: 'POST', body: { token } }),
+    forgot: (email: string) => request<{ ok: true }>('/api/app/auth/forgot', { method: 'POST', body: { email } }),
     account: () => request<AccountSummary>('/api/app/account'),
     setCredentials: (body: { loginName?: string; currentPassword?: string; newPassword: string }) =>
         request<{ ok: true; loginName: string }>('/api/app/account/credentials', { method: 'PUT', body }),
+    setEmail: (email: string) =>
+        request<{ address: string; verified: boolean; sent: boolean }>('/api/app/account/email', { method: 'PUT', body: { email } }),
+    resendVerification: () =>
+        request<{ address: string; verified: boolean; sent: boolean }>('/api/app/account/email/resend', { method: 'POST' }),
+    removeEmail: () => request<{ removed: true }>('/api/app/account/email', { method: 'DELETE' }),
     disconnectIdentity: (provider: 'discord') =>
         request<{ ok: true }>(`/api/app/account/identities/${provider}`, { method: 'DELETE' }),
 
@@ -75,6 +87,8 @@ export const api = {
     adminIssueRecovery: (principalId: string) =>
         request<{ url: string; expiresAt: string; loginName: string | null }>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/recovery`, { method: 'POST' }),
     adminIdentityReport: () => request<MigrationReport>('/api/app/admin/identity/report'),
+    adminInstallation: () => request<InstallationView>('/api/app/admin/installation'),
+    adminTestMail: (to: string) => request<{ ok: true; provider: string }>('/api/app/admin/mail/test', { method: 'POST', body: { to } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),
     chatSuggestions: () =>

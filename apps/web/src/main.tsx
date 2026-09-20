@@ -17,6 +17,9 @@ import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
 import { InvitePage } from './shell/InvitePage';
 import { RecoverPage } from './shell/RecoverPage';
+import { RegisterPage } from './shell/RegisterPage';
+import { ForgotPage } from './shell/ForgotPage';
+import { VerifyEmailPage } from './shell/VerifyEmailPage';
 import { HostRoom } from './rooms/HostRoom';
 import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
@@ -105,6 +108,26 @@ const recoverRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/recover',
     component: RecoverPage,
+});
+
+// Email-backed entry points: open sign-up, "forgot password", and the
+// verification landing page. The server hides them when mail is off.
+const registerRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/register',
+    component: RegisterPage,
+});
+
+const forgotRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/forgot',
+    component: ForgotPage,
+});
+
+const verifyEmailRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/verify-email',
+    component: VerifyEmailPage,
 });
 
 // Everything else lives behind the login gate.
@@ -311,6 +334,9 @@ const routeTree = rootRoute.addChildren([
     shareShellRoute.addChildren([shareRoute]),
     inviteRoute,
     recoverRoute,
+    registerRoute,
+    forgotRoute,
+    verifyEmailRoute,
     authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
         hostRoute,
