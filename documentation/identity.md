@@ -425,7 +425,8 @@ promoted). There is no "first visitor becomes admin" path.
 | `installationId` [`GOOBSTER_INSTALLATION_ID`] | `local` | Label carried on every actor context. |
 | `requireAccount` [`GOOBSTER_IDENTITY_REQUIRE_ACCOUNT`] | `false` | The release gate described above. |
 | `operators` [`GOOBSTER_IDENTITY_OPERATORS`] | `[]` | Discord ids eligible for `--bootstrap-operators`. |
-| `installationName` [`GOOBSTER_INSTALLATION_NAME`] | `Goobster` | Shown on the login screen and invitation page. |
+| `installationName` [`GOOBSTER_INSTALLATION_NAME`] | `Goobster` | Shown on the login screen and invitation page, and as "member of …" in the People picker. |
+| `assistantName` [`GOOBSTER_ASSISTANT_NAME`] | `Goobster` | The assistant's own name where no Discord bot account supplies one (see [independent_runtime.md](independent_runtime.md)). |
 | `nativeLogin` [`GOOBSTER_IDENTITY_NATIVE_LOGIN`] | `false` | Release gate for invitations, registration, login, recovery, and credential enrollment. |
 | `passwordMinLength` [`GOOBSTER_IDENTITY_PASSWORD_MIN_LENGTH`] | `15` | Password floor (12-128). |
 | `passwordCostLog2` [`GOOBSTER_IDENTITY_PASSWORD_COST`] | `15` | scrypt `log2(N)` (14-18); stored per hash, re-hashed on next login when raised. |
@@ -459,12 +460,23 @@ forgotten person has to be invited (or sign up) again. Pending sign-ups
 that are never verified hold only what the person typed, expire with their
 link, and are pruned.
 
+## People discovery (Increment C)
+
+Members of an installation can find each other by name without Discord.
+`identityService.searchPeople({ actorId, q })` matches the start of a
+display name or login name among active accounts, never lists the roster
+(a query is required), and returns `{ id, name }` only;
+`identityService.describeMember(id)` resolves one principal id for an
+invite confirmation. `friendService.listInvitable` merges these members
+(source `member`) with Discord friends and shared-server mates when Discord
+is connected, and the Observatory / Parlor People pickers show them with a
+`member` badge. Invitations accept any principal id. The rest of
+operation without Discord - the adapter switch, the assistant identity, the
+Inbox, runtime modes - is in [independent_runtime.md](independent_runtime.md).
+
 ## Not yet here
 
-Native people discovery, an assistant identity that works with the Discord
-adapter disabled, and in-app delivery are Increment C of the
-[plan](shared_instance_product_spec.md#9-implementation-sequence). A native
-account can sign in and use the private scope today, but chat still needs
-the bot connected. Passkeys and an operator-selected OIDC provider remain
-later additions; a hosted identity service (Supabase Auth, Auth0, …) would
-plug in as such a provider, not as the account store.
+Passkeys and an operator-selected OIDC provider remain later additions; a
+hosted identity service (Supabase Auth, Auth0, …) would plug in as such a
+provider, not as the account store. Profile detail and presence for native
+members beyond name-and-id are separate permissions that do not exist yet.
