@@ -28,6 +28,7 @@ const GROUPS = [
             'githubService',
             'globalCommandPayload',
             'identityService',
+        'nativeAuth',
             'integrationActions',
             'integrationsWebhooks',
             'issueCaptureAndBridges',

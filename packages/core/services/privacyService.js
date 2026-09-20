@@ -357,12 +357,36 @@ class PrivacyService {
         const linkedIdentities = await db.all(
             'SELECT provider, subject FROM auth_identities WHERE principalId = @userId ORDER BY id', { userId }
         );
+        // Native sign-in: whether a password exists (never the hash), open
+        // reset links issued for this account, and invitations the person
+        // issued or redeemed.
+        const credential = await db.get(
+            'SELECT updatedAt FROM password_credentials WHERE principalId = @userId', { userId }
+        );
+        const openRecovery = await db.get(
+            `SELECT COUNT(*) AS c FROM recovery_tokens
+             WHERE principalId = @userId AND consumedAt IS NULL AND expiresAt > @now`,
+            { userId, now: new Date().toISOString().slice(0, 19).replace('T', ' ') }
+        );
+        const invitesIssued = await db.get(
+            'SELECT COUNT(*) AS c FROM account_invites WHERE issuedBy = @userId', { userId }
+        );
+        const inviteRedeemed = await db.get(
+            'SELECT consumedAt FROM account_invites WHERE consumedBy = @userId', { userId }
+        );
 
         return {
             identity: {
                 principal: principal ? { id: principal.id, displayName: principal.displayName, createdAt: principal.createdAt } : null,
                 account: account || null,
-                linkedIdentities
+                linkedIdentities,
+                nativeSignIn: {
+                    hasPassword: Boolean(credential),
+                    passwordUpdatedAt: credential?.updatedAt || null,
+                    openRecoveryLinks: Number(openRecovery?.c || 0),
+                    invitesIssued: Number(invitesIssued?.c || 0),
+                    joinedByInviteAt: inviteRedeemed?.consumedAt || null
+                }
             },
             facts,
             knowledgeGraph: {
@@ -756,6 +780,10 @@ class PrivacyService {
             counts.principals = identity.principals;
             counts.authIdentities = identity.authIdentities;
             counts.appAccounts = identity.accounts;
+            counts.passwordCredentials = identity.passwordCredentials;
+            counts.recoveryTokens = identity.recoveryTokens;
+            counts.oauthLinkStates = identity.oauthLinkStates;
+            counts.accountInvites = identity.invitesIssued;
 
             // Share links go before their conversations: a forgotten user's
             // transcripts must stop being publicly readable.
@@ -1062,6 +1090,18 @@ class PrivacyService {
             )).c,
             app_accounts: (await db.get(
                 'SELECT COUNT(*) AS c FROM app_accounts WHERE principalId = @userId', { userId }
+            )).c,
+            password_credentials: (await db.get(
+                'SELECT COUNT(*) AS c FROM password_credentials WHERE principalId = @userId', { userId }
+            )).c,
+            recovery_tokens: (await db.get(
+                'SELECT COUNT(*) AS c FROM recovery_tokens WHERE principalId = @userId OR issuedBy = @userId', { userId }
+            )).c,
+            oauth_link_states: (await db.get(
+                'SELECT COUNT(*) AS c FROM oauth_link_states WHERE principalId = @userId', { userId }
+            )).c,
+            account_invites: (await db.get(
+                'SELECT COUNT(*) AS c FROM account_invites WHERE issuedBy = @userId OR consumedBy = @userId', { userId }
             )).c,
             web_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }

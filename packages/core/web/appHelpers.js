@@ -101,18 +101,53 @@ function createAppHelpers(ctx) {
             sendError(res, 500, 'INTERNAL', 'Something went wrong.');
             return;
         }
+        // Revocation: a password reset or disable bumps the account's
+        // sessionVersion; sessions minted before that are dead on arrival.
+        if (session.sessionVersion != null && actor.account
+            && Number(actor.account.sessionVersion) !== Number(session.sessionVersion)) {
+            await ctx.sessions.destroy(token);
+            res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
+            sendError(res, 401, 'SESSION_REVOKED', 'Your session was signed out because the account was reset. Sign in again.');
+            return;
+        }
         req.webUser = session;
         req.webSessionToken = token;
         req.actor = actor;
         next();
     }
 
+    /**
+     * Sensitive account changes (credentials, connecting or disconnecting
+     * Discord) need a recent proof of identity on *this* session.
+     * Runs after requireAuth.
+     */
+    function requireRecentAuth(req, res, next) {
+        if (!ctx.sessions.isRecentlyAuthenticated(req.webUser, ctx.identityConfig.recentAuthMinutes)) {
+            sendError(res, 403, 'REAUTH_REQUIRED',
+                'Confirm your password (or sign in again) before changing how you sign in.');
+            return;
+        }
+        next();
+    }
+
+    /** Operator-only routes. Runs after requireAuth; the role comes from the actor, never the client. */
+    function requireOperator(req, res, next) {
+        if (req.actor?.account?.role !== 'operator' || req.actor.account.status !== 'active') {
+            sendError(res, 403, 'FORBIDDEN', 'Only the host can do that.');
+            return;
+        }
+        next();
+    }
+
     return {
         requireAuth,
+        requireRecentAuth,
+        requireOperator,
         sendError,
         parseCookies,
         cookieAttributes,
         projectOwner,
+        authRoute: jsonRoute(ctx, 'Web auth route failed'),
         chatRoute: jsonRoute(ctx, 'Web chat route failed'),
         parlorRoute: jsonRoute(ctx, 'Parlor route failed'),
         dashboardRoute: jsonRoute(ctx, 'Web dashboard route failed'),

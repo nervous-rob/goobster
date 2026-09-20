@@ -213,6 +213,25 @@ class IdentityService {
         );
     }
 
+    /**
+     * Remove every identity of one provider from a native principal. Legacy
+     * principals are refused: their id *is* the Discord subject, so the link
+     * cannot be removed without changing who they are.
+     * @param {{ principalId: string, provider: string }} params
+     * @returns {Promise<number>} rows removed
+     */
+    async unlinkExternal({ principalId, provider }) {
+        if (this.isSnowflake(principalId)) {
+            throw new IdentityError(409, 'LEGACY_IDENTITY',
+                'This account is identified by its Discord id, so Discord cannot be disconnected from it.');
+        }
+        const result = await db.run(
+            'DELETE FROM auth_identities WHERE principalId = @principalId AND provider = @provider',
+            { principalId: String(principalId), provider }
+        );
+        return result.changes;
+    }
+
     // --- Accounts (the entitlement) ----------------------------------------
 
     /**
@@ -297,6 +316,35 @@ class IdentityService {
     }
 
     /**
+     * Operator view: every application account with its principal's display
+     * name, linked providers, and whether native credentials exist. Safe
+     * metadata only - no hashes, no tokens.
+     */
+    async listAccounts() {
+        const rows = await db.all(
+            `SELECT a.principalId, a.loginName, a.status, a.role, a.entitlement, a.createdAt, a.updatedAt,
+                    p.displayName,
+                    (SELECT COUNT(*) FROM password_credentials c WHERE c.principalId = a.principalId) AS credentialCount,
+                    (SELECT COUNT(*) FROM auth_identities i WHERE i.principalId = a.principalId AND i.provider = 'discord') AS discordCount
+             FROM app_accounts a
+             JOIN principals p ON p.id = a.principalId
+             ORDER BY a.createdAt, a.principalId`
+        );
+        return rows.map(row => ({
+            principalId: row.principalId,
+            displayName: row.displayName || null,
+            loginName: row.loginName || null,
+            status: row.status,
+            role: row.role,
+            entitlement: row.entitlement,
+            hasPassword: Number(row.credentialCount) > 0,
+            discordLinked: this.isSnowflake(row.principalId) || Number(row.discordCount) > 0,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt
+        }));
+    }
+
+    /**
      * One-time operator bootstrap from `identity.operators` (config.json) or
      * `GOOBSTER_IDENTITY_OPERATORS`. Idempotent: existing accounts are
      * promoted to operator, new ones are created with the `bootstrap`
@@ -369,7 +417,9 @@ class IdentityService {
             surface,
             sessionId: sessionId || null,
             externalActor: external,
-            account: account ? { role: account.role, status: account.status, entitlement: account.entitlement } : null
+            account: account
+                ? { role: account.role, status: account.status, entitlement: account.entitlement, sessionVersion: Number(account.sessionVersion) }
+                : null
         };
     }
 
@@ -513,6 +563,23 @@ class IdentityService {
     async erasePrincipal(principalId, tx = db) {
         const id = String(principalId);
         const counts = {};
+        counts.passwordCredentials = (await tx.run(
+            'DELETE FROM password_credentials WHERE principalId = @id', { id }
+        )).changes;
+        counts.recoveryTokens = (await tx.run(
+            'DELETE FROM recovery_tokens WHERE principalId = @id OR issuedBy = @id', { id }
+        )).changes;
+        counts.oauthLinkStates = (await tx.run(
+            'DELETE FROM oauth_link_states WHERE principalId = @id', { id }
+        )).changes;
+        // Invitations the person issued go with them; ones they redeemed
+        // stay as the operator's audit trail minus the link to the person.
+        counts.invitesIssued = (await tx.run(
+            'DELETE FROM account_invites WHERE issuedBy = @id', { id }
+        )).changes;
+        await tx.run(
+            'UPDATE account_invites SET consumedBy = NULL WHERE consumedBy = @id', { id }
+        );
         counts.authIdentities = (await tx.run(
             'DELETE FROM auth_identities WHERE principalId = @id', { id }
         )).changes;

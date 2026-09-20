@@ -23,7 +23,10 @@ const express = require('express');
 const { createWebAppContext } = require('./appContext');
 const { createAppHelpers, originGuard } = require('./appHelpers');
 const { attachWebAppWebSocket } = require('./appWebsocket');
-const { mountAuthChat } = require('./routes/authChat');
+const { mountAuth } = require('./routes/auth');
+const { mountAccount } = require('./routes/account');
+const { mountAdmin } = require('./routes/admin');
+const { mountChat } = require('./routes/chat');
 const { mountVoiceTasks } = require('./routes/voiceTasks');
 const { mountProjects } = require('./routes/projects');
 const { mountSpitball } = require('./routes/spitball');
@@ -49,7 +52,10 @@ function createWebAppApp(ctx) {
     // any Origin present on a non-GET request must match the request host.
     app.use('/api/app', originGuard(ctx));
 
-    mountAuthChat(app, ctx, helpers);
+    mountAuth(app, ctx, helpers);
+    mountAccount(app, ctx, helpers);
+    mountAdmin(app, ctx, helpers);
+    mountChat(app, ctx, helpers);
     mountVoiceTasks(app, ctx, helpers);
     mountProjects(app, ctx, helpers);
     mountSpitball(app, ctx, helpers);

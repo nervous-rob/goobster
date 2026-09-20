@@ -26,6 +26,16 @@ function tokens(value) {
     return raw.map(v => String(v ?? '').trim()).filter(Boolean);
 }
 
+/** Integer from env, then config.json, then default - clamped to [min, max]. */
+function int(envName, fileValue, def, min, max) {
+    const raw = process.env[envName] !== undefined && process.env[envName] !== ''
+        ? process.env[envName]
+        : fileValue;
+    const n = Number.parseInt(String(raw ?? ''), 10);
+    const value = Number.isFinite(n) ? n : def;
+    return Math.min(max, Math.max(min, value));
+}
+
 /**
  * Application identity configuration (shared-instance Increment A; spec in
  * documentation/shared_instance_product_spec.md). Resolution order matches
@@ -58,5 +68,33 @@ module.exports = {
      * bootstrap (`node scripts/identity-report.js --bootstrap-operators`).
      * Never inferred from "first visitor" or from Manage Server.
      */
-    operators: tokens(process.env.GOOBSTER_IDENTITY_OPERATORS || identity.operators || [])
+    operators: tokens(process.env.GOOBSTER_IDENTITY_OPERATORS || identity.operators || []),
+    /**
+     * Human name of this installation, shown on the invitation page and the
+     * login screen so people know whose instance they are joining.
+     */
+    installationName: process.env.GOOBSTER_INSTALLATION_NAME
+        || identity.installationName
+        || 'Goobster',
+    /**
+     * Release gate for native (username + password) authentication:
+     * invitations, registration, login, recovery, and credential enrollment.
+     * Off by default - Discord OAuth remains the only sign-in until the
+     * operator turns it on. Discord linking/unlinking is not behind it.
+     */
+    nativeLogin: flag('GOOBSTER_IDENTITY_NATIVE_LOGIN', identity.nativeLogin, false),
+    /** Minimum password length (OWASP: long passphrases over composition rules). */
+    passwordMinLength: int('GOOBSTER_IDENTITY_PASSWORD_MIN_LENGTH', identity.passwordMinLength, 15, 12, 128),
+    /**
+     * scrypt cost as log2(N). 15 = 32 MiB per hash, about 60-120 ms on a
+     * Raspberry Pi 4; raise on faster hosts. Stored with each hash, so
+     * changing it re-hashes on the next successful login.
+     */
+    passwordCostLog2: int('GOOBSTER_IDENTITY_PASSWORD_COST', identity.passwordCostLog2, 15, 14, 18),
+    /** How long a login/re-auth counts as "recent" for sensitive account changes. */
+    recentAuthMinutes: int('GOOBSTER_IDENTITY_RECENT_AUTH_MINUTES', identity.recentAuthMinutes, 15, 1, 1440),
+    /** Default lifetime of a new invitation link. */
+    inviteTtlHours: int('GOOBSTER_IDENTITY_INVITE_TTL_HOURS', identity.inviteTtlHours, 72, 1, 24 * 30),
+    /** Lifetime of an operator-issued password reset link. */
+    recoveryTtlMinutes: int('GOOBSTER_IDENTITY_RECOVERY_TTL_MINUTES', identity.recoveryTtlMinutes, 60, 5, 24 * 60)
 };

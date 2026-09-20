@@ -1261,7 +1261,13 @@ CREATE TABLE IF NOT EXISTS web_sessions (
     avatar TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     lastSeenAt TEXT,
-    expiresAt TEXT NOT NULL
+    expiresAt TEXT NOT NULL,
+    -- When the person last proved who they are on this session (login or
+    -- re-auth); sensitive account changes require this to be recent.
+    authenticatedAt TEXT,
+    -- Snapshot of app_accounts.sessionVersion at creation; a mismatch means
+    -- the account was reset/disabled since and the session is dead.
+    sessionVersion INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(userId);
@@ -2628,3 +2634,56 @@ CREATE TABLE IF NOT EXISTS auth_identities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_auth_identities_principal ON auth_identities(principalId);
+
+-- Native credentials (shared-instance Increment B). One salted, memory-hard
+-- hash per principal; paramsJson records the algorithm and cost so a later
+-- cost change re-hashes on next use instead of invalidating everyone.
+CREATE TABLE IF NOT EXISTS password_credentials (
+    principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+    hash TEXT NOT NULL,
+    paramsJson TEXT NOT NULL,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Single-use invitations issued by an operator. Only the SHA-256 of the
+-- token is stored; redemption is one atomic UPDATE so a race has exactly
+-- one winner. An invite is not a login credential.
+CREATE TABLE IF NOT EXISTS account_invites (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    issuedBy TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
+    note TEXT,
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT,
+    consumedBy TEXT,
+    revokedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Operator-issued, single-use, short-lived password reset tokens (hashed).
+-- Distinct from invitations and from OAuth state.
+CREATE TABLE IF NOT EXISTS recovery_tokens (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('password_reset')),
+    issuedBy TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recovery_tokens_principal ON recovery_tokens(principalId);
+
+-- "Connect Discord" intents: the OAuth state nonce (hashed) bound to the
+-- signed-in principal and session that started the link, so the callback
+-- can tell a link from a login and refuse a state minted for someone else.
+CREATE TABLE IF NOT EXISTS oauth_link_states (
+    stateHash TEXT PRIMARY KEY,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    sessionId INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);

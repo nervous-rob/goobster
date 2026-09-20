@@ -9,6 +9,8 @@ const { toGateway } = require('../gateway');
 const eventBusService = require('../services/eventBusService');
 const webSessionService = require('../services/webSessionService');
 const identityService = require('../services/identityService');
+const nativeAuthService = require('../services/nativeAuthService');
+const identityConfig = require('../config/identityConfig');
 const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
@@ -52,6 +54,8 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         secureCookies: Boolean(publicUrl && publicUrl.startsWith('https://')),
         sessions: deps.sessions || webSessionService,
         identity: deps.identity || identityService,
+        nativeAuth: deps.nativeAuth || nativeAuthService,
+        identityConfig: deps.identityConfig || identityConfig,
         chat: deps.chat || webChatService,
         dashboard: deps.dashboard || webDashboardService,
         parlor: deps.parlor || parlorService,

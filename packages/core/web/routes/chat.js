@@ -1,175 +1,13 @@
 /**
- * Portal routes: AuthChat.
+ * Portal routes: Study chat (conversations, history, shares, turns).
  * Mounted by packages/core/web/appApi.js — do not require this file from apps.
  */
 
-const crypto = require('node:crypto');
-const axios = require('axios');
-const { DISCORD_API, SESSION_COOKIE, STATE_COOKIE } = require('../appHelpers');
 const { streamWebChatTurn, streamLiveTurnProgress } = require('../appStream');
 const { safeFileResponseHeaders } = require('../../utils/safeFileResponse');
 
-function mountAuthChat(app, ctx, h) {
-    const { requireAuth, chatRoute, sendError, parseCookies, cookieAttributes } = h;
-
-
-    // --- Auth -----------------------------------------------------------
-
-    // Client bootstrap info (nothing secret)
-    app.get('/api/app/config', (req, res) => {
-        res.json({
-            clientId: ctx.clientId,
-            devMode: ctx.devMode,
-            loginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl),
-            maxInputLength: ctx.chat.maxInputLength
-        });
-    });
-
-    // Step 1: redirect to Discord's consent page with a state nonce
-    app.get('/api/app/auth/login', (req, res) => {
-        if (!ctx.clientSecret || !ctx.publicUrl) {
-            sendError(res, 503, 'LOGIN_UNAVAILABLE',
-                'Discord login is not configured (webapp.publicUrl and the client secret are required).');
-            return;
-        }
-        const state = crypto.randomBytes(16).toString('hex');
-        res.append('Set-Cookie', `${STATE_COOKIE}=${state}; ${cookieAttributes(ctx, 600)}`);
-        const authorizeUrl = new URL('https://discord.com/oauth2/authorize');
-        authorizeUrl.searchParams.set('client_id', ctx.clientId);
-        authorizeUrl.searchParams.set('response_type', 'code');
-        authorizeUrl.searchParams.set('redirect_uri', `${ctx.publicUrl}/api/app/auth/callback`);
-        authorizeUrl.searchParams.set('scope', 'identify');
-        authorizeUrl.searchParams.set('state', state);
-        res.redirect(authorizeUrl.toString());
-    });
-
-    // Step 2: exchange the code, resolve the user, mint a session cookie
-    app.get('/api/app/auth/callback', async (req, res) => {
-        try {
-            if (!ctx.clientSecret || !ctx.publicUrl) {
-                sendError(res, 503, 'LOGIN_UNAVAILABLE', 'Discord login is not configured.');
-                return;
-            }
-            const { code, state } = req.query;
-            const expectedState = parseCookies(req)[STATE_COOKIE];
-            if (!code || !state || !expectedState || state !== expectedState) {
-                sendError(res, 400, 'BAD_STATE', 'Login flow expired or was tampered with - try again.');
-                return;
-            }
-
-            const tokenResponse = await axios.post(
-                `${DISCORD_API}/oauth2/token`,
-                new URLSearchParams({
-                    client_id: ctx.clientId,
-                    client_secret: ctx.clientSecret,
-                    grant_type: 'authorization_code',
-                    code: String(code),
-                    redirect_uri: `${ctx.publicUrl}/api/app/auth/callback`
-                }),
-                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
-            );
-            const accessToken = tokenResponse.data.access_token;
-
-            const userResponse = await axios.get(`${DISCORD_API}/users/@me`, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-                timeout: 10000
-            });
-            const user = userResponse.data;
-            const displayName = user.global_name || user.username;
-            // The Discord subject resolves to whichever principal owns it -
-            // a native account that linked Discord, or (the common case)
-            // the legacy principal whose id is the snowflake itself.
-            const principalId = await ctx.identity.resolveExternal({ provider: 'discord', subject: user.id })
-                || (await ctx.identity.ensureLegacyPrincipal({ discordId: user.id, displayName })).id;
-            const { token } = await ctx.sessions.create({
-                userId: principalId,
-                userName: displayName,
-                avatar: user.avatar || null
-            });
-
-            res.append('Set-Cookie', `${STATE_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
-            res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, 30 * 24 * 60 * 60)}`);
-            res.redirect('/app/');
-        } catch (error) {
-            ctx.logger.error?.('Web app OAuth callback failed:', error.response?.data || error.message);
-            sendError(res, 502, 'OAUTH_FAILED', 'Discord login failed - try again.');
-        }
-    });
-
-    // Local development identity (never available unless explicitly enabled)
-    app.post('/api/app/auth/dev-session', async (req, res) => {
-        if (!ctx.devMode) {
-            sendError(res, 403, 'DEV_DISABLED', 'Dev sessions are disabled.');
-            return;
-        }
-        const userId = String(req.body?.userId || '').trim();
-        const name = String(req.body?.name || 'dev user').trim().slice(0, 32);
-        if (!ctx.identity.isPrincipalId(userId)) {
-            sendError(res, 400, 'BAD_USER_ID',
-                'userId must be a principal id: a Discord snowflake (digits) or usr_<uuid>.');
-            return;
-        }
-        // Dev mode mints any principal: a native id that does not exist yet
-        // is created on the spot so the Discord-free path can be exercised
-        // without the invitation flow.
-        if (ctx.identity.isNativeId(userId) && !(await ctx.identity.getPrincipal(userId))) {
-            await ctx.identity.createNativePrincipal({ id: userId, displayName: name });
-        }
-        const { token } = await ctx.sessions.create({ userId, userName: name });
-        res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, 30 * 24 * 60 * 60)}`);
-        res.json({ user: { id: userId, name }, devMode: true });
-    });
-
-    app.post('/api/app/auth/logout', requireAuth, async (req, res) => {
-        await ctx.sessions.destroy(req.webSessionToken);
-        res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
-        res.json({ ok: true });
-    });
-
-    // --- Session info ----------------------------------------------------
-
-    app.get('/api/app/me', requireAuth, async (req, res) => {
-        try {
-            const scopes = await ctx.dashboard.listScopes({
-                gateway: ctx.gateway,
-                userId: req.webUser.userId,
-                discordUserId: ctx.identity.discordSubjectFor(req.actor)
-            });
-            let bot = null;
-            try {
-                const botUser = await ctx.gateway?.botUser();
-                if (botUser) bot = { id: botUser.id, name: botUser.username };
-            } catch { /* bot down - degraded, the client shows offline state */ }
-            res.json({
-                user: {
-                    id: req.webUser.userId,
-                    name: req.webUser.userName,
-                    avatar: req.webUser.avatar && req.actor?.externalActor?.provider === 'discord'
-                        ? `https://cdn.discordapp.com/avatars/${req.actor.externalActor.subject}/${req.webUser.avatar}.png?size=64`
-                        : null
-                },
-                // Application identity (shared-instance Increment A): the
-                // entitlement, when one has been granted, and whether this
-                // principal can act on Discord at all.
-                identity: {
-                    installationId: req.actor?.installationId ?? null,
-                    account: req.actor?.account ?? null,
-                    discordLinked: req.actor?.externalActor?.provider === 'discord'
-                },
-                bot,
-                scopes,
-                maxInputLength: ctx.chat.maxInputLength,
-                // Feature switches the client uses to show/hide panes
-                features: {
-                    observatory: ctx.observatory.enabled === true,
-                    spitball: ctx.spitball.enabled === true
-                }
-            });
-        } catch (error) {
-            ctx.logger.error?.('Web app /me failed:', error.message);
-            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
-        }
-    });
+function mountChat(app, ctx, h) {
+    const { requireAuth, chatRoute, sendError } = h;
 
     // --- Chat -------------------------------------------------------------
     // Personalized new-chat suggestions (cache-first; a stale cache is
@@ -431,4 +269,4 @@ function mountAuthChat(app, ctx, h) {
     });
 }
 
-module.exports = { mountAuthChat };
+module.exports = { mountChat };

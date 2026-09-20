@@ -47,17 +47,21 @@ class WebSessionService {
         }
         await this.pruneExpired();
 
+        // Snapshot the account's session version so a later reset or
+        // disable (which bumps it) invalidates this session on next use.
+        const account = await identityService.getAccount(principalId);
         const token = crypto.randomBytes(32).toString('hex');
         const row = await db.get(
-            `INSERT INTO web_sessions (tokenHash, userId, userName, avatar, expiresAt, lastSeenAt)
-             VALUES (@tokenHash, @userId, @userName, @avatar, @expiresAt, datetime('now'))
+            `INSERT INTO web_sessions (tokenHash, userId, userName, avatar, expiresAt, lastSeenAt, authenticatedAt, sessionVersion)
+             VALUES (@tokenHash, @userId, @userName, @avatar, @expiresAt, datetime('now'), datetime('now'), @sessionVersion)
              RETURNING expiresAt`,
             {
                 tokenHash: hashToken(token),
                 userId: principalId,
                 userName,
                 avatar,
-                expiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000)
+                expiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000),
+                sessionVersion: account ? account.sessionVersion : null
             }
         );
         return { token, expiresAt: row.expiresAt };
@@ -66,12 +70,12 @@ class WebSessionService {
     /**
      * Resolve a raw token to its live session, updating lastSeenAt.
      * @param {string} token
-     * @returns {{ id: number, userId: string, userName: string|null, avatar: string|null }|null}
+     * @returns {{ id: number, userId: string, userName: string|null, avatar: string|null, authenticatedAt: string|null, sessionVersion: number|null }|null}
      */
     async get(token) {
         if (!token || typeof token !== 'string') return null;
         const row = await db.get(
-            `SELECT id, userId, userName, avatar FROM web_sessions
+            `SELECT id, userId, userName, avatar, authenticatedAt, sessionVersion FROM web_sessions
              WHERE tokenHash = @tokenHash AND expiresAt > datetime('now')`,
             { tokenHash: hashToken(token) }
         );
@@ -80,7 +84,44 @@ class WebSessionService {
             `UPDATE web_sessions SET lastSeenAt = datetime('now') WHERE id = @id`,
             { id: row.id }
         );
-        return { id: row.id, userId: row.userId, userName: row.userName, avatar: row.avatar };
+        return {
+            id: row.id,
+            userId: row.userId,
+            userName: row.userName,
+            avatar: row.avatar,
+            authenticatedAt: row.authenticatedAt || null,
+            sessionVersion: row.sessionVersion == null ? null : Number(row.sessionVersion)
+        };
+    }
+
+    /**
+     * Record a fresh proof of identity on a live session (password re-auth),
+     * so sensitive account changes can proceed without a new login.
+     * @param {string} token
+     * @returns {Promise<boolean>}
+     */
+    async markAuthenticated(token) {
+        if (!token || typeof token !== 'string') return false;
+        const result = await db.run(
+            `UPDATE web_sessions SET authenticatedAt = datetime('now')
+             WHERE tokenHash = @tokenHash AND expiresAt > datetime('now')`,
+            { tokenHash: hashToken(token) }
+        );
+        return result.changes > 0;
+    }
+
+    /**
+     * Whether a session's last authentication is within the recent-auth
+     * window. Legacy rows without a timestamp are treated as stale.
+     * @param {{ authenticatedAt?: string|null }} session
+     * @param {number} withinMinutes
+     */
+    isRecentlyAuthenticated(session, withinMinutes) {
+        const raw = session?.authenticatedAt;
+        if (!raw) return false;
+        const at = Date.parse(`${String(raw).replace(' ', 'T')}Z`);
+        if (!Number.isFinite(at)) return false;
+        return Date.now() - at <= withinMinutes * 60 * 1000;
     }
 
     /**
