@@ -107,7 +107,6 @@ const MAX_NAME_LENGTH = 60;
 const SLUG_MAX_LENGTH = 48;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const SNOWFLAKE_PATTERN = /^\d{5,20}$/;
 /** Default inbox project for migrated Workshop pins (Phase 2). */
 const WORKSHOP_SLUG = 'workshop';
 const WORKSHOP_NAME = 'Workshop';
@@ -821,13 +820,22 @@ class ObservatoryService {
      */
     async notifyProjectsGone(notices, gateway = null, client = null) {
         const resolved = toGateway(gateway || client);
-        if (!resolved || !Array.isArray(notices) || notices.length === 0) return;
+        if (!Array.isArray(notices) || notices.length === 0) return;
+        const inboxService = require('./inboxService');
         for (const notice of notices) {
             const line = `🔭 The project "${notice.name || notice.slug}" has been deleted by its owner.`;
             for (const memberId of notice.memberIds || []) {
                 try {
-                    await resolved.sendDm(memberId, { content: line });
-                } catch { /* sendDm never throws on LocalGateway; still guard */ }
+                    await inboxService.deliver({
+                        userId: memberId,
+                        kind: 'project',
+                        title: `Project "${notice.name || notice.slug}" was deleted`,
+                        body: line,
+                        source: { type: 'project', id: notice.slug || notice.name },
+                        link: '/observatory',
+                        discord: resolved ? { gateway: resolved, payload: { content: line } } : false
+                    });
+                } catch { /* a notice is best effort */ }
             }
         }
     }
@@ -2945,11 +2953,10 @@ class ObservatoryService {
     /**
      * Completion notification, riding the existing follow-up machinery: a
      * followups row due NOW in the user's DM scope, delivered (and phrased)
-     * by heartbeatService's minute loop. Without a reachable gateway (no
-     * DM channel to target) the job record itself remains the status
-     * surface.
+     * by the follow-up pass into their inbox, echoed to Discord when they
+     * can receive it. The job record itself remains the status surface.
      */
-    async _notifyJobFinished(jobId, clientOrGateway) {
+    async _notifyJobFinished(jobId) {
         const job = await db.get(
             `SELECT j.*, p.name AS projectName, p.slug AS projectSlug
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
@@ -2957,13 +2964,10 @@ class ObservatoryService {
             { jobId }
         );
         if (!job || job.status === 'RUNNING') return;
-        const gateway = toGateway(clientOrGateway);
-        if (!gateway) return;
-        let channelId = null;
-        try {
-            channelId = await gateway.resolveDmChannelId(job.userId);
-        } catch { /* gateway unreachable - the job record stays the status surface */ }
-        if (!channelId) return; // DMs closed - the portal/status action still has the record
+        // The follow-up is filed against the owner's inbox channel: the
+        // follow-up pass delivers it there and echoes to Discord when they
+        // have it, so no gateway is needed here.
+        const channelId = require('./inboxService').inboxChannelId(job.userId);
         const outcome = job.errorCode === JOB_ERROR_CODES.OUTPUT_CONTRACT_FAILED
             ? 'exited 0 but failed its output contract'
             : {
@@ -3287,9 +3291,10 @@ class ObservatoryService {
             await this.resolveProjectForActor({ userId, project, owner })
         );
         const invitee = String(inviteeId ?? '').trim();
-        if (!SNOWFLAKE_PATTERN.test(invitee)) {
+        const identityService = require('./identityService');
+        if (!identityService.isPrincipalId(invitee)) {
             throw new ObservatoryError(400, 'BAD_USER_ID',
-                'That does not look like a Discord user id (a 5-20 digit number).');
+                'That does not look like a user id (a Discord id or a member id from the people picker).');
         }
         if (invitee === row.ownerId) {
             throw new ObservatoryError(400, 'CANNOT_INVITE_SELF',
@@ -3324,28 +3329,39 @@ class ObservatoryService {
                 + '(counting pending invitations).');
         }
 
+        // Resolve the person: a Discord id through the gateway when we can
+        // (a typo'd id should fail loudly, an unreachable bot degrades to
+        // the no-resolution path), a native member id through the identity
+        // tables (it must name an active account of this installation).
         const resolvedGateway = toGateway(gateway || client);
         let inviteeUser = null;
-        if (resolvedGateway) {
-            let reachable = true;
-            try {
-                inviteeUser = await resolvedGateway.getUser(invitee);
-            } catch (error) {
-                if (!isGatewayUnavailable(error)) throw error;
-                reachable = false;
+        let inviteeName = null;
+        if (identityService.isSnowflake(invitee)) {
+            if (resolvedGateway) {
+                let reachable = true;
+                try {
+                    inviteeUser = await resolvedGateway.getUser(invitee);
+                } catch (error) {
+                    if (!isGatewayUnavailable(error)) throw error;
+                    reachable = false;
+                }
+                if (reachable && !inviteeUser) {
+                    throw new ObservatoryError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
+                }
+                if (inviteeUser?.bot) {
+                    throw new ObservatoryError(400, 'CANNOT_INVITE_BOT',
+                        'Bots cannot join projects.');
+                }
             }
-            if (reachable && !inviteeUser) {
-                throw new ObservatoryError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
+            inviteeName = inviteeUser ? (inviteeUser.globalName || inviteeUser.username) : null;
+        } else {
+            const member = await identityService.describeMember(invitee);
+            if (!member) {
+                throw new ObservatoryError(404, 'NO_SUCH_USER', 'No member of this installation with that id.');
             }
-            if (inviteeUser?.bot) {
-                throw new ObservatoryError(400, 'CANNOT_INVITE_BOT',
-                    'Bots cannot join projects.');
-            }
+            inviteeName = member.name;
         }
 
-        const inviteeName = inviteeUser
-            ? (inviteeUser.globalName || inviteeUser.username)
-            : null;
         const invite = await db.get(
             `INSERT INTO project_invites (projectId, inviterId, inviterName, inviteeId, inviteeName)
              VALUES (@projectId, @inviterId, @inviterName, @inviteeId, @inviteeName)
@@ -3359,15 +3375,27 @@ class ObservatoryService {
             }
         );
 
+        // The invitation lands in their inbox (durable, visible in the
+        // portal with or without Discord) and is echoed to their Discord DM
+        // with Accept/Decline buttons when they can receive one. A closed
+        // DM is not an error - the invite still shows in the portal.
         let dmSent = false;
-        if (inviteeUser) {
-            const delivery = await resolvedGateway.sendDm(invitee, this._inviteMessage({
-                inviteId: invite.id,
-                inviterName: ownerName,
-                name: row.name
-            }));
-            dmSent = delivery.ok === true;
-        }
+        try {
+            const delivery = await require('./inboxService').deliver({
+                userId: invitee,
+                kind: 'invite',
+                title: `${ownerName || 'Someone'} invited you to the project "${row.name}"`,
+                body: 'Accept or decline it from Observatory → Invitations in the web app.',
+                source: { type: 'project-invite', id: invite.id },
+                link: '/observatory',
+                dedupeKey: `project-invite:${invite.id}`,
+                discord: resolvedGateway ? {
+                    gateway: resolvedGateway,
+                    payload: this._inviteMessage({ inviteId: invite.id, inviterName: ownerName, name: row.name })
+                } : false
+            });
+            dmSent = delivery.discord.status === 'sent';
+        } catch { /* the invite row is the source of truth */ }
         try {
             require('./eventBusService').publish('project-invite', {
                 userId: invitee, projectId: row.id

@@ -239,7 +239,10 @@ async function handleChatInteraction(interaction, thread = null) {
             console.log('User record ready', { userId });
 
             // Get or create bot user
-            botUserId = await getOrCreateUser(interaction.client.user.id, 'Goobster');
+            botUserId = await getOrCreateUser(
+                interaction.client.user.id,
+                interaction.client.user.username || require('../config/identityConfig').assistantName
+            );
             console.log('Bot user record ready', { botUserId });
 
             // Get or create guild conversation with thread ID. In DMs there is no

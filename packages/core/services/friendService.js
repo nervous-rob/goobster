@@ -193,6 +193,30 @@ class FriendService {
             this._collectMembers(cached, guild, people, blocked, bounded, matches);
         }
 
+        // Members of this installation (native people discovery, Increment
+        // C): the source that exists with Discord switched off. Query-only
+        // by design - the roster is never browsed - and name + id only.
+        if (query) {
+            try {
+                const identityService = require('./identityService');
+                const identityConfig = require('../config/identityConfig');
+                const members = await identityService.searchPeople({
+                    actorId: userId, q: query, exclude: [...blocked], limit: bounded
+                });
+                for (const member of members) {
+                    if (people.size >= bounded) break;
+                    if (people.has(member.id)) continue;
+                    people.set(member.id, {
+                        id: member.id,
+                        name: String(member.name).slice(0, MAX_NAME_LENGTH),
+                        avatar: null,
+                        source: 'member',
+                        via: identityConfig.installationName
+                    });
+                }
+            } catch { /* identity tables unavailable - the other sources stand */ }
+        }
+
         const ordered = [...people.values()]
             .sort((a, b) => {
                 if (a.source !== b.source) return a.source === 'friend' ? -1 : 1;

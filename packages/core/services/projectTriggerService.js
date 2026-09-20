@@ -1116,13 +1116,13 @@ class ProjectTriggerService {
         }));
     }
 
-    async _notifyOwner(trigger, message, client) {
+    async _notifyOwner(trigger, message) {
         try {
-            const { toGateway } = require('../gateway');
-            const gateway = toGateway(client);
-            if (!gateway) return;
-            const channelId = await gateway.resolveDmChannelId(trigger.userId);
-            if (!channelId) return;
+            // A personal follow-up due now: delivered to the owner's inbox
+            // (and echoed to Discord when they have it) by the follow-up
+            // pass, so no gateway is needed to file it.
+            const { inboxChannelId } = require('./inboxService');
+            const channelId = inboxChannelId(trigger.userId);
             await db.run(
                 `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
                  VALUES (@scope, @channelId, @userId, @note, datetime('now'))`,
