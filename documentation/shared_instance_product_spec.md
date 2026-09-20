@@ -393,7 +393,7 @@ Implementation status must be updated here as increments land, with links to the
 
 | Increment | Status | Evidence |
 |---|---|---|
-| A — Identity compatibility | **Shipped** (`principals`, `app_accounts`, `auth_identities`; `identityService`; `requireAccount` gate; `npm run identity:report`; actor context on `req.actor`). Behaviour: [identity.md](identity.md). | `tests/identityService.test.js` on SQLite and Postgres: idempotent backfill (second run creates 0), legacy owners unchanged, native `usr_` id through dev session → `/me` → DM-only scopes, gate on/off, disabled account, `/forget-me` audit clean. |
+| A — Identity compatibility | **Shipped** in [PR #229](https://github.com/nervous-rob/goobster/pull/229) (`principals`, `app_accounts`, `auth_identities`; `identityService`; `requireAccount` gate; `npm run identity:report`; actor context on `req.actor`). Behaviour: [identity.md](identity.md). | `tests/identityService.test.js` on SQLite and Postgres: idempotent backfill (second run creates 0), legacy owners unchanged, native `usr_` id through dev session → `/me` → DM-only scopes, gate on/off, disabled account, `/forget-me` audit clean. |
 | B — Invitations and native authentication | Not started | — |
 | C — Independent runtime and delivery | Not started | — |
 | D — Shared-instance readiness | Not started | — |
