@@ -5,7 +5,8 @@
  * Discord OAuth (login and "Connect Discord" linking), dev sessions,
  * logout, the /me bootstrap, and - behind the `identity.nativeLogin`
  * release gate - invitation redemption, username + password login,
- * re-authentication, and operator-issued recovery.
+ * re-authentication, operator-issued recovery, and (with outbound mail
+ * configured) open sign-up, email verification, and self-service recovery.
  */
 
 const crypto = require('node:crypto');
@@ -47,6 +48,10 @@ function mountAuth(app, ctx, h) {
             devMode: ctx.devMode,
             loginAvailable: discordConfigured(),
             nativeLogin: ctx.nativeAuth.enabled,
+            // Email-backed features: open sign-up and "forgot password".
+            // Both need native login, a mail provider, and publicUrl.
+            registration: ctx.nativeAuth.registrationMode(ctx.publicUrl),
+            emailRecovery: ctx.nativeAuth.emailEnabled(ctx.publicUrl),
             installationName: ctx.identityConfig.installationName,
             passwordMinLength: ctx.identityConfig.passwordMinLength,
             maxInputLength: ctx.chat.maxInputLength
@@ -310,6 +315,53 @@ function mountAuth(app, ctx, h) {
         }
     });
 
+    // --- Email-backed flows (release-gated, and hidden without mail) -----------
+
+    // Open sign-up, step one. Neutral 200 whether the address is new or
+    // already someone's; the next step arrives by email.
+    app.post('/api/app/auth/signup', authRoute(async (req) => ctx.nativeAuth.signup({
+        loginName: req.body?.loginName,
+        password: req.body?.password,
+        email: req.body?.email,
+        displayName: req.body?.displayName,
+        address: clientAddress(req),
+        baseUrl: ctx.publicUrl
+    })));
+
+    // Follow a verification link. A sign-up's link creates the account and
+    // signs the person in; an existing account's link just marks the
+    // address verified (the person may or may not be signed in here).
+    app.post('/api/app/auth/verify-email', async (req, res) => {
+        try {
+            const outcome = await ctx.nativeAuth.verifyEmail({ token: req.body?.token, address: clientAddress(req) });
+            if (outcome.kind === 'registration') {
+                const { token } = await ctx.sessions.create({ userId: outcome.principalId, userName: outcome.displayName });
+                setSession(res, token);
+                res.json({
+                    kind: 'registration',
+                    user: { id: outcome.principalId, name: outcome.displayName, loginName: outcome.loginName }
+                });
+                return;
+            }
+            res.json({ kind: 'verified', address: outcome.address });
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Web app email verification failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
+    // "Forgot password": the reset link goes to the verified address, and
+    // the response is the same whether or not one exists.
+    app.post('/api/app/auth/forgot', authRoute(async (req) => ctx.nativeAuth.requestRecovery({
+        email: req.body?.email,
+        address: clientAddress(req),
+        baseUrl: ctx.publicUrl
+    })));
+
     // --- Session info ----------------------------------------------------
 
     app.get('/api/app/me', requireAuth, async (req, res) => {
@@ -343,7 +395,9 @@ function mountAuth(app, ctx, h) {
                         : null,
                     discordLinked: req.actor?.externalActor?.provider === 'discord',
                     operator: req.actor?.account?.role === 'operator',
-                    nativeLogin: ctx.nativeAuth.enabled
+                    nativeLogin: ctx.nativeAuth.enabled,
+                    registration: ctx.nativeAuth.registrationMode(ctx.publicUrl),
+                    mail: ctx.nativeAuth.emailEnabled(ctx.publicUrl)
                 },
                 bot,
                 scopes,

@@ -374,6 +374,16 @@ class PrivacyService {
         const inviteRedeemed = await db.get(
             'SELECT consumedAt FROM account_invites WHERE consumedBy = @userId', { userId }
         );
+        // The email address on file (the person gave it to us, so they see
+        // it back), whether it is verified, and outstanding verification links.
+        const email = await db.get(
+            'SELECT address, verifiedAt, updatedAt FROM account_emails WHERE principalId = @userId', { userId }
+        );
+        const openVerification = await db.get(
+            `SELECT COUNT(*) AS c FROM email_tokens
+             WHERE principalId = @userId AND consumedAt IS NULL AND expiresAt > @now`,
+            { userId, now: new Date().toISOString().slice(0, 19).replace('T', ' ') }
+        );
 
         return {
             identity: {
@@ -386,7 +396,16 @@ class PrivacyService {
                     openRecoveryLinks: Number(openRecovery?.c || 0),
                     invitesIssued: Number(invitesIssued?.c || 0),
                     joinedByInviteAt: inviteRedeemed?.consumedAt || null
-                }
+                },
+                email: email
+                    ? {
+                        address: email.address,
+                        verified: Boolean(email.verifiedAt),
+                        verifiedAt: email.verifiedAt || null,
+                        updatedAt: email.updatedAt,
+                        openVerificationLinks: Number(openVerification?.c || 0)
+                    }
+                    : null
             },
             facts,
             knowledgeGraph: {
@@ -784,6 +803,8 @@ class PrivacyService {
             counts.recoveryTokens = identity.recoveryTokens;
             counts.oauthLinkStates = identity.oauthLinkStates;
             counts.accountInvites = identity.invitesIssued;
+            counts.accountEmails = identity.emails;
+            counts.emailTokens = identity.emailTokens;
 
             // Share links go before their conversations: a forgotten user's
             // transcripts must stop being publicly readable.
@@ -1102,6 +1123,12 @@ class PrivacyService {
             )).c,
             account_invites: (await db.get(
                 'SELECT COUNT(*) AS c FROM account_invites WHERE issuedBy = @userId OR consumedBy = @userId', { userId }
+            )).c,
+            account_emails: (await db.get(
+                'SELECT COUNT(*) AS c FROM account_emails WHERE principalId = @userId', { userId }
+            )).c,
+            email_tokens: (await db.get(
+                'SELECT COUNT(*) AS c FROM email_tokens WHERE principalId = @userId', { userId }
             )).c,
             web_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }

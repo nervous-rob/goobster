@@ -10,6 +10,7 @@ const eventBusService = require('../services/eventBusService');
 const webSessionService = require('../services/webSessionService');
 const identityService = require('../services/identityService');
 const nativeAuthService = require('../services/nativeAuthService');
+const mailService = require('../services/mailService');
 const identityConfig = require('../config/identityConfig');
 const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
@@ -55,6 +56,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         sessions: deps.sessions || webSessionService,
         identity: deps.identity || identityService,
         nativeAuth: deps.nativeAuth || nativeAuthService,
+        mail: deps.mail || mailService,
         identityConfig: deps.identityConfig || identityConfig,
         chat: deps.chat || webChatService,
         dashboard: deps.dashboard || webDashboardService,

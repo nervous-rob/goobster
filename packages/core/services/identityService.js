@@ -19,7 +19,7 @@ const identityConfig = require('../config/identityConfig');
 
 const SNOWFLAKE = /^\d{5,20}$/;
 const NATIVE_ID = /^usr_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ENTITLEMENTS = ['invite', 'migration', 'bootstrap'];
+const ENTITLEMENTS = ['invite', 'migration', 'bootstrap', 'open'];
 const ROLES = ['member', 'operator'];
 const SURFACES = ['web', 'discord', 'automation'];
 
@@ -252,7 +252,7 @@ class IdentityService {
      * Grant an application account. Idempotent: an existing account is
      * returned untouched (roles are changed with `setAccountRole`, never
      * implicitly by a repeated grant).
-     * @param {{ principalId: string, entitlement: 'invite'|'migration'|'bootstrap', role?: 'member'|'operator', loginName?: string|null }} params
+     * @param {{ principalId: string, entitlement: 'invite'|'migration'|'bootstrap'|'open', role?: 'member'|'operator', loginName?: string|null }} params
      */
     async grantAccount({ principalId, entitlement, role = 'member', loginName = null }) {
         if (!ENTITLEMENTS.includes(entitlement)) {
@@ -325,9 +325,11 @@ class IdentityService {
             `SELECT a.principalId, a.loginName, a.status, a.role, a.entitlement, a.createdAt, a.updatedAt,
                     p.displayName,
                     (SELECT COUNT(*) FROM password_credentials c WHERE c.principalId = a.principalId) AS credentialCount,
-                    (SELECT COUNT(*) FROM auth_identities i WHERE i.principalId = a.principalId AND i.provider = 'discord') AS discordCount
+                    (SELECT COUNT(*) FROM auth_identities i WHERE i.principalId = a.principalId AND i.provider = 'discord') AS discordCount,
+                    e.address AS emailAddress, e.verifiedAt AS emailVerifiedAt
              FROM app_accounts a
              JOIN principals p ON p.id = a.principalId
+             LEFT JOIN account_emails e ON e.principalId = a.principalId
              ORDER BY a.createdAt, a.principalId`
         );
         return rows.map(row => ({
@@ -339,6 +341,7 @@ class IdentityService {
             entitlement: row.entitlement,
             hasPassword: Number(row.credentialCount) > 0,
             discordLinked: this.isSnowflake(row.principalId) || Number(row.discordCount) > 0,
+            email: row.emailAddress ? { address: row.emailAddress, verified: Boolean(row.emailVerifiedAt) } : null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt
         }));
@@ -571,6 +574,18 @@ class IdentityService {
         )).changes;
         counts.oauthLinkStates = (await tx.run(
             'DELETE FROM oauth_link_states WHERE principalId = @id', { id }
+        )).changes;
+        // The address and its verification links; and any open sign-up
+        // parked under that address (it carries no principal of its own).
+        const email = await tx.get('SELECT normalized FROM account_emails WHERE principalId = @id', { id });
+        if (email) {
+            await tx.run('DELETE FROM pending_registrations WHERE emailNormalized = @normalized', { normalized: email.normalized });
+        }
+        counts.emailTokens = (await tx.run(
+            'DELETE FROM email_tokens WHERE principalId = @id', { id }
+        )).changes;
+        counts.emails = (await tx.run(
+            'DELETE FROM account_emails WHERE principalId = @id', { id }
         )).changes;
         // Invitations the person issued go with them; ones they redeemed
         // stay as the operator's audit trail minus the link to the person.

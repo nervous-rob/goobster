@@ -5,12 +5,19 @@
  * single-use invitations, username + password registration and login,
  * operator-issued recovery links, credential enrollment for existing Discord
  * users, and the account-side rules for connecting/disconnecting Discord.
+ * Increment B.1 adds an optional verified email per account, which unlocks
+ * signing in by email, self-service password recovery, and - when the
+ * operator chooses - open sign-up. All of that needs outbound mail
+ * (services/mailService.js) and is hidden when none is configured.
  * Spec: documentation/shared_instance_product_spec.md (§5, §6);
  * reference: documentation/identity.md.
  *
  * Design points
- * - Tokens (invites, recovery, OAuth link state) are stored hashed; the raw
- *   value is returned exactly once to the caller who created it.
+ * - Tokens (invites, recovery, verification, OAuth link state) are stored
+ *   hashed; the raw value is returned exactly once to the caller who
+ *   created it, or leaves only inside the email it belongs in.
+ * - Anything that emails someone answers the same way whether or not the
+ *   address is known, so the API cannot be used to enumerate accounts.
  * - Redemption is one conditional UPDATE, so concurrent attempts have
  *   exactly one winner on both SQLite and Postgres.
  * - Login returns a neutral error for a bad name or password and is
@@ -24,17 +31,26 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const identityConfig = require('../config/identityConfig');
 const identityService = require('./identityService');
+const mailService = require('./mailService');
 const { IdentityError } = identityService;
+const { normalizeEmail } = mailService;
 const { hashPassword, verifyPassword, needsRehash } = require('../utils/passwordHashing');
 const { consumeWindow } = require('../utils/slidingWindowLimit');
 
 const LOGIN_NAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const PASSWORD_MAX_LENGTH = 256;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const LOGIN_MAX_PER_NAME = 10;
 const LOGIN_MAX_PER_ADDRESS = 40;
 const REGISTER_MAX_PER_ADDRESS = 10;
 const RECOVERY_MAX_PER_ADDRESS = 10;
+// Anything that sends mail is throttled per client address and per
+// recipient, so the installation cannot be used to flood an inbox.
+const SIGNUP_MAX_PER_ADDRESS = 5;
+const MAIL_MAX_PER_RECIPIENT = 3;
+const FORGOT_MAX_PER_ADDRESS = 5;
+const VERIFY_SEND_MAX_PER_PRINCIPAL = 5;
 
 // Long passwords people still pick. Composition rules are deliberately
 // absent (OWASP); a length floor plus this list plus "not your login name"
@@ -77,7 +93,65 @@ class NativeAuthService {
         }
     }
 
+    /**
+     * Email features (verification, self-service recovery, open sign-up)
+     * need native login, a mail provider, and an absolute public URL to
+     * put in the links. The URL comes from `webapp.publicUrl`, never from
+     * the request's Host header, so a forged header cannot poison a link.
+     * @param {string|null} baseUrl
+     */
+    emailEnabled(baseUrl) {
+        return this.enabled && mailService.enabled && Boolean(baseUrl);
+    }
+
+    /** Why email features are off (operator-facing), or null when on. */
+    emailDisabledReason(baseUrl) {
+        if (!this.enabled) return 'Password sign-in (identity.nativeLogin) is off.';
+        if (!mailService.enabled) return mailService.describe().reason;
+        if (!baseUrl) return 'webapp.publicUrl is not set, so emailed links would have no address.';
+        return null;
+    }
+
+    assertEmailEnabled(baseUrl) {
+        this.assertEnabled();
+        if (!this.emailEnabled(baseUrl)) {
+            throw new IdentityError(503, 'MAIL_DISABLED',
+                'Email is not configured on this installation. Ask the host.');
+        }
+    }
+
+    /**
+     * Effective registration mode. 'open' only when the operator asked for
+     * it *and* email can be verified; otherwise invitations, with one
+     * warning so the misconfiguration is visible in the log.
+     * @param {string|null} baseUrl
+     * @returns {'invite'|'open'}
+     */
+    registrationMode(baseUrl) {
+        if (identityConfig.registration !== 'open') return 'invite';
+        if (this.emailEnabled(baseUrl)) return 'open';
+        if (!this._warnedOpen) {
+            this._warnedOpen = true;
+            console.warn(`[identity] identity.registration is "open" but ${this.emailDisabledReason(baseUrl)} Falling back to invitations.`);
+        }
+        return 'invite';
+    }
+
     // --- Validation ----------------------------------------------------------
+
+    /**
+     * Validate an email address, returning both the display form and the
+     * normalized (lookup) form.
+     * @param {string} raw
+     * @returns {{ address: string, normalized: string }}
+     */
+    normalizeEmail(raw) {
+        const normalized = normalizeEmail(raw);
+        if (!normalized) {
+            throw new IdentityError(400, 'BAD_EMAIL', 'That does not look like an email address.');
+        }
+        return { address: String(raw).trim(), normalized };
+    }
 
     /**
      * Normalise and validate a login name. Lower-case, 3-32 chars from
@@ -398,9 +472,10 @@ class NativeAuthService {
     }
 
     /**
-     * Verify a login name + password. Neutral error for unknown names and
-     * wrong passwords alike; the disabled state is only revealed after a
-     * correct password. Throttled per name and per address.
+     * Verify a login name (or verified email address) + password. Neutral
+     * error for unknown names and wrong passwords alike; the disabled state
+     * is only revealed after a correct password. Throttled per identifier
+     * and per address.
      * @param {{ loginName: string, password: string, address?: string|null }} params
      * @returns {Promise<{ principalId: string, loginName: string, displayName: string|null }>}
      */
@@ -412,7 +487,9 @@ class NativeAuthService {
         await this._throttle('native_login_addr', address, LOGIN_MAX_PER_ADDRESS, LOGIN_WINDOW_MS);
         await this._throttle('native_login_name', name, LOGIN_MAX_PER_NAME, LOGIN_WINDOW_MS);
 
-        const account = await this.findAccountByLoginName(name);
+        const account = name.includes('@')
+            ? await this.findAccountByEmail(name)
+            : await this.findAccountByLoginName(name);
         if (!account) {
             // Spend comparable time so a missing name is not distinguishable
             // by latency from a wrong password.
@@ -505,6 +582,406 @@ class NativeAuthService {
         return { principalId: pending.principalId, loginName: name, displayName: principal?.displayName || name };
     }
 
+    /**
+     * Self-service reset by verified email. Always resolves the same way
+     * whether or not the address is known - the answer goes to the inbox,
+     * not to the caller - so accounts cannot be enumerated here. Throttled
+     * per client address and per recipient.
+     * @param {{ email: string, address?: string|null, baseUrl: string }} params
+     * @returns {Promise<{ ok: true }>}
+     */
+    async requestRecovery({ email, address = null, baseUrl }) {
+        this.assertEmailEnabled(baseUrl);
+        const { normalized } = this.normalizeEmail(email);
+        await this._throttle('native_forgot_addr', address, FORGOT_MAX_PER_ADDRESS, HOUR_MS);
+        await this._throttle('native_mail_recipient', normalized, MAIL_MAX_PER_RECIPIENT, HOUR_MS);
+        const account = await this.findAccountByEmail(normalized);
+        if (!account || account.status !== 'active') return { ok: true };
+        const token = newToken();
+        const expiresAt = utcIn(identityConfig.recoveryTtlMinutes * 60 * 1000);
+        await db.run(
+            `INSERT INTO recovery_tokens (tokenHash, principalId, purpose, issuedBy, expiresAt)
+             VALUES (@tokenHash, @principalId, 'password_reset', @principalId, @expiresAt)`,
+            { tokenHash: sha256(token), principalId: account.principalId, expiresAt }
+        );
+        const emailRow = await this.getEmail(account.principalId);
+        try {
+            await mailService.send(this._mail('recover', {
+                to: emailRow.address,
+                url: `${baseUrl}/app/recover?token=${encodeURIComponent(token)}`,
+                minutes: identityConfig.recoveryTtlMinutes,
+                loginName: account.loginName
+            }));
+        } catch (error) {
+            await db.run('DELETE FROM recovery_tokens WHERE tokenHash = @tokenHash', { tokenHash: sha256(token) });
+            throw error;
+        }
+        return { ok: true };
+    }
+
+    // --- Email address -------------------------------------------------------
+
+    /**
+     * @param {string} principalId
+     * @returns {Promise<{ address: string, normalized: string, verifiedAt: string|null, updatedAt: string }|null>}
+     */
+    async getEmail(principalId) {
+        return await db.get(
+            'SELECT address, normalized, verifiedAt, updatedAt FROM account_emails WHERE principalId = @principalId',
+            { principalId: String(principalId) }
+        ) || null;
+    }
+
+    /** Account behind a *verified* address, in the shape of findAccountByLoginName. */
+    async findAccountByEmail(email) {
+        const normalized = normalizeEmail(email);
+        if (!normalized) return null;
+        return await db.get(
+            `SELECT a.principalId, a.loginName, a.status, a.role, a.sessionVersion
+             FROM account_emails e JOIN app_accounts a ON a.principalId = e.principalId
+             WHERE e.normalized = @normalized AND e.verifiedAt IS NOT NULL`,
+            { normalized }
+        ) || null;
+    }
+
+    /** Is a verification link for this address still outstanding? */
+    async _verificationPending(principalId, normalized) {
+        const row = await db.get(
+            `SELECT 1 AS present FROM email_tokens
+             WHERE principalId = @principalId AND normalized = @normalized
+               AND consumedAt IS NULL AND expiresAt > @now`,
+            { principalId, normalized, now: nowUtc() }
+        );
+        return Boolean(row);
+    }
+
+    /**
+     * Set (or replace) the account's email address. The address starts
+     * unverified: it cannot be used to sign in or recover until the link
+     * mailed here is followed. An address another account has *claimed but
+     * never verified* is taken over - unproven claims reserve nothing; a
+     * verified one is refused. The route requires recent authentication.
+     * @param {{ principalId: string, email: string, baseUrl: string }} params
+     */
+    async setEmail({ principalId, email, baseUrl }) {
+        this.assertEmailEnabled(baseUrl);
+        const account = await identityService.getAccount(principalId);
+        if (!account) throw new IdentityError(403, 'NO_ACCOUNT', 'The host has not granted this account yet.');
+        const { address, normalized } = this.normalizeEmail(email);
+        const current = await this.getEmail(principalId);
+        if (current && current.normalized === normalized && current.verifiedAt) {
+            return { address: current.address, verified: true, sent: false };
+        }
+        await this._throttle('email_verify_send', principalId, VERIFY_SEND_MAX_PER_PRINCIPAL, HOUR_MS);
+        await db.transaction(async (tx) => {
+            const other = await tx.get(
+                'SELECT principalId, verifiedAt FROM account_emails WHERE normalized = @normalized AND principalId <> @principalId',
+                { normalized, principalId }
+            );
+            if (other) {
+                if (other.verifiedAt) {
+                    throw new IdentityError(409, 'EMAIL_TAKEN', 'That email address is already verified on another account.');
+                }
+                await tx.run('DELETE FROM account_emails WHERE principalId = @id', { id: other.principalId });
+                await tx.run('DELETE FROM email_tokens WHERE principalId = @id', { id: other.principalId });
+            }
+            await tx.run(
+                `INSERT INTO account_emails (principalId, address, normalized, verifiedAt, updatedAt)
+                 VALUES (@principalId, @address, @normalized, NULL, @now)
+                 ON CONFLICT(principalId) DO UPDATE SET address = excluded.address, normalized = excluded.normalized,
+                     verifiedAt = NULL, updatedAt = excluded.updatedAt`,
+                { principalId, address, normalized, now: nowUtc() }
+            );
+            // Links mailed to the previous address die with it.
+            await tx.run('DELETE FROM email_tokens WHERE principalId = @principalId', { principalId });
+        });
+        await this._sendVerification({ principalId, address, normalized, baseUrl });
+        return { address, verified: false, sent: true };
+    }
+
+    /**
+     * Mail a fresh verification link for the address on file. Throttled.
+     * @param {{ principalId: string, baseUrl: string }} params
+     */
+    async resendVerification({ principalId, baseUrl }) {
+        this.assertEmailEnabled(baseUrl);
+        const current = await this.getEmail(principalId);
+        if (!current) throw new IdentityError(404, 'NO_EMAIL', 'There is no email address on this account.');
+        if (current.verifiedAt) return { address: current.address, verified: true, sent: false };
+        await this._throttle('email_verify_send', principalId, VERIFY_SEND_MAX_PER_PRINCIPAL, HOUR_MS);
+        await this._sendVerification({ principalId, address: current.address, normalized: current.normalized, baseUrl });
+        return { address: current.address, verified: false, sent: true };
+    }
+
+    async _sendVerification({ principalId, address, normalized, baseUrl }) {
+        const token = newToken();
+        const minutes = identityConfig.emailVerifyTtlMinutes;
+        await db.run(
+            `INSERT INTO email_tokens (tokenHash, principalId, purpose, normalized, expiresAt)
+             VALUES (@tokenHash, @principalId, 'verify', @normalized, @expiresAt)`,
+            { tokenHash: sha256(token), principalId: String(principalId), normalized, expiresAt: utcIn(minutes * 60 * 1000) }
+        );
+        try {
+            await mailService.send(this._mail('verify', {
+                to: address,
+                url: `${baseUrl}/app/verify-email?token=${encodeURIComponent(token)}`,
+                minutes
+            }));
+        } catch (error) {
+            await db.run('DELETE FROM email_tokens WHERE tokenHash = @tokenHash', { tokenHash: sha256(token) });
+            throw error;
+        }
+    }
+
+    /** Drop the address and any outstanding verification links. */
+    async removeEmail(principalId) {
+        const id = String(principalId);
+        const result = await db.run('DELETE FROM account_emails WHERE principalId = @id', { id });
+        await db.run('DELETE FROM email_tokens WHERE principalId = @id', { id });
+        if (!result.changes) throw new IdentityError(404, 'NO_EMAIL', 'There is no email address on this account.');
+        return { removed: true };
+    }
+
+    /**
+     * Follow a verification link. Two kinds of token land here: an open
+     * sign-up's (the account is created now, and the caller gets a
+     * session) and an existing account's (the address becomes verified;
+     * no session - possession of an inbox is not a login).
+     * @param {{ token: string, address?: string|null }} params
+     * @returns {Promise<{ kind: 'registration', principalId: string, loginName: string, displayName: string }
+     *   | { kind: 'verified', principalId: string, address: string }>}
+     */
+    async verifyEmail({ token, address = null }) {
+        this.assertEnabled();
+        await this._throttle('native_verify_addr', address, REGISTER_MAX_PER_ADDRESS, HOUR_MS);
+        const tokenHash = sha256(String(token || ''));
+        const invalid = () => new IdentityError(404, 'VERIFY_INVALID',
+            'This verification link is not valid - it may have been used or expired.');
+
+        const pendingSignup = await db.get(
+            'SELECT * FROM pending_registrations WHERE tokenHash = @tokenHash AND expiresAt > @now',
+            { tokenHash, now: nowUtc() }
+        );
+        if (pendingSignup) return this._completeSignup(pendingSignup, invalid);
+
+        const pending = await db.get(
+            `SELECT t.principalId, t.normalized FROM email_tokens t
+             WHERE t.tokenHash = @tokenHash AND t.consumedAt IS NULL AND t.expiresAt > @now`,
+            { tokenHash, now: nowUtc() }
+        );
+        if (!pending) throw invalid();
+        const now = nowUtc();
+        const result = await db.transaction(async (tx) => {
+            const claimed = await tx.run(
+                `UPDATE email_tokens SET consumedAt = @now
+                 WHERE tokenHash = @tokenHash AND consumedAt IS NULL AND expiresAt > @now`,
+                { tokenHash, now }
+            );
+            if (claimed.changes !== 1) throw invalid();
+            // Only the address the link was mailed to becomes verified; if
+            // the account moved to a new address meanwhile, this link is moot.
+            const updated = await tx.run(
+                `UPDATE account_emails SET verifiedAt = @now, updatedAt = @now
+                 WHERE principalId = @principalId AND normalized = @normalized`,
+                { now, principalId: pending.principalId, normalized: pending.normalized }
+            );
+            if (updated.changes !== 1) throw invalid();
+            return await tx.get('SELECT address FROM account_emails WHERE principalId = @principalId', { principalId: pending.principalId });
+        });
+        return { kind: 'verified', principalId: pending.principalId, address: result.address };
+    }
+
+    // --- Open sign-up ----------------------------------------------------------
+
+    /**
+     * Open registration, step one: park the sign-up until the address is
+     * verified. Nothing is an account yet. The response is the same
+     * whether the address is new or already belongs to someone (that
+     * person gets a note instead), so this cannot enumerate accounts;
+     * login names are checked openly - they are identifiers, not secrets.
+     * @param {{ loginName: string, password: string, email: string, displayName?: string|null, address?: string|null, baseUrl: string }} params
+     * @returns {Promise<{ ok: true }>}
+     */
+    async signup({ loginName, password, email, displayName = null, address = null, baseUrl }) {
+        this.assertEnabled();
+        if (this.registrationMode(baseUrl) !== 'open') {
+            throw new IdentityError(403, 'REGISTRATION_CLOSED',
+                'This installation is invitation-only. Ask the host for an invitation link.');
+        }
+        await this._throttle('native_signup_addr', address, SIGNUP_MAX_PER_ADDRESS, HOUR_MS);
+        const name = this.normalizeLoginName(loginName);
+        const { address: emailAddress, normalized } = this.normalizeEmail(email);
+        this.validatePassword(password, { loginName: name });
+        await this._throttle('native_mail_recipient', normalized, MAIL_MAX_PER_RECIPIENT, HOUR_MS);
+        const now = nowUtc();
+        await db.run('DELETE FROM pending_registrations WHERE expiresAt <= @now', { now });
+
+        if (await this.findAccountByLoginName(name)) {
+            throw new IdentityError(409, 'LOGIN_NAME_TAKEN', 'That login name is already in use.');
+        }
+        const reserved = await db.get(
+            'SELECT 1 AS present FROM pending_registrations WHERE loginName = @name AND emailNormalized <> @normalized',
+            { name, normalized }
+        );
+        if (reserved) throw new IdentityError(409, 'LOGIN_NAME_TAKEN', 'That login name is already in use.');
+
+        const existing = await this.findAccountByEmail(normalized);
+        if (existing) {
+            const row = await this.getEmail(existing.principalId);
+            try {
+                await mailService.send(this._mail('already', {
+                    to: row.address,
+                    url: `${baseUrl}/app/forgot`,
+                    loginName: existing.loginName
+                }));
+            } catch { /* the caller learns nothing either way */ }
+            return { ok: true };
+        }
+
+        const display = displayName ? String(displayName).trim().slice(0, 100) : name;
+        const credential = await this._hash(password);
+        const token = newToken();
+        const minutes = identityConfig.emailVerifyTtlMinutes;
+        await db.transaction(async (tx) => {
+            await tx.run('DELETE FROM pending_registrations WHERE emailNormalized = @normalized', { normalized });
+            await tx.run(
+                `INSERT INTO pending_registrations (tokenHash, loginName, displayName, emailAddress, emailNormalized, passwordHash, paramsJson, expiresAt)
+                 VALUES (@tokenHash, @loginName, @displayName, @emailAddress, @normalized, @hash, @params, @expiresAt)`,
+                {
+                    tokenHash: sha256(token),
+                    loginName: name,
+                    displayName: display,
+                    emailAddress,
+                    normalized,
+                    hash: credential.hash,
+                    params: JSON.stringify(credential.params),
+                    expiresAt: utcIn(minutes * 60 * 1000)
+                }
+            );
+        });
+        try {
+            await mailService.send(this._mail('signup', {
+                to: emailAddress,
+                url: `${baseUrl}/app/verify-email?token=${encodeURIComponent(token)}`,
+                minutes,
+                loginName: name
+            }));
+        } catch (error) {
+            await db.run('DELETE FROM pending_registrations WHERE tokenHash = @tokenHash', { tokenHash: sha256(token) });
+            throw error;
+        }
+        return { ok: true };
+    }
+
+    /**
+     * Open registration, step two: the verification link was followed.
+     * Consume the pending row atomically (one winner) and create the
+     * principal, the account (entitlement 'open'), the credential, and the
+     * verified address in one transaction.
+     */
+    async _completeSignup(pending, invalid) {
+        const now = nowUtc();
+        return db.transaction(async (tx) => {
+            const claimed = await tx.run(
+                'DELETE FROM pending_registrations WHERE id = @id AND expiresAt > @now',
+                { id: pending.id, now }
+            );
+            if (claimed.changes !== 1) throw invalid();
+            const principalId = identityService.newNativeId();
+            await tx.run(
+                'INSERT INTO principals (id, displayName) VALUES (@id, @name)',
+                { id: principalId, name: pending.displayName || pending.loginName }
+            );
+            try {
+                await tx.run(
+                    `INSERT INTO app_accounts (principalId, loginName, role, entitlement)
+                     VALUES (@principalId, @loginName, 'member', 'open')`,
+                    { principalId, loginName: pending.loginName }
+                );
+            } catch (error) {
+                if (/unique|duplicate/i.test(String(error?.message))) {
+                    throw new IdentityError(409, 'LOGIN_NAME_TAKEN',
+                        'That login name was taken while your email was being verified. Sign up again with another one.');
+                }
+                throw error;
+            }
+            await tx.run(
+                'INSERT INTO password_credentials (principalId, hash, paramsJson) VALUES (@principalId, @hash, @params)',
+                { principalId, hash: pending.passwordHash, params: pending.paramsJson }
+            );
+            try {
+                await tx.run(
+                    `INSERT INTO account_emails (principalId, address, normalized, verifiedAt)
+                     VALUES (@principalId, @address, @normalized, @now)`,
+                    { principalId, address: pending.emailAddress, normalized: pending.emailNormalized, now }
+                );
+            } catch (error) {
+                if (/unique|duplicate/i.test(String(error?.message))) {
+                    throw new IdentityError(409, 'EMAIL_TAKEN', 'That email address was verified on another account meanwhile.');
+                }
+                throw error;
+            }
+            return {
+                kind: 'registration',
+                principalId,
+                loginName: pending.loginName,
+                displayName: pending.displayName || pending.loginName
+            };
+        });
+    }
+
+    // --- Mail templates --------------------------------------------------------
+
+    /** Plain-text messages. The installation name is the only branding. */
+    _mail(kind, { to, url, minutes, loginName }) {
+        const site = identityConfig.installationName;
+        const who = loginName ? ` (login name: ${loginName})` : '';
+        const ttl = minutes >= 120 ? `${Math.round(minutes / 60)} hours` : `${minutes} minutes`;
+        switch (kind) {
+            case 'verify':
+                return {
+                    to,
+                    subject: `${site}: confirm your email address`,
+                    text: `Confirm that this address belongs to your ${site} account${who} by opening this link:\n\n${url}\n\nThe link works once and expires in ${ttl}. If you did not add this address, ignore this message and nothing changes.`
+                };
+            case 'signup':
+                return {
+                    to,
+                    subject: `${site}: finish creating your account`,
+                    text: `Welcome. Open this link to confirm your email address and finish creating your ${site} account${who}:\n\n${url}\n\nThe link works once and expires in ${ttl}. If you did not sign up, ignore this message - no account exists until the link is used.`
+                };
+            case 'already':
+                return {
+                    to,
+                    subject: `${site}: you already have an account`,
+                    text: `Someone (probably you) tried to sign up for ${site} with this address, but it already belongs to an account${who}.\n\nTo sign in, use that login name or this email address. Forgotten the password? Reset it here:\n\n${url}\n\nIf this was not you, no action is needed.`
+                };
+            case 'recover':
+                return {
+                    to,
+                    subject: `${site}: reset your password`,
+                    text: `A password reset was requested for your ${site} account${who}. Choose a new passphrase here:\n\n${url}\n\nThe link works once and expires in ${ttl}. Every other signed-in device is signed out when you use it. If you did not ask for this, ignore this message - your password stays as it is.`
+                };
+            case 'test':
+                return {
+                    to,
+                    subject: `${site}: test message`,
+                    text: `Outbound mail from ${site} is working. This message was sent by the host from the installation panel.`
+                };
+            default:
+                throw new Error(`Unknown mail kind ${kind}`);
+        }
+    }
+
+    /** Operator's smoke test: one message to an address of their choosing. */
+    async sendTestMail({ to, issuedBy, baseUrl }) {
+        this.assertEmailEnabled(baseUrl);
+        const { address } = this.normalizeEmail(to);
+        await this._throttle('mail_test', issuedBy, MAIL_MAX_PER_RECIPIENT, HOUR_MS);
+        await mailService.send(this._mail('test', { to: address }));
+        return { ok: true, provider: mailService.provider };
+    }
+
     // --- Discord link intents ---------------------------------------------------
 
     /**
@@ -578,15 +1055,19 @@ class NativeAuthService {
      * What Settings shows: sign-in methods and their state. Safe metadata only.
      * @param {string} principalId
      */
-    async summary(principalId) {
-        const [principal, account, external, hasPassword] = await Promise.all([
+    async summary(principalId, { baseUrl = null } = {}) {
+        const [principal, account, external, hasPassword, email] = await Promise.all([
             identityService.getPrincipal(principalId),
             identityService.getAccount(principalId),
             identityService.listExternal(principalId),
-            this.hasPassword(principalId)
+            this.hasPassword(principalId),
+            this.getEmail(principalId)
         ]);
         const legacy = identityService.isSnowflake(principalId);
         const discord = external.find(row => row.provider === 'discord');
+        const pendingVerification = email && !email.verifiedAt
+            ? await this._verificationPending(String(principalId), email.normalized)
+            : false;
         return {
             principalId: String(principalId),
             kind: legacy ? 'legacy' : 'native',
@@ -597,6 +1078,12 @@ class NativeAuthService {
             nativeLogin: this.enabled,
             hasPassword,
             passwordMinLength: identityConfig.passwordMinLength,
+            // Email: the address on file (if any), whether it has been
+            // proven, and whether the installation can send mail at all.
+            email: email
+                ? { address: email.address, verified: Boolean(email.verifiedAt), pendingVerification, updatedAt: email.updatedAt }
+                : null,
+            mail: { enabled: this.emailEnabled(baseUrl), reason: this.emailDisabledReason(baseUrl) },
             discord: {
                 linked: legacy || Boolean(discord),
                 subject: legacy ? String(principalId) : (discord?.subject || null),

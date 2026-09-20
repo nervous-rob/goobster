@@ -279,6 +279,29 @@ const TABLE_REBUILDS = [
                 executionAttemptId TEXT,
                 UNIQUE (userId, label)
             )`
+    },
+    {
+        // Shared-instance Increment B.1: accounts created by open sign-up
+        // with a verified email carry the 'open' entitlement.
+        table: 'app_accounts',
+        reason: 'the open entitlement',
+        isCurrent: ddl => ddl.includes("'open'"),
+        columns: [
+            'principalId', 'loginName', 'status', 'role', 'entitlement',
+            'credentialVersion', 'sessionVersion', 'createdAt', 'updatedAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+                loginName TEXT UNIQUE,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
+                entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap', 'open')),
+                credentialVersion INTEGER NOT NULL DEFAULT 1,
+                sessionVersion INTEGER NOT NULL DEFAULT 1,
+                createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+                updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+            )`
     }
 ];
 

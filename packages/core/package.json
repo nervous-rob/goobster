@@ -16,6 +16,7 @@
     "katex": "^0.18.4",
     "libsodium-wrappers": "^0.7.15",
     "node-fetch": "^2.7.0",
+    "nodemailer": "^7.0.13",
     "openai": "^6.45.0",
     "opusscript": "^0.0.8",
     "pdf-parse": "^2.4.5",

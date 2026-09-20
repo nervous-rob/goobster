@@ -3,15 +3,16 @@
  * Mounted by packages/core/web/appApi.js - do not require this file from apps.
  *
  * Sign-in methods (what Settings -> Account shows), credential enrollment
- * and changes, and disconnecting Discord. Sensitive changes need a recent
- * proof of identity; see requireRecentAuth in appHelpers.
+ * and changes, the recovery email address, and disconnecting Discord.
+ * Sensitive changes need a recent proof of identity; see requireRecentAuth
+ * in appHelpers.
  */
 
 function mountAccount(app, ctx, h) {
     const { requireAuth, requireRecentAuth, authRoute } = h;
 
     app.get('/api/app/account', requireAuth, authRoute(async (req) => ({
-        ...(await ctx.nativeAuth.summary(req.webUser.userId)),
+        ...(await ctx.nativeAuth.summary(req.webUser.userId, { baseUrl: ctx.publicUrl })),
         recentAuth: ctx.sessions.isRecentlyAuthenticated(req.webUser, ctx.identityConfig.recentAuthMinutes),
         recentAuthMinutes: ctx.identityConfig.recentAuthMinutes,
         discordLoginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl)
@@ -34,6 +35,21 @@ function mountAccount(app, ctx, h) {
         await ctx.sessions.markAuthenticated(req.webSessionToken);
         return { ok: true, loginName: result.loginName };
     }));
+
+    // --- Email address -----------------------------------------------------
+
+    // Set or replace the address. It starts unverified; a link is mailed.
+    app.put('/api/app/account/email', requireAuth, requireRecentAuth, authRoute(async (req) =>
+        ctx.nativeAuth.setEmail({ principalId: req.webUser.userId, email: req.body?.email, baseUrl: ctx.publicUrl })
+    ));
+
+    app.post('/api/app/account/email/resend', requireAuth, authRoute(async (req) =>
+        ctx.nativeAuth.resendVerification({ principalId: req.webUser.userId, baseUrl: ctx.publicUrl })
+    ));
+
+    app.delete('/api/app/account/email', requireAuth, requireRecentAuth, authRoute(async (req) =>
+        ctx.nativeAuth.removeEmail(req.webUser.userId)
+    ));
 
     app.delete('/api/app/account/identities/:provider', requireAuth, requireRecentAuth, authRoute(async (req) => {
         const provider = String(req.params.provider || '').toLowerCase();

@@ -3,7 +3,8 @@
  * Mounted by packages/core/web/appApi.js - do not require this file from apps.
  *
  * Invitations, the account roster (status, role, migration grants),
- * audited recovery links, and the legacy-data migration report. Every
+ * audited recovery links, the sign-up policy and mail status, and the
+ * legacy-data migration report. Every
  * route runs behind requireAuth + requireOperator; the role is read from
  * the actor context, never from the request.
  */
@@ -93,6 +94,34 @@ function mountAdmin(app, ctx, h) {
         const base = ctx.publicUrl || '';
         return { url: `${base}/app/recover?token=${encodeURIComponent(token)}`, expiresAt, loginName };
     }));
+
+    // --- Sign-up policy and mail -------------------------------------------
+
+    // How people get in, and whether the installation can send mail. The
+    // configured value and the effective one differ when open sign-up is
+    // requested but mail is missing - the panel shows the reason.
+    app.get('/api/app/admin/installation', ...guard, authRoute(async () => ({
+        installationId: ctx.identityConfig.installationId,
+        installationName: ctx.identityConfig.installationName,
+        publicUrl: ctx.publicUrl,
+        nativeLogin: ctx.nativeAuth.enabled,
+        requireAccount: ctx.identityConfig.requireAccount,
+        registration: {
+            configured: ctx.identityConfig.registration,
+            effective: ctx.nativeAuth.registrationMode(ctx.publicUrl)
+        },
+        mail: {
+            ...ctx.mail.describe(),
+            linksEnabled: ctx.nativeAuth.emailEnabled(ctx.publicUrl),
+            reason: ctx.nativeAuth.emailDisabledReason(ctx.publicUrl)
+        },
+        emailVerifyTtlMinutes: ctx.identityConfig.emailVerifyTtlMinutes,
+        recoveryTtlMinutes: ctx.identityConfig.recoveryTtlMinutes
+    })));
+
+    app.post('/api/app/admin/mail/test', ...guard, authRoute(async (req) =>
+        ctx.nativeAuth.sendTestMail({ to: req.body?.to, issuedBy: req.webUser.userId, baseUrl: ctx.publicUrl })
+    ));
 
     // --- Migration report --------------------------------------------------
 

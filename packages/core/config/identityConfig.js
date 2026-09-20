@@ -95,6 +95,18 @@ module.exports = {
     recentAuthMinutes: int('GOOBSTER_IDENTITY_RECENT_AUTH_MINUTES', identity.recentAuthMinutes, 15, 1, 1440),
     /** Default lifetime of a new invitation link. */
     inviteTtlHours: int('GOOBSTER_IDENTITY_INVITE_TTL_HOURS', identity.inviteTtlHours, 72, 1, 24 * 30),
-    /** Lifetime of an operator-issued password reset link. */
-    recoveryTtlMinutes: int('GOOBSTER_IDENTITY_RECOVERY_TTL_MINUTES', identity.recoveryTtlMinutes, 60, 5, 24 * 60)
+    /** Lifetime of a password reset link (operator-issued or emailed). */
+    recoveryTtlMinutes: int('GOOBSTER_IDENTITY_RECOVERY_TTL_MINUTES', identity.recoveryTtlMinutes, 60, 5, 24 * 60),
+    /**
+     * Who may create an account: 'invite' (an operator's link, the
+     * default) or 'open' (anyone with an email address they can prove).
+     * Open sign-up needs outbound mail; without it the effective mode
+     * stays 'invite' and the host panel says why.
+     */
+    registration: (() => {
+        const raw = String(process.env.GOOBSTER_IDENTITY_REGISTRATION || identity.registration || 'invite').trim().toLowerCase();
+        return raw === 'open' ? 'open' : 'invite';
+    })(),
+    /** Lifetime of an email verification link (and of an unverified open sign-up). */
+    emailVerifyTtlMinutes: int('GOOBSTER_IDENTITY_EMAIL_VERIFY_TTL_MINUTES', identity.emailVerifyTtlMinutes, 24 * 60, 5, 7 * 24 * 60)
 };

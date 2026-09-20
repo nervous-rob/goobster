@@ -292,7 +292,9 @@ describe('portal seams', () => {
             account: null,
             discordLinked: false,
             operator: false,
-            nativeLogin: false
+            nativeLogin: false,
+            registration: 'invite',
+            mail: false
         });
         // Only the private scope: guild membership is never asked for a
         // principal with no Discord identity.
@@ -404,7 +406,8 @@ describe('privacy erasure', () => {
                 openRecoveryLinks: 0,
                 invitesIssued: 0,
                 joinedByInviteAt: null
-            }
+            },
+            email: null
         });
 
         const counts = await privacyService.forgetUser({ userId: ROB });

@@ -2608,13 +2608,14 @@ CREATE TABLE IF NOT EXISTS principals (
 -- Portal entitlement. A principal without a row here has no application
 -- account (historical bot users are not granted one by backfill).
 -- entitlement records why the account exists: an accepted invitation, an
--- explicit migration of an existing Discord user, or the operator bootstrap.
+-- explicit migration of an existing Discord user, the operator bootstrap,
+-- or open sign-up with a verified email address.
 CREATE TABLE IF NOT EXISTS app_accounts (
     principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
     loginName TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
     role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
-    entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap')),
+    entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap', 'open')),
     credentialVersion INTEGER NOT NULL DEFAULT 1,
     sessionVersion INTEGER NOT NULL DEFAULT 1,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -2684,6 +2685,54 @@ CREATE TABLE IF NOT EXISTS oauth_link_states (
     principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
     sessionId INTEGER NOT NULL,
     provider TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One optional email address per account (shared-instance Increment B.1).
+-- `normalized` is the lower-cased, trimmed form and is unique across the
+-- installation; `verifiedAt` is set only by a consumed verification token.
+-- A verified address is a login identifier and the self-service recovery
+-- channel; an unverified one is neither.
+CREATE TABLE IF NOT EXISTS account_emails (
+    principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+    address TEXT NOT NULL,
+    normalized TEXT NOT NULL UNIQUE,
+    verifiedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Single-use, short-lived email verification tokens (hashed). `normalized`
+-- pins the address the link was sent to, so changing the address on the
+-- account invalidates links mailed to the previous one.
+CREATE TABLE IF NOT EXISTS email_tokens (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('verify')),
+    normalized TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_tokens_principal ON email_tokens(principalId);
+
+-- Open sign-ups waiting for their email to be verified. Nothing here is
+-- an account: no principal, no app_accounts row, no credential. Verifying
+-- the (hashed) token creates all three in one transaction; a sign-up that
+-- is never verified expires and is pruned. One pending row per address -
+-- signing up again replaces the earlier attempt.
+CREATE TABLE IF NOT EXISTS pending_registrations (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    loginName TEXT NOT NULL,
+    displayName TEXT,
+    emailAddress TEXT NOT NULL,
+    emailNormalized TEXT NOT NULL UNIQUE,
+    passwordHash TEXT NOT NULL,
+    paramsJson TEXT NOT NULL,
     expiresAt TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
