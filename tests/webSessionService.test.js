@@ -43,7 +43,8 @@ describe('session lifecycle', () => {
     test('get resolves a live token and updates lastSeenAt', async () => {
         const { token } = await webSessionService.create({ userId: USER, userName: 'rob', avatar: 'abc' });
         const session = await webSessionService.get(token);
-        expect(session).toEqual({ userId: USER, userName: 'rob', avatar: 'abc' });
+        expect(session).toMatchObject({ userId: USER, userName: 'rob', avatar: 'abc' });
+        expect(Number.isInteger(session.id)).toBe(true);
         expect((await db.get('SELECT lastSeenAt FROM web_sessions')).lastSeenAt).toBeTruthy();
     });
 

@@ -27,6 +27,7 @@ const GROUPS = [
             'gatewaySeam',
             'githubService',
             'globalCommandPayload',
+            'identityService',
             'integrationActions',
             'integrationsWebhooks',
             'issueCaptureAndBridges',
