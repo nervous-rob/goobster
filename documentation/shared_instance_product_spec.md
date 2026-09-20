@@ -1,0 +1,376 @@
+---
+title: "Planned: shared-instance product design and rollout"
+kind: decision
+summary: Planned invitation-only multi-user release covering product organization, native login, identity migration, isolation, resource controls, and implementation gates. These changes are not implemented by this document.
+tags: [planning, shared-instance, native-auth, identity, product, rollout]
+---
+
+# Planned: shared-instance product design and rollout
+
+**Status: design direction agreed; implementation pending.** This document specifies future work. Native login, the proposed navigation, and guided tutorials are not available merely because this document exists. Use the current feature guides and code when describing today's behavior.
+
+Updated: 20 September 2026.
+
+Code observations: `main` at `dac192b298661070304efe2883e13e7fefa1231c` (19 September 2026). Recheck the observations against current main before implementing each increment.
+
+Initial rollout: invited people on the operator's hosted instance, with private accounts and explicit sharing.
+
+This is an implementation plan, not a setup guide. Detailed credential choices and visible names remain proposals where marked. No product rename is selected.
+
+Related planning documents:
+
+- [Guided tutorial specification and curriculum](guided_tutorials_spec.md)
+- [Product naming exploration](product_naming_exploration.md)
+
+Current behavior is documented in [architecture](architecture.md), [web portal setup](webapp_setup.md), [projects](projects.md), [user settings](user_settings.md), and [Spitball Expeditions](spitball_expeditions.md).
+
+## 1. Product direction
+
+**A self-hosted workspace where people think with AI, build reusable knowledge, and carry projects through to results.**
+
+The initial experience should make five things legible:
+
+1. **Chat** is where you work through an immediate question.
+2. **Knowledge** is what you deliberately keep and reuse, with sources where available.
+3. **Projects** bring conversations, selected knowledge, plans, files, and work together around an outcome.
+4. **Discussions** bring people and AI personas into a shared conversation.
+5. **Activity** shows what is running, what happened, and what needs your attention.
+
+The assistant can retain personal memory according to the user's settings. That memory has its own inspection and deletion controls. A chat transcript, a saved note, an inferred personal fact, and a project output are distinct objects. Presenting all four as “knowledge” obscures what is stored and who can use it.
+
+Keep the exploratory personality. Put descriptive names first and room names second during the transition. Avoid renaming every subsystem, database table, tool, and route at once.
+
+### Scope of the first release
+
+- Invitation-only registration on one installation; account administration for the host.
+- Native login with no Discord account requirement.
+- Private chat, notes, projects, settings, and tutorial progress.
+- Deliberate collaboration on projects and discussions.
+- Per-account and per-instance resource controls.
+- Tutorials for every available room/service, with independent skip, resume, and reset.
+- Optional specialist tools behind a Tools destination.
+
+Public signup, billing, organizations, cross-instance federation, and a final brand change are later decisions. This release does not need an enterprise tenancy model. An installation is the operating boundary; accounts and resource memberships provide isolation within it.
+
+### Proposed defaults for a newly invited account
+
+Keep new content private. Make retained chat history and its deletion controls visible. Offer long-term personal-memory learning as an explicit choice; leave proactive outreach and unattended recurring work off until enabled. Select a host-approved default model and explain whose usage allowance it consumes. A tutorial never changes these permissions or enrollment settings implicitly. Preserve existing users' deliberate preferences during migration.
+
+## 2. Baseline observations
+
+These are code observations, not results of a deployed penetration or load test. Paths below refer to the pinned baseline. The existing application already has private scopes, resource membership checks, hashed browser sessions, durable chat coordination, and background-job claims. Preserve and extend them.
+
+| Observation | Evidence at the pinned baseline | Consequence for this work |
+|---|---|---|
+| The primary navigation exposes eleven rooms, plus Settings, using the house/grounds metaphor. | `apps/web/src/shell/AppShell.tsx`, `apps/web/src/main.tsx` | Simplify the first navigation level and retain old deep links. |
+| Spitball combines maps, notes, research expeditions, personal facts, memories, and reports. | `apps/web/src/rooms/SpitballRoom.tsx` | Separate reusable knowledge from personal-memory controls. |
+| Observatory contains projects, generated apps, files, jobs, knowledge, people, and missions. | `apps/web/src/rooms/ObservatoryRoom.tsx`, `documentation/projects.md` | Make Projects the visible organizing concept. Keep advanced execution details inside each project. |
+| Production browser authentication is Discord OAuth. Session creation rejects IDs that are not 5–20 digits. | `packages/core/web/routes/authChat.js`, `packages/core/services/webSessionService.js` | Introduce application identities and credentials; changing the Login component alone is insufficient. |
+| Private chat/memory use `dm:<userId>` as a storage scope. Guild access is checked separately. | `packages/core/utils/dmScope.js`, `packages/core/services/webDashboardService.js` | Preserve existing private data through a scope adapter. Do not equate installation access with guild access. |
+| Chat startup needs a bot identity. The split API also requires Postgres and an internal gateway token at startup. | `packages/core/services/webChatService.js` → `startTurn`; `apps/api/index.js` | Separate assistant identity from Discord identity and make the Discord adapter optional. |
+| Project and discussion invitations expect Discord-shaped IDs; people discovery uses Discord friends or mutual guilds. | `projectService.js` → `invite`; `parlorService.js` → `invite`; `friendService.js` | Add native account discovery/invitations and map optional Discord identities at the adapter boundary. |
+| Tasks explicitly describe delivery through Discord DMs. | `apps/web/src/rooms/TasksRoom.tsx` | Make durable in-app delivery the baseline. Otherwise native users can create work whose result has no destination. |
+| Music Lab local storage has a global prefix, and samples use one global IndexedDB database. | `apps/web/src/music-lab/lib/storage.ts`, `sampleStore.ts` | Namespace content by installation and account; handle unowned legacy browser content explicitly. |
+| Many query keys do not include the account. Logout currently reloads the page. | `apps/web/src/lib/query.ts`, `apps/web/src/shell/AppShell.tsx` | Do not claim an observed leak from query keys alone. Make account changes, session expiry, streams, and cache clearing explicit and test them. |
+| Chat has a durable rate limiter and per-user turn coordination; expeditions use durable claims. Sandbox concurrency uses a process-local counter. | `webChatService.js`, `spitballExpeditionRunner.js`, `sandboxService.js` | Existing coordination is useful, but a process-local cap is not an installation-wide budget. Define admission across services and processes. |
+| Strong sandbox isolation defaults on. Operators can override it for a single-user host. | `packages/core/config/sandboxConfig.js` | Preserve the default and disallow weak isolation for invited accounts. Verify actual host capabilities before enabling execution. |
+| Self-documentation includes shipped repository docs and operator-authored documents. | `documentation/self_knowledge.md`, `selfDocsService.js` | Give user help and operator documentation distinct audiences before exposing help to new accounts. |
+| No guided-onboarding implementation was found in the inspected frontend, services, or docs. | Search for `tutorial`/`onboard` plus inspection of routes and Settings | Add an explicit tutorial subsystem instead of scattered local flags. |
+
+Observation baseline: [pinned main](https://github.com/nervous-rob/goobster/tree/dac192b298661070304efe2883e13e7fefa1231c).
+
+## 3. Information architecture and vocabulary
+
+### Navigation
+
+The main destinations are **Home, Chat, Knowledge, Projects, Discussions, Activity**, and **Tools**. Settings stays in the account area. Activity combines related entry points, but its underlying services and tutorial progress remain distinct.
+
+| Current label | Proposed visible label | Location and behavior |
+|---|---|---|
+| Home | Home | Continue recent work; create a chat, note, or project; show pending approvals. |
+| Study | Chat | Private conversations, history search, uploads, voice, branching, and explicit sharing. |
+| Spitball | Knowledge · Spitball | Notes, tags, source evidence, graph, and Research. Lead with the note list; make the graph another view. |
+| Spitball facts/memories/report | Personal memory | Settings → Memory & privacy, with a shortcut from Chat and Knowledge. |
+| Expeditions | Research runs | Inside Knowledge; can optionally target a project. “Expedition” may remain a secondary term. |
+| Observatory | Projects | Goal, conversation, plan, knowledge, files/apps, runs, and people. |
+| Mission | Project plan | Goal, acceptance criteria, steps, approvals, and evidence. Retain `mission` internally during transition. |
+| Job | Run | A particular execution with status, outputs, logs, and retry/cancel controls. |
+| Workshop inbox / discoveries | Unfiled outputs | A clearly labeled section under Projects, with “Add to project.” |
+| Parlor | Discussions · Parlor | People and AI personas, with participant and knowledge-source visibility. |
+| Noticed | Inbox | Activity → Inbox; explain why an item appeared and what can be done about it. |
+| Tasks | Scheduled tasks | Activity → Scheduled; distinguish reminders from recurring AI work. |
+| Usage | Usage & limits | Account area and Settings; also reachable from a quota notice. |
+| Conservatory / Interval Labs | Music Lab | Optional tool; keep mode names such as Rhythm, Harmony, and Studio. |
+| Exchange | Trading game | Optional tool, explicitly tied to a connected Discord server and game currency. |
+| Decks | Card decks | Optional tool; subtitle identifies Magic: The Gathering so this is not confused with presentations. |
+
+Keep existing URLs operational as aliases. For example, `/study` and `/observatory` continue to work while `/chat` and `/projects` become canonical. Add route-contract tests for bookmarks, notification links, public shares, and settings return links. Do not run blanket replacements over persisted tool names or historical message content.
+
+### The object model users should see
+
+| Object | What it means | What happens across features |
+|---|---|---|
+| Conversation | A transcript of an exchange with people or AI. | Can be associated with a project. It does not automatically become a curated note. |
+| Note | A reusable unit of knowledge with tags and optional evidence. | Can be searched, edited, and explicitly made available to a project or discussion. |
+| Personal memory | Information retained about the person or from their private interactions. | Used according to memory settings. Never automatically injected into a shared conversation. |
+| Project | An outcome with its own members, selected context, plan, and outputs. | Selects which knowledge and conversations belong to the work. It does not clone the user's entire private memory. |
+| Plan | A project's proposed steps and success conditions. | Human approval gates precede consequential execution. |
+| Run | A concrete research, model, or code-execution attempt. | Produces results with provenance and a status. A successful process is not proof that the project goal was met. |
+| Output | A generated file, app, report, or other result. | Lives with its producing conversation/project, or appears in Unfiled outputs until organized. |
+| Activity item | A notice, result, reminder, invitation, or request for input. | Links back to its owning object. It is not another copy of that object. |
+
+A useful first journey is: **ask a question → save a useful answer as a note → add it to a project → run a small task → inspect the output and evidence**. The UI should make each transition explicit.
+
+### Retrieval and provenance contract
+
+- Every result includes its kind, stable resource ID, scope, source/provenance, and permitted next actions.
+- Search and model retrieval apply authorization before ranking and before creating snippets. Mixed-scope results cannot expose names, counts, titles, or vector hits from denied scopes.
+- A no-match result is typed: `no_match`, `unavailable`, `forbidden`, or `needs_input`. An empty authorized search must not silently expand to other users or all guilds.
+- Product help uses the documentation corpus. User knowledge uses the selected authorized knowledge sources. The assistant must not present an instruction manual as a fact learned about a user.
+- Notes in Spitball remain connected through shared tags. The product redesign must not introduce direct note-to-note links as a hidden new model. Other graph types must identify their relationship semantics.
+- “Used these sources” should link to inspectable, authorized evidence. Source citations do not by themselves guarantee a generated claim is true.
+- Product verbs such as **Save note**, **Add to project**, and **Use in discussion** should map to deterministic service actions. No extra model call is needed for routing an already selected object.
+
+## 4. Shared-instance authorization
+
+### Access rules
+
+Installation membership permits use of the application; it does not grant access to everyone else's data.
+
+| Resource | Default access | Grant mechanism | Revocation behavior |
+|---|---|---|---|
+| Private chats, notes, memory, credentials, integrations | Owning account | No blanket sharing | Deny other accounts, including other project members. |
+| Project | Owner | Explicit accepted invitation; roles such as viewer/editor with owner-only management | Recheck reads, writes, queued work, downloads, and streams. Remove access immediately on revocation. |
+| Shared discussion | Explicit members | Accepted invitation, or inherited project membership for project-linked discussions | Stop delivery and further retrieval when membership ends. |
+| Discord guild content | Linked identity plus actual guild/resource permission | Discord membership and permission checks | Losing guild access removes it even if application membership remains. |
+| Public share | Anyone holding the explicitly created share link | Narrow capability for that resource | Revocation blocks future access. Previously downloaded copies cannot be recalled. |
+| User documentation | All accounts, with only public help possibly anonymous | Build-time audience allowlist | Never include operator notes by default. |
+| Installation settings and invites | Host/operator | Explicit application role | Discord Manage Server does not grant installation administration. |
+
+Application privacy is separation between app accounts. A person who controls the host can access its database and files. New-user copy should state who hosts the instance and which external model providers may process requests. Do not promise end-to-end confidentiality from the host.
+
+### Private knowledge entering shared work
+
+Use two explicit operations:
+
+1. **Reference in my private project:** store a reference to the existing note and recheck the note's authorization at read time.
+2. **Publish a copy to a shared project/discussion:** show the content being shared, create a scoped snapshot, retain provenance, and identify its audience.
+
+Adding a private note to a project that later becomes shared must not expose that note automatically. Show unresolved private references and let the owner publish selected copies. Removing the original note does not silently delete a previously published copy; the deletion UI identifies both scopes and lets the owner act on each permitted copy.
+
+Personas must follow the same rule. Private persona knowledge stays private. A shared persona receives only knowledge explicitly published to that discussion/project or otherwise authorized for every intended audience. Mixed-audience retrieval needs an explicit policy, not the creator's broad permissions.
+
+### Required identity in a service call
+
+Use one request/job context through HTTP, Discord, tools, queues, and events:
+
+```ts
+type ActorContext = {
+  actorId: string;              // application principal, never a client override
+  installationId: string;
+  surface: 'web' | 'discord' | 'automation';
+  sessionId?: string;
+  externalActor?: { provider: 'discord'; subject: string };
+};
+
+type ResourceScope =
+  | { kind: 'personal'; ownerId: string }
+  | { kind: 'project'; projectId: number }
+  | { kind: 'discussion'; discussionId: number }
+  | { kind: 'discordGuild'; guildId: string };
+```
+
+An authenticated actor and a selected scope are separate facts. Resource authorization derives from server-side membership. The model may request an action; it never chooses or overrides its actor identity. Worker jobs store the initiating actor and target scope, then revalidate current authority before execution and delivery. Public-share requests use a narrow capability context, not a synthetic privileged user.
+
+## 5. Native login and identity migration
+
+### Recommended first authentication method
+
+Use invitation-based **username and password** accounts. Offer a verified recovery email when mail is configured. Discord becomes an optional linked identity and optional sign-in method. This supports a self-hosted installation without requiring an external identity provider or email service just to register.
+
+Passkeys and an operator-selected OIDC provider are useful later additions. Select a maintained implementation during the authentication PR after checking runtime and deployment compatibility. Do not hand-roll password cryptography or build a new token protocol.
+
+The exact login-method choice is a proposal, not a finalized authentication decision.
+
+### User flows
+
+**New invited user**
+
+1. The host creates a single-use invitation with an expiry and initial member role.
+2. The user opens it and sees the installation name, host identity, privacy summary, and enabled capabilities.
+3. The user chooses a display name, unique login name, and password. Recovery email is optional if mail is unavailable.
+4. The server atomically consumes the invitation, creates the account, and starts a fresh session. Concurrent redemption has exactly one successful outcome.
+5. A short orientation opens in Home. The user can skip immediately. No Discord prompt blocks progress.
+6. Connections offers “Connect Discord” as an optional action with an explanation of the added capabilities.
+
+The host shares the invitation through their chosen channel. The app can copy a link; automatic email delivery is optional. Creating the link and sending it are separate operations.
+
+**Returning user:** login name + password → intended authorized destination. Only accept same-origin return paths. Invalid credentials use a generic response. Session expiry preserves an unsent draft locally under the account identity; it does not leak that draft to the next account.
+
+**Existing Discord user:** sign in through the existing verified Discord flow → activate an explicitly authorized application account → add native credentials → reauthenticate once → verify existing chats, notes, settings, and projects are unchanged. The existing operator account gets the operator role through an explicit one-time bootstrap command or configured allowlist, never by “first public visitor.”
+
+**Recovery:** verified email can receive a short-lived, single-use reset link. Without mail, the UI clearly says to contact the host; the host can issue an audited reset link after independently verifying the requester. Reset completes with session revocation and a new login. Do not use display name or knowledge of a Discord ID as proof of ownership.
+
+**Connect Discord:** begin from a recently authenticated session; bind OAuth state to that session, link intent, expiry, and redirect. Prove control of the Discord identity. Reject conflicts when that external identity already belongs to another account. Do not merge accounts by matching email, name, or guild membership.
+
+**Disconnect Discord:** require a working native sign-in method before removing the last usable identity. Keep application data and local credentials. Stop optional Discord delivery and remove guild-derived access; do not delete shared project memberships that were independently granted in the app.
+
+### Data model and compatibility
+
+Introduce a canonical principal/account layer. The existing `users` table and every field called `userId` must be inventoried before choosing a migration; many fields currently mean a Discord identity in a guild context.
+
+| Proposed record | Essential fields and invariants |
+|---|---|
+| `principals` | Opaque text `id`, display profile, created time. A principal does not automatically have portal access. |
+| `app_accounts` | Principal ID, normalized unique login name, status, role, invite/migration entitlement, credential/session version. Disabled accounts cannot authenticate or launch work. |
+| `auth_identities` | Principal ID, provider, issuer when relevant, external subject; unique provider/issuer/subject. Store credential material separately. |
+| `password_credentials` | Principal ID, salted adaptive hash, parameters/version, updated time. Never store reversible passwords. |
+| `account_invites` | Hashed random token, issuing operator, role, expiry, consumed/revoked time. Token is not a permanent login credential. |
+| `recovery_tokens` | Hashed token, account, purpose, expiry, consumed time. Distinct from invitation and OAuth state. |
+| Existing `web_sessions` | Reference the canonical account; retain hashed opaque tokens; add authentication time and revocation/version semantics as needed. |
+| Scope mapping | Canonical principal and resource scope → existing storage scope, so old private data can keep its `dm:<legacyId>` key initially. |
+
+**Low-risk migration strategy:** treat current IDs as opaque internal IDs for migrated principals; preserve existing IDs and private-scope keys. New native accounts receive a non-Discord-shaped random ID, such as `usr_<uuid>`. The ID format grants no authority. Existing Discord subject mappings resolve to the migrated principal. This avoids rewriting all history and project directories in the first release.
+
+This is a compatibility boundary, not permission to send application IDs to Discord APIs. Bot ingress resolves the principal and retains the actual Discord subject for guild checks, mentions, DMs, and gateway calls. Do not overwrite `interaction.user.id` globally. Core code consumes `actorId`; transport adapters retain external IDs.
+
+Backfill principals for referenced owners as necessary, but **do not grant portal accounts to every person found in bot history**. Only accepted invitations and explicit migration entitlements allow entry. Retaining optional Discord login must not bypass the invitation gate.
+
+For account-link conflicts involving two existing data owners, decline linking and provide a clear explanation. A deliberate account-merge workflow is out of scope for the first release; redirect the person to sign into the existing account and add native credentials there. Never silently split or combine histories.
+
+### Migration procedure and acceptance
+
+1. Inventory identity-bearing columns, embedded IDs in JSON, filesystem paths, vector ownership, cache keys, scheduled-job owners, tokens, integration secrets, and share records.
+2. Back up the database and project files together. Produce a read-only migration report with counts and unresolved owners.
+3. Add tables and mappings. Keep legacy reads operational; new authentication remains disabled behind a release flag.
+4. Backfill deterministically and idempotently. Run twice in a fixture and verify stable ownership and counts.
+5. Update web, Discord, tools, workers, presence, invitation search, and delivery adapters to resolve the same principal.
+6. Exercise the existing operator's migrated account and two native accounts against SQLite and Postgres fixtures.
+7. Enable native authentication only after migration checks and isolation tests pass.
+
+Rollback disables new account creation and the new UI while preserving additive tables and all data. Once native accounts have written data, an old binary that rejects their IDs is not a valid rollback target. Use a compatibility release or restore a coordinated backup during a planned outage; do not casually drop new tables.
+
+### Authentication controls
+
+Use Argon2id through a vetted implementation; OWASP's current minimum is 19 MiB memory, two iterations, and one parallel lane. Benchmark hashing on the actual host and bound concurrent verification work. For password-only accounts, propose a 15-character minimum, support long passphrases and password managers, and reject common compromised choices. Avoid composition puzzles and periodic forced changes. [Password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html), [authentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html).
+
+Reuse the existing opaque server-side session approach. Set `Secure`, `HttpOnly`, and explicit `SameSite` attributes; use a host-scoped cookie in production. Rotate sessions on login and privilege changes. Revoke sessions after credential recovery, account disablement, or explicit device revocation. Protect unsafe requests with CSRF tokens and trusted-origin checks; SameSite is an additional layer. Apply both account and IP throttles without creating an easy permanent-lockout attack. [Session guidance](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html).
+
+Return neutral errors for bad credentials and recovery requests. Never log passwords, invite/reset tokens, OAuth secrets, or full credential-bearing URLs. Require recent authentication for linking, recovery changes, credential removal, operator actions, and account deletion. An enabled development-session bypass is a release blocker on the shared instance.
+
+## 6. Operation without Discord
+
+Native authentication must lead to a usable product.
+
+- Provide an installation-scoped assistant identity for chat and generated messages. Discord's bot ID is a transport identity, not a prerequisite for inference.
+- The API/core runtime starts without a Discord token, client ID, or internal gateway secret when that adapter is disabled.
+- Run required schedulers, job recovery, retention, docs seeding, and event delivery in an explicitly designated core worker/runtime. Avoid accidentally depending on `apps/bot/index.js` to start them.
+- Keep one authoritative worker arrangement for the pilot. Postgres remains the supported database for split processes; retain SQLite support for the supported single-process mode. SQLite is not inherently incompatible with several users.
+- Native people search uses eligible installation accounts and explicit invitations. It never enumerates all private account details. Profile discovery and presence are separate permissions.
+- Task and research results persist to an in-app inbox. Optional Discord delivery references the same result and has a separate delivery status. A failed DM must not lose the result or duplicate execution.
+- A disconnected integration shows a specific unavailable action with a next step. It must not make Chat or Projects report “bot offline.”
+- Trading game remains an optional Discord-guild feature in this release. Show a clear connection requirement; do not invent a fake guild for native accounts.
+
+## 7. Multiple people using the instance at once
+
+### Resource admission
+
+Create a shared admission service that existing executors call; do not replace every executor with a new generic engine. Track both the requesting actor and the owning/billed scope for collaborative work.
+
+| Resource | Required controls | User-visible state |
+|---|---|---|
+| Model requests, research and persona turns | Allowed models; per-user and installation budgets; reservations for concurrent spend; bounded queues; timeouts and cancellation | Queued/running/paused; why it is waiting; which limit applies. |
+| Code runs | Strong isolation; installation-wide concurrency lease; per-user/project caps; CPU/memory/time/output limits | Place in queue; cancel; clear failure reason; accessible output/logs. |
+| Persistent files and uploads | Account/project storage allowance; maximum item size; ownership-checked download; cleanup/retention policy | Used/available storage and a useful remediation. |
+| Scheduled work | Per-account schedule count and frequency limits; current authorization on every run; retry budgets | Last run, next run, delivery destination, pause and cancel. |
+| Streams and presence | Per-session connection limits; account-scoped topics; reauthorization on revocation | Connection state without disclosing unrelated activity. |
+
+Budget values are host policy, not guessed capacity claims. The pilot must measure the current host with representative models and workloads before setting invitation volume. Usage estimates and provider invoices may differ; do not label an estimate as a settled bill.
+
+Use fair scheduling among accounts, with bounded background work so one recursive research run cannot monopolize capacity. Do not preempt an external model stream arbitrarily; admit the next eligible task fairly when capacity frees. Preserve the existing per-user chat rule unless deliberately changed. One user waiting on their own turn must not lock other users out.
+
+Persist leases and idempotency keys for operations that span processes. A worker crash expires a lease and exposes recoverable state. Retrying a delivery must not rerun the underlying research. Unknown outcomes from external providers need reconciliation or an explicit retry decision; database claims alone do not guarantee exactly-once external effects.
+
+### Concurrent edits
+
+- Version mutable notes, settings, plans, and assets. Reject stale writes with a conflict response and reload/compare options.
+- Derive project identity from immutable ID plus authorized owner; a slug is only a label.
+- Use atomic accept/invite/role-change operations and recheck role at commit time.
+- On membership revocation, invalidate subscriptions and block queued writes. Already delivered copies remain outside the application's control.
+- Separate usage attribution from authorization: a project owner's budget does not grant every member their integration credentials.
+
+### Browser and session isolation
+
+Namespace private local drafts, Music Lab compositions, voice presets, sample clips, and tutorial caches by installation/account. Neutral device preferences, such as theme, can remain device-scoped if labeled that way.
+
+Unowned legacy Music Lab data needs an explicit import to a verified existing account. It must never be silently adopted by whichever invited account logs in next. Retain a recoverable legacy export until ownership is resolved.
+
+Cancel queries, abort private streams, clear account data, release audio buffers, and recreate account-scoped providers on login/logout/account change. Use cross-tab notification for logout and revocation. Never service-worker-cache authenticated API responses. Test the transition from account A to B, including late responses that arrive after logout and a second tab whose session has expired.
+
+### Deployment gate
+
+Keep strong sandbox isolation required. Test failure when the host cannot supply the required filesystem/network isolation; do not silently enable the single-user fallback. Installation-wide package approval and extra host mounts remain operator controls. A normal account, project owner, or Discord guild administrator must not acquire them implicitly.
+
+## 8. Planned guided tutorials
+
+Every available room/service gets an independently tracked tutorial. The first successful login opens a short Home orientation; each room then introduces itself on first entry. Steps and whole tutorials can be skipped. Users can pause, resume, replay, reset one tour, or reset all tours in Settings.
+
+Progress belongs to the application account and persists across devices. Reset generations prevent an old tab from restoring obsolete progress. Demonstrations use isolated sample content, with no real provider costs, invitations, schedules, or writes into user knowledge. Major features require demonstrated actions; advanced topics link to version-matched user documentation.
+
+The [guided tutorial specification](guided_tutorials_spec.md) is the authoritative planning document for launch rules, the full room/service catalog, state and API contracts, accessibility, and feedback. Increment F below implements it; the release gates in this document also apply.
+
+
+## 9. Implementation sequence
+
+Each increment should be reviewable on its own. Account creation stays gated until identity, isolation, delivery, and the initial guided path work together.
+
+| Increment | Changes | Main implementation seams | Exit evidence |
+|---|---|---|---|
+| A — Identity compatibility | Principal/account schema; external identity mapping; entitlement policy; legacy migration report; context resolver | DB schema/migrations, `dmScope`, sessions, bot ingress, gateway adapters | Idempotent fixture migration on both engines; legacy data and owners unchanged; native ID passes core boundaries. |
+| B — Invitations and native authentication | Invite administration, register/login, recovery, local credential enrollment, account/device management, optional Discord linking | `authChat.js` split into focused routes; `Login.tsx`; Account/Connections settings | Invitation replay/races, link conflicts, revocation, throttles, CSRF, recovery tests. Registration remains release-gated. |
+| C — Independent runtime and delivery | Assistant identity, optional Discord adapter, core scheduler lifecycle, native people discovery, durable in-app results | `apps/api`, web chat, task/attention delivery, presence, project/Parlor invite services | Full user journey with no Discord config; scheduled result arrives in app; disabled integrations degrade locally. |
+| D — Shared-instance readiness | Scope tests, browser content isolation, cross-process admission/budgets, edit conflicts, stream revocation | Shared access helpers, retrieval, event subscriptions, sandbox, client caches/Music Lab storage | Adversarial two-account tests and representative concurrency tests pass; strong isolation confirmed. |
+| E — Product organization | Navigation/labels, Knowledge versus Memory separation, project tabs, Activity tabs, Tools catalog, scope badges | App shell, room routing, Home, Spitball/Observatory components, settings metadata | Old deep links work; note→project journey is clear; disabled tools are understandable. |
+| F — Guided onboarding | Tutorial state service, catalog, fixtures, UI anchors, docs viewer, Settings reset/replay, feedback | New tutorial service/routes/provider; room components; user docs | Every enabled room has coverage; skip/reset/reload/device/account cases and mobile keyboard journeys pass. |
+| G — Small invited pilot | Staged invitations, host limits, logs without content capture, observed first-use sessions | Deployment policy and operator UI | Native users finish the core journey; no cross-account access; resource waits remain understandable. |
+
+Do not combine the full identity migration, navigation rewrite, tutorial framework, and rebrand in one PR. A–D establish correctness; E–F establish comprehension. Implement a representative E/F vertical slice early to test the design, while keeping public admission gated.
+
+## 10. Validation plan
+
+Extend the existing suites and add new tests only for meaningful behaviors. Current CI requires every new `tests/*.test.js` file to belong to exactly one `tests/ciGroups.js` group. Use deterministic providers for normal CI; live model checks remain optional and credential-gated. Both SQLite and Postgres need migration/service coverage.
+
+| Area | Required scenarios |
+|---|---|
+| Identity migration | Existing operator data preserved; rerun migration; missing owner; rollback-compatible release; native non-snowflake ID; old Discord principal resolution; no accidental portal entitlement for historical users. |
+| Authentication | Invite success/expired/revoked/duplicate/concurrent use; unauthenticated and disabled account; failed login throttling; reset replay; session rotation; device revocation; OAuth state mismatch; identity conflict; unlink last method; native-only login with no Discord config. |
+| Authorization | A cannot list/read/search/export/change/delete B's chats, notes, memory, files, jobs, settings or tutorials. Guessed IDs and owner/actor fields in request bodies grant no authority. Denied searches reveal no snippets/counts. |
+| Collaboration | Explicit acceptance; viewer/editor/owner behavior; revoked membership; concurrent invite acceptance; private knowledge in shared projects; project-linked discussion inheritance; persona memory audience. |
+| Retrieval | Authorized no-match remains empty; service failure is not a wider search; self-help versus user notes; mixed lexical/vector results enforce the same scope. |
+| Runtime and delivery | Discord absent/down; model absent; queue survives restart; one result with multiple delivery attempts; revocation while queued; account disabled during execution; graceful cancellation. |
+| Concurrency | Different users chat simultaneously; one account's turn lock does not block another; two processes respect shared execution limits; crash lease expiry; atomic spend reservations; same-project conflicting edits. |
+| Browser | A signs out/B signs in on same device; expired second tab; late A response; account-scoped local/IndexedDB data; no authenticated response in service-worker cache; legacy content import. |
+| Tutorials | First login once; first visit independently; skip every step; skip one tour; pause/reload/resume; one-tour reset; reset all; stale-tab write after reset; multi-device progress; feature unavailable; missing anchor; new catalog version; no real side effects; no sample content in retrieval. |
+| Accessibility | Keyboard-only path; focus restoration; screen reader labels/progress; 320px width; 200% zoom; reduced motion; dialog within tutorial; mobile target remains visible. |
+| Documentation | Every `docId` resolves; anchors exist; deployed docs match version; operator documents unavailable to ordinary accounts and model retrieval. |
+
+Start a representative load experiment with synthetic identities and mocked provider timing, then repeat a bounded subset with the real host/providers. Suggested fixture: ten accounts, three simultaneous chats, two research runs, and one sandbox run. These are test inputs, not a supported-capacity claim. Measure admission delay, API latency, memory, CPU, DB wait time, queue fairness, retries, cancellation latency and budget accuracy.
+
+Pilot success criteria: two independent native accounts can finish the core journey without Discord; a shared project works through explicit membership; another account cannot access it; tutorials remain optional and recoverable; one user's long research does not prevent another from ordinary navigation and queued chat; the host can suspend an account and revoke its active sessions/work.
+
+## 11. Open naming exploration
+
+The application name and the assistant's name can differ. Goobster may remain the assistant or a selectable persona while the platform adopts a different identity. No new name is selected, and this rollout must not rename packages, configuration keys, stored data, or public APIs without a separate decision.
+
+See [product naming exploration](product_naming_exploration.md) for candidates, tradeoffs, and the checks needed before choosing one.
+
+
+## 12. Decisions and remaining choices
+
+Agreed direction: invited people on the operator's instance; private application accounts; explicit sharing; no Discord requirement for core use; independent room tutorials; per-step and per-tour skipping; reset in Settings; exploratory naming only.
+
+Proposed defaults for implementation review: native username/password with optional verified recovery email; descriptive primary labels; one primary workspace with optional specialist tools; additive identity migration; in-app delivery first; tutorial examples that incur no provider cost; gradual pilot after the shared-instance gates pass.
+
+Resolve during the relevant increment: authentication library, host budget values, whether recovery mail is configured, role granularity for collaborative resources, and migration of historical browser-only content. None requires choosing a new brand first.
+
+Implementation status must be updated here as increments land, with links to their PRs and the validated exit evidence. Do not mark an increment complete solely because its documentation or UI shell exists.
