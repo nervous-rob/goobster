@@ -150,6 +150,7 @@ function createAppHelpers(ctx) {
         authRoute: jsonRoute(ctx, 'Web auth route failed'),
         chatRoute: jsonRoute(ctx, 'Web chat route failed'),
         parlorRoute: jsonRoute(ctx, 'Parlor route failed'),
+        inboxRoute: jsonRoute(ctx, 'Inbox route failed'),
         dashboardRoute: jsonRoute(ctx, 'Web dashboard route failed'),
         exchangeRoute: jsonRoute(ctx, 'Web exchange route failed'),
         appletRoute: jsonRoute(ctx, 'Web applet route failed'),

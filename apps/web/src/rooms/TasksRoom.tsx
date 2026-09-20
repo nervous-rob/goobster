@@ -7,6 +7,8 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
+import { Link } from '@tanstack/react-router';
+import { useMe } from '../hooks/useSession';
 
 const CRON_LABELS = new Map([
     ['0 9 * * *', 'Daily at 9:00'],
@@ -21,14 +23,20 @@ const CRON_LABELS = new Map([
 type Automation = {
     id: number; name: string; prompt: string; enabled: boolean;
     scope?: string; scopeName?: string; schedule?: string; scheduleLabel?: string;
-    nextRun?: string; lastRun?: string;
+    nextRun?: string; lastRun?: string; delivery?: Delivery;
 };
 type Followup = {
     id: number; prompt: string; dueAt?: string; recurrence?: string;
-    deliveryCount?: number; scope?: string; scopeName?: string;
+    deliveryCount?: number; scope?: string; scopeName?: string; delivery?: Delivery;
+};
+type Delivery = 'inbox' | 'discord-dm' | 'channel';
+
+const DELIVERY_LABEL: Record<Delivery, string> = {
+    inbox: 'Inbox', 'discord-dm': 'Discord DM', channel: 'server channel'
 };
 
 export function TasksRoom() {
+    const me = useMe();
     const whenLabel = useDateLabel();
     const toast = useToast();
     const confirm = useConfirm();
@@ -55,7 +63,8 @@ export function TasksRoom() {
                         <div className="empty-logo">🗓️</div>
                         <div className="empty-title">Nothing scheduled yet</div>
                         <div className="hint" style={{ maxWidth: 440, margin: '0 auto' }}>
-                            Scheduled tasks are prompts Goobster runs for you on a timer. Results land in your Discord DMs.
+                            Scheduled tasks are prompts {me.assistant.name} runs for you on a timer. Results land in your{' '}
+                            <Link to="/inbox">Inbox</Link>{me.discord.enabled ? ' - and in your Discord DMs when you have them.' : '.'}
                         </div>
                     </div>
                 )}
@@ -66,7 +75,7 @@ export function TasksRoom() {
                             {tasks.data.automations.map((task) => (
                                 <div key={task.id} className={`list-row task-row${task.enabled ? '' : ' disabled'}`}>
                                     <div className="row-body">
-                                        <span className="badge">{task.scope === 'dm' ? 'DM' : task.scopeName}</span>
+                                        <span className="badge">{task.scope === 'dm' ? (task.delivery ? `→ ${DELIVERY_LABEL[task.delivery]}` : 'DM') : task.scopeName}</span>
                                         <strong>{task.name}</strong>
                                         <div className="task-prompt">{task.prompt}</div>
                                         <div className="row-meta">
@@ -106,7 +115,7 @@ export function TasksRoom() {
                             {tasks.data.followups.map((task) => (
                                 <div key={task.id} className="list-row task-row">
                                     <div className="row-body">
-                                        <span className="badge">{task.scope === 'dm' ? 'DM' : task.scopeName}</span>
+                                        <span className="badge">{task.scope === 'dm' ? (task.delivery ? `→ ${DELIVERY_LABEL[task.delivery]}` : 'DM') : task.scopeName}</span>
                                         <span>{task.prompt}</span>
                                         <div className="row-meta">
                                             {task.recurrence

@@ -30,6 +30,7 @@ const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
 const { buildNativeToolGuidance, buildPromptBasedToolPrompt } = require('@goobster/core/utils/toolPromptBuilder');
 const { runAgentLoop } = require('@goobster/core/utils/chat/agentOrchestrator');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
+const { inboxChannelId, isInboxChannelId } = require('@goobster/core/services/inboxService');
 
 const USER = '720000000000000001';
 const GUILD = '820000000000000001';
@@ -207,7 +208,7 @@ describe('execute: DM and web conversations', () => {
         expect(row).toEqual({ guildId: dmScopeId(USER), channelId: DM_CHANNEL });
     });
 
-    test('a web chat resolves the user\'s Discord DM channel for delivery', async () => {
+    test('a web chat targets the user\'s inbox for delivery - no Discord DM channel is resolved', async () => {
         const createDM = jest.fn().mockResolvedValue({ id: DM_CHANNEL });
         const result = await toolsRegistry.execute('manageAutomations', {
             action: 'create', name: 'web brief', prompt: 'Summarize my day', cron: '0 9 * * *',
@@ -218,13 +219,14 @@ describe('execute: DM and web conversations', () => {
             }
         });
         expect(result).toMatch(/^✅/);
-        expect(createDM).toHaveBeenCalled();
+        expect(result).toContain('your inbox');
+        expect(createDM).not.toHaveBeenCalled();
 
         const row = await db.get('SELECT guildId, channelId FROM automations WHERE userId = @u', { u: USER });
-        expect(row).toEqual({ guildId: dmScopeId(USER), channelId: DM_CHANNEL });
+        expect(row).toEqual({ guildId: dmScopeId(USER), channelId: inboxChannelId(USER) });
     });
 
-    test('a web chat with unreachable DMs refuses with a clear observation', async () => {
+    test('a web chat with unreachable Discord DMs still creates the task - the inbox does not need them', async () => {
         const result = await toolsRegistry.execute('manageAutomations', {
             action: 'create', name: 'web brief', prompt: 'p', cron: '0 9 * * *',
             interactionContext: {
@@ -233,8 +235,9 @@ describe('execute: DM and web conversations', () => {
                 client: { users: { fetch: jest.fn().mockRejectedValue(new Error('blocked')) } }
             }
         });
-        expect(result).toMatch(/^❌/);
-        expect(await db.get('SELECT 1 AS ok FROM automations WHERE userId = @u', { u: USER })).toBeUndefined();
+        expect(result).toMatch(/^✅/);
+        const row = await db.get('SELECT channelId FROM automations WHERE userId = @u', { u: USER });
+        expect(isInboxChannelId(row.channelId)).toBe(true);
     });
 });
 

@@ -471,10 +471,11 @@ describe('portal events for shared discussions', () => {
                 ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
             }));
         });
-        expect(created).toEqual([expect.objectContaining({
-            kind: 'parlor-invite',
-            payload: expect.objectContaining({ userId: FRIEND, conversationId: conversation.id })
-        })]);
+        // The invitation is filed in the invitee's inbox first (its own
+        // event), then the parlor-invite hint follows.
+        expect(created.map(e => e.kind)).toEqual(['inbox', 'parlor-invite']);
+        expect(created[0].payload).toEqual(expect.objectContaining({ userId: FRIEND, kind: 'invite' }));
+        expect(created[1].payload).toEqual(expect.objectContaining({ userId: FRIEND, conversationId: conversation.id }));
 
         const revoked = await collectEvents(() =>
             parlorService.revokeInvite({ ownerId: OWNER, inviteId: invite.id }));

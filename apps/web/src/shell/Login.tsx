@@ -52,7 +52,11 @@ export function Login() {
             <div className="login-card">
                 <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
                 <h1>{cfg?.installationName || 'Goobster'}</h1>
-                <p className="login-sub">Come in. Same brain as Discord — memory, parlor, and the tools he built you.</p>
+                <p className="login-sub">
+                    {cfg && cfg.discord === false
+                        ? 'Come in. Memory, parlor, and the tools he built you — all here.'
+                        : 'Come in. Same brain as Discord — memory, parlor, and the tools he built you.'}
+                </p>
                 {cfg?.nativeLogin && (
                     <form className="native-login" onSubmit={onNative} aria-label="Sign in with a login name and password">
                         <label className="hint" htmlFor="login-name">{cfg.emailRecovery ? 'Login name or email' : 'Login name'}</label>

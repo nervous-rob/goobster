@@ -15,7 +15,7 @@ function mountAccount(app, ctx, h) {
         ...(await ctx.nativeAuth.summary(req.webUser.userId, { baseUrl: ctx.publicUrl })),
         recentAuth: ctx.sessions.isRecentlyAuthenticated(req.webUser, ctx.identityConfig.recentAuthMinutes),
         recentAuthMinutes: ctx.identityConfig.recentAuthMinutes,
-        discordLoginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl)
+        discordLoginAvailable: Boolean(ctx.clientSecret && ctx.publicUrl && ctx.discordConfig.enabled)
     })));
 
     // Set or change the login name and password. Proof: the current

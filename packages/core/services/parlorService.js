@@ -1294,7 +1294,7 @@ class ParlorService {
         // path: the invite is created, just not resolved or DMed.
         const resolvedGateway = toGateway(gateway || client);
         let inviteeUser = null;
-        let inviteeName = null;
+        let inviteeName;
         if (identityService.isSnowflake(invitee)) {
             if (resolvedGateway) {
                 let reachable = true;
@@ -1347,7 +1347,6 @@ class ParlorService {
                 body: 'Accept or decline it from Parlor → Invitations in the web app.',
                 source: { type: 'parlor-invite', id: invite.id },
                 link: '/parlor',
-                dedupeKey: `parlor-invite:${invite.id}`,
                 discord: resolvedGateway ? {
                     gateway: resolvedGateway,
                     payload: this._inviteMessage({ inviteId: invite.id, inviterName: ownerName, title: conversation.title })

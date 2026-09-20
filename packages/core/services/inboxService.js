@@ -125,8 +125,9 @@ class InboxService {
         let echo = { status: row.discordStatus, error: row.discordError || null };
         if (created && discord) {
             echo = await this._echoToDiscord(row, discord);
+            row = (await db.get('SELECT * FROM inbox_items WHERE id = @id', { id: row.id })) || row;
         }
-        return { item: this._publicItem({ ...row, discordStatus: echo.status, discordError: echo.error }), created, discord: echo };
+        return { item: this._publicItem(row), created, discord: echo };
     }
 
     /**

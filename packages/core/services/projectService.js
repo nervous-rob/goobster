@@ -3335,7 +3335,7 @@ class ObservatoryService {
         // tables (it must name an active account of this installation).
         const resolvedGateway = toGateway(gateway || client);
         let inviteeUser = null;
-        let inviteeName = null;
+        let inviteeName;
         if (identityService.isSnowflake(invitee)) {
             if (resolvedGateway) {
                 let reachable = true;
@@ -3388,7 +3388,6 @@ class ObservatoryService {
                 body: 'Accept or decline it from Observatory → Invitations in the web app.',
                 source: { type: 'project-invite', id: invite.id },
                 link: '/observatory',
-                dedupeKey: `project-invite:${invite.id}`,
                 discord: resolvedGateway ? {
                     gateway: resolvedGateway,
                     payload: this._inviteMessage({ inviteId: invite.id, inviterName: ownerName, name: row.name })

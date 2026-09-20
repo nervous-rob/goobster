@@ -16,7 +16,7 @@ type Roster = {
     members: Member[];
     invites: PendingInvite[];
 };
-type Person = { id: string; name: string; avatar?: string | null; source: 'friend' | 'server'; via?: string | null };
+type Person = { id: string; name: string; avatar?: string | null; source: 'friend' | 'server' | 'member'; via?: string | null };
 type Invitable = { people: Person[]; friendsSynced: boolean; syncedAt: string | null };
 
 /**
@@ -177,7 +177,7 @@ function InvitePicker({
             <div className="panel-section-head"><span>Invite someone</span></div>
             <input
                 className="input"
-                placeholder="Search your friends and servers, or paste a user id"
+                placeholder="Search people by name, or paste a user id"
                 autoComplete="off"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -224,18 +224,23 @@ function InvitePicker({
                             : <span className="person-avatar">🙂</span>}
                         <span className="person-body">
                             <span className="person-name">{person.name}</span>
-                            <span className="hint">{person.source === 'friend' ? 'Discord friend' : `shares ${person.via || 'a server'}`}</span>
+                            <span className="hint">
+                                {person.source === 'friend' ? 'Discord friend'
+                                    : person.source === 'member' ? `member of ${person.via || 'this installation'}`
+                                        : `shares ${person.via || 'a server'}`}
+                            </span>
                         </span>
                         {person.source === 'friend' && <span className="person-badge">friend</span>}
+                        {person.source === 'member' && <span className="person-badge">member</span>}
                     </div>
                 ))}
                 {!invitableQ.isPending && !invitableQ.isError && people.length === 0 && !rawId && (
                     <div className="hint">
                         {debounced
-                            ? 'Nobody matches that — you can also paste their Discord user id.'
+                            ? 'Nobody matches that — try the start of their name, or paste their user id.'
                             : (invitableQ.data?.friendsSynced
-                                ? 'Everyone you know is already here.'
-                                : 'No friends synced yet — open Goobster\'s Activity in Discord to bring your friend list over, or paste a Discord user id.')}
+                                ? 'Everyone you know is already here — type a name to find other members.'
+                                : 'Type the start of a name to find members here. Discord friends appear once Goobster\'s Activity has synced them.')}
                     </div>
                 )}
             </div>

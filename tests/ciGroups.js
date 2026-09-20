@@ -95,6 +95,7 @@ const GROUPS = [
             'userSettingsApi',
             'userSettingsService',
             'settingsRuntimePolicy',
+            'independentRuntime',
             'webAppApi',
             'webAppletService',
             'webChatBranchShare',

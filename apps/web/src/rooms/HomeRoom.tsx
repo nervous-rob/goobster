@@ -14,6 +14,7 @@ type HomePayload = {
     workshop?: { pinned?: Array<{ title: string }>; discoveredCount?: number };
     observatory?: { enabled?: boolean; projectCount?: number; runningJobs?: number; latest?: { name: string; updatedAt?: string } };
     servers?: Array<{ name: string }>;
+    inbox?: { unread: number; recent: Array<{ id: number; kind: string; title: string; read: boolean; createdAt: string }> };
 };
 
 function When({ iso }: { iso?: string }) {
@@ -59,6 +60,7 @@ export function HomeRoom() {
     const observatory = home?.observatory || {};
     const followups = watching.followups || [];
     const automations = watching.automations || [];
+    const inbox = home?.inbox || { unread: 0, recent: [] };
 
     return (
         <main className="pane next-pane is-in" id="pane-home">
@@ -78,7 +80,11 @@ export function HomeRoom() {
                             </div>
                             <div>
                                 <h1 className="home-hello">{greeting(me.user.name || '')}</h1>
-                                <p className="home-sub">Same brain as Discord. Chat is one of the rooms.</p>
+                                <p className="home-sub">
+                                    {me.discord?.enabled === false
+                                        ? `${me.assistant.name} lives here. Chat is one of the rooms.`
+                                        : 'Same brain as Discord. Chat is one of the rooms.'}
+                                </p>
                             </div>
                         </header>
                         <div className="home-talk">
@@ -106,6 +112,21 @@ export function HomeRoom() {
                                             {!(you.facts || []).length && <li className="hint">Nothing distilled yet — talk in the Study.</li>}
                                         </ul>
                                     </>
+                                )}
+                            />
+                            <Card title={inbox.unread > 0 ? `Inbox · ${inbox.unread} unread` : 'Inbox'} action="Open Inbox →"
+                                extraClass={`home-card-inbox${inbox.unread > 0 ? ' is-live' : ''}`}
+                                onClick={() => navigate({ to: '/inbox' })}
+                                body={(
+                                    inbox.recent.length
+                                        ? (
+                                            <ul className="home-list">
+                                                {inbox.recent.map((item) => (
+                                                    <li key={item.id}>{item.read ? '○' : '●'} {item.title} <When iso={item.createdAt} /></li>
+                                                ))}
+                                            </ul>
+                                        )
+                                        : <div className="hint">Reminders, task results, and invitations land here{me.discord?.enabled ? ' (and in your Discord DMs)' : ''}.</div>
                                 )}
                             />
                             <Card title="What I'm watching" action="Open Tasks →"

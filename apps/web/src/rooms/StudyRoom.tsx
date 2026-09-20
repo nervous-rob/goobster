@@ -31,6 +31,7 @@ const SUGGESTIONS = [
 ];
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
+const LOCAL_HINT = 'Goobster remembers across your chats here. He can make mistakes.';
 const QUEUE_HINT = 'Enter queues a follow-up — it sends when this reply finishes. Stop is the square beside Send.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
 
@@ -936,7 +937,7 @@ export function StudyRoom() {
                             ➤
                         </button>
                     </form>
-                    <div className="composer-hint hint">{incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : DEFAULT_HINT)}</div>
+                    <div className="composer-hint hint">{incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : (me.discord?.enabled === false ? LOCAL_HINT : DEFAULT_HINT))}</div>
                 </div>
             </div>
             {shareOpen && activeId !== null && (

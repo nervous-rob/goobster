@@ -39,7 +39,10 @@ function mountAuth(app, ctx, h) {
     const setSession = (res, token) => {
         res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, SESSION_MAX_AGE)}`);
     };
-    const discordConfigured = () => Boolean(ctx.clientSecret && ctx.publicUrl);
+    // Discord OAuth needs the application secret and a public URL - and an
+    // installation that has Discord at all (spec §6: with the adapter off,
+    // Discord is not offered as a way in).
+    const discordConfigured = () => Boolean(ctx.clientSecret && ctx.publicUrl && ctx.discordConfig.enabled);
 
     // Client bootstrap info (nothing secret)
     app.get('/api/app/config', (req, res) => {
@@ -53,6 +56,7 @@ function mountAuth(app, ctx, h) {
             registration: ctx.nativeAuth.registrationMode(ctx.publicUrl),
             emailRecovery: ctx.nativeAuth.emailEnabled(ctx.publicUrl),
             installationName: ctx.identityConfig.installationName,
+            discord: ctx.discordConfig.enabled,
             passwordMinLength: ctx.identityConfig.passwordMinLength,
             maxInputLength: ctx.chat.maxInputLength
         });
