@@ -371,11 +371,28 @@ function mountAuth(app, ctx, h) {
                 userId: req.webUser.userId,
                 discordUserId: ctx.identity.discordSubjectFor(req.actor)
             });
+            // The assistant identity is always present (spec §6): the bot's
+            // Discord user when there is one, the installation identity
+            // otherwise. `bot` stays for compatibility and is null when
+            // Discord is not connected; `discord` says which case this is.
+            const discordEnabled = ctx.discordConfig.enabled && ctx.gateway?.kind !== 'disabled';
             let bot = null;
+            let connected = false;
+            let assistant = null;
             try {
                 const botUser = await ctx.gateway?.botUser();
-                if (botUser) bot = { id: botUser.id, name: botUser.username };
+                if (botUser) assistant = { id: botUser.id, name: botUser.username };
             } catch { /* bot down - degraded, the client shows offline state */ }
+            if (!assistant) {
+                const local = ctx.assistantIdentity.assistantUser();
+                assistant = { id: local.id, name: local.username };
+            }
+            if (discordEnabled) {
+                bot = assistant;
+                try {
+                    connected = (await ctx.gateway?.available()) === true;
+                } catch { /* unreachable */ }
+            }
             res.json({
                 user: {
                     id: req.webUser.userId,
@@ -400,6 +417,16 @@ function mountAuth(app, ctx, h) {
                     mail: ctx.nativeAuth.emailEnabled(ctx.publicUrl)
                 },
                 bot,
+                assistant,
+                // The Discord adapter: part of this installation at all, and
+                // reachable right now. Surfaces that are Discord-specific
+                // (Exchange, server scopes, Connect Discord) key off these.
+                discord: {
+                    enabled: discordEnabled,
+                    connected,
+                    reason: discordEnabled ? null : ctx.discordConfig.disabledReason
+                },
+                inbox: { unread: await ctx.inbox.unreadCount(req.webUser.userId).catch(() => 0) },
                 scopes,
                 maxInputLength: ctx.chat.maxInputLength,
                 // Feature switches the client uses to show/hide panes
