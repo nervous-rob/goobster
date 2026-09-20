@@ -87,7 +87,26 @@
         "recentAuthMinutes": 15,
         "inviteTtlHours": 72,
         "recoveryTtlMinutes": 60,
+        "registration": "invite",
+        "emailVerifyTtlMinutes": 1440,
         "operators": []
+    },
+
+    "mail": {
+        "provider": "",
+        "from": "",
+        "replyTo": "",
+        "smtp": {
+            "url": "",
+            "host": "",
+            "port": 587,
+            "secure": false,
+            "user": "",
+            "pass": ""
+        },
+        "resend": {
+            "apiKey": ""
+        }
     },
 
     "ai": {

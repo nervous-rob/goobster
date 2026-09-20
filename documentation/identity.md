@@ -1,17 +1,20 @@
 ---
 title: "Application identity: principals, accounts, and the actor context"
 kind: reference
-summary: How Goobster identifies a person independently of Discord - principals, linked external identities, the account entitlement, the actor context every web request carries, invitations, login name + password sign-in, recovery, Discord connect/disconnect, session revocation, the operator Host room, and the requireAccount / nativeLogin release gates. Shipped behaviour (shared-instance Increments A and B).
-tags: [identity, accounts, principals, sessions, privacy, shared-instance, invitations, password, login, operator]
+summary: How Goobster identifies a person independently of Discord - principals, linked external identities, the account entitlement, the actor context every web request carries, invitations, login name + password sign-in, a verified email address (sign in by email, self-service password reset, open sign-up), outbound mail configuration, recovery, Discord connect/disconnect, session revocation, the operator Host room, and the requireAccount / nativeLogin release gates. Shipped behaviour (shared-instance Increments A, B, and B.1).
+tags: [identity, accounts, principals, sessions, privacy, shared-instance, invitations, password, login, email, mail, smtp, registration, operator]
 ---
 
 # Application identity
 
-**Status: shipped** as Increments A and B of the
+**Status: shipped** as Increments A, B, and B.1 of the
 [shared-instance product plan](shared_instance_product_spec.md). What this
 document describes exists in the code today. Native sign-in is installed but
 **off by default** - the host turns on `identity.nativeLogin` when ready;
-until then Discord OAuth is the only way in.
+until then Discord OAuth is the only way in. Email (verification, reset by
+email, open sign-up) additionally needs an outbound [mail
+provider](#outbound-mail) and `webapp.publicUrl`; without them nothing
+email-related is shown.
 
 ## What a principal is
 
@@ -105,6 +108,7 @@ Three ways into the portal mint the same kind of session (`web_sessions`):
   missing). The session is minted for that principal.
 - **Login name + password** (`POST /api/app/auth/native-login`): the native
   sign-in described below. Only available while `identity.nativeLogin` is on.
+  The identifier may also be the account's **verified** email address.
 - **Dev mode** (`webapp.devMode`, never in production): `POST
   /api/app/auth/dev-session` accepts any principal id. A `usr_<uuid>` that
   does not exist yet is created.
@@ -202,9 +206,11 @@ without a password signs in again instead. `GET /api/app/account` reports
 
 ### Recovery
 
-There is no mail subsystem, so recovery is the plan's fallback: the host
+Two paths mint the same single-use reset token. Without mail, the host
 issues an **audited reset link** from the Host room (`POST
-/api/app/admin/accounts/:principalId/recovery`). The raw token is shown once
+/api/app/admin/accounts/:principalId/recovery`). With mail, the person asks
+for one themselves ([forgot password](#forgot-password-by-email) below).
+For the host's link the raw token is shown once
 (`/app/recover?token=…`); `recovery_tokens` keeps its hash, the account,
 `purpose = 'password_reset'`, who issued it, and the expiry
 (`identity.recoveryTtlMinutes`, default 60). `POST /api/app/auth/recover`
@@ -243,6 +249,119 @@ read from `app_accounts` every time, so they need no rotation.
   access stop with the next request. A legacy principal gets `409
   LEGACY_IDENTITY`: its id *is* the Discord subject.
 
+## Email (Increment B.1)
+
+An account may carry **one email address**. It is optional, it is never
+required to sign in, and it does nothing until it is **verified** by
+following a link mailed to it. A verified address is a second login
+identifier and the channel for self-service password reset; with
+`identity.registration = "open"` it is also how strangers create accounts.
+Everything here needs `identity.nativeLogin`, a configured [mail
+provider](#outbound-mail), and `webapp.publicUrl` (the absolute origin put
+into emailed links - never taken from the request's `Host` header, so a
+forged header cannot redirect a reset link). When any of the three is
+missing the routes answer `503 MAIL_DISABLED`, `GET /api/app/config`
+reports `emailRecovery: false`, and the client hides the flows.
+
+Tables: `account_emails` (one row per principal; `address` as typed,
+`normalized` lower-cased and unique across the installation, `verifiedAt`),
+`email_tokens` (hashed single-use verification links pinned to the address
+they were sent to), and `pending_registrations` (open sign-ups waiting to
+be verified - see below). Normalisation lower-cases and trims; dots and
+plus-tags are **not** stripped, so `a.b+x@example.org` and `ab@example.org`
+are different addresses.
+
+### Adding and verifying an address
+
+Settings → Account → **Email**. `PUT /api/app/account/email { email }`
+(recent authentication required) stores the address **unverified**, deletes
+any earlier verification links for the account, and mails a new one
+(`/app/verify-email?token=…`, lifetime `identity.emailVerifyTtlMinutes`,
+default 24 h). Until the link is followed the address is neither a login
+identifier nor a recovery channel. `POST /api/app/account/email/resend`
+mails a fresh link (five an hour per account); `DELETE /api/app/account/email`
+(recent authentication) removes the address and its links.
+
+Uniqueness: an address that is **verified** on another account is refused
+(`409 EMAIL_TAKEN`). An address another account has claimed but never
+verified is **taken over** - an unproven claim reserves nothing, so nobody
+can squat someone else's address by typing it first.
+
+`POST /api/app/auth/verify-email { token }` is public (the token is the
+capability). For an existing account it consumes the token and marks the
+address verified - **no session is minted**, because proving you can read
+an inbox is not a login. If the account moved to a different address in
+the meantime the old link is `404 VERIFY_INVALID`.
+
+### Forgot password by email
+
+`POST /api/app/auth/forgot { email }` answers `200 { ok: true }` whether or
+not the address is known, verified, or belongs to an active account, so it
+cannot be used to enumerate accounts; when it is the verified address of an
+active account a reset token (`recovery_tokens`, `issuedBy` = the person
+themselves) is mailed as `/app/recover?token=…`. Finishing the reset is the
+same `POST /api/app/auth/recover` as the host's link: every other session
+of the account is revoked. Throttles: five requests an hour per client
+address, three mails an hour per recipient.
+
+### Open sign-up
+
+`identity.registration` is `invite` (default) or `open`. With `open`, the
+login screen shows **Create an account** (`/app/register`) and `POST
+/api/app/auth/signup { email, loginName, password, displayName? }` parks
+the request in `pending_registrations`: the login name, display name,
+address, and the **already-hashed** password, keyed by the address (one
+pending row per address - signing up again replaces the earlier attempt)
+and by a hashed token mailed as `/app/verify-email?token=…`. Nothing is an
+account yet: no principal, no `app_accounts` row, no credential. A sign-up
+that is never verified expires with its link and is pruned on the next
+sign-up.
+
+Following the link (`POST /api/app/auth/verify-email`) consumes the pending
+row atomically - a race admits exactly one - and creates the principal, the
+account (`entitlement = 'open'`, role `member`), the credential, and the
+verified address in one transaction, then mints a session. If the login
+name was taken while the mail was in flight the person is told to sign up
+again (`409 LOGIN_NAME_TAKEN`).
+
+Policy is applied before anything is parked (login-name shape, password
+floor and deny list, address shape). A **taken login name** is refused
+openly (`409 LOGIN_NAME_TAKEN` - login names are identifiers, not secrets).
+A **taken address** is not revealed: the response is the same `200` and the
+address's owner receives a note saying they already have an account, with a
+link to the reset page. Throttles: five sign-ups an hour per client
+address, three mails an hour per recipient.
+
+`open` is only *effective* when mail and `publicUrl` are configured;
+otherwise the effective mode stays `invite`, the log carries one warning,
+and the Host room's **Sign-up & mail** panel shows the configured value,
+the effective value, and the reason they differ.
+
+### Outbound mail
+
+`services/mailService.js` sends plain-text messages through one configured
+provider. `config.json` `mail` block (environment overrides in brackets):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `provider` [`GOOBSTER_MAIL_PROVIDER`] | auto | `smtp` or `resend`. Empty = the first provider whose credentials are present (SMTP, then Resend). |
+| `from` [`GOOBSTER_MAIL_FROM`] | - | Sender, e.g. `"Goobster <goobster@example.org>"`. **Required.** |
+| `replyTo` [`GOOBSTER_MAIL_REPLY_TO`] | - | Optional Reply-To. |
+| `smtp.url` [`GOOBSTER_SMTP_URL`] | - | `smtp://user:pass@host:587` or `smtps://…:465`; wins over the discrete fields. |
+| `smtp.host` / `smtp.port` / `smtp.secure` / `smtp.user` / `smtp.pass` [`GOOBSTER_SMTP_HOST`, `GOOBSTER_SMTP_PORT`, `GOOBSTER_SMTP_SECURE`, `GOOBSTER_SMTP_USER`, `GOOBSTER_SMTP_PASS`] | port `587`, `secure` false | Discrete SMTP settings (STARTTLS on 587, implicit TLS with `secure` on 465). |
+| `resend.apiKey` [`RESEND_API_KEY`] | - | Resend HTTP API key. |
+| `timeoutMs` [`GOOBSTER_MAIL_TIMEOUT_MS`] | `15000` | Connection / request timeout. |
+
+Every transactional mail provider (Postmark, Mailgun, SES, Gmail, Fastmail,
+…) offers SMTP, so `smtp` covers all of them; `resend` is the HTTP route for
+hosts whose network blocks outbound SMTP. Deliverability is the operator's
+job: publish SPF and DKIM for the `from` domain or the messages land in
+spam. Recipient addresses and message bodies are never logged; a failed send
+logs the provider's status and message only. The Host room's **Send test**
+mails one message to an address of the operator's choosing (three an hour).
+Tests and embedding apps replace the transport with
+`mailService.setTransport(async ({ to, subject, text }) => …)`.
+
 ### Operator surface
 
 The **Host** room (sidebar, operators only; every route is behind
@@ -255,11 +374,16 @@ The **Host** room (sidebar, operators only; every route is behind
 | `POST /api/app/admin/accounts` `{ principalId, role? }` | Grant an existing (Discord) principal an account - the `migration` entitlement. |
 | `PATCH /api/app/admin/accounts/:principalId` `{ status?, role? }` | Disable/enable, promote/demote. Refuses to disable or demote yourself (`409 SELF_LOCKOUT`). |
 | `POST /api/app/admin/accounts/:principalId/recovery` | Audited reset link. |
+| `GET /api/app/admin/installation` | Sign-up policy (configured and effective), mail status and the reason it is off, `publicUrl`, link lifetimes. |
+| `POST /api/app/admin/mail/test` `{ to }` | One test message. |
 | `GET /api/app/admin/identity/report` | The same numbers as `npm run identity:report`. |
 
-`GET /api/app/config` tells the client whether native login is on
-(`nativeLogin`), the installation's name, and the password floor; `GET
-/api/app/me` adds `identity.operator` and `identity.nativeLogin`.
+The roster also shows each account's email address and whether it is
+verified. `GET /api/app/config` tells the client whether native login is on
+(`nativeLogin`), the effective `registration` mode, whether `emailRecovery`
+is available, the installation's name, and the password floor; `GET
+/api/app/me` adds `identity.operator`, `identity.nativeLogin`,
+`identity.registration`, and `identity.mail`.
 
 ## Migration report, backfill, and operator bootstrap
 
@@ -307,23 +431,33 @@ promoted). There is no "first visitor becomes admin" path.
 | `passwordCostLog2` [`GOOBSTER_IDENTITY_PASSWORD_COST`] | `15` | scrypt `log2(N)` (14-18); stored per hash, re-hashed on next login when raised. |
 | `recentAuthMinutes` [`GOOBSTER_IDENTITY_RECENT_AUTH_MINUTES`] | `15` | How long a login or re-auth unlocks sensitive account changes. |
 | `inviteTtlHours` [`GOOBSTER_IDENTITY_INVITE_TTL_HOURS`] | `72` | Default invitation lifetime. |
-| `recoveryTtlMinutes` [`GOOBSTER_IDENTITY_RECOVERY_TTL_MINUTES`] | `60` | Reset-link lifetime. |
+| `recoveryTtlMinutes` [`GOOBSTER_IDENTITY_RECOVERY_TTL_MINUTES`] | `60` | Reset-link lifetime (host-issued and emailed alike). |
+| `registration` [`GOOBSTER_IDENTITY_REGISTRATION`] | `invite` | `invite` or `open`. Open sign-up is effective only with mail and `webapp.publicUrl` configured. |
+| `emailVerifyTtlMinutes` [`GOOBSTER_IDENTITY_EMAIL_VERIFY_TTL_MINUTES`] | `1440` | Lifetime of a verification link and of an unverified open sign-up (5 min - 7 days). |
+
+Outbound mail has its own `mail` block, described under [Outbound
+mail](#outbound-mail).
 
 ## Privacy
 
 Principals, linked identities, accounts, credentials, reset tokens, link
-intents, and invitations are per-user data. `/forget-me`
+intents, invitations, and email addresses are per-user data. `/forget-me`
 (`privacyService.forgetUser` → `identityService.erasePrincipal`) deletes the
 principal, `auth_identities`, `app_accounts`, `password_credentials`,
-`recovery_tokens` (issued for or by the person), `oauth_link_states`, and the
-invitations the person **issued**; invitations the person **redeemed** stay
-as the issuing operator's audit row with `consumedBy` cleared.
-`privacyService.auditUser` counts every one of those tables so a clean audit
-stays provable, and `/what-do-you-know-about-me` reports the principal, the
-account (role/status/entitlement/login name - never a hash), linked
-providers, whether a password exists and when it last changed, open reset
-links, invitations issued, and when the person joined by invitation. A
-forgotten person has to be invited again.
+`recovery_tokens` (issued for or by the person), `oauth_link_states`,
+`account_emails`, `email_tokens`, any `pending_registrations` row parked
+under the person's address, and the invitations the person **issued**;
+invitations the person **redeemed** stay as the issuing operator's audit
+row with `consumedBy` cleared. `privacyService.auditUser` counts every one
+of those tables so a clean audit stays provable, and
+`/what-do-you-know-about-me` reports the principal, the account
+(role/status/entitlement/login name - never a hash), linked providers,
+whether a password exists and when it last changed, open reset links,
+invitations issued, when the person joined by invitation, and the email
+address with its verification state and open verification links. A
+forgotten person has to be invited (or sign up) again. Pending sign-ups
+that are never verified hold only what the person typed, expire with their
+link, and are pruned.
 
 ## Not yet here
 
@@ -331,5 +465,6 @@ Native people discovery, an assistant identity that works with the Discord
 adapter disabled, and in-app delivery are Increment C of the
 [plan](shared_instance_product_spec.md#9-implementation-sequence). A native
 account can sign in and use the private scope today, but chat still needs
-the bot connected, and recovery by verified email waits on a mail subsystem
-(the host's audited reset link is the path until then).
+the bot connected. Passkeys and an operator-selected OIDC provider remain
+later additions; a hosted identity service (Supabase Auth, Auth0, …) would
+plug in as such a provider, not as the account store.

@@ -128,10 +128,13 @@ access token once to resolve the user, and never stores it.
   an Origin guard.
 - Two sign-in methods mint the same session: Discord OAuth, and - once the
   host sets `identity.nativeLogin: true` - a login name + password issued
-  through an invitation from the **Host** room. Sessions carry
-  `authenticatedAt` (sensitive changes need a recent one) and an account
-  `sessionVersion` snapshot (a password reset or disable revokes them).
-  Details: `identity.md`.
+  through an invitation from the **Host** room. With an outbound mail
+  provider configured (`mail.*`, see `identity.md`) and `publicUrl` set,
+  accounts can add a verified email address, sign in with it, and reset a
+  forgotten password themselves; `identity.registration: "open"` then also
+  allows self-service sign-up. Sessions carry `authenticatedAt` (sensitive
+  changes need a recent one) and an account `sessionVersion` snapshot (a
+  password reset or disable revokes them). Details: `identity.md`.
 - Guild data access is verified live through the bot client: browsing a
   guild scope requires actual membership, and the knowledge graph requires
   Manage Server (parity with `/monologue graph`).
