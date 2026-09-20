@@ -127,7 +127,7 @@ A useful first journey is: **ask a question → save a useful answer as a note �
 - Search and model retrieval apply authorization before ranking and before creating snippets. Mixed-scope results cannot expose names, counts, titles, or vector hits from denied scopes.
 - A no-match result is typed: `no_match`, `unavailable`, `forbidden`, or `needs_input`. An empty authorized search must not silently expand to other users or all guilds.
 - Product help uses the documentation corpus. User knowledge uses the selected authorized knowledge sources. The assistant must not present an instruction manual as a fact learned about a user.
-- Notes in Spitball remain connected through shared tags. The product redesign must not introduce direct note-to-note links as a hidden new model. Other graph types must identify their relationship semantics.
+- Notes in Spitball keep their existing model: typed note-to-note **Connections** (`kg_edges`, written by the `weave` pass and by explicit edits) plus shared **Tags** as implicit clustering. The product redesign must not add a second, untyped link model beside them; any new graph type must identify its relationship semantics.
 - “Used these sources” should link to inspectable, authorized evidence. Source citations do not by themselves guarantee a generated claim is true.
 - Product verbs such as **Save note**, **Add to project**, and **Use in discussion** should map to deterministic service actions. No extra model call is needed for routing an already selected object.
 
@@ -326,12 +326,12 @@ Each increment should be reviewable on its own. Account creation stays gated unt
 
 | Increment | Changes | Main implementation seams | Exit evidence |
 |---|---|---|---|
-| A — Identity compatibility | Principal/account schema; external identity mapping; entitlement policy; legacy migration report; context resolver | DB schema/migrations, `dmScope`, sessions, bot ingress, gateway adapters | Idempotent fixture migration on both engines; legacy data and owners unchanged; native ID passes core boundaries. |
-| B — Invitations and native authentication | Invite administration, register/login, recovery, local credential enrollment, account/device management, optional Discord linking | `authChat.js` split into focused routes; `Login.tsx`; Account/Connections settings | Invitation replay/races, link conflicts, revocation, throttles, CSRF, recovery tests. Registration remains release-gated. |
+| A — Identity compatibility | Principal/account schema; external identity mapping; entitlement policy; legacy migration report; context resolver | DB schema/migrations, `dmScope`, sessions, bot ingress, gateway adapters | Idempotent fixture migration on both engines; legacy data and owners unchanged; native ID passes core boundaries; `privacyService.forgetUser`/`auditUser`/`buildUserReport` cover every new table. |
+| B — Invitations and native authentication | Invite administration, register/login, recovery, local credential enrollment, account/device management, optional Discord linking | `authChat.js` split into focused routes; `Login.tsx`; Account/Connections settings | Invitation replay/races, link conflicts, revocation, throttles, CSRF, recovery tests. Registration remains release-gated. Credentials, invites, and recovery tokens reachable by the erasure path. |
 | C — Independent runtime and delivery | Assistant identity, optional Discord adapter, core scheduler lifecycle, native people discovery, durable in-app results | `apps/api`, web chat, task/attention delivery, presence, project/Parlor invite services | Full user journey with no Discord config; scheduled result arrives in app; disabled integrations degrade locally. |
 | D — Shared-instance readiness | Scope tests, browser content isolation, cross-process admission/budgets, edit conflicts, stream revocation | Shared access helpers, retrieval, event subscriptions, sandbox, client caches/Music Lab storage | Adversarial two-account tests and representative concurrency tests pass; strong isolation confirmed. |
 | E — Product organization | Navigation/labels, Knowledge versus Memory separation, project tabs, Activity tabs, Tools catalog, scope badges | App shell, room routing, Home, Spitball/Observatory components, settings metadata | Old deep links work; note→project journey is clear; disabled tools are understandable. |
-| F — Guided onboarding | Tutorial state service, catalog, fixtures, UI anchors, docs viewer, Settings reset/replay, feedback | New tutorial service/routes/provider; room components; user docs | Every enabled room has coverage; skip/reset/reload/device/account cases and mobile keyboard journeys pass. |
+| F — Guided onboarding | Tutorial state service, catalog, fixtures, UI anchors, docs viewer, Settings reset/replay, feedback | New tutorial service/routes/provider; room components; user docs | Every enabled room has coverage; skip/reset/reload/device/account cases and mobile keyboard journeys pass. Tutorial progress and feedback rows are erased by `/forget-me` and listed by the transparency report. |
 | G — Small invited pilot | Staged invitations, host limits, logs without content capture, observed first-use sessions | Deployment policy and operator UI | Native users finish the core journey; no cross-account access; resource waits remain understandable. |
 
 Do not combine the full identity migration, navigation rewrite, tutorial framework, and rebrand in one PR. A–D establish correctness; E–F establish comprehension. Implement a representative E/F vertical slice early to test the design, while keeping public admission gated.
@@ -365,7 +365,21 @@ The application name and the assistant's name can differ. Goobster may remain th
 See [product naming exploration](product_naming_exploration.md) for candidates, tradeoffs, and the checks needed before choosing one.
 
 
-## 12. Decisions and remaining choices
+## 12. Standards amendments on adoption
+
+`documentation/development_standards_and_project_goals.md` is authoritative; nothing in this plan changes an engineering rule until it is written there. Each increment below names the invariant it touches so the amendment can land in the same PR as the code.
+
+| Invariant today | Increment | Amendment |
+|---|---|---|
+| A user id is a Discord snowflake stored as TEXT. | A | A user id is a **principal id**: a snowflake for legacy users or `usr_<uuid>` for native ones. Both are TEXT; the shape grants no authority. Shipped - see the *Application identity* section of the standards. |
+| Portal access = a valid web session. | A (gate), B (accounts) | Access = session **and**, once `identity.requireAccount` is on, an active `app_accounts` row. Operator role comes from the explicit bootstrap, never from Manage Server. |
+| Guild-scoped features check membership through the gateway with the user id. | A | Membership is checked with the **Discord subject** from the actor context; a principal without one gets the private scope only and never a fabricated id. |
+| Web-reachable core throws `GatewayUnavailableError` / `BOT_OFFLINE` when the bot is unreachable. | C | Chat and Projects must work with the Discord adapter disabled; only Discord-specific actions report the integration as unavailable. |
+| `webapp.devMode` mints a session for any id. | B/G | Dev mode is a release blocker on a shared instance; the operator checklist verifies it is off. |
+| New per-user stores must be reachable by `privacyService`. | A, B, F | Unchanged, and made an explicit exit gate for every increment that adds a table. |
+| The `self_docs` corpus is public documentation offered on every surface. | D | Operator notes under `data/self-docs/` need an audience before invited accounts can read them through `consultDocs`. |
+
+## 13. Decisions and remaining choices
 
 Agreed direction: invited people on the operator's instance; private application accounts; explicit sharing; no Discord requirement for core use; independent room tutorials; per-step and per-tour skipping; reset in Settings; exploratory naming only.
 
@@ -374,3 +388,15 @@ Proposed defaults for implementation review: native username/password with optio
 Resolve during the relevant increment: authentication library, host budget values, whether recovery mail is configured, role granularity for collaborative resources, and migration of historical browser-only content. None requires choosing a new brand first.
 
 Implementation status must be updated here as increments land, with links to their PRs and the validated exit evidence. Do not mark an increment complete solely because its documentation or UI shell exists.
+
+### Implementation status
+
+| Increment | Status | Evidence |
+|---|---|---|
+| A — Identity compatibility | **Shipped** (`principals`, `app_accounts`, `auth_identities`; `identityService`; `requireAccount` gate; `npm run identity:report`; actor context on `req.actor`). Behaviour: [identity.md](identity.md). | `tests/identityService.test.js` on SQLite and Postgres: idempotent backfill (second run creates 0), legacy owners unchanged, native `usr_` id through dev session → `/me` → DM-only scopes, gate on/off, disabled account, `/forget-me` audit clean. |
+| B — Invitations and native authentication | Not started | — |
+| C — Independent runtime and delivery | Not started | — |
+| D — Shared-instance readiness | Not started | — |
+| E — Product organization | Not started | — |
+| F — Guided onboarding | Not started | — |
+| G — Small invited pilot | Not started | — |
