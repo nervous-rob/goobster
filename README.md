@@ -127,6 +127,17 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Architecture | `documentation/architecture.md` |
 | Self-knowledge (`consultDocs`) | `documentation/self_knowledge.md` |
 
+### Planned product work
+
+The [shared-instance product plan](documentation/shared_instance_product_spec.md)
+defines the next invitation-only multi-user release: clearer navigation,
+Discord-independent accounts, private data boundaries, and shared resource limits.
+The [guided tutorial spec](documentation/guided_tutorials_spec.md) covers each
+room's demonstrations and independent skip, resume, and reset behavior.
+[Naming exploration](documentation/product_naming_exploration.md) records
+candidate directions without selecting a new name. These are plans, not
+instructions for features already available in the app.
+
 ## Prerequisites
 
 - Node.js v20 or higher (v22 recommended)

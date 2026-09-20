@@ -22,6 +22,16 @@ Authoritative standards: `documentation/development_standards_and_project_goals.
 The reactive-port plan and phase status live in `documentation/reactive_port_spec.md`
 and `documentation/reactive_port_status.md`.
 
+## Planned shared-instance release
+
+The [shared-instance product specification](shared_instance_product_spec.md)
+defines future native account identity, optional Discord adapters, resource
+authorization, admission controls, and migration/rollout gates. Its linked
+[tutorial specification](guided_tutorials_spec.md) defines onboarding on those
+account boundaries. These changes are not implemented by the planning docs;
+the current deployment contracts above remain the baseline until their
+respective implementation increments land.
+
 ## System Overview
 
 Goobster is built with a modular architecture that separates concerns into distinct services and components:
