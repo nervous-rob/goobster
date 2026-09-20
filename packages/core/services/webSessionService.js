@@ -11,6 +11,7 @@
 
 const crypto = require('node:crypto');
 const db = require('../db');
+const identityService = require('./identityService');
 
 const SESSION_TTL_DAYS = 30;
 
@@ -22,15 +23,27 @@ function hashToken(token) {
 class WebSessionService {
     /**
      * Create a session and return the raw token (stored only as a hash).
+     *
+     * `userId` is the principal id: a Discord snowflake for a legacy user
+     * (the principal row is provisioned here if missing, so every portal
+     * login leaves a resolvable identity behind) or a native `usr_<uuid>`
+     * that must already exist in `principals`.
      * @param {Object} params
-     * @param {string} params.userId - Discord user snowflake
+     * @param {string} params.userId - principal id
      * @param {string} [params.userName] - display name at login time
      * @param {string} [params.avatar] - Discord avatar hash, if any
      * @returns {{ token: string, expiresAt: string }}
      */
     async create({ userId, userName = null, avatar = null }) {
-        if (!/^\d{5,20}$/.test(String(userId || ''))) {
-            throw new Error('A Discord user id is required to create a web session.');
+        const principalId = String(userId || '');
+        if (identityService.isSnowflake(principalId)) {
+            await identityService.ensureLegacyPrincipal({ discordId: principalId, displayName: userName });
+        } else if (identityService.isNativeId(principalId)) {
+            if (!(await identityService.getPrincipal(principalId))) {
+                throw new Error('Unknown principal - native accounts must be created before they can sign in.');
+            }
+        } else {
+            throw new Error('A principal id (Discord snowflake or usr_<uuid>) is required to create a web session.');
         }
         await this.pruneExpired();
 
@@ -41,7 +54,7 @@ class WebSessionService {
              RETURNING expiresAt`,
             {
                 tokenHash: hashToken(token),
-                userId: String(userId),
+                userId: principalId,
                 userName,
                 avatar,
                 expiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000)
@@ -53,7 +66,7 @@ class WebSessionService {
     /**
      * Resolve a raw token to its live session, updating lastSeenAt.
      * @param {string} token
-     * @returns {{ userId: string, userName: string|null, avatar: string|null }|null}
+     * @returns {{ id: number, userId: string, userName: string|null, avatar: string|null }|null}
      */
     async get(token) {
         if (!token || typeof token !== 'string') return null;
@@ -67,7 +80,7 @@ class WebSessionService {
             `UPDATE web_sessions SET lastSeenAt = datetime('now') WHERE id = @id`,
             { id: row.id }
         );
-        return { userId: row.userId, userName: row.userName, avatar: row.avatar };
+        return { id: row.id, userId: row.userId, userName: row.userName, avatar: row.avatar };
     }
 
     /**

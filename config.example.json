@@ -77,6 +77,12 @@
         "operatorDir": ""
     },
 
+    "identity": {
+        "installationId": "local",
+        "requireAccount": false,
+        "operators": []
+    },
+
     "ai": {
         "provider": "",
         "openai": {

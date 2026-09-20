@@ -2581,3 +2581,50 @@ CREATE TABLE IF NOT EXISTS user_setting_revisions (
     PRIMARY KEY (userId, section)
 );
 
+
+-- ---------------------------------------------------------------------------
+-- Application identity (shared-instance Increment A)
+-- ---------------------------------------------------------------------------
+-- A principal is the canonical application identity every surface resolves
+-- to. Legacy principals keep the Discord snowflake as their id so no
+-- history, dm:<userId> scope, or project directory has to be rewritten;
+-- native principals get an opaque usr_<uuid> id. The id format grants no
+-- authority - portal entry needs an app_accounts row (an entitlement), and
+-- guild access still needs a linked Discord identity plus a real
+-- membership check.
+CREATE TABLE IF NOT EXISTS principals (
+    id TEXT PRIMARY KEY,
+    displayName TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Portal entitlement. A principal without a row here has no application
+-- account (historical bot users are not granted one by backfill).
+-- entitlement records why the account exists: an accepted invitation, an
+-- explicit migration of an existing Discord user, or the operator bootstrap.
+CREATE TABLE IF NOT EXISTS app_accounts (
+    principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+    loginName TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
+    entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap')),
+    credentialVersion INTEGER NOT NULL DEFAULT 1,
+    sessionVersion INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- External identities linked to a principal. One external subject belongs
+-- to exactly one principal; credential material never lives here.
+CREATE TABLE IF NOT EXISTS auth_identities (
+    id INTEGER PRIMARY KEY,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    issuer TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (provider, issuer, subject)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_identities_principal ON auth_identities(principalId);

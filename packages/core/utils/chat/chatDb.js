@@ -42,6 +42,19 @@ async function getOrCreateUser(discordId, username) {
     const existing = await db.get('SELECT id FROM users WHERE discordId = @discordId', { discordId });
     if (existing) return existing.id;
 
+    // First contact from a Discord user also provisions their principal
+    // (id = the snowflake) so the identity layer knows every legacy owner.
+    // Native principals already exist by the time they can chat. Best
+    // effort: identity bookkeeping must never break a message.
+    const identityService = require('../../services/identityService');
+    if (identityService.isSnowflake(discordId)) {
+        try {
+            await identityService.ensureLegacyPrincipal({ discordId, displayName: username });
+        } catch (error) {
+            console.error('Error provisioning principal:', error);
+        }
+    }
+
     return db.insert(
         'INSERT INTO users (discordUsername, discordId, username) VALUES (@username, @discordId, @username)',
         { discordId, username }

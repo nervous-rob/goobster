@@ -75,9 +75,15 @@ function mountAuthChat(app, ctx, h) {
                 timeout: 10000
             });
             const user = userResponse.data;
+            const displayName = user.global_name || user.username;
+            // The Discord subject resolves to whichever principal owns it -
+            // a native account that linked Discord, or (the common case)
+            // the legacy principal whose id is the snowflake itself.
+            const principalId = await ctx.identity.resolveExternal({ provider: 'discord', subject: user.id })
+                || (await ctx.identity.ensureLegacyPrincipal({ discordId: user.id, displayName })).id;
             const { token } = await ctx.sessions.create({
-                userId: user.id,
-                userName: user.global_name || user.username,
+                userId: principalId,
+                userName: displayName,
                 avatar: user.avatar || null
             });
 
@@ -98,9 +104,16 @@ function mountAuthChat(app, ctx, h) {
         }
         const userId = String(req.body?.userId || '').trim();
         const name = String(req.body?.name || 'dev user').trim().slice(0, 32);
-        if (!/^\d{5,20}$/.test(userId)) {
-            sendError(res, 400, 'BAD_USER_ID', 'userId must look like a Discord snowflake (digits).');
+        if (!ctx.identity.isPrincipalId(userId)) {
+            sendError(res, 400, 'BAD_USER_ID',
+                'userId must be a principal id: a Discord snowflake (digits) or usr_<uuid>.');
             return;
+        }
+        // Dev mode mints any principal: a native id that does not exist yet
+        // is created on the spot so the Discord-free path can be exercised
+        // without the invitation flow.
+        if (ctx.identity.isNativeId(userId) && !(await ctx.identity.getPrincipal(userId))) {
+            await ctx.identity.createNativePrincipal({ id: userId, displayName: name });
         }
         const { token } = await ctx.sessions.create({ userId, userName: name });
         res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, 30 * 24 * 60 * 60)}`);
@@ -119,7 +132,8 @@ function mountAuthChat(app, ctx, h) {
         try {
             const scopes = await ctx.dashboard.listScopes({
                 gateway: ctx.gateway,
-                userId: req.webUser.userId
+                userId: req.webUser.userId,
+                discordUserId: ctx.identity.discordSubjectFor(req.actor)
             });
             let bot = null;
             try {
@@ -130,9 +144,17 @@ function mountAuthChat(app, ctx, h) {
                 user: {
                     id: req.webUser.userId,
                     name: req.webUser.userName,
-                    avatar: req.webUser.avatar
-                        ? `https://cdn.discordapp.com/avatars/${req.webUser.userId}/${req.webUser.avatar}.png?size=64`
+                    avatar: req.webUser.avatar && req.actor?.externalActor?.provider === 'discord'
+                        ? `https://cdn.discordapp.com/avatars/${req.actor.externalActor.subject}/${req.webUser.avatar}.png?size=64`
                         : null
+                },
+                // Application identity (shared-instance Increment A): the
+                // entitlement, when one has been granted, and whether this
+                // principal can act on Discord at all.
+                identity: {
+                    installationId: req.actor?.installationId ?? null,
+                    account: req.actor?.account ?? null,
+                    discordLinked: req.actor?.externalActor?.provider === 'discord'
                 },
                 bot,
                 scopes,

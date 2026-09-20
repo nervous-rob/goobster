@@ -45,10 +45,15 @@ class WebDashboardService {
      * With the bot unreachable (split deployment, bot restarting) the DM
      * scope still lists and guild scopes simply drop out until he
      * reconnects - degraded, never a crash.
-     * @param {Object} params - { gateway, userId }
+     *
+     * `userId` is the principal id that keys the DM scope. Guild membership
+     * is a Discord question, so it is asked with `discordUserId` - the
+     * linked Discord subject - and skipped entirely for a principal that
+     * has none (a native account lists only its private scope).
+     * @param {Object} params - { gateway, userId, discordUserId }
      * @returns {Promise<Array<Object>>}
      */
-    async listScopes({ gateway, client, userId }) {
+    async listScopes({ gateway, client, userId, discordUserId = userId }) {
         const scopes = [{
             id: dmScopeId(userId),
             kind: 'dm',
@@ -56,11 +61,12 @@ class WebDashboardService {
             manageGuild: true,
             graphAvailable: false
         }];
+        if (!discordUserId) return scopes;
 
         const resolved = toGateway(gateway || client);
         let mutualGuilds;
         try {
-            mutualGuilds = resolved ? await resolved.listMutualGuilds(userId) : [];
+            mutualGuilds = resolved ? await resolved.listMutualGuilds(discordUserId) : [];
         } catch (error) {
             // Degraded mode: the DM scope still works with the bot down;
             // guild scopes simply don't list until he reconnects.

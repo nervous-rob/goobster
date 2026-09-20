@@ -81,8 +81,29 @@ function createAppHelpers(ctx) {
             sendError(res, 401, 'UNAUTHENTICATED', 'Sign in with Discord to use the web app.');
             return;
         }
+        // The session names the principal; the actor context adds the
+        // installation, the entitlement (when the release gate is on), and
+        // the Discord subject to use for guild checks. A disabled account
+        // is refused here even while the gate is off.
+        let actor;
+        try {
+            actor = await ctx.identity.resolveActor({
+                principalId: session.userId,
+                surface: 'web',
+                sessionId: session.id != null ? String(session.id) : null
+            });
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Web app actor resolution failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+            return;
+        }
         req.webUser = session;
         req.webSessionToken = token;
+        req.actor = actor;
         next();
     }
 
