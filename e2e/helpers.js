@@ -8,7 +8,7 @@ const { OWNER, OWNER_NAME } = require('./constants');
 async function login(page, { userId = OWNER, name = OWNER_NAME } = {}) {
     await page.goto('/app/');
     await expect(page.getByText('Dev mode — mint a local identity')).toBeVisible();
-    await page.getByPlaceholder('Discord user id (digits)').fill(userId);
+    await page.getByPlaceholder('Principal id (digits or usr_…)').fill(userId);
     await page.getByPlaceholder('Display name').fill(name);
     await page.getByRole('button', { name: 'Enter' }).click();
     await expect(page.getByRole('heading', { name: new RegExp(name) })).toBeVisible({
