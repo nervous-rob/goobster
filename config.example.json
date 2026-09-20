@@ -79,7 +79,14 @@
 
     "identity": {
         "installationId": "local",
+        "installationName": "Goobster",
         "requireAccount": false,
+        "nativeLogin": false,
+        "passwordMinLength": 15,
+        "passwordCostLog2": 15,
+        "recentAuthMinutes": 15,
+        "inviteTtlHours": 72,
+        "recoveryTtlMinutes": 60,
         "operators": []
     },
 

@@ -1,17 +1,17 @@
 ---
 title: "Application identity: principals, accounts, and the actor context"
 kind: reference
-summary: How Goobster identifies a person independently of Discord - principals, linked external identities, the account entitlement, the actor context every web request carries, the legacy migration report/backfill, and the requireAccount release gate. This is shipped behaviour (shared-instance Increment A).
-tags: [identity, accounts, principals, sessions, privacy, shared-instance]
+summary: How Goobster identifies a person independently of Discord - principals, linked external identities, the account entitlement, the actor context every web request carries, invitations, login name + password sign-in, recovery, Discord connect/disconnect, session revocation, the operator Host room, and the requireAccount / nativeLogin release gates. Shipped behaviour (shared-instance Increments A and B).
+tags: [identity, accounts, principals, sessions, privacy, shared-instance, invitations, password, login, operator]
 ---
 
 # Application identity
 
-**Status: shipped** as Increment A of the
+**Status: shipped** as Increments A and B of the
 [shared-instance product plan](shared_instance_product_spec.md). What this
-document describes exists in the code today; the invitation flow, native
-login, and account administration UI are later increments and are *not*
-available yet.
+document describes exists in the code today. Native sign-in is installed but
+**off by default** - the host turns on `identity.nativeLogin` when ready;
+until then Discord OAuth is the only way in.
 
 ## What a principal is
 
@@ -97,16 +97,169 @@ same shape synchronously - the message path does no identity database work.
 
 ## Signing in
 
-- **Discord OAuth** (`/api/app/auth/callback`): the Discord subject resolves
-  to the principal that owns it - a native account that linked Discord, or
-  the legacy principal (created on the spot if missing). The session is
-  minted for that principal.
+Three ways into the portal mint the same kind of session (`web_sessions`):
+
+- **Discord OAuth** (`/api/app/auth/login` → `/api/app/auth/callback`): the
+  Discord subject resolves to the principal that owns it - a native account
+  that connected Discord, or the legacy principal (created on the spot if
+  missing). The session is minted for that principal.
+- **Login name + password** (`POST /api/app/auth/native-login`): the native
+  sign-in described below. Only available while `identity.nativeLogin` is on.
 - **Dev mode** (`webapp.devMode`, never in production): `POST
   /api/app/auth/dev-session` accepts any principal id. A `usr_<uuid>` that
-  does not exist yet is created, which is how the Discord-free path is
-  exercised before the invitation flow lands.
-- `webSessionService.create` accepts a snowflake (provisions the legacy
-  principal) or an **existing** native id; anything else is rejected.
+  does not exist yet is created.
+
+`webSessionService.create` accepts a snowflake (provisions the legacy
+principal) or an **existing** native id; anything else is rejected. Every
+session records `authenticatedAt` (when the person last proved who they
+are on it) and a snapshot of the account's `sessionVersion`.
+
+## Native sign-in (Increment B)
+
+Everything in this section sits behind the **`identity.nativeLogin`**
+release gate (default off): invitations, registration, login, recovery,
+re-authentication, and credential enrollment answer `503
+NATIVE_LOGIN_DISABLED` until the host turns it on. Connecting and
+disconnecting Discord are not behind it. Service:
+`services/nativeAuthService.js`; routes: `web/routes/auth.js`,
+`web/routes/account.js`, `web/routes/admin.js`.
+
+### Invitations
+
+An operator issues an invitation from the **Host** room (or `POST
+/api/app/admin/invites` with `role`, optional `note`, optional `ttlHours`).
+The response carries the raw token **once**, inside a ready-to-share URL
+(`/app/invite?token=…`); the database keeps only its SHA-256
+(`account_invites.tokenHash`), the role it grants, who issued it, when it
+expires, and later when and by whom it was redeemed or revoked.
+
+- `GET /api/app/auth/invite/:token` is what the landing page shows before
+  the person commits: the role, the expiry, and the installation's name.
+  It never consumes.
+- `POST /api/app/auth/register` `{ token, loginName, password, displayName? }`
+  redeems it. Redemption is one conditional `UPDATE … WHERE consumedAt IS
+  NULL AND revokedAt IS NULL AND expiresAt > now`; if it did not change
+  exactly one row the link is dead (`404 INVITE_INVALID`). A race for the
+  same token therefore admits exactly one person on both engines. A taken
+  login name (`409 LOGIN_NAME_TAKEN`) or a weak password rolls the
+  transaction back and leaves the invitation open.
+- Success creates a `usr_<uuid>` principal, an `app_accounts` row with
+  `entitlement = 'invite'` and the invitation's role, the credential, and a
+  session. An invitation is never itself a login credential.
+- `DELETE /api/app/admin/invites/:id` revokes an open invitation
+  (redeemed ones cannot be revoked - the account already exists).
+
+### Login names and passwords
+
+- Login names are lower-cased, 3-32 characters of `[a-z0-9._-]`, must
+  start with a letter or digit, and may not look like a principal id (all
+  digits or `usr_…`). They are unique across the installation
+  (`app_accounts.loginName`).
+- Passwords: at least `identity.passwordMinLength` (default **15**, floor
+  12) and at most 256 characters, no composition rules, not the login
+  name, and not on a short built-in list of long-but-common choices
+  (`WEAK_PASSWORD`). Breach-corpus checks need the network and are not
+  performed.
+- Storage: **scrypt** from `node:crypto` (`utils/passwordHashing.js`), 32-byte
+  key, 16-byte random salt, `r = 8`, `p = 1`, `N = 2^identity.passwordCostLog2`
+  (default 2^15 = 32 MiB, ~60-120 ms on a Raspberry Pi 4). The parameters are
+  stored with every hash, so raising the cost re-hashes on the next
+  successful login instead of invalidating anyone. Verification runs behind a
+  two-wide in-process semaphore so a burst cannot pin a small host's memory.
+  This is the "vetted implementation" the plan asked for: no native addon to
+  prebuild for ARM64, and no hand-rolled cryptography (KDF, salt and the
+  timing-safe compare all come from Node).
+- Login (`POST /api/app/auth/native-login`) returns the same `401
+  BAD_CREDENTIALS` for an unknown name and a wrong password, spends
+  comparable time on both, and reveals `403 ACCOUNT_DISABLED` only after a
+  correct password. Attempts are throttled through the shared
+  `web_rate_events` window - 10 per login name and 40 per client address
+  per 15 minutes (`429 TOO_MANY_ATTEMPTS`); a successful login clears the
+  name's bucket so people are not locked out by their own typos. Behind the
+  nginx/tunnel profiles the address is the first `X-Forwarded-For` hop, and
+  only when the direct peer is a private address.
+- Every login mints a fresh session (rotation); the previous cookie is
+  replaced.
+
+### Enrollment for Discord users, and changing a password
+
+`PUT /api/app/account/credentials` `{ loginName?, currentPassword?,
+newPassword }` sets or changes native credentials on the signed-in
+principal. It needs an account (`403 NO_ACCOUNT` otherwise) and proof of
+identity: the **current password** when one exists, otherwise - the
+enrollment case for a Discord-only account - a **recent authentication**
+(see below). A legacy principal that enrolls keeps its snowflake id; it just
+gains a second way in. Settings → *Account & sign-in* is the UI.
+
+### Recent authentication and re-auth
+
+Sensitive changes (credentials, connecting or disconnecting Discord) require
+that `web_sessions.authenticatedAt` is within `identity.recentAuthMinutes`
+(default 15) - otherwise `403 REAUTH_REQUIRED`. `POST /api/app/auth/reauth`
+`{ password }` refreshes the timestamp on the current session; a person
+without a password signs in again instead. `GET /api/app/account` reports
+`recentAuth` so the client can offer the right step.
+
+### Recovery
+
+There is no mail subsystem, so recovery is the plan's fallback: the host
+issues an **audited reset link** from the Host room (`POST
+/api/app/admin/accounts/:principalId/recovery`). The raw token is shown once
+(`/app/recover?token=…`); `recovery_tokens` keeps its hash, the account,
+`purpose = 'password_reset'`, who issued it, and the expiry
+(`identity.recoveryTtlMinutes`, default 60). `POST /api/app/auth/recover`
+`{ token, password, loginName? }` consumes it atomically (replay is `404
+RECOVERY_INVALID`), stores the new credential, bumps the account's
+`credentialVersion` **and** `sessionVersion`, deletes every session of the
+account, and mints a new one. An account with no login name yet (a Discord
+user being recovered into native sign-in) supplies one.
+
+### Session revocation
+
+`app_accounts.sessionVersion` is the kill switch. It is bumped by a password
+reset and by disabling an account; `requireAuth` compares it with the
+snapshot the session was created with and answers `401 SESSION_REVOKED`
+(clearing the cookie) on a mismatch. Sessions created before this column
+existed carry `NULL` and are exempt. Disabling also deletes the sessions
+outright; role changes take effect on the next request because the role is
+read from `app_accounts` every time, so they need no rotation.
+
+### Connecting and disconnecting Discord
+
+- **Connect** (`GET /api/app/auth/link/discord`, signed in, recent auth):
+  starts the normal OAuth redirect but first stores the state nonce
+  (hashed) in `oauth_link_states`, bound to the principal and session that
+  started it, for ten minutes. The callback consumes the intent, checks that
+  the cookie session is the same one, and then `linkExternal`s the Discord
+  subject instead of logging in. Outcomes come back to Settings as
+  `?link=ok`, `?link=conflict` (the Discord account already belongs to
+  another principal - nothing changes), `?link=link_expired`, or
+  `?link=link_session_mismatch`. Legacy principals cannot connect (they
+  already are their Discord identity).
+- **Disconnect** (`DELETE /api/app/account/identities/discord`, recent
+  auth): only for native principals, and only while a login name **and** a
+  password exist (`409 LAST_SIGN_IN_METHOD` otherwise) so the person can
+  still sign in. Data and credentials stay; Discord DMs and guild-derived
+  access stop with the next request. A legacy principal gets `409
+  LEGACY_IDENTITY`: its id *is* the Discord subject.
+
+### Operator surface
+
+The **Host** room (sidebar, operators only; every route is behind
+`requireOperator`, which reads the role from the actor context):
+
+| Route | Purpose |
+|---|---|
+| `GET/POST /api/app/admin/invites`, `DELETE …/:id` | Invitations (list, issue, revoke). |
+| `GET /api/app/admin/accounts` | Roster: principal, login name, role, status, entitlement, Discord linked, has password. |
+| `POST /api/app/admin/accounts` `{ principalId, role? }` | Grant an existing (Discord) principal an account - the `migration` entitlement. |
+| `PATCH /api/app/admin/accounts/:principalId` `{ status?, role? }` | Disable/enable, promote/demote. Refuses to disable or demote yourself (`409 SELF_LOCKOUT`). |
+| `POST /api/app/admin/accounts/:principalId/recovery` | Audited reset link. |
+| `GET /api/app/admin/identity/report` | The same numbers as `npm run identity:report`. |
+
+`GET /api/app/config` tells the client whether native login is on
+(`nativeLogin`), the installation's name, and the password floor; `GET
+/api/app/me` adds `identity.operator` and `identity.nativeLogin`.
 
 ## Migration report, backfill, and operator bootstrap
 
@@ -148,22 +301,35 @@ promoted). There is no "first visitor becomes admin" path.
 | `installationId` [`GOOBSTER_INSTALLATION_ID`] | `local` | Label carried on every actor context. |
 | `requireAccount` [`GOOBSTER_IDENTITY_REQUIRE_ACCOUNT`] | `false` | The release gate described above. |
 | `operators` [`GOOBSTER_IDENTITY_OPERATORS`] | `[]` | Discord ids eligible for `--bootstrap-operators`. |
+| `installationName` [`GOOBSTER_INSTALLATION_NAME`] | `Goobster` | Shown on the login screen and invitation page. |
+| `nativeLogin` [`GOOBSTER_IDENTITY_NATIVE_LOGIN`] | `false` | Release gate for invitations, registration, login, recovery, and credential enrollment. |
+| `passwordMinLength` [`GOOBSTER_IDENTITY_PASSWORD_MIN_LENGTH`] | `15` | Password floor (12-128). |
+| `passwordCostLog2` [`GOOBSTER_IDENTITY_PASSWORD_COST`] | `15` | scrypt `log2(N)` (14-18); stored per hash, re-hashed on next login when raised. |
+| `recentAuthMinutes` [`GOOBSTER_IDENTITY_RECENT_AUTH_MINUTES`] | `15` | How long a login or re-auth unlocks sensitive account changes. |
+| `inviteTtlHours` [`GOOBSTER_IDENTITY_INVITE_TTL_HOURS`] | `72` | Default invitation lifetime. |
+| `recoveryTtlMinutes` [`GOOBSTER_IDENTITY_RECOVERY_TTL_MINUTES`] | `60` | Reset-link lifetime. |
 
 ## Privacy
 
-Principals, linked identities, and accounts are per-user data:
-`/forget-me` (`privacyService.forgetUser`) deletes all three inside its
-transaction, `privacyService.auditUser` counts them (`principals`,
-`auth_identities`, `app_accounts`) so a clean audit stays provable, and
-`/what-do-you-know-about-me` reports the principal, the account
-(role/status/entitlement - never credentials), and linked providers. A
+Principals, linked identities, accounts, credentials, reset tokens, link
+intents, and invitations are per-user data. `/forget-me`
+(`privacyService.forgetUser` → `identityService.erasePrincipal`) deletes the
+principal, `auth_identities`, `app_accounts`, `password_credentials`,
+`recovery_tokens` (issued for or by the person), `oauth_link_states`, and the
+invitations the person **issued**; invitations the person **redeemed** stay
+as the issuing operator's audit row with `consumedBy` cleared.
+`privacyService.auditUser` counts every one of those tables so a clean audit
+stays provable, and `/what-do-you-know-about-me` reports the principal, the
+account (role/status/entitlement/login name - never a hash), linked
+providers, whether a password exists and when it last changed, open reset
+links, invitations issued, and when the person joined by invitation. A
 forgotten person has to be invited again.
 
 ## Not yet here
 
-Invitations, username/password login, recovery, account and device
-administration, native people discovery, and an assistant identity that
-works with the Discord adapter disabled are Increments B and C of the
-[plan](shared_instance_product_spec.md#9-implementation-sequence). Until
-then a native principal can only be minted in dev mode, and chat still needs
-the bot connected.
+Native people discovery, an assistant identity that works with the Discord
+adapter disabled, and in-app delivery are Increment C of the
+[plan](shared_instance_product_spec.md#9-implementation-sequence). A native
+account can sign in and use the private scope today, but chat still needs
+the bot connected, and recovery by verified email waits on a mail subsystem
+(the host's audited reset link is the path until then).

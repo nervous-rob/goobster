@@ -372,7 +372,9 @@ See [product naming exploration](product_naming_exploration.md) for candidates, 
 | Invariant today | Increment | Amendment |
 |---|---|---|
 | A user id is a Discord snowflake stored as TEXT. | A | A user id is a **principal id**: a snowflake for legacy users or `usr_<uuid>` for native ones. Both are TEXT; the shape grants no authority. Shipped - see the *Application identity* section of the standards. |
-| Portal access = a valid web session. | A (gate), B (accounts) | Access = session **and**, once `identity.requireAccount` is on, an active `app_accounts` row. Operator role comes from the explicit bootstrap, never from Manage Server. |
+| Portal access = a valid web session. | A (gate), B (accounts) | Access = session **and**, once `identity.requireAccount` is on, an active `app_accounts` row. Operator role comes from the explicit bootstrap or an operator invitation, never from Manage Server. Shipped. |
+| A session is valid until it expires or is deleted. | B | A session also dies when its `sessionVersion` snapshot no longer matches the account (`401 SESSION_REVOKED`), and sensitive account changes need `authenticatedAt` within `identity.recentAuthMinutes` (`403 REAUTH_REQUIRED`). Shipped. |
+| Discord OAuth is the only sign-in. | B | Login name + password behind `identity.nativeLogin`; invitations, reset links and OAuth link state are stored **hashed**, redeemed by one conditional `UPDATE`, and the raw value is returned once. Password hashing is Node's scrypt with per-hash parameters - hash *before* opening a transaction. Shipped. |
 | Guild-scoped features check membership through the gateway with the user id. | A | Membership is checked with the **Discord subject** from the actor context; a principal without one gets the private scope only and never a fabricated id. |
 | Web-reachable core throws `GatewayUnavailableError` / `BOT_OFFLINE` when the bot is unreachable. | C | Chat and Projects must work with the Discord adapter disabled; only Discord-specific actions report the integration as unavailable. |
 | `webapp.devMode` mints a session for any id. | B/G | Dev mode is a release blocker on a shared instance; the operator checklist verifies it is off. |
@@ -385,7 +387,9 @@ Agreed direction: invited people on the operator's instance; private application
 
 Proposed defaults for implementation review: native username/password with optional verified recovery email; descriptive primary labels; one primary workspace with optional specialist tools; additive identity migration; in-app delivery first; tutorial examples that incur no provider cost; gradual pilot after the shared-instance gates pass.
 
-Resolve during the relevant increment: authentication library, host budget values, whether recovery mail is configured, role granularity for collaborative resources, and migration of historical browser-only content. None requires choosing a new brand first.
+Resolve during the relevant increment: host budget values, role granularity for collaborative resources, and migration of historical browser-only content. None requires choosing a new brand first.
+
+Resolved in Increment B: the password KDF is Node's built-in **scrypt** (`utils/passwordHashing.js`) rather than an Argon2id addon - no native prebuild to carry for ARM64, parameters stored per hash so the cost can rise later, verification bounded by a small semaphore. Recovery mail is **not** configured; the host issues audited reset links from the Host room, and the login screen says to ask the host.
 
 Implementation status must be updated here as increments land, with links to their PRs and the validated exit evidence. Do not mark an increment complete solely because its documentation or UI shell exists.
 
@@ -394,7 +398,7 @@ Implementation status must be updated here as increments land, with links to the
 | Increment | Status | Evidence |
 |---|---|---|
 | A — Identity compatibility | **Shipped** in [PR #229](https://github.com/nervous-rob/goobster/pull/229) (`principals`, `app_accounts`, `auth_identities`; `identityService`; `requireAccount` gate; `npm run identity:report`; actor context on `req.actor`). Behaviour: [identity.md](identity.md). | `tests/identityService.test.js` on SQLite and Postgres: idempotent backfill (second run creates 0), legacy owners unchanged, native `usr_` id through dev session → `/me` → DM-only scopes, gate on/off, disabled account, `/forget-me` audit clean. |
-| B — Invitations and native authentication | Not started | — |
+| B — Invitations and native authentication | **Shipped** in [PR #230](https://github.com/nervous-rob/goobster/pull/230) (`account_invites`, `password_credentials`, `recovery_tokens`, `oauth_link_states`; `nativeAuthService`; `identity.nativeLogin` gate; Host room; Settings → *Account & sign-in*; `/app/invite`, `/app/recover`). Behaviour: [identity.md](identity.md#native-sign-in-increment-b). | `tests/nativeAuth.test.js` on SQLite and Postgres: invitation replay and a 5-way redemption race (one winner), taken name leaves the invite open, neutral login errors, per-name throttle, `BAD_ORIGIN` on cross-origin POST, enrollment behind `REAUTH_REQUIRED`, reset replay + every session revoked, `SESSION_REVOKED` on version bump, link-intent binding/expiry, `IDENTITY_CONFLICT` on link, disconnect rules, operator gating and self-lockout guards, `/forget-me` audit clean across the new tables. Browser walkthrough: invite → register → sign out → native login → dead link. |
 | C — Independent runtime and delivery | Not started | — |
 | D — Shared-instance readiness | Not started | — |
 | E — Product organization | Not started | — |
