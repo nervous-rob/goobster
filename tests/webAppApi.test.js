@@ -1252,22 +1252,37 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(res.json.observatory).toEqual({ enabled: false });
     });
 
-    test('GET /api/app/memory/constellation stars the user\'s own facts', async () => {
+    test('GET /api/app/memory/constellation mirrors the user\'s own facts as memory, shown under view=all', async () => {
         await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@scope, 'USER', @u, 'Likes trains')`,
             { scope: dmScopeId(USER), u: USER }
         );
         const cookie = await login();
+        const scope = encodeURIComponent(dmScopeId(USER));
         const res = await request({
-            reqPath: `/api/app/memory/constellation?scope=${encodeURIComponent(dmScopeId(USER))}`,
+            reqPath: `/api/app/memory/constellation?scope=${scope}`,
             headers: { Cookie: cookie }
         });
         expect(res.status).toBe(200);
         expect(res.json.kind).toBe('personal');
+        expect(res.json.view).toBe('knowledge');
         expect(res.json.nodes[0].id).toBe('you');
-        expect(res.json.nodes.some(n => n.content === 'Likes trains')).toBe(true);
+        // A fact mirror is distilled memory, not saved knowledge: the default
+        // projection counts it but leaves it out of the picture.
+        expect(res.json.nodes.some(n => n.content === 'Likes trains')).toBe(false);
+        expect(res.json.counts.curation.memory).toBeGreaterThanOrEqual(1);
+        expect(res.json.counts.hidden).toBeGreaterThanOrEqual(1);
         expect(res.json.counts.cap).toBe(2500);
+
+        const all = await request({
+            reqPath: `/api/app/memory/constellation?scope=${scope}&view=all`,
+            headers: { Cookie: cookie }
+        });
+        expect(all.status).toBe(200);
+        expect(all.json.view).toBe('all');
+        expect(all.json.nodes.some(n => n.content === 'Likes trains' && n.curation === 'memory')).toBe(true);
+        expect(all.json.counts.hidden).toBe(0);
     });
 
     test('spitball notes can be created, listed, edited, and deleted', async () => {
