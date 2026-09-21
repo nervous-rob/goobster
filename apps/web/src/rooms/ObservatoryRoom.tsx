@@ -217,11 +217,11 @@ export function ObservatoryRoom() {
                 <header className="pane-header">
                     <div className="title-row">
                         <MenuButton />
-                        <h1>The Observatory</h1>
+                        <h1>Projects <span className="room-secondary">the Observatory</span></h1>
                     </div>
                 </header>
                 <div className="pane-body">
-                    <div className="empty">The Observatory is unavailable right now.</div>
+                    <div className="empty">Projects are unavailable right now.</div>
                     <div className="hint">{(list.error as Error).message}</div>
                 </div>
             </main>
@@ -233,7 +233,7 @@ export function ObservatoryRoom() {
             <header className="pane-header">
                 <div className="title-row">
                     <MenuButton />
-                    <h1>{slug && project ? `🔭 ${project.project.name}` : 'The Observatory'}</h1>
+                    <h1>{slug && project ? `🔭 ${project.project.name}` : <>Projects <span className="room-secondary">the Observatory</span></>}</h1>
                 </div>
                 <div className="pane-header-actions">
                     {slug && !inboxPreview && <button type="button" className="btn" onClick={() => { setSelected(null); setPeopleOpen(false); setDockOpen(false); }}>← Back</button>}

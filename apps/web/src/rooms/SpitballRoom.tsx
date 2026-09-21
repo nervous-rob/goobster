@@ -484,7 +484,7 @@ export function SpitballRoom() {
             <header className="pane-header">
                 <div className="title-row">
                     <MenuButton />
-                    <h1>Spitball</h1>
+                    <h1>Knowledge <span className="room-secondary">Spitball</span></h1>
                 </div>
                 <select className="select" value={scopeId} onChange={(e) => changeScope(e.target.value)} aria-label="Scope">
                     {scopes.map((item) => (

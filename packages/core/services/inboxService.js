@@ -67,7 +67,7 @@ class InboxService {
      * @param {string} params.title
      * @param {string} [params.body] - Markdown
      * @param {{ type: string, id: string|number }} [params.source]
-     * @param {string} [params.link] - portal path (e.g. '/tasks')
+     * @param {string} [params.link] - portal path (e.g. '/activity/scheduled'); legacy paths stay valid through the client's aliases
      * @param {Array<{ url: string, name: string }>} [params.attachments]
      * @param {string} [params.dedupeKey] - same key twice = one item
      * @param {Object|false} [params.discord] - `{ gateway, discordUserId?, payload? }`

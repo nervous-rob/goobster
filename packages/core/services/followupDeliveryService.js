@@ -113,7 +113,7 @@ Respond with ONLY the message text.`,
             title: `Reminder: ${note.length > 80 ? `${note.slice(0, 79)}…` : note}`,
             body: message,
             source: { type: 'followup', id: followup.id },
-            link: '/tasks',
+            link: '/activity/scheduled',
             dedupeKey: `followup:${followup.id}:${followup.dueAt}`,
             discord: gateway ? { gateway, payload: { content: `⏰ ${message}`, allowedMentions: { users: [], roles: [] } } } : false
         });

@@ -242,7 +242,7 @@ class AutomationService {
                 title: `Scheduled task "${automation.name}" needs attention`,
                 body: content,
                 source: { type: 'automation', id: automation.id },
-                link: '/tasks',
+                link: '/activity/scheduled',
                 discord: this.gateway ? { gateway: this.gateway } : false
             }).catch(error => console.error(`Could not notify owner of automation ${automation.name}:`, error.message));
             return;
@@ -413,7 +413,7 @@ class AutomationService {
             kind: 'task',
             title: `Scheduled task: ${automation.name}`,
             source: { type: 'automation', id: automation.id },
-            link: '/tasks',
+            link: '/activity/scheduled',
             gateway: this.gateway,
             client: this.client,
             sourceDescription:
@@ -461,7 +461,7 @@ class AutomationService {
                     title: `Scheduled task: ${automation.name}`,
                     body: delivered.join('\n\n'),
                     source: { type: 'automation', id: automation.id },
-                    link: '/tasks',
+                    link: '/activity/scheduled',
                     discord: { status: dmFailure ? 'failed' : 'sent', error: dmFailure }
                 });
             } catch (error) {

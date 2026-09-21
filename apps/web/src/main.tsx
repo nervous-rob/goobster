@@ -7,6 +7,7 @@ import {
     createRootRoute,
     createRoute,
     createRouter,
+    useRouterState,
 } from '@tanstack/react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/query';
@@ -33,7 +34,10 @@ import { DecksRoom } from './rooms/DecksRoom';
 import { ExchangeRoom } from './rooms/ExchangeRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
 import { ObservatoryRoom } from './rooms/ObservatoryRoom';
+import { ActivityRoom } from './rooms/ActivityRoom';
+import { ToolsRoom } from './rooms/ToolsRoom';
 import { SettingsRoom } from './rooms/settings/SettingsRoom';
+import { canonicalPath } from './lib/rooms';
 import './styles.css';
 
 const ConservatoryLayout = lazy(() => import('./music-lab/ConservatoryLayout').then((m) => ({ default: m.ConservatoryLayout })));
@@ -150,47 +154,83 @@ const indexRoute = createRoute({
     component: HomeRoom,
 });
 
-const studyRoute = createRoute({
+// --- Canonical destinations (documentation/portal_navigation.md) ----------
+// Seven primary rooms plus the account area. Route ids stay explicit so
+// params keep their validation; names and aliases come from lib/rooms.
+
+const chatRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/study',
+    path: '/chat',
     component: StudyRoom,
 });
 
-const studyIdRoute = createRoute({
+const chatIdRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/study/$conversationId',
+    path: '/chat/$conversationId',
     component: StudyRoom,
 });
 
-const spitballRoute = createRoute({
+const knowledgeRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/spitball',
+    path: '/knowledge',
     component: SpitballRoom,
 });
 
-// The Library became Spitball; old links and bookmarks keep working.
-const libraryRoute = createRoute({
+const projectsRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/library',
-    component: () => <Navigate to="/spitball" replace />,
+    path: '/projects',
+    component: ObservatoryRoom,
 });
 
-const tasksRoute = createRoute({
+const discussionsRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/tasks',
-    component: TasksRoom,
+    path: '/discussions',
+    component: ParlorRoom,
 });
 
-const noticedRoute = createRoute({
+const discussionsIdRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/noticed',
+    path: '/discussions/$conversationId',
+    component: ParlorRoom,
+});
+
+// Activity keeps delivery (Inbox), proactive attention, and scheduling as
+// three views with their own actions and state - one destination, not one
+// merged list.
+const activityRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/activity',
+    component: ActivityRoom,
+});
+
+const activityIndexRoute = createRoute({
+    getParentRoute: () => activityRoute,
+    path: '/',
+    component: () => <Navigate to="/activity/inbox" replace />,
+});
+
+const activityInboxRoute = createRoute({
+    getParentRoute: () => activityRoute,
+    path: '/inbox',
+    component: InboxRoom,
+});
+
+const activityAttentionRoute = createRoute({
+    getParentRoute: () => activityRoute,
+    path: '/attention',
     component: NoticedRoom,
 });
 
-const inboxRoute = createRoute({
+const activityScheduledRoute = createRoute({
+    getParentRoute: () => activityRoute,
+    path: '/scheduled',
+    component: TasksRoom,
+});
+
+const toolsRoute = createRoute({
     getParentRoute: () => appRoute,
-    path: '/inbox',
-    component: InboxRoom,
+    path: '/tools',
+    component: ToolsRoom,
 });
 
 const hostRoute = createRoute({
@@ -205,12 +245,6 @@ const usageRoute = createRoute({
     component: UsageRoom,
 });
 
-const workshopRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/workshop',
-    component: () => <Navigate to="/observatory" replace />,
-});
-
 const decksRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/decks',
@@ -221,18 +255,6 @@ const exchangeRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/exchange',
     component: ExchangeRoom,
-});
-
-const parlorRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/parlor',
-    component: ParlorRoom,
-});
-
-const parlorIdRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/parlor/$conversationId',
-    component: ParlorRoom,
 });
 
 const conservatoryRoute = createRoute({
@@ -295,36 +317,6 @@ const conservatoryStudioRoute = createRoute({
     component: StudioEngineLoader,
 });
 
-const observatoryRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/observatory',
-    component: ObservatoryRoom,
-});
-
-const observatoryGraphRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/observatory/graph',
-    component: ObservatoryRoom,
-});
-
-const observatorySearchRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/observatory/search',
-    component: ObservatoryRoom,
-});
-
-const observatoryPeopleRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/observatory/people',
-    component: ObservatoryRoom,
-});
-
-const observatoryEventsRoute = createRoute({
-    getParentRoute: () => appRoute,
-    path: '/observatory/events',
-    component: ObservatoryRoom,
-});
-
 const settingsRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/settings',
@@ -337,6 +329,32 @@ const settingsSectionRoute = createRoute({
     component: SettingsRoom,
 });
 
+// --- Legacy aliases --------------------------------------------------------
+// Bookmarks, stored Inbox links, notification deep links, and settings
+// return locations written before the rename keep their meaning: the path
+// is rewritten through the registry and the resource id, query string and
+// hash travel with it. Each alias is its own typed route so a conversation
+// id is still validated as a param rather than swallowed by a splat.
+function LegacyRedirect() {
+    const pathname = useRouterState({ select: (s) => s.location.pathname });
+    return <Navigate to={canonicalPath(pathname) as never} search={true} hash={true} replace />;
+}
+
+const legacyAlias = (path: string) => createRoute({
+    getParentRoute: () => appRoute,
+    path,
+    component: LegacyRedirect,
+});
+
+const legacyRoutes = [
+    '/study', '/study/$conversationId',
+    '/spitball', '/library',
+    '/observatory', '/observatory/graph', '/observatory/search', '/observatory/people', '/observatory/events',
+    '/workshop',
+    '/parlor', '/parlor/$conversationId',
+    '/inbox', '/noticed', '/attention', '/tasks'
+].map(legacyAlias);
+
 const routeTree = rootRoute.addChildren([
     shareShellRoute.addChildren([shareRoute]),
     inviteRoute,
@@ -346,16 +364,19 @@ const routeTree = rootRoute.addChildren([
     verifyEmailRoute,
     authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
-        hostRoute,
-        studyRoute,
-        studyIdRoute,
-        spitballRoute,
-        libraryRoute,
-        tasksRoute,
-        noticedRoute,
-        inboxRoute,
-        usageRoute,
-        workshopRoute,
+        chatRoute,
+        chatIdRoute,
+        knowledgeRoute,
+        projectsRoute,
+        discussionsRoute,
+        discussionsIdRoute,
+        activityRoute.addChildren([
+            activityIndexRoute,
+            activityInboxRoute,
+            activityAttentionRoute,
+            activityScheduledRoute,
+        ]),
+        toolsRoute,
         conservatoryRoute.addChildren([
             conservatoryIndexRoute,
             conservatoryIntervalsRoute,
@@ -367,17 +388,13 @@ const routeTree = rootRoute.addChildren([
             conservatoryStageRoute,
             conservatoryStudioRoute,
         ]),
-        decksRoute,
         exchangeRoute,
-        parlorRoute,
-        parlorIdRoute,
-        observatoryRoute,
-        observatoryGraphRoute,
-        observatorySearchRoute,
-        observatoryPeopleRoute,
-        observatoryEventsRoute,
+        decksRoute,
+        usageRoute,
+        hostRoute,
         settingsRoute,
         settingsSectionRoute,
+        ...legacyRoutes,
     ])]),
 ]);
 

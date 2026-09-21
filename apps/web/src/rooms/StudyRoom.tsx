@@ -378,8 +378,8 @@ export function StudyRoom() {
         setActiveId(id);
         hydratedTurnId.current = null;
         resetTurn();
-        if (id) navigate({ to: '/study/$conversationId', params: { conversationId: String(id) } });
-        else navigate({ to: '/study' });
+        if (id) navigate({ to: '/chat/$conversationId', params: { conversationId: String(id) } });
+        else navigate({ to: '/chat' });
     }, [navigate, resetTurn]);
 
     function onSearchChange(value: string) {
@@ -423,7 +423,7 @@ export function StudyRoom() {
             setIncognito(true);
             setActiveId(null);
             resetTurn();
-            navigate({ to: '/study' });
+            navigate({ to: '/chat' });
             toast('Incognito on — this chat won’t be saved.');
         }
     }

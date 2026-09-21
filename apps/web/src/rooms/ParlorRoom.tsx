@@ -508,7 +508,7 @@ export function ParlorRoom() {
                                 aria-expanded={chats.open}
                                 onClick={chats.toggle}
                             >💬</button>
-                            <div className="chat-title">{conversation?.title || 'The Parlor'}</div>
+                            <div className="chat-title">{conversation?.title || 'Discussions'}</div>
                         </div>
                         <div className="chat-header-actions">
                             <div className="parlor-participants">

@@ -1164,7 +1164,7 @@ Respond with ONLY JSON:
                 title: notices.length > 1 ? `${lead} (+${notices.length - 1} more)` : lead,
                 body,
                 source: { type: 'attention', id: notices.map(notice => notice.id).join(',') },
-                link: '/attention',
+                link: '/activity/attention',
                 discord: gateway ? {
                     gateway,
                     payload: { content: `${prefix}${body.slice(0, 1800)}`, allowedMentions: { users: [], roles: [] } }

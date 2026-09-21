@@ -90,6 +90,7 @@ const GROUPS = [
             'parlorService',
             'parlorSharing',
             'parlorTool',
+            'portalRooms',
             'projectParlor',
             'toolChipLabel',
             'userSettingsApi',

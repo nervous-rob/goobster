@@ -118,7 +118,13 @@ const VOICE_CAPTURE_ENGINES = ['auto', 'live', 'batch'];
 const REDUCED_MOTION = ['system', 'on', 'off'];
 const DENSITIES = ['comfortable', 'compact'];
 const TEXT_SIZES = ['s', 'm', 'l'];
-const START_PAGES = ['home', 'study', 'noticed', 'spitball', 'parlor', 'exchange', 'conservatory'];
+// Portal destinations (apps/web/src/lib/rooms.cjs) plus the room names
+// people saved before the navigation was consolidated; the client maps the
+// older values onto the destination that means the same thing.
+const START_PAGES = [
+    'home', 'chat', 'knowledge', 'projects', 'discussions', 'activity', 'tools',
+    'study', 'noticed', 'inbox', 'spitball', 'parlor', 'exchange', 'conservatory'
+];
 const NEW_CHAT_PRIVACY = ['regular', 'incognito'];
 const QUIET_HOURS_TZ_MODES = ['utc', 'local'];
 const PERSONALITY_PRESETS = {

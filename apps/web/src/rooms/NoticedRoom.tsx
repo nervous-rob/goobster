@@ -164,7 +164,7 @@ export function NoticedRoom() {
                 <header className="pane-header">
                     <div className="title-row">
                         <MenuButton />
-                        <h1>Noticed</h1>
+                        <h1>Attention <span className="room-secondary">Noticed</span></h1>
                     </div>
                 </header>
                 <div className="pane-body">
@@ -202,7 +202,7 @@ export function NoticedRoom() {
             <header className="pane-header">
                 <div className="title-row">
                     <MenuButton />
-                    <h1>Noticed</h1>
+                    <h1>Attention <span className="room-secondary">Noticed</span></h1>
                 </div>
                 <button type="button" className="btn" onClick={() => openSettings('initiative', 'initiative-level')}>⚙ Initiative</button>
             </header>

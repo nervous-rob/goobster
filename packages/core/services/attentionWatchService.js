@@ -520,7 +520,7 @@ class AttentionWatchService {
             kind: 'watch',
             title: `Watch fired: ${watch.label}`,
             source: { type: 'watch', id: watch.id },
-            link: '/attention',
+            link: '/activity/attention',
             gateway: this.gateway || this.client,
             client: this.client,
             sourceDescription:

@@ -15,46 +15,21 @@ import type { InboxEvent, ParlorMentionEvent } from '../hooks/usePortalEvents';
 import { getStoredTheme, paintTheme, resolveTheme, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
 import { paintAppearance, persistAppearance } from '../lib/appearance';
 import { useQuery } from '@tanstack/react-query';
+import {
+    ACCOUNT_ROOMS, PRIMARY_ROOMS, atmosphereFor, isRoomAvailable, legacyHashTarget,
+    parentRoom, resolveRoom, startPageTarget, type Room
+} from '../lib/rooms';
 
-const NAV = [
-    { section: 'The house', items: [
-        { to: '/', label: '🏠 Home', room: 'home' },
-        { to: '/study', label: '💬 Study', room: 'study' },
-        { to: '/parlor', label: '🛋️ Parlor', room: 'parlor' },
-        { to: '/spitball', label: '🧠 Spitball', room: 'spitball' },
-        { to: '/conservatory', label: '🎹 Conservatory', room: 'conservatory' },
-        { to: '/observatory', label: '🔭 Observatory', room: 'observatory', feature: 'observatory' as const }
-    ] },
-    { section: 'The grounds', items: [
-        { to: '/inbox', label: '📥 Inbox', room: 'inbox', count: 'inbox' as const },
-        { to: '/exchange', label: '📊 Exchange', room: 'exchange', discord: true },
-        { to: '/noticed', label: '🧭 Noticed', room: 'noticed' },
-        { to: '/tasks', label: '🗓️ Tasks', room: 'tasks' },
-        { to: '/decks', label: '🃏 Decks', room: 'decks' },
-        { to: '/usage', label: '📈 Usage', room: 'usage' },
-        { to: '/host', label: '🗝️ Host', room: 'host', operator: true }
-    ] }
-];
-
-const PATH_ROOM: Record<string, string> = {
-    '/': 'home',
-    '/share': 'share',
-    '/study': 'study',
-    '/parlor': 'parlor',
-    '/spitball': 'spitball',
-    '/library': 'spitball',
-    '/workshop': 'observatory',
-    '/conservatory': 'conservatory',
-    '/observatory': 'observatory',
-    '/exchange': 'exchange',
-    '/inbox': 'inbox',
-    '/noticed': 'noticed',
-    '/tasks': 'tasks',
-    '/decks': 'decks',
-    '/usage': 'usage',
-    '/host': 'host',
-    '/settings': 'settings'
-};
+function NavLink({ room, active, count, onClick }: { room: Room; active: boolean; count: number; onClick: () => void }) {
+    return (
+        <Link to={room.path as never} className={`nav-btn${active ? ' active' : ''}`}
+            aria-current={active ? 'page' : undefined} data-room={room.id} onClick={onClick}>
+            <span aria-hidden="true">{room.icon}</span> {room.name}
+            {room.secondaryName && <span className="nav-secondary">{room.secondaryName}</span>}
+            {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
+        </Link>
+    );
+}
 
 // The shell tolerates a null session (public share pages render inside it):
 // feature-gated rooms hide, the footer offers Sign in, and room links lead
@@ -85,10 +60,13 @@ export function AppShell() {
     const [attentionPing, setAttentionPing] = useState(false);
     const [inboxPing, setInboxPing] = useState<InboxEvent | null>(null);
 
-    const room = Object.entries(PATH_ROOM).find(([path]) => pathname === path || pathname.startsWith(`${path}/`))?.[1]
-        || (pathname.startsWith('/study') ? 'study' : pathname.startsWith('/parlor') ? 'parlor' : 'home');
+    // Which registry room this URL belongs to (canonical or legacy), and the
+    // primary sidebar entry that should light up for it (Tools for the
+    // specialist rooms).
+    const room = resolveRoom(pathname);
+    const activeNav = parentRoom(room);
 
-    useEffect(() => { applyAtmosphere(room); }, [room]);
+    useEffect(() => { applyAtmosphere(atmosphereFor(room)); }, [room]);
     useEffect(() => {
         const open = () => setForgetOpen(true);
         window.addEventListener('goobster-forget', open);
@@ -124,7 +102,7 @@ export function AppShell() {
         // invitation) while this tab was open. Not shown while already there.
         const onInbox = (event: Event) => {
             if (!notifyInApp) return;
-            if (window.location.pathname.replace(/^\/app/, '').startsWith('/inbox')) return;
+            if (resolveRoom(window.location.pathname) === 'activity') return;
             setInboxPing((event as CustomEvent<InboxEvent>).detail || {});
             playPing();
         };
@@ -193,30 +171,19 @@ export function AppShell() {
         if (!me || !appearance?.startPage || appearance.startPage === 'home') return;
         if (pathname !== '/') return;
         if (sessionStorage.getItem('goobster-start-page-applied')) return;
-        const dest: Record<string, string> = {
-            study: '/study', noticed: '/noticed', inbox: '/inbox', spitball: '/spitball',
-            parlor: '/parlor', exchange: '/exchange', conservatory: '/conservatory'
-        };
-        const to = dest[appearance.startPage];
+        // Saved values may predate the rename (`study`, `noticed`, …); the
+        // registry maps every accepted value onto its current destination.
+        const to = startPageTarget(appearance.startPage);
         if (!to) return;
         sessionStorage.setItem('goobster-start-page-applied', '1');
         navigate({ to: to as never, replace: true });
     }, [appearance, me, navigate, pathname]);
 
     useEffect(() => {
-        const raw = (window.location.hash || '').replace(/^#/, '');
-        if (!raw) return;
-        const [name, id] = raw.split('/');
-        const map: Record<string, string> = {
-            home: '/', study: '/study', parlor: '/parlor', spitball: '/spitball',
-            library: '/spitball', workshop: '/observatory', conservatory: '/conservatory',
-            observatory: '/observatory',
-            exchange: '/exchange', tasks: '/tasks', noticed: '/noticed', inbox: '/inbox', decks: '/decks',
-            usage: '/usage', chat: '/study', memory: '/spitball', mtga: '/decks', settings: '/settings'
-        };
-        const to = map[name];
-        if (to) {
-            const dest = id && (/^\d+$/.test(id) || name === 'conservatory') ? `${to}/${id}` : to;
+        // The pre-router client addressed rooms as `#room/id`; those links
+        // still resolve through the registry.
+        const dest = legacyHashTarget(window.location.hash);
+        if (dest) {
             navigate({ to: dest as never, replace: true });
             history.replaceState(null, '', window.location.pathname + window.location.search);
         }
@@ -238,27 +205,23 @@ export function AppShell() {
                         <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
                     </Link>
                     <nav className="nav" aria-label="Rooms">
-                        {NAV.map((group) => (
-                            <div key={group.section}>
-                                <div className="nav-section">{group.section}</div>
-                                {group.items.map((item) => {
-                                    if ('feature' in item && item.feature && !me?.features?.[item.feature]) return null;
-                                    if ('operator' in item && item.operator && !me?.identity?.operator) return null;
-                                    // Discord-only rooms stay off the map when this
-                                    // installation has no Discord adapter at all.
-                                    if ('discord' in item && item.discord && me && me.discord?.enabled === false) return null;
-                                    const active = room === item.room;
-                                    const count = 'count' in item && item.count === 'inbox' ? (me?.inbox?.unread || 0) : 0;
-                                    return (
-                                        <Link key={item.to} to={item.to} className={`nav-btn${active ? ' active' : ''}`}
-                                            onClick={() => setDrawer(false)}>
-                                            {item.label}
-                                            {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
-                                        </Link>
-                                    );
+                        {PRIMARY_ROOMS.filter((item) => item.path !== '/').map((item) => {
+                            // Feature-gated and operator rooms stay off the map
+                            // when this installation or account cannot use them;
+                            // a direct URL still resolves and explains itself.
+                            if (item.requires && !isRoomAvailable(item, me)) return null;
+                            const count = item.count === 'inbox' ? (me?.inbox?.unread || 0) : 0;
+                            return <NavLink key={item.id} room={item} active={activeNav === item.id} count={count} onClick={() => setDrawer(false)} />;
+                        })}
+                        {me && (
+                            <div className="nav-account">
+                                <div className="nav-section">Your account</div>
+                                {ACCOUNT_ROOMS.filter((item) => item.id !== 'settings').map((item) => {
+                                    if (item.requires && !isRoomAvailable(item, me)) return null;
+                                    return <NavLink key={item.id} room={item} active={activeNav === item.id} count={0} onClick={() => setDrawer(false)} />;
                                 })}
                             </div>
-                        ))}
+                        )}
                     </nav>
                     <ActiveFriends />
                 </div>
@@ -298,12 +261,12 @@ export function AppShell() {
                             const id = mention.conversationId;
                             setMention(null);
                             if (id) {
-                                navigate({ to: '/parlor/$conversationId', params: { conversationId: String(id) } });
+                                navigate({ to: '/discussions/$conversationId', params: { conversationId: String(id) } });
                             }
                         }}
                     >
                         🛋️ <strong>{mention.fromName || 'Someone'}</strong>
-                        {' mentioned you'}{mention.title ? ` in "${mention.title}"` : ' in the Parlor'}
+                        {' mentioned you'}{mention.title ? ` in "${mention.title}"` : ' in a discussion'}
                         <span className="mention-toast-open">Open the chat →</span>
                     </button>
                     <button
@@ -321,12 +284,12 @@ export function AppShell() {
                         className="mention-toast-body"
                         onClick={() => {
                             setInboxPing(null);
-                            navigate({ to: '/inbox' });
+                            navigate({ to: '/activity/inbox' });
                         }}
                     >
                         📥 {inboxPing.kind === 'reminder' ? 'A reminder came due' : inboxPing.kind === 'invite' ? 'You have an invitation' : 'Something new'}
                         {' in your '}<strong>Inbox</strong>
-                        <span className="mention-toast-open">Open the inbox →</span>
+                        <span className="mention-toast-open">Open Activity →</span>
                     </button>
                     <button
                         type="button"
@@ -343,11 +306,11 @@ export function AppShell() {
                         className="mention-toast-body"
                         onClick={() => {
                             setAttentionPing(false);
-                            navigate({ to: '/noticed' });
+                            navigate({ to: '/activity/attention' });
                         }}
                     >
-                        🧭 Something new in <strong>Noticed</strong>
-                        <span className="mention-toast-open">Open Noticed →</span>
+                        🧭 Something new needs your <strong>Attention</strong>
+                        <span className="mention-toast-open">Open Activity →</span>
                     </button>
                     <button
                         type="button"
