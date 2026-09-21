@@ -138,6 +138,15 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        // The in-app inbox (bot-wide, like web conversations): how many
+        // delivered items are kept, and how many are still unread.
+        const inbox = await db.get(
+            `SELECT COUNT(*) AS c,
+                    SUM(CASE WHEN readAt IS NULL AND archivedAt IS NULL THEN 1 ELSE 0 END) AS unread
+             FROM inbox_items WHERE userId = @userId`,
+            { userId }
+        );
+
         // Active read-only share links the user created (bot-wide, like
         // web conversations)
         const shareLinks = await db.get(
@@ -357,12 +366,55 @@ class PrivacyService {
         const linkedIdentities = await db.all(
             'SELECT provider, subject FROM auth_identities WHERE principalId = @userId ORDER BY id', { userId }
         );
+        // Native sign-in: whether a password exists (never the hash), open
+        // reset links issued for this account, and invitations the person
+        // issued or redeemed.
+        const credential = await db.get(
+            'SELECT updatedAt FROM password_credentials WHERE principalId = @userId', { userId }
+        );
+        const openRecovery = await db.get(
+            `SELECT COUNT(*) AS c FROM recovery_tokens
+             WHERE principalId = @userId AND consumedAt IS NULL AND expiresAt > @now`,
+            { userId, now: new Date().toISOString().slice(0, 19).replace('T', ' ') }
+        );
+        const invitesIssued = await db.get(
+            'SELECT COUNT(*) AS c FROM account_invites WHERE issuedBy = @userId', { userId }
+        );
+        const inviteRedeemed = await db.get(
+            'SELECT consumedAt FROM account_invites WHERE consumedBy = @userId', { userId }
+        );
+        // The email address on file (the person gave it to us, so they see
+        // it back), whether it is verified, and outstanding verification links.
+        const email = await db.get(
+            'SELECT address, verifiedAt, updatedAt FROM account_emails WHERE principalId = @userId', { userId }
+        );
+        const openVerification = await db.get(
+            `SELECT COUNT(*) AS c FROM email_tokens
+             WHERE principalId = @userId AND consumedAt IS NULL AND expiresAt > @now`,
+            { userId, now: new Date().toISOString().slice(0, 19).replace('T', ' ') }
+        );
 
         return {
             identity: {
                 principal: principal ? { id: principal.id, displayName: principal.displayName, createdAt: principal.createdAt } : null,
                 account: account || null,
-                linkedIdentities
+                linkedIdentities,
+                nativeSignIn: {
+                    hasPassword: Boolean(credential),
+                    passwordUpdatedAt: credential?.updatedAt || null,
+                    openRecoveryLinks: Number(openRecovery?.c || 0),
+                    invitesIssued: Number(invitesIssued?.c || 0),
+                    joinedByInviteAt: inviteRedeemed?.consumedAt || null
+                },
+                email: email
+                    ? {
+                        address: email.address,
+                        verified: Boolean(email.verifiedAt),
+                        verifiedAt: email.verifiedAt || null,
+                        updatedAt: email.updatedAt,
+                        openVerificationLinks: Number(openVerification?.c || 0)
+                    }
+                    : null
             },
             facts,
             knowledgeGraph: {
@@ -381,6 +433,7 @@ class PrivacyService {
                 enabled: Boolean(row.isEnabled),
                 nextRun: row.nextRun
             })),
+            inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
             shareLinks: shareLinks?.c || 0,
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
@@ -535,6 +588,10 @@ class PrivacyService {
             counts.automations = (await db.run(
                 'DELETE FROM automations WHERE userId = @userId', { userId }
             )).changes;
+
+            // The in-app inbox: delivered results of unattended work
+            // (reminders, task output, watch reports, invites, notices).
+            counts.inboxItems = await require('./inboxService').forgetUser(userId, db);
 
             // The whole attention footprint: the ledger of open loops
             // (provenance cascades), every notice and its feedback, the
@@ -756,6 +813,12 @@ class PrivacyService {
             counts.principals = identity.principals;
             counts.authIdentities = identity.authIdentities;
             counts.appAccounts = identity.accounts;
+            counts.passwordCredentials = identity.passwordCredentials;
+            counts.recoveryTokens = identity.recoveryTokens;
+            counts.oauthLinkStates = identity.oauthLinkStates;
+            counts.accountInvites = identity.invitesIssued;
+            counts.accountEmails = identity.emails;
+            counts.emailTokens = identity.emailTokens;
 
             // Share links go before their conversations: a forgotten user's
             // transcripts must stop being publicly readable.
@@ -1033,6 +1096,9 @@ class PrivacyService {
             automations: (await db.get(
                 'SELECT COUNT(*) AS c FROM automations WHERE userId = @userId', { userId }
             )).c,
+            inbox_items: (await db.get(
+                'SELECT COUNT(*) AS c FROM inbox_items WHERE userId = @userId', { userId }
+            )).c,
             web_share_links: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId', { userId }
             )).c,
@@ -1062,6 +1128,24 @@ class PrivacyService {
             )).c,
             app_accounts: (await db.get(
                 'SELECT COUNT(*) AS c FROM app_accounts WHERE principalId = @userId', { userId }
+            )).c,
+            password_credentials: (await db.get(
+                'SELECT COUNT(*) AS c FROM password_credentials WHERE principalId = @userId', { userId }
+            )).c,
+            recovery_tokens: (await db.get(
+                'SELECT COUNT(*) AS c FROM recovery_tokens WHERE principalId = @userId OR issuedBy = @userId', { userId }
+            )).c,
+            oauth_link_states: (await db.get(
+                'SELECT COUNT(*) AS c FROM oauth_link_states WHERE principalId = @userId', { userId }
+            )).c,
+            account_invites: (await db.get(
+                'SELECT COUNT(*) AS c FROM account_invites WHERE issuedBy = @userId OR consumedBy = @userId', { userId }
+            )).c,
+            account_emails: (await db.get(
+                'SELECT COUNT(*) AS c FROM account_emails WHERE principalId = @userId', { userId }
+            )).c,
+            email_tokens: (await db.get(
+                'SELECT COUNT(*) AS c FROM email_tokens WHERE principalId = @userId', { userId }
             )).c,
             web_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }

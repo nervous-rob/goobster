@@ -468,13 +468,18 @@ describe('portal events for shared discussions', () => {
         let invite;
         const created = await collectEvents(async () => {
             ({ invite } = await parlorService.invite({
-                ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND
+                ownerId: OWNER, ownerName: 'Rob', conversationId: conversation.id, inviteeId: FRIEND
             }));
         });
-        expect(created).toEqual([expect.objectContaining({
-            kind: 'parlor-invite',
-            payload: expect.objectContaining({ userId: FRIEND, conversationId: conversation.id })
-        })]);
+        // The invitation is filed in the invitee's inbox first (its own
+        // event), then the parlor-invite hint follows.
+        expect(created.map(e => e.kind)).toEqual(['inbox', 'parlor-invite']);
+        expect(created[0].payload).toEqual(expect.objectContaining({ userId: FRIEND, kind: 'invite' }));
+        expect(created[1].payload).toEqual(expect.objectContaining({ userId: FRIEND, conversationId: conversation.id }));
+
+        const inboxService = require('@goobster/core/services/inboxService');
+        const filed = await inboxService.list({ userId: FRIEND });
+        expect(filed.items[0].title).toBe('Rob invited you to the discussion "Rust salon"');
 
         const revoked = await collectEvents(() =>
             parlorService.revokeInvite({ ownerId: OWNER, inviteId: invite.id }));
@@ -482,6 +487,20 @@ describe('portal events for shared discussions', () => {
             kind: 'parlor-invite',
             payload: expect.objectContaining({ userId: FRIEND })
         })]);
+    });
+
+    test('an invitation to an untitled discussion reads naturally in the inbox', async () => {
+        const persona = await parlorService.createPersona({
+            ownerId: OWNER, name: 'Bea', emoji: '🪶', charter: 'You write things down.'
+        });
+        const conversation = await parlorService.createConversation({ ownerId: OWNER, personaIds: [persona.id] });
+        expect(conversation.title).toBeFalsy();
+        await parlorService.invite({ ownerId: OWNER, conversationId: conversation.id, inviteeId: FRIEND });
+
+        const inboxService = require('@goobster/core/services/inboxService');
+        const filed = await inboxService.list({ userId: FRIEND });
+        expect(filed.items[0].title).toBe('Someone invited you to a parlor discussion');
+        expect(filed.items[0].title).not.toMatch(/null|undefined/);
     });
 
     test('accepting reaches every human with a scoped members hint', async () => {

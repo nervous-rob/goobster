@@ -8,8 +8,12 @@ portal backend). Apps import core and never the other way around:
 
 - `apps/bot` — Discord gateway, slash commands, voice, Activity, webhooks,
   screen/GBA, and (when `GOOBSTER_INTERNAL_TOKEN` is set) `/internal/gateway/*`.
-- `apps/api` — portal backend for the split deployment. No Discord connection;
-  Discord access goes through `RemoteGateway`. Requires Postgres.
+- `apps/api` — portal backend. No Discord connection of its own. In *paired*
+  mode (the split deployment) Discord access goes through `RemoteGateway`
+  and Postgres is required; in *standalone* mode (no Discord adapter) it is
+  the whole assistant - `DisabledGateway`, its own schedulers via
+  `packages/core/runtime/coreRuntime.js`, SQLite or Postgres. See
+  `independent_runtime.md`.
 
 Two compose profiles (see `documentation/docker_deployment.md`):
 

@@ -178,6 +178,21 @@ body {
 .login-card h1 { margin: 0; font-size: 28px; }
 .login-sub { margin: 0 0 8px; color: var(--text-dim); }
 .dev-login { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 8px; }
+.native-login { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; }
+.native-login .btn { margin-top: 6px; }
+.native-login .hint { margin-top: 2px; }
+.login-or { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+.login-error { color: var(--danger); font-size: 13px; text-align: left; }
+.host-body { display: flex; flex-direction: column; gap: 22px; max-width: 900px; }
+.host-invite-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+.host-invite-form .input { min-width: 180px; }
+.badge.state-open { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
+.badge.state-redeemed { background: rgba(124, 140, 255, 0.16); }
+.badge.state-revoked, .badge.state-expired { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
+.badge.state-verified { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
+.badge.state-unverified { background: rgba(255, 190, 92, 0.18); color: #e0a94a; }
+.login-links { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.login-links a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---------- app shell ---------- */
 
@@ -1821,6 +1836,34 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 .workshop-preview-stage { flex: 1; min-height: 0; padding: 16px; overflow: auto; }
 .workshop-preview-stage .applet { height: 100%; }
 .workshop-preview-stage .applet-frame { height: min(70vh, 640px); }
+
+/* ---------- inbox ---------- */
+
+.nav-count {
+  margin-left: auto; font-size: 11px; font-weight: 700; line-height: 1;
+  padding: 3px 7px; border-radius: 20px; background: var(--accent); color: var(--bg);
+}
+.inbox-count { font-size: 12px; padding: 2px 9px; margin-left: 8px; }
+.inbox-row { align-items: flex-start; }
+.inbox-row.unread strong { color: var(--text); }
+.inbox-row:not(.unread) strong { font-weight: 600; color: var(--text-dim); }
+.inbox-row-main {
+  background: transparent; border: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer; padding: 0; flex: 1; min-width: 0;
+}
+.inbox-row-main:hover strong { text-decoration: underline; }
+.inbox-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); margin-left: 8px; vertical-align: 2px;
+}
+.inbox-body { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.inbox-actions { display: flex; gap: 4px; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.inbox-actions .btn.subtle { padding: 2px 8px; font-size: 12px; }
+.discord-off-note {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-raise); color: var(--text-dim); font-size: 13px; margin-bottom: 14px;
+}
 
 /* ---------- forget theater ---------- */
 

@@ -11,7 +11,7 @@ import { ForgetModal } from '../components/ForgetModal';
 import { useRoomDrawerClose } from '../hooks/useConversationDrawer';
 import { MenuProvider } from './MenuButton';
 import { ActiveFriends } from './ActiveFriends';
-import type { ParlorMentionEvent } from '../hooks/usePortalEvents';
+import type { InboxEvent, ParlorMentionEvent } from '../hooks/usePortalEvents';
 import { getStoredTheme, paintTheme, resolveTheme, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
 import { paintAppearance, persistAppearance } from '../lib/appearance';
 import { useQuery } from '@tanstack/react-query';
@@ -26,11 +26,13 @@ const NAV = [
         { to: '/observatory', label: '🔭 Observatory', room: 'observatory', feature: 'observatory' as const }
     ] },
     { section: 'The grounds', items: [
-        { to: '/exchange', label: '📊 Exchange', room: 'exchange' },
+        { to: '/inbox', label: '📥 Inbox', room: 'inbox', count: 'inbox' as const },
+        { to: '/exchange', label: '📊 Exchange', room: 'exchange', discord: true },
         { to: '/noticed', label: '🧭 Noticed', room: 'noticed' },
         { to: '/tasks', label: '🗓️ Tasks', room: 'tasks' },
         { to: '/decks', label: '🃏 Decks', room: 'decks' },
-        { to: '/usage', label: '📈 Usage', room: 'usage' }
+        { to: '/usage', label: '📈 Usage', room: 'usage' },
+        { to: '/host', label: '🗝️ Host', room: 'host', operator: true }
     ] }
 ];
 
@@ -45,10 +47,12 @@ const PATH_ROOM: Record<string, string> = {
     '/conservatory': 'conservatory',
     '/observatory': 'observatory',
     '/exchange': 'exchange',
+    '/inbox': 'inbox',
     '/noticed': 'noticed',
     '/tasks': 'tasks',
     '/decks': 'decks',
     '/usage': 'usage',
+    '/host': 'host',
     '/settings': 'settings'
 };
 
@@ -79,6 +83,7 @@ export function AppShell() {
     const notifyInApp = settingsQ.data?.sections.initiative.values.notifyInApp !== false;
     const notifySounds = Boolean(settingsQ.data?.sections.initiative.values.notifySounds);
     const [attentionPing, setAttentionPing] = useState(false);
+    const [inboxPing, setInboxPing] = useState<InboxEvent | null>(null);
 
     const room = Object.entries(PATH_ROOM).find(([path]) => pathname === path || pathname.startsWith(`${path}/`))?.[1]
         || (pathname.startsWith('/study') ? 'study' : pathname.startsWith('/parlor') ? 'parlor' : 'home');
@@ -115,13 +120,28 @@ export function AppShell() {
             setAttentionPing(true);
             playPing();
         };
+        // A result landed in the Inbox (a reminder, a task's output, an
+        // invitation) while this tab was open. Not shown while already there.
+        const onInbox = (event: Event) => {
+            if (!notifyInApp) return;
+            if (window.location.pathname.replace(/^\/app/, '').startsWith('/inbox')) return;
+            setInboxPing((event as CustomEvent<InboxEvent>).detail || {});
+            playPing();
+        };
         window.addEventListener('goobster-parlor-mention', onMention);
         window.addEventListener('goobster-attention-noticed', onNoticed);
+        window.addEventListener('goobster-inbox', onInbox);
         return () => {
             window.removeEventListener('goobster-parlor-mention', onMention);
             window.removeEventListener('goobster-attention-noticed', onNoticed);
+            window.removeEventListener('goobster-inbox', onInbox);
         };
     }, [mentionBanners, notifyInApp, notifySounds]);
+    useEffect(() => {
+        if (!inboxPing) return;
+        const timer = window.setTimeout(() => setInboxPing(null), 12_000);
+        return () => window.clearTimeout(timer);
+    }, [inboxPing]);
     useEffect(() => {
         if (!mention) return;
         const timer = window.setTimeout(() => setMention(null), 12_000);
@@ -174,7 +194,7 @@ export function AppShell() {
         if (pathname !== '/') return;
         if (sessionStorage.getItem('goobster-start-page-applied')) return;
         const dest: Record<string, string> = {
-            study: '/study', noticed: '/noticed', spitball: '/spitball',
+            study: '/study', noticed: '/noticed', inbox: '/inbox', spitball: '/spitball',
             parlor: '/parlor', exchange: '/exchange', conservatory: '/conservatory'
         };
         const to = dest[appearance.startPage];
@@ -191,7 +211,7 @@ export function AppShell() {
             home: '/', study: '/study', parlor: '/parlor', spitball: '/spitball',
             library: '/spitball', workshop: '/observatory', conservatory: '/conservatory',
             observatory: '/observatory',
-            exchange: '/exchange', tasks: '/tasks', noticed: '/noticed', decks: '/decks',
+            exchange: '/exchange', tasks: '/tasks', noticed: '/noticed', inbox: '/inbox', decks: '/decks',
             usage: '/usage', chat: '/study', memory: '/spitball', mtga: '/decks', settings: '/settings'
         };
         const to = map[name];
@@ -222,12 +242,18 @@ export function AppShell() {
                             <div key={group.section}>
                                 <div className="nav-section">{group.section}</div>
                                 {group.items.map((item) => {
-                                    if (item.feature && !me?.features?.[item.feature]) return null;
+                                    if ('feature' in item && item.feature && !me?.features?.[item.feature]) return null;
+                                    if ('operator' in item && item.operator && !me?.identity?.operator) return null;
+                                    // Discord-only rooms stay off the map when this
+                                    // installation has no Discord adapter at all.
+                                    if ('discord' in item && item.discord && me && me.discord?.enabled === false) return null;
                                     const active = room === item.room;
+                                    const count = 'count' in item && item.count === 'inbox' ? (me?.inbox?.unread || 0) : 0;
                                     return (
                                         <Link key={item.to} to={item.to} className={`nav-btn${active ? ' active' : ''}`}
                                             onClick={() => setDrawer(false)}>
                                             {item.label}
+                                            {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
                                         </Link>
                                     );
                                 })}
@@ -288,6 +314,28 @@ export function AppShell() {
                     >✕</button>
                 </div>
             )}
+            {inboxPing && (
+                <div className="mention-toast" role="status">
+                    <button
+                        type="button"
+                        className="mention-toast-body"
+                        onClick={() => {
+                            setInboxPing(null);
+                            navigate({ to: '/inbox' });
+                        }}
+                    >
+                        📥 {inboxPing.kind === 'reminder' ? 'A reminder came due' : inboxPing.kind === 'invite' ? 'You have an invitation' : 'Something new'}
+                        {' in your '}<strong>Inbox</strong>
+                        <span className="mention-toast-open">Open the inbox →</span>
+                    </button>
+                    <button
+                        type="button"
+                        className="mention-toast-dismiss"
+                        aria-label="Dismiss"
+                        onClick={() => setInboxPing(null)}
+                    >✕</button>
+                </div>
+            )}
             {attentionPing && (
                 <div className="mention-toast" role="status">
                     <button
@@ -299,7 +347,7 @@ export function AppShell() {
                         }}
                     >
                         🧭 Something new in <strong>Noticed</strong>
-                        <span className="mention-toast-open">Open the inbox →</span>
+                        <span className="mention-toast-open">Open Noticed →</span>
                     </button>
                     <button
                         type="button"

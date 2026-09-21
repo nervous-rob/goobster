@@ -372,7 +372,7 @@ export function ObservatoryRoom() {
                         </div>
                         <div className="hint" style={{ marginTop: 10 }}>
                             Open a project to watch its jobs, renders, and files live — and to render, share,
-                            or ✨ command Goobster to continue it. Background jobs notify you in Discord when they finish.
+                            or ✨ command Goobster to continue it. Background jobs notify you in your Inbox (and Discord, when connected) when they finish.
                         </div>
                     </>
                 )}

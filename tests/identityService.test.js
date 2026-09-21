@@ -246,7 +246,7 @@ describe('actor context', () => {
             .rejects.toMatchObject({ code: 'NO_ACCOUNT', status: 403 });
         await identityService.grantAccount({ principalId: ROB, entitlement: 'migration' });
         const actor = await identityService.resolveActor({ principalId: ROB, surface: 'web', requireAccount: true });
-        expect(actor.account).toEqual({ role: 'member', status: 'active', entitlement: 'migration' });
+        expect(actor.account).toEqual({ role: 'member', status: 'active', entitlement: 'migration', sessionVersion: 1 });
     });
 
     test('discordActor is synchronous and keeps the subject', () => {
@@ -288,8 +288,13 @@ describe('portal seams', () => {
         expect(me.json.user).toEqual({ id: nativeId, name: 'Nat', avatar: null });
         expect(me.json.identity).toEqual({
             installationId: identityConfig.installationId,
+            installationName: identityConfig.installationName,
             account: null,
-            discordLinked: false
+            discordLinked: false,
+            operator: false,
+            nativeLogin: false,
+            registration: 'invite',
+            mail: false
         });
         // Only the private scope: guild membership is never asked for a
         // principal with no Discord identity.
@@ -394,7 +399,15 @@ describe('privacy erasure', () => {
         expect(before.identity).toEqual({
             principal: expect.objectContaining({ id: ROB, displayName: 'rob' }),
             account: expect.objectContaining({ status: 'active', role: 'member', entitlement: 'migration' }),
-            linkedIdentities: [{ provider: 'discord', subject: ROB }]
+            linkedIdentities: [{ provider: 'discord', subject: ROB }],
+            nativeSignIn: {
+                hasPassword: false,
+                passwordUpdatedAt: null,
+                openRecoveryLinks: 0,
+                invitesIssued: 0,
+                joinedByInviteAt: null
+            },
+            email: null
         });
 
         const counts = await privacyService.forgetUser({ userId: ROB });
@@ -409,6 +422,6 @@ describe('privacy erasure', () => {
         expect(await identityService.resolveExternal({ subject: SAM })).toBe(nat.id);
 
         const after = await privacyService.buildUserReport({ userId: ROB, guildId: `dm:${ROB}` });
-        expect(after.identity).toEqual({ principal: null, account: null, linkedIdentities: [] });
+        expect(after.identity).toMatchObject({ principal: null, account: null, linkedIdentities: [], nativeSignIn: { hasPassword: false } });
     });
 });

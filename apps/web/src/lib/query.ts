@@ -10,6 +10,7 @@ export const keys = {
     chatQueue: ['chat-queue'] as const,
     tasks: ['tasks'] as const,
     attention: ['attention'] as const,
+    inbox: (view: 'open' | 'unread' | 'archived' = 'open') => ['inbox', view] as const,
     usage: (days: number) => ['usage', days] as const,
     applets: ['applets'] as const,
     parlorConversations: ['parlor-conversations'] as const,

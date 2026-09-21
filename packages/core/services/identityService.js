@@ -16,10 +16,11 @@
 const crypto = require('node:crypto');
 const db = require('../db');
 const identityConfig = require('../config/identityConfig');
+const { isAssistantId } = require('./assistantIdentity');
 
 const SNOWFLAKE = /^\d{5,20}$/;
 const NATIVE_ID = /^usr_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ENTITLEMENTS = ['invite', 'migration', 'bootstrap'];
+const ENTITLEMENTS = ['invite', 'migration', 'bootstrap', 'open'];
 const ROLES = ['member', 'operator'];
 const SURFACES = ['web', 'discord', 'automation'];
 
@@ -213,6 +214,25 @@ class IdentityService {
         );
     }
 
+    /**
+     * Remove every identity of one provider from a native principal. Legacy
+     * principals are refused: their id *is* the Discord subject, so the link
+     * cannot be removed without changing who they are.
+     * @param {{ principalId: string, provider: string }} params
+     * @returns {Promise<number>} rows removed
+     */
+    async unlinkExternal({ principalId, provider }) {
+        if (this.isSnowflake(principalId)) {
+            throw new IdentityError(409, 'LEGACY_IDENTITY',
+                'This account is identified by its Discord id, so Discord cannot be disconnected from it.');
+        }
+        const result = await db.run(
+            'DELETE FROM auth_identities WHERE principalId = @principalId AND provider = @provider',
+            { principalId: String(principalId), provider }
+        );
+        return result.changes;
+    }
+
     // --- Accounts (the entitlement) ----------------------------------------
 
     /**
@@ -233,7 +253,7 @@ class IdentityService {
      * Grant an application account. Idempotent: an existing account is
      * returned untouched (roles are changed with `setAccountRole`, never
      * implicitly by a repeated grant).
-     * @param {{ principalId: string, entitlement: 'invite'|'migration'|'bootstrap', role?: 'member'|'operator', loginName?: string|null }} params
+     * @param {{ principalId: string, entitlement: 'invite'|'migration'|'bootstrap'|'open', role?: 'member'|'operator', loginName?: string|null }} params
      */
     async grantAccount({ principalId, entitlement, role = 'member', loginName = null }) {
         if (!ENTITLEMENTS.includes(entitlement)) {
@@ -294,6 +314,96 @@ class IdentityService {
     async isEntitled(principalId) {
         const account = await this.getAccount(principalId);
         return Boolean(account && account.status === 'active');
+    }
+
+    /**
+     * Operator view: every application account with its principal's display
+     * name, linked providers, and whether native credentials exist. Safe
+     * metadata only - no hashes, no tokens.
+     */
+    async listAccounts() {
+        const rows = await db.all(
+            `SELECT a.principalId, a.loginName, a.status, a.role, a.entitlement, a.createdAt, a.updatedAt,
+                    p.displayName,
+                    (SELECT COUNT(*) FROM password_credentials c WHERE c.principalId = a.principalId) AS credentialCount,
+                    (SELECT COUNT(*) FROM auth_identities i WHERE i.principalId = a.principalId AND i.provider = 'discord') AS discordCount,
+                    e.address AS emailAddress, e.verifiedAt AS emailVerifiedAt
+             FROM app_accounts a
+             JOIN principals p ON p.id = a.principalId
+             LEFT JOIN account_emails e ON e.principalId = a.principalId
+             ORDER BY a.createdAt, a.principalId`
+        );
+        return rows.map(row => ({
+            principalId: row.principalId,
+            displayName: row.displayName || null,
+            loginName: row.loginName || null,
+            status: row.status,
+            role: row.role,
+            entitlement: row.entitlement,
+            hasPassword: Number(row.credentialCount) > 0,
+            discordLinked: this.isSnowflake(row.principalId) || Number(row.discordCount) > 0,
+            email: row.emailAddress ? { address: row.emailAddress, verified: Boolean(row.emailVerifiedAt) } : null,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt
+        }));
+    }
+
+    /**
+     * The public face of one member of this installation, or null when the
+     * id does not name an active account. Name and id only - never the
+     * login name, email, role, or providers (spec §6: people search never
+     * enumerates private account details).
+     * @param {string} principalId
+     * @returns {Promise<{ id: string, name: string }|null>}
+     */
+    async describeMember(principalId) {
+        if (!this.isPrincipalId(principalId)) return null;
+        const row = await db.get(
+            `SELECT p.id, p.displayName, a.loginName
+             FROM app_accounts a JOIN principals p ON p.id = a.principalId
+             WHERE a.principalId = @id AND a.status = 'active'`,
+            { id: String(principalId) }
+        );
+        if (!row) return null;
+        return { id: row.id, name: row.displayName || row.loginName || `Member ${row.id.slice(-6)}` };
+    }
+
+    /**
+     * Native people discovery (shared-instance Increment C): members of
+     * this installation whose display name or login name starts with the
+     * query. Only active accounts are eligible, the caller must hold one,
+     * a query of at least two characters is required (no browsing the
+     * whole roster), and the result carries name and id only.
+     *
+     * @param {{ actorId: string, q: string, exclude?: string[], limit?: number }} params
+     * @returns {Promise<Array<{ id: string, name: string, source: 'member' }>>}
+     */
+    async searchPeople({ actorId, q, exclude = [], limit = 20 }) {
+        const query = String(q ?? '').trim().toLowerCase();
+        if (query.length < 2) return [];
+        const caller = await this.getAccount(actorId);
+        if (!caller || caller.status !== 'active') return [];
+        const bounded = Math.max(1, Math.min(Number(limit) || 20, 50));
+        const escaped = query.replace(/[\\%_]/g, ch => `\\${ch}`);
+        const rows = await db.all(
+            `SELECT p.id, p.displayName, a.loginName
+             FROM app_accounts a JOIN principals p ON p.id = a.principalId
+             WHERE a.status = 'active'
+               AND (LOWER(COALESCE(p.displayName, '')) LIKE @prefix ESCAPE '\\'
+                    OR LOWER(COALESCE(a.loginName, '')) LIKE @prefix ESCAPE '\\')
+             ORDER BY COALESCE(p.displayName, a.loginName) ASC, p.id ASC
+             LIMIT ${bounded + exclude.length + 1}`,
+            { prefix: `${escaped}%` }
+        );
+        const blocked = new Set([String(actorId), ...exclude.map(String)]);
+        return rows
+            .filter(row => !blocked.has(String(row.id)))
+            .slice(0, bounded)
+            .map(row => ({
+                id: row.id,
+                name: row.displayName || row.loginName || `Member ${String(row.id).slice(-6)}`,
+                source: 'member'
+            }));
     }
 
     /**
@@ -369,7 +479,9 @@ class IdentityService {
             surface,
             sessionId: sessionId || null,
             externalActor: external,
-            account: account ? { role: account.role, status: account.status, entitlement: account.entitlement } : null
+            account: account
+                ? { role: account.role, status: account.status, entitlement: account.entitlement, sessionVersion: Number(account.sessionVersion) }
+                : null
         };
     }
 
@@ -460,6 +572,8 @@ class IdentityService {
         const summary = { total: owners.size, snowflake: 0, native: 0, unresolved: 0, withPrincipal: 0, withAccount: 0 };
         const unresolved = [];
         for (const [id, entry] of owners) {
+            // The assistant's own transcript rows are not a person's data.
+            if (isAssistantId(id)) continue;
             if (this.isSnowflake(id)) summary.snowflake += 1;
             else if (this.isNativeId(id)) summary.native += 1;
             else {
@@ -513,6 +627,35 @@ class IdentityService {
     async erasePrincipal(principalId, tx = db) {
         const id = String(principalId);
         const counts = {};
+        counts.passwordCredentials = (await tx.run(
+            'DELETE FROM password_credentials WHERE principalId = @id', { id }
+        )).changes;
+        counts.recoveryTokens = (await tx.run(
+            'DELETE FROM recovery_tokens WHERE principalId = @id OR issuedBy = @id', { id }
+        )).changes;
+        counts.oauthLinkStates = (await tx.run(
+            'DELETE FROM oauth_link_states WHERE principalId = @id', { id }
+        )).changes;
+        // The address and its verification links; and any open sign-up
+        // parked under that address (it carries no principal of its own).
+        const email = await tx.get('SELECT normalized FROM account_emails WHERE principalId = @id', { id });
+        if (email) {
+            await tx.run('DELETE FROM pending_registrations WHERE emailNormalized = @normalized', { normalized: email.normalized });
+        }
+        counts.emailTokens = (await tx.run(
+            'DELETE FROM email_tokens WHERE principalId = @id', { id }
+        )).changes;
+        counts.emails = (await tx.run(
+            'DELETE FROM account_emails WHERE principalId = @id', { id }
+        )).changes;
+        // Invitations the person issued go with them; ones they redeemed
+        // stay as the operator's audit trail minus the link to the person.
+        counts.invitesIssued = (await tx.run(
+            'DELETE FROM account_invites WHERE issuedBy = @id', { id }
+        )).changes;
+        await tx.run(
+            'UPDATE account_invites SET consumedBy = NULL WHERE consumedBy = @id', { id }
+        );
         counts.authIdentities = (await tx.run(
             'DELETE FROM auth_identities WHERE principalId = @id', { id }
         )).changes;

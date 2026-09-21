@@ -23,7 +23,10 @@ const express = require('express');
 const { createWebAppContext } = require('./appContext');
 const { createAppHelpers, originGuard } = require('./appHelpers');
 const { attachWebAppWebSocket } = require('./appWebsocket');
-const { mountAuthChat } = require('./routes/authChat');
+const { mountAuth } = require('./routes/auth');
+const { mountAccount } = require('./routes/account');
+const { mountAdmin } = require('./routes/admin');
+const { mountChat } = require('./routes/chat');
 const { mountVoiceTasks } = require('./routes/voiceTasks');
 const { mountProjects } = require('./routes/projects');
 const { mountSpitball } = require('./routes/spitball');
@@ -31,6 +34,7 @@ const { mountWorkspace } = require('./routes/workspace');
 const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
 const { mountSettings } = require('./routes/settings');
+const { mountInbox } = require('./routes/inbox');
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -49,13 +53,17 @@ function createWebAppApp(ctx) {
     // any Origin present on a non-GET request must match the request host.
     app.use('/api/app', originGuard(ctx));
 
-    mountAuthChat(app, ctx, helpers);
+    mountAuth(app, ctx, helpers);
+    mountAccount(app, ctx, helpers);
+    mountAdmin(app, ctx, helpers);
+    mountChat(app, ctx, helpers);
     mountVoiceTasks(app, ctx, helpers);
     mountProjects(app, ctx, helpers);
     mountSpitball(app, ctx, helpers);
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
+    mountInbox(app, ctx, helpers);
     // Last: the static client + API 404 fallback
     mountEventsStatic(app, ctx, helpers);
     return app;

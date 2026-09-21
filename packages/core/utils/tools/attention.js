@@ -27,8 +27,9 @@ module.exports = {
         /**
          * Durable recurring automations from chat. Scope + delivery follow
          * the conversation: a guild channel gets a guild automation posting
-         * there; Discord DMs and the web portal get DM-scope rows delivered
-         * to the user's Discord DM channel (the portal's Tasks-pane rules).
+         * there; a Discord DM gets a DM-scope row delivered to that DM; the
+         * web portal gets a DM-scope row delivered to the user's inbox and
+         * echoed to Discord when they have it (the portal's Tasks-pane rules).
          * Ownership, caps, and cron validation live in
          * automationManagerService; execution is automationService's poll
          * loop - the same durable path as /automation and the portal.
@@ -43,19 +44,17 @@ module.exports = {
             const guildId = interactionContext?.guildId || null;
             const scope = guildId || dmScopeId(userId);
 
-            /** Where runs deliver: this channel, or the user's Discord DM for web chats. */
+            /**
+             * Where runs deliver: this channel, or - for web chats and
+             * inbox-delivered turns - the user's inbox (echoed to Discord
+             * when they have it), which needs no gateway to resolve.
+             */
             const resolveChannelId = async () => {
                 const channelId = interactionContext?.channel?.id || interactionContext?.channelId;
+                const { inboxChannelId, isInboxChannelId } = require('../../services/inboxService');
                 const isWeb = typeof channelId === 'string' && channelId.startsWith('web:');
-                if (!isWeb) return channelId || null;
-                const { toGateway } = require('../../gateway');
-                const gateway = toGateway(interactionContext?.gateway || interactionContext?.client);
-                if (!gateway) return null;
-                try {
-                    return await gateway.resolveDmChannelId(userId);
-                } catch {
-                    return null;
-                }
+                if (isWeb || isInboxChannelId(channelId)) return inboxChannelId(userId);
+                return channelId || null;
             };
 
             const describeRun = (row) => {
@@ -78,12 +77,13 @@ module.exports = {
                     }
                     const channelId = await resolveChannelId();
                     if (!channelId) {
-                        return '❌ Could not resolve a delivery channel - web-created automations are delivered to your Discord DMs, which appear unreachable.';
+                        return '❌ Could not resolve a delivery channel for this conversation.';
                     }
                     const created = await automationManagerService.create({
                         userId, scope, channelId, name, prompt, cron
                     });
-                    const where = guildId ? 'this channel' : 'your Discord DMs';
+                    const { isInboxChannelId } = require('../../services/inboxService');
+                    const where = guildId ? 'this channel' : (isInboxChannelId(channelId) ? 'your inbox (and Discord DMs when you have them)' : 'your Discord DMs');
                     return `✅ Created automation "${created.name}" (schedule \`${created.cron}\`, next run ${created.nextRun.toISOString()} UTC). ` +
                         `It runs unattended in ${where} on that schedule, survives restarts, and repeats until cancelled.`;
                 }
@@ -347,7 +347,7 @@ module.exports = {
                     });
                     return `🔔 Watching for \`${watch.topic}\`${jobId ? ` on job #${jobId}` : ''} as "${watch.label}". `
                         + `Nothing recurs and nothing polls - when it happens you will wake up once, do the work, and report back`
-                        + `${isWeb ? ' in their Discord DMs' : ''}. It disarms itself ${watch.expiresAt ? `after ${watch.expiresAt} UTC` : 'eventually'} if the condition never occurs.`;
+                        + `${isWeb ? ' in their inbox (and Discord DMs when they have them)' : ''}. It disarms itself ${watch.expiresAt ? `after ${watch.expiresAt} UTC` : 'eventually'} if the condition never occurs.`;
                 }
 
                 return `❌ Unknown action "${action}". Use arm, list, or cancel.`;

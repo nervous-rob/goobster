@@ -4,10 +4,15 @@ import { applyInvalidation } from '../lib/query';
 
 const KINDS = [
     'hello', 'followup-delivered', 'automation-ran', 'agent-run-updated',
-    'attention-noticed', 'web-turn',
+    'attention-noticed', 'inbox', 'web-turn',
     'parlor-turn', 'parlor-invite', 'parlor-members', 'parlor-mention',
     'project-changed', 'project-invite', 'project-members', 'settings-changed'
 ];
+
+export type InboxEvent = {
+    itemId?: number;
+    kind?: string;
+};
 
 export type ParlorMentionEvent = {
     conversationId?: number;
@@ -34,6 +39,11 @@ export function usePortalEvents(enabled: boolean): void {
             }
             if (event.type === 'attention-noticed') {
                 window.dispatchEvent(new CustomEvent('goobster-attention-noticed', { detail: data }));
+            }
+            // A new inbox item arrived (delivered, not read/archived): the
+            // shell shows a notice that deep-links to the Inbox.
+            if (event.type === 'inbox' && (data as InboxEvent).kind) {
+                window.dispatchEvent(new CustomEvent<InboxEvent>('goobster-inbox', { detail: data as InboxEvent }));
             }
         };
         for (const kind of KINDS) source.addEventListener(kind, onEvent as EventListener);

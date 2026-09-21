@@ -1261,7 +1261,13 @@ CREATE TABLE IF NOT EXISTS web_sessions (
     avatar TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     lastSeenAt TEXT,
-    expiresAt TEXT NOT NULL
+    expiresAt TEXT NOT NULL,
+    -- When the person last proved who they are on this session (login or
+    -- re-auth); sensitive account changes require this to be recent.
+    authenticatedAt TEXT,
+    -- Snapshot of app_accounts.sessionVersion at creation; a mismatch means
+    -- the account was reset/disabled since and the session is dead.
+    sessionVersion INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(userId);
@@ -2602,13 +2608,14 @@ CREATE TABLE IF NOT EXISTS principals (
 -- Portal entitlement. A principal without a row here has no application
 -- account (historical bot users are not granted one by backfill).
 -- entitlement records why the account exists: an accepted invitation, an
--- explicit migration of an existing Discord user, or the operator bootstrap.
+-- explicit migration of an existing Discord user, the operator bootstrap,
+-- or open sign-up with a verified email address.
 CREATE TABLE IF NOT EXISTS app_accounts (
     principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
     loginName TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
     role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
-    entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap')),
+    entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap', 'open')),
     credentialVersion INTEGER NOT NULL DEFAULT 1,
     sessionVersion INTEGER NOT NULL DEFAULT 1,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -2628,3 +2635,143 @@ CREATE TABLE IF NOT EXISTS auth_identities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_auth_identities_principal ON auth_identities(principalId);
+
+-- Native credentials (shared-instance Increment B). One salted, memory-hard
+-- hash per principal; paramsJson records the algorithm and cost so a later
+-- cost change re-hashes on next use instead of invalidating everyone.
+CREATE TABLE IF NOT EXISTS password_credentials (
+    principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+    hash TEXT NOT NULL,
+    paramsJson TEXT NOT NULL,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Single-use invitations issued by an operator. Only the SHA-256 of the
+-- token is stored; redemption is one atomic UPDATE so a race has exactly
+-- one winner. An invite is not a login credential.
+CREATE TABLE IF NOT EXISTS account_invites (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    issuedBy TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
+    note TEXT,
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT,
+    consumedBy TEXT,
+    revokedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Operator-issued, single-use, short-lived password reset tokens (hashed).
+-- Distinct from invitations and from OAuth state.
+CREATE TABLE IF NOT EXISTS recovery_tokens (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('password_reset')),
+    issuedBy TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recovery_tokens_principal ON recovery_tokens(principalId);
+
+-- "Connect Discord" intents: the OAuth state nonce (hashed) bound to the
+-- signed-in principal and session that started the link, so the callback
+-- can tell a link from a login and refuse a state minted for someone else.
+CREATE TABLE IF NOT EXISTS oauth_link_states (
+    stateHash TEXT PRIMARY KEY,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    sessionId INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One optional email address per account (shared-instance Increment B.1).
+-- `normalized` is the lower-cased, trimmed form and is unique across the
+-- installation; `verifiedAt` is set only by a consumed verification token.
+-- A verified address is a login identifier and the self-service recovery
+-- channel; an unverified one is neither.
+CREATE TABLE IF NOT EXISTS account_emails (
+    principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+    address TEXT NOT NULL,
+    normalized TEXT NOT NULL UNIQUE,
+    verifiedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Single-use, short-lived email verification tokens (hashed). `normalized`
+-- pins the address the link was sent to, so changing the address on the
+-- account invalidates links mailed to the previous one.
+CREATE TABLE IF NOT EXISTS email_tokens (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('verify')),
+    normalized TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_tokens_principal ON email_tokens(principalId);
+
+-- Open sign-ups waiting for their email to be verified. Nothing here is
+-- an account: no principal, no app_accounts row, no credential. Verifying
+-- the (hashed) token creates all three in one transaction; a sign-up that
+-- is never verified expires and is pruned. One pending row per address -
+-- signing up again replaces the earlier attempt.
+CREATE TABLE IF NOT EXISTS pending_registrations (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    loginName TEXT NOT NULL,
+    displayName TEXT,
+    emailAddress TEXT NOT NULL,
+    emailNormalized TEXT NOT NULL UNIQUE,
+    passwordHash TEXT NOT NULL,
+    paramsJson TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ---------------------------------------------------------------------------
+-- The in-app inbox (shared-instance Increment C, spec §6). Every result
+-- produced by unattended work for one person - a due reminder, a scheduled
+-- task's reply, a watch that fired, an invitation, a notice the attention
+-- system decided to raise - is written here FIRST, then optionally echoed
+-- to Discord. `discordStatus` records that echo separately, so a failed DM
+-- never loses the result and a retry never re-runs the work. Items are the
+-- person's private data: erased by /forget-me, counted by auditUser.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inbox_items (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    kind TEXT NOT NULL
+        CHECK (kind IN ('reminder', 'task', 'watch', 'notice', 'invite', 'project', 'expedition', 'system')),
+    title TEXT NOT NULL,
+    body TEXT,
+    -- Where it came from: 'followup:12', 'automation:3', 'watch:7', ...
+    sourceType TEXT,
+    sourceId TEXT,
+    -- Portal deep link (path under /app), when there is somewhere to go
+    link TEXT,
+    -- JSON array of { url, name } attachments re-served by the file route
+    attachmentsJson TEXT,
+    -- Idempotency for producers that may re-derive the same result
+    dedupeKey TEXT,
+    readAt TEXT,
+    archivedAt TEXT,
+    -- The optional Discord echo of this item, tracked separately from the
+    -- item itself: 'skipped' (no Discord identity / adapter), 'sent', 'failed'
+    discordStatus TEXT NOT NULL DEFAULT 'skipped'
+        CHECK (discordStatus IN ('skipped', 'sent', 'failed')),
+    discordError TEXT,
+    discordSentAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbox_items_user ON inbox_items(userId, archivedAt, createdAt);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_dedupe ON inbox_items(userId, dedupeKey);

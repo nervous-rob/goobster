@@ -83,6 +83,7 @@ function toUtcText(date) {
 class AttentionWatchService {
     constructor() {
         this.client = null;
+        this.gateway = null;
         this._unsubscribe = null;
         this._running = 0;
         AttentionWatchService.instance = this;
@@ -93,13 +94,16 @@ class AttentionWatchService {
     }
 
     /**
-     * Start listening for conditions. Only the bot process attaches: firing a
-     * watch runs an agent turn that talks to Discord, so it belongs where the
-     * other singleton workers live.
-     * @param {Object} client - the live discord.js client
+     * Start listening for conditions. The process that runs the singleton
+     * workers attaches - the bot when there is one, otherwise the core
+     * runtime. Channel watches need the live client; personal watches
+     * deliver to the inbox and need only the gateway seam.
+     * @param {Object|null} client - the live discord.js client, when this process has one
+     * @param {{ gateway?: Object|null }} [options]
      */
-    attach(client) {
+    attach(client, { gateway = null } = {}) {
         this.client = client || null;
+        this.gateway = gateway || null;
         if (this._unsubscribe) return;
         this._unsubscribe = domainEventBus.subscribe('*', event => this.onEvent(event));
         logger.info?.('[watches] Armed (condition-triggered agent turns)');
@@ -109,6 +113,7 @@ class AttentionWatchService {
         if (this._unsubscribe) this._unsubscribe();
         this._unsubscribe = null;
         this.client = null;
+        this.gateway = null;
     }
 
     present(row) {
@@ -428,8 +433,17 @@ class AttentionWatchService {
      * one set of guardrails for every unattended turn Goobster takes.
      */
     async _runTurn(watch, event) {
+        // Personal watches (no server channel of their own) deliver to the
+        // inbox first and echo to Discord when the person can receive it -
+        // the same path in every process, with or without a client. Channel
+        // watches post where they were armed and need the live client.
+        const { isInboxChannelId } = require('./inboxService');
+        const personal = !watch.channelId || isInboxChannelId(watch.channelId) || isDmScopeId(watch.guildId);
+        if (personal) {
+            return await this._runInboxTurn(watch, event);
+        }
         if (!this.client) {
-            throw new Error('no Discord client attached (watches fire in the bot process)');
+            throw new Error('no Discord client attached (channel watches fire in the bot process)');
         }
         const { handleChatInteraction } = require('../utils/chatHandler');
         const { chunkMessage } = require('../utils');
@@ -493,6 +507,31 @@ class AttentionWatchService {
         };
 
         await handleChatInteraction(pseudoInteraction);
+    }
+
+    /** The same unattended turn, with the reply filed in the inbox. */
+    async _runInboxTurn(watch, event) {
+        const unattendedTurnService = require('./unattendedTurnService');
+        const ownerName = await unattendedTurnService.displayNameFor(watch.userId);
+        const evidence = await this._describeEvent(event);
+        await unattendedTurnService.run({
+            userId: watch.userId,
+            prompt: watch.prompt,
+            kind: 'watch',
+            title: `Watch fired: ${watch.label}`,
+            source: { type: 'watch', id: watch.id },
+            link: '/attention',
+            gateway: this.gateway || this.client,
+            client: this.client,
+            sourceDescription:
+                `A condition ${ownerName} asked you to watch for just happened, and you woke up ` +
+                `because of it. Nobody sent you a prompt and nobody is waiting at a keyboard.\n\n` +
+                `WHAT HAPPENED:\n${evidence}\n\n` +
+                `Carry out the instruction now against that, using your tools if you need more than the ` +
+                `summary above. Then tell them what you found and what you make of it - not merely that ` +
+                `the event occurred, which they can already see for themselves. Your reply is filed in ` +
+                `their inbox in the web app (and echoed to Discord when they have it).`
+        });
     }
 
     /** Erase one person's watches (privacy / forget-me). */

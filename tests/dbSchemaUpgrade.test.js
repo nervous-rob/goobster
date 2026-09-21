@@ -239,6 +239,27 @@ CREATE TABLE IF NOT EXISTS web_live_turns (
 );
 `;
 
+// Application accounts before open sign-up (no 'open' entitlement).
+const PRE_OPEN_ENTITLEMENT = `
+CREATE TABLE principals (
+    id TEXT PRIMARY KEY,
+    displayName TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE app_accounts (
+    principalId TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+    loginName TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'operator')),
+    entitlement TEXT NOT NULL CHECK (entitlement IN ('invite', 'migration', 'bootstrap')),
+    credentialVersion INTEGER NOT NULL DEFAULT 1,
+    sessionVersion INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
 const PRE_PIPELINE_ROWS = [
     `INSERT INTO observatory_projects (id, userId, slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
     `INSERT INTO project_assets (id, projectId, userId, slug, name) VALUES (7, 1, 'u1', 'fetch', 'Fetch')`,
@@ -564,6 +585,25 @@ describe('SQLite: upgrading an existing database', () => {
         expect(database.prepare('SELECT lastActivityAtMs FROM web_live_turns').get()).toEqual({ lastActivityAtMs: 1700000009000 });
         expect(shapeOf(database, 'web_live_turns')).toEqual(shapeOf(bootstrap(seedDatabase('')), 'web_live_turns'));
     });
+
+    test('pre-open-sign-up accounts keep their rows and accept the open entitlement', () => {
+        const file = seedDatabase(PRE_OPEN_ENTITLEMENT, [
+            `INSERT INTO principals (id, displayName) VALUES ('100000000000000001', 'host')`,
+            `INSERT INTO app_accounts (principalId, loginName, role, entitlement, sessionVersion)
+             VALUES ('100000000000000001', 'host', 'operator', 'bootstrap', 3)`
+        ]);
+
+        const database = bootstrap(file);
+
+        expect(database.prepare('SELECT principalId, loginName, role, entitlement, sessionVersion FROM app_accounts').all())
+            .toEqual([{ principalId: '100000000000000001', loginName: 'host', role: 'operator', entitlement: 'bootstrap', sessionVersion: 3 }]);
+        database.prepare(`INSERT INTO principals (id) VALUES ('usr_open')`).run();
+        database.prepare(`INSERT INTO app_accounts (principalId, loginName, entitlement) VALUES ('usr_open', 'newcomer', 'open')`).run();
+        expect(() => database
+            .prepare(`INSERT INTO app_accounts (principalId, loginName, entitlement) VALUES ('usr_open', 'dup', 'invite')`)
+            .run()).toThrow(/UNIQUE|PRIMARY/);
+        expect(shapeOf(database, 'app_accounts')).toEqual(shapeOf(bootstrap(seedDatabase('')), 'app_accounts'));
+    });
 });
 
 const describePostgres = process.env.GOOBSTER_DB_URL ? describe : describe.skip;
@@ -806,5 +846,29 @@ describePostgres('Postgres: upgrading an existing database', () => {
         await adapter.rawQuery(`UPDATE web_live_turns SET "lastActivityAtMs" = 1700000009000 WHERE "userId" = 'u1'`);
         const updated = await adapter.rawQuery('SELECT "lastActivityAtMs" FROM web_live_turns');
         expect(updated.rows).toEqual([{ lastActivityAtMs: 1700000009000 }]);
+    });
+
+    test('pre-open-sign-up accounts keep their rows and accept the open entitlement', async () => {
+        const schemaName = await seedSchema(PRE_OPEN_ENTITLEMENT, [
+            `INSERT INTO principals (id, "displayName") VALUES ('100000000000000001', 'host')`,
+            `INSERT INTO app_accounts ("principalId", "loginName", role, entitlement, "sessionVersion")
+             VALUES ('100000000000000001', 'host', 'operator', 'bootstrap', 3)`
+        ]);
+
+        const adapter = await bootstrap(schemaName);
+
+        const rows = await adapter.rawQuery('SELECT "principalId", "loginName", role, entitlement, "sessionVersion" FROM app_accounts');
+        expect(rows.rows).toEqual([{ principalId: '100000000000000001', loginName: 'host', role: 'operator', entitlement: 'bootstrap', sessionVersion: 3 }]);
+        await adapter.rawQuery(`INSERT INTO principals (id) VALUES ('usr_open')`);
+        await adapter.rawQuery(`INSERT INTO app_accounts ("principalId", "loginName", entitlement) VALUES ('usr_open', 'newcomer', 'open')`);
+        const checks = await adapter.rawQuery(
+            `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+             JOIN pg_class t ON t.oid = c.conrelid
+             JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE t.relname = 'app_accounts' AND c.contype = 'c' AND n.nspname = current_schema()`
+        );
+        const entitlement = checks.rows.map(r => r.def).filter(def => def.includes('entitlement'));
+        expect(entitlement).toHaveLength(1);
+        expect(entitlement[0]).toContain("'open'");
     });
 });

@@ -6,6 +6,12 @@
  * - the bot is restarting, the internal network hiccuped, or the bot is
  * down. Web-reachable services map it onto their own degraded state
  * ("Goobster is offline"), never a crash (reactive port spec §6).
+ *
+ * GatewayDisabledError is its permanent cousin (shared-instance Increment
+ * C): this installation has no Discord adapter at all. It IS an
+ * unavailability for every degradation path that already exists, but
+ * carries its own code so a surface can say "not connected to Discord,
+ * here is the next step" instead of "offline, try again later".
  */
 
 class GatewayError extends Error {
@@ -18,15 +24,33 @@ class GatewayError extends Error {
 }
 
 class GatewayUnavailableError extends GatewayError {
-    constructor(message = 'Goobster is not connected to Discord right now.', { cause } = {}) {
-        super(503, 'GATEWAY_UNAVAILABLE', message, { cause });
+    constructor(message = 'Goobster is not connected to Discord right now.', { cause, code = 'GATEWAY_UNAVAILABLE' } = {}) {
+        super(503, code, message, { cause });
         this.name = 'GatewayUnavailableError';
     }
 }
 
-/** True when an error means "the bot could not be reached", not "no". */
-function isGatewayUnavailable(error) {
-    return error?.code === 'GATEWAY_UNAVAILABLE';
+class GatewayDisabledError extends GatewayUnavailableError {
+    constructor(message = 'This installation is not connected to Discord.') {
+        super(message, { code: 'DISCORD_DISABLED' });
+        this.name = 'GatewayDisabledError';
+    }
 }
 
-module.exports = { GatewayError, GatewayUnavailableError, isGatewayUnavailable };
+/** True when an error means "Discord could not be reached", not "no". */
+function isGatewayUnavailable(error) {
+    return error?.code === 'GATEWAY_UNAVAILABLE' || error?.code === 'DISCORD_DISABLED';
+}
+
+/** True when the installation has no Discord adapter (permanent, not transient). */
+function isGatewayDisabled(error) {
+    return error?.code === 'DISCORD_DISABLED';
+}
+
+module.exports = {
+    GatewayError,
+    GatewayUnavailableError,
+    GatewayDisabledError,
+    isGatewayUnavailable,
+    isGatewayDisabled
+};

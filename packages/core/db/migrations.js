@@ -169,6 +169,10 @@ const COLUMN_MIGRATIONS = [
     // table, created by schema.sql on open; legacy triggers are back-filled
     // lazily by projectTriggerService.catchUpEventTriggers.
     ['project_triggers', 'lastJobOutcome', 'lastJobOutcome TEXT'],
+    // Native authentication (shared-instance Increment B): recent-auth
+    // timestamp and the account session-version snapshot.
+    ['web_sessions', 'authenticatedAt', 'authenticatedAt TEXT'],
+    ['web_sessions', 'sessionVersion', 'sessionVersion INTEGER'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

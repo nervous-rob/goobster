@@ -27,6 +27,8 @@ const HINT_TO_KEYS = {
     home: [['home']],
     tasks: [['tasks'], ['home']],
     attention: [['attention'], ['home']],
+    // The unread badge rides /me, so an inbox change refetches it too.
+    inbox: [['inbox'], ['me'], ['home']],
     observatory: [['observatory']],
     'project-invites': [['project-invites'], ['observatory']],
     settings: [['settings']],

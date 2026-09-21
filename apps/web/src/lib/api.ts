@@ -1,4 +1,4 @@
-import type { AppConfig, ChatAttachment, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -46,6 +46,49 @@ export const api = {
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),
     devSession: (userId: string, name: string) =>
         request('/api/app/auth/dev-session', { method: 'POST', body: { userId, name } }),
+
+    // Native sign-in (release-gated server-side by identity.nativeLogin)
+    nativeLogin: (loginName: string, password: string) =>
+        request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/native-login', { method: 'POST', body: { loginName, password } }),
+    inspectInvite: (token: string) => request<InvitePreview>(`/api/app/auth/invite/${encodeURIComponent(token)}`),
+    register: (body: { token: string; loginName: string; password: string; displayName?: string }) =>
+        request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/register', { method: 'POST', body }),
+    recover: (body: { token: string; password: string; loginName?: string }) =>
+        request<{ user: { id: string; name: string; loginName: string } }>('/api/app/auth/recover', { method: 'POST', body }),
+    reauth: (password: string) => request<{ ok: true }>('/api/app/auth/reauth', { method: 'POST', body: { password } }),
+    // Email-backed flows (hidden by the server unless mail is configured)
+    signup: (body: { loginName: string; password: string; email: string; displayName?: string }) =>
+        request<{ ok: true }>('/api/app/auth/signup', { method: 'POST', body }),
+    verifyEmail: (token: string) =>
+        request<{ kind: 'registration'; user: { id: string; name: string; loginName: string } } | { kind: 'verified'; address: string }>(
+            '/api/app/auth/verify-email', { method: 'POST', body: { token } }),
+    forgot: (email: string) => request<{ ok: true }>('/api/app/auth/forgot', { method: 'POST', body: { email } }),
+    account: () => request<AccountSummary>('/api/app/account'),
+    setCredentials: (body: { loginName?: string; currentPassword?: string; newPassword: string }) =>
+        request<{ ok: true; loginName: string }>('/api/app/account/credentials', { method: 'PUT', body }),
+    setEmail: (email: string) =>
+        request<{ address: string; verified: boolean; sent: boolean }>('/api/app/account/email', { method: 'PUT', body: { email } }),
+    resendVerification: () =>
+        request<{ address: string; verified: boolean; sent: boolean }>('/api/app/account/email/resend', { method: 'POST' }),
+    removeEmail: () => request<{ removed: true }>('/api/app/account/email', { method: 'DELETE' }),
+    disconnectIdentity: (provider: 'discord') =>
+        request<{ ok: true }>(`/api/app/account/identities/${provider}`, { method: 'DELETE' }),
+
+    // Installation administration (operators)
+    adminInvites: () => request<{ invites: Invite[]; nativeLogin: boolean; defaultTtlHours: number }>('/api/app/admin/invites'),
+    adminCreateInvite: (body: { role: 'member' | 'operator'; ttlHours?: number; note?: string }) =>
+        request<{ invite: Invite; url: string }>('/api/app/admin/invites', { method: 'POST', body }),
+    adminRevokeInvite: (id: number) => request<{ invite: Invite }>(`/api/app/admin/invites/${id}`, { method: 'DELETE' }),
+    adminAccounts: () => request<{ accounts: AdminAccount[]; requireAccount: boolean }>('/api/app/admin/accounts'),
+    adminGrantAccount: (principalId: string, role: 'member' | 'operator' = 'member') =>
+        request<{ account: AdminAccount; created: boolean }>('/api/app/admin/accounts', { method: 'POST', body: { principalId, role } }),
+    adminUpdateAccount: (principalId: string, body: { status?: 'active' | 'disabled'; role?: 'member' | 'operator' }) =>
+        request<{ account: AdminAccount }>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}`, { method: 'PATCH', body }),
+    adminIssueRecovery: (principalId: string) =>
+        request<{ url: string; expiresAt: string; loginName: string | null }>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/recovery`, { method: 'POST' }),
+    adminIdentityReport: () => request<MigrationReport>('/api/app/admin/identity/report'),
+    adminInstallation: () => request<InstallationView>('/api/app/admin/installation'),
+    adminTestMail: (to: string) => request<{ ok: true; provider: string }>('/api/app/admin/mail/test', { method: 'POST', body: { to } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),
     chatSuggestions: () =>
@@ -181,6 +224,15 @@ export const api = {
     deleteAutomation: (id: number) => request(`/api/app/tasks/automations/${id}`, { method: 'DELETE' }),
     cancelFollowup: (id: number) => request(`/api/app/tasks/followups/${id}`, { method: 'DELETE' }),
     usage: (days = 30) => request(`/api/app/usage?days=${days}`),
+
+    inbox: ({ unread = false, archived = false }: { unread?: boolean; archived?: boolean } = {}) =>
+        request<InboxList>(`/api/app/inbox?${archived ? 'archived=1' : ''}${unread ? '&unread=1' : ''}`),
+    inboxRead: (id: number, read = true) =>
+        request<InboxItem>(`/api/app/inbox/${id}/read`, { method: 'POST', body: { read } }),
+    inboxReadAll: () => request<{ updated: number }>('/api/app/inbox/read-all', { method: 'POST' }),
+    inboxArchive: (id: number) => request<{ archived: boolean }>(`/api/app/inbox/${id}/archive`, { method: 'POST' }),
+    people: (q: string) =>
+        request<{ people: Person[]; friendsSynced: boolean; discord: boolean }>(`/api/app/people?q=${encodeURIComponent(q)}`),
 
     attention: () => request('/api/app/attention'),
     attentionEnroll: (initiative?: string) =>

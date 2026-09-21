@@ -58,7 +58,6 @@ const MAX_TAG_LENGTH = kgConfig.MAX_TAG_LENGTH;
 const MAX_PARTICIPANTS_PER_CONVERSATION = 4;
 // Humans per discussion, the owner included (multi-user parlors)
 const MAX_MEMBERS_PER_CONVERSATION = 4;
-const SNOWFLAKE_PATTERN = /^\d{5,20}$/;
 const MAX_MESSAGE_LENGTH = 8000;
 const MAX_TITLE_LENGTH = 80;
 const CONVERSATION_LIST_LIMIT = 100;
@@ -1255,9 +1254,10 @@ class ParlorService {
                 + 'to the project from its People panel instead.');
         }
         const invitee = String(inviteeId ?? '').trim();
-        if (!SNOWFLAKE_PATTERN.test(invitee)) {
+        const identityService = require('./identityService');
+        if (!identityService.isPrincipalId(invitee)) {
             throw new ParlorError(400, 'BAD_USER_ID',
-                'That does not look like a Discord user id (a 5-20 digit number).');
+                'That does not look like a user id (a Discord id or a member id from the people picker).');
         }
         if (invitee === ownerId) {
             throw new ParlorError(400, 'CANNOT_INVITE_SELF', 'You are already the host of this discussion.');
@@ -1294,25 +1294,33 @@ class ParlorService {
         // path: the invite is created, just not resolved or DMed.
         const resolvedGateway = toGateway(gateway || client);
         let inviteeUser = null;
-        if (resolvedGateway) {
-            let reachable = true;
-            try {
-                inviteeUser = await resolvedGateway.getUser(invitee);
-            } catch (error) {
-                if (!isGatewayUnavailable(error)) throw error;
-                reachable = false;
+        let inviteeName;
+        if (identityService.isSnowflake(invitee)) {
+            if (resolvedGateway) {
+                let reachable = true;
+                try {
+                    inviteeUser = await resolvedGateway.getUser(invitee);
+                } catch (error) {
+                    if (!isGatewayUnavailable(error)) throw error;
+                    reachable = false;
+                }
+                if (reachable && !inviteeUser) {
+                    throw new ParlorError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
+                }
+                if (inviteeUser?.bot) {
+                    throw new ParlorError(400, 'CANNOT_INVITE_BOT', 'Bots cannot join parlor discussions.');
+                }
             }
-            if (reachable && !inviteeUser) {
-                throw new ParlorError(404, 'NO_SUCH_USER', 'No Discord user with that id.');
+            inviteeName = inviteeUser ? (inviteeUser.globalName || inviteeUser.username) : null;
+        } else {
+            // A native member id: must name an active account of this installation.
+            const member = await identityService.describeMember(invitee);
+            if (!member) {
+                throw new ParlorError(404, 'NO_SUCH_USER', 'No member of this installation with that id.');
             }
-            if (inviteeUser?.bot) {
-                throw new ParlorError(400, 'CANNOT_INVITE_BOT', 'Bots cannot join parlor discussions.');
-            }
+            inviteeName = member.name;
         }
 
-        const inviteeName = inviteeUser
-            ? (inviteeUser.globalName || inviteeUser.username)
-            : null;
         const invite = await db.get(
             `INSERT INTO parlor_invites (conversationId, inviterId, inviterName, inviteeId, inviteeName)
              VALUES (@conversationId, @inviterId, @inviterName, @inviteeId, @inviteeName)
@@ -1326,17 +1334,28 @@ class ParlorService {
             }
         );
 
+        // Inbox first (durable, visible with or without Discord), then the
+        // Discord DM with Accept/Decline buttons when they can receive one.
+        // Fire-and-report (the dmSent:false convention): DMs closed - the
+        // invite still shows in their web app.
         let dmSent = false;
-        if (inviteeUser) {
-            // Fire-and-report (the dmSent:false convention): DMs closed -
-            // the invite still shows in their web app.
-            const delivery = await resolvedGateway.sendDm(invitee, this._inviteMessage({
-                inviteId: invite.id,
-                inviterName: ownerName,
+        try {
+            const delivery = await require('./inboxService').deliver({
+                userId: invitee,
+                kind: 'invite',
                 title: conversation.title
-            }));
-            dmSent = delivery.ok === true;
-        }
+                    ? `${ownerName || 'Someone'} invited you to the discussion "${conversation.title}"`
+                    : `${ownerName || 'Someone'} invited you to a parlor discussion`,
+                body: 'Accept or decline it from Parlor → Invitations in the web app.',
+                source: { type: 'parlor-invite', id: invite.id },
+                link: '/parlor',
+                discord: resolvedGateway ? {
+                    gateway: resolvedGateway,
+                    payload: this._inviteMessage({ inviteId: invite.id, inviterName: ownerName, title: conversation.title })
+                } : false
+            });
+            dmSent = delivery.discord.status === 'sent';
+        } catch { /* the invite row is the source of truth */ }
         // The invitee's open web session refetches its invitation list
         try {
             require('./eventBusService').publish('parlor-invite', {

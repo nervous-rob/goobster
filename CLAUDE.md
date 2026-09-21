@@ -47,7 +47,7 @@ npm workspaces (`packages/*`, `apps/*`):
 
 - **`packages/core`** (`@goobster/core`) — everything shared: `services/` (~75 domain services), `utils/` (chat pipeline, handlers), `db/` (database facade), `config/` (config resolution), `gateway/` (the Discord gateway seam), `web/` (portal backend).
 - **`apps/bot`** — the Discord client: `index.js` entry, `commands/<category>/` slash commands, `events/` (`interactionCreate.js`, `messageCreate.js`), `web/` (HTTP layer: health, portal hosting, Activity, internal gateway API).
-- **`apps/api`** — split-deployment web backend: portal against Postgres + a `RemoteGateway` to the bot. Refuses SQLite; requires `GOOBSTER_DB_URL` and `GOOBSTER_INTERNAL_TOKEN`.
+- **`apps/api`** — the web backend in two modes (`GOOBSTER_RUNTIME_MODE`, else inferred from the Discord adapter switch): **paired** (split deployment: portal against Postgres + a `RemoteGateway` to the bot; refuses SQLite; requires `GOOBSTER_DB_URL` and `GOOBSTER_INTERNAL_TOKEN`) and **standalone** (no Discord at all: `DisabledGateway`, its own schedulers through `packages/core/runtime/coreRuntime.js`, SQLite allowed). See `documentation/independent_runtime.md`.
 - **`apps/sandbox`** — the sandboxed code-execution runner (port 3200, shared-secret auth).
 - **`apps/web`** — React portal client (TypeScript, Vite, TanStack Router/Query). The only TypeScript in the repo; everything else is CommonJS JavaScript.
 
@@ -66,7 +66,7 @@ All data access goes through the async facade: `await db.get/all/run/insert(sql,
 - All schema lives in `db/schema.sql`, applied/verified automatically on DB open.
 
 ### Discord gateway seam (`packages/core/gateway/`)
-Web-reachable core code never touches discord.js directly — it talks to the small `DiscordGateway` interface (`LocalGateway` wraps the live client; `RemoteGateway` is an HTTP client to the bot's `/internal/gateway/*` API). Reads throw `GatewayUnavailableError` when the bot is unreachable; callers degrade (DM-scoped features keep working, guild panes return `BOT_OFFLINE`) rather than crash. `sendDm`/`sendToChannel` never throw.
+Web-reachable core code never touches discord.js directly — it talks to the small `DiscordGateway` interface (`LocalGateway` wraps the live client; `RemoteGateway` is an HTTP client to the bot's `/internal/gateway/*` API). Reads throw `GatewayUnavailableError` when the bot is unreachable; callers degrade (DM-scoped features keep working, guild panes return `BOT_OFFLINE`) rather than crash. `sendDm`/`sendToChannel` never throw. With the adapter off (`config/discordConfig.js`), `DisabledGateway` throws the `GatewayDisabledError` subclass → `DISCORD_DISABLED` (permanent, not a retry). Results for a person go through `services/inboxService.deliver()` (the Inbox is the record; the Discord DM is an echo), never straight to `sendDm`.
 
 ### AI providers (`services/aiService.js`)
 Routes between OpenAI, Anthropic, Gemini, and Ollama (local fallback; auto-detect in that order). Every provider implements the same contract (`chat(messages, opts)` → `{ content, toolCalls }`, `generateText`, streaming via `opts.onDelta`, `opts.reasoning_effort`). Rules:
