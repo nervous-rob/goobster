@@ -15,14 +15,14 @@ test('an opened unread result survives the filtered refetch until it is closed',
     await expect(row).toBeVisible();
     const refetch = page.waitForResponse(result => new URL(result.url()).pathname === '/api/app/inbox'
         && new URL(result.url()).searchParams.get('unread') === '1');
-    await row.getByRole('button', { name: new RegExp(C.INBOX_TITLE) }).click();
+    await row.getByRole('button', { name: new RegExp(C.INBOX_TITLE), expanded: false }).click();
     await expect(row.getByText(C.INBOX_BODY)).toBeVisible();
     expect((await (await refetch).json()).items.some(result => result.id === item.id)).toBe(false);
     await expect(row.getByRole('button', { name: 'Unread', exact: true })).toBeVisible();
     const refreshed = await page.request.get('/api/app/inbox?unread=1');
     expect((await refreshed.json()).items.some(result => result.id === item.id)).toBe(false);
     await expect(row.getByText(C.INBOX_BODY)).toBeVisible();
-    await row.getByRole('button', { name: new RegExp(C.INBOX_TITLE) }).click();
+    await row.getByRole('button', { name: new RegExp(C.INBOX_TITLE), expanded: true }).click();
     await expect(row).toHaveCount(0);
 });
 
@@ -44,7 +44,7 @@ test('the Archive can load and open its fifty-first result', async ({ page }) =>
 test('an attachment-only result renders its file and preview controls keep it open', async ({ page }) => {
     await openRoom(page, /Inbox/);
     const row = page.locator('.inbox-row').filter({ hasText: C.INBOX_ATTACHMENT_TITLE });
-    await row.getByRole('button', { name: new RegExp(C.INBOX_ATTACHMENT_TITLE) }).click();
+    await row.getByRole('button', { name: new RegExp(C.INBOX_ATTACHMENT_TITLE), expanded: false }).click();
     await expect(row.locator('.file-card-title')).toContainText('review.csv');
     await expect(row.getByText('kept attachment', { exact: true })).toBeVisible();
     await row.getByRole('button', { name: 'value', exact: true }).click();
