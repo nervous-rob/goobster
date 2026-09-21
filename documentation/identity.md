@@ -180,8 +180,10 @@ expires, and later when and by whom it was redeemed or revoked.
   `web_rate_events` window - 10 per login name and 40 per client address
   per 15 minutes (`429 TOO_MANY_ATTEMPTS`); a successful login clears the
   name's bucket so people are not locked out by their own typos. Behind the
-  nginx/tunnel profiles the address is the first `X-Forwarded-For` hop, and
-  only when the direct peer is a private address.
+  nginx/tunnel profiles the private/loopback proxy suffix of
+  `X-Forwarded-For` is traversed from right to left. The first public address
+  is the client; any earlier client-supplied prefix is ignored. A public
+  direct peer's header is ignored, and malformed chains use the direct peer.
 - Every login mints a fresh session (rotation); the previous cookie is
   replaced.
 
@@ -219,6 +221,11 @@ RECOVERY_INVALID`), stores the new credential, bumps the account's
 `credentialVersion` **and** `sessionVersion`, deletes every session of the
 account, and mints a new one. An account with no login name yet (a Discord
 user being recovered into native sign-in) supplies one.
+
+Changing a password or completing recovery invalidates every outstanding
+reset link for the account. Replacing or removing the recovery email does
+the same. Issuance and redemption serialize with those changes, so a reset
+already in flight cannot restore an older credential or recovery address.
 
 ### Session revocation
 
@@ -285,7 +292,9 @@ mails a fresh link (five an hour per account); `DELETE /api/app/account/email`
 Uniqueness: an address that is **verified** on another account is refused
 (`409 EMAIL_TAKEN`). An address another account has claimed but never
 verified is **taken over** - an unproven claim reserves nothing, so nobody
-can squat someone else's address by typing it first.
+can squat someone else's address by typing it first. This applies to both
+Account settings and open sign-up; the displaced claim's verification links
+are invalidated atomically, and concurrent verification preserves one owner.
 
 `POST /api/app/auth/verify-email { token }` is public (the token is the
 capability). For an existing account it consumes the token and marks the

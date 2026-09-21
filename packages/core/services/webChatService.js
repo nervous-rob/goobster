@@ -1111,38 +1111,32 @@ class WebChatService {
      * @param {string} userId - owner (only they may fetch it)
      * @returns {Promise<{ url: string, name: string }|null>}
      */
-    async _registerFile(filePath, userId) {
+    async _registerFile(filePath, userId, { pruneExpired = true } = {}) {
         try {
             const resolved = path.resolve(String(filePath));
             if (!fs.existsSync(resolved)) return null;
             // Prune expired rows opportunistically; reuse (and refresh)
             // an existing registration so repeated history loads don't grow
             // the registry and keep serving a stable URL per file.
-            await db.run(
-                `DELETE FROM web_generated_files
-                 WHERE createdAt < datetime('now', '-${FILE_TTL_MS / (60 * 60 * 1000)} hours')`
-            );
-            const existing = await db.get(
-                `SELECT id, name FROM web_generated_files
-                 WHERE userId = @userId AND path = @path`,
-                { userId, path: resolved }
-            );
-            if (existing) {
+            if (pruneExpired) {
                 await db.run(
-                    `UPDATE web_generated_files
-                     SET createdAt = CURRENT_TIMESTAMP WHERE id = @id`,
-                    { id: existing.id }
+                    `DELETE FROM web_generated_files
+                     WHERE createdAt < datetime('now', '-${FILE_TTL_MS / (60 * 60 * 1000)} hours')`
                 );
-                return { url: `/api/app/files/${existing.id}`, name: existing.name };
             }
             const id = crypto.randomBytes(16).toString('hex');
             const name = path.basename(resolved);
-            await db.run(
+            // Multiple inbox items (or tabs) may renew the same file at
+            // once. Return the winning registration instead of losing a
+            // link to a unique-key race.
+            const registered = await db.get(
                 `INSERT INTO web_generated_files (id, userId, path, name, createdAt)
-                 VALUES (@id, @userId, @path, @name, CURRENT_TIMESTAMP)`,
+                 VALUES (@id, @userId, @path, @name, CURRENT_TIMESTAMP)
+                 ON CONFLICT(userId, path) DO UPDATE SET createdAt = CURRENT_TIMESTAMP
+                 RETURNING id, name`,
                 { id, userId, path: resolved, name }
             );
-            return { url: `/api/app/files/${id}`, name };
+            return { url: `/api/app/files/${registered.id}`, name: registered.name };
         } catch {
             return null;
         }
@@ -1158,6 +1152,29 @@ class WebChatService {
      */
     async registerFile(filePath, userId) {
         return this._registerFile(filePath, userId);
+    }
+
+    /**
+     * Capture an owner-verified file reference for a durable server-side
+     * record. Unlike a download, this may recover an expired registration
+     * that has not yet been pruned. Never return the reference to a browser.
+     */
+    async getFileReference(url, userId) {
+        const match = /^\/api\/app\/files\/([0-9a-f]{32})$/i.exec(String(url || ''));
+        if (!match) return null;
+        const row = await db.get(
+            'SELECT userId, path FROM web_generated_files WHERE id = @id AND userId = @userId',
+            { id: match[1], userId: String(userId) }
+        );
+        return row ? { userId: row.userId, path: row.path } : null;
+    }
+
+    /** Renew a download from a trusted stored reference for its original owner. */
+    async restoreFileReference(reference, userId) {
+        if (reference?.userId !== String(userId) || typeof reference.path !== 'string') return null;
+        // Do not prune here: other legacy inbox attachments may still need
+        // their expired registry entries to recover a durable reference.
+        return this._registerFile(reference.path, userId, { pruneExpired: false });
     }
 
     /**

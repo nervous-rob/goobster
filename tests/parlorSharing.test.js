@@ -585,3 +585,43 @@ describe('privacy (/forget-me) for shared parlors', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM parlor_invites')).c).toBe(1);
     });
 });
+
+
+describe('Discord buttons for native invitees', () => {
+    test.each(['accept', 'decline'])('%s resolves the linked principal and rejects other users', async (action) => {
+        const identity = require('@goobster/core/services/identityService');
+        const native = await identity.createNativePrincipal({ displayName: 'Native invitee' });
+        const discordId = action === 'accept' ? '700000000000000091' : '700000000000000092';
+        await identity.grantAccount({ principalId: native.id, entitlement: 'invite' });
+        await identity.linkExternal({ principalId: native.id, provider: 'discord', subject: discordId });
+        const { conversation } = await makeSalon();
+        const inviteParams = { ownerId: OWNER, conversationId: conversation.id };
+        const gateway = {
+            isGoobsterGateway: true,
+            sendDm: jest.fn(async () => ({ ok: true }))
+        };
+        const { invite, dmSent } = await parlorService.invite({ ...inviteParams, inviteeId: native.id, gateway });
+        expect(dmSent).toBe(true);
+        expect(gateway.sendDm).toHaveBeenCalledWith(discordId, expect.any(Object));
+        const interaction = {
+            user: { id: discordId, username: 'native-invitee' },
+            message: { embeds: [] },
+            update: jest.fn(async () => {}),
+            reply: jest.fn(async () => {})
+        };
+        await parlorService.handleInviteButton(action, invite.id, { ...interaction, user: { id: STRANGER } });
+        expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ ephemeral: true }));
+        expect((await db.get('SELECT status FROM parlor_invites WHERE id = @id', { id: invite.id })).status).toBe('pending');
+
+        await parlorService.handleInviteButton(action, invite.id, interaction);
+        expect(interaction.update).toHaveBeenCalledWith(expect.objectContaining({ components: [] }));
+        expect((await db.get('SELECT status FROM parlor_invites WHERE id = @id', { id: invite.id })).status)
+            .toBe(action === 'accept' ? 'accepted' : 'declined');
+        const members = await db.all('SELECT userId FROM parlor_members WHERE conversationId = @resourceId', { resourceId: conversation.id });
+        expect(members.some(row => row.userId === native.id)).toBe(action === 'accept');
+        expect(members.some(row => row.userId === discordId)).toBe(false);
+        // The response adapter still holds the real Discord identity.
+        expect(interaction.user.id).toBe(discordId);
+        await identity.erasePrincipal(native.id);
+    });
+});

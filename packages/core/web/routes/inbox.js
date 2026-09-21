@@ -22,7 +22,8 @@ function mountInbox(app, ctx, h) {
         userId: req.webUser.userId,
         unread: flag(req.query.unread),
         archived: flag(req.query.archived),
-        limit: req.query.limit
+        limit: req.query.limit,
+        cursor: req.query.cursor
     })));
 
     app.get('/api/app/inbox/unread', requireAuth, inboxRoute(async (req) => ({

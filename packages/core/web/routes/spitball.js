@@ -66,6 +66,7 @@ function mountSpitball(app, ctx, h) {
     app.get('/api/app/spitball/notes', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.listNotes({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             q: req.query.q,
@@ -80,6 +81,7 @@ function mountSpitball(app, ctx, h) {
     app.post('/api/app/spitball/notes', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.createNote({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.body?.scope || ''),
             userId: req.webUser.userId,
             label: req.body?.label,
@@ -92,6 +94,7 @@ function mountSpitball(app, ctx, h) {
     app.patch('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.updateNote({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.body?.scope || req.query.scope || ''),
             userId: req.webUser.userId,
             nodeId: req.params.nodeId,
@@ -105,6 +108,7 @@ function mountSpitball(app, ctx, h) {
     app.delete('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.deleteNote({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             nodeId: req.params.nodeId

@@ -87,9 +87,7 @@ class InboxService {
         const cleanTitle = String(title ?? '').trim().slice(0, MAX_TITLE);
         if (!cleanTitle) throw new InboxError(400, 'BAD_TITLE', 'An inbox item needs a title.');
         const cleanBody = body == null ? null : String(body).slice(0, MAX_BODY);
-        const files = Array.isArray(attachments)
-            ? attachments.filter(a => a && typeof a.url === 'string').map(a => ({ url: a.url, name: a.name || null }))
-            : [];
+        const files = await this._retainAttachments(attachments, owner);
 
         const params = {
             userId: owner,
@@ -127,7 +125,7 @@ class InboxService {
             echo = await this._echoToDiscord(row, discord);
             row = (await db.get('SELECT * FROM inbox_items WHERE id = @id', { id: row.id })) || row;
         }
-        return { item: this._publicItem(row), created, discord: echo };
+        return { item: await this._publicItem(row), created, discord: echo };
     }
 
     /**
@@ -199,7 +197,48 @@ class InboxService {
         }
     }
 
-    _publicItem(row) {
+    /** Only registry ownership can authorize a path; ignore caller-supplied references. */
+    async _retainAttachments(attachments, userId) {
+        if (!Array.isArray(attachments) || attachments.length === 0) return [];
+        const webChatService = require('./webChatService');
+        const retained = [];
+        for (const attachment of Array.isArray(attachments) ? attachments : []) {
+            if (typeof attachment?.url !== 'string') continue;
+            const file = await webChatService.getFileReference(attachment.url, userId);
+            retained.push({ url: attachment.url, name: attachment.name || null, ...(file ? { file } : {}) });
+        }
+        return retained;
+    }
+
+    /** Rebuild expiring download URLs without exposing the stored local paths. */
+    async _attachmentsForItem(row) {
+        if (!row.attachmentsJson) return [];
+        const webChatService = require('./webChatService');
+        const stored = [];
+        const visible = [];
+        for (const attachment of this._parseAttachments(row.attachmentsJson)) {
+            if (typeof attachment?.url !== 'string') continue;
+            // Older rows contain only a URL. Recover its path while the
+            // owner-bound registry entry still exists, even after its TTL.
+            const file = attachment.file?.userId === row.userId && typeof attachment.file.path === 'string'
+                ? attachment.file
+                : await webChatService.getFileReference(attachment.url, row.userId);
+            const registered = file ? await webChatService.restoreFileReference(file, row.userId) : null;
+            const publicFile = { url: registered?.url || attachment.url, name: attachment.name || registered?.name || null };
+            visible.push(publicFile);
+            stored.push({ ...publicFile, ...(file ? { file } : {}) });
+        }
+        const json = JSON.stringify(stored);
+        if (json !== row.attachmentsJson) {
+            await db.run(
+                'UPDATE inbox_items SET attachmentsJson = @json WHERE id = @id AND userId = @userId',
+                { json, id: row.id, userId: row.userId }
+            );
+        }
+        return visible;
+    }
+
+    async _publicItem(row) {
         return {
             id: row.id,
             kind: row.kind,
@@ -207,7 +246,7 @@ class InboxService {
             body: row.body || null,
             source: row.sourceType ? { type: row.sourceType, id: row.sourceId } : null,
             link: row.link || null,
-            attachments: row.attachmentsJson ? this._parseAttachments(row.attachmentsJson) : [],
+            attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
             archived: Boolean(row.archivedAt),
             discord: { status: row.discordStatus, error: row.discordError || null, sentAt: row.discordSentAt || null },
@@ -218,19 +257,41 @@ class InboxService {
     // --- Reading ------------------------------------------------------------
 
     /**
-     * @param {Object} params - { userId, unread?, archived?, limit? }
-     * @returns {Promise<{ items: Object[], unread: number }>}
+     * @param {Object} params - { userId, unread?, archived?, limit?, cursor? }
+     * @returns {Promise<{ items: Object[], unread: number, nextCursor: string|null }>}
      */
-    async list({ userId, unread = false, archived = false, limit = 50 }) {
-        const bounded = Math.max(1, Math.min(Number(limit) || 50, MAX_LIST));
+    async list({ userId, unread = false, archived = false, limit = 50, cursor = null }) {
+        const bounded = Math.max(1, Math.min(Math.trunc(Number(limit)) || 50, MAX_LIST));
         const where = ['userId = @userId', archived ? 'archivedAt IS NOT NULL' : 'archivedAt IS NULL'];
+        const params = { userId: String(userId) };
         if (unread) where.push('readAt IS NULL');
+        if (cursor != null && cursor !== '') {
+            const id = Number(cursor);
+            if (!/^\d+$/.test(String(cursor)) || !Number.isSafeInteger(id) || id < 1) {
+                throw new InboxError(400, 'BAD_CURSOR', 'Invalid inbox page cursor.');
+            }
+            // Resolve the ordering key within this person's inbox. The row
+            // can have changed read/archive state since the previous page.
+            const boundary = await db.get(
+                'SELECT id, createdAt FROM inbox_items WHERE id = @id AND userId = @userId',
+                { id, userId: params.userId }
+            );
+            if (!boundary) throw new InboxError(400, 'BAD_CURSOR', 'Invalid inbox page cursor.');
+            params.beforeTime = boundary.createdAt;
+            params.beforeId = boundary.id;
+            where.push('(createdAt < @beforeTime OR (createdAt = @beforeTime AND id < @beforeId))');
+        }
         const rows = await db.all(
             `SELECT * FROM inbox_items WHERE ${where.join(' AND ')}
-             ORDER BY createdAt DESC, id DESC LIMIT ${bounded}`,
-            { userId: String(userId) }
+             ORDER BY createdAt DESC, id DESC LIMIT ${bounded + 1}`,
+            params
         );
-        return { items: rows.map(row => this._publicItem(row)), unread: await this.unreadCount(userId) };
+        const page = rows.slice(0, bounded);
+        return {
+            items: await Promise.all(page.map(row => this._publicItem(row))),
+            unread: await this.unreadCount(userId),
+            nextCursor: rows.length > bounded ? String(page[page.length - 1].id) : null
+        };
     }
 
     async unreadCount(userId) {

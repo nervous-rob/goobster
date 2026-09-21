@@ -1849,7 +1849,7 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 .inbox-row:not(.unread) strong { font-weight: 600; color: var(--text-dim); }
 .inbox-row-main {
   background: transparent; border: 0; color: inherit; font: inherit;
-  text-align: left; cursor: pointer; padding: 0; flex: 1; min-width: 0;
+  text-align: left; cursor: pointer; padding: 0; flex: 1; min-width: 0; width: 100%;
 }
 .inbox-row-main:hover strong { text-decoration: underline; }
 .inbox-dot {

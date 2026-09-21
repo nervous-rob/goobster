@@ -123,6 +123,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/memory/report', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getReport({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId
         })
@@ -131,6 +132,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/memory/memories', requireAuth, dashboardRoute(async (req) => ({
         memories: await ctx.dashboard.listMemories({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             limit: req.query.limit
@@ -140,6 +142,7 @@ function mountWorkspace(app, ctx, h) {
     app.delete('/api/app/memory/memories/:memoryId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.deleteMemory({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             memoryId: req.params.memoryId
@@ -149,6 +152,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/memory/facts', requireAuth, dashboardRoute(async (req) => ({
         facts: await ctx.dashboard.listFacts({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId
         })
@@ -157,6 +161,7 @@ function mountWorkspace(app, ctx, h) {
     app.delete('/api/app/memory/facts/:factId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.deleteFact({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             factId: req.params.factId
@@ -183,6 +188,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/graph', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getGraph({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             guildId: String(req.query.guildId || ''),
             userId: req.webUser.userId
         })
@@ -192,6 +198,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/home', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getHome({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             userId: req.webUser.userId
         })
     ));
@@ -200,6 +207,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/memory/constellation', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getConstellation({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId
         })
@@ -211,6 +219,7 @@ function mountWorkspace(app, ctx, h) {
     app.get('/api/app/memory/reflection', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getReflection({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
             userId: req.webUser.userId,
             target: String(req.query.target || 'personal')
@@ -220,6 +229,7 @@ function mountWorkspace(app, ctx, h) {
     app.post('/api/app/memory/reflection', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.startReflection({
             gateway: ctx.gateway,
+            discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.body?.scope || ''),
             userId: req.webUser.userId,
             target: String(req.body?.target || 'personal')

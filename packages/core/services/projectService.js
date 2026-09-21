@@ -3567,7 +3567,12 @@ class ObservatoryService {
             await settle('This invitation is no longer valid (the project may have been deleted).');
             return;
         }
-        if (interaction.user.id !== invite.inviteeId) {
+        // Discord sends the external subject; invitations belong to the
+        // canonical principal, which may be a linked native account.
+        const principalId = await require('./identityService').resolveExternal({
+            provider: 'discord', subject: interaction.user.id
+        }) || interaction.user.id;
+        if (principalId !== invite.inviteeId) {
             await interaction.reply({
                 content: '❌ This invitation is not addressed to you.',
                 ephemeral: true
@@ -3576,7 +3581,7 @@ class ObservatoryService {
         }
         try {
             const result = await this.respondInvite({
-                userId: interaction.user.id,
+                userId: principalId,
                 userName: interaction.user.globalName || interaction.user.username || null,
                 inviteId: invite.id,
                 accept: action === 'accept'

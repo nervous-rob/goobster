@@ -10,25 +10,32 @@
  */
 
 const crypto = require('node:crypto');
+const { isIP } = require('node:net');
 const axios = require('axios');
 const { DISCORD_API, SESSION_COOKIE, STATE_COOKIE } = require('../appHelpers');
 
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60;
 
-const PRIVATE_PEER = /^(::1|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.))/;
+const PRIVATE_PEER = /^(::1$|f[cd][0-9a-f]{2}:|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.))/i;
 
 /**
  * Client address for the per-address login throttle. X-Forwarded-For is
- * honoured only when the direct peer is a private/loopback address (the
- * nginx or Cloudflare-tunnel profile); a public peer's header is ignored so
- * it cannot spoof its way into a fresh bucket.
+ * Walk the private/loopback proxy suffix from right to left (the nginx or
+ * Cloudflare-tunnel profile), stopping at the first public address. Proxies
+ * append the connecting address, so any prefix a client supplied is ignored.
  */
 function clientAddress(req) {
     const peer = req.socket?.remoteAddress || req.ip || null;
     const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded && peer && PRIVATE_PEER.test(peer)) {
-        const first = String(forwarded).split(',')[0].trim();
-        if (first) return first;
+    if (forwarded && peer && isIP(peer) && PRIVATE_PEER.test(peer)) {
+        const chain = String(forwarded).split(',').map(value => value.trim());
+        // A malformed chain cannot manufacture new rate-limit buckets.
+        if (chain.some(value => !isIP(value))) return peer;
+        let address = peer;
+        for (let i = chain.length - 1; i >= 0 && PRIVATE_PEER.test(address); i -= 1) {
+            address = chain[i];
+        }
+        return address;
     }
     return peer;
 }

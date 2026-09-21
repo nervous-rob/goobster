@@ -379,6 +379,17 @@ class NativeAuthService {
         );
     }
 
+    // All changes to an account's recovery authority take this lock first.
+    // A no-op UPDATE locks the row on Postgres and the writer on SQLite.
+    async _lockAccount(tx, principalId) {
+        await tx.run('UPDATE app_accounts SET principalId = principalId WHERE principalId = @principalId', { principalId });
+        return tx.get('SELECT * FROM app_accounts WHERE principalId = @principalId', { principalId });
+    }
+
+    async _revokeRecovery(tx, principalId) {
+        await tx.run('DELETE FROM recovery_tokens WHERE principalId = @principalId AND consumedAt IS NULL', { principalId });
+    }
+
     /**
      * Check a password against a principal's stored credential. Re-hashes
      * transparently when the configured cost has gone up.
@@ -393,7 +404,16 @@ class NativeAuthService {
         if (!row) return false;
         const ok = await verifyPassword(password, row.hash);
         if (ok && needsRehash(row.hash, { logN: identityConfig.passwordCostLog2 })) {
-            try { await this._storePassword(principalId, await this._hash(password)); } catch { /* best effort */ }
+            try {
+                const credential = await this._hash(password);
+                // A concurrent reset must never be overwritten by a rehash
+                // of the password that was correct when verification began.
+                await db.run(
+                    `UPDATE password_credentials SET hash = @hash, paramsJson = @params, updatedAt = @now
+                     WHERE principalId = @principalId AND hash = @previous`,
+                    { principalId, hash: credential.hash, params: JSON.stringify(credential.params), now: nowUtc(), previous: row.hash }
+                );
+            } catch { /* best effort */ }
         }
         return ok;
     }
@@ -439,6 +459,10 @@ class NativeAuthService {
         }
         const credential = await this._hash(password);
         await db.transaction(async (tx) => {
+            const current = await this._lockAccount(tx, principalId);
+            if (!current || current.status !== 'active' || Number(current.credentialVersion) !== Number(account.credentialVersion)) {
+                throw new IdentityError(403, 'BAD_CREDENTIALS', 'Your credentials changed. Sign in again before changing your password.');
+            }
             if (name !== account.loginName) {
                 try {
                     await tx.run(
@@ -457,6 +481,7 @@ class NativeAuthService {
                 'UPDATE app_accounts SET credentialVersion = credentialVersion + 1, updatedAt = @now WHERE principalId = @principalId',
                 { now: nowUtc(), principalId }
             );
+            await this._revokeRecovery(tx, principalId);
         });
         return { principalId, loginName: name };
     }
@@ -519,15 +544,18 @@ class NativeAuthService {
      */
     async issueRecovery({ principalId, issuedBy }) {
         this.assertEnabled();
-        const account = await identityService.getAccount(principalId);
-        if (!account) throw new IdentityError(404, 'ACCOUNT_NOT_FOUND', 'That principal has no application account.');
         const token = newToken();
         const expiresAt = utcIn(identityConfig.recoveryTtlMinutes * 60 * 1000);
-        await db.run(
-            `INSERT INTO recovery_tokens (tokenHash, principalId, purpose, issuedBy, expiresAt)
-             VALUES (@tokenHash, @principalId, 'password_reset', @issuedBy, @expiresAt)`,
-            { tokenHash: sha256(token), principalId: String(principalId), issuedBy: String(issuedBy), expiresAt }
-        );
+        const account = await db.transaction(async (tx) => {
+            const current = await this._lockAccount(tx, String(principalId));
+            if (!current) throw new IdentityError(404, 'ACCOUNT_NOT_FOUND', 'That principal has no application account.');
+            await tx.run(
+                `INSERT INTO recovery_tokens (tokenHash, principalId, purpose, issuedBy, expiresAt)
+                 VALUES (@tokenHash, @principalId, 'password_reset', @issuedBy, @expiresAt)`,
+                { tokenHash: sha256(token), principalId: String(principalId), issuedBy: String(issuedBy), expiresAt }
+            );
+            return current;
+        });
         return { token, expiresAt, principalId: String(principalId), loginName: account.loginName };
     }
 
@@ -562,12 +590,14 @@ class NativeAuthService {
         }
         const credential = await this._hash(password);
         await db.transaction(async (tx) => {
+            await this._lockAccount(tx, pending.principalId);
             const claimed = await tx.run(
                 `UPDATE recovery_tokens SET consumedAt = @now
                  WHERE tokenHash = @tokenHash AND consumedAt IS NULL AND expiresAt > @now`,
                 { tokenHash, now: nowUtc() }
             );
             if (claimed.changes !== 1) throw invalid();
+            await this._revokeRecovery(tx, pending.principalId);
             await this._storePassword(pending.principalId, credential, tx);
             await tx.run(
                 `UPDATE app_accounts
@@ -599,12 +629,25 @@ class NativeAuthService {
         if (!account || account.status !== 'active') return { ok: true };
         const token = newToken();
         const expiresAt = utcIn(identityConfig.recoveryTtlMinutes * 60 * 1000);
-        await db.run(
-            `INSERT INTO recovery_tokens (tokenHash, principalId, purpose, issuedBy, expiresAt)
-             VALUES (@tokenHash, @principalId, 'password_reset', @principalId, @expiresAt)`,
-            { tokenHash: sha256(token), principalId: account.principalId, expiresAt }
-        );
-        const emailRow = await this.getEmail(account.principalId);
+        const emailRow = await db.transaction(async (tx) => {
+            const current = await this._lockAccount(tx, account.principalId);
+            if (!current || current.status !== 'active') return null;
+            // Resolve the recipient under the same lock used by address
+            // changes, so a stale lookup cannot mint a link for an old inbox.
+            const recipient = await tx.get(
+                `SELECT address FROM account_emails
+                 WHERE principalId = @principalId AND normalized = @normalized AND verifiedAt IS NOT NULL`,
+                { principalId: account.principalId, normalized }
+            );
+            if (!recipient) return null;
+            await tx.run(
+                `INSERT INTO recovery_tokens (tokenHash, principalId, purpose, issuedBy, expiresAt)
+                 VALUES (@tokenHash, @principalId, 'password_reset', @principalId, @expiresAt)`,
+                { tokenHash: sha256(token), principalId: account.principalId, expiresAt }
+            );
+            return recipient;
+        });
+        if (!emailRow) return { ok: true };
         try {
             await mailService.send(this._mail('recover', {
                 to: emailRow.address,
@@ -655,6 +698,21 @@ class NativeAuthService {
         return Boolean(row);
     }
 
+    async _reclaimUnverifiedEmail(tx, normalized, principalId) {
+        // Recheck verifiedAt in the DELETE itself: verification racing this
+        // claim must either win and preserve its owner, or find no address.
+        const displaced = await tx.get(
+            `DELETE FROM account_emails
+             WHERE normalized = @normalized AND principalId <> @principalId AND verifiedAt IS NULL
+             RETURNING principalId`,
+            { normalized, principalId }
+        );
+        if (displaced) {
+            await tx.run('DELETE FROM email_tokens WHERE principalId = @principalId AND normalized = @normalized',
+                { principalId: displaced.principalId, normalized });
+        }
+    }
+
     /**
      * Set (or replace) the account's email address. The address starts
      * unverified: it cannot be used to sign in or recover until the link
@@ -674,26 +732,32 @@ class NativeAuthService {
         }
         await this._throttle('email_verify_send', principalId, VERIFY_SEND_MAX_PER_PRINCIPAL, HOUR_MS);
         await db.transaction(async (tx) => {
+            await this._lockAccount(tx, principalId);
+            await this._reclaimUnverifiedEmail(tx, normalized, principalId);
             const other = await tx.get(
                 'SELECT principalId, verifiedAt FROM account_emails WHERE normalized = @normalized AND principalId <> @principalId',
                 { normalized, principalId }
             );
             if (other) {
-                if (other.verifiedAt) {
-                    throw new IdentityError(409, 'EMAIL_TAKEN', 'That email address is already verified on another account.');
-                }
-                await tx.run('DELETE FROM account_emails WHERE principalId = @id', { id: other.principalId });
-                await tx.run('DELETE FROM email_tokens WHERE principalId = @id', { id: other.principalId });
+                throw new IdentityError(409, 'EMAIL_TAKEN', 'That email address is already verified on another account.');
             }
-            await tx.run(
-                `INSERT INTO account_emails (principalId, address, normalized, verifiedAt, updatedAt)
-                 VALUES (@principalId, @address, @normalized, NULL, @now)
-                 ON CONFLICT(principalId) DO UPDATE SET address = excluded.address, normalized = excluded.normalized,
-                     verifiedAt = NULL, updatedAt = excluded.updatedAt`,
-                { principalId, address, normalized, now: nowUtc() }
-            );
+            try {
+                await tx.run(
+                    `INSERT INTO account_emails (principalId, address, normalized, verifiedAt, updatedAt)
+                     VALUES (@principalId, @address, @normalized, NULL, @now)
+                     ON CONFLICT(principalId) DO UPDATE SET address = excluded.address, normalized = excluded.normalized,
+                         verifiedAt = NULL, updatedAt = excluded.updatedAt`,
+                    { principalId, address, normalized, now: nowUtc() }
+                );
+            } catch (error) {
+                if (/unique|duplicate/i.test(String(error?.message))) {
+                    throw new IdentityError(409, 'EMAIL_TAKEN', 'That email address was claimed on another account meanwhile.');
+                }
+                throw error;
+            }
             // Links mailed to the previous address die with it.
             await tx.run('DELETE FROM email_tokens WHERE principalId = @principalId', { principalId });
+            await this._revokeRecovery(tx, principalId);
         });
         await this._sendVerification({ principalId, address, normalized, baseUrl });
         return { address, verified: false, sent: true };
@@ -736,9 +800,13 @@ class NativeAuthService {
     /** Drop the address and any outstanding verification links. */
     async removeEmail(principalId) {
         const id = String(principalId);
-        const result = await db.run('DELETE FROM account_emails WHERE principalId = @id', { id });
-        await db.run('DELETE FROM email_tokens WHERE principalId = @id', { id });
-        if (!result.changes) throw new IdentityError(404, 'NO_EMAIL', 'There is no email address on this account.');
+        await db.transaction(async (tx) => {
+            await this._lockAccount(tx, id);
+            const result = await tx.run('DELETE FROM account_emails WHERE principalId = @id', { id });
+            if (!result.changes) throw new IdentityError(404, 'NO_EMAIL', 'There is no email address on this account.');
+            await tx.run('DELETE FROM email_tokens WHERE principalId = @id', { id });
+            await this._revokeRecovery(tx, id);
+        });
         return { removed: true };
     }
 
@@ -772,20 +840,21 @@ class NativeAuthService {
         if (!pending) throw invalid();
         const now = nowUtc();
         const result = await db.transaction(async (tx) => {
-            const claimed = await tx.run(
-                `UPDATE email_tokens SET consumedAt = @now
-                 WHERE tokenHash = @tokenHash AND consumedAt IS NULL AND expiresAt > @now`,
-                { tokenHash, now }
-            );
-            if (claimed.changes !== 1) throw invalid();
             // Only the address the link was mailed to becomes verified; if
             // the account moved to a new address meanwhile, this link is moot.
+            // Lock address before token, matching unverified-claim reclamation.
             const updated = await tx.run(
                 `UPDATE account_emails SET verifiedAt = @now, updatedAt = @now
                  WHERE principalId = @principalId AND normalized = @normalized`,
                 { now, principalId: pending.principalId, normalized: pending.normalized }
             );
             if (updated.changes !== 1) throw invalid();
+            const claimed = await tx.run(
+                `UPDATE email_tokens SET consumedAt = @now
+                 WHERE tokenHash = @tokenHash AND consumedAt IS NULL AND expiresAt > @now`,
+                { tokenHash, now }
+            );
+            if (claimed.changes !== 1) throw invalid();
             return await tx.get('SELECT address FROM account_emails WHERE principalId = @principalId', { principalId: pending.principalId });
         });
         return { kind: 'verified', principalId: pending.principalId, address: result.address };
@@ -888,6 +957,7 @@ class NativeAuthService {
             );
             if (claimed.changes !== 1) throw invalid();
             const principalId = identityService.newNativeId();
+            await this._reclaimUnverifiedEmail(tx, pending.emailNormalized, principalId);
             await tx.run(
                 'INSERT INTO principals (id, displayName) VALUES (@id, @name)',
                 { id: principalId, name: pending.displayName || pending.loginName }

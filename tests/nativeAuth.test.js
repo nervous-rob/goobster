@@ -23,6 +23,7 @@ const privacyService = require('@goobster/core/services/privacyService');
 const eventBusService = require('@goobster/core/services/eventBusService');
 const { hashPassword, verifyPassword, needsRehash } = require('@goobster/core/utils/passwordHashing');
 const { createWebAppApp, createWebAppContext } = require('@goobster/core/web/appApi');
+const { clientAddress } = require('@goobster/core/web/routes/auth');
 
 const ROB = '100000000000000001';
 const SAM = '100000000000000002';
@@ -303,6 +304,17 @@ describe('invitations', () => {
 });
 
 describe('login', () => {
+    test.each([
+        ['172.18.0.2', '203.0.113.99, 198.51.100.8', '198.51.100.8'],
+        ['127.0.0.1', '203.0.113.99, 198.51.100.8, 10.0.0.2', '198.51.100.8'],
+        ['::1', '203.0.113.99, 2001:db8::8', '2001:db8::8'],
+        ['::ffff:172.18.0.2', '198.51.100.8', '198.51.100.8'],
+        ['198.51.100.8', '203.0.113.99', '198.51.100.8'],
+        ['127.0.0.1', 'not-an-address', '127.0.0.1']
+    ])('client address ignores an untrusted prefix through %s', (peer, forwarded, expected) => {
+        expect(clientAddress({ socket: { remoteAddress: peer }, headers: { 'x-forwarded-for': forwarded } })).toBe(expected);
+    });
+
     test('neutral errors, disabled only after a correct password, and a fresh session on success', async () => {
         const host = await operator();
         const { token } = await invite(host);
@@ -421,6 +433,62 @@ describe('credentials and re-auth', () => {
 });
 
 describe('recovery and revocation', () => {
+    test.each(['password change', 'recovery'])('%s invalidates every previously issued reset link', async (operation) => {
+        const host = await operator();
+        const { token } = await invite(host);
+        const { res } = await register(token, 'nat');
+        const principalId = res.json.user.id;
+        const older = await nativeAuthService.issueRecovery({ principalId, issuedBy: ROB });
+        const newer = await nativeAuthService.issueRecovery({ principalId, issuedBy: ROB });
+        const password = `${GOOD} changed`;
+        if (operation === 'password change') {
+            await nativeAuthService.setCredentials({ principalId, currentPassword: GOOD, password });
+        } else {
+            await nativeAuthService.completeRecovery({ token: newer.token, password });
+        }
+        for (const reset of [older, newer]) {
+            await expect(nativeAuthService.completeRecovery({ token: reset.token, password: `${GOOD} stolen` }))
+                .rejects.toMatchObject({ code: 'RECOVERY_INVALID' });
+        }
+        expect(await nativeAuthService.checkPassword(principalId, password)).toBe(true);
+    });
+
+    test.each(['password change', 'recovery'])('a stale in-flight %s cannot overwrite completed recovery', async (operation) => {
+        const host = await operator();
+        const { token } = await invite(host);
+        const { res } = await register(token, 'nat');
+        const principalId = res.json.user.id;
+        const staleReset = await nativeAuthService.issueRecovery({ principalId, issuedBy: ROB });
+        const winningReset = await nativeAuthService.issueRecovery({ principalId, issuedBy: ROB });
+        const stalePassword = `${GOOD} stale`;
+        const winnerPassword = `${GOOD} winner`;
+        let entered;
+        let release;
+        const hashing = new Promise(resolve => { entered = resolve; });
+        const resume = new Promise(resolve => { release = resolve; });
+        const originalHash = nativeAuthService._hash.bind(nativeAuthService);
+        const hash = jest.spyOn(nativeAuthService, '_hash').mockImplementation(async (password) => {
+            if (password === stalePassword) { entered(); await resume; }
+            return originalHash(password);
+        });
+        const stale = (operation === 'password change'
+            ? nativeAuthService.setCredentials({ principalId, currentPassword: GOOD, password: stalePassword })
+            : nativeAuthService.completeRecovery({ token: staleReset.token, password: stalePassword }))
+            .catch(error => error);
+        try {
+            await hashing;
+            await nativeAuthService.completeRecovery({ token: winningReset.token, password: winnerPassword });
+            release();
+            expect(await stale).toMatchObject({ code: operation === 'password change' ? 'BAD_CREDENTIALS' : 'RECOVERY_INVALID' });
+            expect(await nativeAuthService.checkPassword(principalId, winnerPassword)).toBe(true);
+            expect(await nativeAuthService.checkPassword(principalId, stalePassword)).toBe(false);
+        } finally {
+            release();
+            await stale;
+            hash.mockRestore();
+        }
+    });
+
     test('an operator-issued reset is single-use, revokes every session, and rotates the credential', async () => {
         const host = await operator();
         const { token } = await invite(host);

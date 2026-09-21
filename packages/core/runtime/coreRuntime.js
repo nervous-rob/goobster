@@ -124,7 +124,10 @@ async function startCoreRuntime({
     });
     await step('missionReconcile', async () => {
         const missions = load('projectMissionService', () => require('../services/projectMissionService'));
-        const starting = await missions.reconcileStartingSteps({ olderThanMs: 0 });
+        // Another process may still be launching a child. Starting this
+        // process is not evidence that every STARTING claim was abandoned;
+        // use the same stale threshold as periodic reconciliation.
+        const starting = await missions.reconcileStartingSteps();
         const running = await missions.reconcileRunningSteps();
         if (starting > 0 || running > 0) {
             logger.info?.(`[runtime] Missions: reconciled ${starting} STARTING and ${running} RUNNING step(s) left by a previous process`);
