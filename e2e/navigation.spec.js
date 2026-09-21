@@ -24,8 +24,10 @@ test.describe('legacy URLs keep their meaning', () => {
     const matrix = [
         ['/app/study', '/app/chat', 'chat', null],
         ['/app/study/424242', '/app/chat/424242', 'chat', null],
-        ['/app/spitball', '/app/knowledge', 'knowledge', /^Knowledge/],
-        ['/app/library', '/app/knowledge', 'knowledge', /^Knowledge/],
+        // Knowledge opens on Notes (E2): the alias lands on the room, the room lands on its first view.
+        ['/app/spitball', '/app/knowledge/notes', 'knowledge', /^Knowledge/],
+        ['/app/library', '/app/knowledge/notes', 'knowledge', /^Knowledge/],
+        ['/app/spitball/map', '/app/knowledge/map', 'knowledge', /^Knowledge/],
         ['/app/observatory', '/app/projects', 'projects', /^Projects/],
         ['/app/observatory/graph', '/app/projects', 'projects', /^Projects/],
         ['/app/workshop', '/app/projects', 'projects', /^Projects/],
@@ -58,7 +60,7 @@ test.describe('legacy URLs keep their meaning', () => {
 
     test('canonical URLs are not rewritten and light up their own entry', async ({ page }) => {
         for (const [path, room] of [
-            ['/app/chat', 'chat'], ['/app/knowledge', 'knowledge'], ['/app/projects', 'projects'],
+            ['/app/chat', 'chat'], ['/app/knowledge/notes', 'knowledge'], ['/app/knowledge/map', 'knowledge'], ['/app/projects', 'projects'],
             ['/app/discussions', 'discussions'], ['/app/activity/scheduled', 'activity'], ['/app/tools', 'tools'],
             ['/app/conservatory', 'tools'], ['/app/decks', 'tools'], ['/app/usage', 'usage']
         ]) {
@@ -138,7 +140,7 @@ test.describe('sidebar', () => {
         await expect(page.getByRole('button', { name: /New project/ })).toBeVisible();
         await page.getByRole('button', { name: /Personal memory/ }).click();
         await expect(page).toHaveURL(/\/app\/settings\/memory$/);
-        await expect(page.getByRole('link', { name: 'Open Knowledge →' })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Open Knowledge →', exact: true })).toHaveAttribute('href', '/app/knowledge/notes');
     });
 });
 

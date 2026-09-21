@@ -378,7 +378,7 @@ const legacyAlias = (path: string) => createRoute({
 
 const legacyRoutes = [
     '/study', '/study/$conversationId',
-    '/spitball', '/library',
+    '/spitball', '/spitball/$view', '/library', '/library/$view',
     '/observatory', '/observatory/graph', '/observatory/search', '/observatory/people', '/observatory/events',
     '/workshop',
     '/parlor', '/parlor/$conversationId',

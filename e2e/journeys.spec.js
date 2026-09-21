@@ -15,7 +15,9 @@ test('expedition → claims → notes → evidence', async ({ page }) => {
     await openRoom(page, /Knowledge/);
     await expect(page.getByRole('heading', { name: /^Knowledge/ })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Expeditions' }).click();
+    const views = page.getByRole('navigation', { name: 'Knowledge views' });
+    await views.getByRole('link', { name: /Research/ }).click();
+    await expect(page).toHaveURL(/\/app\/knowledge\/research$/);
     await expect(page.getByText(C.EXPEDITION_SEED)).toBeVisible();
     await expect(page.getByText(/completed/i).first()).toBeVisible();
 
@@ -26,9 +28,13 @@ test('expedition → claims → notes → evidence', async ({ page }) => {
     await expect(page.getByText(C.CLAIM_TEXT)).toBeVisible();
 
     await page.getByRole('button', { name: '← Expeditions' }).click();
-    await page.getByRole('button', { name: 'Notes' }).click();
-    await expect(page.getByText(C.NOTE_LABEL)).toBeVisible();
-    await expect(page.getByText(/parametrizes cells/i)).toBeVisible();
+    await views.getByRole('link', { name: /Notes/ }).click();
+    await expect(page).toHaveURL(/\/app\/knowledge\/notes$/);
+    const notes = page.locator('[data-tour="knowledge-notes"]');
+    await expect(notes.getByText(C.NOTE_LABEL)).toBeVisible();
+    await expect(notes.getByText(/parametrizes cells/i)).toBeVisible();
+    // Research the person launched is kept knowledge, so it carries no "unsorted" badge.
+    await expect(notes.locator('.notes-row').filter({ hasText: C.NOTE_LABEL }).locator('.curation-badge')).toHaveCount(0);
 });
 
 test('project Parlor → transcript → project knowledge', async ({ page }) => {

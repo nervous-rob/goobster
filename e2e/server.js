@@ -40,6 +40,7 @@ const observatoryConfig = require('@goobster/core/config/observatoryConfig');
 const expeditionService = require('@goobster/core/services/spitballExpeditionService');
 const knowledgeGraphService = require('@goobster/core/services/knowledgeGraphService');
 const kgConfig = require('@goobster/core/config/knowledgeGraphConfig');
+const factsService = require('@goobster/core/services/factsService');
 const parlorService = require('@goobster/core/services/parlorService');
 const attention = require('@goobster/core/services/attentionService');
 const policies = require('@goobster/core/services/attentionPolicyService');
@@ -161,6 +162,55 @@ async function seedExpedition(userId) {
         summary: C.EXPEDITION_SUMMARY
     });
     return expedition.id;
+}
+
+/**
+ * Personal-memory and curation fixtures (documentation/knowledge_and_memory.md):
+ * a distilled note and a mirrored fact (curation = memory, hidden from the
+ * default Notes projection), a legacy tool row nothing has sorted
+ * (unclassified, still listed with a Keep action), and one raw memory.
+ */
+async function seedPersonalMemory(userId) {
+    const guildId = dmScopeId(userId);
+    const scopeKey = `USER:${userId}`;
+    await knowledgeGraphService.upsertNode({
+        guildId,
+        scopeKey,
+        subjectType: 'USER',
+        subjectId: userId,
+        type: 'preference',
+        label: C.DISTILLED_NOTE_LABEL,
+        content: C.DISTILLED_NOTE_CONTENT,
+        source: 'consolidation'
+    });
+    await knowledgeGraphService.upsertNode({
+        guildId,
+        scopeKey,
+        subjectType: 'USER',
+        subjectId: userId,
+        type: 'concept',
+        label: C.LEGACY_NOTE_LABEL,
+        content: C.LEGACY_NOTE_CONTENT,
+        source: 'tool'
+    });
+    await factsService.addFact({
+        guildId,
+        subjectType: 'USER',
+        subjectId: userId,
+        content: C.FACT_CONTENT,
+        source: 'user'
+    });
+    await db.insert(
+        `INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
+         VALUES (@guildId, 'web', @authorId, @authorName, @content, @embedding, 3, 'e2e-fixture')`,
+        {
+            guildId,
+            authorId: userId,
+            authorName: C.OWNER_NAME,
+            content: C.MEMORY_CONTENT,
+            embedding: Buffer.from(new Float32Array([0.1, 0.2, 0.3]).buffer)
+        }
+    );
 }
 
 async function seedParlor(userId) {
@@ -361,6 +411,7 @@ async function seedInboxAndPeople() {
 async function seed() {
     const observatory = makeObservatory();
     await seedExpedition(C.OWNER);
+    await seedPersonalMemory(C.OWNER);
     await seedParlor(C.OWNER);
     await seedProject(observatory, C.OWNER);
     await seedAttention(C.OWNER);
