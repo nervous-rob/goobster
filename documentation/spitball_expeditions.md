@@ -224,15 +224,25 @@ loudness filter, as everywhere in the attention system.
 
 ## Web surface
 
-The Library room is now **Spitball** (`apps/web/src/rooms/SpitballRoom.tsx`,
-route `/spitball`; `/library` and the `#library`/`#memory` hashes redirect).
-Inside: **Map** (the constellation, search/filter, every in-cap note), **Notes** (browse/edit personal `kg_nodes`), **Expeditions** (list, a
-labeled start form with Topic / Lens-plus-blurb / Depth cards / Intent, a
-detail view with a live researching animation while a run is queued or
-in-flight, cycles, Leads, and Sources, plus Pause/Continue/Cancel, and a
-"more cycles would finish this" proposal when a budget stop leaves the
-intent unfinished), and the
-existing About you / Facts / Memories / Server graph tabs. Routes under `/api/app/spitball/*` follow the
+The portal room is **Knowledge · Spitball** (`apps/web/src/rooms/knowledge/`,
+route `/knowledge`; `/spitball`, `/library` and the `#library`/`#memory`
+hashes redirect through the room registry — see
+[portal_navigation.md](portal_navigation.md)). It opens on **Notes**
+(`/knowledge/notes`: browse, edit, **Keep** and delete personal `kg_nodes`
+under the curation projection described in
+[knowledge_and_memory.md](knowledge_and_memory.md)); **Map**
+(`/knowledge/map`: the constellation, search/filter, every in-cap note under
+the same projection, plus the explicitly labelled *Server's shared graph*
+mode for Manage Server) and **Research** (`/knowledge/research`) are the
+other registered views. Research is `ResearchView.tsx` wrapping
+`components/ExpeditionsTab.tsx`: a list, a labeled start form with Topic /
+Lens-plus-blurb / Depth cards / Intent, a detail view with a live researching
+animation while a run is queued or in-flight, cycles, Leads, and Sources,
+plus Pause/Continue/Cancel, and a "more cycles would finish this" proposal
+when a budget stop leaves the intent unfinished. Research notes land in the
+user's graph with `curation = 'saved'`, so they appear in the default Notes
+and Map projection. The former About you / Facts / Memories tabs now live in
+Settings → Memory & privacy. Routes under `/api/app/spitball/*` follow the
 portal conventions (plain `requireAuth` + service-level ownership checks;
 `chatRoute` translates the status+code contract):
 

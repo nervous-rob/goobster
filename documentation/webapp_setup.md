@@ -49,16 +49,18 @@ left off).
   workspace (the notes used are shown as grounding chips under the message),
   and after replying it extracts durable knowledge from the exchange back
   into the workspace - so each persona develops its own expertise over time.
-- **Knowledge (Spitball, `/knowledge`; formerly the Library)** - notes,
-  tags, the **Map** (a personal constellation: you in the center, facts and
-  memories around you), research expeditions, and the transparency report
-  (About you, Facts, Memories). Facts and memories still delete one-by-one.
-  Manage Server members also get the guild knowledge graph. **Forget me**
-  lives here (and on Home): type FORGET ME and watch the rows disappear —
-  the same erasure as `/forget-me` in Discord. Home's *Personal memory* card
-  points at Settings → Memory & privacy; separating saved knowledge from
-  personal memory in the room itself is planned work (E2 in
-  `shared_instance_product_spec.md`).
+- **Knowledge (Spitball, `/knowledge`; formerly the Library)** - what you
+  chose to keep. Opens on **Notes** (`/knowledge/notes`: search, filters,
+  New note, edit, delete, **Keep** for unsorted legacy rows), with **Map**
+  (`/knowledge/map`: the same notes as a graph - typed connections plus
+  shared-tag hubs) and **Research** (`/knowledge/research`: expeditions) as
+  its other views. *Your notes* is the default projection; *All retained
+  knowledge* also shows what Goobster distilled. Manage Server members can
+  switch the Map to the server's own shared graph (labelled as such).
+  What Goobster knows *about you* - the transparency report, Facts and
+  Memories with one-by-one deletion, retention and **Forget me** - lives in
+  **Settings → Memory & privacy**, one click away from Chat, Knowledge and
+  Home's *Personal memory* card. See `documentation/knowledge_and_memory.md`.
 - **Projects (the Observatory, `/projects`)** - shown only when the feature
   is enabled. Persistent simulation projects on top of the sandbox, plus the
   unfiled generated apps that used to be the Workshop (`/workshop` and
