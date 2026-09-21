@@ -1437,21 +1437,24 @@ describe('two-stage pipeline scenario (real Observatory, fake sandbox)', () => {
     }
 
     /**
-     * Fire Stage 2 and wait until the Observatory's post-settle hook has run
-     * for that job (the trigger that started it carries its verdict), so
-     * assertions about downstream dispatch are not racing the settle path.
+     * Fire Stage 2 and wait until the Observatory's post-settle hook has
+     * finished for that job, so assertions about downstream dispatch are not
+     * racing the settle path. `settleHooks` is filled by the test's spy on
+     * the singleton hook with one promise per job id; the hook writes the
+     * started trigger's lastJobOutcome *before* it fires event triggers, so
+     * that column alone is not proof the child job exists yet.
      */
-    async function fireStage2(svc, stage2Id) {
+    async function fireStage2(svc, stage2Id, settleHooks) {
         await setDue(stage2Id);
         await svc.fireDueCronTriggers();
         const row = await db.get('SELECT lastOutcome FROM project_triggers WHERE id = @id', { id: stage2Id });
         expect(row.lastOutcome).toMatch(/^started: job #\d+ \(fetch v1\), 1 required output\(s\), awaiting settlement$/);
         const jobId = Number(/job #(\d+)/.exec(row.lastOutcome)[1]);
         const job = await waitForSettled(jobId);
-        await waitFor(async () => {
-            const t = await db.get('SELECT lastJobOutcome FROM project_triggers WHERE id = @id', { id: stage2Id });
-            return t.lastJobOutcome && t.lastJobOutcome.includes(`job #${jobId}`);
-        }, { what: `settle hook for job #${jobId}` });
+        await waitFor(() => settleHooks.has(jobId), { what: `settle hook for job #${jobId}` });
+        await settleHooks.get(jobId);
+        const t = await db.get('SELECT lastJobOutcome FROM project_triggers WHERE id = @id', { id: stage2Id });
+        expect(t.lastJobOutcome).toContain(`job #${jobId}`);
         return job;
     }
 
@@ -1469,23 +1472,29 @@ describe('two-stage pipeline scenario (real Observatory, fake sandbox)', () => {
         const obs = makeRealObservatory((opts) => sandboxBehaviour(opts));
         const svc = makeService({ observatory: obs });
         // Route the Observatory's singleton settle hook into this instance,
-        // optionally making the project busy first (step 6).
+        // optionally making the project busy first (step 6), and expose one
+        // promise per job so fireStage2 can wait for the whole hook.
         let blockBeforeSettle = false;
+        const settleHooks = new Map();
         const singletonSpy = jest.spyOn(projectTriggerService, 'evaluateJobSettled')
-            .mockImplementation(async (jobId, opts) => {
-                if (blockBeforeSettle) {
-                    blockBeforeSettle = false;
-                    const project = await db.get(
-                        'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
-                        { userId: USER, slug: 'atlas' }
-                    );
-                    await db.insert(
-                        `INSERT INTO observatory_jobs (projectId, userId, language, code, status, startedBy)
-                         VALUES (@projectId, @userId, 'python', 'print(1)', 'RUNNING', 'chat')`,
-                        { projectId: project.id, userId: USER }
-                    );
-                }
-                return await svc.evaluateJobSettled(jobId, opts);
+            .mockImplementation((jobId, opts) => {
+                const hook = (async () => {
+                    if (blockBeforeSettle) {
+                        blockBeforeSettle = false;
+                        const project = await db.get(
+                            'SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug',
+                            { userId: USER, slug: 'atlas' }
+                        );
+                        await db.insert(
+                            `INSERT INTO observatory_jobs (projectId, userId, language, code, status, startedBy)
+                             VALUES (@projectId, @userId, 'python', 'print(1)', 'RUNNING', 'chat')`,
+                            { projectId: project.id, userId: USER }
+                        );
+                    }
+                    return await svc.evaluateJobSettled(jobId, opts);
+                })();
+                settleHooks.set(Number(jobId), hook);
+                return hook;
             });
         try {
             const stage2 = await svc.create({
@@ -1506,7 +1515,7 @@ describe('two-stage pipeline scenario (real Observatory, fake sandbox)', () => {
             );
 
             // 1-3. Stage 2 exits 0 without a manifest -> OUTPUT_CONTRACT_FAILED; Stage 3 never launches.
-            const broken = await fireStage2(svc, stage2.id);
+            const broken = await fireStage2(svc, stage2.id, settleHooks);
             expect(broken.status).toBe('FAILED');
             expect(broken.exitCode).toBe(0);
             expect(broken.errorCode).toBe('OUTPUT_CONTRACT_FAILED');
@@ -1522,7 +1531,7 @@ describe('two-stage pipeline scenario (real Observatory, fake sandbox)', () => {
 
             // 4-5. Stage 2 writes a valid manifest -> exactly one Stage 3 child with the right parent.
             sandboxBehaviour = writingSandbox(manifest);
-            const good = await fireStage2(svc, stage2.id);
+            const good = await fireStage2(svc, stage2.id, settleHooks);
             expect(good.status).toBe('COMPLETED');
             expect(good.errorCode).toBeNull();
             expect(JSON.parse(good.outputContractResultJson)).toMatchObject({ ok: true });
@@ -1555,7 +1564,7 @@ describe('two-stage pipeline scenario (real Observatory, fake sandbox)', () => {
             // 6-7. Stage 2 succeeds while the project is busy at dispatch time:
             // the Stage 3 event is RETRYABLE, not gone, and retries once free.
             blockBeforeSettle = true;
-            const busyRun = await fireStage2(svc, stage2.id);
+            const busyRun = await fireStage2(svc, stage2.id, settleHooks);
             expect(busyRun.status).toBe('COMPLETED');
             expect(await stage3Children()).toHaveLength(1);
             stage3Deliveries = await svc.listDeliveries({ userId: USER, project: 'atlas', trigger: stage3.id });
