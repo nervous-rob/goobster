@@ -57,6 +57,9 @@ const INVALIDATION_HINTS = {
     // hints (project-assets:<slug>, …) ride the payload so the open
     // project page refetches the explorer and version rails.
     'project-changed': ['observatory'],
+    // An inbox item was delivered, read, or archived (Increment C): the
+    // Inbox pane and the sidebar unread badge refetch.
+    'inbox': ['inbox', 'home'],
     // User settings changed: invalidates settings and related room caches
     'settings-changed': ['settings', 'chat-settings', 'voice-settings', 'attention', 'home']
 };

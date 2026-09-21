@@ -13,16 +13,58 @@ export type Me = {
     identity?: {
         installationId: string | null;
         installationName?: string;
-        account: { role: 'member' | 'operator'; status: 'active' | 'disabled'; entitlement: 'invite' | 'migration' | 'bootstrap' } | null;
+        account: { role: 'member' | 'operator'; status: 'active' | 'disabled'; entitlement: Entitlement } | null;
         discordLinked: boolean;
         operator: boolean;
         nativeLogin: boolean;
+        /** Effective sign-up policy and whether email-backed flows exist. */
+        registration?: RegistrationMode;
+        mail?: boolean;
     };
+    /** The Discord bot user when Discord is connected; null otherwise (kept for compatibility). */
     bot: { id: string; name: string } | null;
+    /** The assistant's identity on this installation - always present, with or without Discord. */
+    assistant: { id: string; name: string };
+    /** The Discord adapter: part of this installation at all, and reachable right now. */
+    discord: { enabled: boolean; connected: boolean; reason: string | null };
+    /** The in-app inbox: unread count for the sidebar badge. */
+    inbox: { unread: number };
     scopes: Scope[];
     maxInputLength: number;
     features: { observatory?: boolean; spitball?: boolean };
 };
+
+export type InboxKind = 'reminder' | 'task' | 'watch' | 'notice' | 'invite' | 'project' | 'expedition' | 'system';
+
+/** One delivered result of unattended work (GET /api/app/inbox). */
+export type InboxItem = {
+    id: number;
+    kind: InboxKind;
+    title: string;
+    body: string | null;
+    source: { type: string; id: string | null } | null;
+    link: string | null;
+    attachments: Array<{ url: string; name: string | null }>;
+    read: boolean;
+    archived: boolean;
+    /** The optional Discord echo of this item: bookkeeping, never the source of truth. */
+    discord: { status: 'skipped' | 'sent' | 'failed'; error: string | null; sentAt: string | null };
+    createdAt: string;
+};
+
+export type InboxList = { items: InboxItem[]; unread: number };
+
+/** Someone the signed-in person can reach (GET /api/app/people, invite pickers). */
+export type Person = {
+    id: string;
+    name: string;
+    avatar?: string | null;
+    source: 'friend' | 'server' | 'member';
+    via?: string | null;
+};
+
+export type Entitlement = 'invite' | 'migration' | 'bootstrap' | 'open';
+export type RegistrationMode = 'invite' | 'open';
 
 /** GET /api/app/account - the signed-in person's sign-in methods (safe metadata only). */
 export type AccountSummary = {
@@ -33,6 +75,10 @@ export type AccountSummary = {
     nativeLogin: boolean;
     hasPassword: boolean;
     passwordMinLength: number;
+    /** The address on file, if any, and whether it has been proven. */
+    email: { address: string; verified: boolean; pendingVerification: boolean; updatedAt: string } | null;
+    /** Whether this installation can send mail (verification, recovery). */
+    mail: { enabled: boolean; reason: string | null };
     discord: {
         linked: boolean;
         subject: string | null;
@@ -73,11 +119,25 @@ export type AdminAccount = {
     loginName: string | null;
     status: 'active' | 'disabled';
     role: 'member' | 'operator';
-    entitlement: 'invite' | 'migration' | 'bootstrap';
+    entitlement: Entitlement;
     hasPassword: boolean;
     discordLinked: boolean;
+    email: { address: string; verified: boolean } | null;
     createdAt: string;
     updatedAt: string;
+};
+
+/** GET /api/app/admin/installation - sign-up policy and mail status. */
+export type InstallationView = {
+    installationId: string;
+    installationName: string;
+    publicUrl: string | null;
+    nativeLogin: boolean;
+    requireAccount: boolean;
+    registration: { configured: RegistrationMode; effective: RegistrationMode };
+    mail: { enabled: boolean; provider: string | null; from: string | null; linksEnabled: boolean; reason: string | null };
+    emailVerifyTtlMinutes: number;
+    recoveryTtlMinutes: number;
 };
 
 export type MigrationReport = {
@@ -264,7 +324,13 @@ export type AppConfig = {
     devMode: boolean;
     loginAvailable: boolean;
     nativeLogin: boolean;
+    /** Effective sign-up policy ('open' only when mail is configured). */
+    registration: RegistrationMode;
+    /** "Forgot password" by email is available. */
+    emailRecovery: boolean;
     installationName: string;
+    /** Whether this installation has a Discord adapter at all. */
+    discord: boolean;
     passwordMinLength: number;
     maxInputLength: number;
 };

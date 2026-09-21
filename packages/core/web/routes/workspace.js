@@ -367,11 +367,14 @@ function mountWorkspace(app, ctx, h) {
 
     // --- The Jimbucks Exchange (browser trading terminal) --------------------
     /** The guild + caller identity every exchange call is scoped to. */
+    // The exchange is a Discord-guild feature: wallets key on the Discord
+    // subject, and membership is checked with it (spec §12). A principal
+    // without one gets NO_DISCORD_IDENTITY, never a fabricated id.
     function exchangeScope(req, guildId = req.query.guildId) {
         return {
             gateway: ctx.gateway,
             guildId: String(guildId || ''),
-            userId: req.webUser.userId
+            userId: ctx.identity.discordSubjectFor(req.actor) || req.webUser.userId
         };
     }
 

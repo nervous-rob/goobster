@@ -1,8 +1,8 @@
 /**
  * Unit tests for the web portal's scheduled tasks (services/webTaskService):
  * listing automations + followups, creating DM-scope tasks, cancel/toggle
- * ownership rules, validation guardrails, DM-scope execution through
- * automationService's pseudo-interaction, and /forget-me coverage.
+ * ownership rules, validation guardrails, inbox-delivered execution through
+ * automationService's unattended turn, and /forget-me coverage.
  */
 const path = require('node:path');
 const os = require('node:os');
@@ -19,11 +19,13 @@ const db = require('@goobster/core/db');
 const webTaskService = require('@goobster/core/services/webTaskService');
 const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
+const { inboxChannelId } = require('@goobster/core/services/inboxService');
 
 const USER = '300000000000000001';
 const OTHER = '300000000000000002';
 const GUILD = '400000000000000001';
 const DM_CHANNEL = '500000000000000001';
+const INBOX_CHANNEL = inboxChannelId(USER);
 
 const client = {
     guilds: { cache: new Map([[GUILD, { name: 'Test Guild' }]]) },
@@ -49,12 +51,13 @@ beforeEach(async () => {
     handleChatInteraction.mockResolvedValue(undefined);
     await db.run('DELETE FROM automations');
     await db.run('DELETE FROM followups');
+    await db.run('DELETE FROM inbox_items');
 });
 
 const FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
 describe('createTask', () => {
-    test('creates a recurring DM-scope automation delivered to the DM channel', async () => {
+    test('creates a recurring DM-scope automation delivered to the inbox', async () => {
         const created = await webTaskService.createTask({
             client, userId: USER, name: 'Morning brief', prompt: 'Summarize my day', cron: '0 9 * * *'
         });
@@ -63,7 +66,7 @@ describe('createTask', () => {
 
         const row = await db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
         expect(row.guildId).toBe(dmScopeId(USER));
-        expect(row.channelId).toBe(DM_CHANNEL);
+        expect(row.channelId).toBe(INBOX_CHANNEL);
         expect(row.promptText).toBe('Summarize my day');
         expect(row.schedule).toBe('0 9 * * *');
         expect(row.isEnabled).toBe(1);
@@ -77,7 +80,7 @@ describe('createTask', () => {
 
         const row = await db.get('SELECT * FROM followups WHERE id = @id', { id: created.id });
         expect(row.guildId).toBe(dmScopeId(USER));
-        expect(row.channelId).toBe(DM_CHANNEL);
+        expect(row.channelId).toBe(INBOX_CHANNEL);
         expect(row.status).toBe('PENDING');
         expect(row.note).toBe('Ask me about the deploy');
     });
@@ -147,18 +150,14 @@ describe('createTask', () => {
             .rejects.toMatchObject({ code: 'TOO_MANY_TASKS' });
     });
 
-    test('an unreachable DM is a clear 502, and an offline client a 503', async () => {
-        const offlineClient = {};
-        await expect(webTaskService.createTask({
-            client: offlineClient, userId: USER, name: 'n', prompt: 'p', cron: '0 9 * * *'
-        })).rejects.toMatchObject({ status: 503, code: 'BOT_OFFLINE' });
-
-        const blockedClient = {
-            users: { fetch: jest.fn().mockRejectedValue(new Error('Cannot send messages to this user')) }
-        };
-        await expect(webTaskService.createTask({
-            client: blockedClient, userId: USER, name: 'n', prompt: 'p', cron: '0 9 * * *'
-        })).rejects.toMatchObject({ status: 502, code: 'DM_UNAVAILABLE' });
+    test('creating a task never depends on Discord being reachable', async () => {
+        // No client, no gateway: the task is filed against the inbox channel
+        // (spec §6 - Discord is an optional echo, never a prerequisite).
+        const created = await webTaskService.createTask({
+            userId: USER, name: 'n', prompt: 'p', cron: '0 9 * * *'
+        });
+        const row = await db.get('SELECT channelId FROM automations WHERE id = @id', { id: created.id });
+        expect(row.channelId).toBe(INBOX_CHANNEL);
     });
 });
 
@@ -183,12 +182,15 @@ describe('listTasks', () => {
         const dmTask = tasks.automations.find(a => a.name === 'dm task');
         expect(dmTask.scope).toBe('dm');
         expect(dmTask.scopeName).toBe('Direct messages');
+        expect(dmTask.delivery).toBe('inbox');
         const guildTask = tasks.automations.find(a => a.name === 'guild task');
         expect(guildTask.scope).toBe('guild');
         expect(guildTask.scopeName).toBe('Test Guild');
+        expect(guildTask.delivery).toBe('channel');
 
         expect(tasks.followups).toHaveLength(1);
         expect(tasks.followups[0].prompt).toBe('remind me');
+        expect(tasks.followups[0].delivery).toBe('inbox');
     });
 
     test('cancelled followups disappear from the list', async () => {
@@ -246,8 +248,8 @@ describe('ownership', () => {
     });
 });
 
-describe('DM-scope execution (automationService)', () => {
-    test('a due DM automation runs through the chat pipeline as a DM pseudo-interaction', async () => {
+describe('inbox execution (automationService)', () => {
+    test('a due portal task runs through the chat pipeline and files its reply in the inbox, echoed to Discord', async () => {
         const AutomationService = require('@goobster/core/services/automationService');
         const created = await webTaskService.createTask({
             client, userId: USER, name: 'brief', prompt: 'Summarize the news', cron: '0 9 * * *'
@@ -258,14 +260,15 @@ describe('DM-scope execution (automationService)', () => {
         const automation = await db.get('SELECT * FROM automations WHERE id = @id', { id: created.id });
 
         const sent = [];
-        const dmChannel = {
-            id: DM_CHANNEL,
-            send: jest.fn(async (payload) => { sent.push(payload); return { id: 'm1' }; }),
-            sendTyping: jest.fn()
-        };
         const execClient = {
-            channels: { fetch: jest.fn().mockResolvedValue(dmChannel) },
-            users: { fetch: jest.fn().mockResolvedValue({ id: USER, username: 'rob' }) }
+            user: { id: '999999999999999999', username: 'Goobster' },
+            channels: { fetch: jest.fn().mockResolvedValue(null) },
+            users: {
+                fetch: jest.fn().mockResolvedValue({
+                    id: USER, username: 'rob',
+                    send: jest.fn(async (payload) => { sent.push(payload); return { id: 'm1', channelId: DM_CHANNEL }; })
+                })
+            }
         };
 
         handleChatInteraction.mockImplementation(async (interaction) => {
@@ -275,34 +278,93 @@ describe('DM-scope execution (automationService)', () => {
         const service = new AutomationService(execClient);
         await service.executeAutomation(automation);
 
-        // The pseudo-interaction is DM-shaped: no guild, the owner's user,
-        // the DM channel - so the pipeline resolves the dm:<userId> scope.
+        // The pseudo-interaction is personal: no guild, the owner's user,
+        // the inbox channel - so the pipeline resolves the dm:<userId> scope.
         const interaction = handleChatInteraction.mock.calls[0][0];
         expect(interaction.guild).toBeNull();
         expect(interaction.guildId).toBeNull();
         expect(interaction.user.id).toBe(USER);
-        expect(interaction.channelId).toBe(DM_CHANNEL);
+        expect(interaction.channelId).toBe(INBOX_CHANNEL);
         expect(interaction.isAutomation).toBe(true);
         expect(interaction.options.getString()).toBe('Summarize the news');
         expect(interaction.sourceDescription).toContain('scheduled task');
-
-        // Delivery lands in the DM with the scheduled-task banner
-        expect(sent[0].content).toContain('Scheduled Task');
-        expect(sent[0].content).toContain('All quiet today.');
-
-        // The responder's preferred capability delivers banner-first and
-        // chunked (DMs keep Discord's 2000-char cap)
         expect(typeof interaction.sendFullResponse).toBe('function');
-        await interaction.sendFullResponse('y'.repeat(4200));
-        const chunked = sent.slice(1);
-        expect(chunked.length).toBeGreaterThan(1);
-        expect(chunked[0].content).toContain('Scheduled Task');
-        expect(chunked.every(m => m.content.length <= 2000)).toBe(true);
+
+        // The result is durable in the inbox first ...
+        const item = await db.get(
+            `SELECT * FROM inbox_items WHERE userId = @userId AND kind = 'task'`, { userId: USER }
+        );
+        expect(item.title).toContain('brief');
+        expect(item.body).toContain('All quiet today.');
+        expect(item.sourceType).toBe('automation');
+        expect(String(item.sourceId)).toBe(String(automation.id));
+        // ... and the Discord DM is an echo of the same item
+        expect(item.discordStatus).toBe('sent');
+        expect(sent).toHaveLength(1);
+        expect(sent[0].content).toContain('brief');
+        expect(sent[0].content).toContain('All quiet today.');
 
         // lastRun/nextRun advance so it doesn't re-fire immediately
         const after = await db.get('SELECT lastRun, nextRun FROM automations WHERE id = @id', { id: automation.id });
         expect(after.lastRun).toBeTruthy();
         expect(after.nextRun).toBeTruthy();
+    });
+
+    test('a process without a Discord client runs inbox tasks and leaves Discord-channel ones alone', async () => {
+        const AutomationService = require('@goobster/core/services/automationService');
+        const created = await webTaskService.createTask({
+            userId: USER, name: 'headless', prompt: 'Do the thing', cron: '0 9 * * *'
+        });
+        await db.run(`UPDATE automations SET nextRun = datetime('now', '-1 minute') WHERE id = @id`, { id: created.id });
+        await db.run(
+            `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+             VALUES (@userId, @guildId, 'chan', 'guild task', 'p', '0 8 * * *', datetime('now', '-1 minute'))`,
+            { userId: USER, guildId: GUILD }
+        );
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.sendFullResponse('Done, headless.');
+        });
+
+        const service = new AutomationService(null);
+        const due = await service.getDueAutomations();
+        expect(due.map(a => a.name)).toEqual(['headless']);
+        await service.executeAutomation(due[0]);
+
+        const item = await db.get(`SELECT * FROM inbox_items WHERE userId = @userId AND kind = 'task'`, { userId: USER });
+        expect(item.body).toBe('Done, headless.');
+        // No gateway at all: the echo is skipped, not failed
+        expect(item.discordStatus).toBe('skipped');
+    });
+
+    test('a legacy DM-channel task still delivers to the DM and keeps a durable copy in the inbox', async () => {
+        const AutomationService = require('@goobster/core/services/automationService');
+        await db.run(
+            `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+             VALUES (@userId, @scope, @channel, 'legacy brief', 'Summarize', '0 9 * * *', datetime('now', '-1 minute'))`,
+            { userId: USER, scope: dmScopeId(USER), channel: DM_CHANNEL }
+        );
+        const automation = await db.get('SELECT * FROM automations WHERE name = @name', { name: 'legacy brief' });
+        const sent = [];
+        const dmChannel = {
+            id: DM_CHANNEL,
+            send: jest.fn(async (payload) => { sent.push(payload); return { id: 'm1' }; }),
+            sendTyping: jest.fn()
+        };
+        const execClient = {
+            channels: { fetch: jest.fn().mockResolvedValue(dmChannel) },
+            users: { fetch: jest.fn().mockResolvedValue({ id: USER, username: 'rob' }) }
+        };
+        handleChatInteraction.mockImplementation(async (interaction) => {
+            await interaction.reply('All quiet today.');
+        });
+
+        await new AutomationService(execClient).executeAutomation(automation);
+
+        expect(sent[0].content).toContain('Scheduled Task');
+        expect(sent[0].content).toContain('All quiet today.');
+        const item = await db.get(`SELECT * FROM inbox_items WHERE userId = @userId AND kind = 'task'`, { userId: USER });
+        expect(item.body).toContain('All quiet today.');
+        expect(item.discordStatus).toBe('sent');
     });
 });
 

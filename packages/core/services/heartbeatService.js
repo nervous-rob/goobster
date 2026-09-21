@@ -353,53 +353,12 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
      * 60s timer) from overlapping the next one and double-delivering.
      */
     async deliverDueFollowups() {
-        const outcome = await db.withSingletonLock('heartbeat_followups', async () => {
-            if (this.deliveringFollowups) return;
-            this.deliveringFollowups = true;
-            try {
-                await this._deliverDueFollowupsBody();
-            } finally {
-                this.deliveringFollowups = false;
-            }
-        });
-        if (!outcome.acquired) {
-            console.warn('[Heartbeat] Follow-up pass skipped: another process holds the singleton lock');
-            return { skipped: true };
-        }
-        return outcome.result;
-    }
-
-    async _deliverDueFollowupsBody() {
-        const due = await followupService.getDue();
-        for (const followup of due) {
-            try {
-                const channel = await this.client.channels.fetch(followup.channelId).catch(() => null);
-                if (!channel || !channel.isTextBased()) {
-                    await followupService.cancel(followup.id);
-                    continue;
-                }
-
-                const message = await aiService.generateText(
-                    `You are Goobster, a friendly Discord bot. You previously promised to follow up on something, and now is the time. Write a short (1-2 sentence), casual follow-up message${followup.userId ? ` addressed to <@${followup.userId}>` : ''}.
-
-Follow-up note: "${followup.note}"${followup.recurrence ? `
-This is a recurring check-in (repeats ${followup.recurrence}) - it will fire again automatically.` : ''}
-
-Respond with ONLY the message text.`,
-                    { temperature: 0.7, max_tokens: 120 }
-                );
-
-                await channel.send({
-                    content: `⏰ ${message.trim()}`,
-                    allowedMentions: followup.userId ? { users: [followup.userId] } : { users: [], roles: [] }
-                });
-                const { recurring, nextDueAt } = await followupService.recordDelivery(followup);
-                console.log(`[Heartbeat] Delivered follow-up #${followup.id}${recurring ? ` (recurring, next at ${nextDueAt} UTC)` : ''}: ${followup.note}`);
-            } catch (error) {
-                console.error(`[Heartbeat] Follow-up #${followup.id} failed:`, error.message);
-                // Leave PENDING so the next pass retries; cancel if the channel vanished
-            }
-        }
+        // Personal follow-ups land in the inbox (then echo to Discord); guild
+        // follow-ups post to their channel through this client. The pass and
+        // its singleton lock live in followupDeliveryService so the core
+        // runtime can run the same pass in a process without a bot.
+        const followupDeliveryService = require('./followupDeliveryService');
+        return await followupDeliveryService.deliverDue({ client: this.client });
     }
 
     _setPresence(text) {

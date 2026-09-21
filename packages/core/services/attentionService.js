@@ -1144,22 +1144,38 @@ Respond with ONLY JSON:
     }
 
     /**
-     * Reach out. Delivery goes through the gateway seam, so this code never
-     * touches discord.js and works the same in the bot and api processes.
+     * Reach out. The message is filed in the person's inbox first (durable,
+     * visible in the portal with or without Discord), then echoed to their
+     * Discord DM through the gateway seam when they can receive one. This
+     * code never touches discord.js and works the same in every process.
      * @returns {Promise<boolean>} whether the message landed
      */
     async _contact({ userId, gateway, notices, message, urgent }) {
-        if (!gateway) return false;
         const body = String(message || '').trim();
         if (!body) return false;
         const prefix = urgent ? '❗ ' : '👋 ';
-        const result = await gateway.sendDm(userId, {
-            content: `${prefix}${body.slice(0, 1800)}`,
-            allowedMentions: { users: [], roles: [] }
-        });
-        if (!result?.ok) {
-            logger.warn?.(`[attention] DM to ${userId} failed: ${result?.error || 'unknown'}`);
+        const lead = notices[0]?.title ? String(notices[0].title) : 'Something worth a look';
+        let outcome;
+        try {
+            const inboxService = require('./inboxService');
+            outcome = await inboxService.deliver({
+                userId,
+                kind: 'notice',
+                title: notices.length > 1 ? `${lead} (+${notices.length - 1} more)` : lead,
+                body,
+                source: { type: 'attention', id: notices.map(notice => notice.id).join(',') },
+                link: '/attention',
+                discord: gateway ? {
+                    gateway,
+                    payload: { content: `${prefix}${body.slice(0, 1800)}`, allowedMentions: { users: [], roles: [] } }
+                } : false
+            });
+        } catch (error) {
+            logger.warn?.(`[attention] Could not file a notice for ${userId}: ${error.message}`);
             return false;
+        }
+        if (outcome.discord.status === 'failed') {
+            logger.warn?.(`[attention] DM to ${userId} failed (${outcome.discord.error || 'unknown'}); the notice is in their inbox`);
         }
         await this._markDelivered(notices.map(notice => notice.id));
         await db.run(

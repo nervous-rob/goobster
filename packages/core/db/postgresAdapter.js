@@ -170,6 +170,16 @@ const CONSTRAINT_MIGRATIONS = [
         matches: def => def.includes("'ARMED'") && def.includes("'FIRED'"),
         isCurrent: def => def.includes("'FIRING'"),
         add: `CHECK (status IN ('ARMED', 'FIRING', 'FIRED', 'EXPIRED', 'CANCELLED', 'FAILED'))`
+    },
+    {
+        // Shared-instance Increment B.1: accounts created by open sign-up
+        // with a verified email carry the 'open' entitlement.
+        table: 'app_accounts',
+        reason: 'the open entitlement',
+        type: 'c',
+        matches: def => def.includes("'invite'") && def.includes("'bootstrap'"),
+        isCurrent: def => def.includes("'open'"),
+        add: `CHECK (entitlement IN ('invite', 'migration', 'bootstrap', 'open'))`
     }
 ];
 

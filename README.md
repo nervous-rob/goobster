@@ -126,18 +126,26 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Docker | `documentation/docker_deployment.md` |
 | Architecture | `documentation/architecture.md` |
 | Self-knowledge (`consultDocs`) | `documentation/self_knowledge.md` |
-| Application identity (principals, accounts, invitations, native sign-in) | `documentation/identity.md` |
+| Application identity (principals, accounts, invitations, native sign-in, verified email, outbound mail) | `documentation/identity.md` |
+| Running without Discord (adapter switch, assistant identity, the Inbox, runtime modes, people discovery) | `documentation/independent_runtime.md` |
 
 ### Planned product work
 
 The [shared-instance product plan](documentation/shared_instance_product_spec.md)
 defines the next invitation-only multi-user release: clearer navigation,
 Discord-independent accounts, private data boundaries, and shared resource limits.
-Its first two increments have shipped - application identity (principals,
-accounts, the `identity:report` migration tooling) and native sign-in
+Its first increments have shipped - application identity (principals,
+accounts, the `identity:report` migration tooling), native sign-in
 (operator invitations, login name + password, audited recovery, Discord
-connect/disconnect, the Host room), the latter behind `identity.nativeLogin`;
-see `documentation/identity.md`.
+connect/disconnect, the Host room) behind `identity.nativeLogin`, and an
+optional verified email per account (sign in by email, self-service password
+reset, and `identity.registration: "open"` sign-up) once an outbound mail
+provider is configured (`mail.*`: SMTP or Resend); see
+`documentation/identity.md`. The assistant also runs with **no Discord at
+all**: `apps/api` in standalone mode serves the portal with chat, memory,
+tasks, projects, and an in-app **Inbox** where reminders, task results,
+watch reports, and invitations land (Discord DMs become an optional echo);
+members find each other by name; see `documentation/independent_runtime.md`.
 The [guided tutorial spec](documentation/guided_tutorials_spec.md) covers each
 room's demonstrations and independent skip, resume, and reset behavior.
 [Naming exploration](documentation/product_naming_exploration.md) records
@@ -316,8 +324,9 @@ Use `/help` in Discord to see all available commands, organized by categories:
 Set `"webapp": { "enabled": true }` in `config.json` and open `/app/`
 (run `npm run build:web` first). Dev mode mints a session without
 OAuth. Rooms: Study, Parlor, Observatory (Projects), Spitball
-(including Expeditions), Noticed (Attention), plus Exchange, Workshop,
-and Tasks.
+(including Expeditions), Noticed (Attention), Inbox, plus Exchange,
+Workshop, and Tasks. Without a bot token, `node apps/api` serves the same
+portal in standalone mode (`documentation/independent_runtime.md`).
 
 ### Voice Features
 

@@ -34,6 +34,7 @@ const { mountWorkspace } = require('./routes/workspace');
 const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
 const { mountSettings } = require('./routes/settings');
+const { mountInbox } = require('./routes/inbox');
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -62,6 +63,7 @@ function createWebAppApp(ctx) {
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
+    mountInbox(app, ctx, helpers);
     // Last: the static client + API 404 fallback
     mountEventsStatic(app, ctx, helpers);
     return app;

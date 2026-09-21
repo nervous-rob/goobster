@@ -297,29 +297,10 @@ client.once(Events.ClientReady, async readyClient => {
 	try {
 		logger.info('Initializing database connection...');
 		await getConnection();
-		require('@goobster/core/services/eventBusService').start();
-		require('@goobster/core/services/chatHistoryRetentionService').start();
 		logger.info('Database connection initialized successfully');
 	} catch (error) {
 		logger.error('Failed to initialize database connection:', error);
 		// Continue startup even if database fails - some features will be disabled
-	}
-	
-	// Seed Goobster's own documentation into self_docs (idempotent, hash
-	// compared; embeddings backfill in the background when a backend exists)
-	try {
-		const selfDocsService = require('@goobster/core/services/selfDocsService');
-		const seeded = await selfDocsService.seedOnStartup({ logger });
-		if (seeded?.acquired) {
-			const changed = seeded.inserted + seeded.updated + seeded.deleted;
-			logger.info(`Self-docs: ${seeded.docs} document(s), ${seeded.chunks} chunk(s)`
-				+ (changed > 0
-					? ` (${seeded.inserted} new, ${seeded.updated} updated, ${seeded.deleted} removed)`
-					: ' (unchanged)'));
-		}
-	} catch (error) {
-		logger.error('Failed to seed self-documentation:', error);
-		logger.info('Bot will continue; consultDocs seeds lazily on first use');
 	}
 
 	// Initialize shared voice service (optional - bot continues without voice)
@@ -334,164 +315,24 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Bot will continue without voice features');
 	}
 
-	// Initialize automation service
+	// The core runtime: event bus, startup reconciliation, and every
+	// scheduled worker (automations, follow-ups, attention, triggers,
+	// expeditions, consolidation, reflection) plus the Discord-bound ones
+	// (guild heartbeat, monologue, agent tracker, exchange risk engine).
+	// Each worker soft-fails on its own; the lifecycle lives in core so
+	// the same set runs in a process without a Discord client.
 	try {
-		logger.info('Initializing automation service...');
-		const AutomationService = require('@goobster/core/services/automationService');
-		client.automationService = new AutomationService(client);
-		client.automationService.start();
-		logger.info('Automation service initialized successfully');
+		const { startCoreRuntime } = require('@goobster/core/runtime/coreRuntime');
+		client.coreRuntime = await startCoreRuntime({ client, logger });
+		client.automationService = client.coreRuntime.services.automation || null;
+		client.heartbeatService = client.coreRuntime.services.heartbeat || null;
+		client.personalHeartbeatService = client.coreRuntime.services.personalHeartbeat || null;
+		client.agentTrackerService = client.coreRuntime.services.agentTracker || null;
+		client.monologueService = client.coreRuntime.services.monologue || null;
+		client.exchangeRiskEngine = client.coreRuntime.services.exchangeRiskEngine || null;
 	} catch (error) {
-		logger.error('Failed to initialize automation service:', error);
-		// Don't exit since this is not a critical service
-		logger.info('Bot will continue without automation service');
-	}
-
-	// Initialize heartbeat (proactive mode + follow-up delivery)
-	try {
-		logger.info('Initializing heartbeat service...');
-		const HeartbeatService = require('@goobster/core/services/heartbeatService');
-		client.heartbeatService = new HeartbeatService(client);
-		client.heartbeatService.start();
-		logger.info('Heartbeat service initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize heartbeat service:', error);
-		logger.info('Bot will continue without proactive features');
-	}
-
-	// Initialize the personal heartbeat (the attention system: open loops,
-	// initiative policy, and condition-triggered watches). Idle until
-	// somebody enables it with /attention.
-	try {
-		logger.info('Initializing personal heartbeat (attention)...');
-		const PersonalHeartbeatService = require('@goobster/core/services/personalHeartbeatService');
-		client.personalHeartbeatService = new PersonalHeartbeatService(client);
-		client.personalHeartbeatService.start();
-		logger.info('Personal heartbeat initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize personal heartbeat:', error);
-		logger.info('Bot will continue without the attention system');
-	}
-
-	// Workshop pins → versioned project assets (Phase 2). Idempotent;
-	// pins stay in web_applets with a migratedAssetId marker.
-	try {
-		const workshopPinMigration = require('@goobster/core/services/workshopPinMigration');
-		const migrated = await workshopPinMigration.runOnStartup();
-		if (migrated.acquired && (migrated.migrated > 0 || migrated.linked > 0)) {
-			logger.info(`Workshop: migrated ${migrated.migrated} pin(s) `
-				+ `(${migrated.linked} already-linked) across ${migrated.users} user(s)`);
-		}
-	} catch (error) {
-		logger.error('Failed to migrate Workshop pins:', error);
-		logger.info('Pins stay in the Workshop; migration retries on the next start');
-	}
-
-	// Resume Observatory jobs interrupted by the restart (checkpointed
-	// background simulations pick back up instead of freezing forever)
-	try {
-		const observatoryService = require('@goobster/core/services/observatoryService');
-		const resumedJobs = await observatoryService.autoResumeInterrupted({ client });
-		if (resumedJobs.length > 0) {
-			logger.info(`Observatory: auto-resumed ${resumedJobs.length} interrupted job(s): ${resumedJobs.join(', ')}`);
-		}
-	} catch (error) {
-		logger.error('Failed to auto-resume Observatory jobs:', error);
-		logger.info('Interrupted jobs stay resumable from the portal');
-	}
-
-	try {
-		const projectMissionService = require('@goobster/core/services/projectMissionService');
-		const starting = await projectMissionService.reconcileStartingSteps({ olderThanMs: 0 });
-		const running = await projectMissionService.reconcileRunningSteps();
-		if (starting > 0 || running > 0) {
-			logger.info(`Missions: reconciled ${starting} STARTING and ${running} RUNNING step(s) left by a previous process`);
-		}
-	} catch (error) {
-		logger.error('Failed to reconcile Mission STARTING steps:', error);
-	}
-
-	// Project event triggers: jobs that settled while we were down (the
-	// domain bus is not durable). Compare finishedAt against lastRun.
-	try {
-		const projectTriggerService = require('@goobster/core/services/projectTriggerService');
-		const caughtUp = await projectTriggerService.catchUpEventTriggers({ client });
-		if (caughtUp > 0) {
-			logger.info(`Observatory: caught up ${caughtUp} project trigger fire(s) missed during downtime`);
-		}
-	} catch (error) {
-		logger.error('Failed to catch up project triggers:', error);
-	}
-
-	// Spitball Expeditions: park runs interrupted by the restart (PAUSED,
-	// owner can continue) and pick queued ones back up.
-	try {
-		const spitballExpeditionRunner = require('@goobster/core/services/spitballExpeditionRunner');
-		const kicked = await spitballExpeditionRunner.start();
-		if (kicked.length > 0) {
-			logger.info(`Spitball: picked up ${kicked.length} queued expedition(s): ${kicked.join(', ')}`);
-		}
-	} catch (error) {
-		logger.error('Failed to start the Spitball expedition runner:', error);
-		logger.info('Bot will continue without expedition pickup');
-	}
-
-	// Initialize the Cursor agent run tracker (no-op when unconfigured)
-	try {
-		const AgentTrackerService = require('@goobster/core/services/agentTrackerService');
-		client.agentTrackerService = new AgentTrackerService(client);
-		client.agentTrackerService.start();
-	} catch (error) {
-		logger.error('Failed to initialize agent tracker service:', error);
-		logger.info('Bot will continue without Cursor agent tracking');
-	}
-
-	// Initialize internal monologue (per-guild private thought process)
-	try {
-		logger.info('Initializing monologue service...');
-		const MonologueService = require('@goobster/core/services/monologueService');
-		client.monologueService = new MonologueService(client);
-		client.monologueService.start();
-		logger.info('Monologue service initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize monologue service:', error);
-		logger.info('Bot will continue without the internal monologue');
-	}
-
-	// Initialize the exchange risk engine (interest, expiries, resting orders,
-	// margin calls, forced liquidation). Idle until a guild uses the exchange.
-	try {
-		logger.info('Initializing exchange risk engine...');
-		const RiskEngine = require('@goobster/core/services/exchange/riskEngine');
-		client.exchangeRiskEngine = new RiskEngine(client);
-		client.exchangeRiskEngine.start();
-		logger.info('Exchange risk engine initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize exchange risk engine:', error);
-		logger.info('Bot will continue without automatic settlement and liquidation');
-	}
-
-	// Initialize nightly memory consolidation
-	try {
-		logger.info('Initializing memory consolidation service...');
-		const memoryConsolidationService = require('@goobster/core/services/memoryConsolidationService');
-		memoryConsolidationService.start();
-		logger.info('Memory consolidation service initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize memory consolidation service:', error);
-		logger.info('Bot will continue without memory consolidation');
-	}
-
-	// Initialize knowledge reflection (scheduled graph enrichment; also
-	// serves the web app's on-demand Reflect button)
-	try {
-		logger.info('Initializing knowledge reflection service...');
-		const knowledgeReflectionService = require('@goobster/core/services/knowledgeReflectionService');
-		knowledgeReflectionService.start();
-		logger.info('Knowledge reflection service initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize knowledge reflection service:', error);
-		logger.info('Bot will continue without scheduled knowledge reflection');
+		logger.error('Failed to start the core runtime:', error);
+		logger.info('Bot will continue with chat only; scheduled work is disabled');
 	}
 
 	// Initialize music service (using the shared voiceService)
@@ -716,42 +557,11 @@ const shutdown = async () => {
                         client.musicService.dispose();
                         logger.debug('Music service cleanup complete');
                 }
-                if (client.automationService) {
-                        logger.debug('Stopping automation service...');
-                        client.automationService.stop();
-                        logger.debug('Automation service stopped');
+                if (client.coreRuntime) {
+                        logger.debug('Stopping the core runtime...');
+                        await client.coreRuntime.stop();
+                        logger.debug('Core runtime stopped');
                 }
-                if (client.heartbeatService) {
-                        logger.debug('Stopping heartbeat service...');
-                        client.heartbeatService.stop();
-                        logger.debug('Heartbeat service stopped');
-                }
-                if (client.personalHeartbeatService) {
-                        logger.debug('Stopping personal heartbeat...');
-                        client.personalHeartbeatService.stop();
-                        logger.debug('Personal heartbeat stopped');
-                }
-                if (client.agentTrackerService) {
-                        logger.debug('Stopping agent tracker service...');
-                        client.agentTrackerService.stop();
-                        logger.debug('Agent tracker service stopped');
-                }
-                if (client.monologueService) {
-                        logger.debug('Stopping monologue service...');
-                        client.monologueService.stop();
-                        logger.debug('Monologue service stopped');
-                }
-                if (client.exchangeRiskEngine) {
-                        logger.debug('Stopping exchange risk engine...');
-                        client.exchangeRiskEngine.stop();
-                        logger.debug('Exchange risk engine stopped');
-                }
-                try {
-                        require('@goobster/core/services/memoryConsolidationService').stop();
-                } catch { /* not started */ }
-                try {
-                        require('@goobster/core/services/knowledgeReflectionService').stop();
-                } catch { /* not started */ }
 
                 if (idleStatusInterval) {
                         clearInterval(idleStatusInterval);
@@ -768,8 +578,6 @@ const shutdown = async () => {
 		// Close database connection
 		logger.debug('Closing database connection...');
 		try {
-			await require('@goobster/core/services/chatHistoryRetentionService').stop();
-			await require('@goobster/core/services/eventBusService').close();
 			await closeConnection();
 			logger.debug('Database connection closed successfully');
 		} catch (dbError) {

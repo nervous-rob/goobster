@@ -8,6 +8,10 @@
  *    wraps the live discord.js client.
  *  - RemoteGateway (apps/api): an HTTP client for the bot's internal
  *    gateway API (/internal/gateway/*, shared-secret authenticated).
+ *  - DisabledGateway (any process of an installation with no Discord
+ *    adapter): every read refuses with GatewayDisabledError, sends report
+ *    `DISCORD_DISABLED`, and botUser() is the installation's assistant
+ *    identity (shared-instance Increment C).
  *
  * Interface (all methods async, all results plain JSON snapshots):
  *   available() -> boolean
@@ -24,13 +28,18 @@
  *   guildMeta(guildId) -> { id, name, icon, memberCount } | null
  *
  * Read methods throw GatewayUnavailableError when the bot cannot be
- * reached; callers map that onto their degraded "Goobster is offline"
- * state (DM-scoped features keep working, guild-scoped panes degrade).
+ * reached (GatewayDisabledError, a subclass, when there is no bot to
+ * reach); callers map that onto their degraded state (DM-scoped features
+ * keep working, guild-scoped panes degrade), never a crash.
  */
 
 const { LocalGateway } = require('./localGateway');
 const { RemoteGateway } = require('./remoteGateway');
-const { GatewayError, GatewayUnavailableError, isGatewayUnavailable } = require('./errors');
+const { DisabledGateway } = require('./disabledGateway');
+const {
+    GatewayError, GatewayUnavailableError, GatewayDisabledError,
+    isGatewayUnavailable, isGatewayDisabled
+} = require('./errors');
 
 /** LocalGateway per client, so repeated wrapping is free and identity-stable. */
 const wrapped = new WeakMap();
@@ -40,7 +49,7 @@ const wrapped = new WeakMap();
  * Lets services accept either during the transition: bot-side callers keep
  * passing the live client; the api app passes a RemoteGateway.
  * @param {Object|null} clientOrGateway
- * @returns {LocalGateway|RemoteGateway|null}
+ * @returns {LocalGateway|RemoteGateway|DisabledGateway|null}
  */
 function toGateway(clientOrGateway) {
     if (!clientOrGateway) return null;
@@ -56,8 +65,11 @@ function toGateway(clientOrGateway) {
 module.exports = {
     LocalGateway,
     RemoteGateway,
+    DisabledGateway,
     GatewayError,
     GatewayUnavailableError,
+    GatewayDisabledError,
     isGatewayUnavailable,
+    isGatewayDisabled,
     toGateway
 };

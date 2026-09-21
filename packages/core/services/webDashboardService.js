@@ -475,6 +475,20 @@ class WebDashboardService {
             observatory = { enabled: false };
         }
 
+        // The inbox card: the unread count and the freshest few items,
+        // so Home shows what landed while the person was away.
+        let inbox = { unread: 0, recent: [] };
+        try {
+            const inboxService = require('./inboxService');
+            const listed = await inboxService.list({ userId, limit: 3 });
+            inbox = {
+                unread: listed.unread,
+                recent: listed.items.map(item => ({
+                    id: item.id, kind: item.kind, title: item.title, read: item.read, createdAt: item.createdAt
+                }))
+            };
+        } catch { /* inbox unavailable - the card shows empty */ }
+
         return {
             you: {
                 nickname: report.nickname,
@@ -491,6 +505,7 @@ class WebDashboardService {
                 automations: report.automations || []
             },
             pickup: { conversations, parlor },
+            inbox,
             workshop: {
                 pinned: workshop.pinned.slice(0, 4),
                 discoveredCount: workshop.discovered.length

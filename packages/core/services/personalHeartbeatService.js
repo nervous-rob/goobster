@@ -43,12 +43,15 @@ function utcMs(text) {
 
 class PersonalHeartbeatService {
     /**
-     * @param {Object} client - the live discord.js client (wrapped in a
-     *   gateway, so nothing below this line touches discord.js)
+     * @param {Object|null} client - the live discord.js client (wrapped in a
+     *   gateway, so nothing below this line touches discord.js), or null in
+     *   a process without one
+     * @param {{ gateway?: Object|null }} [options] - the gateway seam to use
+     *   when there is no client (RemoteGateway, DisabledGateway)
      */
-    constructor(client) {
-        this.client = client || null;
-        this.gateway = toGateway(client);
+    constructor(client, { gateway = null } = {}) {
+        this.client = client?.isGoobsterGateway ? null : (client || null);
+        this.gateway = toGateway(gateway || client);
         this.timer = null;
         this.firstTick = null;
         this.ticking = false;
@@ -68,7 +71,7 @@ class PersonalHeartbeatService {
         // Events only accelerate the loop; they are never the source of
         // truth (see domainEventBus). A missed event costs one interval.
         this._unsubscribe = domainEventBus.subscribe('*', event => attentionService.onEvent(event));
-        attentionWatchService.attach(this.client);
+        attentionWatchService.attach(this.client, { gateway: this.gateway });
 
         logger.info?.(`[attention] Personal heartbeat started (every ${Math.round(HEARTBEAT.tickMs / 60000)}m)`);
     }

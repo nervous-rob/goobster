@@ -17,6 +17,9 @@ import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
 import { InvitePage } from './shell/InvitePage';
 import { RecoverPage } from './shell/RecoverPage';
+import { RegisterPage } from './shell/RegisterPage';
+import { ForgotPage } from './shell/ForgotPage';
+import { VerifyEmailPage } from './shell/VerifyEmailPage';
 import { HostRoom } from './rooms/HostRoom';
 import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
@@ -24,6 +27,7 @@ import { StudyRoom } from './rooms/StudyRoom';
 import { SpitballRoom } from './rooms/SpitballRoom';
 import { TasksRoom } from './rooms/TasksRoom';
 import { NoticedRoom } from './rooms/NoticedRoom';
+import { InboxRoom } from './rooms/InboxRoom';
 import { UsageRoom } from './rooms/UsageRoom';
 import { DecksRoom } from './rooms/DecksRoom';
 import { ExchangeRoom } from './rooms/ExchangeRoom';
@@ -107,6 +111,26 @@ const recoverRoute = createRoute({
     component: RecoverPage,
 });
 
+// Email-backed entry points: open sign-up, "forgot password", and the
+// verification landing page. The server hides them when mail is off.
+const registerRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/register',
+    component: RegisterPage,
+});
+
+const forgotRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/forgot',
+    component: ForgotPage,
+});
+
+const verifyEmailRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/verify-email',
+    component: VerifyEmailPage,
+});
+
 // Everything else lives behind the login gate.
 const authedRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -161,6 +185,12 @@ const noticedRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/noticed',
     component: NoticedRoom,
+});
+
+const inboxRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/inbox',
+    component: InboxRoom,
 });
 
 const hostRoute = createRoute({
@@ -311,6 +341,9 @@ const routeTree = rootRoute.addChildren([
     shareShellRoute.addChildren([shareRoute]),
     inviteRoute,
     recoverRoute,
+    registerRoute,
+    forgotRoute,
+    verifyEmailRoute,
     authedRoute.addChildren([appRoute.addChildren([
         indexRoute,
         hostRoute,
@@ -320,6 +353,7 @@ const routeTree = rootRoute.addChildren([
         libraryRoute,
         tasksRoute,
         noticedRoute,
+        inboxRoute,
         usageRoute,
         workshopRoute,
         conservatoryRoute.addChildren([
