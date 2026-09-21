@@ -89,17 +89,19 @@ class WebDashboardService {
 
     /**
      * Validate that a user may browse a scope; returns the member snapshot
-     * for guild scopes (null for the DM scope).
+     * for guild scopes (null for the DM scope). The authenticated actor
+     * supplies discordUserId for gateway checks; userId still owns private
+     * app data. Legacy callers may use their snowflake for both.
      * @param {Object} params - { gateway, scope, userId }
      */
-    async _requireScopeAccess({ gateway, client, scope, userId }) {
+    async _requireScopeAccess({ gateway, client, scope, userId, discordUserId = userId }) {
         if (isDmScopeId(scope)) {
             if (scope !== dmScopeId(userId)) {
                 throw new WebDashboardError(403, 'FORBIDDEN', 'That DM scope belongs to another user.');
             }
             return null;
         }
-        return await requireGuildMember({ gateway: gateway || client, guildId: scope, userId });
+        return await requireGuildMember({ gateway: gateway || client, guildId: scope, userId: discordUserId });
     }
 
     /**
@@ -107,8 +109,8 @@ class WebDashboardService {
      * /what-do-you-know-about-me).
      * @param {Object} params - { gateway, scope, userId }
      */
-    async getReport({ gateway, client, scope, userId }) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async getReport({ gateway, client, scope, userId, discordUserId = userId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         return await privacyService.buildUserReport({ guildId: scope, userId });
     }
 
@@ -117,8 +119,8 @@ class WebDashboardService {
      * of the conversation). Guild scope: only memories the user authored.
      * @param {Object} params - { gateway, scope, userId, limit }
      */
-    async listMemories({ gateway, client, scope, userId, limit = 100 }) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async listMemories({ gateway, client, scope, userId, discordUserId = userId, limit = 100 }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         const bounded = Math.max(1, Math.min(Number(limit) || 100, MEMORY_PAGE_LIMIT));
         const dmScope = isDmScopeId(scope);
         const params = dmScope ? { scope, limit: bounded } : { scope, userId, limit: bounded };
@@ -136,8 +138,8 @@ class WebDashboardService {
      * memory), then clean orphaned vectors.
      * @param {Object} params - { gateway, scope, userId, memoryId }
      */
-    async deleteMemory({ gateway, client, scope, userId, memoryId }) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async deleteMemory({ gateway, client, scope, userId, discordUserId = userId, memoryId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         const dmScope = isDmScopeId(scope);
         const params = dmScope
             ? { memoryId: Number(memoryId), scope }
@@ -159,8 +161,8 @@ class WebDashboardService {
      * scope: USER facts about the requesting user only.
      * @param {Object} params - { gateway, scope, userId }
      */
-    async listFacts({ gateway, client, scope, userId }) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async listFacts({ gateway, client, scope, userId, discordUserId = userId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         const dmScope = isDmScopeId(scope);
         return await factsService.listFactsForScope({
             guildId: scope,
@@ -176,8 +178,8 @@ class WebDashboardService {
      * fact about them in a guild).
      * @param {Object} params - { gateway, scope, userId, factId }
      */
-    async deleteFact({ gateway, client, scope, userId, factId }) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async deleteFact({ gateway, client, scope, userId, discordUserId = userId, factId }) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         const rawId = String(factId);
         if (rawId.startsWith('kg:')) {
             const nodeId = Number(rawId.slice(3));
@@ -364,17 +366,17 @@ class WebDashboardService {
      * Manage Server only (parity with /monologue graph|thoughts).
      * @param {Object} params - { gateway, guildId, userId }
      */
-    async getGraph({ gateway, client, guildId, userId }) {
+    async getGraph({ gateway, client, guildId, userId, discordUserId = userId }) {
         if (isDmScopeId(guildId)) {
             throw new WebDashboardError(400, 'BAD_SCOPE',
                 'The knowledge graph is a server feature - DMs do not have one.');
         }
         const resolved = toGateway(gateway || client);
-        await this._requireScopeAccess({ gateway: resolved, scope: guildId, userId });
+        await this._requireScopeAccess({ gateway: resolved, scope: guildId, userId, discordUserId });
         // A live permission check, never cached (the spec §6 rule for
         // permission-gated surfaces), mirroring /monologue graph.
         const manageGuild = resolved
-            ? await resolved.memberHasPermission(guildId, userId, 'ManageGuild').catch(() => false)
+            ? await resolved.memberHasPermission(guildId, discordUserId, 'ManageGuild').catch(() => false)
             : false;
         if (!manageGuild) {
             throw new WebDashboardError(403, 'FORBIDDEN',
@@ -418,7 +420,7 @@ class WebDashboardService {
      * Chat is a verb from here, not the landing page.
      * @param {Object} params - { gateway, userId }
      */
-    async getHome({ gateway, client, userId }) {
+    async getHome({ gateway, client, userId, discordUserId = userId }) {
         const scope = dmScopeId(userId);
         const report = await privacyService.buildUserReport({ guildId: scope, userId });
         const webChatService = require('./webChatService');
@@ -450,7 +452,7 @@ class WebDashboardService {
         }
 
         const workshop = await webAppletService.listWorkshop(userId);
-        const scopes = await this.listScopes({ gateway: gateway || client, userId });
+        const scopes = await this.listScopes({ gateway: gateway || client, userId, discordUserId });
         const servers = scopes.filter(s => s.kind === 'guild').map(s => ({
             id: s.id,
             name: s.name,
@@ -522,9 +524,9 @@ class WebDashboardService {
      * The guild knowledge graph stays Manage Server and is a separate call.
      * @param {Object} params - { gateway, scope, userId }
      */
-    async getConstellation({ gateway, client, scope, userId }) {
+    async getConstellation({ gateway, client, scope, userId, discordUserId = userId }) {
         const resolved = gateway || client;
-        await this._requireScopeAccess({ gateway: resolved, scope, userId });
+        await this._requireScopeAccess({ gateway: resolved, scope, userId, discordUserId });
         const isDm = isDmScopeId(scope);
         const youLabel = isDm ? 'You' : 'You, here';
 
@@ -535,7 +537,7 @@ class WebDashboardService {
             userLabel: youLabel
         });
 
-        const memories = await this.listMemories({ gateway: resolved, scope, userId, limit: 80 });
+        const memories = await this.listMemories({ gateway: resolved, scope, userId, discordUserId, limit: 80 });
         graph.counts = {
             ...graph.counts,
             memories: memories.length,
@@ -549,8 +551,8 @@ class WebDashboardService {
      * List the requesting user's personal notes in this scope, with
      * search / type / tag / source filters for the Notes tab.
      */
-    async listNotes({ gateway, client, scope, userId, q, type, tag, source, limit, offset } = {}) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async listNotes({ gateway, client, scope, userId, discordUserId = userId, q, type, tag, source, limit, offset } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         return knowledgeGraphService.listUserNotes({
             guildId: scope,
             userId,
@@ -566,8 +568,8 @@ class WebDashboardService {
     /**
      * Manual create of a personal note.
      */
-    async createNote({ gateway, client, scope, userId, label, content, type, tags } = {}) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async createNote({ gateway, client, scope, userId, discordUserId = userId, label, content, type, tags } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         try {
             const note = await knowledgeGraphService.createUserNote({
                 guildId: scope,
@@ -593,8 +595,8 @@ class WebDashboardService {
      * Manual edit of a personal note. Ownership is re-checked in the
      * graph service; a missing / foreign note is 404.
      */
-    async updateNote({ gateway, client, scope, userId, nodeId, label, content, type, tags } = {}) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async updateNote({ gateway, client, scope, userId, discordUserId = userId, nodeId, label, content, type, tags } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         try {
             const note = await knowledgeGraphService.updateUserNote({
                 guildId: scope,
@@ -623,8 +625,8 @@ class WebDashboardService {
     /**
      * Delete a personal note. Cascades edges / tags / revisions via FKs.
      */
-    async deleteNote({ gateway, client, scope, userId, nodeId } = {}) {
-        await this._requireScopeAccess({ gateway: gateway || client, scope, userId });
+    async deleteNote({ gateway, client, scope, userId, discordUserId = userId, nodeId } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         const deleted = await knowledgeGraphService.deleteUserNote({
             guildId: scope,
             userId,
@@ -643,7 +645,7 @@ class WebDashboardService {
      * requires Manage Server (the Server graph tab).
      * @param {Object} params - { gateway, scope, userId, target }
      */
-    async _resolveReflectionTarget({ gateway, client, scope, userId, target = 'personal' }) {
+    async _resolveReflectionTarget({ gateway, client, scope, userId, discordUserId = userId, target = 'personal' }) {
         const reflection = require('./knowledgeReflectionService');
         const resolved = toGateway(gateway || client);
         if (target === 'guild') {
@@ -651,9 +653,9 @@ class WebDashboardService {
                 throw new WebDashboardError(400, 'BAD_SCOPE',
                     'The server graph is a guild feature - DMs do not have one.');
             }
-            await this._requireScopeAccess({ gateway: resolved, scope, userId });
+            await this._requireScopeAccess({ gateway: resolved, scope, userId, discordUserId });
             const manageGuild = resolved
-                ? await resolved.memberHasPermission(scope, userId, 'ManageGuild').catch(() => false)
+                ? await resolved.memberHasPermission(scope, discordUserId, 'ManageGuild').catch(() => false)
                 : false;
             if (!manageGuild) {
                 throw new WebDashboardError(403, 'FORBIDDEN',
@@ -668,7 +670,7 @@ class WebDashboardService {
                 passes: reflection.scheduledPasses
             };
         }
-        await this._requireScopeAccess({ gateway: resolved, scope, userId });
+        await this._requireScopeAccess({ gateway: resolved, scope, userId, discordUserId });
         return {
             scopeKey: knowledgeGraphService.resolveScopeKey({
                 subjectType: 'USER',
@@ -687,10 +689,10 @@ class WebDashboardService {
      * the client polls getReflection until the run settles.
      * @param {Object} params - { gateway, scope, userId, target }
      */
-    async startReflection({ gateway, client, scope, userId, target = 'personal' }) {
+    async startReflection({ gateway, client, scope, userId, discordUserId = userId, target = 'personal' }) {
         const resolved = gateway || client;
         const { scopeKey, subjectType, subjectId, passes } =
-            await this._resolveReflectionTarget({ gateway: resolved, scope, userId, target });
+            await this._resolveReflectionTarget({ gateway: resolved, scope, userId, discordUserId, target });
         const reflection = require('./knowledgeReflectionService');
         try {
             const { run, execution } = await reflection.startRun({
@@ -717,10 +719,10 @@ class WebDashboardService {
      * and the "last reflected" hint). Same access rules as startReflection.
      * @param {Object} params - { gateway, scope, userId, target }
      */
-    async getReflection({ gateway, client, scope, userId, target = 'personal' }) {
+    async getReflection({ gateway, client, scope, userId, discordUserId = userId, target = 'personal' }) {
         const resolved = gateway || client;
         const { scopeKey } =
-            await this._resolveReflectionTarget({ gateway: resolved, scope, userId, target });
+            await this._resolveReflectionTarget({ gateway: resolved, scope, userId, discordUserId, target });
         const reflection = require('./knowledgeReflectionService');
         return { run: await reflection.getLatestRun(scope, scopeKey) };
     }

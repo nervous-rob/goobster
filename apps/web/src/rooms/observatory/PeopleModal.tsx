@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
+import { pastedPrincipalId } from '../../lib/people';
 import { Modal } from '../../components/Modal';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -153,7 +154,7 @@ function InvitePicker({
         staleTime: 10_000
     });
     const people = invitableQ.data?.people || [];
-    const rawId = /^\d{5,20}$/.test(debounced) ? debounced : null;
+    const rawId = pastedPrincipalId(debounced);
     const rawKnown = rawId !== null && people.some((person) => person.id === rawId);
 
     async function invite(userId: string, label: string | null) {
@@ -164,7 +165,7 @@ function InvitePicker({
             const who = result.inviteeName || label || `user ${userId}`;
             toast(result.dmSent
                 ? `Invitation sent to ${who} by DM.`
-                : `Invitation created for ${who} — their DMs are closed, but it shows in their web app.`);
+                : `Invitation created for ${who} — it is in their Inbox.`);
             setQuery('');
             await onInvited();
         } catch (error) {
@@ -201,7 +202,7 @@ function InvitePicker({
                         <span className="person-avatar">＋</span>
                         <span className="person-body">
                             <span className="person-name">Invite user {rawId}</span>
-                            <span className="hint">by Discord user id</span>
+                            <span className="hint">by {rawId.startsWith('usr_') ? 'account' : 'Discord user'} id</span>
                         </span>
                     </div>
                 )}

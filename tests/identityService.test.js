@@ -30,6 +30,7 @@ const IDENTITY_TABLES = ['web_sessions', 'auth_identities', 'app_accounts', 'pri
 
 let server;
 let port;
+let webContext;
 
 function request({ method = 'GET', reqPath, headers = {}, body = null }) {
     const payload = body ? JSON.stringify(body) : null;
@@ -70,6 +71,7 @@ beforeAll((done) => {
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} }
     });
+    webContext = ctx;
     const app = express();
     app.use(createWebAppApp(ctx));
     server = app.listen(0, '127.0.0.1', () => {
@@ -423,5 +425,73 @@ describe('privacy erasure', () => {
 
         const after = await privacyService.buildUserReport({ userId: ROB, guildId: `dm:${ROB}` });
         expect(after.identity).toMatchObject({ principal: null, account: null, linkedIdentities: [], nativeSignIn: { hasPassword: false } });
+    });
+});
+
+
+describe('linked native dashboard scopes', () => {
+    test('portal guild routes use the linked subject while private ownership stays native', async () => {
+        const guildId = '100000000000000099';
+        const native = await identityService.createNativePrincipal({ displayName: 'Native member' });
+        await identityService.grantAccount({ principalId: native.id, entitlement: 'invite' });
+        await identityService.linkExternal({ principalId: native.id, provider: 'discord', subject: SAM });
+        const { cookie } = await devSession(native.id);
+        const headers = { cookie };
+        const priorGateway = webContext.gateway;
+        const gateway = {
+            isGoobsterGateway: true,
+            listMutualGuilds: jest.fn(async () => [{ id: guildId, name: 'Linked guild', manageGuild: true }]),
+            getGuildMember: jest.fn(async (id, subject) => ({
+                guild: { id }, member: { id: subject, permissions: ['ManageGuild'] }
+            })),
+            memberHasPermission: jest.fn(async () => true)
+        };
+        webContext.gateway = gateway;
+        try {
+            const me = await request({ reqPath: '/api/app/me', headers });
+            expect(me.json.scopes.map(scope => scope.id)).toContain(guildId);
+            for (const reqPath of [
+                `/api/app/memory/report?scope=${guildId}`,
+                `/api/app/memory/memories?scope=${guildId}`,
+                `/api/app/memory/facts?scope=${guildId}`,
+                `/api/app/memory/constellation?scope=${guildId}`,
+                `/api/app/memory/reflection?scope=${guildId}&target=guild`,
+                `/api/app/graph?guildId=${guildId}`,
+                `/api/app/spitball/notes?scope=${guildId}`
+            ]) {
+                const response = await request({ reqPath, headers });
+                expect({ reqPath, status: response.status, error: response.json?.error }).toEqual({ reqPath, status: 200 });
+            }
+            expect(gateway.getGuildMember).toHaveBeenCalledWith(guildId, SAM);
+            expect(gateway.getGuildMember.mock.calls.every(([, id]) => id === SAM)).toBe(true);
+            expect(gateway.memberHasPermission).toHaveBeenCalledWith(guildId, SAM, 'ManageGuild');
+
+            const report = await request({ reqPath: `/api/app/memory/report?scope=${guildId}`, headers });
+            expect(report.json.identity.principal.id).toBe(native.id);
+            const own = await request({ reqPath: `/api/app/memory/report?scope=dm:${native.id}`, headers });
+            expect(own.status).toBe(200);
+            for (const id of [SAM, ROB]) {
+                const other = await request({ reqPath: `/api/app/memory/report?scope=dm:${id}`, headers });
+                expect(other.status).toBe(403);
+                expect(other.json.error.code).toBe('FORBIDDEN');
+            }
+
+            gateway.memberHasPermission.mockResolvedValue(false);
+            expect((await request({ reqPath: `/api/app/graph?guildId=${guildId}`, headers })).status).toBe(403);
+            gateway.getGuildMember.mockResolvedValue({ guild: { id: guildId }, member: null });
+            const removed = await request({ reqPath: `/api/app/memory/report?scope=${guildId}`, headers });
+            expect(removed.json.error.code).toBe('NOT_A_MEMBER');
+
+            await identityService.unlinkExternal({ principalId: native.id, provider: 'discord' });
+            gateway.getGuildMember.mockClear();
+            const unlinked = await request({
+                reqPath: `/api/app/memory/report?scope=${guildId}&discordUserId=${SAM}`, headers
+            });
+            expect(unlinked.status).toBe(403);
+            expect(unlinked.json.error.code).toBe('NO_DISCORD_IDENTITY');
+            expect(gateway.getGuildMember).not.toHaveBeenCalled();
+        } finally {
+            webContext.gateway = priorGateway;
+        }
     });
 });

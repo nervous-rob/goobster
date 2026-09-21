@@ -52,7 +52,7 @@ export type InboxItem = {
     createdAt: string;
 };
 
-export type InboxList = { items: InboxItem[]; unread: number };
+export type InboxList = { items: InboxItem[]; unread: number; nextCursor: string | null };
 
 /** Someone the signed-in person can reach (GET /api/app/people, invite pickers). */
 export type Person = {

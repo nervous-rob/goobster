@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useDateLabel } from '../hooks/useDateLabel';
@@ -43,11 +43,13 @@ export function InboxRoom() {
     const toast = useToast();
     const queryClient = useQueryClient();
     const [view, setView] = useState<View>('open');
-    const [expanded, setExpanded] = useState<number | null>(null);
+    const [selected, setSelected] = useState<InboxItem | null>(null);
 
-    const list = useQuery({
+    const list = useInfiniteQuery({
         queryKey: keys.inbox(view),
-        queryFn: () => api.inbox({ unread: view === 'unread', archived: view === 'archived' })
+        queryFn: ({ pageParam }) => api.inbox({ unread: view === 'unread', archived: view === 'archived', cursor: pageParam }),
+        initialPageParam: null as string | null,
+        getNextPageParam: (page) => page.nextCursor
     });
 
     const invalidate = () => Promise.all([
@@ -56,11 +58,14 @@ export function InboxRoom() {
     ]);
 
     async function open(item: InboxItem) {
-        const next = expanded === item.id ? null : item.id;
-        setExpanded(next);
+        const next = selected?.id === item.id ? null : item;
+        // Keep the open message independently of the filtered list: marking
+        // it read removes it from Unread, but must not close its contents.
+        setSelected(next);
         if (next !== null && !item.read) {
             try {
-                await api.inboxRead(item.id, true);
+                const updated = await api.inboxRead(item.id, true);
+                setSelected((current) => current?.id === updated.id ? updated : current);
                 await invalidate();
             } catch (error) { toast((error as Error).message, true); }
         }
@@ -68,7 +73,8 @@ export function InboxRoom() {
 
     async function toggleRead(item: InboxItem) {
         try {
-            await api.inboxRead(item.id, !item.read);
+            const updated = await api.inboxRead(item.id, !item.read);
+            setSelected((current) => current?.id === updated.id ? updated : current);
             await invalidate();
         } catch (error) { toast((error as Error).message, true); }
     }
@@ -76,7 +82,7 @@ export function InboxRoom() {
     async function archive(item: InboxItem) {
         try {
             await api.inboxArchive(item.id);
-            if (expanded === item.id) setExpanded(null);
+            setSelected((current) => current?.id === item.id ? null : current);
             toast('Archived.');
             await invalidate();
         } catch (error) { toast((error as Error).message, true); }
@@ -85,13 +91,16 @@ export function InboxRoom() {
     async function readAll() {
         try {
             const { updated } = await api.inboxReadAll();
+            setSelected((current) => current ? { ...current, read: true } : current);
             toast(updated ? `Marked ${updated} read.` : 'Nothing unread.');
             await invalidate();
         } catch (error) { toast((error as Error).message, true); }
     }
 
-    const unread = list.data?.unread ?? me.inbox?.unread ?? 0;
-    const items = list.data?.items || [];
+    const unread = list.data?.pages[0]?.unread ?? me.inbox?.unread ?? 0;
+    const byId = new Map(list.data?.pages.flatMap((page) => page.items).map((item) => [item.id, item]) || []);
+    if (selected && !byId.has(selected.id)) byId.set(selected.id, selected);
+    const items = [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id);
 
     return (
         <main className="pane next-pane is-in">
@@ -108,7 +117,7 @@ export function InboxRoom() {
                     {(['open', 'unread', 'archived'] as View[]).map((option) => (
                         <button key={option} type="button" role="tab" aria-selected={view === option}
                             className={`segment-btn${view === option ? ' active' : ''}`}
-                            onClick={() => { setView(option); setExpanded(null); }}>
+                            onClick={() => { setView(option); setSelected(null); }}>
                             {option === 'open' ? 'Inbox' : option === 'unread' ? 'Unread' : 'Archive'}
                         </button>
                     ))}
@@ -136,28 +145,30 @@ export function InboxRoom() {
                 {items.length > 0 && (
                     <div className="list-card">
                         {items.map((item) => {
-                            const isOpen = expanded === item.id;
+                            const isOpen = selected?.id === item.id;
                             const echo = echoLabel(item, me.discord.enabled);
                             return (
                                 <div key={item.id} className={`list-row task-row inbox-row${item.read ? '' : ' unread'}${isOpen ? ' open' : ''}`}>
-                                    <button type="button" className="row-body inbox-row-main" aria-expanded={isOpen}
-                                        onClick={() => open(item)}>
-                                        <span className="badge">{KIND_MARK[item.kind]} {KIND_LABEL[item.kind]}</span>
-                                        <strong>{item.title}</strong>
-                                        {!item.read && <span className="inbox-dot" aria-label="unread" />}
-                                        <div className="row-meta">
-                                            {whenLabel(item.createdAt)}
-                                            {echo ? ` · ${echo}` : ''}
-                                            {item.attachments.length > 0 ? ` · ${item.attachments.length} attachment${item.attachments.length === 1 ? '' : 's'}` : ''}
-                                        </div>
+                                    <div className="row-body">
+                                        <button type="button" className="inbox-row-main" aria-expanded={isOpen}
+                                            onClick={() => open(item)}>
+                                            <span className="badge">{KIND_MARK[item.kind]} {KIND_LABEL[item.kind]}</span>
+                                            <strong>{item.title}</strong>
+                                            {!item.read && <span className="inbox-dot" aria-label="unread" />}
+                                            <div className="row-meta">
+                                                {whenLabel(item.createdAt)}
+                                                {echo ? ` · ${echo}` : ''}
+                                                {item.attachments.length > 0 ? ` · ${item.attachments.length} attachment${item.attachments.length === 1 ? '' : 's'}` : ''}
+                                            </div>
+                                        </button>
                                         {isOpen && (
                                             <div className="inbox-body">
-                                                {item.body
-                                                    ? <Markdown source={item.body} attachments={item.attachments.map((a) => ({ url: a.url, name: a.name || undefined }))} />
+                                                {item.body || item.attachments.length > 0
+                                                    ? <Markdown source={item.body || ''} attachments={item.attachments.map((a) => ({ url: a.url, name: a.name || undefined }))} />
                                                     : <div className="hint">No details - the title is the whole message.</div>}
                                             </div>
                                         )}
-                                    </button>
+                                    </div>
                                     <div className="inbox-actions">
                                         {item.link && (
                                             <Link to={item.link as never} className="btn subtle" title="Open where this came from">Open →</Link>
@@ -174,6 +185,12 @@ export function InboxRoom() {
                             );
                         })}
                     </div>
+                )}
+                {list.hasNextPage && (
+                    <button type="button" className="btn" disabled={list.isFetchingNextPage}
+                        onClick={() => void list.fetchNextPage()} style={{ marginTop: 14 }}>
+                        {list.isFetchingNextPage ? 'Loading…' : 'Load older items'}
+                    </button>
                 )}
             </div>
         </main>

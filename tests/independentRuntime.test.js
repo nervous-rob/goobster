@@ -25,6 +25,7 @@ const identityService = require('@goobster/core/services/identityService');
 const privacyService = require('@goobster/core/services/privacyService');
 const followupService = require('@goobster/core/services/followupService');
 const followupDeliveryService = require('@goobster/core/services/followupDeliveryService');
+const webChatService = require('@goobster/core/services/webChatService');
 const aiService = require('@goobster/core/services/aiService');
 const discordConfig = require('@goobster/core/config/discordConfig');
 const identityConfig = require('@goobster/core/config/identityConfig');
@@ -123,7 +124,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
     jest.restoreAllMocks();
-    for (const table of ['inbox_items', 'followups', 'web_sessions', 'auth_identities', 'app_accounts', 'principals']) {
+    for (const table of ['inbox_items', 'web_generated_files', 'followups', 'web_sessions', 'auth_identities', 'app_accounts', 'principals']) {
         await db.run(`DELETE FROM ${table}`);
     }
 });
@@ -264,6 +265,102 @@ describe('inboxService', () => {
         await expect(inboxService.deliver({ userId: '', kind: 'task', title: 'x' })).rejects.toMatchObject({ code: 'BAD_USER' });
         await expect(inboxService.deliver({ userId: NATIVE_USER, kind: 'tweet', title: 'x' })).rejects.toMatchObject({ code: 'BAD_KIND' });
         await expect(inboxService.deliver({ userId: NATIVE_USER, kind: 'task', title: '   ' })).rejects.toMatchObject({ code: 'BAD_TITLE' });
+    });
+
+    test('unattended attachments survive registry expiry and pruning without exposing paths or another owner', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-inbox-files-'));
+        const filePath = path.join(dir, 'overnight.txt');
+        fs.writeFileSync(filePath, 'Scheduled report');
+        jest.spyOn(require('@goobster/core/utils/chatHandler'), 'handleChatInteraction').mockImplementation(async interaction => {
+            await interaction.channel.send({ files: [{ attachment: filePath, name: 'Report.txt' }] });
+            await interaction.sendFullResponse('Your report is ready.');
+        });
+        try {
+            const { item } = await require('@goobster/core/services/unattendedTurnService').run({
+                userId: NATIVE_USER, prompt: 'Make a report', kind: 'task', title: 'Overnight report',
+                gateway: new DisabledGateway()
+            });
+            expect(item.attachments).toHaveLength(1);
+            expect(item.attachments[0].name).toBe('Report.txt');
+            expect(JSON.stringify(item)).not.toContain(filePath);
+            const oldId = item.attachments[0].url.split('/').pop();
+            await db.run("UPDATE web_generated_files SET createdAt = datetime('now', '-7 hours') WHERE id = @id", { id: oldId });
+            // Serving an expired URL prunes its row, as does registering
+            // another generated file. The Inbox must survive either path.
+            expect(await webChatService.getFile(oldId, NATIVE_USER)).toBeNull();
+
+            const reopened = await inboxService.get({ userId: NATIVE_USER, itemId: item.id });
+            const renewedId = reopened.attachments[0].url.split('/').pop();
+            expect(renewedId).not.toBe(oldId);
+            expect(await webChatService.getFile(renewedId, NATIVE_USER)).toMatchObject({ path: filePath });
+            expect(await webChatService.getFile(renewedId, NATIVE_PEER)).toBeNull();
+            await expect(inboxService.get({ userId: NATIVE_PEER, itemId: item.id })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+            await inboxService.deliver({ userId: NATIVE_USER, kind: 'task', title: 'Same report again', attachments: reopened.attachments });
+            await db.run('DELETE FROM web_generated_files WHERE userId = @userId', { userId: NATIVE_USER });
+            const listed = await inboxService.list({ userId: NATIVE_USER });
+            expect(listed.items).toHaveLength(2);
+            expect(JSON.stringify(listed)).not.toContain(filePath);
+            for (const listedItem of listed.items) {
+                const listedAttachment = listedItem.attachments[0];
+                expect(Object.keys(listedAttachment).sort()).toEqual(['name', 'url']);
+                expect(await webChatService.getFile(listedAttachment.url.split('/').pop(), NATIVE_USER)).toMatchObject({ path: filePath });
+            }
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('recovers legacy URL-only attachments before renewing and retains them for later reads', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-inbox-legacy-'));
+        try {
+            const files = [];
+            for (const name of ['first.txt', 'second.txt']) {
+                const filePath = path.join(dir, name);
+                fs.writeFileSync(filePath, name);
+                files.push(await webChatService.registerFile(filePath, NATIVE_USER));
+            }
+            // Direct insertion models rows written before durable references.
+            const id = await db.insert(
+                "INSERT INTO inbox_items (userId, kind, title, attachmentsJson) VALUES (@userId, 'task', 'Legacy files', @json)",
+                { userId: NATIVE_USER, json: JSON.stringify(files) }
+            );
+            await db.run("UPDATE web_generated_files SET createdAt = datetime('now', '-7 hours') WHERE userId = @userId", { userId: NATIVE_USER });
+            const recovered = await inboxService.get({ userId: NATIVE_USER, itemId: id });
+            for (const file of recovered.attachments) {
+                expect(await webChatService.getFile(file.url.split('/').pop(), NATIVE_USER)).not.toBeNull();
+            }
+            await db.run('DELETE FROM web_generated_files WHERE userId = @userId', { userId: NATIVE_USER });
+            const reopened = await inboxService.get({ userId: NATIVE_USER, itemId: id });
+            for (const file of reopened.attachments) {
+                expect(await webChatService.getFile(file.url.split('/').pop(), NATIVE_USER)).not.toBeNull();
+            }
+            expect(JSON.stringify(reopened)).not.toContain(dir);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('does not trust supplied attachment paths or renew another person\'s file', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-inbox-owner-'));
+        try {
+            const filePath = path.join(dir, 'private.txt');
+            fs.writeFileSync(filePath, 'Private to the original owner');
+            const registered = await webChatService.registerFile(filePath, NATIVE_USER);
+            const { item } = await inboxService.deliver({
+                userId: NATIVE_PEER, kind: 'task', title: 'Untrusted reference',
+                attachments: [{ ...registered, file: { userId: NATIVE_PEER, path: filePath } }]
+            });
+            const stored = await db.get('SELECT attachmentsJson FROM inbox_items WHERE id = @id', { id: item.id });
+            expect(stored.attachmentsJson).not.toContain(filePath);
+            expect(await webChatService.getFile(registered.url.split('/').pop(), NATIVE_PEER)).toBeNull();
+            expect(await webChatService.restoreFileReference({ userId: NATIVE_USER, path: filePath }, NATIVE_PEER)).toBeNull();
+            await db.run('DELETE FROM web_generated_files WHERE userId = @userId', { userId: NATIVE_USER });
+            await inboxService.get({ userId: NATIVE_PEER, itemId: item.id });
+            expect(await db.get('SELECT COUNT(*) AS c FROM web_generated_files WHERE userId = @userId', { userId: NATIVE_PEER })).toMatchObject({ c: 0 });
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     test('publishes inbox events the reactive client can act on', async () => {
@@ -598,6 +695,61 @@ describe('core runtime lifecycle', () => {
         expect(runtime.started).not.toContain('automation');
         expect(errors.join('\n')).toMatch(/selfDocs failed to start: corpus missing/);
         await runtime.stop();
+    });
+
+    test('paired API startup preserves a mission child another process is still launching', async () => {
+        const { ProjectMissionService } = require('@goobster/core/services/projectMissionService');
+        const missions = new ProjectMissionService();
+        const args = { userId: NATIVE_USER, project: 'startup-race' };
+        await db.run(
+            'INSERT INTO observatory_projects (userId, slug, name) VALUES (@userId, @slug, @name)',
+            { userId: NATIVE_USER, slug: args.project, name: 'Startup race' }
+        );
+        await missions.create({
+            ...args, title: 'Startup race', objective: 'Launch a job across an API restart',
+            successCriteria: ['The job remains tracked'],
+            steps: [{ kind: 'job', title: 'Launch job', actionParams: { asset: 'script' } }]
+        });
+        const receipt = await missions.mintApprovalReceipt({ ...args, origin: 'portal' });
+        await missions.approve({ ...args, receiptId: receipt.id, nonce: receipt.nonce });
+        const active = await missions.start(args);
+        let release;
+        let launched;
+        const gate = new Promise(resolve => { release = resolve; });
+        const entered = new Promise(resolve => { launched = resolve; });
+        jest.spyOn(missions, '_kickStep').mockImplementation(async ({ project, step }) => {
+            launched();
+            await gate;
+            const jobId = await db.insert(
+                `INSERT INTO observatory_jobs (projectId, userId, language, code, status, executionAttemptId)
+                 VALUES (@projectId, @userId, 'python', 'print(1)', 'RUNNING', @attemptId)`,
+                { projectId: project.id, userId: NATIVE_USER, attemptId: step.executionAttemptId }
+            );
+            return { jobId };
+        });
+        const pending = missions.startStep({ ...args, stepId: active.steps[0].id })
+            .then(result => ({ result }), error => ({ error }));
+        await entered;
+        let runtime;
+        try {
+            const deps = fakeDeps([]);
+            deps.projectMissionService = missions;
+            runtime = await startCoreRuntime({
+                gateway: new DisabledGateway(), schedulers: false,
+                logger: { info: () => {}, error: () => {} }, deps
+            });
+            const during = await missions.get(args);
+            expect(during.status).toBe('ACTIVE');
+            expect(during.steps[0].status).toBe('STARTING');
+        } finally {
+            release();
+            await runtime?.stop();
+        }
+        const outcome = await pending;
+        expect(outcome.error).toBeUndefined();
+        expect(outcome.result.status).toBe('ACTIVE');
+        expect(outcome.result.steps[0].status).toBe('RUNNING');
+        expect(outcome.result.steps[0].jobId).toBeTruthy();
     });
 });
 

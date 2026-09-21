@@ -96,6 +96,7 @@ const GROUPS = [
             'userSettingsService',
             'settingsRuntimePolicy',
             'independentRuntime',
+            'inboxPagination',
             'webAppApi',
             'webAppletService',
             'webChatBranchShare',

@@ -44,6 +44,8 @@ const parlorService = require('@goobster/core/services/parlorService');
 const attention = require('@goobster/core/services/attentionService');
 const policies = require('@goobster/core/services/attentionPolicyService');
 const eventBusService = require('@goobster/core/services/eventBusService');
+const inboxService = require('@goobster/core/services/inboxService');
+const identityService = require('@goobster/core/services/identityService');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
 const PNG_1X1 = Buffer.from(
@@ -333,12 +335,30 @@ function mountRendererHarness(app) {
     });
 }
 
+async function seedInboxAndPeople() {
+    await identityService.createNativePrincipal({ id: C.NATIVE_MEMBER, displayName: C.NATIVE_MEMBER_NAME });
+    await identityService.grantAccount({ principalId: C.NATIVE_MEMBER, entitlement: 'invite', loginName: 'native-colleague' });
+    await inboxService.deliver({ userId: C.OWNER, kind: 'task', title: C.INBOX_TITLE, body: C.INBOX_BODY });
+    await inboxService.deliver({
+        userId: C.OWNER, kind: 'task', title: C.INBOX_ATTACHMENT_TITLE,
+        attachments: [{ url: '/e2e/inbox-attachment.csv', name: 'review.csv' }]
+    });
+    for (let i = 1; i <= 51; i++) {
+        const { item } = await inboxService.deliver({
+            userId: C.OWNER, kind: 'task', title: `Archived result ${i}`,
+            body: `Archived details ${i}.`
+        });
+        await inboxService.archive({ userId: C.OWNER, itemId: item.id });
+    }
+}
+
 async function seed() {
     const observatory = makeObservatory();
     await seedExpedition(C.OWNER);
     await seedParlor(C.OWNER);
     await seedProject(observatory, C.OWNER);
     await seedAttention(C.OWNER);
+    await seedInboxAndPeople();
     return observatory;
 }
 
@@ -359,6 +379,9 @@ async function main() {
     const app = express();
     app.get('/health', (_req, res) => {
         res.json({ ok: true, db: DB_PATH });
+    });
+    app.get('/e2e/inbox-attachment.csv', (_req, res) => {
+        res.type('text/csv').send('name,value\nkept attachment,42\n');
     });
     mountRendererHarness(app);
     app.use(createWebAppApp(ctx));

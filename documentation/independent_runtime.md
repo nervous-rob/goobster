@@ -106,6 +106,12 @@ link, attachments, dedupeKey, discord })` **once per result**:
 `project`, `expedition`, `system`. `link` is a portal path (`/tasks`,
 `/parlor`, `/observatory`) the **Open →** button follows. `attachments` are
 `{ url, name }` pairs re-served by the existing file route.
+For local files, delivery also stores an internal file reference after
+checking the registry's owner. Inbox reads renew download URLs from that
+reference, so the registry's six-hour TTL does not expire a retained
+attachment. The file must still exist on disk; local paths never appear
+in API responses. Legacy URL-only items recover a reference when their
+registry row still exists, including after its TTL.
 
 ### Where deliveries go now
 
@@ -134,7 +140,11 @@ watches both use it, so their behaviour cannot drift apart.
 
 ### The portal side
 
-- `GET /api/app/inbox` (`?unread=1`, `?archived=1`), `GET /api/app/inbox/:id`,
+- `GET /api/app/inbox` accepts `unread=1`, `archived=1`, `limit`, and `cursor`
+  query parameters. It returns `{ items, unread, nextCursor }`; pass a
+  non-null `nextCursor` as `cursor` to load the next page. Ordering is
+  newest first, and the cursor is checked against the signed-in person's
+  own items. Other routes: `GET /api/app/inbox/:id`,
   `POST /api/app/inbox/:id/read` (`{ read: false }` puts it back),
   `POST /api/app/inbox/read-all`, `POST /api/app/inbox/:id/archive`. Items
   are the signed-in person's own; the routes never cross users.
@@ -166,7 +176,10 @@ await runtime.stop();
 
 - **Always:** event bus, chat-history retention, self-docs seeding, workshop
   pin migration, Observatory resume, mission reconcile, project-trigger
-  catch-up.
+  catch-up. Mission startup reconciliation uses the same two-minute stale
+  threshold as periodic recovery: a fresh `STARTING` claim may belong to
+  another process, including when the paired API restarts with its
+  schedulers disabled.
 - **Schedulers** (`schedulers: true`): automations, follow-up delivery,
   personal heartbeat (attention), Spitball expeditions, memory
   consolidation, knowledge reflection. Every pass that must not double up

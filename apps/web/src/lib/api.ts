@@ -225,8 +225,13 @@ export const api = {
     cancelFollowup: (id: number) => request(`/api/app/tasks/followups/${id}`, { method: 'DELETE' }),
     usage: (days = 30) => request(`/api/app/usage?days=${days}`),
 
-    inbox: ({ unread = false, archived = false }: { unread?: boolean; archived?: boolean } = {}) =>
-        request<InboxList>(`/api/app/inbox?${archived ? 'archived=1' : ''}${unread ? '&unread=1' : ''}`),
+    inbox: ({ unread = false, archived = false, cursor }: { unread?: boolean; archived?: boolean; cursor?: string | null } = {}) => {
+        const params = new URLSearchParams();
+        if (archived) params.set('archived', '1');
+        if (unread) params.set('unread', '1');
+        if (cursor) params.set('cursor', cursor);
+        return request<InboxList>(`/api/app/inbox?${params}`);
+    },
     inboxRead: (id: number, read = true) =>
         request<InboxItem>(`/api/app/inbox/${id}/read`, { method: 'POST', body: { read } }),
     inboxReadAll: () => request<{ updated: number }>('/api/app/inbox/read-all', { method: 'POST' }),

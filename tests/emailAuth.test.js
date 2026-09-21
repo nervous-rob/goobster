@@ -403,6 +403,32 @@ describe('open sign-up', () => {
         expect(await db.get('SELECT COUNT(*) AS c FROM app_accounts')).toEqual({ c: 1 });
     });
 
+    test('open sign-up reclaims an unverified address and invalidates the displaced claim', async () => {
+        const cookie = await member();
+        expect((await request({ method: 'PUT', reqPath: '/api/app/account/email', headers: { cookie }, body: { email: 'claimed@example.org' } })).status).toBe(200);
+        const displacedToken = tokenMailedTo('claimed@example.org', '/app/verify-email');
+        const { principalId } = await openSignup('rightful', 'claimed@example.org');
+        expect(await nativeAuthService.getEmail(SAM)).toBeNull();
+        expect(await nativeAuthService.findAccountByEmail('claimed@example.org')).toMatchObject({ principalId });
+        expect((await verify(displacedToken)).res.json.error.code).toBe('VERIFY_INVALID');
+        expect((await login('claimed@example.org', GOOD)).res.json.user.id).toBe(principalId);
+    });
+
+    test('signup reclamation racing verification preserves exactly one verified owner', async () => {
+        const cookie = await member();
+        await request({ method: 'PUT', reqPath: '/api/app/account/email', headers: { cookie }, body: { email: 'contested@example.org' } });
+        const existingToken = tokenMailedTo('contested@example.org', '/app/verify-email');
+        await signup({ loginName: 'contender', email: 'contested@example.org' });
+        const signupToken = tokenMailedTo('contested@example.org', '/app/verify-email');
+        const results = await Promise.all([verify(existingToken), verify(signupToken)]);
+        expect(results.filter(result => result.res.status === 200)).toHaveLength(1);
+        expect(results.filter(result => result.res.status !== 200)[0].res.json.error.code)
+            .toMatch(/^(VERIFY_INVALID|EMAIL_TAKEN)$/);
+        const rows = await db.all('SELECT principalId, verifiedAt FROM account_emails WHERE normalized = @email', { email: 'contested@example.org' });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].verifiedAt).toBeTruthy();
+    });
+
     test('the mail failing rolls the sign-up back so it can be retried at once', async () => {
         mailService.setTransport(async () => { throw new Error('smtp down'); });
         const res = await signup({ loginName: 'unlucky', email: 'unlucky@example.org' });
@@ -536,6 +562,36 @@ describe('an address on an existing account', () => {
 });
 
 describe('forgot password', () => {
+    test.each(['replace', 'remove'])('%s email invalidates old recovery links', async (operation) => {
+        const { cookie, principalId } = await openSignup('moving', 'old@example.org');
+        await request({ method: 'POST', reqPath: '/api/app/auth/forgot', body: { email: 'old@example.org' } });
+        const token = tokenMailedTo('old@example.org', '/app/recover');
+        const change = await request({
+            method: operation === 'replace' ? 'PUT' : 'DELETE', reqPath: '/api/app/account/email',
+            headers: { cookie }, body: operation === 'replace' ? { email: 'new@example.org' } : null
+        });
+        expect(change.status).toBe(200);
+        const reset = await request({ method: 'POST', reqPath: '/api/app/auth/recover', body: { token, password: `${GOOD} stolen` } });
+        expect(reset.json.error.code).toBe('RECOVERY_INVALID');
+        expect(await nativeAuthService.checkPassword(principalId, GOOD)).toBe(true);
+    });
+
+    test('recovery rechecks email ownership after a concurrent address removal', async () => {
+        const { principalId } = await openSignup('moving', 'old@example.org');
+        const lookup = nativeAuthService.findAccountByEmail.bind(nativeAuthService);
+        const spy = jest.spyOn(nativeAuthService, 'findAccountByEmail').mockImplementationOnce(async (email) => {
+            const account = await lookup(email);
+            await nativeAuthService.removeEmail(principalId);
+            return account;
+        });
+        outbox = [];
+        try {
+            expect(await nativeAuthService.requestRecovery({ email: 'old@example.org', baseUrl: PUBLIC_URL })).toEqual({ ok: true });
+            expect(outbox).toHaveLength(0);
+            expect(await db.get('SELECT COUNT(*) AS c FROM recovery_tokens')).toEqual({ c: 0 });
+        } finally { spy.mockRestore(); }
+    });
+
     test('the reset link goes to the verified address; using it rotates the credential and every other session', async () => {
         const { cookie: firstDevice, principalId } = await openSignup('forgetful', 'forget@example.org');
         const secondDevice = (await login('forgetful', GOOD)).cookie;
@@ -592,6 +648,17 @@ describe('forgot password', () => {
 });
 
 describe('throttles', () => {
+    test('spoofed X-Forwarded-For prefixes share the real client signup budget', async () => {
+        for (let i = 0; i < 5; i += 1) {
+            const result = await signup({ loginName: `proxied${i}`, email: `proxied${i}@example.org` },
+                { 'x-forwarded-for': `203.0.113.${i}, 198.51.100.8` });
+            expect(result.status).toBe(200);
+        }
+        const blocked = await signup({ loginName: 'proxiedlast', email: 'proxiedlast@example.org' },
+            { 'x-forwarded-for': '203.0.113.99, 198.51.100.8' });
+        expect(blocked.json.error.code).toBe('TOO_MANY_ATTEMPTS');
+    });
+
     test('sign-ups are limited per client address and mail per recipient', async () => {
         const from = { 'x-forwarded-for': '203.0.113.9' };
         for (let i = 0; i < 5; i += 1) {

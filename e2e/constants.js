@@ -7,7 +7,12 @@ module.exports = {
     OWNER_NAME: 'Rob',
     MEMBER: '800000000000000002',
     MEMBER_NAME: 'Frieda',
+    NATIVE_MEMBER: 'usr_0f7f5d0e-3333-4a2b-9c3d-000000000003',
+    NATIVE_MEMBER_NAME: 'Native colleague',
     BOT_ID: '900000000000000001',
+    INBOX_TITLE: 'Unread research result',
+    INBOX_BODY: 'Keep this result open while reading its detailed explanation.',
+    INBOX_ATTACHMENT_TITLE: 'Attachment only result',
 
     EXPEDITION_SEED: 'positive Grassmannian',
     EXPEDITION_INTENT: 'understand scattering amplitudes',
