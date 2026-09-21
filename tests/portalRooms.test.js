@@ -33,6 +33,23 @@ describe('room registry shape', () => {
         }
     });
 
+    test('Knowledge registers Notes, Map and Research as views under /knowledge (E2)', () => {
+        const views = rooms.ROOM_BY_ID.knowledge.views;
+        expect(views.map((view) => view.id)).toEqual(['notes', 'map', 'research']);
+        expect(views.map((view) => view.path)).toEqual(['/knowledge/notes', '/knowledge/map', '/knowledge/research']);
+        // The house name for research stays visible as a secondary label.
+        expect(views.find((view) => view.id === 'research').secondaryName).toBe('Expeditions');
+        // Every view path resolves to its own room and is unique across the registry.
+        const viewPaths = rooms.ROOMS.flatMap((room) => (room.views || []).map((view) => view.path));
+        expect(new Set(viewPaths).size).toBe(viewPaths.length);
+        for (const room of rooms.ROOMS) {
+            for (const view of room.views || []) {
+                expect(rooms.resolveRoom(view.path)).toBe(room.id);
+                expect(rooms.resolveRoomView(room.id, view.path)).toBe(view.id);
+            }
+        }
+    });
+
     test('lists all 28 planned tutorial ids exactly once across rooms', () => {
         const all = rooms.ROOMS.flatMap((room) => room.tutorials);
         expect(new Set(all).size).toBe(all.length);
@@ -80,7 +97,7 @@ describe('canonicalPath', () => {
     });
 
     test('leaves canonical, public and account paths alone', () => {
-        for (const path of ['/', '/chat', '/chat/9', '/knowledge', '/projects', '/discussions/4',
+        for (const path of ['/', '/chat', '/chat/9', '/knowledge', '/knowledge/notes', '/knowledge/map', '/knowledge/research', '/projects', '/discussions/4',
             '/activity/inbox', '/activity/attention', '/activity/scheduled', '/tools',
             '/conservatory', '/conservatory/rhythm', '/exchange', '/decks', '/usage', '/host',
             '/settings', '/settings/memory', '/share/tok']) {
@@ -106,6 +123,7 @@ describe('resolveRoom', () => {
         ['/', 'home'],
         ['/chat', 'chat'], ['/chat/12', 'chat'], ['/study/12', 'chat'],
         ['/knowledge', 'knowledge'], ['/spitball', 'knowledge'], ['/library', 'knowledge'],
+        ['/knowledge/notes', 'knowledge'], ['/knowledge/map', 'knowledge'], ['/knowledge/research', 'knowledge'], ['/spitball/research', 'knowledge'],
         ['/projects', 'projects'], ['/observatory', 'projects'], ['/observatory/graph', 'projects'], ['/workshop', 'projects'],
         ['/discussions/3', 'discussions'], ['/parlor', 'discussions'],
         ['/activity', 'activity'], ['/activity/inbox', 'activity'], ['/activity/attention', 'activity'],
@@ -126,6 +144,16 @@ describe('resolveRoom', () => {
         expect(rooms.resolveActivityView('/chat')).toBeNull();
     });
 
+    test('names the Knowledge view for a path; the bare room path is the Notes landing, not a view', () => {
+        expect(rooms.resolveKnowledgeView('/knowledge/notes')).toBe('notes');
+        expect(rooms.resolveKnowledgeView('/knowledge/map')).toBe('map');
+        expect(rooms.resolveKnowledgeView('/knowledge/research')).toBe('research');
+        expect(rooms.resolveKnowledgeView('/spitball/map')).toBe('map');
+        expect(rooms.resolveKnowledgeView('/knowledge')).toBeNull();
+        expect(rooms.resolveKnowledgeView('/activity/inbox')).toBeNull();
+        expect(rooms.resolveRoomView('chat', '/chat')).toBeNull();
+    });
+
     test('atmosphere follows the room and falls back to Home', () => {
         expect(rooms.atmosphereFor('knowledge')).toBe('room-library');
         expect(rooms.atmosphereFor('music')).toBe('room-conservatory');
@@ -137,6 +165,7 @@ describe('roomDisplayName (settings return links)', () => {
     test.each([
         ['/study', 'Chat'], ['/chat/4?x=1', 'Chat'],
         ['/knowledge', 'Knowledge'], ['/spitball', 'Knowledge'],
+        ['/knowledge/map', 'Knowledge · Map'], ['/knowledge/research', 'Knowledge · Research'],
         ['/observatory', 'Projects'], ['/parlor/2', 'Discussions'],
         ['/noticed', 'Activity · Attention'], ['/activity/inbox', 'Activity · Inbox'], ['/tasks', 'Activity · Scheduled'],
         ['/conservatory/rhythm', 'Music Lab'], ['/exchange', 'Trading game'],
@@ -219,6 +248,7 @@ describe('legacy #room/id hashes', () => {
         ['#parlor/7', '/discussions/7'], ['#spitball', '/knowledge'], ['#library', '/knowledge'], ['#memory', '/knowledge'],
         ['#workshop', '/projects'], ['#observatory', '/projects'],
         ['#inbox', '/activity/inbox'], ['#noticed', '/activity/attention'], ['#tasks', '/activity/scheduled'],
+        ['#expeditions', '/knowledge/research'],
         ['#conservatory/rhythm', '/conservatory/rhythm'], ['#exchange', '/exchange'], ['#mtga', '/decks'], ['#decks', '/decks'],
         ['#usage', '/usage'], ['#settings', '/settings'], ['#home', '/'],
         ['#study/not-an-id', '/chat'],

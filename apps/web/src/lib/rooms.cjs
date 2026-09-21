@@ -49,7 +49,16 @@ const ROOMS = [
         group: 'primary',
         atmosphere: 'room-library',
         legacyIds: ['spitball', 'library', 'memory'],
-        tutorials: ['knowledge.basics', 'knowledge.research']
+        tutorials: ['knowledge.basics', 'knowledge.research'],
+        // Knowledge opens on Notes; Map is the same projection drawn as a
+        // graph; Research is where expeditions are launched and read. The
+        // personal-memory views (About you / Facts / Memories) moved to
+        // Settings → Memory & privacy - see documentation/knowledge_and_memory.md.
+        views: [
+            { id: 'notes', name: 'Notes', icon: '📝', path: '/knowledge/notes' },
+            { id: 'map', name: 'Map', icon: '🕸️', path: '/knowledge/map' },
+            { id: 'research', name: 'Research', secondaryName: 'Expeditions', icon: '🧭', path: '/knowledge/research', legacyIds: ['expeditions'] }
+        ]
     },
     {
         id: 'projects',
@@ -272,24 +281,39 @@ function parentRoom(roomId) {
     return room?.parent || roomId;
 }
 
+/**
+ * The view of a room (Activity, Knowledge) a pathname points at, or null
+ * when the path is outside that room or on its bare landing path.
+ */
+function resolveRoomView(roomId, pathname) {
+    const path = canonicalPath(pathname);
+    const views = ROOM_BY_ID[roomId]?.views || [];
+    return views
+        .filter((view) => matchesPrefix(path, view.path))
+        .sort((a, b) => b.path.length - a.path.length)[0]?.id || null;
+}
+
 /** The Activity view a pathname points at, or null outside Activity. */
 function resolveActivityView(pathname) {
-    const path = canonicalPath(pathname);
-    const views = ROOM_BY_ID.activity.views;
-    return views.find((view) => matchesPrefix(path, view.path))?.id || null;
+    return resolveRoomView('activity', pathname);
+}
+
+/** The Knowledge view a pathname points at (`/knowledge` itself is null: it opens on Notes). */
+function resolveKnowledgeView(pathname) {
+    return resolveRoomView('knowledge', pathname);
 }
 
 function atmosphereFor(roomId) {
     return ROOM_BY_ID[roomId]?.atmosphere || 'room-home';
 }
 
-/** "Chat", "Knowledge", "Activity · Attention" - what a settings return link says it goes back to. */
+/** "Chat", "Knowledge · Map", "Activity · Attention" - what a settings return link says it goes back to. */
 function roomDisplayName(pathname) {
     const id = resolveRoom(pathname);
     const room = ROOM_BY_ID[id];
     if (!room) return 'where you were';
-    if (id === 'activity') {
-        const view = resolveActivityView(pathname);
+    if (room.views) {
+        const view = resolveRoomView(id, pathname);
         const meta = room.views.find((entry) => entry.id === view);
         return meta ? `${room.name} · ${meta.name}` : room.name;
     }
@@ -413,7 +437,9 @@ module.exports = {
     isLegacyPath,
     resolveRoom,
     parentRoom,
+    resolveRoomView,
     resolveActivityView,
+    resolveKnowledgeView,
     atmosphereFor,
     roomDisplayName,
     isRoomAvailable,

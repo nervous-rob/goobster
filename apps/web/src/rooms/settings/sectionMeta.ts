@@ -1,6 +1,6 @@
 import type { SettingsSectionId } from '../../lib/types';
 
-export type ScopeLabel = 'Your account' | 'Private chats & DMs' | 'This device';
+export type ScopeLabel = 'Your account' | 'Private chats & DMs' | 'This device' | 'A server you pick';
 
 export type SectionMeta = {
     id: SettingsSectionId;
@@ -147,7 +147,9 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'export', label: 'Export settings and report', keywords: ['export', 'download', 'backup'] },
     { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
     { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
-    { section: 'memory', fieldId: 'memory-report', label: 'What Goobster knows about you', keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency'] },
+    { section: 'memory', fieldId: 'memory-report', label: 'What Goobster knows about you', keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency', 'personal memory', 'about you', 'distilled'] },
+    { section: 'memory', fieldId: 'memory-scopes', label: 'Inspect a server scope', keywords: ['server', 'guild', 'scope', 'advanced', 'facts in a server', 'server memories'] },
+    { section: 'memory', fieldId: 'deletion-rules', label: 'What deleting removes', keywords: ['delete', 'deletion', 'linked copies', 'provenance', 'what is removed', 'transcripts'] },
     { section: 'memory', fieldId: 'forget-me', label: 'Forget me', keywords: ['forget', 'erase', 'delete everything', 'wipe', 'gdpr'] },
     { section: 'connections', fieldId: 'github', label: 'GitHub', keywords: ['github', 'git', 'repos', 'pull requests', 'token'] },
     { section: 'connections', fieldId: 'notion', label: 'Notion', keywords: ['notion', 'pages', 'notes', 'token'] },

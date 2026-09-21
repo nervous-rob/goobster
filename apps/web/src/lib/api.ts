@@ -202,11 +202,11 @@ export const api = {
     deleteMemory: (scope: string, id: number) =>
         request(`/api/app/memory/memories/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
     facts: (scope: string) => request(`/api/app/memory/facts?scope=${encodeURIComponent(scope)}`),
-    deleteFact: (scope: string, id: number) =>
-        request(`/api/app/memory/facts/${id}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
+    deleteFact: (scope: string, id: number | string) =>
+        request(`/api/app/memory/facts/${encodeURIComponent(String(id))}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
     graph: (guildId: string) => request(`/api/app/graph?guildId=${encodeURIComponent(guildId)}`),
-    constellation: (scope: string) =>
-        request(`/api/app/memory/constellation?scope=${encodeURIComponent(scope)}`),
+    constellation: (scope: string, view: 'knowledge' | 'memory' | 'all' = 'knowledge') =>
+        request(`/api/app/memory/constellation?scope=${encodeURIComponent(scope)}&view=${encodeURIComponent(view)}`),
     reflection: (scope: string, target: string) =>
         request(`/api/app/memory/reflection?scope=${encodeURIComponent(scope)}&target=${encodeURIComponent(target)}`),
     startReflection: (scope: string, target: string) =>
@@ -503,17 +503,27 @@ export const api = {
     spitballNoteEvidence: (nodeId: number | string) =>
         request(`/api/app/spitball/notes/${nodeId}/evidence`),
     spitballNotes: (scope: string, filters: {
-        q?: string; type?: string; tag?: string; source?: string; limit?: number; offset?: number;
+        q?: string; type?: string; tag?: string; source?: string;
+        /** Server-side curation projection (ADR 0008); defaults to `knowledge`. */
+        view?: 'knowledge' | 'memory' | 'all';
+        /** Exact curation filter on top of the projection. */
+        curation?: 'saved' | 'memory' | 'unclassified' | '';
+        limit?: number; offset?: number;
     } = {}) => {
         const params = new URLSearchParams({ scope });
         if (filters.q) params.set('q', filters.q);
         if (filters.type) params.set('type', filters.type);
         if (filters.tag) params.set('tag', filters.tag);
         if (filters.source) params.set('source', filters.source);
+        if (filters.view) params.set('view', filters.view);
+        if (filters.curation) params.set('curation', filters.curation);
         if (filters.limit) params.set('limit', String(filters.limit));
         if (filters.offset) params.set('offset', String(filters.offset));
         return request(`/api/app/spitball/notes?${params.toString()}`);
     },
+    /** Keep / Treat as memory: changes `curation` only, never source, content or revisions. */
+    spitballSetNoteCuration: (scope: string, nodeId: number | string, curation: 'saved' | 'memory') =>
+        request(`/api/app/spitball/notes/${nodeId}`, { method: 'PATCH', body: { scope, curation } }),
     spitballCreateNote: (scope: string, fields: Record<string, unknown>) =>
         request('/api/app/spitball/notes', { method: 'POST', body: { scope, ...fields } }),
     spitballUpdateNote: (scope: string, nodeId: number | string, fields: Record<string, unknown>) =>

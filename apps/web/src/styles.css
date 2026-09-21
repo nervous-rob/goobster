@@ -1382,22 +1382,53 @@ html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
    box instead and lays the view's pane out under it in normal flow. */
 #stage .activity-shell { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 #stage .activity-shell > .pane { position: relative; inset: auto; flex: 1; min-height: 0; }
-.activity-tabs {
+/* One strip style for every room with registered views (Activity, Knowledge). */
+.activity-tabs, .view-tabs {
   display: flex; gap: 4px; padding: 8px 24px 0; border-bottom: 1px solid var(--border);
   overflow-x: auto; flex: none; scrollbar-width: none;
 }
-.activity-tabs::-webkit-scrollbar { display: none; }
-.activity-tab {
+.activity-tabs::-webkit-scrollbar, .view-tabs::-webkit-scrollbar { display: none; }
+.activity-tab, .view-tab {
   display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px 10px;
   color: var(--text-dim); text-decoration: none; font-size: 14px; font-weight: 600;
   border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; border-radius: 8px 8px 0 0;
   transition: color 160ms, border-color 160ms, background 160ms;
 }
-.activity-tab:hover { color: var(--text); background: var(--bg-raise-2); }
-.activity-tab.active { color: var(--text); border-bottom-color: var(--accent); }
-.activity-tab-secondary { font-size: 11.5px; font-weight: 500; color: var(--text-dim); opacity: 0.85; }
+.activity-tab:hover, .view-tab:hover { color: var(--text); background: var(--bg-raise-2); }
+.activity-tab.active, .view-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.activity-tab-secondary, .view-tab-secondary { font-size: 11.5px; font-weight: 500; color: var(--text-dim); opacity: 0.85; }
 .activity-tab .nav-count { margin-left: 2px; }
 .activity-shell .pane-header { border-top: 0; }
+#pane-library > .view-tabs { padding-top: 4px; }
+
+/* Saved-knowledge curation (ADR 0008): kept / memory / unsorted. */
+.curation-badge { margin-left: 8px; font-size: 10.5px; text-transform: none; letter-spacing: 0; vertical-align: middle; }
+.curation-badge.curation-saved { color: #59d18c; border-color: rgba(89, 209, 140, 0.45); }
+.curation-badge.curation-memory { color: #ff7ac8; border-color: rgba(255, 122, 200, 0.45); }
+.curation-badge.curation-unclassified { color: var(--text-dim); border-style: dashed; }
+#pane-library .notes-projection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 8px; }
+#pane-library .notes-projection .notes-chips { margin: 0; }
+#pane-library .notes-projection-hint { flex: 1 1 260px; min-width: 0; }
+#pane-library .map-projection, #pane-library .map-mode { margin: 0; align-items: center; gap: 8px; }
+#pane-library .map-mode { margin-bottom: 10px; }
+#pane-library .notes-row.curation-row-memory .notes-row-title { color: var(--text-dim); }
+#pane-library .notes-keep { flex: none; align-self: center; }
+.link-btn {
+  background: none; border: 0; padding: 0; margin: 0; color: var(--accent); cursor: pointer;
+  font: inherit; text-decoration: underline; text-underline-offset: 2px;
+}
+.link-btn:hover { color: var(--text); }
+
+/* Personal memory (Settings → Memory & privacy) */
+.personal-memory { margin-top: 12px; }
+.personal-memory .segment { margin-bottom: 12px; }
+.personal-memory .mtab { max-width: none; margin: 0; }
+.personal-memory .stat-grid { margin-bottom: 12px; }
+.personal-memory .privacy-stage { margin-bottom: 8px; }
+.settings-scoped-panel { margin-top: 12px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 10px; background: var(--bg-raise); }
+.settings-scoped-title { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-bottom: 4px; }
+.deletion-rules { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.deletion-rules strong { color: var(--text); }
 
 .tools-intro { margin: 0 0 16px; max-width: 640px; }
 .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; max-width: 920px; }

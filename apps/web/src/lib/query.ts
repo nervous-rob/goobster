@@ -39,6 +39,9 @@ export const keys = {
     spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,
     memory: (scope: string, tab: string) => ['memory', scope, tab] as const,
+    /** The personal Map under one curation projection; `constellationRoot` invalidates every projection at once. */
+    constellation: (scope: string, view: string) => ['memory', scope, 'map', view] as const,
+    constellationRoot: (scope: string) => ['memory', scope, 'map'] as const,
     settings: ['settings'] as const
 };
 
