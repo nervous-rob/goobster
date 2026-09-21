@@ -7,19 +7,22 @@
  * occurrences, so the same PENDING-gated cancel covers both kinds).
  *
  * Portal-created tasks live in the user's DM scope (guildId "dm:<userId>")
- * and deliver to their Discord DM channel - the one place the bot can
- * always reach them. automationService executes DM-scope rows through the
- * same handleChatInteraction pipeline as guild automations (a DM-shaped
- * pseudo-interaction, never a parallel executor). Guild automations the
- * user created via /automation are listed (and cancellable - the same
- * authority /automation delete gives them) but new guild automations stay
- * a Discord-side action.
+ * and deliver to their in-app inbox (channelId "inbox:<userId>"), echoed
+ * to their Discord DM when they have one (shared-instance Increment C).
+ * automationService executes inbox rows through the same
+ * handleChatInteraction pipeline as guild automations (an inbox-shaped
+ * unattended turn, never a parallel executor), so creating a task never
+ * depends on Discord being connected. Guild automations the user created
+ * via /automation are listed (and cancellable - the same authority
+ * /automation delete gives them) but new guild automations stay a
+ * Discord-side action.
  */
 
 const { CronExpressionParser } = require('cron-parser');
 const db = require('../db');
-const { toGateway, isGatewayUnavailable } = require('../gateway');
+const { toGateway } = require('../gateway');
 const { dmScopeId, isDmScopeId } = require('../utils/dmScope');
+const { inboxChannelId, isInboxChannelId } = require('./inboxService');
 const { validateCron } = require('./automationManagerService');
 
 const MAX_NAME_LENGTH = 60;
@@ -59,6 +62,14 @@ class WebTaskService {
             if (isDmScopeId(guildId)) return 'Direct messages';
             return guildNames.get(guildId) || `Server ${guildId}`;
         };
+        // Where the result goes: the inbox (every portal-created task; a
+        // personal reminder of any origin), a Discord DM (legacy portal
+        // rows), or a server channel.
+        const deliveryOf = (row, kind) => {
+            if (isInboxChannelId(row.channelId)) return 'inbox';
+            if (isDmScopeId(row.guildId)) return kind === 'followup' ? 'inbox' : 'discord-dm';
+            return 'channel';
+        };
         const guildIds = [...new Set((await db.all(
             `SELECT guildId FROM automations WHERE userId = @userId
              UNION SELECT guildId FROM followups WHERE userId = @userId AND status = 'PENDING'`,
@@ -74,7 +85,7 @@ class WebTaskService {
         }
 
         const automations = (await db.all(
-            `SELECT id, guildId, name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
+            `SELECT id, guildId, channelId, name, promptText, schedule, isEnabled, lastRun, nextRun, metadata
              FROM automations WHERE userId = @userId
              ORDER BY isEnabled DESC, COALESCE(nextRun, '9999') ASC, id DESC`,
             { userId }
@@ -94,12 +105,13 @@ class WebTaskService {
                 lastRun: row.lastRun,
                 nextRun: row.nextRun,
                 scope: isDmScopeId(row.guildId) ? 'dm' : 'guild',
-                scopeName: scopeName(row.guildId)
+                scopeName: scopeName(row.guildId),
+                delivery: deliveryOf(row, 'automation')
             };
         });
 
         const followups = (await db.all(
-            `SELECT id, guildId, note, dueAt, createdAt, recurrence, recurMinutes, deliveryCount FROM followups
+            `SELECT id, guildId, channelId, note, dueAt, createdAt, recurrence, recurMinutes, deliveryCount FROM followups
              WHERE userId = @userId AND status = 'PENDING'
              ORDER BY dueAt ASC`,
             { userId }
@@ -113,7 +125,8 @@ class WebTaskService {
             recurMinutes: row.recurMinutes,
             deliveryCount: row.deliveryCount,
             scope: isDmScopeId(row.guildId) ? 'dm' : 'guild',
-            scopeName: scopeName(row.guildId)
+            scopeName: scopeName(row.guildId),
+            delivery: deliveryOf(row, 'followup')
         }));
 
         return { automations, followups };
@@ -133,33 +146,11 @@ class WebTaskService {
         }
     }
 
-    /** Resolve (creating if needed) the user's DM channel id for delivery. */
-    async _dmChannelId({ gateway, userId }) {
-        const resolved = toGateway(gateway);
-        if (!resolved) {
-            throw new WebTaskError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
-        }
-        let channelId;
-        try {
-            channelId = await resolved.resolveDmChannelId(userId);
-        } catch (error) {
-            if (isGatewayUnavailable(error)) {
-                throw new WebTaskError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
-            }
-            throw new WebTaskError(502, 'DM_UNAVAILABLE',
-                'Could not open your Discord DM - scheduled prompts are delivered there.', { cause: error });
-        }
-        if (!channelId) {
-            throw new WebTaskError(502, 'DM_UNAVAILABLE',
-                'Could not open your Discord DM - scheduled prompts are delivered there.');
-        }
-        return channelId;
-    }
-
     /**
      * Create a scheduled prompt. `cron` makes a recurring automation;
      * `dueAt` (ISO 8601, future) makes a one-shot followup. Exactly one of
-     * the two must be provided. Delivery is the user's Discord DM.
+     * the two must be provided. Delivery is the user's inbox (plus a
+     * Discord DM echo when they can receive one).
      * @param {Object} params - { gateway, userId, name, prompt, cron?, dueAt? }
      */
     async createTask({ gateway, client, userId, name, prompt, cron = null, dueAt = null }) {
@@ -195,7 +186,7 @@ class WebTaskService {
             }
 
             const { cron: cleanCron, nextRun } = this._validateCron(cron);
-            const channelId = await this._dmChannelId({ gateway: gateway || client, userId });
+            const channelId = inboxChannelId(userId);
             const row = await db.get(
                 `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun, metadata)
                  VALUES (@userId, @scope, @channelId, @name, @prompt, @cron, @nextRun, @metadata)
@@ -236,7 +227,7 @@ class WebTaskService {
                 `At most ${MAX_PENDING_FOLLOWUPS_PER_USER} pending reminders - cancel one first.`);
         }
 
-        const channelId = await this._dmChannelId({ gateway: gateway || client, userId });
+        const channelId = inboxChannelId(userId);
         const row = await db.get(
             `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
              VALUES (@scope, @channelId, @userId, @note, @dueAt)

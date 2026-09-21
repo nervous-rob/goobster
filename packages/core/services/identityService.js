@@ -16,6 +16,7 @@
 const crypto = require('node:crypto');
 const db = require('../db');
 const identityConfig = require('../config/identityConfig');
+const { isAssistantId } = require('./assistantIdentity');
 
 const SNOWFLAKE = /^\d{5,20}$/;
 const NATIVE_ID = /^usr_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -348,6 +349,64 @@ class IdentityService {
     }
 
     /**
+     * The public face of one member of this installation, or null when the
+     * id does not name an active account. Name and id only - never the
+     * login name, email, role, or providers (spec §6: people search never
+     * enumerates private account details).
+     * @param {string} principalId
+     * @returns {Promise<{ id: string, name: string }|null>}
+     */
+    async describeMember(principalId) {
+        if (!this.isPrincipalId(principalId)) return null;
+        const row = await db.get(
+            `SELECT p.id, p.displayName, a.loginName
+             FROM app_accounts a JOIN principals p ON p.id = a.principalId
+             WHERE a.principalId = @id AND a.status = 'active'`,
+            { id: String(principalId) }
+        );
+        if (!row) return null;
+        return { id: row.id, name: row.displayName || row.loginName || `Member ${row.id.slice(-6)}` };
+    }
+
+    /**
+     * Native people discovery (shared-instance Increment C): members of
+     * this installation whose display name or login name starts with the
+     * query. Only active accounts are eligible, the caller must hold one,
+     * a query of at least two characters is required (no browsing the
+     * whole roster), and the result carries name and id only.
+     *
+     * @param {{ actorId: string, q: string, exclude?: string[], limit?: number }} params
+     * @returns {Promise<Array<{ id: string, name: string, source: 'member' }>>}
+     */
+    async searchPeople({ actorId, q, exclude = [], limit = 20 }) {
+        const query = String(q ?? '').trim().toLowerCase();
+        if (query.length < 2) return [];
+        const caller = await this.getAccount(actorId);
+        if (!caller || caller.status !== 'active') return [];
+        const bounded = Math.max(1, Math.min(Number(limit) || 20, 50));
+        const escaped = query.replace(/[\\%_]/g, ch => `\\${ch}`);
+        const rows = await db.all(
+            `SELECT p.id, p.displayName, a.loginName
+             FROM app_accounts a JOIN principals p ON p.id = a.principalId
+             WHERE a.status = 'active'
+               AND (LOWER(COALESCE(p.displayName, '')) LIKE @prefix ESCAPE '\\'
+                    OR LOWER(COALESCE(a.loginName, '')) LIKE @prefix ESCAPE '\\')
+             ORDER BY COALESCE(p.displayName, a.loginName) ASC, p.id ASC
+             LIMIT ${bounded + exclude.length + 1}`,
+            { prefix: `${escaped}%` }
+        );
+        const blocked = new Set([String(actorId), ...exclude.map(String)]);
+        return rows
+            .filter(row => !blocked.has(String(row.id)))
+            .slice(0, bounded)
+            .map(row => ({
+                id: row.id,
+                name: row.displayName || row.loginName || `Member ${String(row.id).slice(-6)}`,
+                source: 'member'
+            }));
+    }
+
+    /**
      * One-time operator bootstrap from `identity.operators` (config.json) or
      * `GOOBSTER_IDENTITY_OPERATORS`. Idempotent: existing accounts are
      * promoted to operator, new ones are created with the `bootstrap`
@@ -513,6 +572,8 @@ class IdentityService {
         const summary = { total: owners.size, snowflake: 0, native: 0, unresolved: 0, withPrincipal: 0, withAccount: 0 };
         const unresolved = [];
         for (const [id, entry] of owners) {
+            // The assistant's own transcript rows are not a person's data.
+            if (isAssistantId(id)) continue;
             if (this.isSnowflake(id)) summary.snowflake += 1;
             else if (this.isNativeId(id)) summary.native += 1;
             else {

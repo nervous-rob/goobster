@@ -114,7 +114,8 @@ class RemoteGateway {
             if (this.fallbackBotUserId) {
                 // Degraded mode: the application client id IS the bot's user
                 // id, so DM-scoped surfaces keep working while the bot is out.
-                return { id: this.fallbackBotUserId, username: 'Goobster' };
+                const { assistantUser } = require('../services/assistantIdentity');
+                return { id: this.fallbackBotUserId, username: assistantUser().username };
             }
             throw error;
         }

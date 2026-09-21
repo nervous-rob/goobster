@@ -77,6 +77,14 @@ module.exports = {
         || identity.installationName
         || 'Goobster',
     /**
+     * The assistant's own name on every surface (chat, inbox items,
+     * generated messages). Discord's bot account is a transport identity;
+     * this is the installation-scoped one that exists with Discord off.
+     */
+    assistantName: String(process.env.GOOBSTER_ASSISTANT_NAME
+        || identity.assistantName
+        || 'Goobster').trim().slice(0, 32) || 'Goobster',
+    /**
      * Release gate for native (username + password) authentication:
      * invitations, registration, login, recovery, and credential enrollment.
      * Off by default - Discord OAuth remains the only sign-in until the

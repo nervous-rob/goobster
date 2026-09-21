@@ -138,6 +138,15 @@ class PrivacyService {
             { guildId, userId }
         );
 
+        // The in-app inbox (bot-wide, like web conversations): how many
+        // delivered items are kept, and how many are still unread.
+        const inbox = await db.get(
+            `SELECT COUNT(*) AS c,
+                    SUM(CASE WHEN readAt IS NULL AND archivedAt IS NULL THEN 1 ELSE 0 END) AS unread
+             FROM inbox_items WHERE userId = @userId`,
+            { userId }
+        );
+
         // Active read-only share links the user created (bot-wide, like
         // web conversations)
         const shareLinks = await db.get(
@@ -424,6 +433,7 @@ class PrivacyService {
                 enabled: Boolean(row.isEnabled),
                 nextRun: row.nextRun
             })),
+            inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
             shareLinks: shareLinks?.c || 0,
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
@@ -578,6 +588,10 @@ class PrivacyService {
             counts.automations = (await db.run(
                 'DELETE FROM automations WHERE userId = @userId', { userId }
             )).changes;
+
+            // The in-app inbox: delivered results of unattended work
+            // (reminders, task output, watch reports, invites, notices).
+            counts.inboxItems = await require('./inboxService').forgetUser(userId, db);
 
             // The whole attention footprint: the ledger of open loops
             // (provenance cascades), every notice and its feedback, the
@@ -1081,6 +1095,9 @@ class PrivacyService {
             )).c,
             automations: (await db.get(
                 'SELECT COUNT(*) AS c FROM automations WHERE userId = @userId', { userId }
+            )).c,
+            inbox_items: (await db.get(
+                'SELECT COUNT(*) AS c FROM inbox_items WHERE userId = @userId', { userId }
             )).c,
             web_share_links: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId', { userId }

@@ -2,10 +2,19 @@ const db = require('../db');
 const { CronExpressionParser } = require('cron-parser');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const { isDmScopeId } = require('../utils/dmScope');
+const { toGateway } = require('../gateway');
+const { isInboxChannelId } = require('./inboxService');
 
 class AutomationService {
-    constructor(client) {
-        this.client = client;
+    /**
+     * @param {Object|null} client - live discord.js client; null in a process
+     *   without one (the api service, a Discord-less installation), which
+     *   then runs only inbox-delivered automations.
+     * @param {{ gateway?: Object|null }} [options]
+     */
+    constructor(client, { gateway = null } = {}) {
+        this.client = client || null;
+        this.gateway = toGateway(gateway || client);
         this.checkInterval = 60000; // Check every minute
         // How long the poll loop waits on one run before moving on. The
         // claim already advanced nextRun, so a straggler finishing in the
@@ -41,7 +50,10 @@ class AutomationService {
      * up exactly where the previous one left off.
      */
     async getDueAutomations() {
-        // Timestamps are stored as UTC text, compared against CURRENT_TIMESTAMP
+        // Timestamps are stored as UTC text, compared against CURRENT_TIMESTAMP.
+        // Without a live client only inbox-delivered automations can run
+        // here; Discord-channel ones wait for the bot process.
+        const onlyInbox = this.client ? '' : "AND a.channelId LIKE 'inbox:%'";
         return await db.all(`
             SELECT
                 a.id, a.userId, a.guildId, a.channelId,
@@ -49,6 +61,7 @@ class AutomationService {
             FROM automations a
             WHERE a.isEnabled = 1
             AND a.nextRun <= CURRENT_TIMESTAMP
+            ${onlyInbox}
         `);
     }
 
@@ -219,8 +232,21 @@ class AutomationService {
         }
     }
 
-    /** Best-effort message to the automation's delivery channel. */
+    /** Best-effort message to the automation's delivery channel (or inbox). */
     _notifyChannel(automation, content) {
+        if (isInboxChannelId(automation.channelId) || !this.client) {
+            const inboxService = require('./inboxService');
+            inboxService.deliver({
+                userId: automation.userId,
+                kind: 'system',
+                title: `Scheduled task "${automation.name}" needs attention`,
+                body: content,
+                source: { type: 'automation', id: automation.id },
+                link: '/tasks',
+                discord: this.gateway ? { gateway: this.gateway } : false
+            }).catch(error => console.error(`Could not notify owner of automation ${automation.name}:`, error.message));
+            return;
+        }
         Promise.resolve()
             .then(() => this.client.channels.fetch(automation.channelId))
             .then(channel => channel?.send?.({ content, allowedMentions: { users: [], roles: [] } }))
@@ -255,6 +281,21 @@ class AutomationService {
         if (!await this.claimDueRun(automation)) return;
 
         try {
+            // Inbox-delivered automations (every task created from the
+            // portal) run the unattended turn and file the reply in the
+            // owner's inbox, echoing to Discord when they can receive it.
+            // No Discord client is involved, so this path is the same in
+            // every process.
+            if (isInboxChannelId(automation.channelId)) {
+                await this.executeInboxAutomation(automation);
+                await this.markRan(automation.id);
+                return;
+            }
+            if (!this.client) {
+                console.warn(`Automation "${automation.name}" delivers to Discord; this process has no client and leaves it to the bot.`);
+                return;
+            }
+
             // Get the channel
             const channel = await this.client.channels.fetch(automation.channelId);
             if (!channel) {
@@ -362,23 +403,70 @@ class AutomationService {
      * "dm:<userId>" scope - shared memory/facts/settings with their DMs
      * and web chats), delivered to their Discord DM channel.
      */
+    async executeInboxAutomation(automation) {
+        const unattendedTurnService = require('./unattendedTurnService');
+        const { displayNameFor } = unattendedTurnService;
+        const ownerName = await displayNameFor(automation.userId);
+        await unattendedTurnService.run({
+            userId: automation.userId,
+            prompt: automation.promptText,
+            kind: 'task',
+            title: `Scheduled task: ${automation.name}`,
+            source: { type: 'automation', id: automation.id },
+            link: '/tasks',
+            gateway: this.gateway,
+            client: this.client,
+            sourceDescription:
+                `You are executing "${automation.name}", a scheduled task ${ownerName} set up in advance. ` +
+                'This is a private one-on-one conversation; your reply is filed in their inbox in the web app ' +
+                '(and echoed to their Discord DMs when they have one) - address them directly and carry out the task now.'
+        });
+    }
+
     async executeDmAutomation(automation, channel) {
         const user = await this.client.users.fetch(automation.userId);
         const { chunkMessage } = require('../utils');
 
+        // The DM is the delivery this row asked for; the inbox keeps a
+        // durable copy of the same result (spec §6) so it survives a closed
+        // DM and shows up in the portal.
+        const delivered = [];
+        let dmFailure = null;
         const deliver = async (response) => {
             const content = typeof response === 'string' ? response : response?.content;
             if (!content) return;
+            delivered.push(content);
             // The banner rides the first chunk; DMs keep Discord's 2000-char cap
             const chunks = chunkMessage(`🤖 **Scheduled Task** - "${automation.name}"\n\n${content}`);
             let sent;
-            for (const [index, chunk] of chunks.entries()) {
-                sent = await channel.send({
-                    content: chunk,
-                    embeds: index === chunks.length - 1 && typeof response === 'object' ? response.embeds : undefined
-                });
+            try {
+                for (const [index, chunk] of chunks.entries()) {
+                    sent = await channel.send({
+                        content: chunk,
+                        embeds: index === chunks.length - 1 && typeof response === 'object' ? response.embeds : undefined
+                    });
+                }
+            } catch (error) {
+                dmFailure = error.message;
+                throw error;
             }
             return sent;
+        };
+        const fileInInbox = async () => {
+            if (delivered.length === 0) return;
+            try {
+                await require('./inboxService').deliver({
+                    userId: automation.userId,
+                    kind: 'task',
+                    title: `Scheduled task: ${automation.name}`,
+                    body: delivered.join('\n\n'),
+                    source: { type: 'automation', id: automation.id },
+                    link: '/tasks',
+                    discord: { status: dmFailure ? 'failed' : 'sent', error: dmFailure }
+                });
+            } catch (error) {
+                console.error(`Could not file automation "${automation.name}" in the inbox:`, error.message);
+            }
         };
 
         const pseudoInteraction = {
@@ -406,7 +494,11 @@ class AutomationService {
             }
         };
 
-        await handleChatInteraction(pseudoInteraction);
+        try {
+            await handleChatInteraction(pseudoInteraction);
+        } finally {
+            await fileInInbox();
+        }
     }
 
     async executeDigest(automation, channel) {

@@ -1,4 +1,4 @@
-import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -224,6 +224,15 @@ export const api = {
     deleteAutomation: (id: number) => request(`/api/app/tasks/automations/${id}`, { method: 'DELETE' }),
     cancelFollowup: (id: number) => request(`/api/app/tasks/followups/${id}`, { method: 'DELETE' }),
     usage: (days = 30) => request(`/api/app/usage?days=${days}`),
+
+    inbox: ({ unread = false, archived = false }: { unread?: boolean; archived?: boolean } = {}) =>
+        request<InboxList>(`/api/app/inbox?${archived ? 'archived=1' : ''}${unread ? '&unread=1' : ''}`),
+    inboxRead: (id: number, read = true) =>
+        request<InboxItem>(`/api/app/inbox/${id}/read`, { method: 'POST', body: { read } }),
+    inboxReadAll: () => request<{ updated: number }>('/api/app/inbox/read-all', { method: 'POST' }),
+    inboxArchive: (id: number) => request<{ archived: boolean }>(`/api/app/inbox/${id}/archive`, { method: 'POST' }),
+    people: (q: string) =>
+        request<{ people: Person[]; friendsSynced: boolean; discord: boolean }>(`/api/app/people?q=${encodeURIComponent(q)}`),
 
     attention: () => request('/api/app/attention'),
     attentionEnroll: (initiative?: string) =>

@@ -111,6 +111,9 @@ The full table is in *Raspberry Pi Setup Guide → Troubleshooting*.
 | `/app` returns `503 WEB_CLIENT_UNBUILT` | React client not built | Operator: `npm run build:web` |
 | Login loop / OAuth error | `webapp.publicUrl` missing or does not match the Developer Portal redirect | Operator; *Web App Setup §1-3* |
 | Guild panes say `BOT_OFFLINE` | Split deployment and the bot is unreachable from the api process; DM-scoped panes keep working | Operator checks the bot container and `GOOBSTER_INTERNAL_TOKEN` |
+| Server scopes / Exchange say `DISCORD_DISABLED`, Exchange missing from the nav | The installation has no Discord adapter (`discord.enabled: false` or no bot token) - by design, not a fault | Nothing to fix; Discord-specific features need a bot token (*Independent runtime*) |
+| Exchange says `NO_DISCORD_IDENTITY` | A native (`usr_…`) account with no linked Discord identity on a Discord-connected installation | Settings → Account → Connect Discord |
+| A reminder or task result never arrives in Discord DMs | Delivery lands in the **Inbox** first; the Discord echo is skipped when the person has no Discord identity or DMs are closed | Open the Inbox room; `discordStatus` on the item says why the echo was skipped |
 | "Works on localhost only" | `webapp.devMode` mints sessions without Discord - never on an internet-exposed server | Operator |
 
 ## Sandbox runs and Observatory jobs

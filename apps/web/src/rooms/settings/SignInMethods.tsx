@@ -5,6 +5,7 @@ import { keys } from '../../lib/query';
 import { useConfirm } from '../../hooks/useConfirm';
 import { useToast } from '../../hooks/useToast';
 import { Field } from './SectionFrame';
+import { useMe } from '../../hooks/useSession';
 
 const ACCOUNT_KEY = ['account-summary'];
 
@@ -15,6 +16,7 @@ const ACCOUNT_KEY = ['account-summary'];
  * panel offers a re-auth box when the server says so.
  */
 export function SignInMethods() {
+    const me = useMe();
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
@@ -266,7 +268,11 @@ export function SignInMethods() {
                             }}>Connect Discord</a>
                         )}
                         {data.discord.canConnect && !data.discordLoginAvailable && (
-                            <span className="hint">Discord login is not configured here.</span>
+                            <span className="hint">
+                                {me.discord?.enabled === false
+                                    ? 'This installation is not connected to Discord.'
+                                    : 'Discord login is not configured here.'}
+                            </span>
                         )}
                         {data.discord.linked && data.kind === 'native' && (
                             <button type="button" className="btn subtle small" disabled={busy || !data.discord.canDisconnect}

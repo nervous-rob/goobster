@@ -1837,6 +1837,34 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 .workshop-preview-stage .applet { height: 100%; }
 .workshop-preview-stage .applet-frame { height: min(70vh, 640px); }
 
+/* ---------- inbox ---------- */
+
+.nav-count {
+  margin-left: auto; font-size: 11px; font-weight: 700; line-height: 1;
+  padding: 3px 7px; border-radius: 20px; background: var(--accent); color: var(--bg);
+}
+.inbox-count { font-size: 12px; padding: 2px 9px; margin-left: 8px; }
+.inbox-row { align-items: flex-start; }
+.inbox-row.unread strong { color: var(--text); }
+.inbox-row:not(.unread) strong { font-weight: 600; color: var(--text-dim); }
+.inbox-row-main {
+  background: transparent; border: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer; padding: 0; flex: 1; min-width: 0;
+}
+.inbox-row-main:hover strong { text-decoration: underline; }
+.inbox-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); margin-left: 8px; vertical-align: 2px;
+}
+.inbox-body { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.inbox-actions { display: flex; gap: 4px; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.inbox-actions .btn.subtle { padding: 2px 8px; font-size: 12px; }
+.discord-off-note {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-raise); color: var(--text-dim); font-size: 13px; margin-bottom: 14px;
+}
+
 /* ---------- forget theater ---------- */
 
 .forget-modal { width: min(460px, 92vw); display: flex; flex-direction: column; gap: 14px; }

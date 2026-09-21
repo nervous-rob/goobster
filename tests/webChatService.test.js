@@ -446,9 +446,17 @@ describe('turn validation', () => {
             .rejects.toThrow(expect.objectContaining({ status: 429, code: 'RATE_LIMITED' }));
     });
 
-    test('rejects turns while the bot is offline with 503', async () => {
-        await expect((async () => await webChatService.startTurn({ client: {}, userId: USER, userName: 'rob', message: 'hi' }))())
-            .rejects.toThrow(expect.objectContaining({ status: 503, code: 'BOT_OFFLINE' }));
+    test('a turn without a Discord identity runs as the installation assistant, never "bot offline"', async () => {
+        // Discord's bot user is a transport identity (spec §6): with no
+        // client and no gateway the turn still runs, authored by the
+        // installation-scoped assistant identity.
+        const { assistantUser } = require('@goobster/core/services/assistantIdentity');
+        const turn = await webChatService.startTurn({ client: {}, userId: USER, userName: 'rob', message: 'hi' });
+        await turn.run({});
+        const interaction = handleChatInteraction.mock.calls.at(-1)[0];
+        expect(interaction.client.user.id).toBe(assistantUser().id);
+        expect(interaction.client.user.username).toBe(assistantUser().username);
+        await turn.release();
     });
 
     test('validates vision attachments: shape, count, and data-URL format', async () => {

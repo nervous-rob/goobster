@@ -2736,3 +2736,42 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
     expiresAt TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------------------------------------------------------------------------
+-- The in-app inbox (shared-instance Increment C, spec §6). Every result
+-- produced by unattended work for one person - a due reminder, a scheduled
+-- task's reply, a watch that fired, an invitation, a notice the attention
+-- system decided to raise - is written here FIRST, then optionally echoed
+-- to Discord. `discordStatus` records that echo separately, so a failed DM
+-- never loses the result and a retry never re-runs the work. Items are the
+-- person's private data: erased by /forget-me, counted by auditUser.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inbox_items (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    kind TEXT NOT NULL
+        CHECK (kind IN ('reminder', 'task', 'watch', 'notice', 'invite', 'project', 'expedition', 'system')),
+    title TEXT NOT NULL,
+    body TEXT,
+    -- Where it came from: 'followup:12', 'automation:3', 'watch:7', ...
+    sourceType TEXT,
+    sourceId TEXT,
+    -- Portal deep link (path under /app), when there is somewhere to go
+    link TEXT,
+    -- JSON array of { url, name } attachments re-served by the file route
+    attachmentsJson TEXT,
+    -- Idempotency for producers that may re-derive the same result
+    dedupeKey TEXT,
+    readAt TEXT,
+    archivedAt TEXT,
+    -- The optional Discord echo of this item, tracked separately from the
+    -- item itself: 'skipped' (no Discord identity / adapter), 'sent', 'failed'
+    discordStatus TEXT NOT NULL DEFAULT 'skipped'
+        CHECK (discordStatus IN ('skipped', 'sent', 'failed')),
+    discordError TEXT,
+    discordSentAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbox_items_user ON inbox_items(userId, archivedAt, createdAt);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_dedupe ON inbox_items(userId, dedupeKey);

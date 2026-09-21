@@ -1090,7 +1090,7 @@ describe('orphan reaping and resume', () => {
 });
 
 describe('notifications', () => {
-    test('a finished background job files a follow-up in the user\'s DM scope', async () => {
+    test('a finished background job files a follow-up against the user\'s inbox in their DM scope', async () => {
         const svc = makeService();
         const userId = nextUser();
         await svc.createProject({ userId, name: 'notify-me' });
@@ -1110,14 +1110,16 @@ describe('notifications', () => {
             { userId }
         ));
         expect(followup.guildId).toBe(`dm:${userId}`);
-        expect(followup.channelId).toBe('dm-channel-1');
+        // Delivery is the follow-up pass's job: inbox first, Discord echo
+        // when the person has it - so the row never names a DM channel.
+        expect(require('@goobster/core/services/inboxService').isInboxChannelId(followup.channelId)).toBe(true);
         expect(followup.status).toBe('PENDING');
         expect(followup.note).toContain(`job #${jobId}`);
         expect(followup.note).toContain('notify-me');
         expect(followup.note).toContain('finished successfully');
     }, 20_000);
 
-    test('no client = no notification, and never an error', async () => {
+    test('no client = the notification is still filed (the inbox needs no Discord), and never an error', async () => {
         const svc = makeService();
         const userId = nextUser();
         await svc.createProject({ userId, name: 'silent' });
@@ -1126,9 +1128,10 @@ describe('notifications', () => {
         });
         const job = await waitForJob(svc, userId, jobId);
         expect(job.status).toBe('COMPLETED');
-        expect((await db.get(
-            'SELECT COUNT(*) AS c FROM followups WHERE userId = @userId', { userId }
-        )).c).toBe(0);
+        const followup = await waitFor(async () => await db.get(
+            'SELECT channelId FROM followups WHERE userId = @userId', { userId }
+        ));
+        expect(require('@goobster/core/services/inboxService').isInboxChannelId(followup.channelId)).toBe(true);
     }, 20_000);
 });
 

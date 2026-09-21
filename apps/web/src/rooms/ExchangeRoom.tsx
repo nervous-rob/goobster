@@ -87,10 +87,13 @@ type Order = {
 type Leaderboard = { rows: Array<{ name?: string; userId?: string; isBot?: boolean; accountType?: string; marginCall?: boolean; cash?: number; exposure?: number; debt?: number; equity?: number }>; currencyName?: string };
 
 function isBotOffline(error: unknown): boolean {
-    return error instanceof ApiError && (error.status === 503 || error.code === 'BOT_OFFLINE');
+    return error instanceof ApiError && (error.status === 503 || error.code === 'BOT_OFFLINE' || error.code === 'DISCORD_DISABLED');
 }
 
 function errorText(error: unknown): string {
+    if (error instanceof ApiError && error.code === 'DISCORD_DISABLED') {
+        return 'This installation is not connected to Discord, and the Exchange is a Discord-server game - there is nothing to trade here.';
+    }
     if (isBotOffline(error)) {
         return 'Goobster is offline right now — the Exchange needs the Discord bot connected. Try again once it is back.';
     }
@@ -755,8 +758,11 @@ export function ExchangeRoom() {
                 </header>
                 <div className="pane-body">
                     <div className="empty">
-                        The exchange is per-server: wallets, positions, and the feature switches all live in a Discord server.
-                        Join a server Goobster is in (or invite him to yours) and it shows up here.
+                        {me.discord?.enabled === false
+                            ? 'The Exchange is a Discord-server game - wallets, positions, and the feature switches all live in a server - and this installation is not connected to Discord.'
+                            : me.identity && !me.identity.discordLinked
+                                ? 'The Exchange is per-server: wallets and positions live in a Discord server. Connect Discord in Settings → Account and join a server Goobster is in to play.'
+                                : 'The exchange is per-server: wallets, positions, and the feature switches all live in a Discord server. Join a server Goobster is in (or invite him to yours) and it shows up here.'}
                     </div>
                 </div>
             </main>

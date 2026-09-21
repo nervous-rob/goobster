@@ -413,20 +413,28 @@ describe('the interruption policy', () => {
         expect(delivered.c).toBeGreaterThan(0);
     });
 
-    test('a DM that fails to send leaves the notice undelivered for next time', async () => {
+    test('a DM that fails to send still lands in the inbox, with the Discord failure recorded', async () => {
         const policy = await enroll('delegate');
         await seedUrgentDeadline();
         aiService.generateText.mockImplementation(keepAll());
         const gateway = fakeGateway({ ok: false });
 
         const summary = await attention.sweepUser({ policy, gateway });
-        expect(summary.contacted).toBe(false);
-        const stuck = await db.get(
-            `SELECT COUNT(*) AS c FROM attention_notices
-             WHERE userId = @u AND status = 'surfaced'`,
+        // The inbox is the durable delivery (spec §6); Discord is the echo.
+        expect(summary.contacted).toBe(true);
+        const item = await db.get(
+            `SELECT * FROM inbox_items WHERE userId = @u AND kind = 'notice' ORDER BY id DESC LIMIT 1`,
             { u: USER }
         );
-        expect(stuck.c).toBeGreaterThan(0);
+        expect(item).toBeTruthy();
+        expect(item.discordStatus).toBe('failed');
+        expect(item.discordError).toBe('blocked');
+        const delivered = await db.get(
+            `SELECT COUNT(*) AS c FROM attention_notices
+             WHERE userId = @u AND status = 'delivered'`,
+            { u: USER }
+        );
+        expect(delivered.c).toBeGreaterThan(0);
     });
 });
 
@@ -812,17 +820,19 @@ describe('watches wait for conditions', () => {
         // that fires with no content produces "no message provided" and
         // silently wastes the condition it was waiting for.
         const { handleChatInteraction } = require('@goobster/core/utils/chatHandler');
+        handleChatInteraction.mockImplementationOnce(async (interaction) => {
+            await interaction.sendFullResponse('The bifurcation held for 8 of 10 seeds.');
+        });
         const sent = [];
-        const channel = {
-            id: 'dm-channel',
-            isTextBased: () => true,
-            sendTyping: async () => {},
-            send: async (payload) => { sent.push(payload.content); return { id: 'm1' }; }
-        };
         watches.attach({
             user: { id: '999999999999999999' },
-            users: { fetch: async () => ({ id: USER, username: 'rob', createDM: async () => channel }) },
-            channels: { fetch: async () => channel },
+            users: {
+                fetch: async () => ({
+                    id: USER, username: 'rob',
+                    send: async (payload) => { sent.push(payload.content); return { id: 'm1', channelId: 'dm' }; }
+                })
+            },
+            channels: { fetch: async () => null },
             guilds: { cache: new Map() }
         });
         try {
@@ -847,13 +857,21 @@ describe('watches wait for conditions', () => {
             expect(interaction.sourceDescription).toContain('observatory.job_completed');
             expect(interaction.sourceDescription).toContain('emergence-study');
 
-            // Delivery is labelled with the watch, so an unprompted message is
-            // always traceable to the thing the user asked him to watch for.
-            await interaction.sendFullResponse('The bifurcation held for 8 of 10 seeds.');
+            // A personal watch files its result in the inbox first (labelled
+            // with the watch, so an unprompted message is always traceable to
+            // the thing the user asked him to watch for), then echoes to Discord.
+            const item = await db.get(
+                `SELECT * FROM inbox_items WHERE userId = @userId AND kind = 'watch' ORDER BY id DESC LIMIT 1`,
+                { userId: USER }
+            );
+            expect(item.title).toContain('run result');
+            expect(item.body).toContain('bifurcation held');
+            expect(item.discordStatus).toBe('sent');
             expect(sent[0]).toContain('run result');
             expect(sent[0]).toContain('bifurcation held');
         } finally {
             watches.detach();
+            await db.run('DELETE FROM inbox_items WHERE userId = @userId', { userId: USER });
         }
     });
 

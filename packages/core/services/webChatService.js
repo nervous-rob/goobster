@@ -20,6 +20,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const db = require('../db');
 const { toGateway } = require('../gateway');
+const { resolveAssistantUser } = require('./assistantIdentity');
+const identityConfig = require('../config/identityConfig');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const sandboxConfig = require('../config/sandboxConfig');
 const { dmScopeId } = require('../utils/dmScope');
@@ -1537,21 +1539,13 @@ class WebChatService {
         images = null, files = null, incognito = false,
         isAutomation = false, sourceDescription = null, spoken = false
     }) {
-        // Resolve the bot identity through whichever seam this process has:
-        // the live client (bot / lite), or the gateway (the api service).
-        // RemoteGateway falls back to the configured application client id
-        // when the bot is down, so DM-scoped chat keeps working (spec §6
-        // degraded mode) - only a process with neither is truly offline.
+        // Resolve the assistant identity through whichever seam this process
+        // has: the live client (bot / lite), the gateway (the api service
+        // reaching the bot), or the installation's own assistant identity.
+        // Discord's bot user is a transport identity, not a prerequisite for
+        // a chat turn (spec §6), so this never reports the bot as offline.
         const resolvedGateway = toGateway(gateway || client);
-        let botUser = client?.user ? { id: client.user.id, username: client.user.username } : null;
-        if (!botUser && resolvedGateway) {
-            try {
-                botUser = await resolvedGateway.botUser();
-            } catch { /* unreachable and no fallback */ }
-        }
-        if (!botUser?.id) {
-            throw new WebChatError(503, 'BOT_OFFLINE', 'Goobster is not connected to Discord yet.');
-        }
+        const botUser = await resolveAssistantUser({ client, gateway: resolvedGateway });
         this._rememberRuntime(userId, { client, gateway: resolvedGateway, userName });
         const text = String(message ?? '').trim();
         if (!text) {
@@ -1842,8 +1836,9 @@ class WebChatService {
         // In the api process there is no live client: tools that only read
         // the bot identity get this shim, and everything that actually
         // needs Discord goes through interaction.gateway.
-        const effectiveClient = client
-            || { user: { id: botUserId, username: botUser?.username || 'Goobster' } };
+        const effectiveClient = client?.user?.id
+            ? client
+            : { user: { id: botUserId, username: botUser?.username || identityConfig.assistantName } };
 
         const channel = {
             id: channelId,

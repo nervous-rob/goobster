@@ -64,9 +64,19 @@ you left off). Chat is the Study — a verb from Home, not the landing page.
   slash commands use, so every feature gate and margin rule applies
   identically - see `documentation/jimbucks_exchange.md`.
 
+- **Inbox** - where unattended work lands: due reminders, scheduled task
+  output, watch reports, attention notices, invitations. Every result is
+  stored here first and echoed to Discord DMs as an optional extra, so a
+  person with no Discord account (or an installation with no Discord) still
+  receives everything - see `documentation/independent_runtime.md`.
+
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
 server (the one that serves `/health` and the Activity) also serve the web
-client at `/app` and its API under `/api/app/*`.
+client at `/app` and its API under `/api/app/*`. The same portal can also
+run **without Discord** as `apps/api` in standalone mode (no bot token,
+`discord.enabled: false` or simply no `token`): chat, memory, tasks,
+projects, and the Inbox all work; server scopes and the Exchange say the
+installation is not connected to Discord.
 
 ## 1. Configuration
 
@@ -137,7 +147,13 @@ access token once to resolve the user, and never stores it.
   password reset or disable revokes them). Details: `identity.md`.
 - Guild data access is verified live through the bot client: browsing a
   guild scope requires actual membership, and the knowledge graph requires
-  Manage Server (parity with `/monologue graph`).
+  Manage Server (parity with `/monologue graph`). With the bot unreachable
+  those panes answer `503 BOT_OFFLINE` (transient); with no Discord adapter
+  at all they answer `503 DISCORD_DISABLED`; a native account with no linked
+  Discord identity gets `403 NO_DISCORD_IDENTITY` and a pointer to
+  Settings → Account. `GET /api/app/me` carries `discord: { enabled,
+  connected, reason }`, `assistant: { id, name }`, and `inbox: { unread }`
+  so the client can degrade the right surfaces.
 - `/forget-me` deletes the user's web sessions along with everything else,
   and the erasure audit counts the table.
 
@@ -293,9 +309,17 @@ in `/margin`, the same way the chat tools require explicit confirmation.
 ```
 
 Open `http://localhost:3000/app/`, mint a dev identity (any snowflake-shaped
-id), and chat. Dev identities get real DM-scope data keyed on that id, so
-use a test id if you don't want test conversations mixed into a real user's
-memory.
+id or a `usr_…` principal id), and chat. Dev identities get real DM-scope
+data keyed on that id, so use a test id if you don't want test conversations
+mixed into a real user's memory.
+
+To develop against the portal with **no Discord token at all**, run the api
+in standalone mode against a throwaway database:
+
+```bash
+GOOBSTER_DISCORD_ENABLED=0 GOOBSTER_DB_PATH=/tmp/dev.sqlite GOOBSTER_API_PORT=3100 node apps/api
+# then http://localhost:3100/app/
+```
 
 Guild-scoped panes (the memory dashboard's guild scopes, the knowledge graph,
 and the whole exchange terminal) verify real membership through the bot

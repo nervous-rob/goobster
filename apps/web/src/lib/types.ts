@@ -21,10 +21,46 @@ export type Me = {
         registration?: RegistrationMode;
         mail?: boolean;
     };
+    /** The Discord bot user when Discord is connected; null otherwise (kept for compatibility). */
     bot: { id: string; name: string } | null;
+    /** The assistant's identity on this installation - always present, with or without Discord. */
+    assistant: { id: string; name: string };
+    /** The Discord adapter: part of this installation at all, and reachable right now. */
+    discord: { enabled: boolean; connected: boolean; reason: string | null };
+    /** The in-app inbox: unread count for the sidebar badge. */
+    inbox: { unread: number };
     scopes: Scope[];
     maxInputLength: number;
     features: { observatory?: boolean; spitball?: boolean };
+};
+
+export type InboxKind = 'reminder' | 'task' | 'watch' | 'notice' | 'invite' | 'project' | 'expedition' | 'system';
+
+/** One delivered result of unattended work (GET /api/app/inbox). */
+export type InboxItem = {
+    id: number;
+    kind: InboxKind;
+    title: string;
+    body: string | null;
+    source: { type: string; id: string | null } | null;
+    link: string | null;
+    attachments: Array<{ url: string; name: string | null }>;
+    read: boolean;
+    archived: boolean;
+    /** The optional Discord echo of this item: bookkeeping, never the source of truth. */
+    discord: { status: 'skipped' | 'sent' | 'failed'; error: string | null; sentAt: string | null };
+    createdAt: string;
+};
+
+export type InboxList = { items: InboxItem[]; unread: number };
+
+/** Someone the signed-in person can reach (GET /api/app/people, invite pickers). */
+export type Person = {
+    id: string;
+    name: string;
+    avatar?: string | null;
+    source: 'friend' | 'server' | 'member';
+    via?: string | null;
 };
 
 export type Entitlement = 'invite' | 'migration' | 'bootstrap' | 'open';
@@ -293,6 +329,8 @@ export type AppConfig = {
     /** "Forgot password" by email is available. */
     emailRecovery: boolean;
     installationName: string;
+    /** Whether this installation has a Discord adapter at all. */
+    discord: boolean;
     passwordMinLength: number;
     maxInputLength: number;
 };
