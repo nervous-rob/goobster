@@ -218,7 +218,7 @@ export function MemorySection({ section, userId, onDirty }: {
                     )}
                 </div>
                 <div className="settings-inline-row">
-                    <Link to="/spitball" className="btn">Open Spitball →</Link>
+                    <Link to="/knowledge" className="btn">Open Knowledge →</Link>
                 </div>
             </Field>
 

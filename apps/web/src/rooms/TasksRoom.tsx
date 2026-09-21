@@ -51,7 +51,7 @@ export function TasksRoom() {
             <header className="pane-header">
                 <div className="title-row">
                     <MenuButton />
-                    <h1>Tasks</h1>
+                    <h1>Scheduled <span className="room-secondary">Tasks</span></h1>
                 </div>
                 <button type="button" className="btn primary" onClick={() => setCreating(true)}>✚ New task</button>
             </header>
@@ -64,7 +64,7 @@ export function TasksRoom() {
                         <div className="empty-title">Nothing scheduled yet</div>
                         <div className="hint" style={{ maxWidth: 440, margin: '0 auto' }}>
                             Scheduled tasks are prompts {me.assistant.name} runs for you on a timer. Results land in your{' '}
-                            <Link to="/inbox">Inbox</Link>{me.discord.enabled ? ' - and in your Discord DMs when you have them.' : '.'}
+                            <Link to="/activity/inbox">Inbox</Link>{me.discord.enabled ? ' - and in your Discord DMs when you have them.' : '.'}
                         </div>
                     </div>
                 )}

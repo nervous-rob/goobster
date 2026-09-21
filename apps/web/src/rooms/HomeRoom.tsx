@@ -6,6 +6,7 @@ import { keys } from '../lib/query';
 import { bindTilt, formatClock, formatRelativeTime, greeting } from '../lib/atmosphere';
 import { useMe } from '../hooks/useSession';
 import { MenuButton } from '../shell/MenuButton';
+import { PRIMARY_ROOMS, isRoomAvailable } from '../lib/rooms';
 
 type HomePayload = {
     you?: { factCount?: number; memoryCount?: number; nickname?: string; facts?: string[] };
@@ -82,24 +83,32 @@ export function HomeRoom() {
                                 <h1 className="home-hello">{greeting(me.user.name || '')}</h1>
                                 <p className="home-sub">
                                     {me.discord?.enabled === false
-                                        ? `${me.assistant.name} lives here. Chat is one of the rooms.`
-                                        : 'Same brain as Discord. Chat is one of the rooms.'}
+                                        ? `${me.assistant.name} lives here. Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.`
+                                        : 'Same brain as Discord. Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.'}
                                 </p>
                             </div>
                         </header>
-                        <div className="home-talk">
-                            <button type="button" className="btn primary big" onClick={() => navigate({ to: '/study' })}>
-                                Talk to Goobster
+                        <div className="home-talk" data-tour="home-create">
+                            <button type="button" className="btn primary big" data-tour="home-new-chat" onClick={() => navigate({ to: '/chat' })}>
+                                💬 New chat
                             </button>
-                            <button type="button" className="btn" onClick={() => {
+                            <button type="button" className="btn" data-tour="home-new-note" onClick={() => navigate({ to: '/knowledge' })}>
+                                🧠 New note
+                            </button>
+                            {(observatory.enabled || me.features?.observatory) && (
+                                <button type="button" className="btn" data-tour="home-new-project" onClick={() => navigate({ to: '/projects' })}>
+                                    🔭 New project
+                                </button>
+                            )}
+                            <button type="button" className="btn subtle" onClick={() => {
                                 const last = pickup.conversations?.[0];
-                                if (last) navigate({ to: '/study/$conversationId', params: { conversationId: String(last.id) } });
-                                else navigate({ to: '/study' });
+                                if (last) navigate({ to: '/chat/$conversationId', params: { conversationId: String(last.id) } });
+                                else navigate({ to: '/chat' });
                             }}>Pick up the last chat</button>
                         </div>
                         <div className="home-grid">
-                            <Card title="What I know about you" action="Open Spitball →"
-                                extraClass="home-card-you" onClick={() => navigate({ to: '/spitball' })}
+                            <Card title="Personal memory" action="Inspect in Settings → Memory & privacy →"
+                                extraClass="home-card-you" onClick={() => navigate({ to: '/settings/$section', params: { section: 'memory' } })}
                                 body={(
                                     <>
                                         <div className="home-counts">
@@ -109,14 +118,14 @@ export function HomeRoom() {
                                         </div>
                                         <ul className="home-facts">
                                             {(you.facts || []).slice(0, 5).map((f) => <li key={f}>{f}</li>)}
-                                            {!(you.facts || []).length && <li className="hint">Nothing distilled yet — talk in the Study.</li>}
+                                            {!(you.facts || []).length && <li className="hint">Nothing distilled yet — talk in Chat. Saved notes live in Knowledge, separately.</li>}
                                         </ul>
                                     </>
                                 )}
                             />
-                            <Card title={inbox.unread > 0 ? `Inbox · ${inbox.unread} unread` : 'Inbox'} action="Open Inbox →"
+                            <Card title={inbox.unread > 0 ? `Activity · ${inbox.unread} unread` : 'Activity'} action="Open Activity →"
                                 extraClass={`home-card-inbox${inbox.unread > 0 ? ' is-live' : ''}`}
-                                onClick={() => navigate({ to: '/inbox' })}
+                                onClick={() => navigate({ to: '/activity/inbox' })}
                                 body={(
                                     inbox.recent.length
                                         ? (
@@ -126,12 +135,12 @@ export function HomeRoom() {
                                                 ))}
                                             </ul>
                                         )
-                                        : <div className="hint">Reminders, task results, and invitations land here{me.discord?.enabled ? ' (and in your Discord DMs)' : ''}.</div>
+                                        : <div className="hint">Reminders, task results, notices, and invitations land in your Inbox{me.discord?.enabled ? ' (and in your Discord DMs)' : ''}.</div>
                                 )}
                             />
-                            <Card title="What I'm watching" action="Open Tasks →"
+                            <Card title="Scheduled" action="Open Activity → Scheduled →"
                                 extraClass={`home-card-watch${followups.length || automations.some((a) => a.enabled) ? ' is-live' : ''}`}
-                                onClick={() => navigate({ to: '/tasks' })}
+                                onClick={() => navigate({ to: '/activity/scheduled' })}
                                 body={(
                                     (followups.length || automations.length)
                                         ? (
@@ -144,7 +153,7 @@ export function HomeRoom() {
                                                 ))}
                                             </ul>
                                         )
-                                        : <div className="hint">No follow-ups or automations right now.</div>
+                                        : <div className="hint">No reminders or recurring tasks right now.</div>
                                 )}
                             />
                             <div className="home-card">
@@ -153,29 +162,29 @@ export function HomeRoom() {
                                     {(pickup.conversations?.length || pickup.parlor?.length) ? (
                                         <ul className="home-list home-pickup">
                                             {(pickup.conversations || []).slice(0, 4).map((c) => (
-                                                <li key={`c-${c.id}`} onClick={() => navigate({ to: '/study/$conversationId', params: { conversationId: String(c.id) } })}>
+                                                <li key={`c-${c.id}`} onClick={() => navigate({ to: '/chat/$conversationId', params: { conversationId: String(c.id) } })}>
                                                     <span>💬 {c.title}</span> <When iso={c.lastMessageAt} />
                                                 </li>
                                             ))}
                                             {(pickup.parlor || []).slice(0, 3).map((c) => (
-                                                <li key={`p-${c.id}`} onClick={() => navigate({ to: '/parlor/$conversationId', params: { conversationId: String(c.id) } })}>
+                                                <li key={`p-${c.id}`} onClick={() => navigate({ to: '/discussions/$conversationId', params: { conversationId: String(c.id) } })}>
                                                     <span>🛋️ {c.title}</span> <When iso={c.lastMessageAt} />
                                                 </li>
                                             ))}
                                         </ul>
-                                    ) : <div className="hint">No conversations yet. The Study is empty and waiting.</div>}
+                                    ) : <div className="hint">No conversations yet. Start one in Chat.</div>}
                                 </div>
                             </div>
-                            <Card title="Tools I built you" action="Open the inbox →" onClick={() => navigate({ to: '/observatory' })}
+                            <Card title="Unfiled apps" action="Open Projects →" onClick={() => navigate({ to: '/projects' })}
                                 body={workshop.pinned?.length
                                     ? <ul className="home-list">{workshop.pinned.slice(0, 3).map((a) => <li key={a.title}>{a.title}</li>)}</ul>
                                     : <div className="hint">{workshop.discoveredCount
-                                        ? `${workshop.discoveredCount} mini-app${workshop.discoveredCount === 1 ? '' : 's'} waiting in the Observatory inbox.`
-                                        : 'Ask in the Study: “build me a …” and it lands in the Observatory inbox.'}</div>}
+                                        ? `${workshop.discoveredCount} generated app${workshop.discoveredCount === 1 ? '' : 's'} waiting to be filed under a project.`
+                                        : 'Ask in Chat: “build me a …” and the app waits here until you file it under a project.'}</div>}
                             />
                             {(observatory.enabled || me.features?.observatory) && (
-                                <Card title="The Observatory" extraClass={`home-card-obs${observatory.runningJobs ? ' is-live' : ''}`}
-                                    action="Open the dome →" onClick={() => navigate({ to: '/observatory' })}
+                                <Card title="Projects" extraClass={`home-card-obs${observatory.runningJobs ? ' is-live' : ''}`}
+                                    action="Open Projects →" onClick={() => navigate({ to: '/projects' })}
                                     body={observatory.projectCount
                                         ? (
                                             <>
@@ -186,22 +195,18 @@ export function HomeRoom() {
                                                 {observatory.latest && <p className="hint">Last touched {observatory.latest.name} <When iso={observatory.latest.updatedAt} /></p>}
                                             </>
                                         )
-                                        : <div className="hint">The dome is dark. Ask in the Study to start a simulation.</div>}
+                                        : <div className="hint">No projects yet. Create one to bring a conversation, selected notes, a plan, and runs together.</div>}
                                 />
                             )}
                         </div>
-                        <div className="home-doors-label">More rooms</div>
+                        <div className="home-doors-label">Everywhere else</div>
                         <div className="home-doors">
-                            {([
-                                ['🛋️ Parlor', '/parlor'],
-                                ['🎹 Conservatory', '/conservatory'],
-                                ['📊 Exchange', '/exchange'],
-                                ['🗓️ Tasks', '/tasks'],
-                                ['🃏 Decks', '/decks'],
-                                ['📈 Usage', '/usage']
-                            ] as const).map(([label, to]) => (
-                                <Door key={to} label={label} onClick={() => navigate({ to })} />
-                            ))}
+                            {PRIMARY_ROOMS
+                                .filter((room) => room.path !== '/' && isRoomAvailable(room, me))
+                                .map((room) => (
+                                    <Door key={room.id} label={`${room.icon} ${room.name}`} onClick={() => navigate({ to: room.path as never })} />
+                                ))}
+                            <Door label="📈 Usage & limits" onClick={() => navigate({ to: '/usage' })} />
                         </div>
                         {!!home.servers?.length && (
                             <div className="home-servers hint">

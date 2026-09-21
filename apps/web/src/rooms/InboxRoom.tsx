@@ -135,7 +135,7 @@ export function InboxRoom() {
                         <div className="hint" style={{ maxWidth: 480, margin: '0 auto' }}>
                             {view === 'open'
                                 ? <>When {me.assistant.name} finishes something for you while you are away - a reminder comes due,
-                                    a scheduled <Link to="/tasks">task</Link> runs, a watch fires, someone invites you - the result lands here
+                                    a scheduled <Link to="/activity/scheduled">task</Link> runs, a watch fires, someone invites you - the result lands here
                                     {me.discord.enabled ? ', and in your Discord DMs when you have them.' : '.'}</>
                                 : 'Items you archive stay readable here.'}
                         </div>

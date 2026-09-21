@@ -832,7 +832,7 @@ class ObservatoryService {
                         title: `Project "${notice.name || notice.slug}" was deleted`,
                         body: line,
                         source: { type: 'project', id: notice.slug || notice.name },
-                        link: '/observatory',
+                        link: '/projects',
                         discord: resolved ? { gateway: resolved, payload: { content: line } } : false
                     });
                 } catch { /* a notice is best effort */ }
@@ -3385,9 +3385,9 @@ class ObservatoryService {
                 userId: invitee,
                 kind: 'invite',
                 title: `${ownerName || 'Someone'} invited you to the project "${row.name}"`,
-                body: 'Accept or decline it from Observatory → Invitations in the web app.',
+                body: 'Accept or decline it from Projects → Invitations in the web app.',
                 source: { type: 'project-invite', id: invite.id },
-                link: '/observatory',
+                link: '/projects',
                 discord: resolvedGateway ? {
                     gateway: resolvedGateway,
                     payload: this._inviteMessage({ inviteId: invite.id, inviterName: ownerName, name: row.name })

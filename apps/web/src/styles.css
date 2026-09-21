@@ -1368,3 +1368,58 @@ html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
     min-height: 44px;
   }
 }
+
+/* ---------- navigation contract: sidebar, Activity, Tools ---------- */
+
+.nav-secondary {
+  margin-left: 6px; font-size: 11.5px; font-weight: 500; color: var(--text-dim);
+  letter-spacing: 0; opacity: 0.85;
+}
+.nav-btn.active .nav-secondary { color: var(--text-dim); }
+.nav-account { margin-top: 6px; }
+
+/* The stage positions every pane absolutely; the Activity strip owns that
+   box instead and lays the view's pane out under it in normal flow. */
+#stage .activity-shell { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+#stage .activity-shell > .pane { position: relative; inset: auto; flex: 1; min-height: 0; }
+.activity-tabs {
+  display: flex; gap: 4px; padding: 8px 24px 0; border-bottom: 1px solid var(--border);
+  overflow-x: auto; flex: none; scrollbar-width: none;
+}
+.activity-tabs::-webkit-scrollbar { display: none; }
+.activity-tab {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px 10px;
+  color: var(--text-dim); text-decoration: none; font-size: 14px; font-weight: 600;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; border-radius: 8px 8px 0 0;
+  transition: color 160ms, border-color 160ms, background 160ms;
+}
+.activity-tab:hover { color: var(--text); background: var(--bg-raise-2); }
+.activity-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.activity-tab-secondary { font-size: 11.5px; font-weight: 500; color: var(--text-dim); opacity: 0.85; }
+.activity-tab .nav-count { margin-left: 2px; }
+.activity-shell .pane-header { border-top: 0; }
+
+.tools-intro { margin: 0 0 16px; max-width: 640px; }
+.tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; max-width: 920px; }
+a.tools-card { text-decoration: none; }
+.tools-card { transform: none; }
+.tools-card.is-unavailable { cursor: default; opacity: 0.78; }
+.tools-card.is-unavailable:hover { border-color: var(--border); box-shadow: none; }
+.tools-card-head { display: flex; align-items: center; gap: 12px; }
+.tools-card-icon { font-size: 26px; line-height: 1; }
+.tools-card-title { font-weight: 700; font-size: 16px; }
+.tools-card-secondary { font-size: 12.5px; }
+.tools-card-blurb { margin: 0; color: var(--text-dim); font-size: 14px; flex: 1; }
+.tools-card-unavailable {
+  font-size: 13px; color: var(--text-dim); padding: 8px 10px; border-radius: 8px;
+  background: var(--bg-raise-2); border: 1px dashed var(--border);
+}
+
+@media (max-width: 720px) {
+  .activity-tabs { padding: 6px 12px 0; }
+  .activity-tab { padding: 8px 10px 10px; font-size: 13.5px; }
+  .activity-tab-secondary { display: none; }
+}
+.room-secondary {
+  margin-left: 6px; font-size: 12px; font-weight: 500; color: var(--text-dim); letter-spacing: 0;
+}

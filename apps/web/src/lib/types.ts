@@ -1,3 +1,5 @@
+import type { StartPage } from './rooms';
+
 export type Scope = {
     id: string;
     kind: 'dm' | 'guild';
@@ -545,7 +547,7 @@ export type UserSettingsResponse = {
             density: 'comfortable' | 'compact';
             enterToSend: boolean;
             expandChatDetails: boolean;
-            startPage: 'home' | 'study' | 'noticed' | 'spitball' | 'parlor' | 'exchange' | 'conservatory';
+            startPage: StartPage;
             preferredExchangeGuild: string | null;
             expeditionDefaultDepth: 'focused' | 'standard' | 'deep';
             expeditionDefaultLens: string;

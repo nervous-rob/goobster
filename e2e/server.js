@@ -339,6 +339,12 @@ async function seedInboxAndPeople() {
     await identityService.createNativePrincipal({ id: C.NATIVE_MEMBER, displayName: C.NATIVE_MEMBER_NAME });
     await identityService.grantAccount({ principalId: C.NATIVE_MEMBER, entitlement: 'invite', loginName: 'native-colleague' });
     await inboxService.deliver({ userId: C.OWNER, kind: 'task', title: C.INBOX_TITLE, body: C.INBOX_BODY });
+    // A row stored under a pre-consolidation portal path: the client's
+    // route aliases must still take it to Activity → Scheduled.
+    await inboxService.deliver({
+        userId: C.OWNER, kind: 'reminder', title: C.INBOX_LEGACY_LINK_TITLE,
+        body: 'Its link still says /tasks.', link: '/tasks'
+    });
     await inboxService.deliver({
         userId: C.OWNER, kind: 'task', title: C.INBOX_ATTACHMENT_TITLE,
         attachments: [{ url: '/e2e/inbox-attachment.csv', name: 'review.csv' }]

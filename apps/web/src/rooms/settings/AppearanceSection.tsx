@@ -16,6 +16,7 @@ import {
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { useSession } from '../../hooks/useSession';
+import { START_PAGE_OPTIONS, startPageOptionFor } from '../../lib/rooms';
 
 type Values = UserSettingsResponse['sections']['appearance']['values'];
 type Draft = {
@@ -190,15 +191,11 @@ export function AppearanceSection({ section, onDirty }: {
 
             <Field id="start-page" label="Start page" scope="Your account"
                 hint="Where the portal opens after sign-in. Falls back to Home if that room is unavailable.">
-                <select id="start-page-input" className="input" value={d.draft.startPage}
+                <select id="start-page-input" className="input" value={startPageOptionFor(d.draft.startPage)}
                     onChange={(e) => d.set({ startPage: e.target.value as Draft['startPage'] })}>
-                    <option value="home">Home</option>
-                    <option value="study">Study</option>
-                    <option value="noticed">Noticed</option>
-                    <option value="spitball">Spitball</option>
-                    <option value="parlor">Parlor</option>
-                    <option value="exchange">Exchange</option>
-                    <option value="conservatory">Conservatory</option>
+                    {START_PAGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                 </select>
             </Field>
 
@@ -246,9 +243,9 @@ export function AppearanceSection({ section, onDirty }: {
                     onClick={() => d.set({ linkByTag: !d.draft.linkByTag })} />
             </Field>
 
-            <Field id="conservatory" label="Conservatory library" scope="This device"
-                hint="Music-engine parameters stay in the Conservatory editors. Settings can only point you there or clear this device's local library from Account.">
-                <Link className="btn" to="/conservatory">Open the Conservatory</Link>
+            <Field id="conservatory" label="Music Lab library" scope="This device"
+                hint="Music-engine parameters stay in the Music Lab editors. Settings can only point you there or clear this device's local library from Account.">
+                <Link className="btn" to="/conservatory">Open Music Lab</Link>
             </Field>
 
             <SaveBar section="appearance" draft={{ ...d,

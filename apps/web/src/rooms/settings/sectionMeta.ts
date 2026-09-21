@@ -39,7 +39,7 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Chat & models',
         icon: '💬',
         scope: 'Private chats & DMs',
-        blurb: 'Which AI platform and model answers in the Study and your DMs, and how hard it thinks.',
+        blurb: 'Which AI platform and model answers in Chat and your DMs, and how hard it thinks.',
         keywords: ['ai', 'model', 'provider', 'platform', 'openai', 'anthropic', 'gemini', 'ollama', 'reasoning', 'thinking', 'thoughtful', 'temperature', 'tokens', 'tools', 'usage', 'parlor', 'research']
     },
     {
@@ -143,7 +143,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'new-chat-privacy', label: 'Default new-chat privacy', keywords: ['incognito', 'private chat', 'new chat'] },
     { section: 'memory', fieldId: 'learn-memories', label: 'Learn new long-term memories', keywords: ['learn', 'extract memories', 'write memories'] },
     { section: 'memory', fieldId: 'use-memories', label: 'Use existing memories', keywords: ['recall', 'use memories', 'read memories'] },
-    { section: 'memory', fieldId: 'chat-history', label: 'Study chat-history retention', keywords: ['chat history', 'transcripts', 'conversation expiry'] },
+    { section: 'memory', fieldId: 'chat-history', label: 'Chat-history retention', keywords: ['chat history', 'study', 'transcripts', 'conversation expiry'] },
     { section: 'memory', fieldId: 'export', label: 'Export settings and report', keywords: ['export', 'download', 'backup'] },
     { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
     { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
@@ -164,7 +164,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'link-by-tag', label: 'Link notes by shared tag', keywords: ['tags', 'link by tag', 'map', 'graph', 'spitball'] },
     { section: 'appearance', fieldId: 'expedition-defaults', label: 'Defaults for new expeditions', keywords: ['expedition', 'depth', 'lens', 'spitball defaults'] },
     { section: 'appearance', fieldId: 'parlor-defaults', label: 'Defaults for new personas', keywords: ['parlor', 'persona defaults', 'charter', 'emoji'] },
-    { section: 'appearance', fieldId: 'conservatory', label: 'Conservatory library', keywords: ['conservatory', 'music', 'local storage'] },
+    { section: 'appearance', fieldId: 'conservatory', label: 'Music Lab library', keywords: ['conservatory', 'music lab', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
     { section: 'account', fieldId: 'sign-in-password', label: 'Login name & password', keywords: ['password', 'passphrase', 'login name', 'username', 'change password', 'sign in without discord'] },
     { section: 'account', fieldId: 'sign-in-discord', label: 'Discord connection', keywords: ['discord', 'connect', 'disconnect', 'link', 'unlink'] },

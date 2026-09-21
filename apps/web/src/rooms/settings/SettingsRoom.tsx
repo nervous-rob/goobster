@@ -5,6 +5,7 @@ import { useMe } from '../../hooks/useSession';
 import { useConfirm } from '../../hooks/useConfirm';
 import { MenuButton } from '../../shell/MenuButton';
 import type { SettingsSectionId } from '../../lib/types';
+import { roomDisplayName } from '../../lib/rooms';
 import { SECTIONS, SECTION_BY_ID, isSectionId, searchSettings } from './sectionMeta';
 import { useFieldAnchor } from './SectionFrame';
 import { ProfileSection } from './ProfileSection';
@@ -18,14 +19,10 @@ import { AccountSection } from './AccountSection';
 
 const UNSAVED = 'You have unsaved settings changes. Leave and discard them?';
 
-const ROOM_NAMES: Record<string, string> = {
-    study: 'the Study', noticed: 'Noticed', spitball: 'Spitball', parlor: 'the Parlor',
-    library: 'the Library', workshop: 'the Workshop', observatory: 'the Observatory'
-};
-
+// The return link names the room through the registry, so a location saved
+// under an older path ("/study/12?x=1") still reads "Back to Chat".
 function roomName(href: string): string {
-    const first = href.replace(/^\//, '').split(/[/?#]/)[0] || '';
-    return ROOM_NAMES[first] || 'where you were';
+    return roomDisplayName(href.split(/[?#]/)[0] || '/');
 }
 
 /**

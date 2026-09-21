@@ -416,7 +416,7 @@ describe('follow-up delivery without a Discord client', () => {
         const { items } = await inboxService.list({ userId: NATIVE_USER });
         expect(items).toHaveLength(1);
         expect(items[0]).toEqual(expect.objectContaining({
-            kind: 'reminder', title: 'Reminder: water the plants', link: '/tasks',
+            kind: 'reminder', title: 'Reminder: water the plants', link: '/activity/scheduled',
             source: { type: 'followup', id: String(personal.id) }
         }));
         expect(items[0].body).toContain('water the plants');
@@ -494,7 +494,7 @@ describe('native people discovery', () => {
         expect(result.dmSent).toBe(false);
         const { items } = await inboxService.list({ userId: NATIVE_PEER });
         expect(items).toHaveLength(1);
-        expect(items[0]).toEqual(expect.objectContaining({ kind: 'invite', link: '/observatory' }));
+        expect(items[0]).toEqual(expect.objectContaining({ kind: 'invite', link: '/projects' }));
         expect(items[0].title).toContain('Quiet Garden');
         expect(items[0].discord.status).toBe('skipped');
 

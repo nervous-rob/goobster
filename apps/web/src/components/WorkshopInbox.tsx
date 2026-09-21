@@ -223,10 +223,10 @@ export function WorkshopInbox({
                             className="btn"
                             onClick={() => {
                                 setCurrent(null);
-                                navigate({ to: '/observatory' });
+                                navigate({ to: '/projects' });
                             }}
                         >
-                            Open in Observatory
+                            Open in Projects
                         </button>
                     ) : null}
                     {current.conversationId ? (
@@ -234,7 +234,7 @@ export function WorkshopInbox({
                             type="button"
                             className="btn"
                             onClick={() => navigate({
-                                to: '/study/$conversationId',
+                                to: '/chat/$conversationId',
                                 params: { conversationId: String(current.conversationId) }
                             })}
                         >

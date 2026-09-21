@@ -184,12 +184,12 @@ test('search finds Phase 3 fields and chat-history shows a preview', async ({ pa
 
 test('room shortcuts open the matching section with a way back', async ({ page }) => {
     await login(page);
-    await page.getByRole('navigation', { name: 'Rooms' }).getByRole('link', { name: 'Study' }).click();
+    await page.getByRole('navigation', { name: 'Rooms' }).getByRole('link', { name: /Chat/ }).click();
     await page.getByRole('button', { name: 'Chat settings' }).click();
     await expect(page).toHaveURL(/\/app\/settings\/chat/);
     await expect(page.getByRole('heading', { level: 1, name: 'Chat & models' })).toBeVisible();
-    await page.getByRole('link', { name: /Back to the Study/ }).click();
-    await expect(page).toHaveURL(/\/app\/study/);
+    await page.getByRole('link', { name: /Back to Chat/ }).click();
+    await expect(page).toHaveURL(/\/app\/chat/);
 });
 
 test('saved creation defaults reach the expedition and persona forms', async ({ page }) => {

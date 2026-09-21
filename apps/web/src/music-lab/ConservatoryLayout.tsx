@@ -16,7 +16,7 @@ export function ConservatoryLayout() {
             <div className="conservatory-toolbar">
                 <div className="title-row conservatory-title-row">
                     <MenuButton />
-                    <div className="chat-title">Conservatory</div>
+                    <div className="chat-title">Music Lab <span className="room-secondary">the Conservatory</span></div>
                 </div>
                 <SiteNav />
             </div>

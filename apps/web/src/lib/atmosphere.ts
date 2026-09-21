@@ -1,23 +1,9 @@
-const ROOM_CLASS: Record<string, string> = {
-    home: 'room-home',
-    study: 'room-study',
-    parlor: 'room-parlor',
-    library: 'room-library',
-    // Spitball inherits the Library's wash (same room, new name)
-    spitball: 'room-library',
-    workshop: 'room-workshop',
-    conservatory: 'room-conservatory',
-    observatory: 'room-observatory',
-    exchange: 'room-exchange',
-    tasks: 'room-tasks',
-    noticed: 'room-noticed',
-    decks: 'room-decks',
-    usage: 'room-usage',
-    // Settings is calm and neutral: it borrows the Usage wash
-    settings: 'room-usage'
-};
-
-const ROOM_CLASSES = Object.values(ROOM_CLASS);
+// Every wash the stylesheet defines. Which room wears which lives in the
+// room registry (lib/rooms) - this module only paints.
+const ROOM_CLASSES = [
+    'room-home', 'room-study', 'room-parlor', 'room-library', 'room-workshop', 'room-conservatory',
+    'room-observatory', 'room-exchange', 'room-tasks', 'room-noticed', 'room-decks', 'room-usage'
+];
 const TOD_CLASSES = ['tod-morning', 'tod-day', 'tod-dusk', 'tod-night'];
 
 export function timeOfDayClass(date = new Date()): string {
@@ -29,10 +15,11 @@ export function timeOfDayClass(date = new Date()): string {
     return 'tod-night';
 }
 
-export function applyAtmosphere(room: string): void {
+/** Paint a room wash (`room-*` class from the registry) plus the time of day. */
+export function applyAtmosphere(roomClass: string): void {
     const { body } = document;
     for (const cls of ROOM_CLASSES) body.classList.remove(cls);
-    body.classList.add(ROOM_CLASS[room] || 'room-home');
+    body.classList.add(ROOM_CLASSES.includes(roomClass) ? roomClass : 'room-home');
     for (const cls of TOD_CLASSES) body.classList.remove(cls);
     body.classList.add(timeOfDayClass());
 }

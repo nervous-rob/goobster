@@ -1346,9 +1346,9 @@ class ParlorService {
                 title: conversation.title
                     ? `${ownerName || 'Someone'} invited you to the discussion "${conversation.title}"`
                     : `${ownerName || 'Someone'} invited you to a parlor discussion`,
-                body: 'Accept or decline it from Parlor → Invitations in the web app.',
+                body: 'Accept or decline it from Discussions → Invitations in the web app.',
                 source: { type: 'parlor-invite', id: invite.id },
-                link: '/parlor',
+                link: '/discussions',
                 discord: resolvedGateway ? {
                     gateway: resolvedGateway,
                     payload: this._inviteMessage({ inviteId: invite.id, inviterName: ownerName, title: conversation.title })

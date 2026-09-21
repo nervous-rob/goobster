@@ -13,6 +13,7 @@ module.exports = {
     INBOX_TITLE: 'Unread research result',
     INBOX_BODY: 'Keep this result open while reading its detailed explanation.',
     INBOX_ATTACHMENT_TITLE: 'Attachment only result',
+    INBOX_LEGACY_LINK_TITLE: 'Reminder written before the rename',
 
     EXPEDITION_SEED: 'positive Grassmannian',
     EXPEDITION_INTENT: 'understand scattering amplitudes',

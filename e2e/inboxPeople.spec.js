@@ -9,7 +9,7 @@ test('an opened unread result survives the filtered refetch until it is closed',
     const item = (await response.json()).items.find(row => row.title === C.INBOX_TITLE);
     expect(item).toBeTruthy();
     await page.request.post(`/api/app/inbox/${item.id}/read`, { data: { read: false } });
-    await openRoom(page, /Inbox/);
+    await openRoom(page, /Activity/);
     await page.getByRole('tab', { name: 'Unread', exact: true }).click();
     const row = page.locator('.inbox-row').filter({ hasText: C.INBOX_TITLE });
     await expect(row).toBeVisible();
@@ -27,7 +27,7 @@ test('an opened unread result survives the filtered refetch until it is closed',
 });
 
 test('the Archive can load and open its fifty-first result', async ({ page }) => {
-    await openRoom(page, /Inbox/);
+    await openRoom(page, /Activity/);
     await page.getByRole('tab', { name: 'Archive', exact: true }).click();
     await expect(page.locator('.inbox-row')).toHaveCount(50);
     await expect(page.getByText('Archived result 1', { exact: true })).toHaveCount(0);
@@ -42,7 +42,7 @@ test('the Archive can load and open its fifty-first result', async ({ page }) =>
 });
 
 test('an attachment-only result renders its file and preview controls keep it open', async ({ page }) => {
-    await openRoom(page, /Inbox/);
+    await openRoom(page, /Activity/);
     const row = page.locator('.inbox-row').filter({ hasText: C.INBOX_ATTACHMENT_TITLE });
     await row.getByRole('button', { name: new RegExp(C.INBOX_ATTACHMENT_TITLE), expanded: false }).click();
     await expect(row.locator('.file-card-title')).toContainText('review.csv');
@@ -52,10 +52,10 @@ test('an attachment-only result renders its file and preview controls keep it op
     await expect(row.getByRole('link', { name: /Download/ })).toHaveAttribute('href', '/e2e/inbox-attachment.csv');
 });
 
-for (const room of ['Parlor', 'Observatory']) {
+for (const room of ['Discussions', 'Projects']) {
     test(`${room} accepts a pasted native account id without a people-search result`, async ({ page }) => {
         await openRoom(page, new RegExp(room));
-        if (room === 'Parlor') {
+        if (room === 'Discussions') {
             await page.getByText('Salon on ingest', { exact: true }).click();
             await page.getByRole('button', { name: 'People in this discussion' }).click();
         } else {
