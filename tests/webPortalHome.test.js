@@ -99,15 +99,24 @@ describe('getConstellation', () => {
             { other: dmScopeId(OTHER), otherUser: OTHER }
         );
 
+        // Default projection: the distilled fact is counted, not drawn.
         const graph = await webDashboardService.getConstellation({
             client: fakeClient, scope, userId: USER
         });
         expect(graph.kind).toBe('personal');
+        expect(graph.view).toBe('knowledge');
         expect(graph.nodes[0]).toMatchObject({ id: 'you', type: 'person' });
-        expect(graph.nodes.some(n => n.content === 'Likes trains')).toBe(true);
-        expect(graph.nodes.some(n => n.content === 'secret')).toBe(false);
+        expect(graph.nodes.some(n => n.content === 'Likes trains')).toBe(false);
+        expect(graph.counts.curation.memory).toBe(1);
         expect(graph.counts.memories).toBe(1);
-        expect(graph.edges.some(e => e.sourceId === 'you' || e.targetId?.startsWith('kg:'))).toBe(true);
+
+        // "All retained knowledge" draws it, still never another user's.
+        const all = await webDashboardService.getConstellation({
+            client: fakeClient, scope, userId: USER, view: 'all'
+        });
+        expect(all.nodes.some(n => n.content === 'Likes trains')).toBe(true);
+        expect(all.nodes.some(n => n.content === 'secret')).toBe(false);
+        expect(all.edges.some(e => e.sourceId === 'you' || e.targetId?.startsWith('kg:'))).toBe(true);
     });
 
     test('refuses another user\'s DM scope', async () => {

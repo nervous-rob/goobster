@@ -20,8 +20,41 @@ const {
     MAX_TAG_LENGTH,
     NODE_TYPES,
     NODE_SOURCES,
+    CURATION_STATES,
+    CURATION_VIEWS,
+    DEFAULT_CURATION_BY_SOURCE,
     ORPHAN_CONFIDENCE_THRESHOLD
 } = kgConfig;
+
+/** A curation value or null when the caller sent nothing usable. */
+function normalizeCuration(value) {
+    return CURATION_STATES.includes(value) ? value : null;
+}
+
+/** The intent a writer's declared source implies when it passes no curation. */
+function curationForSource(source) {
+    return DEFAULT_CURATION_BY_SOURCE[source] || 'unclassified';
+}
+
+/**
+ * The one server-side projection over a personal scope (ADR 0008). Every
+ * read of the Notes list, the Map, search counts and the transfer picker
+ * goes through this predicate so they cannot disagree.
+ * @param {string} view - 'knowledge' (saved + unclassified), 'memory', 'all'
+ * @param {string} [alias] - table alias, e.g. 'n'
+ */
+function curationPredicate(view, alias = '') {
+    const col = alias ? `${alias}.curation` : 'curation';
+    switch (view) {
+        case 'memory': return `${col} = 'memory'`;
+        case 'all': return '1 = 1';
+        default: return `${col} IN ('saved', 'unclassified')`;
+    }
+}
+
+function normalizeView(view) {
+    return CURATION_VIEWS.includes(view) ? view : 'knowledge';
+}
 
 function clamp01(value, fallback) {
     const n = Number(value);
@@ -79,6 +112,8 @@ function maxNodesForScope(scopeKey) {
 class KnowledgeGraphService {
     constructor() {
         this._legalizer = new KnowledgeGraphLegalizer(this);
+        // Personal scopes whose curation backfill already ran in this process.
+        this._curationBackfilled = new Set();
     }
 
     get nodeTypes() {
@@ -107,7 +142,8 @@ class KnowledgeGraphService {
         content = null,
         salience,
         confidence,
-        source = 'monologue'
+        source = 'monologue',
+        curation = null
     } = {}) {
         const sk = scopeKey || resolveScopeKey({ subjectType, subjectId });
         const cleanLabel = normalizeLabel(label);
@@ -116,6 +152,9 @@ class KnowledgeGraphService {
         const cleanType = type && NODE_TYPES.includes(type) ? type : null;
         const cleanContent = content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null;
         const cleanSource = kgConfig.NODE_SOURCES.includes(source) ? source : 'monologue';
+        // Intent is declared at creation and never rewritten by a later
+        // automated touch (ADR 0008): the UPDATE branch below leaves it alone.
+        const cleanCuration = normalizeCuration(curation) || curationForSource(cleanSource);
 
         const existing = await db.get(
             `SELECT id, type, label, content, salience, confidence, source FROM kg_nodes
@@ -171,9 +210,9 @@ class KnowledgeGraphService {
 
         const result = await db.insert(
             `INSERT INTO kg_nodes (
-                guildId, scopeKey, type, label, content, salience, confidence, source, subjectType, subjectId
+                guildId, scopeKey, type, label, content, salience, confidence, source, curation, subjectType, subjectId
              ) VALUES (
-                @guildId, @scopeKey, @type, @label, @content, @salience, @confidence, @source, @subjectType, @subjectId
+                @guildId, @scopeKey, @type, @label, @content, @salience, @confidence, @source, @curation, @subjectType, @subjectId
              )`,
             {
                 guildId,
@@ -184,6 +223,7 @@ class KnowledgeGraphService {
                 salience: clamp01(salience, 0.5),
                 confidence: clamp01(confidence, 0.5),
                 source: cleanSource,
+                curation: cleanCuration,
                 subjectType: subjectType || null,
                 subjectId: subjectId || null
             }
@@ -887,7 +927,10 @@ ${excerpt}`;
             content: trimmed,
             salience: 0.72,
             confidence: 0.85,
-            source: source === 'consolidation' ? 'consolidation' : source === 'user' ? 'user' : 'tool'
+            source: source === 'consolidation' ? 'consolidation' : source === 'user' ? 'user' : 'tool',
+            // A fact is "what Goobster knows about you" whoever phrased it -
+            // it belongs to Personal memory, not the saved-knowledge shelf.
+            curation: 'memory'
         });
         if (result?.id && factId) {
             await this.addProvenance({ nodeId: result.id, sourceKind: 'fact', sourceId: factId });
@@ -980,6 +1023,13 @@ ${excerpt}`;
                 );
             }
             await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: drop.id });
+            // A deliberate save survives a merge in either direction.
+            if (drop.curation === 'saved' && keep.curation !== 'saved') {
+                await db.run(
+                    `UPDATE kg_nodes SET curation = 'saved' WHERE id = @id`,
+                    { id: keep.id }
+                );
+            }
             await this._recordRevision(keep.id, keep.source, 'reflection_merge');
         });
         return true;
@@ -1017,15 +1067,18 @@ ${excerpt}`;
         scopeKey,
         kind = 'scope',
         anchor = null,
-        attachUnlinkedToAnchor = false
+        attachUnlinkedToAnchor = false,
+        view = 'all'
     } = {}) {
         const cap = maxNodesForScope(scopeKey);
+        const projection = normalizeView(view);
         const dbNodes = await db.all(
             `SELECT * FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${curationPredicate(projection)}
              ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
             { guildId, scopeKey, limit: cap }
         );
+        const curationCounts = await this._curationCounts({ guildId, scopeKey });
 
         const nodes = [];
         if (anchor) nodes.push(anchor);
@@ -1042,6 +1095,7 @@ ${excerpt}`;
                 salience: node.salience,
                 confidence: node.confidence,
                 source: node.source,
+                curation: node.curation,
                 ref: { kind: 'kg_node', id: node.id }
             });
         }
@@ -1090,8 +1144,10 @@ ${excerpt}`;
             node.provenance = provenanceMap.get(kgId) || [];
         }
 
+        const totalInScope = curationCounts.saved + curationCounts.memory + curationCounts.unclassified;
         return {
             kind,
+            view: projection,
             nodes,
             edges,
             counts: {
@@ -1102,21 +1158,28 @@ ${excerpt}`;
                 memories: 0,
                 tags: [...tags.values()].reduce((n, arr) => n + arr.length, 0),
                 cap,
-                truncated: dbNodes.length >= cap
+                truncated: dbNodes.length >= cap,
+                // Scope-wide curation breakdown so the legend can say how
+                // many rows the current projection leaves out.
+                curation: curationCounts,
+                hidden: Math.max(0, totalInScope - dbNodes.length)
             }
         };
     }
 
     /**
-     * Personal graph payload for the web portal Map tab.
+     * Personal graph payload for the web portal Map tab. `view` is the
+     * curation projection (ADR 0008); Notes and the Map share it.
      */
-    async getPersonalGraphView({ guildId, userId, userLabel = 'You' }) {
+    async getPersonalGraphView({ guildId, userId, userLabel = 'You', view = 'knowledge' }) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
         await this.syncLegacyFacts({ guildId, subjectType: 'USER', subjectId: userId });
+        await this.backfillCuration({ guildId, userId });
         return this.getScopeGraphView({
             guildId,
             scopeKey,
             kind: 'personal',
+            view: normalizeView(view),
             attachUnlinkedToAnchor: true,
             anchor: {
                 id: 'you',
@@ -1149,30 +1212,208 @@ ${excerpt}`;
             salience: node.salience,
             confidence: node.confidence,
             source: node.source,
+            curation: node.curation || 'unclassified',
             tags,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt
         };
     }
 
+    /** Scope-wide curation breakdown: { saved, memory, unclassified }. */
+    async _curationCounts({ guildId, scopeKey }) {
+        const rows = await db.all(
+            `SELECT curation, COUNT(*) AS c FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             GROUP BY curation`,
+            { guildId, scopeKey }
+        );
+        const counts = { saved: 0, memory: 0, unclassified: 0 };
+        for (const row of rows) {
+            if (row.curation in counts) counts[row.curation] = Number(row.c) || 0;
+        }
+        return counts;
+    }
+
     /**
-     * Browse the user's personal notes (the Spitball Notes tab).
-     * Filters are exact on type/source/tag; q is a case-insensitive
-     * substring of label, content, or tag name.
+     * Inventory of a personal scope before (and after) the curation
+     * backfill: how many rows each writer source left in each curation
+     * state, and how many unclassified rows still carry decisive evidence.
+     * Read-only; ADR 0008 asks for this before any backfill.
+     */
+    async inventoryCuration({ guildId, userId } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const rows = await db.all(
+            `SELECT source, curation, COUNT(*) AS c FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             GROUP BY source, curation
+             ORDER BY source, curation`,
+            { guildId, scopeKey }
+        );
+        const bySource = rows.map(row => ({
+            source: row.source,
+            curation: row.curation,
+            count: Number(row.c) || 0
+        }));
+        const evidence = await db.get(
+            `SELECT
+                SUM(CASE WHEN ${this._memoryEvidenceSql('n')} THEN 1 ELSE 0 END) AS memoryEvidence,
+                SUM(CASE WHEN ${this._savedEvidenceSql('n')} THEN 1 ELSE 0 END) AS savedEvidence,
+                COUNT(*) AS unclassified
+             FROM kg_nodes n
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.curation = 'unclassified'`,
+            { guildId, scopeKey }
+        );
+        return {
+            counts: await this._curationCounts({ guildId, scopeKey }),
+            bySource,
+            unclassified: {
+                total: Number(evidence?.unclassified) || 0,
+                memoryEvidence: Number(evidence?.memoryEvidence) || 0,
+                savedEvidence: Number(evidence?.savedEvidence) || 0
+            }
+        };
+    }
+
+    /** SQL: the row was distilled by Goobster (fact mirror, consolidation, parlor write-back). */
+    _memoryEvidenceSql(alias) {
+        return `(${alias}.source = 'consolidation' OR EXISTS (
+            SELECT 1 FROM kg_provenance p WHERE p.nodeId = ${alias}.id
+              AND p.sourceKind IN ('fact', 'consolidation', 'memory', 'parlor_conversation')
+        ))`;
+    }
+
+    /** SQL: the person wrote, edited, researched or saved the row on purpose. */
+    _savedEvidenceSql(alias) {
+        return `(${alias}.source IN ('user', 'research')
+            OR EXISTS (
+                SELECT 1 FROM kg_node_revisions r WHERE r.nodeId = ${alias}.id AND r.changeKind = 'human_edit'
+            )
+            OR EXISTS (
+                SELECT 1 FROM kg_provenance p WHERE p.nodeId = ${alias}.id
+                  AND p.sourceKind IN ('expedition', 'research_claim', 'research_source')
+            )
+            OR EXISTS (SELECT 1 FROM kg_artifacts a WHERE a.nodeId = ${alias}.id))`;
+    }
+
+    /**
+     * Conservative backfill (ADR 0008 §5): classify only `unclassified` rows
+     * with decisive evidence. Precedence: a human edit wins (the person
+     * touched it, so it is theirs), then distillation evidence (fact mirror,
+     * consolidation, parlor write-back), then the remaining saved signals
+     * (user/research source, research provenance, a saved file). Rows
+     * without evidence stay unclassified and visible. Never deletes,
+     * rescopes, or rewrites `source`. Idempotent; runs once per process per
+     * personal scope (transient guard, re-derivable state).
+     * @returns {{ memory: number, saved: number }|null} rows moved, or null when already run
+     */
+    async backfillCuration({ guildId, userId } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const key = `${guildId}|${scopeKey}`;
+        if (this._curationBackfilled.has(key)) return null;
+        this._curationBackfilled.add(key);
+        try {
+            const before = await this.inventoryCuration({ guildId, userId });
+            if (before.unclassified.total === 0) return { memory: 0, saved: 0 };
+            const moved = await db.transaction(async (tx) => {
+                const savedFirst = await tx.run(
+                    `UPDATE kg_nodes SET curation = 'saved'
+                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified'
+                       AND EXISTS (
+                           SELECT 1 FROM kg_node_revisions r WHERE r.nodeId = kg_nodes.id AND r.changeKind = 'human_edit'
+                       )`,
+                    { guildId, scopeKey }
+                );
+                const memory = await tx.run(
+                    `UPDATE kg_nodes SET curation = 'memory'
+                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified'
+                       AND ${this._memoryEvidenceSql('kg_nodes')}`,
+                    { guildId, scopeKey }
+                );
+                const saved = await tx.run(
+                    `UPDATE kg_nodes SET curation = 'saved'
+                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified'
+                       AND ${this._savedEvidenceSql('kg_nodes')}`,
+                    { guildId, scopeKey }
+                );
+                return {
+                    memory: memory.changes || 0,
+                    saved: (savedFirst.changes || 0) + (saved.changes || 0)
+                };
+            });
+            logger.info?.(
+                `[KG] Curation backfill ${scopeKey}@${guildId}: ${before.unclassified.total} unclassified -> `
+                + `${moved.saved} saved, ${moved.memory} memory, `
+                + `${before.unclassified.total - moved.saved - moved.memory} left unclassified`
+            );
+            return moved;
+        } catch (error) {
+            this._curationBackfilled.delete(key);
+            logger.warn?.(`[KG] Curation backfill for ${scopeKey} failed: ${error.message}`);
+            return null;
+        }
+    }
+
+    /** The row is a mirrored fact when it carries `fact` provenance. */
+    async _mirroredFactIds(nodeId) {
+        const rows = await db.all(
+            `SELECT sourceId FROM kg_provenance
+             WHERE nodeId = @nodeId AND sourceKind = 'fact' AND sourceId IS NOT NULL`,
+            { nodeId }
+        );
+        return rows.map(row => Number(row.sourceId)).filter(Number.isFinite);
+    }
+
+    /**
+     * Explicit reclassification (the Keep / Treat-as-memory actions).
+     * Touches nothing but `curation`: no source rebrand, no revision, no
+     * updatedAt bump - intent changed, the knowledge did not.
+     */
+    async setUserNoteCuration({ guildId, userId, nodeId, curation } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const next = normalizeCuration(curation);
+        if (!next || next === 'unclassified') {
+            const error = new Error('Curation must be "saved" or "memory".');
+            error.status = 400;
+            error.code = 'BAD_REQUEST';
+            throw error;
+        }
+        const node = await db.get(
+            'SELECT id FROM kg_nodes WHERE id = @id AND guildId = @guildId AND scopeKey = @scopeKey',
+            { id: Number(nodeId), guildId, scopeKey }
+        );
+        if (!node) return null;
+        await db.run('UPDATE kg_nodes SET curation = @curation WHERE id = @id', { id: node.id, curation: next });
+        const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: node.id });
+        const tagMap = await this.getTagsForNodes([node.id]);
+        return this._shapeUserNote(fresh, tagMap.get(node.id) || []);
+    }
+
+    /**
+     * Browse the user's personal notes (the Knowledge Notes view).
+     * Filters are exact on type/source/tag/curation; q is a case-insensitive
+     * substring of label, content, or tag name. `view` is the curation
+     * projection shared with the Map (ADR 0008): 'knowledge' (default),
+     * 'memory', or 'all'. Facet counts and `total` are computed inside the
+     * same projection so the list, the legend and the search count agree.
      */
     async listUserNotes({
         guildId, userId, q = '', type = null, tag = null, source = null,
+        view = 'knowledge', curation = null,
         limit = 200, offset = 0
     } = {}) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        await this.backfillCuration({ guildId, userId });
+        const projection = normalizeView(view);
         const query = String(q || '').trim();
         const typeFilter = type && NODE_TYPES.includes(type) ? type : null;
         const sourceFilter = source && NODE_SOURCES.includes(source) ? source : null;
+        const curationFilter = normalizeCuration(curation);
         const tagFilter = tag ? normalizeTagName(tag) : null;
         const bounded = Math.max(1, Math.min(Number(limit) || 200, maxNodesForScope(scopeKey)));
         const skip = Math.max(0, Number(offset) || 0);
 
-        const clauses = ['n.guildId = @guildId', 'n.scopeKey = @scopeKey'];
+        const scopeClauses = ['n.guildId = @guildId', 'n.scopeKey = @scopeKey', curationPredicate(projection, 'n')];
+        const clauses = [...scopeClauses];
         const params = { guildId, scopeKey, limit: bounded, offset: skip };
         if (typeFilter) {
             clauses.push('n.type = @type');
@@ -1181,6 +1422,10 @@ ${excerpt}`;
         if (sourceFilter) {
             clauses.push('n.source = @source');
             params.source = sourceFilter;
+        }
+        if (curationFilter) {
+            clauses.push('n.curation = @curation');
+            params.curation = curationFilter;
         }
         if (tagFilter) {
             clauses.push(`EXISTS (
@@ -1211,36 +1456,54 @@ ${excerpt}`;
             params
         );
         const tagMap = await this.getTagsForNodes(rows.map(row => row.id));
+        // Facets count inside the projection (not the whole scope) so a tag
+        // or type chip never promises rows the list will not show.
+        const scopeWhere = scopeClauses.join(' AND ');
         const vocab = await db.all(
             `SELECT t.name, COUNT(nt.nodeId) AS uses
              FROM kg_tags t
              JOIN kg_node_tags nt ON nt.tagId = t.id
-             WHERE t.guildId = @guildId AND t.scopeKey = @scopeKey
+             JOIN kg_nodes n ON n.id = nt.nodeId
+             WHERE t.guildId = @guildId AND t.scopeKey = @scopeKey AND ${scopeWhere}
              GROUP BY t.id, t.name
              ORDER BY uses DESC, t.name LIMIT 80`,
             { guildId, scopeKey }
         );
         const typeRows = await db.all(
-            `SELECT type, COUNT(*) AS c FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey
-             GROUP BY type ORDER BY c DESC`,
+            `SELECT n.type, COUNT(*) AS c FROM kg_nodes n
+             WHERE ${scopeWhere}
+             GROUP BY n.type ORDER BY c DESC`,
             { guildId, scopeKey }
         );
         const sourceRows = await db.all(
-            `SELECT source, COUNT(*) AS c FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey
-             GROUP BY source ORDER BY c DESC`,
+            `SELECT n.source, COUNT(*) AS c FROM kg_nodes n
+             WHERE ${scopeWhere}
+             GROUP BY n.source ORDER BY c DESC`,
             { guildId, scopeKey }
         );
+        const curationRows = await db.all(
+            `SELECT n.curation, COUNT(*) AS c FROM kg_nodes n
+             WHERE ${scopeWhere}
+             GROUP BY n.curation ORDER BY c DESC`,
+            { guildId, scopeKey }
+        );
+        const curationCounts = await this._curationCounts({ guildId, scopeKey });
         return {
             notes: rows.map(row => this._shapeUserNote(row, tagMap.get(row.id) || [])),
             total: totalRow?.c || 0,
             cap: maxNodesForScope(scopeKey),
+            view: projection,
             types: typeRows,
             sources: sourceRows,
+            curations: curationRows,
             tags: vocab,
+            // Scope-wide breakdown, independent of the projection, so the
+            // client can say "N distilled notes are not shown here".
+            curation: curationCounts,
             nodeTypes: NODE_TYPES,
-            nodeSources: NODE_SOURCES
+            nodeSources: NODE_SOURCES,
+            curationStates: CURATION_STATES,
+            views: CURATION_VIEWS
         };
     }
 
@@ -1276,10 +1539,13 @@ ${excerpt}`;
             ? (content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null)
             : node.content;
 
+        // A human edit is the record of the preferred representation and
+        // the clearest statement of intent: the note becomes saved knowledge
+        // whatever wrote it first (ADR 0008 §3).
         await db.run(
             `UPDATE kg_nodes SET
                  label = @label, type = @type, content = @content,
-                 source = 'user', updatedAt = CURRENT_TIMESTAMP
+                 source = 'user', curation = 'saved', updatedAt = CURRENT_TIMESTAMP
              WHERE id = @id`,
             { id: node.id, label: nextLabel, type: nextType, content: nextContent }
         );
@@ -1297,6 +1563,14 @@ ${excerpt}`;
         return this._shapeUserNote(fresh, tagMap.get(node.id) || []);
     }
 
+    /**
+     * Delete one personal note. Connections, tags, provenance, revisions,
+     * the embedding and any artifact row cascade with it. A node that mirrors
+     * a `facts` row takes that row with it, otherwise `syncLegacyFacts`
+     * would resurrect the note on the next read. Raw memories and
+     * transcripts the note was distilled from are deliberately untouched
+     * (documentation/knowledge_and_memory.md, deletion semantics).
+     */
     async deleteUserNote({ guildId, userId, nodeId } = {}) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
         const node = await db.get(
@@ -1304,7 +1578,16 @@ ${excerpt}`;
             { id: Number(nodeId), guildId, scopeKey }
         );
         if (!node) return 0;
-        return (await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id })).changes;
+        const factIds = await this._mirroredFactIds(node.id);
+        return await db.transaction(async (tx) => {
+            for (const factId of factIds) {
+                await tx.run(
+                    'DELETE FROM facts WHERE id = @factId AND guildId = @guildId',
+                    { factId, guildId }
+                );
+            }
+            return (await tx.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id })).changes;
+        });
     }
 
     /**
@@ -1341,7 +1624,8 @@ ${excerpt}`;
             type: cleanType,
             label: cleanLabel,
             content: cleanContent,
-            source: 'user'
+            source: 'user',
+            curation: 'saved'
         });
         if (Array.isArray(tags) && tags.length) {
             await this.addTagsToNode({ guildId, scopeKey, label: cleanLabel, tags });
@@ -1376,3 +1660,7 @@ module.exports.hasMutationWork = KnowledgeGraphService.hasMutationWork;
 module.exports.hasMutationPayload = KnowledgeGraphService.hasMutationPayload;
 module.exports.parlorScopeKey = parlorScopeKey;
 module.exports.projectScopeKey = projectScopeKey;
+module.exports.curationPredicate = curationPredicate;
+module.exports.curationForSource = curationForSource;
+module.exports.normalizeCuration = normalizeCuration;
+module.exports.normalizeView = normalizeView;

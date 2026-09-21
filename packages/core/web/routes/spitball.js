@@ -73,6 +73,10 @@ function mountSpitball(app, ctx, h) {
             type: req.query.type,
             tag: req.query.tag,
             source: req.query.source,
+            // Curation projection (ADR 0008): knowledge (default) | memory | all,
+            // plus an optional exact curation filter inside it.
+            view: req.query.view,
+            curation: req.query.curation,
             limit: req.query.limit,
             offset: req.query.offset
         })
@@ -91,19 +95,31 @@ function mountSpitball(app, ctx, h) {
         })
     ));
 
-    app.patch('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) =>
-        ctx.dashboard.updateNote({
+    // A body that carries only `curation` is a reclassification (Keep /
+    // Treat as memory): intent changes, the note's text, source and
+    // revision trail do not. Anything else is a human edit, which also
+    // makes the note saved knowledge.
+    app.patch('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) => {
+        const body = req.body || {};
+        const editing = ['label', 'content', 'type', 'tags'].some((field) => body[field] !== undefined);
+        const common = {
             gateway: ctx.gateway,
             discordUserId: ctx.identity.discordSubjectFor(req.actor),
-            scope: String(req.body?.scope || req.query.scope || ''),
+            scope: String(body.scope || req.query.scope || ''),
             userId: req.webUser.userId,
-            nodeId: req.params.nodeId,
-            label: req.body?.label,
-            content: req.body?.content,
-            type: req.body?.type,
-            tags: req.body?.tags
-        })
-    ));
+            nodeId: req.params.nodeId
+        };
+        if (!editing && body.curation !== undefined) {
+            return ctx.dashboard.setNoteCuration({ ...common, curation: body.curation });
+        }
+        return ctx.dashboard.updateNote({
+            ...common,
+            label: body.label,
+            content: body.content,
+            type: body.type,
+            tags: body.tags
+        });
+    }));
 
     app.delete('/api/app/spitball/notes/:nodeId', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.deleteNote({

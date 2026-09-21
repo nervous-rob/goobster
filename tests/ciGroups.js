@@ -123,6 +123,7 @@ const GROUPS = [
             'graphClusters',
             'graphFilter',
             'kgArtifactService',
+            'knowledgeCuration',
             'knowledgeGraphService',
             'knowledgeReflectionService',
             'lookupNotesArtifacts',

@@ -524,7 +524,7 @@ class WebDashboardService {
      * The guild knowledge graph stays Manage Server and is a separate call.
      * @param {Object} params - { gateway, scope, userId }
      */
-    async getConstellation({ gateway, client, scope, userId, discordUserId = userId }) {
+    async getConstellation({ gateway, client, scope, userId, discordUserId = userId, view = 'knowledge' }) {
         const resolved = gateway || client;
         await this._requireScopeAccess({ gateway: resolved, scope, userId, discordUserId });
         const isDm = isDmScopeId(scope);
@@ -534,7 +534,8 @@ class WebDashboardService {
         const graph = await knowledgeGraphService.getPersonalGraphView({
             guildId: scope,
             userId,
-            userLabel: youLabel
+            userLabel: youLabel,
+            view
         });
 
         const memories = await this.listMemories({ gateway: resolved, scope, userId, discordUserId, limit: 80 });
@@ -551,7 +552,10 @@ class WebDashboardService {
      * List the requesting user's personal notes in this scope, with
      * search / type / tag / source filters for the Notes tab.
      */
-    async listNotes({ gateway, client, scope, userId, discordUserId = userId, q, type, tag, source, limit, offset } = {}) {
+    async listNotes({
+        gateway, client, scope, userId, discordUserId = userId,
+        q, type, tag, source, view, curation, limit, offset
+    } = {}) {
         await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         return knowledgeGraphService.listUserNotes({
             guildId: scope,
@@ -560,9 +564,36 @@ class WebDashboardService {
             type,
             tag,
             source,
+            view,
+            curation,
             limit,
             offset
         });
+    }
+
+    /**
+     * Explicit reclassification of one personal note (Keep / Treat as
+     * memory). Only `curation` changes - see knowledgeGraphService.
+     */
+    async setNoteCuration({ gateway, client, scope, userId, discordUserId = userId, nodeId, curation } = {}) {
+        await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
+        try {
+            const note = await knowledgeGraphService.setUserNoteCuration({
+                guildId: scope,
+                userId,
+                nodeId,
+                curation
+            });
+            if (!note) {
+                throw new WebDashboardError(404, 'NOT_FOUND', 'Note not found.');
+            }
+            return { note };
+        } catch (err) {
+            if (err && err.status === 400) {
+                throw new WebDashboardError(400, 'BAD_REQUEST', err.message);
+            }
+            throw err;
+        }
     }
 
     /**

@@ -203,13 +203,15 @@ function mountWorkspace(app, ctx, h) {
         })
     ));
 
-    // Personal constellation (you + facts + memories) for the Library map.
+    // Personal constellation (you + notes) for the Knowledge map. `view`
+    // is the same curation projection the Notes list uses (ADR 0008).
     app.get('/api/app/memory/constellation', requireAuth, dashboardRoute((req) =>
         ctx.dashboard.getConstellation({
             gateway: ctx.gateway,
             discordUserId: ctx.identity.discordSubjectFor(req.actor),
             scope: String(req.query.scope || ''),
-            userId: req.webUser.userId
+            userId: req.webUser.userId,
+            view: req.query.view
         })
     ));
 

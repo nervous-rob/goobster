@@ -35,6 +35,33 @@ const NODE_TYPES = ['concept', 'fact', 'opinion', 'experience', 'person', 'place
 
 const NODE_SOURCES = ['monologue', 'consolidation', 'tool', 'migration', 'user', 'research', 'conversation'];
 
+/**
+ * Saved-knowledge curation (ADR 0008, documentation/knowledge_and_memory.md).
+ * `curation` records the person's intent and is independent of `source`
+ * (who wrote the row): 'saved' = kept deliberately, 'memory' = distilled by
+ * Goobster and managed from Personal memory, 'unclassified' = legacy or
+ * undeclared. Notes/Map/search default to the `knowledge` projection.
+ */
+const CURATION_STATES = ['saved', 'memory', 'unclassified'];
+
+/** Projections a personal-scope read may ask for. */
+const CURATION_VIEWS = ['knowledge', 'memory', 'all'];
+
+/**
+ * What a writer's declared `source` implies about intent when it does not
+ * pass `curation` itself. Writers with a sharper signal override this
+ * (`syncFactNode` → memory, `saveArtifact` → saved).
+ */
+const DEFAULT_CURATION_BY_SOURCE = {
+    user: 'saved',
+    research: 'saved',
+    consolidation: 'memory',
+    conversation: 'memory',
+    tool: 'unclassified',
+    monologue: 'unclassified',
+    migration: 'unclassified'
+};
+
 const RELATION_KINDS = ['causal', 'logical', 'associative', 'temporal', 'social'];
 
 const PROVENANCE_KINDS = [
@@ -122,6 +149,9 @@ module.exports = {
     MAX_TAGS_PER_SCOPE,
     MAX_TAGS_PER_NODE,
     MAX_TAG_LENGTH,
+    CURATION_STATES,
+    CURATION_VIEWS,
+    DEFAULT_CURATION_BY_SOURCE,
     SEMANTIC_MERGE_THRESHOLD,
     ORPHAN_CONFIDENCE_THRESHOLD,
     DISTILLED_MEMORY_RETENTION_DAYS,

@@ -1302,6 +1302,47 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(patched.status).toBe(200);
         expect(patched.json.note.content).toBe('Hand-edited bilingual decree');
         expect(patched.json.note.source).toBe('user');
+        expect(patched.json.note.curation).toBe('saved');
+
+        // A curation-only PATCH reclassifies without touching the note.
+        const shelved = await request({
+            method: 'PATCH',
+            reqPath: `/api/app/spitball/notes/${created.json.note.id}`,
+            headers: { Cookie: cookie },
+            body: { scope, curation: 'memory' }
+        });
+        expect(shelved.status).toBe(200);
+        expect(shelved.json.note).toMatchObject({ curation: 'memory', source: 'user', content: 'Hand-edited bilingual decree' });
+
+        const knowledgeView = await request({
+            reqPath: `/api/app/spitball/notes?scope=${encodeURIComponent(scope)}`,
+            headers: { Cookie: cookie }
+        });
+        expect(knowledgeView.json.view).toBe('knowledge');
+        expect(knowledgeView.json.total).toBe(0);
+        expect(knowledgeView.json.curation).toEqual({ saved: 0, memory: 1, unclassified: 0 });
+
+        const allView = await request({
+            reqPath: `/api/app/spitball/notes?scope=${encodeURIComponent(scope)}&view=all&curation=memory`,
+            headers: { Cookie: cookie }
+        });
+        expect(allView.json.view).toBe('all');
+        expect(allView.json.total).toBe(1);
+
+        const badCuration = await request({
+            method: 'PATCH',
+            reqPath: `/api/app/spitball/notes/${created.json.note.id}`,
+            headers: { Cookie: cookie },
+            body: { scope, curation: 'unclassified' }
+        });
+        expect(badCuration.status).toBe(400);
+
+        const constellationAll = await request({
+            reqPath: `/api/app/memory/constellation?scope=${encodeURIComponent(scope)}&view=all`,
+            headers: { Cookie: cookie }
+        });
+        expect(constellationAll.json.view).toBe('all');
+        expect(constellationAll.json.counts.curation.memory).toBe(1);
 
         const deleted = await request({
             method: 'DELETE',
