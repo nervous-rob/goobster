@@ -12,8 +12,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('expedition → claims → notes → evidence', async ({ page }) => {
-    await openRoom(page, /Spitball/);
-    await expect(page.getByRole('heading', { name: 'Spitball' })).toBeVisible();
+    await openRoom(page, /Knowledge/);
+    await expect(page.getByRole('heading', { name: /^Knowledge/ })).toBeVisible();
 
     await page.getByRole('button', { name: 'Expeditions' }).click();
     await expect(page.getByText(C.EXPEDITION_SEED)).toBeVisible();
@@ -32,15 +32,15 @@ test('expedition → claims → notes → evidence', async ({ page }) => {
 });
 
 test('project Parlor → transcript → project knowledge', async ({ page }) => {
-    await openRoom(page, /Parlor/);
+    await openRoom(page, /Discussions/);
     await expect(page.getByText(C.PERSONA_NAME).first()).toBeVisible();
     await expect(page.getByText('Salon on ingest')).toBeVisible();
     await page.getByText('Salon on ingest').click();
     await expect(page.getByText(C.PARLOR_USER_MESSAGE)).toBeVisible();
     await expect(page.getByText(C.PARLOR_REPLY)).toBeVisible();
 
-    await openRoom(page, /Observatory/);
-    await expect(page.getByRole('heading', { name: 'The Observatory' })).toBeVisible();
+    await openRoom(page, /Projects/);
+    await expect(page.getByRole('heading', { name: /^Projects/ })).toBeVisible();
     await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
     await expect(page.getByRole('heading', { name: new RegExp(C.PROJECT_NAME) })).toBeVisible();
 
@@ -55,7 +55,7 @@ test('project Parlor → transcript → project knowledge', async ({ page }) => 
 });
 
 test('project job → artifact → Attention notice', async ({ page }) => {
-    await openRoom(page, /Observatory/);
+    await openRoom(page, /Projects/);
     await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
     await expect(page.getByText('❌ FAILED')).toBeVisible();
     await expect(page.getByText(/Job #/)).toBeVisible();
@@ -64,8 +64,9 @@ test('project job → artifact → Attention notice', async ({ page }) => {
     await page.getByRole('button', { name: '📁 out' }).click();
     await expect(page.getByRole('button', { name: /result\.json/ })).toBeVisible();
 
-    await openRoom(page, /Noticed/);
-    await expect(page.getByRole('heading', { name: 'Noticed' })).toBeVisible();
+    await openRoom(page, /Activity/);
+    await page.getByRole('navigation', { name: 'Activity views' }).getByRole('link', { name: /Attention/ }).click();
+    await expect(page.getByRole('heading', { name: /^Attention/ })).toBeVisible();
     await expect(page.getByText(C.NOTICE_TITLE)).toBeVisible();
     await expect(page.getByText(C.NOTICE_DETAIL)).toBeVisible();
 
@@ -79,7 +80,7 @@ test('project job → artifact → Attention notice', async ({ page }) => {
 });
 
 test('project mission draft → approve → review → complete', async ({ page }) => {
-    await openRoom(page, /Observatory/);
+    await openRoom(page, /Projects/);
     await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
     await expect(page.getByRole('heading', { name: new RegExp(C.PROJECT_NAME) })).toBeVisible();
     await expect(page.getByText(/No open mission/)).toBeVisible();

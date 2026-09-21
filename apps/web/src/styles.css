@@ -1378,8 +1378,10 @@ html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
 .nav-btn.active .nav-secondary { color: var(--text-dim); }
 .nav-account { margin-top: 6px; }
 
-.activity-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
-.activity-shell > .pane { flex: 1; min-height: 0; }
+/* The stage positions every pane absolutely; the Activity strip owns that
+   box instead and lays the view's pane out under it in normal flow. */
+#stage .activity-shell { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+#stage .activity-shell > .pane { position: relative; inset: auto; flex: 1; min-height: 0; }
 .activity-tabs {
   display: flex; gap: 4px; padding: 8px 24px 0; border-bottom: 1px solid var(--border);
   overflow-x: auto; flex: none; scrollbar-width: none;
