@@ -90,7 +90,7 @@ never a one-off migration script.
 | PR06 | Default new-chat privacy | prefs → Study `newChat` |
 | PR10–PR12 | Export, revoke shares, revoke applet grants | dedicated settings routes |
 | AC02–AC03 | Sessions / sign out other devices; clear device-local prefs | `web_sessions` + browser keys |
-| UI01 V2–UI09, UI12 | System theme + account sync, text size, motion, density, Enter-to-send, detail expansion, start page, Exchange server, Conservatory link | prefs + device paint |
+| UI01 V2–UI09, UI12 | System theme + account sync, text size, motion, density, Enter-to-send, detail expansion, start page (room ids from `portal_navigation.md`; older saved values such as `study` or `noticed` stay valid and map onto the current destination), Exchange server, Music Lab link | prefs + device paint |
 
 ### Phase 3 (Later runtime policies)
 

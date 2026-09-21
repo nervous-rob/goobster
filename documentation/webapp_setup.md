@@ -1,11 +1,17 @@
 # Goobster Web App - Setup
 
 The web app is a browser interface for Goobster, served by the bot itself.
-It is one house with rooms, not eight products in a nav. **Home** is the
-front door (what he knows about you, what he is watching, pick up where
-you left off). Chat is the Study — a verb from Home, not the landing page.
+It is one house with rooms, not eight products in a nav. The sidebar has
+**seven primary destinations** - Home, Chat, Knowledge, Projects,
+Discussions, Activity, Tools - plus an account area (Usage & limits,
+Settings, and the operator-only Host). The house names stay as secondary
+labels ("Knowledge · Spitball", "Discussions · the Parlor") and every older
+URL still resolves; the contract, the room registry and the alias table are
+in [portal_navigation.md](portal_navigation.md). **Home** is the front door
+(new chat / note / project, personal memory, Activity, pick up where you
+left off).
 
-- **Chat (the Study)** - a full LLM chat that runs through the *same pipeline* as
+- **Chat (the Study, `/chat`)** - a full LLM chat that runs through the *same pipeline* as
   Discord chat (memory recall, facts, personality, tool calling, per-user
   settings). Conversations live in the user's DM scope, so web chat and
   Discord DMs share long-term memory. Replies stream token-by-token, render
@@ -34,7 +40,7 @@ you left off). Chat is the Study — a verb from Home, not the landing page.
   content route. Demos, visualizations, simulators, calculators, little
   games - the system prompt tells the model about this canvas, so
   "build me a ..." just works.
-- **The Parlor** - a multi-persona AI workspace where conversations become
+- **Discussions (the Parlor, `/discussions`)** - a multi-persona AI workspace where conversations become
   persistent, evolving knowledge. Create personas with distinct charters
   (a researcher, an engineer, a philosopher...), seed each one's private
   tag-first knowledge workspace (notes connect through shared tags; semantic
@@ -43,19 +49,27 @@ you left off). Chat is the Study — a verb from Home, not the landing page.
   workspace (the notes used are shown as grounding chips under the message),
   and after replying it extracts durable knowledge from the exchange back
   into the workspace - so each persona develops its own expertise over time.
-- **Library** - memory as a place, not a settings pane. The default **Map**
-  is a personal constellation (you in the center, facts and memories around
-  you). About you is the transparency report. Facts and memories still
-  delete one-by-one. Manage Server members also get the guild knowledge
-  graph. **Forget me** lives here (and on Home): type FORGET ME and watch
-  the rows disappear — the same erasure as `/forget-me` in Discord.
-- **Workshop** - mini-apps Goobster built in the Study, pinned so they
-  outlive the chat. Discover unpinned `html`/`svg` fences from recent
-  replies, pin a copy, reopen it anytime.
-- **The Observatory** - the dome on the house, not a utility on the
-  grounds. Shown only when the feature is enabled. Persistent simulation
-  projects on top of the sandbox; Home grows a dome card with project and
-  running-job counts. See `documentation/observatory.md`.
+- **Knowledge (Spitball, `/knowledge`; formerly the Library)** - notes,
+  tags, the **Map** (a personal constellation: you in the center, facts and
+  memories around you), research expeditions, and the transparency report
+  (About you, Facts, Memories). Facts and memories still delete one-by-one.
+  Manage Server members also get the guild knowledge graph. **Forget me**
+  lives here (and on Home): type FORGET ME and watch the rows disappear —
+  the same erasure as `/forget-me` in Discord. Home's *Personal memory* card
+  points at Settings → Memory & privacy; separating saved knowledge from
+  personal memory in the room itself is planned work (E2 in
+  `shared_instance_product_spec.md`).
+- **Projects (the Observatory, `/projects`)** - shown only when the feature
+  is enabled. Persistent simulation projects on top of the sandbox, plus the
+  unfiled generated apps that used to be the Workshop (`/workshop` and
+  `/observatory` still resolve here). Home grows a Projects card with
+  project and running-job counts. See `documentation/observatory.md`.
+- **Tools (`/tools`)** - the door to the optional specialist rooms: **Music
+  Lab** (the Conservatory, `/conservatory`), the **Trading game** (the
+  Exchange, `/exchange`) and **Card decks** (MTG Arena, `/decks`). Each card
+  says what the tool is for and, when it cannot open on this installation
+  (the trading game without a Discord adapter), why - instead of opening a
+  room that fails.
 - **The exchange** - a browser trading terminal for one of your servers:
   the account audit (equity, buying power, positions, liquidation levels,
   risk flags, and the wallet-vs-ledger reconciliation), quotes with a price
@@ -64,11 +78,17 @@ you left off). Chat is the Study — a verb from Home, not the landing page.
   slash commands use, so every feature gate and margin rule applies
   identically - see `documentation/jimbucks_exchange.md`.
 
-- **Inbox** - where unattended work lands: due reminders, scheduled task
-  output, watch reports, attention notices, invitations. Every result is
-  stored here first and echoed to Discord DMs as an optional extra, so a
-  person with no Discord account (or an installation with no Discord) still
-  receives everything - see `documentation/independent_runtime.md`.
+- **Activity (`/activity`)** - one destination, three views that keep their
+  own actions: **Inbox** (`/activity/inbox`, formerly `/inbox`) is where
+  unattended work lands - due reminders, scheduled task output, watch
+  reports, attention notices, invitations. Every result is stored here first
+  and echoed to Discord DMs as an optional extra, so a person with no
+  Discord account (or an installation with no Discord) still receives
+  everything - see `documentation/independent_runtime.md`. **Attention**
+  (`/activity/attention`, formerly Noticed) is the proactive-attention
+  ledger with its why/acknowledge/snooze controls (`documentation/attention.md`),
+  and **Scheduled** (`/activity/scheduled`, formerly Tasks) is reminders and
+  recurring AI tasks. The sidebar badge is the Inbox unread count alone.
 
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
 server (the one that serves `/health` and the Activity) also serve the web
