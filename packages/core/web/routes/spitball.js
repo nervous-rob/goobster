@@ -129,7 +129,8 @@ function mountSpitball(app, ctx, h) {
             return ctx.transfers.useNoteInDiscussion({
                 ...common,
                 userName: req.webUser.userName,
-                conversationId: body.conversationId
+                conversationId: body.conversationId,
+                requestId: body.requestId
             });
         }
         if (body.target === 'project') {

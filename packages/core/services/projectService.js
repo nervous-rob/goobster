@@ -1414,16 +1414,9 @@ class ObservatoryService {
             if (parts.length) knowledgeText = parts.join('\n');
             knowledgeTruncated = (tags || []).length > knowledgeCap;
         } catch { /* knowledge is optional in the preamble */ }
-        try {
-            // The actor's own private references (ADR 0010 §3), resolved as
-            // them - the only reader who may see them.
-            const referenced = await require('./knowledgeTransferService').describeReferencesForManifest({
-                userId, projectId: row.id, limit: knowledgeCap
-            });
-            if (referenced) {
-                knowledgeText = knowledgeText === '(none)' ? referenced : `${knowledgeText}\n${referenced}`;
-            }
-        } catch { /* references are optional in the preamble */ }
+        // This text is persisted in chat and can be consolidated into project
+        // knowledge. Only published project notes belong here; private references
+        // remain in the owner's notes view even while the project is private.
         const lines = [
             `Project manifest for "${row.name}" (slug: ${row.slug}):`,
             `Assets (${assets.length}): ${shownAssets.length

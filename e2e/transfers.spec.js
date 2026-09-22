@@ -135,11 +135,11 @@ test('the picker is owner-qualified and refuses memory; a private project takes 
     const reference = dialog.getByRole('radio', { name: /Reference/ });
     await expect(reference).toBeEnabled();
     await reference.check();
-    await expect(page.getByTestId('transfer-audience')).toHaveCount(0);
+    await expect(page.getByTestId('transfer-audience')).toContainText('only you');
     await expect(page.getByTestId('transfer-submit')).toHaveText('Reference in project');
     await page.getByTestId('transfer-submit').click();
     await expect(dialog.getByRole('heading', { name: `Referenced in ${C.PROJECT_NAME}` })).toBeVisible();
-    await expect(page.getByTestId('transfer-done')).toContainText('only you can see it there');
+    await expect(page.getByTestId('transfer-done')).toContainText('only you see it');
     await page.getByTestId('transfer-open-project').click();
 
     // The transfer opens the project's Knowledge view at its owner-qualified address.
@@ -254,6 +254,30 @@ test('Use in discussion posts the note as a message from you; no persona turn ru
     expect(posted.userId).toBe(C.OWNER);
     expect(posted.content).toContain(C.CHAT_ANSWER_HEADING);
     expect(posted.content).toContain(C.CHAT_ANSWER_BODY);
+});
+
+test('publication stays disabled until a failed audience lookup is retried successfully', async ({ page }) => {
+    await page.goto('/app/knowledge/notes');
+    let release;
+    const waiting = new Promise(resolve => { release = resolve; });
+    let attempts = 0;
+    await page.route('**/api/app/projects/*/audience?*', async route => {
+        if (++attempts === 1) {
+            await waiting;
+            await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Unavailable' } }) });
+        } else await route.continue();
+    });
+    await savedRow(page).getByRole('button', { name: 'Add to project…' }).click();
+    await page.getByTestId('transfer-project').selectOption(`${C.MEMBER}:${C.PROJECT_SLUG}`);
+    await expect(page.getByTestId('transfer-audience')).toContainText('checking');
+    await expect(page.getByTestId('transfer-submit')).toBeDisabled();
+    release();
+    await expect(page.getByRole('alert')).toContainText('Could not check the audience');
+    await expect(page.getByTestId('transfer-submit')).toBeDisabled();
+    await page.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(page.getByTestId('transfer-audience')).toContainText(C.MEMBER_NAME);
+    await expect(page.getByTestId('transfer-submit')).toBeEnabled();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
 });
 
 test('deleting the original names every scope it reached; the published copy and the transcript message stay', async ({ page }) => {

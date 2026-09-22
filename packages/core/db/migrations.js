@@ -13,6 +13,8 @@
  */
 
 const COLUMN_MIGRATIONS = [
+    ['knowledge_transfers', 'requestId', 'requestId TEXT'],
+    ['knowledge_transfers', 'requestSourceNodeId', 'requestSourceNodeId INTEGER'],
     ['parlor_conversations', 'modelConfigJson', 'modelConfigJson TEXT'],
     ['spitball_expeditions', 'modelConfigJson', 'modelConfigJson TEXT'],
     ['guild_settings', 'proactive_mode',
@@ -34,6 +36,9 @@ const COLUMN_MIGRATIONS = [
     ['guild_settings', 'tts_accent', 'tts_accent TEXT'],
     // Per-user custom instructions (web portal settings dialog)
     ['UserPreferences', 'custom_instructions', 'custom_instructions TEXT'],
+    // Anthropic cache counters remain subsets of total input tokens.
+    ['usage_log', 'cacheReadTokens', 'cacheReadTokens INTEGER NOT NULL DEFAULT 0'],
+    ['usage_log', 'cacheWriteTokens', 'cacheWriteTokens INTEGER NOT NULL DEFAULT 0'],
     // Web chat branching: a forked conversation points at its source
     ['web_conversations', 'parentConversationId', 'parentConversationId INTEGER'],
     ['web_conversations', 'branchedFromMessageId', 'branchedFromMessageId INTEGER'],

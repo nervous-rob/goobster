@@ -82,7 +82,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     const [anchorFound, setAnchorFound] = useState<boolean | null>(null);
     // After Pause or Escape, do not seize focus again this session.
     const pausedRef = useRef<Set<string>>(new Set());
-    const offeredRef = useRef(false);
+    const offeredRef = useRef<Set<string>>(new Set());
 
     const data = tutorialsQ.data;
     const invalidate = useCallback(async () => {
@@ -139,6 +139,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
 
     const replay = useCallback(async (tutorialId: string) => {
         pausedRef.current.delete(tutorialId);
+        offeredRef.current.delete(tutorialId);
         await api.resetTutorial(tutorialId);
         await invalidate();
         setActiveId(tutorialId);
@@ -165,6 +166,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     const resetOne = useCallback(async (tutorialId: string) => {
         if (activeId === tutorialId) setActiveId(null);
         pausedRef.current.delete(tutorialId);
+        offeredRef.current.delete(tutorialId);
         await api.resetTutorial(tutorialId);
         await invalidate();
     }, [activeId, invalidate]);
@@ -172,6 +174,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     const resetAll = useCallback(async () => {
         setActiveId(null);
         pausedRef.current.clear();
+        offeredRef.current.clear();
         await api.resetAllTutorials();
         await invalidate();
     }, [invalidate]);
@@ -224,14 +227,13 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
 
     const dismissOffer = useCallback(() => {
         setOffer(null);
-        offeredRef.current = true;
     }, []);
 
     const acceptOffer = useCallback(async () => {
         if (!offer) return;
         const id = offer.tutorialId;
         setOffer(null);
-        offeredRef.current = true;
+        offeredRef.current.add(id);
         if (id === 'home.orientation') {
             try { await api.markOrientationOffered(); } catch { /* */ }
         }
@@ -252,7 +254,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     }, [activeId, pause]);
 
     // Spotlight the control the current step points at. Anchors can render a
-    // beat after navigation, so look a few times before declaring it off screen.
+    // beat after navigation or be replaced by a refetch on the same route.
     const anchorId = active?.entry.steps.find((s) => s.id === active.progress.currentStepId)?.anchorId || null;
     useEffect(() => {
         if (!anchorId) {
@@ -261,41 +263,43 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         }
         setAnchorFound(null);
         let target: Element | null = null;
-        const timers: ReturnType<typeof setTimeout>[] = [];
-        const reducedMotion = typeof window !== 'undefined'
-            && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-        const look = (attempt: number) => {
+        const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        const look = () => {
             const el = document.querySelector(`[data-tour="${anchorId}"]`);
-            if (el) {
+            if (el !== target) {
+                target?.classList.remove('tour-target');
                 target = el;
-                el.classList.add('tour-target');
-                el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
-                setAnchorFound(true);
-                return;
+                if (target) {
+                    target.classList.add('tour-target');
+                    target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
+                }
             }
-            const waits = [150, 500, 1200];
-            if (attempt < waits.length) timers.push(setTimeout(() => look(attempt + 1), waits[attempt]));
-            else setAnchorFound(false);
+            setAnchorFound(Boolean(target));
         };
-        look(0);
+        // Child-list changes cover late loads, removal, and replacement without
+        // observing our own class changes or restarting the animation each render.
+        const observer = new MutationObserver(look);
+        observer.observe(document.body, { childList: true, subtree: true });
+        look();
         return () => {
-            timers.forEach(clearTimeout);
+            observer.disconnect();
             target?.classList.remove('tour-target');
         };
     }, [anchorId, pathname]);
 
     // First login / room-entry offers. Never on public shares. Never after Pause.
     useEffect(() => {
-        if (!enabled || isShare || !data || activeId || offer || offeredRef.current) return;
+        if (!enabled || isShare || !data || activeId || offer) return;
         if (!data.preferences.autoStart) return;
 
         const home = progressFor(data, 'home.orientation');
         const homeEntry = entryFor(data, 'home.orientation');
-        if (home && homeEntry && home.status === 'not_started' && !pausedRef.current.has('home.orientation')) {
+        if (room !== 'settings' && home && homeEntry && home.status === 'not_started'
+            && !pausedRef.current.has('home.orientation') && !offeredRef.current.has('home.orientation')) {
             const kind = data.preferences.orientationOfferedAt ? 'existing' : 'first_login';
             // Existing users get an unobtrusive offer; first login is nonblocking too.
             setOffer({ tutorialId: 'home.orientation', title: homeEntry.title, kind });
-            offeredRef.current = true;
+            offeredRef.current.add('home.orientation');
             return;
         }
 
@@ -304,10 +308,10 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         for (const entry of roomTutorials) {
             const progress = progressFor(data, entry.id);
             if (!progress || progress.status !== 'not_started') continue;
-            if (pausedRef.current.has(entry.id)) continue;
+            if (pausedRef.current.has(entry.id) || offeredRef.current.has(entry.id)) continue;
             if (!entry.launchable) continue;
             setOffer({ tutorialId: entry.id, title: entry.title, kind: 'room' });
-            offeredRef.current = true;
+            offeredRef.current.add(entry.id);
             break;
         }
     }, [enabled, isShare, data, activeId, offer, room]);

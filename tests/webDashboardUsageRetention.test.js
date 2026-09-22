@@ -48,7 +48,7 @@ describe('getUsageStats', () => {
         await seedUsage({ userId: OTHER, model: 'gpt-a', input: 9999, output: 9999 });
 
         const stats = await webDashboardService.getUsageStats({ userId: USER, days: 30 });
-        expect(stats.totals).toEqual({ calls: 3, inputTokens: 310, outputTokens: 155 });
+        expect(stats.totals).toEqual({ calls: 3, inputTokens: 310, outputTokens: 155, cacheReadTokens: 0, cacheWriteTokens: 0 });
 
         expect(stats.byModel).toHaveLength(2);
         expect(stats.byModel[0]).toMatchObject({ model: 'gpt-a', calls: 2, inputTokens: 300, outputTokens: 150 });
@@ -59,6 +59,22 @@ describe('getUsageStats', () => {
         expect(stats.byDay).toHaveLength(2);
         expect(stats.byDay[0].inputTokens).toBe(210); // yesterday: 200 + 10
         expect(stats.byDay[1].inputTokens).toBe(100); // today
+    });
+
+    test('cache metrics persist and aggregate without inflating totals or leaking other users', async () => {
+        const tracker = require('@goobster/core/services/usageTracker');
+        const entry = { provider: 'anthropic', model: 'claude-test', operation: 'chat', userId: USER, guildId: dmScopeId(USER) };
+        await tracker.log({ ...entry, inputTokens: 13050, outputTokens: 20, cacheReadTokens: 12000, cacheWriteTokens: 1000 });
+        await tracker.log({ ...entry, inputTokens: 2020, outputTokens: 10, cacheReadTokens: 2000 });
+        await tracker.log({ ...entry, userId: OTHER, guildId: dmScopeId(OTHER), inputTokens: 999, cacheReadTokens: 999 });
+        const stats = await webDashboardService.getUsageStats({ userId: USER });
+        const expected = { calls: 2, inputTokens: 15070, outputTokens: 30, cacheReadTokens: 14000, cacheWriteTokens: 1000 };
+        expect(stats.totals).toEqual(expected);
+        expect(stats.byModel[0]).toMatchObject(expected);
+        expect(stats.byDay[0]).toMatchObject(expected);
+        expect(await tracker.getTotals({ guildId: dmScopeId(USER) })).toEqual(expected);
+        expect((await tracker.getSummary({ guildId: dmScopeId(USER) }))[0]).toMatchObject(expected);
+        expect(stats.byOperation[0].totalTokens).toBe(15100);
     });
 
     test('the window filters old rows and days is clamped', async () => {
@@ -75,7 +91,7 @@ describe('getUsageStats', () => {
 
     test('an empty history returns zeroed shapes, not errors', async () => {
         const stats = await webDashboardService.getUsageStats({ userId: USER });
-        expect(stats.totals).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0 });
+        expect(stats.totals).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
         expect(stats.byModel).toEqual([]);
         expect(stats.byDay).toEqual([]);
     });

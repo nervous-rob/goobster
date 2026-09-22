@@ -44,6 +44,7 @@ class AnthropicService {
         this.apiKey = aiConfig.anthropic.apiKey;
         this.defaultModel = aiConfig.anthropic.chatModel;
         this.defaultReasoningEffort = null;
+        this.promptCaching = aiConfig.anthropic.promptCaching !== false;
         this.baseUrl = ANTHROPIC_API_BASE_URL;
     }
 
@@ -212,6 +213,20 @@ class AnthropicService {
         };
         if (request.system) body.system = request.system;
         if (request.tools && request.tools.length > 0) body.tools = request.tools;
+        if (request.promptCaching) {
+            // Three checkpoints at most: stable tools, system, and the growing
+            // conversation. A changing clock/retrieval in system must not force
+            // the (often large) tool definitions to be written again.
+            const cacheControl = { type: 'ephemeral' }; // default five-minute TTL
+            body.cache_control = cacheControl;
+            if (body.tools?.length) {
+                body.tools = body.tools.map((tool, index) => index === body.tools.length - 1
+                    ? { ...tool, cache_control: cacheControl } : tool);
+            }
+            if (body.system) {
+                body.system = [{ type: 'text', text: body.system, cache_control: cacheControl }];
+            }
+        }
         if (request.temperature !== undefined) body.temperature = request.temperature;
         if (request.top_p !== undefined) body.top_p = request.top_p;
         if (request.effort) body.output_config = { effort: request.effort };
@@ -301,11 +316,11 @@ class AnthropicService {
         const toolCalls = [];
         // Index in the response content array -> pending tool call being built
         const pendingToolCalls = new Map();
-        const usage = { inputTokens: 0, outputTokens: 0 };
+        let rawUsage = {};
 
         for await (const event of await this._readSseJson(response)) {
             if (event.type === 'message_start') {
-                usage.inputTokens = event.message?.usage?.input_tokens || 0;
+                rawUsage = { ...rawUsage, ...event.message?.usage };
             } else if (event.type === 'content_block_start') {
                 if (event.content_block?.type === 'tool_use') {
                     pendingToolCalls.set(event.index, {
@@ -332,13 +347,14 @@ class AnthropicService {
                     pendingToolCalls.delete(event.index);
                 }
             } else if (event.type === 'message_delta') {
-                if (event.usage?.output_tokens) usage.outputTokens = event.usage.output_tokens;
+                // Streaming usage updates are cumulative, not increments.
+                rawUsage = { ...rawUsage, ...event.usage };
             } else if (event.type === 'error') {
                 throw new Error(event.error?.message || 'Anthropic stream error');
             }
         }
 
-        return { content, toolCalls, usage };
+        return { content, toolCalls, usage: this._normalizeUsage(rawUsage) };
     }
 
     /**
@@ -346,7 +362,7 @@ class AnthropicService {
      * and streaming.
      *
      * @param {Array|string} messages
-     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta, reasoning_effort
+     * @param {Object} opts - temperature, top_p, max_tokens, model, functions, webSearch, onDelta, reasoning_effort, promptCaching
      * @returns {Promise<{content: string, toolCalls: Array}>}
      */
     async chat(messages, opts = {}) {
@@ -379,6 +395,7 @@ class AnthropicService {
             system,
             max_tokens: withThinkingHeadroom(max_tokens, thinkingEffort),
             tools,
+            promptCaching: opts.promptCaching ?? this.promptCaching,
             effort
         };
 
@@ -407,15 +424,26 @@ class AnthropicService {
 
             const httpResponse = await this._postMessages(request, { signal: opts.signal });
             const response = await httpResponse.json();
-            await this._logUsage({
-                inputTokens: response.usage?.input_tokens || 0,
-                outputTokens: response.usage?.output_tokens || 0
-            }, modelToUse, opts.usageContext);
+            await this._logUsage(this._normalizeUsage(response.usage), modelToUse, opts.usageContext);
             return this._parseResponse(response);
         } catch (error) {
             console.error('Anthropic API Error:', error.message);
             throw new Error('Failed to complete chat request: ' + error.message, { cause: error });
         }
+    }
+
+    _normalizeUsage(raw = {}) {
+        const count = value => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+        const cacheReadTokens = count(raw?.cache_read_input_tokens);
+        const cacheWriteTokens = count(raw?.cache_creation_input_tokens);
+        return {
+            // Anthropic input_tokens excludes both cache reads and writes.
+            // Our provider-neutral total includes them exactly once.
+            inputTokens: count(raw?.input_tokens) + cacheReadTokens + cacheWriteTokens,
+            outputTokens: count(raw?.output_tokens),
+            cacheReadTokens,
+            cacheWriteTokens
+        };
     }
 
     async _logUsage(usage, model, usageContext = {}) {
@@ -425,6 +453,8 @@ class AnthropicService {
             operation: 'chat',
             inputTokens: usage?.inputTokens || 0,
             outputTokens: usage?.outputTokens || 0,
+            cacheReadTokens: usage?.cacheReadTokens || 0,
+            cacheWriteTokens: usage?.cacheWriteTokens || 0,
             guildId: usageContext?.guildId,
             userId: usageContext?.userId
         });
@@ -441,7 +471,11 @@ class AnthropicService {
             finalPrompt = `Current date and time: ${dateString}, ${now.toLocaleTimeString('en-US')}\n\n${prompt}`;
         }
 
-        const { content } = await this.chat([{ role: 'user', content: finalPrompt }], options);
+        const { content } = await this.chat([{ role: 'user', content: finalPrompt }], {
+            ...options,
+            // Single-use background prompts rarely repay a cache write.
+            promptCaching: options.promptCaching ?? false
+        });
         if (!content) {
             throw new Error('Empty response from Anthropic API');
         }

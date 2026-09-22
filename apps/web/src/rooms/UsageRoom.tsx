@@ -11,7 +11,7 @@ type ModelRow = { provider: string; model: string; calls: number; inputTokens: n
 type OperationRow = { operation: string; calls: number; totalTokens?: number };
 type UsagePayload = {
     days: number;
-    totals: { calls: number; inputTokens: number; outputTokens: number };
+    totals: { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
     byDay: DayRow[];
     byModel: ModelRow[];
     byOperation: OperationRow[];
@@ -185,6 +185,16 @@ export function UsageRoom() {
                                 </div>
                             </div>
                         ) : null}
+                        {Boolean(stats.totals.cacheReadTokens || stats.totals.cacheWriteTokens) && (
+                            <div className="list-card" data-testid="usage-prompt-cache">
+                                <strong>Anthropic prompt cache</strong>
+                                <p className="hint">
+                                    {formatTokens(stats.totals.cacheReadTokens || 0)} input tokens reused;{' '}
+                                    {formatTokens(stats.totals.cacheWriteTokens || 0)} written to cache.
+                                    Both are included in the input total. Reused tokens cost less; cache writes cost extra.
+                                </p>
+                            </div>
+                        )}
                         <div className="stat-grid">
                             <div className="stat-card">
                                 <div className="stat-label">AI calls</div>

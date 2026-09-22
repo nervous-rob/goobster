@@ -7,11 +7,12 @@ describe('AnthropicService', () => {
         global.fetch = originalFetch;
     });
 
-    function createService() {
+    function createService(promptCaching = true) {
         jest.doMock('@goobster/core/config/aiConfig', () => ({
             anthropic: {
                 apiKey: 'test-anthropic-key',
-                chatModel: 'claude-test-model'
+                chatModel: 'claude-test-model',
+                promptCaching
             }
         }));
         jest.doMock('@goobster/core/services/usageTracker', () => ({
@@ -58,7 +59,8 @@ describe('AnthropicService', () => {
 
         const body = JSON.parse(global.fetch.mock.calls[0][1].body);
         expect(body.model).toBe('claude-test-model');
-        expect(body.system).toBe('Be concise.');
+        expect(body.system).toEqual([{ type: 'text', text: 'Be concise.', cache_control: { type: 'ephemeral' } }]);
+        expect(body.cache_control).toEqual({ type: 'ephemeral' });
         expect(body.max_tokens).toBe(64);
         expect(body.temperature).toBe(0.4);
         expect(body.messages).toEqual([
@@ -116,7 +118,7 @@ describe('AnthropicService', () => {
                     required: ['text']
                 }
             },
-            { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
+            { type: 'web_search_20250305', name: 'web_search', max_uses: 5, cache_control: { type: 'ephemeral' } }
         ]);
     });
 
@@ -231,14 +233,15 @@ describe('AnthropicService', () => {
     test('streams SSE events, reports deltas, and assembles tool inputs', async () => {
         const encoder = new TextEncoder();
         const events = [
-            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4}}}\n\n',
+            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":1,"cache_read_input_tokens":1000,"cache_creation_input_tokens":200}}}\n\n',
             'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}\n\n',
             'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}\n\n',
             'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_9","name":"echoMessage"}}\n\n',
             'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"text\\":"}}\n\n',
             'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"hi\\"}"}}\n\n',
             'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
-            'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":6}}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":3}}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","usage":{"input_tokens":9,"cache_read_input_tokens":1500,"cache_creation_input_tokens":300,"output_tokens":6}}\n\n',
             'event: message_stop\ndata: {"type":"message_stop"}\n\n'
         ];
         global.fetch = jest.fn().mockResolvedValue({
@@ -263,6 +266,59 @@ describe('AnthropicService', () => {
         expect(result.toolCalls).toEqual([{ id: 'toolu_9', name: 'echoMessage', arguments: '{"text":"hi"}' }]);
         expect(onDelta).toHaveBeenNthCalledWith(1, 'Hel');
         expect(onDelta).toHaveBeenNthCalledWith(2, 'lo');
+        expect(require('@goobster/core/services/usageTracker').log).toHaveBeenCalledWith(expect.objectContaining({
+            inputTokens: 1809, outputTokens: 6, cacheReadTokens: 1500, cacheWriteTokens: 300
+        }));
+    });
+
+    test('non-streaming cache counters include the full prompt exactly once', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+            content: [{ type: 'text', text: 'Cached answer' }],
+            usage: { input_tokens: 50, output_tokens: 20, cache_read_input_tokens: 12000, cache_creation_input_tokens: 1000 }
+        }) });
+        const service = createService();
+        await service.chat('Continue', { usageContext: { userId: 'owner', guildId: 'dm:owner' } });
+        expect(require('@goobster/core/services/usageTracker').log).toHaveBeenCalledWith(expect.objectContaining({
+            inputTokens: 13050, outputTokens: 20, cacheReadTokens: 12000, cacheWriteTokens: 1000,
+            userId: 'owner', guildId: 'dm:owner'
+        }));
+    });
+
+    test('tool checkpoints survive a changing system prompt without mutating caller data', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [], usage: {} }) });
+        const service = createService();
+        const functions = Object.freeze([Object.freeze({ name: 'lookup', description: 'Find notes', parameters: { type: 'object' } })]);
+        for (const clock of ['10:00', '10:01']) {
+            await service.chat([{ role: 'system', content: `NOW: ${clock}` }, { role: 'user', content: 'Recall notes' }], { functions });
+        }
+        const [first, next] = global.fetch.mock.calls.map(call => JSON.parse(call[1].body));
+        expect(first.tools).toEqual(next.tools);
+        expect(first.tools[0].cache_control).toEqual({ type: 'ephemeral' });
+        expect(first.system).not.toEqual(next.system);
+        expect(functions[0]).not.toHaveProperty('cache_control');
+        expect(JSON.stringify(first).match(/"cache_control"/g)).toHaveLength(3);
+        expect(require('@goobster/core/services/usageTracker').log).toHaveBeenCalledWith(expect.objectContaining({
+            inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0
+        }));
+    });
+
+    test('global and per-call opt-out omit all cache controls; standalone generation defaults off', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: 'text', text: 'Done' }] }) });
+        const service = createService(false);
+        const messages = [{ role: 'system', content: 'Instructions' }, { role: 'user', content: 'Hello' }];
+        const functions = [{ name: 'lookup', parameters: { type: 'object' } }];
+        await service.chat(messages, { functions });
+        let body = JSON.parse(global.fetch.mock.calls.at(-1)[1].body);
+        expect(JSON.stringify(body)).not.toContain('cache_control');
+        expect(typeof body.system).toBe('string');
+        service.promptCaching = true;
+        await service.chat(messages, { functions, promptCaching: false });
+        expect(global.fetch.mock.calls.at(-1)[1].body).not.toContain('cache_control');
+        await service.generateText('A one-off background task');
+        expect(global.fetch.mock.calls.at(-1)[1].body).not.toContain('cache_control');
+        await service.generateText('A deliberately repeated prompt', { promptCaching: true });
+        body = JSON.parse(global.fetch.mock.calls.at(-1)[1].body);
+        expect(body.cache_control).toEqual({ type: 'ephemeral' });
     });
 
     test('surfaces API errors with status and message', async () => {

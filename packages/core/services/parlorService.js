@@ -2023,7 +2023,7 @@ class ParlorService {
      * @param {Object} params - { userId, userName, conversationId, content }
      * @returns {Promise<{ id:number, role:'user', content:string, userId:string, userName:string|null, createdAt:string }>}
      */
-    async postMessage({ userId, userName = null, conversationId, content }) {
+    async postMessage({ userId, userName = null, conversationId, content, notify = true }) {
         const text = String(content ?? '').trim();
         if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
         if (text.length > MAX_MESSAGE_LENGTH) {
@@ -2042,7 +2042,7 @@ class ParlorService {
             `UPDATE parlor_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
             { id: conversation.id }
         );
-        await this._notifyTurn(conversation.id, userId);
+        if (notify) await this._notifyTurn(conversation.id, userId);
         return message;
     }
 

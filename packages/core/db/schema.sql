@@ -502,6 +502,9 @@ CREATE TABLE IF NOT EXISTS knowledge_transfers (
     -- saved answer), or the transcript message a discussion copy became
     copyNodeId INTEGER REFERENCES kg_nodes(id) ON DELETE SET NULL,
     copyMessageId INTEGER,
+    -- Retry receipt: preserve the request's source identity after note deletion.
+    requestId TEXT,
+    requestSourceNodeId INTEGER,
     -- JSON { kind, ownerId, memberIds, shared } - who could read the
     -- destination when the transfer happened
     audienceJson TEXT,
@@ -512,6 +515,7 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_user ON knowledge_transfers(u
 CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_source ON knowledge_transfers(sourceNodeId);
 CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_target ON knowledge_transfers(targetKind, targetId);
 CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_copy ON knowledge_transfers(copyNodeId);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_transfers_request ON knowledge_transfers(userId, requestId);
 
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the
@@ -560,6 +564,9 @@ CREATE TABLE IF NOT EXISTS usage_log (
     operation TEXT NOT NULL,
     inputTokens INTEGER NOT NULL DEFAULT 0,
     outputTokens INTEGER NOT NULL DEFAULT 0,
+    -- Cache counters are subsets of inputTokens (total prompt tokens).
+    cacheReadTokens INTEGER NOT NULL DEFAULT 0,
+    cacheWriteTokens INTEGER NOT NULL DEFAULT 0,
     count INTEGER NOT NULL DEFAULT 1,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

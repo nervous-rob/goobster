@@ -1547,7 +1547,6 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 }
 @media (prefers-reduced-motion: reduce) {
   .tutorial-panel { animation: none; }
-  .tour-target { animation: none; }
 }
 .tutorial-panel.is-soft { opacity: 0.96; }
 /* Spotlight on the control the active step points at (added by TutorialProvider). */
@@ -1558,6 +1557,9 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
   box-shadow: 0 0 0 6px var(--accent-soft);
   animation: tour-target-in 1.4s ease-out 1;
   scroll-margin: 96px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-target { animation: none; }
 }
 @keyframes tour-target-in {
   0% { box-shadow: 0 0 0 0 var(--accent-soft); outline-color: transparent; }

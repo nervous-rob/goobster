@@ -34,7 +34,8 @@ module.exports = {
     anthropic: {
         apiKey: process.env.ANTHROPIC_API_KEY || fileConfig.anthropicKey || null,
         chatModel: process.env.ANTHROPIC_CHAT_MODEL || process.env.ANTHROPIC_MODEL || fileConfig.ai?.anthropic?.chatModel || 'claude-sonnet-5',
-        thoughtfulModel: process.env.ANTHROPIC_THOUGHTFUL_MODEL || fileConfig.ai?.anthropic?.thoughtfulModel || 'claude-fable-5'
+        thoughtfulModel: process.env.ANTHROPIC_THOUGHTFUL_MODEL || fileConfig.ai?.anthropic?.thoughtfulModel || 'claude-fable-5',
+        promptCaching: (process.env.ANTHROPIC_PROMPT_CACHING ?? String(fileConfig.ai?.anthropic?.promptCaching ?? 'true')) !== 'false'
     },
 
     gemini: {
