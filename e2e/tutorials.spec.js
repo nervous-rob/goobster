@@ -232,11 +232,14 @@ test('authored demos, skip step, and Keep this example work without a provider',
     await expect(panel.locator('[data-tour="tutorial-keep-example"]')).toBeVisible();
 
     // Keep this example is the only knowledge write.
+    const keepResp = page.waitForResponse((res) =>
+        res.url().includes('/api/app/tutorials/keep-example') && res.request().method() === 'POST'
+    );
     await panel.locator('[data-tour="tutorial-keep-example"]').click();
     await confirmModal(page);
-    await expect(page.getByText(/Kept "Tide-pool anemones"|already have "Tide-pool anemones"/)).toBeVisible({
-        timeout: 10_000
-    });
+    const kept = await keepResp;
+    expect(kept.ok()).toBe(true);
+    await expect(page.locator('#toast')).toContainText('Tide-pool anemones', { timeout: 10_000 });
 
     const notes = await page.request.get(
         `/api/app/spitball/notes?scope=${encodeURIComponent(`dm:${C.OWNER}`)}&view=knowledge`
