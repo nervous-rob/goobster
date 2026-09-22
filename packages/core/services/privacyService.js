@@ -427,7 +427,10 @@ class PrivacyService {
                 // person kept on purpose vs. what Goobster distilled.
                 saved: kgStats?.saved || 0,
                 distilled: kgStats?.distilled || 0,
-                unclassified: kgStats?.unclassified || 0
+                unclassified: kgStats?.unclassified || 0,
+                // Explicit transfers (ADR 0010): answers saved as notes,
+                // notes referenced from private projects, copies published.
+                transfers: await require('./knowledgeTransferService').summarizeForUser(userId)
             },
             memories: {
                 count: memories?.count || 0,
@@ -580,6 +583,10 @@ class PrivacyService {
             for (const row of artifactRows) {
                 kgArtifactStorage.deleteRelativePath(row.relativePath);
             }
+            // The transfer ledger (ADR 0010): every move this person made.
+            // Before the nodes go, so the rows are counted as theirs and
+            // not merely orphaned by the cascade.
+            counts.knowledgeTransfers = (await require('./knowledgeTransferService').forgetUser(userId)).transfers;
             counts.kgNodes = (await db.run(
                 `DELETE FROM kg_nodes WHERE scopeKey = @userScope OR guildId = @dmScope`,
                 { userScope: `USER:${userId}`, dmScope }
@@ -1090,6 +1097,10 @@ class PrivacyService {
             )).c,
             kg_artifacts: (await db.get(
                 'SELECT COUNT(*) AS c FROM kg_artifacts WHERE authorId = @userId',
+                { userId }
+            )).c,
+            knowledge_transfers: (await db.get(
+                'SELECT COUNT(*) AS c FROM knowledge_transfers WHERE userId = @userId',
                 { userId }
             )).c,
             dm_conversations: (await db.get(

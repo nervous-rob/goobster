@@ -78,6 +78,7 @@ function extractApplets(text) {
 const PIN_COLUMNS = `a.id, a.title, a.language, a.source, a.conversationId, a.messageId,
                     a.grantsJson, a.createdAt, a.lastOpenedAt, a.migratedAssetId,
                     pa.slug AS migratedAssetSlug, p.slug AS migratedProjectSlug,
+                    p.userId AS migratedProjectOwnerId,
                     wc.title AS conversationTitle`;
 
 const PIN_FROM = `FROM web_applets a
@@ -102,7 +103,9 @@ function serialize(row) {
         migrated,
         migratedAssetId: migrated ? (row.migratedAssetId ?? null) : null,
         migratedAssetSlug: row.migratedAssetSlug || null,
-        migratedProject: row.migratedProjectSlug || null
+        migratedProject: row.migratedProjectSlug || null,
+        // The project's address is owner + slug (ADR 0009); links need both.
+        migratedProjectOwnerId: migrated ? (row.migratedProjectOwnerId || null) : null
     };
 }
 
@@ -176,7 +179,8 @@ class WebAppletService {
                     migrated: false,
                     migratedAssetId: null,
                     migratedAssetSlug: null,
-                    migratedProject: null
+                    migratedProject: null,
+                    migratedProjectOwnerId: null
                 });
                 if (found.length >= DISCOVER_RESULT_LIMIT) return found;
             }

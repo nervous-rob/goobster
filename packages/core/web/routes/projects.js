@@ -720,14 +720,41 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
-    app.get('/api/app/projects/:slug/knowledge/notes', requireAuth, chatRoute(async (req) => ({
-        notes: await ctx.observatory.listKnowledgeNotes({
+    // Project notes plus the caller's own private references (ADR 0010):
+    // copies carry publishedBy / canRemove; references resolve only for the
+    // person who made them, and the audience says who else reads the scope.
+    app.get('/api/app/projects/:slug/knowledge/notes', requireAuth, chatRoute(async (req) => {
+        const common = {
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        };
+        const [notes, refs] = await Promise.all([
+            ctx.observatory.listKnowledgeNotes({ ...common, q: req.query.q || null }),
+            ctx.observatory.listKnowledgeReferences(common)
+        ]);
+        return { notes, references: refs.references, audience: refs.audience, role: refs.role };
+    }));
+
+    // Remove a note from the project scope (owner, or the publisher of a copy).
+    // The original personal note is never touched.
+    app.delete('/api/app/projects/:slug/knowledge/notes/:nodeId', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.deleteKnowledgeNote({
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
-            q: req.query.q || null
+            nodeId: req.params.nodeId
         })
-    })));
+    ));
+
+    // Who can read this project right now - named before a copy is published.
+    app.get('/api/app/projects/:slug/audience', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.getProjectAudience({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        })
+    ));
 
     app.delete('/api/app/projects/:slug/members/:memberId', requireAuth, chatRoute(async (req) =>
         ctx.observatory.removeMember({
