@@ -78,12 +78,18 @@ export function TutorialsSection() {
                         const canResume = status === 'in_progress' || status === 'paused'
                             || (status === 'not_started' && entry.launchable);
                         const canReplay = status !== 'not_started';
+                        const seen = progress
+                            ? progress.completedStepIds.length + progress.skippedStepIds.length
+                            : 0;
+                        const showProgress = (status === 'in_progress' || status === 'paused') && entry.steps.length > 0;
                         return (
                             <div key={entry.id} className="list-row tutorial-row" data-tutorial-id={entry.id}>
-                                <span>
+                                <span className="tutorial-row-main">
                                     <strong>{entry.title}</strong>
-                                    <span className="hint"> · {STATUS_LABEL[status]}
-                                        {progress && progress.revision > 0 ? ` · gen ${progress.generation}` : ''}
+                                    <span className="hint tutorial-row-meta">
+                                        {STATUS_LABEL[status]}
+                                        {showProgress ? ` · step ${Math.min(seen + 1, entry.steps.length)} of ${entry.steps.length}` : ''}
+                                        {status === 'not_started' && !entry.launchable ? ' · coming soon' : ''}
                                     </span>
                                 </span>
                                 <span className="tutorial-row-actions">
