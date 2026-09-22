@@ -1,10 +1,12 @@
 # Goobster
 
 A self-hostable AI workspace where conversation, computation, knowledge,
-collaboration, and initiative share one persistent substrate. Discord is
-the original front door; the browser portal is a first-class room of the
-same house. Optimized for a **Raspberry Pi 4B**: local SQLite by default,
-system FFmpeg, and every cloud integration optional.
+collaboration, and initiative share one persistent substrate. It runs as
+a browser portal with **no Discord at all**, or with Discord connected as
+an additional front door. Optimized for a **Raspberry Pi 4B**: local
+SQLite by default, system FFmpeg, and every cloud integration optional.
+See [Where your data goes](#where-your-data-goes) for what that does and
+does not mean for privacy.
 
 The distinctive product is not “a bot that can call tools.” It is a
 closed cognitive loop:
@@ -20,7 +22,9 @@ provenance, confidence bounds, and state transitions.
 
 - [The cognitive loop](#the-cognitive-loop)
 - [Also in the house](#also-in-the-house)
+- [Where your data goes](#where-your-data-goes)
 - [Documentation](#documentation)
+- [Ways to run it](#ways-to-run-it)
 - [Prerequisites](#prerequisites)
 - [Configuration](#configuration)
 - [Installation](#installation)
@@ -90,9 +94,10 @@ provenance still attached.
 
 These stay first-class; they are no longer the shape of the product.
 
-- **Privacy that is provable:** `/what-do-you-know-about-me`,
-  `/forget-me`, retention windows, per-channel exclusions. Everything
-  lives on hardware you own.
+- **Privacy you can inspect:** `/what-do-you-know-about-me`,
+  `/forget-me`, retention windows, per-channel exclusions, and a settings
+  and report export. Data is stored on the host you run; see
+  [Where your data goes](#where-your-data-goes) for what leaves it.
 - **Long-term memory and Server Wrapped:** local embeddings, `/recall`,
   counts-only activity stats.
 - **The Goobster Tavern:** a persistent tabletop RPG in Discord, playable
@@ -112,6 +117,36 @@ These stay first-class; they are no longer the shape of the product.
 - **Deployment:** lite (one process, SQLite) or full (Postgres +
   pgvector + bot + api + nginx). npm workspaces; core never imports an
   app.
+
+## Where your data goes
+
+Self-hosted storage does not mean all processing stays local. Plainly:
+
+- **Stored on your host.** Chats, memory, knowledge, projects, files and
+  settings live in the installation's database (SQLite or Postgres) and
+  `data/` directory.
+- **Sent to the providers you configure.** Model requests go to whichever
+  of OpenAI, Anthropic, Gemini or Ollama answers them, with the context the
+  turn needs (messages, retrieved notes and memories, attachments). Web
+  search, speech, image, music and integration providers (Perplexity,
+  ElevenLabs, GitHub, Notion, Spotify, ...) receive what their feature
+  sends them. Research runs query public sources (Wikipedia, arXiv, and
+  Perplexity when configured) with the topic being researched. Discord,
+  when connected, carries the messages exchanged there.
+- **Fully local only with local providers.** With Ollama for chat and
+  embeddings and no cloud keys, chat, memory, knowledge retrieval (BM25),
+  projects and the Tavern's deterministic rules run without a cloud
+  model provider. Voice, Perplexity web search, image generation and
+  generated audio are unavailable in that setup today.
+- **Readable by the host operator.** Whoever runs the installation can read
+  its database and files. The application keeps each account's private
+  data separate from other accounts (adversarial isolation testing is
+  tracked in issue #247); it does not hide data from the operator.
+- **What the privacy commands guarantee.** `/what-do-you-know-about-me` and
+  `/forget-me` report and erase a person's data inside this installation,
+  with an audit that checks nothing is left behind. They cannot recall data
+  already sent to an external provider, and they are not a compliance
+  certification.
 
 ## Documentation
 
@@ -156,17 +191,38 @@ room's demonstrations and independent skip, resume, and reset behavior.
 candidate directions without selecting a new name. These are plans, not
 instructions for features already available in the app.
 
+## Ways to run it
+
+| Shape | Discord | Process | Database | Start |
+|---|---|---|---|---|
+| **Standalone** | None | `apps/api` serves the portal and runs the schedulers | SQLite or Postgres | `node apps/api` |
+| **Lite** (default install) | Required | `apps/bot` runs the Discord adapter and serves the portal in-process | SQLite | `npm start` |
+| **Full** | Required | postgres + bot + api + nginx (`deploy/docker-compose.yml`) | Postgres + pgvector | `docker compose -f deploy/docker-compose.yml up -d` |
+
+**Without Discord** you get the portal's Chat, Knowledge (including
+Research), Projects, Discussions, Activity (Inbox, Attention, Scheduled)
+and memory; results land in the in-app Inbox. Discord-only features (slash
+commands, server scopes, the trading game, music and voice channels, the
+Tavern in a channel) report that Discord is not connected. See
+[`documentation/independent_runtime.md`](documentation/independent_runtime.md)
+for the standalone setup and
+[`documentation/identity.md`](documentation/identity.md) for creating
+operator and member accounts.
+
 ## Prerequisites
 
 - Node.js v20 or higher (v22 recommended)
 - FFmpeg (`sudo apt install ffmpeg`)
-- A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
+- A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications)),
+  only for the lite profile or to connect Discord
 - Optional: [Ollama](https://ollama.com) for local AI chat with no cloud dependency
 - Optional: OpenAI / Anthropic / Gemini / Perplexity / ElevenLabs / Spotify API keys
 
 ## Configuration
 
-Copy `config.example.json` to `config.json` and fill in your values. Only the Discord credentials are required — everything else degrades gracefully:
+Copy `config.example.json` to `config.json` and fill in your values. For the
+lite profile only the Discord credentials are required; standalone mode needs
+no Discord keys at all (omit `token`). Everything else degrades gracefully:
 
 ```json
 {
@@ -219,7 +275,8 @@ One-shot installer (Raspberry Pi OS 64-bit, Bookworm):
 git clone https://github.com/nervous-rob/goobster.git
 cd goobster
 ./scripts/install-rpi.sh --service   # --service also installs the systemd unit
-# Edit config.json with your Discord token
+# Edit config.json: add your Discord token for the lite profile,
+# or see "Ways to run it" for standalone mode without Discord
 sudo systemctl start goobster
 ```
 
@@ -333,10 +390,13 @@ Use `/help` in Discord to see all available commands, organized by categories:
 
 Set `"webapp": { "enabled": true }` in `config.json` and open `/app/`
 (run `npm run build:web` first). Dev mode mints a session without
-OAuth. Rooms: Study, Parlor, Observatory (Projects), Spitball
-(including Expeditions), Noticed (Attention), Inbox, plus Exchange,
-Workshop, and Tasks. Without a bot token, `node apps/api` serves the same
-portal in standalone mode (`documentation/independent_runtime.md`).
+OAuth. Destinations: Home, Chat, Knowledge (Notes, Map, Research),
+Projects, Discussions, Activity (Inbox, Attention, Scheduled) and Tools
+(Music Lab, Trading game, Card decks), plus Usage & limits, Settings and
+the operator's Host room. Older room names and paths still resolve
+(`documentation/portal_navigation.md`). Without a bot token, `node apps/api`
+serves the same portal in standalone mode
+(`documentation/independent_runtime.md`).
 
 ### Voice Features
 
