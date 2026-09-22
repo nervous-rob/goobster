@@ -59,7 +59,7 @@ for (const room of ['Discussions', 'Projects']) {
             await page.getByText('Salon on ingest', { exact: true }).click();
             await page.getByRole('button', { name: 'People in this discussion' }).click();
         } else {
-            await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
+            await page.getByTestId(`project-card-${C.OWNER}-${C.PROJECT_SLUG}`).click();
             const more = page.getByRole('button', { name: 'More actions' });
             if (await more.isVisible()) await more.click();
             await page.getByRole('button', { name: 'People', exact: true }).click();

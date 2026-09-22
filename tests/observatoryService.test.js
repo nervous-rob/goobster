@@ -120,16 +120,36 @@ afterAll(() => {
 });
 
 describe('gates', () => {
-    test('disabled Observatory refuses everything', async () => {
+    test('execution off (Observatory switch) still organizes projects but refuses to run (ADR 0009)', async () => {
         const svc = makeService({ observatory: { enabled: false } });
         expect(svc.enabled).toBe(false);
-        await expectThrow(async () => await svc.createProject({ userId: nextUser(), name: 'x' }), { code: 'DISABLED', status: 403 });
+        expect(svc.executionEnabled).toBe(false);
+        expect(svc.organizationEnabled).toBe(true);
+        const userId = nextUser();
+        const created = await svc.createProject({ userId, name: 'x' });
+        expect((await svc.listProjects(userId)).map(p => p.slug)).toEqual([created.slug]);
+        await expectThrow(
+            async () => await svc.run({ userId, project: created.slug, language: 'bash', code: 'true' }),
+            { code: 'DISABLED', status: 403 }
+        );
     });
 
-    test('a disabled sandbox disables the Observatory too (it grants persistence, not execution)', async () => {
+    test('a disabled sandbox disables execution too (a project grants persistence, not execution)', async () => {
         const svc = makeService({ sandbox: { enabled: false } });
         expect(svc.enabled).toBe(false);
-        await expectThrow(async () => await svc.listProjects(nextUser()), { code: 'DISABLED' });
+        const userId = nextUser();
+        const created = await svc.createProject({ userId, name: 'y' });
+        await expectThrow(
+            async () => await svc.render({ userId, project: created.slug }),
+            { code: 'DISABLED', status: 403 }
+        );
+    });
+
+    test('projects.enabled = false turns organization off as well', async () => {
+        const svc = makeService({ observatory: { projectsEnabled: false } });
+        expect(svc.organizationEnabled).toBe(false);
+        await expectThrow(async () => await svc.listProjects(nextUser()), { code: 'PROJECTS_DISABLED', status: 403 });
+        await expectThrow(async () => await svc.createProject({ userId: nextUser(), name: 'x' }), { code: 'PROJECTS_DISABLED' });
     });
 });
 
@@ -1330,13 +1350,15 @@ describe('dashboard share links', () => {
         await expectThrow(async () => await svc.getSharedDashboard('a'.repeat(40)), { code: 'NOT_FOUND' });
     });
 
-    test('share links die with the feature switch', async () => {
+    test('share links die with the projects switch, not the execution switch', async () => {
         const svc = makeService();
         const userId = nextUser();
         const { slug } = await svc.createProject({ userId, name: 'switched-off' });
         const { token } = await svc.createShareLink({ userId, project: slug });
-        const disabled = makeService({ observatory: { enabled: false } });
-        await expectThrow(() => disabled.getSharedDashboard(token), { code: 'DISABLED', status: 403 });
+        const noExecution = makeService({ observatory: { enabled: false } });
+        expect((await noExecution.getSharedDashboard(token)).html).toContain('switched-off');
+        const disabled = makeService({ observatory: { projectsEnabled: false } });
+        await expectThrow(() => disabled.getSharedDashboard(token), { code: 'PROJECTS_DISABLED', status: 403 });
     });
 });
 

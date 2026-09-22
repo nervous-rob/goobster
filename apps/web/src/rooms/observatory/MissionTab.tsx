@@ -56,6 +56,8 @@ type Mission = {
 type HistoryRow = { id: number; title: string; status: string; completedAt?: string | null };
 
 const STEP_KINDS: Array<Step['kind']> = ['expedition', 'job', 'watch', 'human'];
+/** Visible names for the step kinds (the ids are API vocabulary). */
+const STEP_KIND_LABELS: Record<Step['kind'], string> = { expedition: 'research', job: 'run', watch: 'watch', human: 'human' };
 
 export function MissionTab({
     slug,
@@ -89,8 +91,8 @@ export function MissionTab({
     const history = (q.data?.history || []).filter((row) => row.status === 'COMPLETED' || row.status === 'CANCELLED');
 
     return (
-        <div className="obs-mission">
-            {q.isPending && <div className="empty">Loading mission…</div>}
+        <div className="obs-mission" data-tour="project-plan">
+            {q.isPending && <div className="empty">Loading plan…</div>}
             {q.isError && <div className="empty">{(q.error as Error).message}</div>}
             {q.isSuccess && !mission && (
                 <DraftForm
@@ -131,7 +133,7 @@ export function MissionTab({
             )}
             {history.length > 0 && (
                 <details className="obs-mission-history">
-                    <summary>Earlier missions ({history.length})</summary>
+                    <summary>Earlier plans ({history.length})</summary>
                     <ul>
                         {history.map((row) => (
                             <li key={row.id}>
@@ -164,10 +166,10 @@ function DraftForm({
 
     return (
         <div className="obs-mission-draft">
-            <div className="section-title">Start a mission</div>
+            <div className="section-title">Start a plan</div>
             <p className="hint">
                 One outcome, how you will know it worked, and a plan you can approve in under a minute.
-                Ask Goobster in the project chat if you would rather draft it conversationally.
+                Ask Goobster in the project Conversation if you would rather draft it conversationally.
             </p>
             <label className="obs-mission-field">
                 <span>Title</span>
@@ -201,7 +203,7 @@ function DraftForm({
                     deadline: deadline || undefined
                 })}
             >
-                {busy ? 'Drafting…' : 'Draft mission'}
+                {busy ? 'Drafting…' : 'Draft plan'}
             </button>
         </div>
     );
@@ -371,7 +373,7 @@ function MissionView({
                         setStepParam('');
                         setStepChoices('');
                     }}>
-                        {STEP_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                        {STEP_KINDS.map((k) => <option key={k} value={k}>{STEP_KIND_LABELS[k]}</option>)}
                     </select>
                     <input className="input" placeholder="Step title" value={stepTitle} maxLength={160}
                         onChange={(e) => setStepTitle(e.target.value)} />
@@ -406,7 +408,7 @@ function MissionView({
                             setStepChoices('');
                         }}>Add step</button>
                     {mission.status === 'APPROVED' && (
-                        <span className="hint">Adding a step returns this mission to draft so you can re-approve the new plan.</span>
+                        <span className="hint">Adding a step returns this plan to draft so you can re-approve it.</span>
                     )}
                 </div>
             )}
@@ -431,7 +433,7 @@ function MissionView({
                     <select className="input" value={evidenceKind} onChange={(e) => setEvidenceKind(e.target.value)}>
                         <option value="note">note</option>
                         <option value="claim">claim</option>
-                        <option value="job">job</option>
+                        <option value="job">run</option>
                         <option value="artifact">artifact</option>
                     </select>
                     <input className="input" placeholder="id" value={evidenceId}
@@ -480,7 +482,7 @@ function MissionView({
                         )}
                         {mission.status === 'REVIEW' && (
                             <button type="button" className="btn primary" disabled={busy}
-                                onClick={() => onComplete(reviewNotes, verdict)}>Complete mission</button>
+                                onClick={() => onComplete(reviewNotes, verdict)}>Complete plan</button>
                         )}
                     </div>
                 </div>

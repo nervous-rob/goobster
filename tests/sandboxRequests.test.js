@@ -123,7 +123,11 @@ function makeService(overrides = {}, deps = {}) {
         overlayDir: path.join(tmpRoot, 'overlay'),
         ...overrides
     };
-    return new SandboxRequestService(config, deps);
+    return new SandboxRequestService(config, {
+        lookup: publicLookup,
+        transport: offlineTransport(),
+        ...deps
+    });
 }
 
 /** The stored fetch/install fake: writes bytes so quota math is real. */
@@ -136,6 +140,27 @@ function fakeFetchToFile({ bytes = 1000, contentType = 'text/csv' } = {}) {
 
 /** A DNS fake answering every name with one public address. */
 const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }];
+
+/**
+ * Wheel-size HEAD requests go to the real PyPI file host unless a transport
+ * is injected, and the DNS lookup in front of them has no deadline of its
+ * own. A stalled resolver then holds the test until Jest's suite timeout
+ * (20s on the Postgres matrix). These specs assert the approval contract,
+ * not the network, so the default transport fails the HEAD immediately.
+ */
+function offlineTransport() {
+    const { EventEmitter } = require('node:events');
+    return {
+        request() {
+            const req = new EventEmitter();
+            req.end = () => {
+                setImmediate(() => req.emit('error', Object.assign(new Error('offline'), { code: 'ENETUNREACH' })));
+            };
+            req.destroy = () => {};
+            return req;
+        }
+    };
+}
 
 afterAll(() => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });

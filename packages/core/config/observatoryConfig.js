@@ -9,6 +9,15 @@ try {
 }
 
 const observatory = fileConfig.observatory || {};
+const projects = fileConfig.projects || {};
+
+/** Boolean knob: env wins (`0`/`false` off, `1`/`true` on), then config.json, then the default. */
+function flag(envValue, fileValue, def) {
+    if (envValue === '0' || envValue === 'false') return false;
+    if (envValue === '1' || envValue === 'true') return true;
+    if (fileValue === true || fileValue === false) return fileValue;
+    return def;
+}
 
 /** Clamp a numeric knob into [min, max], falling back to def when unset/invalid. */
 function bounded(value, def, min, max) {
@@ -32,10 +41,24 @@ function bounded(value, def, min, max) {
  * ceiling so a config typo can never remove a guardrail.
  */
 module.exports = {
-    /** Master switch. Off = the observatory tool is not registered at all. */
+    /**
+     * Execution switch. Off = the observatory tool is not registered at all
+     * and no run, render or agent command can start. Organizing projects
+     * (`projectsEnabled`) does not depend on it - ADR 0009.
+     */
     enabled: process.env.GOOBSTER_OBSERVATORY_ENABLED === '1'
         || process.env.GOOBSTER_OBSERVATORY_ENABLED === 'true'
         || observatory.enabled === true,
+
+    /**
+     * Organization switch for the Projects room: create, list, open and
+     * delete projects; members, files, assets, plans, knowledge, automations
+     * definitions, run history, dashboards and share links. On by default -
+     * Projects is a core destination and must not require enabling code
+     * execution. `GOOBSTER_PROJECTS_ENABLED=0` or `"projects": { "enabled":
+     * false }` in config.json turns it off.
+     */
+    projectsEnabled: flag(process.env.GOOBSTER_PROJECTS_ENABLED, projects.enabled, true),
 
     /**
      * Where the tool may run: 'web' (default - only the authenticated web

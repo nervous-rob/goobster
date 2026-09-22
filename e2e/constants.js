@@ -42,6 +42,11 @@ module.exports = {
     PROJECT_KNOWLEDGE_CONTENT: 'The ingest runs nightly.',
 
     PROJECT_NAME: 'Emergence study',
+    PROJECT_SLUG: 'emergence-study',
+    PROJECT_GOAL: 'Find out whether the nightly ingest cadence changes what emerges.',
+    // Frieda owns a project with the SAME name (and slug) and has Rob on it,
+    // so Rob's list carries two "Emergence study" rows that differ by owner.
+    TWIN_PROJECT_GOAL: 'A different study that happens to share the name.',
     MISSION_TITLE: 'pgvector at one million notes',
     MISSION_OBJECTIVE: 'Determine whether pgvector recall remains useful above one million notes.',
     MISSION_CRITERION_1: 'A reproducible benchmark artifact exists',

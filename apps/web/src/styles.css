@@ -1400,6 +1400,29 @@ html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
 .activity-tab .nav-count { margin-left: 2px; }
 .activity-shell .pane-header { border-top: 0; }
 #pane-library > .view-tabs { padding-top: 4px; }
+#pane-observatory > .view-tabs { padding-top: 4px; }
+
+/* Projects (ADR 0009): URL-addressed project views, goal, inline conversation and people. */
+#pane-observatory a.list-row { color: inherit; text-decoration: none; }
+#pane-observatory a.list-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.obs-goal { margin: 0 0 8px; font-size: 14.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; }
+.obs-goal.is-empty { color: var(--text-dim); font-style: italic; }
+.row-meta.obs-goal { font-size: 13px; color: var(--text-dim); font-style: normal; margin: 4px 0 2px; }
+.btn.is-muted { opacity: 0.55; cursor: not-allowed; }
+.btn.is-muted:hover { opacity: 0.7; }
+.view-tab .badge { margin-left: 4px; font-size: 10px; }
+.obs-chat-dock.is-inline { width: auto; flex: 1; min-height: min(70dvh, 720px); }
+.obs-chat-dock.is-inline .obs-chat-dock-scroll { min-height: 320px; }
+.obs-people-view .project-people { max-width: 640px; }
+.obs-people-view .obs-section-head { margin-bottom: 10px; }
+.project-chooser { max-width: 720px; }
+.project-create .field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.project-create .field > span { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.project-create .field > span .hint { display: inline; margin: 0; font-weight: 500; }
+.project-create textarea.input { resize: vertical; }
+@media (max-width: 900px) {
+    .obs-chat-dock.is-inline { position: static; max-height: none; border-radius: 12px; box-shadow: none; }
+}
 
 /* Saved-knowledge curation (ADR 0008): kept / memory / unsorted. */
 .curation-badge { margin-left: 8px; font-size: 10.5px; text-transform: none; letter-spacing: 0; vertical-align: middle; }

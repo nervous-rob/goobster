@@ -47,26 +47,29 @@ test('project Parlor → transcript → project knowledge', async ({ page }) => 
 
     await openRoom(page, /Projects/);
     await expect(page.getByRole('heading', { name: /^Projects/ })).toBeVisible();
-    await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
+    // Two projects share this name (ADR 0009); the card names its owner.
+    await page.getByTestId(`project-card-${C.OWNER}-${C.PROJECT_SLUG}`).click();
     await expect(page.getByRole('heading', { name: new RegExp(C.PROJECT_NAME) })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Chat' }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(page.getByLabel(/Chat about/i).getByText(C.PARLOR_USER_MESSAGE)).toBeVisible();
     await expect(page.getByLabel(/Chat about/i).getByText(C.PARLOR_REPLY)).toBeVisible();
     await page.getByRole('button', { name: 'Hide chat' }).click();
 
-    await page.getByRole('button', { name: 'Knowledge' }).click();
+    await page.getByRole('navigation', { name: 'Project views' }).getByRole('link', { name: 'Knowledge', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/app/projects/${C.OWNER}/${C.PROJECT_SLUG}/knowledge$`));
     await expect(page.getByText(C.PROJECT_KNOWLEDGE_LABEL)).toBeVisible();
     await expect(page.getByText(C.PROJECT_KNOWLEDGE_CONTENT)).toBeVisible();
 });
 
-test('project job → artifact → Attention notice', async ({ page }) => {
+test('project run → output → Attention notice', async ({ page }) => {
     await openRoom(page, /Projects/);
-    await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
+    await page.getByTestId(`project-card-${C.OWNER}-${C.PROJECT_SLUG}`).click();
     await expect(page.getByText('❌ FAILED')).toBeVisible();
-    await expect(page.getByText(/Job #/)).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Artifacts' })).toBeVisible();
-    await page.getByRole('button', { name: 'Browse all files in Explorer' }).click();
+    await expect(page.getByText(/Run #/)).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Outputs' })).toBeVisible();
+    await page.getByRole('button', { name: 'Browse all files' }).click();
+    await expect(page).toHaveURL(new RegExp(`/app/projects/${C.OWNER}/${C.PROJECT_SLUG}/files$`));
     await page.getByRole('button', { name: '📁 out' }).click();
     await expect(page.getByRole('button', { name: /result\.json/ })).toBeVisible();
 
@@ -85,20 +88,21 @@ test('project job → artifact → Attention notice', async ({ page }) => {
     await expect(page.getByText(C.NOTICE_TITLE)).toHaveCount(0);
 });
 
-test('project mission draft → approve → review → complete', async ({ page }) => {
+test('project plan draft → approve → review → complete', async ({ page }) => {
     await openRoom(page, /Projects/);
-    await page.getByRole('button', { name: new RegExp(C.PROJECT_NAME) }).click();
+    await page.getByTestId(`project-card-${C.OWNER}-${C.PROJECT_SLUG}`).click();
     await expect(page.getByRole('heading', { name: new RegExp(C.PROJECT_NAME) })).toBeVisible();
-    await expect(page.getByText(/No open mission/)).toBeVisible();
+    await expect(page.getByText(/No open plan/)).toBeVisible();
     await page.getByRole('button', { name: 'Start one' }).click();
+    await expect(page).toHaveURL(new RegExp(`/app/projects/${C.OWNER}/${C.PROJECT_SLUG}/plan$`));
 
-    await expect(page.getByText('Start a mission')).toBeVisible();
+    await expect(page.getByText('Start a plan')).toBeVisible();
     await page.getByPlaceholder('pgvector at one million notes').fill(C.MISSION_TITLE);
     await page.getByPlaceholder(/Determine whether pgvector/).fill(C.MISSION_OBJECTIVE);
     await page.getByPlaceholder(/A reproducible benchmark/).fill(
         `${C.MISSION_CRITERION_1}\n${C.MISSION_CRITERION_2}`
     );
-    await page.getByRole('button', { name: 'Draft mission' }).click();
+    await page.getByRole('button', { name: 'Draft plan' }).click();
 
     await expect(page.getByRole('heading', { name: C.MISSION_TITLE })).toBeVisible();
     await expect(page.getByText('DRAFT', { exact: true })).toBeVisible();
@@ -116,9 +120,9 @@ test('project mission draft → approve → review → complete', async ({ page 
     await expect(page.getByText('REVIEW', { exact: true })).toBeVisible();
 
     await page.getByPlaceholder(/What the evidence shows/).fill(C.MISSION_REVIEW);
-    await page.getByRole('button', { name: 'Complete mission' }).click();
+    await page.getByRole('button', { name: 'Complete plan' }).click();
 
-    await expect(page.getByText('Start a mission')).toBeVisible();
-    await page.getByText(/Earlier missions/).click();
+    await expect(page.getByText('Start a plan')).toBeVisible();
+    await page.getByText(/Earlier plans/).click();
     await expect(page.getByText(C.MISSION_TITLE)).toBeVisible();
 });

@@ -20,13 +20,16 @@ export function ProjectChatDock({
     ownerId,
     projectName,
     open,
-    onToggle
+    onToggle,
+    variant = 'dock'
 }: {
     slug: string;
     ownerId?: string | null;
     projectName: string;
     open: boolean;
     onToggle: () => void;
+    /** `inline` fills the Conversation view instead of docking beside it (no Close). */
+    variant?: 'dock' | 'inline';
 }) {
     const me = useMe();
     const toast = useToast();
@@ -167,7 +170,7 @@ export function ProjectChatDock({
     if (!open) return null;
 
     return (
-        <aside className="obs-chat-dock open" aria-label={`Chat about ${projectName}`}>
+        <aside className={`obs-chat-dock open${variant === 'inline' ? ' is-inline' : ''}`} aria-label={`Chat about ${projectName}`} data-tour="project-conversation">
             <div className="obs-chat-dock-body">
                     <div className="obs-chat-dock-head">
                         <div className="obs-chat-dock-title">
@@ -178,7 +181,7 @@ export function ProjectChatDock({
                             {sending && (
                                 <button type="button" className="btn danger" onClick={() => void stop()}>Stop</button>
                             )}
-                            <button type="button" className="btn" onClick={onToggle}>Close</button>
+                            {variant === 'dock' && <button type="button" className="btn" onClick={onToggle}>Close</button>}
                         </div>
                     </div>
                     {participants.length > 1 && (
