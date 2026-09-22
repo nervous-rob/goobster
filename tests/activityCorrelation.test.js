@@ -22,7 +22,6 @@ const userSettings = require('@goobster/core/services/userSettingsService');
 const privacy = require('@goobster/core/services/privacyService');
 const eventBus = require('@goobster/core/services/eventBusService');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
-const { UserSettingsError } = userSettings;
 
 const OWNER = '700000000000000001';
 const OTHER = '700000000000000002';
@@ -194,9 +193,9 @@ test('hidden tool rooms are a validated preference on the existing settings row'
     expect(raised).toHaveLength(3);
     await privacy.forgetUser({ userId: OWNER });
     const audit = await privacy.auditUser({ userId: OWNER });
-    expect(audit.user_settings).toBe(0);
-    expect(audit.attention_notices).toBe(0);
-    expect(audit.inbox_items).toBe(0);
+    expect(audit.byTable.user_settings).toBe(0);
+    expect(audit.byTable.attention_notices).toBe(0);
+    expect(audit.byTable.inbox_items).toBe(0);
 });
 
 test('resetting appearance clears a hidden tool without touching chat tool switches', async () => {

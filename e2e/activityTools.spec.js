@@ -126,7 +126,7 @@ test('hiding a tool removes it from Tools and a direct address still opens it', 
     await expect(trading).toHaveAttribute('aria-disabled', 'true');
 
     await page.goto('/app/conservatory');
-    await expect(page.getByText('Music Lab', { exact: true })).toBeVisible();
+    await expect(page.locator('#pane-conservatory .chat-title')).toContainText('Music Lab');
     await page.reload();
     await expect(page).toHaveURL(/\/app\/conservatory$/);
     await page.goBack();
