@@ -80,7 +80,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🎨',
         scope: 'Your account',
         blurb: 'Theme, density, keyboard, and working defaults. Theme also keeps a device copy.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'expedition', 'parlor']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
     },
     {
         id: 'account',
@@ -162,6 +162,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'enter-to-send', label: 'Enter to send', keywords: ['enter', 'newline', 'keyboard', 'ime'] },
     { section: 'appearance', fieldId: 'expand-details', label: 'Expand chat details', keywords: ['tools', 'thinking', 'code', 'attachments'] },
     { section: 'appearance', fieldId: 'start-page', label: 'Start page', keywords: ['home', 'landing', 'default room'] },
+    { section: 'appearance', fieldId: 'hidden-tools', label: 'Hidden tools', keywords: ['hide', 'hidden', 'tools', 'music lab', 'trading game', 'card decks', 'exchange', 'conservatory'] },
     { section: 'appearance', fieldId: 'exchange-server', label: 'Preferred Exchange server', keywords: ['exchange', 'guild', 'trading'] },
     { section: 'appearance', fieldId: 'link-by-tag', label: 'Link notes by shared tag', keywords: ['tags', 'link by tag', 'map', 'graph', 'spitball'] },
     { section: 'appearance', fieldId: 'expedition-defaults', label: 'Defaults for new expeditions', keywords: ['expedition', 'depth', 'lens', 'spitball defaults'] },

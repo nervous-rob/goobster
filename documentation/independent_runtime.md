@@ -127,7 +127,7 @@ their rows under it.
 | Due follow-up, guild channel | same service | none | posts to the channel; needs the live client, otherwise waits |
 | DM-scope automation / web-created task | `automationService.executeInboxAutomation` → `unattendedTurnService.run` | `task`, the turn's reply plus attachments | DM |
 | Personal watch fired | `attentionWatchService._runInboxTurn` → `unattendedTurnService.run` | `watch`, with the evidence in the body | DM |
-| Attention contact (nudge, notice) | `attentionService._contact` | `notice` | DM |
+| Attention contact (nudge, notice) | `attentionService._contact` | `notice`. The Inbox row and the Attention notice name each other (`activityCorrelation`); the sidebar badge counts the inbox row once | DM |
 | Project / Parlor invitation | `projectService.invite` / `parlorService.invite` | `invite`, link to the pane with Accept/Decline | DM with buttons |
 | Observatory job finished | `observatoryService` files a follow-up under the inbox channel | `reminder` via the follow-up path | DM |
 
@@ -152,7 +152,10 @@ watches both use it, so their behaviour cannot drift apart.
   Archived views, expand to read, Open →, mark read/unread, archive. The
   sidebar badge and the Home card come from `me.inbox.unread` and the home
   overview; an `inbox` portal event pings the tab (unless it is already on
-  the Inbox) with a toast that opens it.
+  the Inbox) with a toast that opens it. A row whose `sourceType` is
+  `attention` says which notices it delivered, and those notices say they
+  were delivered here. Archiving stays on this room; acknowledging,
+  snoozing and dismissing stay on Attention.
 - Tasks show each row's destination (`→ Inbox`, `→ Discord DM`,
   `→ server channel`) from `webTaskService.listTasks().delivery`.
 

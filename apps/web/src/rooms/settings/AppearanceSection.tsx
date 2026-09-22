@@ -16,7 +16,7 @@ import {
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { useSession } from '../../hooks/useSession';
-import { START_PAGE_OPTIONS, startPageOptionFor } from '../../lib/rooms';
+import { START_PAGE_OPTIONS, TOOL_ROOMS, startPageOptionFor } from '../../lib/rooms';
 
 type Values = UserSettingsResponse['sections']['appearance']['values'];
 type Draft = {
@@ -28,6 +28,7 @@ type Draft = {
     enterToSend: boolean;
     expandChatDetails: boolean;
     startPage: Values['startPage'];
+    hiddenToolRooms: string[];
     preferredExchangeGuild: string;
     expeditionDefaultDepth: Values['expeditionDefaultDepth'];
     expeditionDefaultLens: string;
@@ -50,6 +51,7 @@ const LABELS: Record<string, string> = {
     enterToSend: 'Enter to send',
     expandChatDetails: 'Expand chat details',
     startPage: 'Start page',
+    hiddenToolRooms: 'Hidden tools',
     preferredExchangeGuild: 'Preferred Exchange server',
     expeditionDefaultDepth: 'Expedition depth',
     expeditionDefaultLens: 'Expedition lens',
@@ -84,6 +86,7 @@ export function AppearanceSection({ section, onDirty }: {
         enterToSend: v.enterToSend !== false,
         expandChatDetails: Boolean(v.expandChatDetails),
         startPage: v.startPage || 'home',
+        hiddenToolRooms: Array.isArray(v.hiddenToolRooms) ? v.hiddenToolRooms : [],
         preferredExchangeGuild: v.preferredExchangeGuild || '',
         expeditionDefaultDepth: v.expeditionDefaultDepth || 'standard',
         expeditionDefaultLens: v.expeditionDefaultLens || 'general',
@@ -197,6 +200,26 @@ export function AppearanceSection({ section, onDirty }: {
                         <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                 </select>
+            </Field>
+
+            <Field id="hidden-tools" label="Hidden tools" scope="Your account"
+                hint="Checked tools leave the Tools page and are not offered in navigation. Opening the address still works. This does not change whether the host can run the tool.">
+                <div className="settings-tool-list" id="hidden-tools-input">
+                    {TOOL_ROOMS.map((tool) => {
+                        const hidden = d.draft.hiddenToolRooms.includes(tool.id);
+                        return (
+                            <label key={tool.id} className="settings-check">
+                                <input type="checkbox" checked={hidden} aria-label={`Hide ${tool.name}`}
+                                    onChange={() => d.set({
+                                        hiddenToolRooms: hidden
+                                            ? d.draft.hiddenToolRooms.filter((id) => id !== tool.id)
+                                            : [...d.draft.hiddenToolRooms, tool.id]
+                                    })} />
+                                {tool.name}
+                            </label>
+                        );
+                    })}
+                </div>
             </Field>
 
             <Field id="exchange-server" label="Preferred Exchange server" scope="Your account"

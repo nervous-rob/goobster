@@ -30,6 +30,55 @@ const KIND_LABEL: Record<InboxKind, string> = {
     invite: 'invitation', project: 'project', expedition: 'expedition', system: 'system'
 };
 
+function noticeStatusPhrase(status: string | null): string | null {
+    switch (status) {
+        case 'dismissed': return 'dismissed in Attention';
+        case 'acted_on': return 'acted on in Attention';
+        case 'snoozed': return 'snoozed in Attention';
+        case 'expired': return 'expired in Attention';
+        default: return null;
+    }
+}
+
+/** The row is the delivery of these notices. Their actions stay on Attention. */
+function AttentionDelivery({ item }: { item: InboxItem }) {
+    const delivery = item.attention;
+    if (!delivery || delivery.notices.length === 0) return null;
+    const many = delivery.notices.length > 1;
+    return (
+        <div className="activity-correlation" data-testid="inbox-attention-delivery">
+            {many
+                ? `This is the Inbox delivery of ${delivery.notices.length} Attention notices.`
+                : 'This is the Inbox delivery of the Attention notice '}
+            {many ? (
+                <ul className="activity-correlation-list">
+                    {delivery.notices.map((notice) => {
+                        const phrase = noticeStatusPhrase(notice.status);
+                        return (
+                            <li key={notice.id}>
+                                <Link to="/activity/attention" hash={`notice-${notice.id}`}>
+                                    {notice.title || `Notice ${notice.id}`}
+                                </Link>
+                                {phrase ? ` — ${phrase}` : ''}
+                            </li>
+                        );
+                    })}
+                </ul>
+            ) : (
+                <>
+                    <Link to="/activity/attention" hash={`notice-${delivery.notices[0].id}`}>
+                        {delivery.notices[0].title || `Notice ${delivery.notices[0].id}`}
+                    </Link>
+                    {noticeStatusPhrase(delivery.notices[0].status)
+                        ? ` — ${noticeStatusPhrase(delivery.notices[0].status)}`
+                        : ''}
+                    .
+                </>
+            )}
+        </div>
+    );
+}
+
 function echoLabel(item: InboxItem, discordEnabled: boolean): string | null {
     if (item.discord.status === 'sent') return 'also sent to your Discord DMs';
     if (item.discord.status === 'failed') return 'Discord DM could not be delivered';
@@ -148,7 +197,7 @@ export function InboxRoom() {
                             const isOpen = selected?.id === item.id;
                             const echo = echoLabel(item, me.discord.enabled);
                             return (
-                                <div key={item.id} className={`list-row task-row inbox-row${item.read ? '' : ' unread'}${isOpen ? ' open' : ''}`}>
+                                <div key={item.id} id={`inbox-${item.id}`} className={`list-row task-row inbox-row${item.read ? '' : ' unread'}${isOpen ? ' open' : ''}`}>
                                     <div className="row-body">
                                         <button type="button" className="inbox-row-main" aria-expanded={isOpen}
                                             onClick={() => open(item)}>
@@ -161,6 +210,7 @@ export function InboxRoom() {
                                                 {item.attachments.length > 0 ? ` · ${item.attachments.length} attachment${item.attachments.length === 1 ? '' : 's'}` : ''}
                                             </div>
                                         </button>
+                                        <AttentionDelivery item={item} />
                                         {isOpen && (
                                             <div className="inbox-body">
                                                 {item.body || item.attachments.length > 0

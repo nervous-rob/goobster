@@ -405,6 +405,17 @@ const ACCOUNT_ROOMS = ROOMS.filter((room) => room.group === 'account');
 const TOOL_ROOMS = ROOMS.filter((room) => room.group === 'tools');
 
 /**
+ * Tool rooms still offered in the catalog and in navigation. `hiddenIds`
+ * is the person's `appearance.hiddenToolRooms` preference. Hiding is not
+ * availability (`isRoomAvailable`) and not a permission: a direct URL still
+ * resolves. Unknown ids are ignored here; the settings write rejects them.
+ */
+function catalogTools(hiddenIds) {
+    const hidden = new Set(Array.isArray(hiddenIds) ? hiddenIds.map((id) => String(id)) : []);
+    return TOOL_ROOMS.filter((room) => !hidden.has(room.id));
+}
+
+/**
  * Start-page preference. New values are room ids; the older room names
  * that people already saved (`study`, `noticed`, …) keep meaning what they
  * meant. `packages/core/config/userSettingsSchema.js` accepts the same set
@@ -483,6 +494,7 @@ module.exports = {
     PRIMARY_ROOMS,
     ACCOUNT_ROOMS,
     TOOL_ROOMS,
+    catalogTools,
     START_PAGE_OPTIONS,
     START_PAGES,
     LEGACY_START_PAGES,

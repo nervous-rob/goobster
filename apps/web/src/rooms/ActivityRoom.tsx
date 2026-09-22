@@ -8,7 +8,9 @@ import { ROOM_BY_ID, resolveActivityView } from '../lib/rooms';
  * (read/unread, archive); Attention is proactive notices (why, acknowledge,
  * snooze, watches); Scheduled is reminders and recurring AI tasks. The
  * existing rooms render unchanged underneath this strip - nothing is
- * merged into one list, and the badge is the Inbox's unread count alone.
+ * merged into one list. A notice that was also delivered to the Inbox is
+ * named from both views; the badge on this strip and in the sidebar is
+ * the Inbox's unread count alone.
  */
 export function ActivityRoom() {
     const me = useMe();

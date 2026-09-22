@@ -85,7 +85,7 @@ const SECTION_METADATA = {
         scope: SCOPES.ACCOUNT,
         description: 'Visual theme, density, keyboard, and working defaults for the web portal.',
         appliesTo: ['web-portal'],
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'expedition', 'parlor']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
     },
     connections: {
         id: 'connections',
@@ -125,6 +125,11 @@ const START_PAGES = [
     'home', 'chat', 'knowledge', 'projects', 'discussions', 'activity', 'tools',
     'study', 'noticed', 'inbox', 'spitball', 'parlor', 'exchange', 'conservatory'
 ];
+// Tool rooms a person may hide (`appearance.hiddenToolRooms`). Core cannot
+// import the web registry, so this list is the allow-list and
+// tests/portalRooms.test.js fails when it drifts from rooms.cjs TOOL_ROOMS.
+// Order is the catalog order.
+const TOOL_ROOM_IDS = ['music', 'trading', 'decks'];
 const NEW_CHAT_PRIVACY = ['regular', 'incognito'];
 const QUIET_HOURS_TZ_MODES = ['utc', 'local'];
 const PERSONALITY_PRESETS = {
@@ -214,6 +219,7 @@ const PREFERENCE_DEFAULTS = {
     enterToSend: true,
     expandChatDetails: false,
     startPage: 'home',
+    hiddenToolRooms: [],
     preferredExchangeGuild: null,
     personalityPreset: null,
     replyMaxTokens: null,
@@ -257,7 +263,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
     memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
     appearance: [
         'theme', 'linkByTag', 'textSize', 'reducedMotion', 'density',
-        'enterToSend', 'expandChatDetails', 'startPage', 'preferredExchangeGuild',
+        'enterToSend', 'expandChatDetails', 'startPage', 'hiddenToolRooms', 'preferredExchangeGuild',
         'expeditionDefaultDepth', 'expeditionDefaultLens', 'parlorDefaultEmoji', 'parlorDefaultCharter'
     ],
     connections: ['githubAllowlist', 'notionAllowlist']
@@ -423,6 +429,24 @@ function coercePreference(key, raw) {
                 return { ok: false, code: 'BAD_START_PAGE', message: `startPage must be one of: ${START_PAGES.join(', ')}.` };
             }
             return { ok: true, value: raw };
+        case 'hiddenToolRooms': {
+            if (raw == null || raw === '') return { ok: true, value: [] };
+            if (!Array.isArray(raw)) {
+                return { ok: false, code: 'BAD_TOOL_ROOMS', message: 'hiddenToolRooms must be a list of tool room ids.' };
+            }
+            const clean = [];
+            const seen = new Set();
+            for (const item of raw) {
+                const id = String(item ?? '').trim();
+                if (!id || seen.has(id)) continue;
+                if (!TOOL_ROOM_IDS.includes(id)) {
+                    return { ok: false, code: 'BAD_TOOL_ROOMS', message: `${id} is not a tool room.` };
+                }
+                seen.add(id);
+                clean.push(id);
+            }
+            return { ok: true, value: clean };
+        }
         case 'personalityPreset': {
             if (raw === null || raw === '' || raw === 'custom') return { ok: true, value: null };
             if (!PERSONALITY_PRESET_IDS.includes(raw)) {
@@ -613,6 +637,7 @@ module.exports = {
     DENSITIES,
     TEXT_SIZES,
     START_PAGES,
+    TOOL_ROOM_IDS,
     NEW_CHAT_PRIVACY,
     QUIET_HOURS_TZ_MODES,
     PERSONALITY_PRESETS,
