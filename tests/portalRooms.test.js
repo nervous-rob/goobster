@@ -39,15 +39,62 @@ describe('room registry shape', () => {
         expect(views.map((view) => view.path)).toEqual(['/knowledge/notes', '/knowledge/map', '/knowledge/research']);
         // The house name for research stays visible as a secondary label.
         expect(views.find((view) => view.id === 'research').secondaryName).toBe('Expeditions');
-        // Every view path resolves to its own room and is unique across the registry.
-        const viewPaths = rooms.ROOMS.flatMap((room) => (room.views || []).map((view) => view.path));
+        // Every fixed view path resolves to its own room and is unique across the registry.
+        const fixed = rooms.ROOMS.filter((room) => !room.detail);
+        const viewPaths = fixed.flatMap((room) => (room.views || []).map((view) => view.path));
         expect(new Set(viewPaths).size).toBe(viewPaths.length);
-        for (const room of rooms.ROOMS) {
+        for (const room of fixed) {
             for (const view of room.views || []) {
                 expect(rooms.resolveRoom(view.path)).toBe(room.id);
                 expect(rooms.resolveRoomView(room.id, view.path)).toBe(view.id);
             }
         }
+    });
+
+    test('Projects registers its views under a per-project path, owner first (E3, ADR 0009)', () => {
+        const room = rooms.ROOM_BY_ID.projects;
+        expect(room.detail).toEqual({ params: ['owner', 'slug'], defaultView: 'overview' });
+        expect(room.views.map((view) => view.id)).toEqual([
+            'overview', 'plan', 'conversation', 'knowledge', 'files', 'apps', 'runs', 'people', 'automations'
+        ]);
+        // Visible names are Plan / Files / Runs; the internal names stay as secondary labels.
+        expect(room.views.find((view) => view.id === 'plan').secondaryName).toBe('Mission');
+        expect(room.views.find((view) => view.id === 'runs').secondaryName).toBe('Jobs');
+        expect(room.views.find((view) => view.id === 'files').secondaryName).toBe('Explorer');
+        // Segments are unique, and none is a fixed path.
+        const segments = room.views.map((view) => view.segment);
+        expect(new Set(segments).size).toBe(segments.length);
+        expect(room.views.every((view) => view.path === undefined)).toBe(true);
+
+        const params = { owner: '800000000000000001', slug: 'emergence-study' };
+        for (const view of room.views) {
+            const path = rooms.detailPath('projects', params, view.id);
+            expect(path).toBe(`/projects/800000000000000001/emergence-study/${view.segment}`);
+            expect(rooms.resolveRoom(path)).toBe('projects');
+            expect(rooms.resolveRoomView('projects', path)).toBe(view.id);
+            expect(rooms.resolveRoomDetail('projects', path)).toEqual({ params, view: view.id });
+        }
+        // The bare detail path is the default view; old segment names still resolve.
+        expect(rooms.detailPath('projects', params)).toBe('/projects/800000000000000001/emergence-study/overview');
+        expect(rooms.resolveRoomDetail('projects', '/app/projects/800000000000000001/emergence-study'))
+            .toEqual({ params, view: 'overview' });
+        expect(rooms.resolveRoomView('projects', '/projects/800000000000000001/emergence-study/mission')).toBe('plan');
+        expect(rooms.resolveRoomView('projects', '/projects/800000000000000001/emergence-study/explorer')).toBe('files');
+        expect(rooms.resolveRoomView('projects', '/projects/800000000000000001/emergence-study/jobs')).toBe('runs');
+        // An unknown segment names the project but no view, so the shell can fall back.
+        expect(rooms.resolveRoomDetail('projects', '/projects/800000000000000001/emergence-study/bogus'))
+            .toEqual({ params, view: null });
+        // The list and the slug-only resolver path are not a view of any project.
+        expect(rooms.resolveRoomView('projects', '/projects')).toBeNull();
+        expect(rooms.resolveRoomDetail('projects', '/projects')).toBeNull();
+        expect(rooms.resolveRoomDetail('projects', '/projects/emergence-study')).toBeNull();
+        expect(rooms.resolveRoomView('projects', '/projects/emergence-study')).toBeNull();
+        // Owner ids and slugs survive URL encoding.
+        expect(rooms.resolveRoomDetail('projects', '/projects/usr_ab%20c/x-y/runs'))
+            .toEqual({ params: { owner: 'usr_ab c', slug: 'x-y' }, view: 'runs' });
+        expect(rooms.detailPath('projects', { owner: 'usr_ab c', slug: 'x-y' }, 'runs')).toBe('/projects/usr_ab%20c/x-y/runs');
+        // Rooms without a detail pattern have no item to resolve.
+        expect(rooms.resolveRoomDetail('knowledge', '/knowledge/notes')).toBeNull();
     });
 
     test('lists all 28 planned tutorial ids exactly once across rooms', () => {
@@ -125,6 +172,7 @@ describe('resolveRoom', () => {
         ['/knowledge', 'knowledge'], ['/spitball', 'knowledge'], ['/library', 'knowledge'],
         ['/knowledge/notes', 'knowledge'], ['/knowledge/map', 'knowledge'], ['/knowledge/research', 'knowledge'], ['/spitball/research', 'knowledge'],
         ['/projects', 'projects'], ['/observatory', 'projects'], ['/observatory/graph', 'projects'], ['/workshop', 'projects'],
+        ['/projects/emergence-study', 'projects'], ['/projects/800/emergence-study/runs', 'projects'],
         ['/discussions/3', 'discussions'], ['/parlor', 'discussions'],
         ['/activity', 'activity'], ['/activity/inbox', 'activity'], ['/activity/attention', 'activity'],
         ['/activity/scheduled', 'activity'], ['/inbox', 'activity'], ['/noticed', 'activity'], ['/tasks', 'activity'], ['/attention', 'activity'],
@@ -166,7 +214,9 @@ describe('roomDisplayName (settings return links)', () => {
         ['/study', 'Chat'], ['/chat/4?x=1', 'Chat'],
         ['/knowledge', 'Knowledge'], ['/spitball', 'Knowledge'],
         ['/knowledge/map', 'Knowledge · Map'], ['/knowledge/research', 'Knowledge · Research'],
-        ['/observatory', 'Projects'], ['/parlor/2', 'Discussions'],
+        ['/observatory', 'Projects'], ['/projects/emergence-study', 'Projects'],
+        ['/projects/800/emergence-study/runs', 'Projects · Runs'], ['/projects/800/emergence-study', 'Projects · Overview'],
+        ['/parlor/2', 'Discussions'],
         ['/noticed', 'Activity · Attention'], ['/activity/inbox', 'Activity · Inbox'], ['/tasks', 'Activity · Scheduled'],
         ['/conservatory/rhythm', 'Music Lab'], ['/exchange', 'Trading game'],
         ['/', 'Home']
@@ -180,8 +230,10 @@ describe('availability', () => {
     const trading = rooms.ROOM_BY_ID.trading;
     const host = rooms.ROOM_BY_ID.host;
 
-    test('Projects needs the observatory feature, Host needs the operator role, Trading needs Discord', () => {
-        expect(rooms.isRoomAvailable(projects, { features: { observatory: true } })).toBe(true);
+    test('Projects needs the projects feature (organizing, not execution), Host needs the operator role, Trading needs Discord', () => {
+        expect(rooms.isRoomAvailable(projects, { features: { projects: true } })).toBe(true);
+        expect(rooms.isRoomAvailable(projects, { features: { projects: true, observatory: false } })).toBe(true);
+        expect(rooms.isRoomAvailable(projects, { features: { observatory: true } })).toBe(false);
         expect(rooms.isRoomAvailable(projects, { features: {} })).toBe(false);
         expect(rooms.isRoomAvailable(host, { identity: { operator: true } })).toBe(true);
         expect(rooms.isRoomAvailable(host, { identity: { operator: false } })).toBe(false);
@@ -200,7 +252,7 @@ describe('availability', () => {
         expect(rooms.unavailableReason(trading, { discord: { enabled: false } })).toMatch(/not connected to Discord/);
         expect(rooms.unavailableReason(host, { identity: { operator: false } })).toMatch(/host/);
         expect(rooms.unavailableReason(projects, { features: {} })).toMatch(/not enabled/);
-        expect(rooms.unavailableReason(projects, { features: { observatory: true } })).toBeNull();
+        expect(rooms.unavailableReason(projects, { features: { projects: true } })).toBeNull();
     });
 });
 
