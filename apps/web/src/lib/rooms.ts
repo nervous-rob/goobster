@@ -149,3 +149,16 @@ export function projectPath(params: ProjectParams, view: ProjectViewId | null = 
 export function resolveProjectView(pathname: string): ProjectViewId | null {
     return resolveRoomView('projects', pathname) as ProjectViewId | null;
 }
+
+/**
+ * The project view a route's `view` param names - `overview` when the
+ * param is absent, an old segment name (`mission`, `jobs`, `explorer`)
+ * mapped to its current view, and null for an unknown segment. Reads the
+ * matched param rather than the live pathname, which can already point
+ * elsewhere while a navigation away is pending.
+ */
+export function projectViewFromParam(segment: string | undefined): ProjectViewId | null {
+    if (segment === undefined) return ROOM_BY_ID.projects.detail?.defaultView as ProjectViewId;
+    const view = PROJECT_VIEWS.find((entry) => entry.segment === segment || (entry.legacyIds || []).includes(segment));
+    return (view?.id as ProjectViewId | undefined) || null;
+}

@@ -27,11 +27,11 @@ export function ArtifactGallery({
         return (
             <section className="obs-artifacts">
                 <div className="obs-section-head">
-                    <h3>Artifacts</h3>
+                    <h3>Outputs</h3>
                 </div>
                 <p className="hint obs-artifacts-empty">
                     No renders or images in the workspace yet. Command Goobster to
-                    produce some, or drop files in Explorer.
+                    produce some, or drop files in Files.
                 </p>
             </section>
         );
@@ -43,10 +43,10 @@ export function ArtifactGallery({
     return (
         <section className="obs-artifacts">
             <div className="obs-section-head">
-                <h3>Artifacts</h3>
+                <h3>Outputs</h3>
                 <span className="hint">
                     {mediaCount} in this workspace
-                    {hidden > 0 ? ` · ${hidden} more files in Explorer` : ''}
+                    {hidden > 0 ? ` · ${hidden} more in Files` : ''}
                 </span>
             </div>
             <p className="hint obs-artifacts-lead">
@@ -105,7 +105,7 @@ export function ArtifactGallery({
 
             {onBrowse && (
                 <button type="button" className="btn subtle obs-artifacts-more" onClick={onBrowse}>
-                    Browse all files in Explorer
+                    Browse all files
                 </button>
             )}
         </section>

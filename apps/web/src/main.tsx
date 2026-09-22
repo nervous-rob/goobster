@@ -7,6 +7,7 @@ import {
     createRootRoute,
     createRoute,
     createRouter,
+    useParams,
     useRouterState,
 } from '@tanstack/react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -36,7 +37,9 @@ import { UsageRoom } from './rooms/UsageRoom';
 import { DecksRoom } from './rooms/DecksRoom';
 import { ExchangeRoom } from './rooms/ExchangeRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
-import { ObservatoryRoom } from './rooms/ObservatoryRoom';
+import { ProjectListView } from './rooms/projects/ProjectListView';
+import { ProjectResolver } from './rooms/projects/ProjectResolver';
+import { ProjectShell } from './rooms/projects/ProjectShell';
 import { ActivityRoom } from './rooms/ActivityRoom';
 import { ToolsRoom } from './rooms/ToolsRoom';
 import { SettingsRoom } from './rooms/settings/SettingsRoom';
@@ -206,10 +209,37 @@ const knowledgeResearchRoute = createRoute({
     component: ResearchView,
 });
 
+// Projects: the list, a slug-only resolver, and one project addressed by
+// its owner and slug on a registered view (lib/rooms.cjs `detail`). Two
+// owners may share a slug, so the owner is part of the address; the bare
+// detail path redirects to Overview with search and hash intact.
 const projectsRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/projects',
-    component: ObservatoryRoom,
+    component: ProjectListView,
+});
+
+const projectResolverRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/projects/$slug',
+    component: ProjectResolver,
+});
+
+function ProjectDefaultView() {
+    const { owner, slug } = useParams({ strict: false }) as { owner: string; slug: string };
+    return <Navigate to={`/projects/${owner}/${slug}/overview` as never} search={true} hash={true} replace />;
+}
+
+const projectDetailRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/projects/$owner/$slug',
+    component: ProjectDefaultView,
+});
+
+const projectViewRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/projects/$owner/$slug/$view',
+    component: ProjectShell,
 });
 
 const discussionsRoute = createRoute({
@@ -403,6 +433,9 @@ const routeTree = rootRoute.addChildren([
             knowledgeResearchRoute,
         ]),
         projectsRoute,
+        projectResolverRoute,
+        projectDetailRoute,
+        projectViewRoute,
         discussionsRoute,
         discussionsIdRoute,
         activityRoute.addChildren([

@@ -304,6 +304,9 @@ export const api = {
     mtgaExportDeck: (id: number) => request(`/api/app/mtga/decks/${id}/export`),
 
     observatoryProjects: () => request('/api/app/observatory/projects'),
+    /** Direct creation - an empty organizational container, no model call (ADR 0009). */
+    createProject: (body: { name: string; goal?: string }) =>
+        request('/api/app/projects', { method: 'POST', body }),
     observatoryProject: (slug: string, owner?: string | null) =>
         request(`/api/app/observatory/projects/${encodeURIComponent(slug)}${ownerQs(owner)}`),
     observatoryDeleteProject: (slug: string, owner?: string | null) =>

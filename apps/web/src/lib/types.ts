@@ -33,7 +33,8 @@ export type Me = {
     inbox: { unread: number };
     scopes: Scope[];
     maxInputLength: number;
-    features: { observatory?: boolean; spitball?: boolean };
+    /** `projects` = organizing projects (ADR 0009); `observatory` = running code in them. */
+    features: { projects?: boolean; observatory?: boolean; spitball?: boolean };
 };
 
 export type InboxKind = 'reminder' | 'task' | 'watch' | 'notice' | 'invite' | 'project' | 'expedition' | 'system';
