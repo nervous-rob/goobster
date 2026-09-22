@@ -254,7 +254,7 @@ async function seedParlor(userId) {
 }
 
 async function seedProject(observatory, userId) {
-    const project = await observatory.createProject({ userId, name: C.PROJECT_NAME });
+    const project = await observatory.createProject({ userId, name: C.PROJECT_NAME, description: C.PROJECT_GOAL });
     await observatory.writeWorkspaceFile({
         userId,
         slug: project.slug,
@@ -318,6 +318,21 @@ async function seedProject(observatory, userId) {
     );
 
     return { id: project.id, slug: project.slug, parlorId: parlor.conversation.id };
+}
+
+/**
+ * The same-slug twin (E3): another owner's project with the same name,
+ * shared with `memberId`, so one slug names two projects in that person's
+ * list and only the owner-qualified address tells them apart.
+ */
+async function seedTwinProject(observatory, ownerId, memberId) {
+    // The twin's owner has signed into the portal before, so project
+    // payloads can name her rather than show a bare id.
+    await identityService.ensureLegacyPrincipal({ discordId: ownerId, displayName: C.MEMBER_NAME });
+    const twin = await observatory.createProject({ userId: ownerId, name: C.PROJECT_NAME, description: C.TWIN_PROJECT_GOAL });
+    const { invite } = await observatory.invite({ userId: ownerId, project: twin.slug, inviteeId: memberId });
+    await observatory.respondInvite({ userId: memberId, inviteId: invite.id, accept: true });
+    return twin;
 }
 
 async function seedAttention(userId) {
@@ -414,6 +429,7 @@ async function seed() {
     await seedPersonalMemory(C.OWNER);
     await seedParlor(C.OWNER);
     await seedProject(observatory, C.OWNER);
+    await seedTwinProject(observatory, C.MEMBER, C.OWNER);
     await seedAttention(C.OWNER);
     await seedInboxAndPeople();
     return observatory;
