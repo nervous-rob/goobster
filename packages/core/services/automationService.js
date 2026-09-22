@@ -110,12 +110,15 @@ class AutomationService {
     }
 
     /**
-     * Run one automation, but never let the poll loop wait on it longer
-     * than executionWaitMs. Timing out the WAIT is safe: the fire was
-     * already claimed (nextRun advanced), so the still-running turn cannot
+     * Claim one automation, then wait at most executionWaitMs for execution.
+     * The database claim must settle before the wait timer starts: returning
+     * with an in-flight claim would leave the row due and detach work that
+     * has not yet acquired it. Once claimed (nextRun advanced), the turn cannot
      * be picked up again - the loop just stops being hostage to it.
      */
     async executeWithTimeout(automation) {
+        if (!await this.claimDueRun(automation)) return;
+
         let timer = null;
         const timedWait = new Promise(resolve => {
             timer = setTimeout(() => {
@@ -129,7 +132,7 @@ class AutomationService {
             timer.unref?.();
         });
         try {
-            await Promise.race([this.executeAutomation(automation), timedWait]);
+            await Promise.race([this._executeClaimedAutomation(automation), timedWait]);
         } finally {
             clearTimeout(timer);
         }
@@ -279,7 +282,11 @@ class AutomationService {
         // Claim first: nextRun advances before anything runs, so a crash or
         // restart mid-execution can never fire the same scheduled run twice.
         if (!await this.claimDueRun(automation)) return;
+        await this._executeClaimedAutomation(automation);
+    }
 
+    /** Internal execution body; callers must finish claimDueRun first. */
+    async _executeClaimedAutomation(automation) {
         try {
             // Inbox-delivered automations (every task created from the
             // portal) run the unattended turn and file the reply in the
