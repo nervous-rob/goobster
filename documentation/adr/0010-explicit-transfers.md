@@ -92,10 +92,11 @@ audience the project has **now**, and enforced server-side:
   reader must be the actor who created the reference. Any other reader -
   a collaborator invited later, a share-link visitor, an expedition, the
   graph, `recall_knowledge` - never sees it. So promoting a project to
-  shared **cannot expose** a private reference: the owner's view marks each
-  reference *private - only you can see this* with **Publish a copy** and
-  **Remove reference** beside it; collaborators see nothing of it, not even
-  a count.
+  shared **cannot expose** a private reference: the owner's view lists each
+  reference under *Referenced from your private notes* (badge *reference ·
+  only you*) with **Stop referencing** beside it and points at Knowledge →
+  Notes → **Add to project… → Publish a copy** for the day others should
+  read it; collaborators see nothing of it, not even a count.
 - **Copy** (`mode = 'copy'`, the UI's *Publish a copy*) is the only mode
   for a project with members or a share link, and the only mode for a
   discussion. The dialog shows exactly what will be shared (title, text,
@@ -129,9 +130,10 @@ and discussion copies stay in their transcripts, each with `sourceNodeId`
 nulled and `sourceLabel` preserved. The deletion dialog lists each
 destination the note went to and lets the person act on the ones they may:
 a project copy they published, or one in a project they own, has a
-**Remove copy** button (`DELETE /api/app/projects/:slug/knowledge/notes/:nodeId`,
-owner or publisher); a discussion copy is a message in a shared transcript
-and stays, and the dialog says so. Deleting a project copy from the project
+*remove that copy too* checkbox (`DELETE /api/app/projects/:slug/knowledge/notes/:nodeId`,
+owner or publisher - the same removal the project's Knowledge view offers);
+a discussion copy is a message in a shared transcript and stays, and the
+dialog says so. Deleting a project copy from the project
 side never touches the original. Deleting the project or the discussion
 takes its copies with it (cascade / explicit delete); the ledger row
 becomes unreachable and is excluded from every listing by joining the

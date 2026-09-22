@@ -411,7 +411,8 @@ The report walks every identity-bearing table (`identityService.OWNER_COLUMNS`:
 `guild_settings` `dm:` scope, `kg_nodes` `USER:` scope, `kg_artifacts`,
 `followups`, `automations`, `observatory_projects`, `project_members`,
 `parlor_personas`, `parlor_members`, `user_friends`, `user_integrations`,
-`attention_policies`, `spitball_expeditions`) and reports distinct owners,
+`attention_policies`, `spitball_expeditions`, `knowledge_transfers`) and
+reports distinct owners,
 how many already have a principal or an account, and which ids are neither
 Discord-shaped nor native (**unresolved** - shown with the tables they
 appear in so the operator can decide what they are).

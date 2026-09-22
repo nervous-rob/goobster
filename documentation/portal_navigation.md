@@ -88,7 +88,11 @@ shortcut (to Settings → Memory & privacy) sit in the room header and apply
 to every view. The About you / Facts / Memories views that used to be tabs
 here moved to Settings, where retention, learning and deletion already
 lived. What each view shows, and the saved-knowledge boundary behind it,
-is [knowledge_and_memory.md](knowledge_and_memory.md) (package E2).
+is [knowledge_and_memory.md](knowledge_and_memory.md) (package E2). A note
+leaves this room by **Add to project…** / **Use in discussion…** on its
+row, and an answer arrives from Chat by **Save as note**
+([knowledge_and_memory.md](knowledge_and_memory.md#moving-a-note-into-shared-work),
+package E4).
 
 ## Projects
 
@@ -175,14 +179,17 @@ this contract, had no route at all; it is now an alias of
 
 ## What this contract does not do
 
-It does not add the explicit answer → note → project actions (E4),
-duplicate-notice correlation or tool visibility preferences (E5), or any
-tutorial behaviour (F). The room ids and tutorial ids it fixes are what
-those packages build on. The saved knowledge versus personal memory
-boundary (E2) is its own contract in
-[knowledge_and_memory.md](knowledge_and_memory.md), and the project
-organization contract (E3) is [ADR 0009](adr/0009-project-organization-contract.md);
-this document only registers the views they need.
+It does not add duplicate-notice correlation or tool visibility
+preferences (E5), or any tutorial behaviour (F). The room ids and tutorial
+ids it fixes are what those packages build on. The saved knowledge versus
+personal memory boundary (E2) is its own contract in
+[knowledge_and_memory.md](knowledge_and_memory.md), the project
+organization contract (E3) is [ADR 0009](adr/0009-project-organization-contract.md),
+and the explicit answer → note → project / discussion transfers (E4) are
+[ADR 0010](adr/0010-explicit-transfers.md) - buttons on the selected object
+that open the destination at its canonical address (`/knowledge/notes`,
+`/projects/:ownerId/:slug/knowledge`, `/discussions/:id`); this document
+only registers the routes they land on.
 
 ## Tests
 
