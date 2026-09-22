@@ -57,7 +57,6 @@ function caps(overrides = {}) {
     return {
         isOperator: false,
         discordEnabled: false,
-        features: { projects: true, observatory: false, spitball: true },
         ...overrides,
         features: {
             projects: true,
