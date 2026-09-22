@@ -1,5 +1,82 @@
 # Goobster Differentiation Strategy
 
+> **Status (22 September 2026): the direction below is superseded.** This
+> document was written when Goobster was a Discord companion. Its "Now"
+> phase shipped, and its `/forget-me` deletion scope is still the reference
+> that `services/privacyService.js` cites. The product has since become a
+> self-hosted AI workspace that runs with or without Discord
+> ([independent_runtime.md](independent_runtime.md)). The current direction
+> is in [Current direction](#current-direction-september-2026) directly
+> below; everything after it is kept as history.
+
+## Current direction (September 2026)
+
+The roadmap is tracked in GitHub issue #246. It advances from a
+demonstrated user need to a measured result, instead of treating every
+plausible feature as a prerequisite for launch.
+
+**Working hypothesis (to test, not assume).** The next release is organized
+around one outcome:
+
+> "Help me follow a topic over time, understand what changed, verify the
+> evidence, and produce something I can use or share."
+
+That gives Projects, Research (Expeditions), Knowledge, Attention and the
+Inbox a common purpose. The biggest missing piece is evidence about which
+recurring task makes someone come back and eventually pay, so the first
+step is a pilot with one segment, a named user and buyer, and explicit
+success criteria (issue #265).
+
+**Sequence.**
+
+1. Define the pilot and make the deployment and privacy promise consistent
+   (#265, #268).
+2. Minimum foundation for a shared release: safety gates (#247), usage
+   limits (#248), backup with a tested restore (#249), pilot diagnostics
+   (#256), operator sign-in protection (#255).
+3. A research-brief experiment (#254) measured with a research-quality
+   evaluation set (#267), and a first-use task that crosses the whole
+   product (#266).
+4. Remove the obstacles pilot users actually hit: a feed/web-page Attention
+   source, a complete export, a read-only MCP server, push notifications,
+   user-provided keys (#253, #250, #251, #257, #269).
+5. Expand distribution and optional capabilities after repeat use and
+   operating costs are understood (#259, #258, #252, #270, #260).
+
+**What to measure.** These replace the guild-oriented metrics further down
+for the workspace product:
+
+| Metric | Why |
+|---|---|
+| Repeat use of the pilot task (weekly) | Whether the task is worth returning for. |
+| First-use task completed without help | Whether the product's promise is reachable by a new person. |
+| Time saved after the person verified the output | Unverified time saved overstates value. |
+| Research quality on the evaluation set (#267): citation support, unsupported claims, missed qualifications, edits needed | Provenance shows where a claim came from, not that it is right. |
+| Cost per useful, accepted result | Model tokens, research retries, search services, sandbox time, storage and support time, divided by results the person accepted. Token totals alone miss most of it. |
+| Willingness to pay, and support effort per user | The commercial test. |
+
+**Claims to keep accurate.**
+
+- Self-hosted storage does not mean all processing stays local: configured
+  model, search, speech and integration providers receive data, and the
+  host operator can read the database and files. The README's
+  *Where your data goes* section is the reference wording.
+- Erasure tests demonstrate application behaviour, not blanket
+  confidentiality or compliance.
+- Features such as MCP support, agents, automations and research exist in
+  other self-hosted assistants. Differentiation has to come from a better
+  workflow or outcome, shown with pilot evidence.
+
+**Candidate segments**, tested one at a time: self-hosters and homelab
+users; small research-heavy teams (consultancies, analysts, journalists,
+academic labs); tabletop RPG and friend Discord communities (growth more
+than revenue). The original Discord-server targets below remain valid for
+the Discord side of the product.
+
+---
+
+*The rest of this document is the original strategy, kept for history.*
+
 > **Goobster is a private, self-hosted Discord companion with long-term memory — not a generic command bot.**
 
 ## Context
@@ -103,6 +180,10 @@ To keep the roadmap disciplined, these stay off the board until Tier 1 has shipp
 
 ## Baseline metrics (capture at week 0, before anything ships)
 
+*Historical: these metrics measure the Discord-companion strategy. The
+workspace product's metrics are in
+[Current direction](#current-direction-september-2026).*
+
 KPI targets are fuzzy without a baseline. Week-0 capture uses the existing `usage_log` table (`services/usageTracker.js`) plus a few new counters; anything not yet instrumented is recorded as TBD and instrumented as part of the "Now" phase.
 
 | Metric | Current baseline | Source |
@@ -130,4 +211,4 @@ Start with **/recall + privacy commands** — additive, reuses the memory/facts 
 - `npm run dev` with a test guild config (see AGENTS.md for the config.json bootstrap); confirm `Ready! Logged in as <tag>`
 - Exercise the new command/tool end-to-end in a test guild; for voice features, join a voice channel and confirm audio round-trip
 - For privacy commands: verify `/forget-me` leaves zero user-attributed rows across memories, embeddings, facts, follow-ups, conversation history, nicknames, and preferences, and that usage rows are anonymized
-- `npm test` — **currently fails with "No tests found, exiting with code 1"** (the scripts in `tests/` don't match jest's default `*.test.js` pattern and `passWithNoTests` isn't set). The "Now" phase must either add real Jest specs for the new services (preferred) or configure `passWithNoTests` as a stopgap
+- `npm test` runs the Jest unit specs (`tests/*.test.js`) with no keys or network; CI runs them as named groups on SQLite and Postgres (see `documentation/testing_guide.md` and `tests/ciGroups.js`). *(When this document was written, `npm test` found no specs; the "Now" phase added them.)*
