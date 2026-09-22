@@ -824,6 +824,7 @@ export function StudyRoom() {
                                         className="msg-action"
                                         title="Keep this answer as a note in Knowledge"
                                         data-testid={`save-as-note-${message.id}`}
+                                        data-tour="chat-save-as-note"
                                         onClick={() => setNoteTarget({ conversationId: activeId, messageId: message.id, content: message.content })}
                                     >📝 Save as note</button>
                                 )}
@@ -927,6 +928,7 @@ export function StudyRoom() {
                             ref={composerRef}
                             className="composer-input"
                             rows={1}
+                            data-tour="chat-composer"
                             value={composer}
                             onChange={(e) => setComposer(e.target.value)}
                             placeholder={enterToSend ? 'Message Goobster… (Enter to send, Shift+Enter for a new line)' : 'Message Goobster… (Enter for a new line, Ctrl/Cmd+Enter to send)'}

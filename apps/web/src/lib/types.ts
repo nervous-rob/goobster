@@ -734,4 +734,69 @@ export type ChatHistoryPreviewResponse = {
     dataClasses: string[];
 };
 
-export type SettingsSectionId = keyof UserSettingsResponse['sections'];
+export type SettingsSectionId = keyof UserSettingsResponse['sections'] | 'tutorials';
+
+export type TutorialStatus =
+    | 'not_started'
+    | 'in_progress'
+    | 'paused'
+    | 'skipped'
+    | 'completed'
+    | 'finished_with_skips';
+
+export type TutorialProgress = {
+    accountId: string;
+    tutorialId: string;
+    version: number;
+    generation: number;
+    revision: number;
+    status: TutorialStatus;
+    currentStepId: string | null;
+    completedStepIds: string[];
+    skippedStepIds: string[];
+    unavailableStepIds: string[];
+    updatedAt: string | null;
+};
+
+export type TutorialCatalogEntry = {
+    id: string;
+    roomId: string;
+    version: number;
+    title: string;
+    hostOnly: boolean;
+    stepIds: string[];
+    steps: Array<{
+        id: string;
+        title: string;
+        body: string | null;
+        anchorId: string | null;
+        path: string | null;
+        demo: string | null;
+        keepablePieceId: string | null;
+    }>;
+    launchable: boolean;
+};
+
+export type TutorialSample = {
+    id: string;
+    title: string;
+    question: string;
+    answer: { heading: string; body: string };
+    notes: Array<{ id: string; label: string; content: string; tags: string[]; audience: string }>;
+    source: { id: string; title: string; excerpt: string };
+    claim: { id: string; text: string; distinguishedFrom: string };
+    project: { id: string; name: string; slug: string; goal: string; audience: string };
+    run: { id: string; title: string; status: string; output: string };
+    app: { id: string; title: string; origin: string; version: string };
+};
+
+export type TutorialsResponse = {
+    catalog: TutorialCatalogEntry[];
+    progress: TutorialProgress[];
+    preferences: {
+        autoStart: boolean;
+        orientationOfferedAt: string | null;
+        updatedAt: string | null;
+    };
+    sample: TutorialSample;
+};

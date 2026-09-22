@@ -235,6 +235,7 @@ export function AppShell() {
                     {me ? (
                         <>
                             <Link to="/settings" className={`nav-btn settings-link${room === 'settings' ? ' active' : ''}`}
+                                data-tour="nav-settings"
                                 onClick={() => setDrawer(false)}>
                                 ⚙️ Settings
                             </Link>

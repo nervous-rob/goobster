@@ -111,6 +111,14 @@ describe('room registry shape', () => {
             'trading.basics', 'decks.basics', 'usage.basics', 'settings.basics',
             'memory.basics', 'connections.basics', 'admin.instance'
         ]));
+        // Core catalog (packages/core/config/tutorialCatalog.js) must stay in
+        // lockstep — core cannot import this registry.
+        const catalog = require('../packages/core/config/tutorialCatalog');
+        expect(catalog.TUTORIAL_IDS.slice().sort()).toEqual(all.slice().sort());
+        for (const id of all) {
+            const room = rooms.ROOMS.find((r) => r.tutorials.includes(id));
+            expect(catalog.TUTORIAL_BY_ID[id].roomId).toBe(room.id);
+        }
     });
 });
 

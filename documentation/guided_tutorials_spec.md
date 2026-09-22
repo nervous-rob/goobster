@@ -1,29 +1,29 @@
 ---
-title: "Planned: guided tutorials and onboarding"
+title: "Guided tutorials and onboarding"
 kind: decision
-summary: Planned per-account, per-room tutorials with safe demonstrations, independent skip/resume/reset, versioned progress, user documentation, accessibility, and a full service curriculum. This subsystem is not implemented yet.
-tags: [planning, tutorials, onboarding, settings, accessibility]
+summary: Per-account, per-room tutorials with safe demonstrations, independent skip/resume/reset, versioned progress, user documentation, accessibility, and a full service curriculum. F1 ships the framework (state machine, API, Settings, provider shell); F2 authors the demonstration tours.
+tags: [tutorials, onboarding, settings, accessibility]
 ---
 
-# Planned: guided tutorials and onboarding
+# Guided tutorials and onboarding
 
-**Status: implementation specification; not implemented.** This document defines future tutorial behavior. It does not describe an existing onboarding system or working tutorial API.
+**Status: F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; remaining catalog entries stay empty until a later package.
 
-Updated: 20 September 2026.
+Updated: 22 September 2026.
 
 Parent plan: [shared-instance product design and rollout](shared_instance_product_spec.md).
 
-Implement this as increment F of the parent plan, after establishing canonical account identity and the relevant access boundaries. A representative preview may inform UI design before production integration. All sample content must remain isolated from real user data and external actions.
+All sample content must remain isolated from real user data and external actions. Tour events touch only the `tutorial_*` tables — they never spend a provider call, send an invitation, or write user knowledge.
 
 ## Launch, skip, and reset rules
 
 - The first successful login opens a short Home orientation once. Use a nonblocking guide panel so the user can explore or dismiss it.
 - Each room/service starts its own tutorial on first entry, once its permissions, feature flags, and UI are ready. Opening one room must not complete another room's tutorial.
-- Show **Back**, **Next**, **Skip step**, **Skip this tutorial**, and **Pause** throughout. A final step has **Finish** instead of Next.
+- Show **Back**, **Next**, **Skip step**, **Skip this tutorial**, and **Pause** throughout. A final step has **Finish** instead of Next. (F2 ships Next / Skip step / Finish on authored tours; Back remains optional until a multi-step history UI needs it.)
 - Skipping a step records a skip, not a completed exercise. The user can finish with skipped steps and revisit them later.
 - Skipping an entire tutorial leaves other tutorials eligible. It does not silently disable all onboarding.
 - Pause or Escape saves position. Returning shows a Resume affordance; it does not seize focus repeatedly.
-- Settings → Tutorials lists each tour, its progress, and controls to Resume, Replay, or Reset. Offer Reset all and an account-level auto-start toggle. Resetting tutorials does not change user content or permissions.
+- Settings → Tutorials lists each tour, its progress, and controls to Resume, Replay, or Reset. Offer Reset all and an account-level auto-start toggle. Resetting tutorials does not change user content, permissions, or `appearance.hiddenToolRooms`.
 - Resetting one tour makes it eligible on its next entry. Reset all resets the orientation and all tours; it does not open all of them simultaneously.
 - Existing users receive an unobtrusive offer to take the new tours. Do not classify every migration as a first-ever login and interrupt active work.
 - Public read-only share pages do not start account tutorials or require registration to read an already authorized public share.
@@ -32,13 +32,15 @@ Implement this as increment F of the parent plan, after establishing canonical a
 
 Use a small “Weekend field notebook” example: a question, two tagged notes, a source, a private project, one completed run, and an output. Reuse the same fictional content across Chat, Knowledge, and Projects so their relationship becomes visible.
 
-Tour examples are isolated from real knowledge retrieval, personal memory, usage accounting, notifications, and external side effects. Demo actions never send messages, make provider calls, run code, or schedule real work. A separate **Keep this example** action can copy selected material into the account after a clear preview; skipping or resetting does not create duplicate real data.
+**F2** supplies the fixtures (`packages/core/config/tutorialSamples.js`) and demonstration actions for the four authored tours. Tour examples are isolated from real knowledge retrieval, personal memory, usage accounting, notifications, and external side effects. Demo actions never send messages, make provider calls, run code, or schedule real work. A separate **Keep this example** action (`POST /api/app/tutorials/keep-example`) can copy selected material into the account after a clear preview; skipping or resetting does not create duplicate real data. Tour *events* only mutate `tutorial_progress` / `tutorial_events` — they never call Keep.
 
 Each major feature needs a demonstrated action, a visible result, and an explanation of where the result lives. A tooltip that only describes a button does not satisfy the requirement. Optional live practice may follow the example, but real work must be explicitly initiated through the normal product controls.
 
 ## Tutorial catalog and coverage
 
-The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists.
+Stable tutorial ids live in `packages/core/config/tutorialCatalog.js` and are listed on each room in `apps/web/src/lib/rooms.cjs`. Core never imports the web registry; `tests/portalRooms.test.js` and `tests/tutorialFramework.test.js` fail when the two lists drift. Clients cannot invent tutorial ids or step ids.
+
+The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. **F2 ships steps for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`**; other ids keep an empty `steps` array so the Settings list and state machine still work. A tutorial with no applicable steps does not launch.
 
 | Stable tutorial ID | Required demonstrations | Advanced overview and documentation source |
 |---|---|---|
@@ -70,7 +72,7 @@ The steps below are the minimum authored curriculum. Every semicolon-separated a
 | `memory.basics` | Compare transcript, personal fact and saved note; inspect why a memory exists; preview a correction/deletion; adjust future memory behavior; preview an export and account deletion scope. | Vector cleanup, retention and shared-copy semantics. `user_settings.md`, `user_knowledge_graph.md`. |
 | `connections.basics` | Inspect an available integration; preview connection and permission scope; select a delivery destination; disconnect the sample integration without deleting account data. | Provider credentials and guild access. `webapp_setup.md`, integration-specific setup docs. |
 
-Host-only administration gets a separate `admin.instance` tour: issue/revoke an invitation, disable a sample account, inspect aggregate capacity, set a quota, and review a failed integration. It cannot appear to ordinary accounts.
+Host-only administration gets a separate `admin.instance` tour: issue/revoke an invitation, disable a sample account, inspect aggregate capacity, set a quota, and review a failed integration. It cannot appear to ordinary accounts (F1 enforces this on the catalog and API).
 
 ## Detailed example: Knowledge tutorial
 
@@ -104,31 +106,33 @@ type TutorialProgress = {
 };
 ```
 
-Store one progress row per account/tutorial/version with explicit transitions. The catalog is versioned content in source control: tutorial ID, room ID, capability requirements, stable step IDs, anchor IDs, sample scenario, completion event, and user-help document ID. Clients cannot invent tutorial IDs or mark an arbitrary account complete.
+Store one progress row per account/tutorial/version with explicit transitions (`packages/core/services/tutorialService.js`, tables `tutorial_progress`, `tutorial_events`, `tutorial_preferences`, `tutorial_feedback`). The catalog is versioned content in source control: tutorial ID, room ID, capability requirements, stable step IDs, anchor IDs, sample scenario, completion event, and user-help document ID. Clients cannot invent tutorial IDs or mark an arbitrary account complete.
 
-Proposed endpoints:
+Endpoints (account from the session):
 
 - `GET /api/app/tutorials`: permitted catalog, progress, and auto-start preference.
-- `POST /api/app/tutorials/:id/events`: event ID, generation, expected revision, step ID, and action (`start`, `complete_step`, `skip_step`, `pause`, `skip_tutorial`, `finish`). Derive account from the session.
+- `POST /api/app/tutorials/:id/events`: event ID, generation, expected revision, step ID, and action (`start`, `complete_step`, `skip_step`, `pause`, `skip_tutorial`, `finish`).
 - `POST /api/app/tutorials/:id/reset`: increment generation and clear progress for that tutorial.
-- `POST /api/app/tutorials/reset`: reset all permitted tutorials atomically or return explicit per-item outcomes.
+- `POST /api/app/tutorials/reset`: reset all permitted tutorials atomically.
 - `PATCH /api/app/tutorial-preferences`: change auto-start without mutating completion history.
 
 Events are idempotent. A stale tab cannot resurrect progress from before a reset; reject mismatched generation/revision and reload. Capability-unavailable steps are recorded separately and do not falsely imply demonstrated skills. A tutorial with no applicable steps does not launch. Text-only edits retain version; material step changes create a new version with an explicit progress migration. Never replay all tutorials on every deployment.
 
+Tutorial progress and feedback rows are per-user data: `privacyService.forgetUser` / `auditUser` / `buildUserReport` cover them.
+
 ## UI integration and accessibility
 
-Create a centralized `TutorialProvider`, `TutorialPanel`, catalog, progress hook, and Settings section. Mount the provider inside the authenticated account scope. Resolve room IDs from the route registry. Add stable `data-tour` anchors to actual controls rather than selectors based on translated labels or brittle CSS structure.
+`TutorialProvider` and `TutorialPanel` mount inside the authenticated account scope (`apps/web/src/tutorials/`). Resolve room IDs from the route registry. Add stable `data-tour` anchors to actual controls rather than selectors based on translated labels or brittle CSS structure. F1 targets existing anchors; add an anchor only where a step has nowhere to point. Missing anchors explain themselves and offer skip or continue — never spin forever. A tutorial failure must not break the room.
 
 The guide is nonmodal during exercises. When a real product dialog opens, the guide coordinates with it instead of adding a second focus trap. Use labeled controls, sensible focus restoration, keyboard operation, and a progress announcement after deliberate step changes. Escape pauses the tour; it does not delete content. Real modal dialogs should follow [WAI's dialog focus and keyboard pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/).
 
-On mobile, use an in-flow guide card or a collapsible sheet that never covers the target control. Support reduced motion, zoom, narrow screens, and screen-reader-only traversal. Missing anchors or disabled features show a useful explanation and skip/continue controls. Never spin forever waiting for an element. A tutorial failure must not break the room.
+On mobile, use an in-flow guide card or a collapsible sheet that never covers the target control. Support reduced motion, zoom, narrow screens, and screen-reader-only traversal.
 
 ## Documentation and product quality feedback
 
 Serve version-matched user guides from the app, including offline/self-hosted deployments. A manifest maps tutorial `docId` values to allowlisted user-facing pages. Build checks reject broken IDs and anchors. Existing operator/setup docs can supply material, but should not be linked indiscriminately into user tours or seeded into a public corpus.
 
-Offer optional per-step feedback: “Unclear,” “Couldn't find it,” and “Didn't work,” plus free text. Record tutorial version, step, route, capabilities and error code; do not collect chat/note contents by default. Record aggregated starts, completions, skips, pauses and failures. Skips alone do not prove bad design. Combine them with observed usability sessions and failed task completion.
+Offer optional per-step feedback: “Unclear,” “Couldn't find it,” and “Didn't work,” plus free text. Record tutorial version, step, route, capabilities and error code; do not collect chat/note contents by default. The `tutorial_feedback` table exists for erasure/transparency; the feedback API and UI arrive with authored tours. Record aggregated starts, completions, skips, pauses and failures. Skips alone do not prove bad design. Combine them with observed usability sessions and failed task completion.
 
 Acceptance criterion for the redesign: a new person can explain what becomes a conversation, note, memory, project, and output, then perform one cross-feature task without the host narrating every click.
 
@@ -136,11 +140,20 @@ Acceptance criterion for the redesign: a new person can explain what becomes a c
 
 The [parent plan's validation matrix](shared_instance_product_spec.md#10-validation-plan) applies in addition to these tutorial-specific gates:
 
+### F1 (framework) — shipped
+
 - Every enabled user-facing room/service is mapped to a stable tutorial ID; capability-gated and host-only tours cannot launch for unauthorized users.
-- Every major feature has a demonstrated action and inspectable result. Advanced documentation links resolve to the matching deployed user-guide version.
-- First login and first room entry start only the eligible guide; completing or skipping one never changes another tour's progress.
-- Skip step, skip tutorial, pause/resume, reset one, reset all, and auto-start preferences work across reloads and devices.
+- First login and first room entry offer only the eligible guide; completing or skipping one never changes another tour's progress.
+- Skip step, skip tutorial, pause/resume, reset one, reset all, and auto-start preferences work across reloads (API + Settings).
 - A stale tab cannot overwrite a reset; retried events cannot advance a tour twice.
-- Demo actions do not call providers, send messages, create schedules, consume quotas, or contaminate memory/retrieval.
+- Tour events do not call providers, send messages, create schedules, consume quotas, or contaminate memory/retrieval.
 - Missing anchors, unavailable features, and tutorial-service failures leave the room usable.
-- Keyboard, screen-reader, narrow-screen, zoom, and reduced-motion journeys pass against the real components.
+- Tutorial progress and feedback rows are erased by `/forget-me` and listed by the transparency report.
+- `tests/tutorialFramework.test.js` on SQLite and Postgres; `e2e/tutorials.spec.js` (no provider).
+
+### F2 (authored tours) — shipped (sample subset)
+
+- `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps` each have demonstrated actions and inspectable in-panel results (Weekend field notebook). Remaining curriculum rows stay empty until a later package.
+- Demo fixtures stay out of retrieval; **Keep this example** is explicit and idempotent on note title.
+- `tests/tutorialFramework.test.js` covers keep/skip/isolation; `e2e/tutorials.spec.js` covers demos, skip step, Keep, and Finish (no provider).
+- Keyboard, screen-reader, narrow-screen, zoom, and reduced-motion journeys against every remaining room's authored steps are deferred with those tours.

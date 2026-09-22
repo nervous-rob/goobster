@@ -16,6 +16,7 @@ import { MemorySection } from './MemorySection';
 import { ConnectionsSection } from './ConnectionsSection';
 import { AppearanceSection } from './AppearanceSection';
 import { AccountSection } from './AccountSection';
+import { TutorialsSection } from './TutorialsSection';
 
 const UNSAVED = 'You have unsaved settings changes. Leave and discard them?';
 
@@ -148,8 +149,8 @@ export function SettingsRoom() {
                     ))}
                 </nav>
                 <div className={`settings-content${active ? '' : ' narrow-hidden'}`}>
-                    {settings.isPending && <div className="empty">Loading your settings…</div>}
-                    {settings.isError && (
+                    {settings.isPending && active !== 'tutorials' && <div className="empty">Loading your settings…</div>}
+                    {settings.isError && active !== 'tutorials' && (
                         <div className="empty">
                             Couldn't load settings: {(settings.error as Error).message}
                             <div><button type="button" className="btn" onClick={() => settings.refetch()}>Try again</button></div>
@@ -169,6 +170,7 @@ export function SettingsRoom() {
                     {data && active === 'connections' && <ConnectionsSection section={data.sections.connections} onDirty={markDirty('connections')} />}
                     {data && active === 'appearance' && <AppearanceSection section={data.sections.appearance} onDirty={markDirty('appearance')} />}
                     {data && active === 'account' && <AccountSection section={data.sections.account} />}
+                    {active === 'tutorials' && <TutorialsSection />}
                 </div>
             </div>
         </main>

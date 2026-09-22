@@ -586,6 +586,80 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
+    // Bypasses the event API so empty-step catalog tours can still show
+    // paused/completed rows. Never calls a provider.
+    app.post('/e2e/fixtures/tutorial-progress', express.json(), async (req, res) => {
+        try {
+            const tutorialService = require('@goobster/core/services/tutorialService');
+            const userId = String(req.body?.userId || C.OWNER);
+            const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+            for (const row of rows) {
+                const tutorialId = String(row.tutorialId || '');
+                const version = Number(row.version || 1);
+                await db.run(
+                    `INSERT INTO tutorial_progress (
+                        accountId, tutorialId, version, generation, revision, status,
+                        currentStepId, completedStepIdsJson, skippedStepIdsJson,
+                        unavailableStepIdsJson, updatedAt
+                     ) VALUES (
+                        @accountId, @tutorialId, @version, @generation, @revision, @status,
+                        @currentStepId, @completedStepIdsJson, @skippedStepIdsJson,
+                        @unavailableStepIdsJson, datetime('now')
+                     )
+                     ON CONFLICT(accountId, tutorialId, version) DO UPDATE SET
+                        generation = excluded.generation,
+                        revision = excluded.revision,
+                        status = excluded.status,
+                        currentStepId = excluded.currentStepId,
+                        completedStepIdsJson = excluded.completedStepIdsJson,
+                        skippedStepIdsJson = excluded.skippedStepIdsJson,
+                        unavailableStepIdsJson = excluded.unavailableStepIdsJson,
+                        updatedAt = excluded.updatedAt`,
+                    {
+                        accountId: userId,
+                        tutorialId,
+                        version,
+                        generation: Number(row.generation || 1),
+                        revision: Number(row.revision || 1),
+                        status: String(row.status || 'paused'),
+                        currentStepId: row.currentStepId || null,
+                        completedStepIdsJson: JSON.stringify(row.completedStepIds || []),
+                        skippedStepIdsJson: JSON.stringify(row.skippedStepIds || []),
+                        unavailableStepIdsJson: JSON.stringify(row.unavailableStepIds || [])
+                    }
+                );
+            }
+            if (req.body?.autoStart !== undefined) {
+                await tutorialService.patchPreferences(userId, { autoStart: Boolean(req.body.autoStart) });
+            } else {
+                // Keep the offer from covering Settings during the walkthrough.
+                await tutorialService.patchPreferences(userId, { autoStart: false });
+            }
+            // A note + a hidden tool prove Reset all does not touch them.
+            if (req.body?.seedSideEffects) {
+                const userSettings = require('@goobster/core/services/userSettingsService');
+                await db.run(
+                    `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content, curation, source)
+                     VALUES (@guildId, @scopeKey, 'concept', @label, 'side effect', 'saved', 'user')
+                     ON CONFLICT(guildId, scopeKey, label) DO NOTHING`,
+                    {
+                        guildId: dmScopeId(userId),
+                        scopeKey: `USER:${userId}`,
+                        label: C.TUTORIAL_SIDE_NOTE || 'Tutorial side-effect note'
+                    }
+                );
+                await userSettings.updateSection({
+                    userId,
+                    section: 'appearance',
+                    changes: { hiddenToolRooms: ['music'] }
+                });
+            }
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     mountRendererHarness(app);
     app.use(createWebAppApp(ctx));
 
