@@ -34,6 +34,17 @@ module.exports = {
     FACT_CONTENT: 'Rob keeps a raspberry pi on the shelf',
     MEMORY_CONTENT: 'Rob mentioned the ingest job runs on the pi at night.',
 
+    // A saved chat with one answer worth keeping (ADR 0010: answer -> note ->
+    // project) and one generated app (the Save to project… hop).
+    CHAT_TITLE: 'Compound interest',
+    CHAT_QUESTION: 'Explain compound interest, with the formula.',
+    CHAT_ANSWER_HEADING: 'Compound interest formula',
+    CHAT_ANSWER_BODY: 'The balance after t years is A = P(1 + r/n)^(nt).',
+    CHAT_APP_TITLE: 'Interest dial',
+    // Minted by POST /e2e/fixtures/distilled-note: a memory row the picker must refuse.
+    TRANSFER_MEMORY_LABEL: 'Checks rates on Fridays',
+    TRANSFER_MEMORY_CONTENT: 'Distilled: the rate questions always come on a Friday.',
+
     PERSONA_NAME: 'Ada',
     PERSONA_CHARTER: 'A careful research companion.',
     PARLOR_USER_MESSAGE: 'Goobster, what is our ingest cadence?',

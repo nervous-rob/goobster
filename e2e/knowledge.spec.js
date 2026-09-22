@@ -111,7 +111,9 @@ test('deleting a note says what stays; the memory it came from is untouched', as
     await distilled.getByRole('button', { name: `Delete ${C.DISTILLED_NOTE_LABEL}` }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toContainText('Raw memories and chat transcripts it was distilled from are not deleted');
-    await dialog.getByRole('button', { name: 'Confirm' }).click();
+    // Nowhere else to name: this note never entered a project or discussion (ADR 0010 §4).
+    await expect(dialog).toContainText('It has not been added to any project or discussion.');
+    await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(page.getByText('Note deleted.')).toBeVisible();
     await expect(notes.getByText(C.DISTILLED_NOTE_LABEL)).toHaveCount(0);
 

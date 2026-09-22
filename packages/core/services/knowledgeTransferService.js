@@ -161,12 +161,11 @@ class KnowledgeTransferService {
             'SELECT 1 AS ok FROM observatory_share_links WHERE projectId = @projectId',
             { projectId: project.id }
         ));
-        const ownerName = await require('./projectService')._displayName(project.ownerId);
         return {
             kind: 'project',
             ownerId: project.ownerId,
-            ownerName: ownerName || null,
-            members: members.map(m => ({ userId: m.userId, userName: m.userName || null })),
+            ownerName: await this._displayName(project.ownerId),
+            members: await this._namedMembers(members),
             memberIds: [project.ownerId, ...members.map(m => m.userId)],
             shared,
             private: members.length === 0 && !shared
@@ -183,11 +182,29 @@ class KnowledgeTransferService {
         return {
             kind: 'discussion',
             ownerId: conversation.ownerId,
-            members: members.map(m => ({ userId: m.userId, userName: m.userName || null })),
+            ownerName: await this._displayName(conversation.ownerId),
+            members: await this._namedMembers(members),
             memberIds: [conversation.ownerId, ...members.map(m => m.userId)],
             shared: false,
             private: members.length === 0
         };
+    }
+
+    /**
+     * An audience names people, not ids: the stored member name first, then
+     * the same nickname / principal lookup the project owner gets.
+     */
+    async _namedMembers(rows) {
+        const out = [];
+        for (const row of rows) {
+            out.push({ userId: row.userId, userName: row.userName || await this._displayName(row.userId) });
+        }
+        return out;
+    }
+
+    async _displayName(userId) {
+        if (!userId) return null;
+        return (await require('./projectService')._displayName(userId)) || null;
     }
 
     // --- Actions -----------------------------------------------------------

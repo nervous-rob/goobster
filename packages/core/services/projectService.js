@@ -1919,6 +1919,12 @@ class ObservatoryService {
         const tagMap = await knowledgeGraphService.getTagsForNodes(notes.map(n => n.id));
         const transfers = require('./knowledgeTransferService');
         const origins = await transfers.copyOriginsForNodes(notes.map(n => n.id));
+        const publisherNames = new Map();
+        for (const origin of origins.values()) {
+            if (!publisherNames.has(origin.userId)) {
+                publisherNames.set(origin.userId, await this._displayName(origin.userId));
+            }
+        }
         return notes.map(n => {
             const origin = origins.get(n.id) || null;
             const shaped = {
@@ -1937,6 +1943,7 @@ class ObservatoryService {
                 // A published copy (ADR 0010 §3): who put it here and from
                 // which note; removable by them or the project owner.
                 shaped.publishedBy = origin.userId;
+                shaped.publishedByName = publisherNames.get(origin.userId) || null;
                 shaped.publishedFrom = origin.sourceLabel || null;
                 shaped.publishedAt = origin.createdAt;
                 shaped.canRemove = row.role === 'owner' || origin.userId === userId;

@@ -512,6 +512,15 @@ describe('Add to project (note -> project)', () => {
         );
         expect(copies.c).toBe(1);
 
+        // Organization worked with execution off; running code in the same
+        // project still refuses (ADR 0009 - the two switches stay separate).
+        const run = await request({
+            method: 'POST', reqPath: '/api/app/observatory/command', headers: { cookie: rob },
+            body: { project: 'shared-study', owner: ROB, instructions: 'run it' }
+        });
+        expect(run.status).toBe(403);
+        expect(run.json.error.code).toBe('DISABLED');
+
         // A different personal note with a clashing title is a conflict, not an overwrite.
         const clash = await knowledgeGraphService.createUserNote({
             guildId: dmScopeId(ROB), userId: ROB, label: 'Compound interest', content: 'a different note with the same title'

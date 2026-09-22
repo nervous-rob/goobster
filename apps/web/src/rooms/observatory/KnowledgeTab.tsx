@@ -36,6 +36,7 @@ type NoteRow = {
     updatedAt?: string;
     /** Set on a published copy (ADR 0010): who put it here and from which note. */
     publishedBy?: string;
+    publishedByName?: string | null;
     publishedFrom?: string | null;
     publishedAt?: string;
     canRemove?: boolean;
@@ -207,7 +208,7 @@ export function KnowledgeTab({
                                 <strong>{note.label}</strong>
                                 {note.publishedBy ? (
                                     <span className="badge" title={note.publishedFrom ? `Published from “${note.publishedFrom}”` : 'A published copy'}>
-                                        copy · {note.publishedBy === me.user.id ? 'published by you' : `published by ${note.publishedBy}`}
+                                        copy · {note.publishedBy === me.user.id ? 'published by you' : `published by ${note.publishedByName || note.publishedBy}`}
                                     </span>
                                 ) : null}
                                 {note.content ? <div className="row-meta">{note.content}</div> : null}
