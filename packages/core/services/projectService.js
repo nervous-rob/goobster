@@ -793,6 +793,11 @@ class ObservatoryService {
         return row;
     }
 
+    /**
+     * A person's display name for project payloads: the nickname Goobster
+     * was told to use, else the name on their principal (portal sign-in,
+     * native `usr_…` accounts), else null so callers fall back to the id.
+     */
     async _displayName(userId) {
         try {
             const nick = await db.get(
@@ -801,6 +806,13 @@ class ObservatoryService {
             );
             if (nick?.nickname) return nick.nickname;
         } catch { /* table may be empty */ }
+        try {
+            const principal = await db.get(
+                'SELECT displayName FROM principals WHERE id = @userId LIMIT 1',
+                { userId }
+            );
+            if (principal?.displayName) return principal.displayName;
+        } catch { /* best-effort */ }
         return null;
     }
 

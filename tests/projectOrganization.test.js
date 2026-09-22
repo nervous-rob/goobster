@@ -268,6 +268,9 @@ describe('owner-safe addressing', () => {
         expect(same).toHaveLength(2);
         expect(new Set(same.map(p => p.ownerId))).toEqual(new Set([ROB, SAM]));
         expect(same.find(p => p.ownerId === SAM).role).toBe('collaborator');
+        // The other owner is named from her portal sign-in (principals),
+        // not shown as a bare id - there is no user_nicknames row for her.
+        expect(same.find(p => p.ownerId === SAM).ownerName).toBe('sam');
 
         // Owner-qualified opens exactly the project asked for ...
         const mine = await request({
