@@ -1593,6 +1593,8 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
     max-width: none;
     max-height: min(70vh, calc(100dvh - 32px));
   }
+  /* Four actions rarely fit one row; give the primary its own full-width row. */
+  .tutorial-panel-actions .btn.primary { flex: 1 1 100%; justify-content: center; }
 }
 
 /* Step progress dots: done / current / skipped / unavailable / todo */
