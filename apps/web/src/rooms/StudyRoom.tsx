@@ -8,6 +8,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
 import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
+import { SaveNoteModal } from '../components/SaveNoteModal';
 import { ChatTranscript } from '../components/ChatTranscript';
 import type { ChatMessage, ChatQueueItem, Conversation, TurnProgress } from '../lib/types';
 import { MenuButton } from '../shell/MenuButton';
@@ -113,6 +114,7 @@ export function StudyRoom() {
     const [files, setFiles] = useState<PendingFile[]>([]);
     const turn = useChatTurn();
     const [saveTarget, setSaveTarget] = useState<SaveToProjectTarget | null>(null);
+    const [noteTarget, setNoteTarget] = useState<{ conversationId: number; messageId: number; content: string } | null>(null);
     const [shareOpen, setShareOpen] = useState(false);
     const chats = useConversationDrawer();
     const openSettings = useOpenSettings();
@@ -795,7 +797,9 @@ export function StudyRoom() {
                         expandDetails={Boolean(settingsQ.data?.sections.appearance.values.expandChatDetails)}
                         onNotify={toast}
                         requestGrant={confirm}
-                        onSaveToProject={me.features?.observatory
+                        // Adding a generated app to a project is organization
+                        // (me.features.projects), not execution (ADR 0009/0010).
+                        onSaveToProject={me.features?.projects !== false
                             ? (info) => setSaveTarget({
                                 ...info,
                                 conversationId: activeId,
@@ -812,6 +816,16 @@ export function StudyRoom() {
                                 )}
                                 {message.role === 'assistant' && lastAssistant === message && activeId !== null && (
                                     <button type="button" className="msg-action" onClick={() => void regenerate()}>↻ Regenerate</button>
+                                )}
+                                {message.role === 'assistant' && !incognito && !message.isError && !message.draft && !message.typing
+                                    && message.content && message.id > 0 && activeId !== null && (
+                                    <button
+                                        type="button"
+                                        className="msg-action"
+                                        title="Keep this answer as a note in Knowledge"
+                                        data-testid={`save-as-note-${message.id}`}
+                                        onClick={() => setNoteTarget({ conversationId: activeId, messageId: message.id, content: message.content })}
+                                    >📝 Save as note</button>
                                 )}
                                 {message.role === 'assistant' && voice.data?.tts && message.content && (
                                     <button type="button" className="msg-action listen" onClick={() => void listen(message.content)}>🔊 Listen</button>
@@ -948,6 +962,14 @@ export function StudyRoom() {
                 <SaveToProjectModal
                     target={saveTarget}
                     onClose={() => setSaveTarget(null)}
+                />
+            )}
+            {noteTarget && (
+                <SaveNoteModal
+                    conversationId={noteTarget.conversationId}
+                    messageId={noteTarget.messageId}
+                    content={noteTarget.content}
+                    onClose={() => setNoteTarget(null)}
                 />
             )}
             {voiceChat.active && <VoiceChatOverlay voiceChat={voiceChat} />}
