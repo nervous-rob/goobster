@@ -462,10 +462,13 @@ class WebDashboardService {
         let observatory = { enabled: false };
         try {
             const observatoryService = require('./observatoryService');
-            if (observatoryService.enabled) {
+            // The Home card is about organizing projects, which does not
+            // need code execution (ADR 0009).
+            if (observatoryService.organizationEnabled) {
                 const projects = await observatoryService.listProjects(userId);
                 observatory = {
                     enabled: true,
+                    execution: observatoryService.executionEnabled === true,
                     projectCount: projects.length,
                     runningJobs: projects.reduce((n, p) => n + (Number(p.runningJobs) || 0), 0),
                     latest: projects[0]

@@ -442,7 +442,10 @@ function mountAuth(app, ctx, h) {
                 maxInputLength: ctx.chat.maxInputLength,
                 // Feature switches the client uses to show/hide panes
                 features: {
-                    observatory: ctx.observatory.enabled === true,
+                    // Organizing projects (the Projects room) is separate
+                    // from running code in them (ADR 0009).
+                    projects: ctx.observatory.organizationEnabled !== false,
+                    observatory: (ctx.observatory.executionEnabled ?? ctx.observatory.enabled) === true,
                     spitball: ctx.spitball.enabled === true
                 }
             });

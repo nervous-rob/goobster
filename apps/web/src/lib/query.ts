@@ -36,6 +36,9 @@ export const keys = {
     spitballNotes: (scope: string, filters: Record<string, string> = {}) =>
         ['spitball-notes', scope, filters] as const,
     spitballNotesRoot: (scope: string) => ['spitball-notes', scope] as const,
+    /** Where one personal note has gone (ADR 0010). */
+    noteTransfers: (nodeId: number | string) => ['note-transfers', String(nodeId)] as const,
+    projectAudience: (slug: string, owner?: string | null) => ['project-audience', slug, owner || ''] as const,
     spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,
     memory: (scope: string, tab: string) => ['memory', scope, tab] as const,

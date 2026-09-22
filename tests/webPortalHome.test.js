@@ -75,7 +75,10 @@ describe('getHome', () => {
         expect(home.watching.followups).toHaveLength(1);
         expect(home.pickup.conversations[0].title).toBe('Pi plans');
         expect(home.workshop.pinned[0].title).toBe('Clock');
-        expect(home.observatory).toEqual({ enabled: false });
+        // Organizing projects is on by default even with execution off (ADR 0009).
+        expect(home.observatory).toEqual({
+            enabled: true, execution: false, projectCount: 0, runningJobs: 0, latest: null
+        });
         expect(home.servers).toEqual([]);
     });
 });

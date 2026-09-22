@@ -23,15 +23,16 @@ type Invitable = { people: Person[]; friendsSynced: boolean; syncedAt: string | 
 /**
  * People of one project: the owner, accepted collaborators (remove/leave),
  * pending invitations (owner can withdraw), and — for the owner — the
- * invite picker sourced from Discord friends and shared servers.
+ * invite picker sourced from Discord friends and shared servers. The
+ * People view renders this inline; the modal wrapper below is the
+ * secondary presentation from the project header.
  */
-export function ProjectPeopleModal({
-    slug, ownerId, meId, onClose, onLeft
+export function ProjectPeople({
+    slug, ownerId, meId, onLeft
 }: {
     slug: string;
     ownerId?: string | null;
     meId: string;
-    onClose: () => void;
     onLeft: () => void;
 }) {
     const toast = useToast();
@@ -77,8 +78,7 @@ export function ProjectPeopleModal({
     }
 
     return (
-        <Modal onClose={onClose} className="parlor-modal">
-            <h2>People on this project</h2>
+        <div className="project-people" data-tour="project-people">
             {rosterQ.isPending && <div className="hint">Loading…</div>}
             {rosterQ.isError && <div className="hint">{(rosterQ.error as Error).message}</div>}
             {roster && (
@@ -129,6 +129,23 @@ export function ProjectPeopleModal({
                     )}
                 </>
             )}
+        </div>
+    );
+}
+
+export function ProjectPeopleModal({
+    slug, ownerId, meId, onClose, onLeft
+}: {
+    slug: string;
+    ownerId?: string | null;
+    meId: string;
+    onClose: () => void;
+    onLeft: () => void;
+}) {
+    return (
+        <Modal onClose={onClose} className="parlor-modal">
+            <h2>People on this project</h2>
+            <ProjectPeople slug={slug} ownerId={ownerId} meId={meId} onLeft={onLeft} />
         </Modal>
     );
 }

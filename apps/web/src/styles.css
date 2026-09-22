@@ -1400,6 +1400,29 @@ html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
 .activity-tab .nav-count { margin-left: 2px; }
 .activity-shell .pane-header { border-top: 0; }
 #pane-library > .view-tabs { padding-top: 4px; }
+#pane-observatory > .view-tabs { padding-top: 4px; }
+
+/* Projects (ADR 0009): URL-addressed project views, goal, inline conversation and people. */
+#pane-observatory a.list-row { color: inherit; text-decoration: none; }
+#pane-observatory a.list-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.obs-goal { margin: 0 0 8px; font-size: 14.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; }
+.obs-goal.is-empty { color: var(--text-dim); font-style: italic; }
+.row-meta.obs-goal { font-size: 13px; color: var(--text-dim); font-style: normal; margin: 4px 0 2px; }
+.btn.is-muted { opacity: 0.55; cursor: not-allowed; }
+.btn.is-muted:hover { opacity: 0.7; }
+.view-tab .badge { margin-left: 4px; font-size: 10px; }
+.obs-chat-dock.is-inline { width: auto; flex: 1; min-height: min(70dvh, 720px); }
+.obs-chat-dock.is-inline .obs-chat-dock-scroll { min-height: 320px; }
+.obs-people-view .project-people { max-width: 640px; }
+.obs-people-view .obs-section-head { margin-bottom: 10px; }
+.project-chooser { max-width: 720px; }
+.project-create .field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.project-create .field > span { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.project-create .field > span .hint { display: inline; margin: 0; font-weight: 500; }
+.project-create textarea.input { resize: vertical; }
+@media (max-width: 900px) {
+    .obs-chat-dock.is-inline { position: static; max-height: none; border-radius: 12px; box-shadow: none; }
+}
 
 /* Saved-knowledge curation (ADR 0008): kept / memory / unsorted. */
 .curation-badge { margin-left: 8px; font-size: 10.5px; text-transform: none; letter-spacing: 0; vertical-align: middle; }
@@ -1454,3 +1477,33 @@ a.tools-card { text-decoration: none; }
 .room-secondary {
   margin-left: 6px; font-size: 12px; font-weight: 500; color: var(--text-dim); letter-spacing: 0;
 }
+
+/* Explicit transfers (ADR 0010): Save as note, Add to project, Use in discussion */
+#pane-library .notes-row-actions {
+  display: inline-flex; gap: 6px; align-self: center; flex: none; margin-right: 4px;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+#pane-library .notes-row:hover .notes-row-actions,
+#pane-library .notes-row:focus-within .notes-row-actions { opacity: 1; }
+@media (hover: none) { #pane-library .notes-row-actions { opacity: 1; } }
+.transfer-modes { display: grid; gap: 8px; }
+.transfer-mode {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-raise);
+}
+.transfer-mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.transfer-mode.disabled { opacity: 0.6; cursor: not-allowed; }
+.transfer-mode input { margin-top: 3px; }
+.transfer-mode > span { display: grid; gap: 2px; }
+.transfer-audience, .transfer-preview {
+  padding: 10px 12px; border-radius: 10px; border: 1px dashed var(--border);
+  background: var(--bg-raise-2); font-size: 13.5px;
+}
+.transfer-audience { margin-bottom: 12px; }
+.transfer-preview-body {
+  margin-top: 6px; color: var(--text-dim); white-space: pre-wrap; max-height: 180px; overflow: auto; font-size: 13px;
+}
+.delete-note-scopes { margin-top: 12px; }
+.delete-note-list { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 8px; font-size: 13.5px; }
+.delete-note-choice { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.delete-note-choice input { margin-top: 3px; }

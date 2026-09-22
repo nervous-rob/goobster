@@ -42,6 +42,7 @@ const knowledgeGraphService = require('@goobster/core/services/knowledgeGraphSer
 const kgConfig = require('@goobster/core/config/knowledgeGraphConfig');
 const factsService = require('@goobster/core/services/factsService');
 const parlorService = require('@goobster/core/services/parlorService');
+const webChatService = require('@goobster/core/services/webChatService');
 const attention = require('@goobster/core/services/attentionService');
 const policies = require('@goobster/core/services/attentionPolicyService');
 const eventBusService = require('@goobster/core/services/eventBusService');
@@ -213,6 +214,51 @@ async function seedPersonalMemory(userId) {
     );
 }
 
+/**
+ * A saved web chat, written the way the chat pipeline writes it (ADR 0010:
+ * the answer -> note hop starts here). One question, one answer with a
+ * heading, and a second answer carrying a generated app so the Save to
+ * project… hop has a fence to act on.
+ */
+async function seedChat(userId) {
+    const conversation = await webChatService.createConversation(userId);
+    await webChatService.renameConversation({ userId, conversationId: conversation.id, title: C.CHAT_TITLE });
+    const { channelId } = await db.get('SELECT channelId FROM web_conversations WHERE id = @id', { id: conversation.id });
+    await db.run(
+        `INSERT INTO users (discordUsername, discordId, username) VALUES (@name, @id, @name) ON CONFLICT DO NOTHING`,
+        { id: userId, name: C.OWNER_NAME }
+    );
+    await db.run(
+        `INSERT INTO users (discordUsername, discordId, username) VALUES ('Goobster', @id, 'Goobster') ON CONFLICT DO NOTHING`,
+        { id: C.BOT_ID }
+    );
+    const human = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: userId })).id;
+    const bot = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: C.BOT_ID })).id;
+    const guildConvId = await db.insert(
+        `INSERT INTO guild_conversations (guildId, channelId, threadId) VALUES (@g, @c, @t)`,
+        { g: dmScopeId(userId), c: channelId, t: `channel-${channelId}` }
+    );
+    const conversationId = await db.insert(
+        'INSERT INTO conversations (userId, guildConversationId) VALUES (@u, @g)', { u: human, g: guildConvId }
+    );
+    const app = `\`\`\`html\n<!doctype html><html><head><title>${C.CHAT_APP_TITLE}</title></head><body><h1>${C.CHAT_APP_TITLE}</h1><input type="range"></body></html>\n\`\`\``;
+    const turns = [
+        [human, 0, C.CHAT_QUESTION],
+        [bot, 1, `## ${C.CHAT_ANSWER_HEADING}\n\n${C.CHAT_ANSWER_BODY}`],
+        [human, 0, 'Build me a tiny dial for it.'],
+        [bot, 1, `Here you go.\n\n${app}`]
+    ];
+    const ids = [];
+    for (const [by, isBot, text] of turns) {
+        ids.push(await db.insert(
+            `INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot)
+             VALUES (@c, @g, @by, @m, @isBot)`,
+            { c: conversationId, g: guildConvId, by, m: text, isBot }
+        ));
+    }
+    return { conversationId: conversation.id, messageIds: ids };
+}
+
 async function seedParlor(userId) {
     const persona = await parlorService.createPersona({
         ownerId: userId,
@@ -254,7 +300,7 @@ async function seedParlor(userId) {
 }
 
 async function seedProject(observatory, userId) {
-    const project = await observatory.createProject({ userId, name: C.PROJECT_NAME });
+    const project = await observatory.createProject({ userId, name: C.PROJECT_NAME, description: C.PROJECT_GOAL });
     await observatory.writeWorkspaceFile({
         userId,
         slug: project.slug,
@@ -318,6 +364,21 @@ async function seedProject(observatory, userId) {
     );
 
     return { id: project.id, slug: project.slug, parlorId: parlor.conversation.id };
+}
+
+/**
+ * The same-slug twin (E3): another owner's project with the same name,
+ * shared with `memberId`, so one slug names two projects in that person's
+ * list and only the owner-qualified address tells them apart.
+ */
+async function seedTwinProject(observatory, ownerId, memberId) {
+    // The twin's owner has signed into the portal before, so project
+    // payloads can name her rather than show a bare id.
+    await identityService.ensureLegacyPrincipal({ discordId: ownerId, displayName: C.MEMBER_NAME });
+    const twin = await observatory.createProject({ userId: ownerId, name: C.PROJECT_NAME, description: C.TWIN_PROJECT_GOAL });
+    const { invite } = await observatory.invite({ userId: ownerId, project: twin.slug, inviteeId: memberId });
+    await observatory.respondInvite({ userId: memberId, inviteId: invite.id, accept: true });
+    return twin;
 }
 
 async function seedAttention(userId) {
@@ -412,8 +473,10 @@ async function seed() {
     const observatory = makeObservatory();
     await seedExpedition(C.OWNER);
     await seedPersonalMemory(C.OWNER);
+    await seedChat(C.OWNER);
     await seedParlor(C.OWNER);
     await seedProject(observatory, C.OWNER);
+    await seedTwinProject(observatory, C.MEMBER, C.OWNER);
     await seedAttention(C.OWNER);
     await seedInboxAndPeople();
     return observatory;
@@ -439,6 +502,27 @@ async function main() {
     });
     app.get('/e2e/inbox-attachment.csv', (_req, res) => {
         res.type('text/csv').send('name,value\nkept attachment,42\n');
+    });
+    // A distilled row Goobster "inferred" (curation = memory), minted on
+    // demand so the transfers spec can prove the picker refuses it without
+    // depending on which memory rows an earlier spec has already deleted.
+    app.post('/e2e/fixtures/distilled-note', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || C.OWNER);
+            const node = await knowledgeGraphService.upsertNode({
+                guildId: dmScopeId(userId),
+                scopeKey: `USER:${userId}`,
+                subjectType: 'USER',
+                subjectId: userId,
+                type: 'preference',
+                label: String(req.body?.label || C.TRANSFER_MEMORY_LABEL),
+                content: String(req.body?.content || C.TRANSFER_MEMORY_CONTENT),
+                source: 'consolidation'
+            });
+            res.json({ id: node.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
     });
     mountRendererHarness(app);
     app.use(createWebAppApp(ctx));

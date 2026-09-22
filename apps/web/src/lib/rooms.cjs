@@ -68,9 +68,27 @@ const ROOMS = [
         path: '/projects',
         group: 'primary',
         atmosphere: 'room-observatory',
-        requires: { feature: 'observatory' },
+        // Organizing projects is its own capability; running code in them
+        // (`features.observatory`) is gated per control - ADR 0009.
+        requires: { feature: 'projects' },
         legacyIds: ['observatory', 'workshop'],
-        tutorials: ['projects.basics', 'projects.plans', 'projects.runs', 'projects.apps']
+        tutorials: ['projects.basics', 'projects.plans', 'projects.runs', 'projects.apps'],
+        // Views live under a per-project path: /projects/:owner/:slug/<view>.
+        // The owner is part of the address because two owners may share a
+        // slug. `/projects/:slug` alone is a resolver (unique match redirects,
+        // several show a chooser) - see documentation/projects.md.
+        detail: { params: ['owner', 'slug'], defaultView: 'overview' },
+        views: [
+            { id: 'overview', name: 'Overview', icon: '🔭', segment: 'overview' },
+            { id: 'plan', name: 'Plan', secondaryName: 'Mission', icon: '🎯', segment: 'plan', legacyIds: ['mission'] },
+            { id: 'conversation', name: 'Conversation', icon: '💬', segment: 'conversation' },
+            { id: 'knowledge', name: 'Knowledge', icon: '🧠', segment: 'knowledge' },
+            { id: 'files', name: 'Files', secondaryName: 'Explorer', icon: '📁', segment: 'files', legacyIds: ['explorer'] },
+            { id: 'apps', name: 'Apps', icon: '🧩', segment: 'apps' },
+            { id: 'runs', name: 'Runs', secondaryName: 'Jobs', icon: '▶️', segment: 'runs', legacyIds: ['jobs'] },
+            { id: 'people', name: 'People', icon: '👥', segment: 'people' },
+            { id: 'automations', name: 'Automations', icon: '⏱️', segment: 'automations' }
+        ]
     },
     {
         id: 'discussions',
@@ -267,7 +285,7 @@ function resolveRoom(pathname) {
     for (const room of ROOMS) {
         if (room.path !== '/' && matchesPrefix(path, room.path)) candidates.push({ id: room.id, len: room.path.length });
         for (const view of room.views || []) {
-            if (matchesPrefix(path, view.path)) candidates.push({ id: room.id, len: view.path.length });
+            if (view.path && matchesPrefix(path, view.path)) candidates.push({ id: room.id, len: view.path.length });
         }
     }
     if (path.startsWith('/activity')) return 'activity';
@@ -282,14 +300,50 @@ function parentRoom(roomId) {
 }
 
 /**
- * The view of a room (Activity, Knowledge) a pathname points at, or null
- * when the path is outside that room or on its bare landing path.
+ * For a room whose views live under a per-item path (Projects:
+ * `/projects/:owner/:slug/<view>`), the item the pathname names and the
+ * view it is on - the default view when the segment is absent - or null
+ * when the path is the room's list, a resolver path (`/projects/:slug`),
+ * or outside the room. Params are decoded route segments; the view id is
+ * null for an unknown segment so the caller can redirect to the default.
+ */
+function resolveRoomDetail(roomId, pathname) {
+    const room = ROOM_BY_ID[roomId];
+    if (!room?.detail) return null;
+    const path = canonicalPath(pathname);
+    if (!matchesPrefix(path, room.path) || path === room.path) return null;
+    const segments = path.slice(room.path.length + 1).split('/').map((part) => {
+        try { return decodeURIComponent(part); } catch { return part; }
+    });
+    const arity = room.detail.params.length;
+    if (segments.length < arity || segments.length > arity + 1) return null;
+    const params = Object.fromEntries(room.detail.params.map((name, index) => [name, segments[index]]));
+    const segment = segments[arity];
+    if (segment === undefined) return { params, view: room.detail.defaultView };
+    const view = (room.views || []).find((entry) => entry.segment === segment || (entry.legacyIds || []).includes(segment));
+    return { params, view: view?.id || null };
+}
+
+/** The canonical path of one view of one item: `/projects/<owner>/<slug>/<segment>`. */
+function detailPath(roomId, params, viewId = null) {
+    const room = ROOM_BY_ID[roomId];
+    if (!room?.detail) return room?.path || '/';
+    const view = (room.views || []).find((entry) => entry.id === (viewId || room.detail.defaultView));
+    const parts = room.detail.params.map((name) => encodeURIComponent(String(params?.[name] ?? '')));
+    return `${room.path}/${parts.join('/')}/${view?.segment || room.detail.defaultView}`;
+}
+
+/**
+ * The view of a room (Activity, Knowledge, Projects) a pathname points at,
+ * or null when the path is outside that room or on its bare landing path.
  */
 function resolveRoomView(roomId, pathname) {
+    const room = ROOM_BY_ID[roomId];
+    if (room?.detail) return resolveRoomDetail(roomId, pathname)?.view || null;
     const path = canonicalPath(pathname);
-    const views = ROOM_BY_ID[roomId]?.views || [];
+    const views = room?.views || [];
     return views
-        .filter((view) => matchesPrefix(path, view.path))
+        .filter((view) => view.path && matchesPrefix(path, view.path))
         .sort((a, b) => b.path.length - a.path.length)[0]?.id || null;
 }
 
@@ -413,7 +467,7 @@ function legacyHashTarget(hash) {
     let base = null;
     for (const room of ROOMS) {
         // A view name (`noticed`, `tasks`) is more specific than its room.
-        const view = (room.views || []).find((entry) => entry.id === name || (entry.legacyIds || []).includes(name));
+        const view = (room.views || []).find((entry) => entry.path && (entry.id === name || (entry.legacyIds || []).includes(name)));
         if (view) { base = view.path; break; }
         if (room.id === name || (room.legacyIds || []).includes(name)) { base = room.path; break; }
     }
@@ -438,6 +492,8 @@ module.exports = {
     resolveRoom,
     parentRoom,
     resolveRoomView,
+    resolveRoomDetail,
+    detailPath,
     resolveActivityView,
     resolveKnowledgeView,
     atmosphereFor,

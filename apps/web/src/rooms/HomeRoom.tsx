@@ -95,7 +95,7 @@ export function HomeRoom() {
                             <button type="button" className="btn" data-tour="home-new-note" onClick={() => navigate({ to: '/knowledge' })}>
                                 🧠 New note
                             </button>
-                            {(observatory.enabled || me.features?.observatory) && (
+                            {(observatory.enabled || me.features?.projects) && (
                                 <button type="button" className="btn" data-tour="home-new-project" onClick={() => navigate({ to: '/projects' })}>
                                     🔭 New project
                                 </button>
@@ -182,7 +182,7 @@ export function HomeRoom() {
                                         ? `${workshop.discoveredCount} generated app${workshop.discoveredCount === 1 ? '' : 's'} waiting to be filed under a project.`
                                         : 'Ask in Chat: “build me a …” and the app waits here until you file it under a project.'}</div>}
                             />
-                            {(observatory.enabled || me.features?.observatory) && (
+                            {(observatory.enabled || me.features?.projects) && (
                                 <Card title="Projects" extraClass={`home-card-obs${observatory.runningJobs ? ' is-live' : ''}`}
                                     action="Open Projects →" onClick={() => navigate({ to: '/projects' })}
                                     body={observatory.projectCount

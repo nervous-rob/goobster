@@ -55,6 +55,19 @@ const MAX_PACKAGES_PER_REQUEST = 8;
 const PYPI_INDEX = 'https://pypi.org/simple';
 const DRY_RUN_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+// Wheel sizes are best-effort decoration on a proposal. The DNS lookup in
+// front of the HEAD has no deadline of its own; cap it so a stalled
+// resolver cannot pin the proposal (or a unit test) for the OS timeout.
+const WHEEL_LOOKUP_TIMEOUT_MS = 5_000;
+
+function withDeadline(promise, ms) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), ms);
+        timer.unref?.();
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 // One spec the model may propose: name, optional exact version pin,
 // optional import name when it differs (emcee / pyyaml==6.0.3 / pyyaml:yaml).
@@ -278,7 +291,10 @@ class SandboxRequestService {
         await Promise.all(resolved.map(async (pkg) => {
             try {
                 const assessed = safeFetch.assessUrl(pkg.url);
-                const pinned = await safeFetch.resolvePinned(assessed.host, { lookup: this._lookup });
+                const pinned = await withDeadline(
+                    safeFetch.resolvePinned(assessed.host, { lookup: this._lookup }),
+                    WHEEL_LOOKUP_TIMEOUT_MS
+                );
                 pkg.sizeBytes = await this._headContentLength(assessed.url, pinned.address);
             } catch {
                 pkg.sizeBytes = null; // unknown is fine - shown as such

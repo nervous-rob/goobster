@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
+import { projectPath } from '../lib/rooms';
+import { useMe } from '../hooks/useSession';
 import { bindTilt } from '../lib/atmosphere';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
@@ -23,6 +25,8 @@ export type InboxApplet = {
     migratedAssetId?: number | null;
     migratedAssetSlug?: string | null;
     migratedProject?: string | null;
+    /** The migrated project's owner - with the slug, its address (ADR 0009). */
+    migratedProjectOwnerId?: string | null;
 };
 
 type AppletsPayload = {
@@ -128,6 +132,7 @@ export function WorkshopInbox({
 }: {
     onPreviewChange?: (applet: InboxApplet | null) => void;
 } = {}) {
+    const me = useMe();
     const toast = useToast();
     const confirm = useConfirm();
     const navigate = useNavigate();
@@ -172,7 +177,7 @@ export function WorkshopInbox({
         if (!current) return;
         try {
             if (current.pinned && current.id) {
-                if (!await confirm('Unpin this mini-app from the inbox?')) return;
+                if (!await confirm('Unpin this mini-app from Unfiled apps?')) return;
                 await api.unpinApplet(current.id);
                 toast('Unpinned.');
                 setCurrent(null);
@@ -187,7 +192,7 @@ export function WorkshopInbox({
                 messageId: current.messageId,
                 grants: current.grants
             }) as InboxApplet;
-            toast('Pinned to the inbox.');
+            toast('Pinned under Unfiled apps.');
             setCurrent({ ...pinned, pinned: true });
             await queryClient.invalidateQueries({ queryKey: keys.applets });
         } catch (error) {
@@ -208,7 +213,7 @@ export function WorkshopInbox({
                         className="btn primary"
                         onClick={() => setPromoteTarget(current)}
                     >
-                        Promote to project…
+                        Add to project…
                     </button>
                     <button
                         type="button"
@@ -223,7 +228,14 @@ export function WorkshopInbox({
                             className="btn"
                             onClick={() => {
                                 setCurrent(null);
-                                navigate({ to: '/projects' });
+                                // The project's own address, on its Outputs view -
+                                // never the bare list (ADR 0009 §3).
+                                navigate({
+                                    to: projectPath({
+                                        owner: current.migratedProjectOwnerId || me.user.id,
+                                        slug: current.migratedProject as string
+                                    }, 'apps') as never
+                                });
                             }}
                         >
                             Open in Projects
@@ -256,8 +268,8 @@ export function WorkshopInbox({
                         origin="portal"
                         promote
                         appletId={promoteTarget.pinned ? promoteTarget.id ?? null : null}
-                        heading="Promote to project…"
-                        hint="Copy this mini-app into a versioned project asset. The inbox pin stays until pins retire."
+                        heading="Add to project…"
+                        hint="Copy this mini-app into a versioned project asset. The Unfiled-apps pin stays until pins retire."
                         onClose={() => setPromoteTarget(null)}
                         onSaved={() => {
                             void queryClient.invalidateQueries({ queryKey: keys.applets }).then(() => {
@@ -273,12 +285,13 @@ export function WorkshopInbox({
     }
 
     return (
-        <div className="workshop-shell workshop-inbox">
-            <div className="section-title">Inbox</div>
+        <div className="workshop-shell workshop-inbox" data-tour="project-unfiled-apps">
+            <div className="section-title">Unfiled apps</div>
             <p className="hint workshop-lead">
-                Mini-apps discovered in the Study, plus leftover Workshop pins.
-                Promote one into a project to give it a versioned home; pinning
-                still works during this deprecation window.
+                Mini-apps Goobster built in Chat that do not live in a project yet, plus
+                leftover Workshop pins. This lists generated apps only - not files or reports.
+                Add one to a project to give it a versioned home; pinning still works during
+                this deprecation window.
             </p>
             {applets.isPending && <div className="empty">Looking through the bench…</div>}
             {applets.isError && <div className="empty">{(applets.error as Error).message}</div>}
@@ -287,7 +300,7 @@ export function WorkshopInbox({
                     <Section
                         title="Pinned"
                         items={catalog.pinned || []}
-                        empty="Nothing pinned yet. Open a discovered app and pin it, or ask in the Study: “build me a …”"
+                        empty="Nothing pinned yet. Open a discovered app and pin it, or ask in Chat: “build me a …”"
                         onOpen={setCurrent}
                     />
                     <Section
@@ -304,7 +317,7 @@ export function WorkshopInbox({
                     origin="portal"
                     promote
                     appletId={promoteTarget.pinned ? promoteTarget.id ?? null : null}
-                    heading="Promote to project…"
+                    heading="Add to project…"
                     hint="Copy this mini-app into a versioned project asset."
                     onClose={() => setPromoteTarget(null)}
                     onSaved={() => { void queryClient.invalidateQueries({ queryKey: keys.applets }); }}

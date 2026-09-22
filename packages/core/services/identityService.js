@@ -52,7 +52,8 @@ const OWNER_COLUMNS = [
     { table: 'user_friends', column: 'ownerId' },
     { table: 'user_integrations', column: 'userId' },
     { table: 'attention_policies', column: 'userId' },
-    { table: 'spitball_expeditions', column: 'userId' }
+    { table: 'spitball_expeditions', column: 'userId' },
+    { table: 'knowledge_transfers', column: 'userId' }
 ];
 
 class IdentityError extends Error {

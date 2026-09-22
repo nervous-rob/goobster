@@ -1570,6 +1570,11 @@ ${excerpt}`;
      * would resurrect the note on the next read. Raw memories and
      * transcripts the note was distilled from are deliberately untouched
      * (documentation/knowledge_and_memory.md, deletion semantics).
+     *
+     * Transfers (ADR 0010 §4): references to this note point at nothing
+     * once it is gone and are dropped; published copies keep their own
+     * nodes / messages and their ledger rows (sourceNodeId nulls, the
+     * title snapshot stays). The saved-answer row travels with the note.
      */
     async deleteUserNote({ guildId, userId, nodeId } = {}) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
@@ -1586,6 +1591,12 @@ ${excerpt}`;
                     { factId, guildId }
                 );
             }
+            await tx.run(
+                `DELETE FROM knowledge_transfers
+                 WHERE (sourceNodeId = @id AND mode = 'reference')
+                    OR (targetKind = 'note' AND copyNodeId = @id)`,
+                { id: node.id }
+            );
             return (await tx.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id })).changes;
         });
     }

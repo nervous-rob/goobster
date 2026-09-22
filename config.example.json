@@ -54,6 +54,10 @@
         "requireStrongIsolation": true
     },
 
+    "projects": {
+        "enabled": true
+    },
+
     "observatory": {
         "enabled": false,
         "scope": "web",

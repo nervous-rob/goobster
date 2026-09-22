@@ -1249,7 +1249,8 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(res.json.you.facts).toContain('Likes trains');
         expect(res.json.pickup).toEqual(expect.objectContaining({ conversations: expect.any(Array) }));
         expect(res.json.workshop).toEqual(expect.objectContaining({ pinned: expect.any(Array) }));
-        expect(res.json.observatory).toEqual({ enabled: false });
+        // Organizing projects is on even though this test server cannot run code (ADR 0009).
+        expect(res.json.observatory).toEqual(expect.objectContaining({ enabled: true, execution: false }));
     });
 
     test('GET /api/app/memory/constellation mirrors the user\'s own facts as memory, shown under view=all', async () => {

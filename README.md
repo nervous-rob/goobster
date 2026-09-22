@@ -50,11 +50,15 @@ from chat via `manageParlor`.
 A **Project** is the aggregate for one piece of work: a durable
 workspace, versioned assets, checkpointed jobs, triggers, collaborators,
 project knowledge, and a shared project parlor. The Observatory *is*
-this feature. Jobs run through the sandbox (persistence, never new
-execution powers). Triggers schedule future work. Collaborators sit at
-the project table; the built-in Goobster seat acts as the member who
-spoke and writes back into the project’s Spitball. See
-`documentation/projects.md`.
+this feature. Jobs (shown as **Runs**) run through the sandbox
+(persistence, never new execution powers). Triggers schedule future work.
+Collaborators sit at the project table; the built-in Goobster seat acts
+as the member who spoke and writes back into the project’s Spitball.
+Organizing projects is on by default; running code in them needs
+`observatory.enabled` and the sandbox. In the portal each project has its
+own address (`/projects/<owner>/<slug>/<view>`) with Overview, Plan,
+Conversation, Knowledge, Files, Apps, Runs, People and Automations views.
+See `documentation/projects.md`.
 
 ### Spitball and Expeditions
 

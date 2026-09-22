@@ -33,7 +33,8 @@ export type Me = {
     inbox: { unread: number };
     scopes: Scope[];
     maxInputLength: number;
-    features: { observatory?: boolean; spitball?: boolean };
+    /** `projects` = organizing projects (ADR 0009); `observatory` = running code in them. */
+    features: { projects?: boolean; observatory?: boolean; spitball?: boolean };
 };
 
 export type InboxKind = 'reminder' | 'task' | 'watch' | 'notice' | 'invite' | 'project' | 'expedition' | 'system';
@@ -268,6 +269,101 @@ export type NotesPayload = {
     nodeSources: string[];
     curationStates: Curation[];
     views: CurationView[];
+};
+
+// --- Explicit transfers (ADR 0010) -----------------------------------------
+
+/** Who can read a destination at the moment a note enters it. */
+export type TransferAudience = {
+    kind: 'personal' | 'project' | 'discussion';
+    ownerId: string;
+    ownerName?: string | null;
+    members?: Array<{ userId: string; userName: string | null }>;
+    memberIds: string[];
+    shared: boolean;
+    private: boolean;
+};
+
+export type TransferMode = 'reference' | 'copy';
+
+/** One row of the transfer ledger, as the API returns it. */
+export type KnowledgeTransfer = {
+    id: number;
+    userId: string;
+    sourceKind: 'chat_message' | 'note';
+    sourceConversationId: number | null;
+    sourceMessageId: number | null;
+    sourceNodeId: number | null;
+    sourceLabel: string | null;
+    targetKind: 'note' | 'project' | 'discussion';
+    targetId: number;
+    mode: TransferMode;
+    copyNodeId: number | null;
+    copyMessageId: number | null;
+    audience: TransferAudience | null;
+    createdAt: string;
+};
+
+/** Where a personal note has gone (GET /api/app/spitball/notes/:id/transfers). */
+export type NoteDestinations = {
+    note: { id: number; label: string; curation?: Curation };
+    savedFrom: { conversationId: number | null; messageId: number | null; title: string | null; createdAt: string } | null;
+    projects: Array<{
+        transferId: number;
+        mode: TransferMode;
+        projectId: number;
+        slug: string;
+        name: string;
+        ownerId: string;
+        role: 'owner' | 'collaborator';
+        copyNodeId: number | null;
+        audience: TransferAudience | null;
+        canRemove: boolean;
+        createdAt: string;
+    }>;
+    discussions: Array<{
+        transferId: number;
+        conversationId: number;
+        title: string | null;
+        ownerId: string;
+        projectId: number | null;
+        messageId: number | null;
+        messageExists: boolean;
+        audience: TransferAudience | null;
+        canRemove: boolean;
+        createdAt: string;
+    }>;
+};
+
+/** POST .../transfers with target=project. */
+export type AddToProjectResult = {
+    mode: TransferMode;
+    project: { id: number; slug: string; name: string; ownerId: string; role: 'owner' | 'collaborator' };
+    audience: TransferAudience;
+    transfer: KnowledgeTransfer;
+    copy: { id: number; label: string } | null;
+};
+
+/** POST .../transfers with target=discussion. */
+export type UseInDiscussionResult = {
+    mode: 'copy';
+    discussion: { id: number; title: string | null; ownerId: string; projectId: number | null };
+    audience: TransferAudience;
+    message: { id: number };
+    transfer: KnowledgeTransfer;
+};
+
+/** POST /api/app/spitball/notes/from-message. */
+export type SaveMessageAsNoteResult = {
+    note: UserNote;
+    transfer: KnowledgeTransfer;
+    truncated: boolean;
+};
+
+/** GET /api/app/projects/:slug/audience. */
+export type ProjectAudience = TransferAudience & {
+    role: 'owner' | 'collaborator';
+    project: { id: number; slug: string; name: string; ownerId: string };
 };
 
 export type NoteEvidence = {

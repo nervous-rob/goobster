@@ -3,11 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
-import { useConfirm } from '../../hooks/useConfirm';
 import { GraphCanvas } from '../../components/GraphCanvas';
 import { MapSlicers, type SlicerSelection } from '../../components/MapSlicers';
 import { NoteEditor } from '../../components/NoteEditor';
-import { deleteNoteWarning } from '../../components/NotesTab';
+import { DeleteNoteDialog } from '../../components/DeleteNoteDialog';
 import { TYPE_COLORS } from '../../renderers/graph.js';
 import { facetCounts, filterConstellation, withTagLinks } from '../../lib/graphFilter';
 import type { CurationView, UserNote } from '../../lib/types';
@@ -100,9 +99,9 @@ function PersonalMap({
     onLinkByTag: (next: boolean) => void;
 }) {
     const toast = useToast();
-    const confirm = useConfirm();
     const queryClient = useQueryClient();
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+    const [deleting, setDeleting] = useState<UserNote | null>(null);
     const [selectId, setSelectId] = useState<string | number | null>(null);
     const [editorNote, setEditorNote] = useState<UserNote | null>(null);
     const [q, setQ] = useState('');
@@ -222,17 +221,7 @@ function PersonalMap({
                                         toast((error as Error).message, true);
                                     }
                                 }}
-                                onDelete={async (note) => {
-                                    if (!await confirm(deleteNoteWarning(note))) return;
-                                    try {
-                                        await api.spitballDeleteNote(scopeId, note.id);
-                                        toast('Note deleted.');
-                                        setSelectedNode(null);
-                                        invalidate();
-                                    } catch (error) {
-                                        toast((error as Error).message, true);
-                                    }
-                                }}
+                                onDelete={(note) => setDeleting(note)}
                             />
                         </div>
                         <MapSlicers facets={facets} selected={slicers} onChange={setSlicers} />
@@ -246,6 +235,18 @@ function PersonalMap({
                     onClose={() => setEditorNote(null)}
                     onSaved={() => {
                         setEditorNote(null);
+                        setSelectedNode(null);
+                        invalidate();
+                    }}
+                />
+            )}
+            {deleting && (
+                <DeleteNoteDialog
+                    scope={scopeId}
+                    note={deleting}
+                    onClose={() => setDeleting(null)}
+                    onDeleted={() => {
+                        setDeleting(null);
                         setSelectedNode(null);
                         invalidate();
                     }}
