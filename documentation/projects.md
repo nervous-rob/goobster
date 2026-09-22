@@ -588,7 +588,7 @@ instead of the personal scope.
 Expeditions can target a project (`spitball_expeditions.projectId`):
 notes, tags, and edges land in the project scope with unchanged
 provenance. Any member may launch one; budgets charge the launcher.
-Launch from the Spitball room ("into project X") or the project's
+Launch from Knowledge → Research ("into project X") or the project's
 Knowledge tab.
 
 ## Missions

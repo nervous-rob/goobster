@@ -119,9 +119,12 @@ const TABLE_REBUILDS = [
             && ddl.includes("'artifact'")
             && ddl.includes("'research'")
             && ddl.includes("'conversation'"),
+        // `curation` is listed because column migrations run before rebuilds:
+        // an old database gains the column first and must keep it through
+        // the copy.
         columns: [
             'id', 'guildId', 'scopeKey', 'type', 'label', 'content', 'salience', 'confidence',
-            'source', 'subjectType', 'subjectId', 'createdAt', 'updatedAt'
+            'source', 'curation', 'subjectType', 'subjectId', 'createdAt', 'updatedAt'
         ],
         ddl: name => `
             CREATE TABLE ${name} (
@@ -136,6 +139,8 @@ const TABLE_REBUILDS = [
                 confidence REAL NOT NULL DEFAULT 0.5,
                 source TEXT NOT NULL DEFAULT 'monologue'
                     CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research', 'conversation')),
+                curation TEXT NOT NULL DEFAULT 'unclassified'
+                    CHECK (curation IN ('saved', 'memory', 'unclassified')),
                 subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
                 subjectId TEXT,
                 createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

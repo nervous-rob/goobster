@@ -24,6 +24,16 @@ module.exports = {
     SOURCE_TITLE: 'Total positivity',
     SOURCE_URL: 'https://arxiv.org/abs/1234.5678',
 
+    // Saved-knowledge curation fixtures (ADR 0008): one note Goobster
+    // distilled (memory), one legacy row a tool wrote without saying why
+    // (unclassified), one distilled fact, one raw memory.
+    DISTILLED_NOTE_LABEL: 'Prefers morning deep work',
+    DISTILLED_NOTE_CONTENT: 'Distilled from several chats: deep work happens before noon.',
+    LEGACY_NOTE_LABEL: 'Old tool scribble',
+    LEGACY_NOTE_CONTENT: 'Written by a tool before notes were sorted.',
+    FACT_CONTENT: 'Rob keeps a raspberry pi on the shelf',
+    MEMORY_CONTENT: 'Rob mentioned the ingest job runs on the pi at night.',
+
     PERSONA_NAME: 'Ada',
     PERSONA_CHARTER: 'A careful research companion.',
     PARLOR_USER_MESSAGE: 'Goobster, what is our ingest cadence?',

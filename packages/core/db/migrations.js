@@ -91,6 +91,11 @@ const COLUMN_MIGRATIONS = [
     ['kg_nodes', 'source', `source TEXT NOT NULL DEFAULT 'monologue'`],
     ['kg_nodes', 'subjectType', `subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD'))`],
     ['kg_nodes', 'subjectId', 'subjectId TEXT'],
+    // Saved-knowledge curation (ADR 0008): the person's intent, kept apart
+    // from `source`. Existing rows land as 'unclassified' and only rows with
+    // decisive evidence are backfilled (knowledgeGraphService.backfillCuration).
+    ['kg_nodes', 'curation',
+        `curation TEXT NOT NULL DEFAULT 'unclassified' CHECK (curation IN ('saved', 'memory', 'unclassified'))`],
     ['kg_edges', 'scopeKey', `scopeKey TEXT NOT NULL DEFAULT ''`],
     // Found-on-the-web artifacts carry their origin (source URL, credit,
     // license) so recall can caption and attribute them.

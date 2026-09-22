@@ -1,7 +1,7 @@
 ---
 title: "Portal navigation: rooms, canonical routes, and legacy aliases"
 kind: reference
-summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar and active-room matching, canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, package E1).
+summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1 and E2).
 tags: [portal, navigation, routes, rooms, web, shared-instance, aliases, tutorials]
 ---
 
@@ -37,13 +37,13 @@ entry declares:
 | `legacyIds` | Older room names (`study`, `noticed`, `mtga`, …) accepted by the `#room/id` hash scheme and the start-page preference. |
 | `count` | Which badge the entry shows (`inbox` = Inbox unread count). |
 | `tutorials` | The stable tutorial ids from [the guided-tutorial spec](guided_tutorials_spec.md) that belong to this room - all 28, each listed exactly once. |
-| `views` | Activity only: Inbox, Attention, Scheduled with their own paths and legacy ids. |
+| `views` | Rooms with several views: Activity (Inbox, Attention, Scheduled) and Knowledge (Notes, Map, Research), each with its own path, optional secondary name and legacy ids. `resolveRoomView(roomId, path)` names the view a path points at; `resolveActivityView` / `resolveKnowledgeView` are the typed shorthands. |
 
 The sidebar (`shell/AppShell.tsx`), the active-room highlight, the body
 atmosphere, Home's doors, the Tools cards (`rooms/ToolsRoom.tsx`), the
 Activity strip (`rooms/ActivityRoom.tsx`), the Settings "Back to …" link,
-the Appearance start-page select and the legacy hash redirect all read from
-the registry. TanStack route definitions stay explicitly typed in
+the Knowledge strip (`rooms/knowledge/KnowledgeRoom.tsx`), the Appearance
+start-page select and the legacy hash redirect all read from the registry. TanStack route definitions stay explicitly typed in
 `apps/web/src/main.tsx`: the registry decides names and path equivalences,
 never route parameters. `rooms.ts` is the typed ESM façade; the `.cjs` file
 exists so `tests/portalRooms.test.js` can `require()` it.
@@ -54,7 +54,7 @@ exists so `tests/portalRooms.test.js` can `require()` it.
 |---|---|---|
 | Home | `/` | - |
 | Chat | `/chat`, `/chat/:conversationId` | `/study`, `/study/:conversationId` |
-| Knowledge | `/knowledge` | `/spitball`, `/library` |
+| Knowledge | `/knowledge/notes`, `/knowledge/map`, `/knowledge/research` (`/knowledge` → Notes, keeping query and hash) | `/spitball`, `/library`, and `/spitball/<view>`, `/library/<view>` |
 | Projects | `/projects` | `/observatory`, `/workshop`, and the old `/observatory/{graph,search,people,events}` sub-pages (they rendered the same landing page) |
 | Discussions | `/discussions`, `/discussions/:conversationId` | `/parlor`, `/parlor/:conversationId` |
 | Activity | `/activity/inbox`, `/activity/attention`, `/activity/scheduled` (`/activity` → Inbox) | `/inbox`, `/noticed`, `/attention`, `/tasks` |
@@ -75,8 +75,19 @@ Every alias is its own typed route whose only component redirects through
   "Back to Chat", one opened from `/noticed` says "Back to Activity ·
   Attention".
 
-The pre-router `#room/id` hash scheme (`/app/#study/42`, `/app/#mtga`)
-still resolves through `legacyHashTarget()`.
+The pre-router `#room/id` hash scheme (`/app/#study/42`, `/app/#mtga`,
+`/app/#expeditions`) still resolves through `legacyHashTarget()`.
+
+## Knowledge
+
+Knowledge opens on **Notes**. **Map** draws the same notes as a graph and
+**Research** (Expeditions) is a nested view because a research run has
+state a list does not. The scope select and the **Personal memory**
+shortcut (to Settings → Memory & privacy) sit in the room header and apply
+to every view. The About you / Facts / Memories views that used to be tabs
+here moved to Settings, where retention, learning and deletion already
+lived. What each view shows, and the saved-knowledge boundary behind it,
+is [knowledge_and_memory.md](knowledge_and_memory.md) (package E2).
 
 ## Activity
 
@@ -123,19 +134,22 @@ this contract, had no route at all; it is now an alias of
 
 ## What this contract does not do
 
-It does not change the object model (saved knowledge versus personal
-memory, E2), project selection in the URL (E3), the explicit answer → note
-→ project actions (E4), duplicate-notice correlation or tool visibility
-preferences (E5), or any tutorial behaviour (F). The room ids and tutorial
-ids it fixes are what those packages build on.
+It does not change project selection in the URL (E3), the explicit answer
+→ note → project actions (E4), duplicate-notice correlation or tool
+visibility preferences (E5), or any tutorial behaviour (F). The room ids
+and tutorial ids it fixes are what those packages build on. The saved
+knowledge versus personal memory boundary (E2) is its own contract in
+[knowledge_and_memory.md](knowledge_and_memory.md); this document only
+registers the Knowledge views it needs.
 
 ## Tests
 
 - `tests/portalRooms.test.js` - the registry: seven primary rooms, unique
-  ids/paths, all 28 tutorial ids once, alias rewriting (ids kept, server
-  share excluded, lookalike prefixes ignored), room resolution for every
-  canonical and legacy path, display names, availability rules, start-page
-  parity and mapping, legacy hash targets.
+  ids/paths, all 28 tutorial ids once, the Knowledge views and their
+  resolution, alias rewriting (ids kept, server share excluded, lookalike
+  prefixes ignored), room resolution for every canonical and legacy path,
+  display names (including `Knowledge · Map`), availability rules,
+  start-page parity and mapping, legacy hash targets.
 - `e2e/navigation.spec.js` - the real router: the legacy → canonical
   matrix with query and hash preserved and the right sidebar entry active,
   the `#room/id` hash, the seven-entry sidebar with Host hidden from a
@@ -144,3 +158,5 @@ ids it fixes are what those packages build on.
   Personal memory shortcut, a settings return link from a legacy path, a
   start page saved as `study`, an Inbox row stored with a `/tasks` link, and
   both public share families without a session.
+- `e2e/knowledge.spec.js` - the Knowledge views, the Notes landing for
+  `/knowledge` and its aliases, and the rest of the E2 behaviour.

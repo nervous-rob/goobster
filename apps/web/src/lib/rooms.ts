@@ -12,15 +12,21 @@ export type RoomRequirement = {
 };
 
 export type ActivityViewId = 'inbox' | 'attention' | 'scheduled';
+export type KnowledgeViewId = 'notes' | 'map' | 'research';
+export type RoomViewId = ActivityViewId | KnowledgeViewId;
 
-export type ActivityView = {
-    id: ActivityViewId;
+/** A registered view inside a room (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research). */
+export type RoomView<Id extends RoomViewId = RoomViewId> = {
+    id: Id;
     name: string;
     secondaryName?: string;
     icon: string;
     path: string;
     legacyIds?: string[];
 };
+
+export type ActivityView = RoomView<ActivityViewId>;
+export type KnowledgeView = RoomView<KnowledgeViewId>;
 
 export type RoomId =
     | 'home' | 'chat' | 'knowledge' | 'projects' | 'discussions' | 'activity' | 'tools'
@@ -43,7 +49,7 @@ export type Room = {
     blurb?: string;
     unavailable?: string;
     tutorials: string[];
-    views?: ActivityView[];
+    views?: RoomView[];
 };
 
 export type Alias = { from: string; to: string; landing?: boolean };
@@ -76,7 +82,9 @@ type Registry = {
     isLegacyPath: (pathname: string) => boolean;
     resolveRoom: (pathname: string) => RoomId;
     parentRoom: (roomId: RoomId) => RoomId;
+    resolveRoomView: (roomId: RoomId, pathname: string) => RoomViewId | null;
     resolveActivityView: (pathname: string) => ActivityViewId | null;
+    resolveKnowledgeView: (pathname: string) => KnowledgeViewId | null;
     atmosphereFor: (roomId: string) => string;
     roomDisplayName: (pathname: string) => string;
     isRoomAvailable: (room: Room, me: RoomViewer) => boolean;
@@ -101,7 +109,9 @@ export const canonicalPath = rooms.canonicalPath;
 export const isLegacyPath = rooms.isLegacyPath;
 export const resolveRoom = rooms.resolveRoom;
 export const parentRoom = rooms.parentRoom;
+export const resolveRoomView = rooms.resolveRoomView;
 export const resolveActivityView = rooms.resolveActivityView;
+export const resolveKnowledgeView = rooms.resolveKnowledgeView;
 export const atmosphereFor = rooms.atmosphereFor;
 export const roomDisplayName = rooms.roomDisplayName;
 export const isRoomAvailable = rooms.isRoomAvailable;

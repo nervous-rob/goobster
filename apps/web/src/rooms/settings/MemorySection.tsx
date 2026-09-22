@@ -10,14 +10,8 @@ import { Modal } from '../../components/Modal';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { useForgetOpener } from '../../shell/AppShell';
-
-type ReportPayload = {
-    facts: unknown[];
-    memories: { count: number; oldest?: string; newest?: string };
-    conversations: { messages: number; count: number };
-    followups: unknown[];
-    applets?: number;
-};
+import { useMe } from '../../hooks/useSession';
+import { PersonalMemoryPanel, type ReportPayload } from '../../components/memory/PersonalMemoryPanel';
 
 const RETENTION_OPTIONS: Array<{ value: number | null; label: string }> = [
     { value: null, label: 'Keep forever' },
@@ -203,8 +197,8 @@ export function MemorySection({ section, userId, onDirty }: {
                 <div className="hint">Currently: <strong>{historyCurrent ? `after ${historyCurrent} days` : 'kept forever'}</strong>.</div>
             </Field>
 
-            <Field id="memory-report" label="What Goobster knows about you"
-                hint="A live count of what he holds in your private scope. Review and delete individual memories and facts in Spitball.">
+            <Field id="memory-report" label="What Goobster knows about you" scope="Private chats & DMs"
+                hint="Personal memory: the facts and raw memories Goobster inferred about you in your private space, with one-by-one deletion. Notes you kept on purpose are Knowledge, not memory, and live in their own room.">
                 <div className="list-card settings-report" id="memory-report-input">
                     {report.isPending && <div className="list-row"><span className="hint">Counting…</span></div>}
                     {report.isError && <div className="list-row"><span className="hint">{(report.error as Error).message}</span></div>}
@@ -212,14 +206,30 @@ export function MemorySection({ section, userId, onDirty }: {
                         <>
                             <div className="list-row"><span>Memories</span><strong>{report.data.memories?.count ?? 0}</strong></div>
                             <div className="list-row"><span>Distilled facts</span><strong>{report.data.facts?.length ?? 0}</strong></div>
+                            <div className="list-row"><span>Distilled notes</span><strong>{report.data.knowledgeGraph?.distilled ?? 0}</strong></div>
+                            <div className="list-row"><span>Notes you kept</span><strong>{report.data.knowledgeGraph?.saved ?? 0}</strong></div>
                             <div className="list-row"><span>Study conversations</span><strong>{report.data.conversations?.count ?? 0}</strong></div>
                             <div className="list-row"><span>Follow-ups</span><strong>{report.data.followups?.length ?? 0}</strong></div>
                         </>
                     )}
                 </div>
                 <div className="settings-inline-row">
-                    <Link to="/knowledge" className="btn">Open Knowledge →</Link>
+                    <Link to="/knowledge/notes" className="btn" data-tour="memory-open-knowledge">Open Knowledge →</Link>
                 </div>
+                <PersonalMemoryPanel scope={scope} scopeKind="dm" scopeName="your private space" onForget={openForget} idPrefix="personal-memory" />
+            </Field>
+
+            <ServerScopeInspector />
+
+            <Field id="deletion-rules" label="What deleting removes — and what it leaves"
+                hint="Memories, facts, notes and transcripts are separate copies with separate controls. None of them promises to erase the others; only Forget me does.">
+                <ul className="hint deletion-rules" id="deletion-rules-input" data-tour="memory-deletion-rules">
+                    <li><strong>Delete a memory</strong> removes that raw memory and its recall vector. Notes Goobster distilled from it stay, pointing at a source that is gone.</li>
+                    <li><strong>Forget a fact</strong> removes the fact and its copy on the Knowledge Map. The memories it was distilled from stay.</li>
+                    <li><strong>Delete a note</strong> (in Knowledge) removes the note, its connections, tags and evidence links. If it mirrored a fact, the fact goes too. The memories or chats it came from stay.</li>
+                    <li><strong>Chat-history retention</strong> deletes transcripts only; memories and notes are untouched.</li>
+                    <li><strong>Forget me</strong> erases every copy and signs you out.</li>
+                </ul>
             </Field>
 
             <Field id="forget-me" label="Forget me"
@@ -279,6 +289,43 @@ export function MemorySection({ section, userId, onDirty }: {
                 </Modal>
             )}
         </section>
+    );
+}
+
+/**
+ * Advanced: the same personal-memory views for a server you share with
+ * Goobster - what he keeps about *you in that server*. Always labelled with
+ * the server's name; never folded into the private-space report above.
+ * Absent when there are no server scopes (no Discord, or none in common).
+ */
+function ServerScopeInspector() {
+    const me = useMe();
+    const guilds = (me.scopes || []).filter((item) => item.kind === 'guild');
+    const [guildId, setGuildId] = useState('');
+    if (guilds.length === 0) return null;
+    const selected = guilds.find((item) => item.id === guildId) || null;
+    return (
+        <Field id="memory-scopes" label="Inspect a server scope" scope="A server you pick"
+            hint="Advanced. Goobster keeps a separate set of facts and memories about you in each server. Pick one to review or delete them; nothing here touches your private space.">
+            <select id="memory-scopes-input" className="select" value={guildId} onChange={(e) => setGuildId(e.target.value)} data-tour="memory-server-scope">
+                <option value="">Choose a server…</option>
+                {guilds.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+            {selected && (
+                <div className="settings-scoped-panel" data-scope={selected.id}>
+                    <div className="settings-scoped-title">
+                        <span className="badge settings-scope">Server</span> What Goobster knows about you in <strong>{selected.name}</strong>
+                    </div>
+                    <PersonalMemoryPanel
+                        key={selected.id}
+                        scope={selected.id}
+                        scopeKind="guild"
+                        scopeName={selected.name}
+                        idPrefix={`server-memory-${selected.id}`}
+                    />
+                </div>
+            )}
+        </Field>
     );
 }
 

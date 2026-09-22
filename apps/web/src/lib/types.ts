@@ -228,6 +228,17 @@ export type ResearchClaim = {
     createdAt?: string;
 };
 
+/**
+ * Saved-knowledge curation (ADR 0008): did the person decide to keep this?
+ * Independent of `source`, which records who wrote the row.
+ */
+export type Curation = 'saved' | 'memory' | 'unclassified';
+
+/** The server-side projection a personal-scope read asks for. */
+export type CurationView = 'knowledge' | 'memory' | 'all';
+
+export type CurationCounts = { saved: number; memory: number; unclassified: number };
+
 export type UserNote = {
     id: number;
     type: string;
@@ -236,6 +247,7 @@ export type UserNote = {
     salience?: number;
     confidence?: number;
     source?: string;
+    curation?: Curation;
     tags: string[];
     createdAt?: string;
     updatedAt?: string;
@@ -245,11 +257,17 @@ export type NotesPayload = {
     notes: UserNote[];
     total: number;
     cap: number;
+    view: CurationView;
     types: Array<{ type: string; c: number }>;
     sources: Array<{ source: string; c: number }>;
+    curations: Array<{ curation: Curation; c: number }>;
     tags: Array<{ name: string; uses: number }>;
+    /** Scope-wide breakdown, independent of the projection. */
+    curation: CurationCounts;
     nodeTypes: string[];
     nodeSources: string[];
+    curationStates: Curation[];
+    views: CurationView[];
 };
 
 export type NoteEvidence = {

@@ -4,9 +4,11 @@ import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
+import { useOpenSettings } from '../hooks/useOpenSettings';
 import { NoteEditor } from './NoteEditor';
 import { TYPE_COLORS } from '../renderers/graph.js';
-import type { UserNote, NotesPayload } from '../lib/types';
+import { CURATION_LABEL, CurationBadge } from '../rooms/knowledge/graphParts';
+import type { Curation, CurationView, UserNote, NotesPayload } from '../lib/types';
 
 type SortKey = 'updated' | 'label' | 'type';
 
@@ -34,18 +36,46 @@ function metaLine(note: UserNote): string {
     return parts.join(' · ');
 }
 
-export function NotesTab({ scope }: { scope: string }) {
+/** What deleting this note does - and does not - remove (ADR 0008 §6). */
+export function deleteNoteWarning(note: UserNote): string {
+    const base = `Delete “${note.label}”? This removes the note, its connections, tags and evidence links from the Map.`;
+    if (note.type === 'fact') {
+        return `${base} It is a distilled fact, so Goobster forgets the fact too. The raw memories and chats it came from are not deleted.`;
+    }
+    return `${base} Raw memories and chat transcripts it was distilled from are not deleted - manage those in Personal memory.`;
+}
+
+/**
+ * The Notes list: the caller's personal notes under one server-side
+ * curation projection. `knowledge` (the default) is what the person kept
+ * plus rows nothing has sorted yet; `all` is every retained row including
+ * what Goobster distilled, for inspection. Search, facets and totals come
+ * from the same projection, so this list, the Map and the counts agree.
+ */
+export function NotesTab({
+    scope,
+    view = 'knowledge',
+    onView
+}: {
+    scope: string;
+    view?: CurationView;
+    onView?: (view: CurationView) => void;
+}) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
+    const openSettings = useOpenSettings();
     const [q, setQ] = useState('');
     const [type, setType] = useState('');
     const [tag, setTag] = useState('');
     const [source, setSource] = useState('');
+    const [curation, setCuration] = useState<Curation | ''>('');
     const [sort, setSort] = useState<SortKey>('updated');
     const [editor, setEditor] = useState<UserNote | 'new' | null>(null);
 
-    const filters = { q: q.trim(), type, tag, source };
+    // The curation chip only means something under "All retained knowledge".
+    const effectiveCuration = view === 'all' ? curation : '';
+    const filters = { q: q.trim(), type, tag, source, view, curation: effectiveCuration };
     const notesQ = useQuery({
         queryKey: keys.spitballNotes(scope, filters),
         queryFn: () => api.spitballNotes(scope, { ...filters, limit: 1000 }) as Promise<NotesPayload>,
@@ -62,16 +92,22 @@ export function NotesTab({ scope }: { scope: string }) {
     const usedTypes = data?.types || [];
     const usedTags = data?.tags || [];
     const usedSources = (data?.sources || []).filter((row) => row.source);
-    const filtered = Boolean(type || tag || source || q.trim());
+    const usedCurations = data?.curations || [];
+    const filtered = Boolean(type || tag || source || effectiveCuration || q.trim());
+    const counts = data?.curation;
+    const knowledgeTotal = counts ? counts.saved + counts.unclassified : null;
+    const everything = counts ? counts.saved + counts.memory + counts.unclassified : null;
+    const distilled = counts?.memory || 0;
 
     function invalidateNotes() {
         queryClient.invalidateQueries({ queryKey: keys.spitballNotesRoot(scope) });
-        queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'map') });
+        queryClient.invalidateQueries({ queryKey: keys.constellationRoot(scope) });
         queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'facts') });
+        queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'overview') });
     }
 
     async function removeNote(note: UserNote) {
-        if (!await confirm(`Delete “${note.label}”? This removes it from the map too.`)) return;
+        if (!await confirm(deleteNoteWarning(note))) return;
         try {
             await api.spitballDeleteNote(scope, note.id);
             toast('Note deleted.');
@@ -79,6 +115,22 @@ export function NotesTab({ scope }: { scope: string }) {
         } catch (error) {
             toast((error as Error).message, true);
         }
+    }
+
+    async function keepNote(note: UserNote) {
+        try {
+            await api.spitballSetNoteCuration(scope, note.id, 'saved');
+            toast(`“${note.label}” kept with your knowledge.`);
+            invalidateNotes();
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    function changeView(next: CurationView) {
+        if (next === view) return;
+        setCuration('');
+        onView?.(next);
     }
 
     return (
@@ -91,10 +143,73 @@ export function NotesTab({ scope }: { scope: string }) {
                     value={q}
                     onChange={(event) => setQ(event.target.value)}
                 />
-                <button type="button" className="btn primary" onClick={() => setEditor('new')}>
+                <button type="button" className="btn primary" data-tour="knowledge-new-note" onClick={() => setEditor('new')}>
                     New note
                 </button>
             </div>
+
+            {onView && (
+                <div className="notes-projection" role="group" aria-label="Which notes to show">
+                    <div className="notes-chips" data-tour="knowledge-projection">
+                        <button
+                            type="button"
+                            className={`notes-chip${view === 'knowledge' ? ' on' : ''}`}
+                            aria-pressed={view === 'knowledge'}
+                            title="What you kept, plus notes nothing has sorted yet"
+                            onClick={() => changeView('knowledge')}
+                        >
+                            Your notes
+                            {knowledgeTotal !== null && <span className="notes-chip-count">{knowledgeTotal}</span>}
+                        </button>
+                        <button
+                            type="button"
+                            className={`notes-chip${view === 'all' ? ' on' : ''}`}
+                            aria-pressed={view === 'all'}
+                            title="Every row kept in this scope, including what Goobster distilled from conversation"
+                            onClick={() => changeView('all')}
+                        >
+                            All retained knowledge
+                            {everything !== null && <span className="notes-chip-count">{everything}</span>}
+                        </button>
+                    </div>
+                    {view === 'knowledge' && distilled > 0 && (
+                        <span className="hint notes-projection-hint">
+                            {distilled} distilled {distilled === 1 ? 'note' : 'notes'} Goobster inferred about you {distilled === 1 ? 'is' : 'are'} not shown here —{' '}
+                            <button type="button" className="link-btn" onClick={() => changeView('all')}>show everything</button>
+                            {' '}or manage them in{' '}
+                            <button type="button" className="link-btn" onClick={() => openSettings('memory', 'memory-report')}>Personal memory</button>.
+                        </span>
+                    )}
+                    {view === 'all' && (
+                        <span className="hint notes-projection-hint">
+                            Inspection view: kept notes, distilled memory and unsorted legacy rows side by side. Nothing is hidden here.
+                        </span>
+                    )}
+                </div>
+            )}
+
+            {view === 'all' && usedCurations.length > 1 && (
+                <div className="notes-chips" role="tablist" aria-label="Filter by curation">
+                    <button
+                        type="button"
+                        className={`notes-chip${curation === '' ? ' on' : ''}`}
+                        onClick={() => setCuration('')}
+                    >
+                        Everything
+                    </button>
+                    {usedCurations.map((row) => (
+                        <button
+                            key={row.curation}
+                            type="button"
+                            className={`notes-chip curation-chip-${row.curation}${curation === row.curation ? ' on' : ''}`}
+                            onClick={() => setCuration(curation === row.curation ? '' : row.curation)}
+                        >
+                            {CURATION_LABEL[row.curation] || row.curation}
+                            <span className="notes-chip-count">{row.c}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {usedTypes.length > 1 && (
                 <div className="notes-chips" role="tablist" aria-label="Filter by type">
@@ -121,7 +236,7 @@ export function NotesTab({ scope }: { scope: string }) {
             )}
 
             <div className="notes-meta">
-                <span>
+                <span data-tour="knowledge-notes-count">
                     {notesQ.isPending
                         ? 'Loading…'
                         : `${data?.total ?? 0} note${(data?.total ?? 0) === 1 ? '' : 's'}`}
@@ -170,7 +285,7 @@ export function NotesTab({ scope }: { scope: string }) {
                     <button
                         type="button"
                         className="notes-clear"
-                        onClick={() => { setQ(''); setType(''); setTag(''); setSource(''); }}
+                        onClick={() => { setQ(''); setType(''); setTag(''); setSource(''); setCuration(''); }}
                     >
                         Clear
                     </button>
@@ -180,42 +295,60 @@ export function NotesTab({ scope }: { scope: string }) {
             {notesQ.isError && <div className="empty">{(notesQ.error as Error).message}</div>}
             {!notesQ.isPending && notes.length === 0 && (
                 <div className="empty">
-                    {filtered ? 'Nothing matches those filters.' : 'No notes yet — write one, or talk in the Study.'}
+                    {filtered ? 'Nothing matches those filters.' : 'No notes yet — write one, or talk in Chat.'}
                 </div>
             )}
 
             {notes.length > 0 && (
                 <div className="notes-list">
-                    {notes.map((item) => (
-                        <div key={item.id} className="notes-row">
-                            <button
-                                type="button"
-                                className="notes-row-main"
-                                onClick={() => setEditor(item)}
-                            >
-                                <span
-                                    className="notes-dot"
-                                    style={{ background: TYPE_COLOR_MAP[item.type] || 'var(--accent)' }}
-                                    aria-hidden
-                                />
-                                <span className="notes-row-copy">
-                                    <span className="notes-row-title">{item.label}</span>
-                                    {excerpt(item.content) ? (
-                                        <span className="notes-row-excerpt">{excerpt(item.content)}</span>
-                                    ) : null}
-                                    <span className="notes-row-sub">{metaLine(item)}</span>
-                                </span>
-                            </button>
-                            <button
-                                type="button"
-                                className="row-delete"
-                                title="Delete"
-                                onClick={() => removeNote(item)}
-                            >
-                                ✕
-                            </button>
-                        </div>
-                    ))}
+                    {notes.map((item) => {
+                        const state: Curation = item.curation || 'unclassified';
+                        const showBadge = view === 'all' || state !== 'saved';
+                        return (
+                            <div key={item.id} className={`notes-row curation-row-${state}`} data-curation={state}>
+                                <button
+                                    type="button"
+                                    className="notes-row-main"
+                                    onClick={() => setEditor(item)}
+                                >
+                                    <span
+                                        className="notes-dot"
+                                        style={{ background: TYPE_COLOR_MAP[item.type] || 'var(--accent)' }}
+                                        aria-hidden
+                                    />
+                                    <span className="notes-row-copy">
+                                        <span className="notes-row-title">
+                                            {item.label}
+                                            {showBadge && <CurationBadge curation={state} />}
+                                        </span>
+                                        {excerpt(item.content) ? (
+                                            <span className="notes-row-excerpt">{excerpt(item.content)}</span>
+                                        ) : null}
+                                        <span className="notes-row-sub">{metaLine(item)}</span>
+                                    </span>
+                                </button>
+                                {state !== 'saved' && (
+                                    <button
+                                        type="button"
+                                        className="btn small notes-keep"
+                                        title="File this with your saved knowledge. Only how it is shelved changes."
+                                        onClick={() => keepNote(item)}
+                                    >
+                                        Keep
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    className="row-delete"
+                                    title="Delete"
+                                    aria-label={`Delete ${item.label}`}
+                                    onClick={() => removeNote(item)}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
 

@@ -201,8 +201,7 @@ test('saved creation defaults reach the expedition and persona forms', async ({ 
     await page.getByLabel('New persona charter', { exact: true }).fill('Follow the evidence.');
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
     await expect(page.getByText('All changes saved')).toBeVisible();
-    await page.goto('/app/spitball');
-    await page.getByRole('button', { name: 'Expeditions', exact: true }).click();
+    await page.goto('/app/knowledge/research');
     await page.getByRole('button', { name: '+ New expedition', exact: true }).click();
     await expect(page.locator('#exp-lens')).toHaveValue('mathematics');
     await expect(page.locator('.depth-card.active')).toContainText('Deep');

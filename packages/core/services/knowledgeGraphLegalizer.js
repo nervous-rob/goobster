@@ -42,7 +42,10 @@ class KnowledgeGraphLegalizer {
         source = 'consolidation',
         mutations = {},
         limits = kgConfig.LIMITS.consolidation,
-        provenance = null
+        provenance = null,
+        // Saved-knowledge intent for NEW nodes (ADR 0008); null lets
+        // upsertNode derive it from `source`. Existing nodes keep theirs.
+        curation = null
     } = {}) {
         const applied = {
             nodesUpserted: 0,
@@ -77,6 +80,7 @@ class KnowledgeGraphLegalizer {
                     subjectType,
                     subjectId,
                     source,
+                    curation,
                     type: node.type,
                     label: targetLabel,
                     content: merged ? this._mergeContent(merged.content, node.content) : node.content,

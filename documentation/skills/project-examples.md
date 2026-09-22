@@ -20,7 +20,7 @@ before proposing it.
 | Something that should persist, iterate, or run longer than one call | `observatory` (a **project**) | Workspace + versioned assets + checkpointed background jobs + dashboard |
 | The same work on a schedule ("every morning", "hourly") | `manageAutomations` | Durable cron automation; each run is a full agent turn with tools |
 | To know when an outcome happens ("tell me when it finishes") | `watchFor` | Fires one turn on a condition; never poll with an automation |
-| Autonomous research over a topic with sources and notes | Spitball **Expedition** (portal: Spitball → Expeditions) | Pipeline with source review, legalized notes, budgets |
+| Autonomous research over a topic with sources and notes | Spitball **Expedition** (portal: Knowledge → Research) | Pipeline with source review, legalized notes, budgets |
 | Several viewpoints debating one topic | `manageParlor` `quickstart` | Multi-persona salon grounded in per-persona notes |
 | A tabletop adventure | `/tavern`, `/adventure`, the `tavern*` tools | Deterministic rules + authored prose; AI narration optional |
 | A reminder with no work attached | `scheduleFollowUp` | Reposts a note; runs no tools |
@@ -90,7 +90,7 @@ Brief: "Every weekday at 9am Eastern, summarise what changed in the lab channel.
 
 Brief: "Find out what is known about tidal locking timescales for sub-Neptunes."
 
-- Expeditions are started from the portal (Spitball → Expeditions). Help the user
+- Expeditions are started from the portal (Knowledge → Research). Help the user
   write a **seed** that names the question, the scope boundary, and what a good
   answer looks like; a *focused* run completes in about a minute with real keys.
 - The pipeline works from Wikipedia alone when no Perplexity key exists; say so

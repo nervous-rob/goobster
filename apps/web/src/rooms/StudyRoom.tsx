@@ -766,6 +766,7 @@ export function StudyRoom() {
                             setShareOpen(true);
                         }}>🔗<span className="menu-label">Share</span></button>
                         <button type="button" className="icon-action" onClick={() => openSettings('connections')}>🧩<span className="menu-label">Connections</span></button>
+                        <button type="button" className="icon-action" data-tour="chat-personal-memory" title="Personal memory — what Goobster knows about you" aria-label="Personal memory" onClick={() => openSettings('memory', 'memory-report')}>🧠<span className="menu-label">Personal memory</span></button>
                         </HeaderOverflow>
                     </div>
                 </header>

@@ -111,7 +111,10 @@ class PrivacyService {
         const kgStats = await db.get(
             `SELECT
                 (SELECT COUNT(*) FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey) AS nodes,
-                (SELECT COUNT(*) FROM kg_edges WHERE guildId = @guildId AND scopeKey = @scopeKey) AS edges`,
+                (SELECT COUNT(*) FROM kg_edges WHERE guildId = @guildId AND scopeKey = @scopeKey) AS edges,
+                (SELECT COUNT(*) FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'saved') AS saved,
+                (SELECT COUNT(*) FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'memory') AS distilled,
+                (SELECT COUNT(*) FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified') AS unclassified`,
             { guildId, scopeKey }
         );
 
@@ -419,7 +422,12 @@ class PrivacyService {
             facts,
             knowledgeGraph: {
                 nodes: kgStats?.nodes || 0,
-                edges: kgStats?.edges || 0
+                edges: kgStats?.edges || 0,
+                // Saved-knowledge curation breakdown (ADR 0008): what the
+                // person kept on purpose vs. what Goobster distilled.
+                saved: kgStats?.saved || 0,
+                distilled: kgStats?.distilled || 0,
+                unclassified: kgStats?.unclassified || 0
             },
             memories: {
                 count: memories?.count || 0,

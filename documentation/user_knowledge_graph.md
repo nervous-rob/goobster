@@ -197,13 +197,34 @@ Order is owned by `utils/chat/promptContext.js` (text, web, automations, and voi
 
 The legacy flat facts dossier and the always-on memory block are gone from the default prompt.
 
-## Web portal (Library)
+## Curation: saved knowledge versus distilled memory
 
-- **Map tab** (`GET /api/app/memory/constellation`) renders the **real** user-scoped graph: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search plus multi-select type/tag/source slicers hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note. **Group by tag** (on by default, remembered in `localStorage`) overlays tag hubs. A small map keeps every tag as a diamond; a dense map parks each note in one primary group (`utils/graphClusters.js`), keeps smaller satellite groups, and interconnects hubs with parent/child and shared-tag overlap edges — never a second spring that drags notes into the middle. Cluster hulls, a soft third axis, label collision, and zoom LOD keep titles readable. The overlay is view-time only — never written to `kg_nodes` or `kg_edges`.
-- **Notes tab** — browse, search, filter, create, edit, and delete personal notes. Manual edits set `source = 'user'` and record a `human_edit` revision so research will not casually overwrite the preferred text. Routes: `GET/POST /api/app/spitball/notes`, `PATCH/DELETE /api/app/spitball/notes/:nodeId`.
-- **Reflect button** (Map + Server graph tabs) — starts a reflection run for the visible scope and polls it to completion (see Reflection above).
-- **Graph tab** (Manage Server) — guild-wide monologue graph (up to 1000 nodes) with the same search/filter chrome.
-- **Facts / Memories tabs** — filter views over provenance (`sourceKind = fact|memory`) with links to graph nodes.
+`kg_nodes.curation` (`saved` / `memory` / `unclassified`, default
+`unclassified`) records whether the *person* decided to keep a node. It is
+independent of `source` (who wrote it) and of provenance (where it came
+from), and no code path rewrites `source` when curation changes.
+`upsertNode` takes `curation`; when a writer passes none,
+`DEFAULT_CURATION_BY_SOURCE` in `config/knowledgeGraphConfig.js` derives it
+(`user`, `research` → `saved`; `consolidation`, `conversation` → `memory`;
+`tool`, `monologue`, `migration` → `unclassified`). `syncFactNode` always
+writes `memory`, `saveArtifact` always `saved`; `createUserNote` and a
+human edit set `saved`; `setUserNoteCuration` is the explicit
+reclassification (the portal's **Keep**). Merges keep `saved` if either
+side had it. `listUserNotes` and `getPersonalGraphView` share one
+projection (`view = knowledge | memory | all`, `curationPredicate`), and a
+conservative once-per-process backfill (`inventoryCuration` then
+`backfillCuration`) classifies only evidenced legacy rows. Retrieval
+(`lookupNotes`, `searchNodes`, the prompt pack) ignores curation. Contract
+and UI: [knowledge_and_memory.md](knowledge_and_memory.md), decision:
+[ADR 0008](adr/0008-knowledge-curation-contract.md).
+
+## Web portal (Knowledge, and Settings → Memory & privacy)
+
+- **Knowledge → Map** (`GET /api/app/memory/constellation?scope&view`) renders the **real** user-scoped graph under the chosen curation projection: `kg_nodes` + `kg_edges` + tags, up to the storage cap (2500 personal). A `person` anchor node represents the user. Search plus multi-select type/tag/source slicers hide nodes client-side so a dense graph stays navigable; a hit list pans to the chosen note. **Group by tag** (on by default, remembered in `localStorage`) overlays tag hubs. A small map keeps every tag as a diamond; a dense map parks each note in one primary group (`utils/graphClusters.js`), keeps smaller satellite groups, and interconnects hubs with parent/child and shared-tag overlap edges — never a second spring that drags notes into the middle. Cluster hulls, a soft third axis, label collision, and zoom LOD keep titles readable. The overlay is view-time only — never written to `kg_nodes` or `kg_edges`. The legend carries the scope-wide `curation` breakdown and how many rows the projection left out.
+- **Knowledge → Notes** (the landing view) — browse, search, filter, create, edit, delete and **Keep** personal notes under the same projection as the Map. Manual edits set `source = 'user'`, `curation = 'saved'` and record a `human_edit` revision so research will not casually overwrite the preferred text. Routes: `GET/POST /api/app/spitball/notes` (`view`, `curation` filters), `PATCH/DELETE /api/app/spitball/notes/:nodeId` (a PATCH with only `curation` reclassifies; a DELETE also removes a mirrored `facts` row).
+- **Reflect button** (Map, and the server graph mode) — starts a reflection run for the visible scope and polls it to completion (see Reflection above).
+- **Server's shared graph** (Knowledge → Map, Manage Server, explicitly labelled) — guild-wide monologue graph (up to 1000 nodes) with the same search/filter chrome.
+- **Facts / Memories** — in **Settings → Memory & privacy** (*What Goobster knows about you*), for the private scope and, under *Inspect a server scope*, for one server at a time. Facts are read through the `type = 'fact'` mirror; forgetting one removes the mirror (`deleteMirroredFact`).
 
 ## Privacy
 

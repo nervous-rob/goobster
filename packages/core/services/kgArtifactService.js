@@ -185,7 +185,10 @@ class KgArtifactService {
             content: nodeContent,
             salience,
             confidence,
-            source: 'tool'
+            source: 'tool',
+            // Fetched at the person's request and shown as "saved files":
+            // deliberate knowledge, not distilled memory (ADR 0008).
+            curation: 'saved'
         });
         if (!node) throw new KgArtifactError('NODE', 'Could not create artifact node.');
 

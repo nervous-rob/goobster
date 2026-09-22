@@ -330,6 +330,12 @@ CREATE TABLE IF NOT EXISTS kg_nodes (
     confidence REAL NOT NULL DEFAULT 0.5,
     source TEXT NOT NULL DEFAULT 'monologue'
         CHECK (source IN ('monologue', 'consolidation', 'tool', 'migration', 'user', 'research', 'conversation')),
+    -- Curation is the person's intent, independent of `source` (who wrote
+    -- it): 'saved' = kept deliberately as reusable knowledge, 'memory' =
+    -- distilled by Goobster (managed from Personal memory), 'unclassified' =
+    -- legacy / undeclared. ADR 0008, documentation/knowledge_and_memory.md.
+    curation TEXT NOT NULL DEFAULT 'unclassified'
+        CHECK (curation IN ('saved', 'memory', 'unclassified')),
     subjectType TEXT CHECK (subjectType IS NULL OR subjectType IN ('USER', 'GUILD')),
     subjectId TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -338,6 +344,7 @@ CREATE TABLE IF NOT EXISTS kg_nodes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kg_nodes_guild_salience ON kg_nodes(guildId, scopeKey, salience);
+CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope_curation ON kg_nodes(guildId, scopeKey, curation);
 CREATE INDEX IF NOT EXISTS idx_kg_nodes_scope ON kg_nodes(guildId, scopeKey);
 
 CREATE TABLE IF NOT EXISTS kg_edges (

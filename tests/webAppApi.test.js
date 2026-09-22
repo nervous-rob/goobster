@@ -1252,22 +1252,37 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(res.json.observatory).toEqual({ enabled: false });
     });
 
-    test('GET /api/app/memory/constellation stars the user\'s own facts', async () => {
+    test('GET /api/app/memory/constellation mirrors the user\'s own facts as memory, shown under view=all', async () => {
         await db.run(
             `INSERT INTO facts (guildId, subjectType, subjectId, content)
              VALUES (@scope, 'USER', @u, 'Likes trains')`,
             { scope: dmScopeId(USER), u: USER }
         );
         const cookie = await login();
+        const scope = encodeURIComponent(dmScopeId(USER));
         const res = await request({
-            reqPath: `/api/app/memory/constellation?scope=${encodeURIComponent(dmScopeId(USER))}`,
+            reqPath: `/api/app/memory/constellation?scope=${scope}`,
             headers: { Cookie: cookie }
         });
         expect(res.status).toBe(200);
         expect(res.json.kind).toBe('personal');
+        expect(res.json.view).toBe('knowledge');
         expect(res.json.nodes[0].id).toBe('you');
-        expect(res.json.nodes.some(n => n.content === 'Likes trains')).toBe(true);
+        // A fact mirror is distilled memory, not saved knowledge: the default
+        // projection counts it but leaves it out of the picture.
+        expect(res.json.nodes.some(n => n.content === 'Likes trains')).toBe(false);
+        expect(res.json.counts.curation.memory).toBeGreaterThanOrEqual(1);
+        expect(res.json.counts.hidden).toBeGreaterThanOrEqual(1);
         expect(res.json.counts.cap).toBe(2500);
+
+        const all = await request({
+            reqPath: `/api/app/memory/constellation?scope=${scope}&view=all`,
+            headers: { Cookie: cookie }
+        });
+        expect(all.status).toBe(200);
+        expect(all.json.view).toBe('all');
+        expect(all.json.nodes.some(n => n.content === 'Likes trains' && n.curation === 'memory')).toBe(true);
+        expect(all.json.counts.hidden).toBe(0);
     });
 
     test('spitball notes can be created, listed, edited, and deleted', async () => {
@@ -1302,6 +1317,47 @@ describe('companion home, constellation, workshop, forget', () => {
         expect(patched.status).toBe(200);
         expect(patched.json.note.content).toBe('Hand-edited bilingual decree');
         expect(patched.json.note.source).toBe('user');
+        expect(patched.json.note.curation).toBe('saved');
+
+        // A curation-only PATCH reclassifies without touching the note.
+        const shelved = await request({
+            method: 'PATCH',
+            reqPath: `/api/app/spitball/notes/${created.json.note.id}`,
+            headers: { Cookie: cookie },
+            body: { scope, curation: 'memory' }
+        });
+        expect(shelved.status).toBe(200);
+        expect(shelved.json.note).toMatchObject({ curation: 'memory', source: 'user', content: 'Hand-edited bilingual decree' });
+
+        const knowledgeView = await request({
+            reqPath: `/api/app/spitball/notes?scope=${encodeURIComponent(scope)}`,
+            headers: { Cookie: cookie }
+        });
+        expect(knowledgeView.json.view).toBe('knowledge');
+        expect(knowledgeView.json.total).toBe(0);
+        expect(knowledgeView.json.curation).toEqual({ saved: 0, memory: 1, unclassified: 0 });
+
+        const allView = await request({
+            reqPath: `/api/app/spitball/notes?scope=${encodeURIComponent(scope)}&view=all&curation=memory`,
+            headers: { Cookie: cookie }
+        });
+        expect(allView.json.view).toBe('all');
+        expect(allView.json.total).toBe(1);
+
+        const badCuration = await request({
+            method: 'PATCH',
+            reqPath: `/api/app/spitball/notes/${created.json.note.id}`,
+            headers: { Cookie: cookie },
+            body: { scope, curation: 'unclassified' }
+        });
+        expect(badCuration.status).toBe(400);
+
+        const constellationAll = await request({
+            reqPath: `/api/app/memory/constellation?scope=${encodeURIComponent(scope)}&view=all`,
+            headers: { Cookie: cookie }
+        });
+        expect(constellationAll.json.view).toBe('all');
+        expect(constellationAll.json.counts.curation.memory).toBe(1);
 
         const deleted = await request({
             method: 'DELETE',

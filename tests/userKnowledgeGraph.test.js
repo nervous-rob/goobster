@@ -219,12 +219,25 @@ describe('personal graph view', () => {
              VALUES (@scope, 'USER', @user, 'Enjoys hiking')`,
             { scope: SCOPE, user: USER }
         );
+        // A mirrored fact is distilled memory (ADR 0008): the default
+        // `knowledge` projection leaves it out but still counts it, and the
+        // `all` projection shows it with the anchor.
         const view = await kg.getPersonalGraphView({ guildId: SCOPE, userId: USER });
         expect(view.nodes[0].id).toBe('you');
-        expect(view.nodes.some(n => n.content === 'Enjoys hiking')).toBe(true);
-        expect(view.counts.nodes).toBeGreaterThan(0);
+        expect(view.view).toBe('knowledge');
+        expect(view.nodes.some(n => n.content === 'Enjoys hiking')).toBe(false);
+        expect(view.counts.curation.memory).toBeGreaterThan(0);
+        expect(view.counts.hidden).toBeGreaterThan(0);
         expect(view.counts.cap).toBe(2500);
         expect(view.counts.truncated).toBe(false);
+
+        const all = await kg.getPersonalGraphView({ guildId: SCOPE, userId: USER, view: 'all' });
+        expect(all.nodes[0].id).toBe('you');
+        const fact = all.nodes.find(n => n.content === 'Enjoys hiking');
+        expect(fact).toBeTruthy();
+        expect(fact.curation).toBe('memory');
+        expect(all.counts.nodes).toBeGreaterThan(0);
+        expect(all.counts.hidden).toBe(0);
     });
 
     test('getPersonalGraphView returns more than the old 120-node map limit', async () => {

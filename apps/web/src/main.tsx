@@ -25,7 +25,10 @@ import { HostRoom } from './rooms/HostRoom';
 import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
-import { SpitballRoom } from './rooms/SpitballRoom';
+import { KnowledgeRoom } from './rooms/knowledge/KnowledgeRoom';
+import { NotesView } from './rooms/knowledge/NotesView';
+import { MapView } from './rooms/knowledge/MapView';
+import { ResearchView } from './rooms/knowledge/ResearchView';
 import { TasksRoom } from './rooms/TasksRoom';
 import { NoticedRoom } from './rooms/NoticedRoom';
 import { InboxRoom } from './rooms/InboxRoom';
@@ -170,10 +173,37 @@ const chatIdRoute = createRoute({
     component: StudyRoom,
 });
 
+// Knowledge opens on Notes; Map and Research are registered views of the
+// same room (lib/rooms.cjs). The bare path redirects with search and hash
+// intact so a bookmarked `/knowledge?…` keeps its state.
 const knowledgeRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/knowledge',
-    component: SpitballRoom,
+    component: KnowledgeRoom,
+});
+
+const knowledgeIndexRoute = createRoute({
+    getParentRoute: () => knowledgeRoute,
+    path: '/',
+    component: () => <Navigate to="/knowledge/notes" search={true} hash={true} replace />,
+});
+
+const knowledgeNotesRoute = createRoute({
+    getParentRoute: () => knowledgeRoute,
+    path: '/notes',
+    component: NotesView,
+});
+
+const knowledgeMapRoute = createRoute({
+    getParentRoute: () => knowledgeRoute,
+    path: '/map',
+    component: MapView,
+});
+
+const knowledgeResearchRoute = createRoute({
+    getParentRoute: () => knowledgeRoute,
+    path: '/research',
+    component: ResearchView,
 });
 
 const projectsRoute = createRoute({
@@ -348,7 +378,7 @@ const legacyAlias = (path: string) => createRoute({
 
 const legacyRoutes = [
     '/study', '/study/$conversationId',
-    '/spitball', '/library',
+    '/spitball', '/spitball/$view', '/library', '/library/$view',
     '/observatory', '/observatory/graph', '/observatory/search', '/observatory/people', '/observatory/events',
     '/workshop',
     '/parlor', '/parlor/$conversationId',
@@ -366,7 +396,12 @@ const routeTree = rootRoute.addChildren([
         indexRoute,
         chatRoute,
         chatIdRoute,
-        knowledgeRoute,
+        knowledgeRoute.addChildren([
+            knowledgeIndexRoute,
+            knowledgeNotesRoute,
+            knowledgeMapRoute,
+            knowledgeResearchRoute,
+        ]),
         projectsRoute,
         discussionsRoute,
         discussionsIdRoute,
