@@ -1528,7 +1528,7 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
   bottom: 16px;
   max-width: 440px;
   max-height: calc(100vh - 32px);
-  overflow: auto;
+  overflow: hidden;
   margin-inline: auto;
   display: flex;
   flex-direction: column;
@@ -1547,21 +1547,37 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 }
 @media (prefers-reduced-motion: reduce) {
   .tutorial-panel { animation: none; }
+  .tour-target { animation: none; }
 }
 .tutorial-panel.is-soft { opacity: 0.96; }
+/* Spotlight on the control the active step points at (added by TutorialProvider). */
+.tour-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 6px var(--accent-soft);
+  animation: tour-target-in 1.4s ease-out 1;
+  scroll-margin: 96px;
+}
+@keyframes tour-target-in {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft); outline-color: transparent; }
+  40% { box-shadow: 0 0 0 12px var(--accent-soft); outline-color: var(--accent); }
+  100% { box-shadow: 0 0 0 6px var(--accent-soft); outline-color: var(--accent); }
+}
 .tutorial-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .tutorial-panel-title { font-weight: 600; font-size: 14.5px; }
-.tutorial-panel-body { display: grid; gap: 6px; }
+/* Body scrolls; the action row stays reachable however tall a demo gets. */
+.tutorial-panel-body { display: grid; gap: 6px; align-content: start; min-height: 0; overflow-y: auto; flex: 1 1 auto; margin: -4px; padding: 4px; }
 .tutorial-step-title { font-size: 15.5px; margin-top: 2px; }
 .tutorial-step-body { line-height: 1.5; margin: 0; }
-.tutorial-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tutorial-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: none; }
 .tutorial-panel-actions .tutorial-advance { margin-left: auto; }
 .tutorial-elsewhere { margin: 4px 0 0; }
 .tutorial-elsewhere a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .tutorial-elsewhere a:hover { text-decoration: underline; }
 .tutorial-row { align-items: flex-start; }
-.tutorial-row-main { display: grid; gap: 2px; min-width: 0; }
-.tutorial-row-meta { white-space: nowrap; }
+.tutorial-row-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; flex: 1 1 auto; }
+.tutorial-row-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tutorial-row-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; flex-shrink: 0; }
 @media (min-width: 720px) {
   .tutorial-panel {
@@ -1575,7 +1591,7 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
   .tutorial-panel {
     /* In-flow feel on narrow screens: never cover the whole stage */
     max-width: none;
-    max-height: 60vh;
+    max-height: min(70vh, calc(100dvh - 32px));
   }
 }
 

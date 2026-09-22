@@ -28,6 +28,8 @@ type TutorialContextValue = {
     data: TutorialsResponse | undefined;
     loading: boolean;
     active: { tutorialId: string; progress: TutorialProgress; entry: TutorialCatalogEntry } | null;
+    /** null = step has no anchor or we are still looking; false = looked and it is not on screen. */
+    anchorFound: boolean | null;
     resume: (tutorialId: string) => Promise<void>;
     replay: (tutorialId: string) => Promise<void>;
     resetOne: (tutorialId: string) => Promise<void>;
@@ -77,6 +79,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [offer, setOffer] = useState<TutorialContextValue['offer']>(null);
+    const [anchorFound, setAnchorFound] = useState<boolean | null>(null);
     // After Pause or Escape, do not seize focus again this session.
     const pausedRef = useRef<Set<string>>(new Set());
     const offeredRef = useRef(false);
@@ -248,6 +251,39 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         return () => window.removeEventListener('keydown', onKey);
     }, [activeId, pause]);
 
+    // Spotlight the control the current step points at. Anchors can render a
+    // beat after navigation, so look a few times before declaring it off screen.
+    const anchorId = active?.entry.steps.find((s) => s.id === active.progress.currentStepId)?.anchorId || null;
+    useEffect(() => {
+        if (!anchorId) {
+            setAnchorFound(null);
+            return;
+        }
+        setAnchorFound(null);
+        let target: Element | null = null;
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        const reducedMotion = typeof window !== 'undefined'
+            && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        const look = (attempt: number) => {
+            const el = document.querySelector(`[data-tour="${anchorId}"]`);
+            if (el) {
+                target = el;
+                el.classList.add('tour-target');
+                el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
+                setAnchorFound(true);
+                return;
+            }
+            const waits = [150, 500, 1200];
+            if (attempt < waits.length) timers.push(setTimeout(() => look(attempt + 1), waits[attempt]));
+            else setAnchorFound(false);
+        };
+        look(0);
+        return () => {
+            timers.forEach(clearTimeout);
+            target?.classList.remove('tour-target');
+        };
+    }, [anchorId, pathname]);
+
     // First login / room-entry offers. Never on public shares. Never after Pause.
     useEffect(() => {
         if (!enabled || isShare || !data || activeId || offer || offeredRef.current) return;
@@ -280,6 +316,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         data,
         loading: tutorialsQ.isPending,
         active,
+        anchorFound,
         resume,
         replay,
         resetOne,
@@ -312,6 +349,7 @@ export function useTutorials(): TutorialContextValue {
             data: undefined,
             loading: false,
             active: null,
+            anchorFound: null,
             resume: async () => {},
             replay: async () => {},
             resetOne: async () => {},
