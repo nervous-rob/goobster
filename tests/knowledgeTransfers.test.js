@@ -356,7 +356,7 @@ describe('Add to project (note -> project)', () => {
         expect(res.json.error.code).toBe('NOT_KNOWLEDGE');
         const asRef = await request({
             method: 'POST', reqPath: `/api/app/spitball/notes/${memoryId}/transfers`, headers: { cookie },
-            body: { target: 'discussion', conversationId: 1 }
+            body: { target: 'discussion', conversationId: 1, requestId: 'memory-refused' }
         });
         expect(asRef.status).toBe(400);
         expect(asRef.json.error.code).toBe('NOT_KNOWLEDGE');
@@ -400,6 +400,13 @@ describe('Add to project (note -> project)', () => {
         expect(ok.json.audience).toMatchObject({ private: true, memberIds: [ROB] });
         expect(ok.json.project).toMatchObject({ slug: 'private-study', ownerId: ROB, role: 'owner' });
 
+        // Even a currently private project's chat may later consolidate into a
+        // shared project scope. Its persisted manifest must never contain references.
+        const execution = new ObservatoryService({ config: { ...svc.config, enabled: true }, sandbox: { enabled: true } });
+        const manifest = await execution.buildChatManifest({ userId: ROB, project: 'private-study' });
+        expect(manifest.text).not.toContain('Compound interest');
+        expect(manifest.text).not.toContain('A = P');
+
         // Nothing was written into the project scope ...
         const coords = svc.knowledgeCoords({ ...privateProject, ownerId: ROB });
         const inScope = await db.get(
@@ -423,7 +430,7 @@ describe('Add to project (note -> project)', () => {
         expect(again.json.transfer.id).toBe(ok.json.transfer.id);
     });
 
-    test('sharing the project later does not expose the reference; the manifest reads it only as the actor', async () => {
+    test('sharing the project later does not expose the reference in notes or chat manifests', async () => {
         const { invite } = await svc.invite({ userId: ROB, project: 'private-study', inviteeId: TIA });
         await svc.respondInvite({ userId: TIA, inviteId: invite.id, accept: true });
 
@@ -434,11 +441,12 @@ describe('Add to project (note -> project)', () => {
         expect(theirs.json.references).toEqual([]);
         expect(theirs.json.audience.private).toBe(false);
 
-        const forRob = await transfers.describeReferencesForManifest({ userId: ROB, projectId: privateProject.id });
-        expect(forRob).toMatch(/visible only to you/);
-        expect(forRob).toMatch(/Compound interest/);
-        const forTia = await transfers.describeReferencesForManifest({ userId: TIA, projectId: privateProject.id });
-        expect(forTia).toBe('');
+        const execution = new ObservatoryService({ config: { ...svc.config, enabled: true }, sandbox: { enabled: true } });
+        const manifest = await execution.buildChatManifest({ userId: ROB, project: 'private-study' });
+        expect(manifest.text).not.toContain('Compound interest');
+        expect(manifest.text).not.toContain('A = P');
+        const forTia = await execution.buildChatManifest({ userId: TIA, project: 'private-study', owner: ROB });
+        expect(forTia.text).not.toContain('Compound interest');
 
         // The reference is Rob's to drop; Tia cannot.
         const transferId = (await db.get(
@@ -563,6 +571,34 @@ describe('Add to project (note -> project)', () => {
         expect(await db.get(`SELECT id FROM knowledge_transfers WHERE sourceNodeId = @n AND targetKind = 'project'`, { n: own.id })).toBeUndefined();
     });
 
+    test('renaming and clearing a published note keeps one removable copy and its history', async () => {
+        const own = await knowledgeGraphService.createUserNote({
+            guildId: dmScopeId(SAM), userId: SAM, label: 'Before rename', content: 'Old body', tags: ['old']
+        });
+        const args = { userId: SAM, nodeId: own.id, project: 'shared-study', owner: ROB, mode: 'copy' };
+        const first = await transfers.addNoteToProject(args);
+        await knowledgeGraphService.updateUserNote({
+            guildId: dmScopeId(SAM), userId: SAM, nodeId: own.id, label: 'After rename', content: '', tags: ['new']
+        });
+        const [again, retry] = await Promise.all([transfers.addNoteToProject(args), transfers.addNoteToProject(args)]);
+        expect(again.copy).toMatchObject({ id: first.copy.id, label: 'After rename', content: null, tags: ['new'] });
+        expect(retry.copy.id).toBe(first.copy.id);
+        expect(again.transfer.id).toBe(first.transfer.id);
+        expect(await transfers.publisherOf(first.copy.id)).toBe(SAM);
+        const destinations = await transfers.listNoteDestinations({ userId: SAM, nodeId: own.id });
+        expect(destinations.projects).toHaveLength(1);
+        const coords = svc.knowledgeCoords({ ...sharedProject, ownerId: ROB });
+        expect(await knowledgeGraphService.getNode(coords.guildId, 'Before rename', coords.scopeKey)).toBeFalsy();
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_node_revisions WHERE nodeId = @id', { id: first.copy.id })).c).toBeGreaterThan(1);
+
+        // A rename collision must not overwrite another publisher's note or detach this copy.
+        await knowledgeGraphService.updateUserNote({ guildId: dmScopeId(SAM), userId: SAM, nodeId: own.id, label: 'Compound interest' });
+        await expect(transfers.addNoteToProject(args)).rejects.toMatchObject({ code: 'CONFLICT' });
+        expect((await db.get('SELECT label FROM kg_nodes WHERE id = @id', { id: first.copy.id })).label).toBe('After rename');
+        await svc.deleteKnowledgeNote({ userId: SAM, project: 'shared-study', owner: ROB, nodeId: first.copy.id });
+        await knowledgeGraphService.deleteUserNote({ guildId: dmScopeId(SAM), userId: SAM, nodeId: own.id });
+    });
+
     test('the note knows where it has gone', async () => {
         const rob = await login(ROB, 'rob');
         await request({
@@ -598,7 +634,7 @@ describe('Use in discussion (note -> discussion)', () => {
         const before = await db.get('SELECT COUNT(*) AS c FROM parlor_messages WHERE conversationId = @id', { id: conversation.id });
         const res = await request({
             method: 'POST', reqPath: `/api/app/spitball/notes/${noteId}/transfers`, headers: { cookie: rob },
-            body: { target: 'discussion', conversationId: conversation.id }
+            body: { target: 'discussion', conversationId: conversation.id, requestId: 'post-note' }
         });
         expect(res.status).toBe(200);
         expect(res.json.mode).toBe('copy');
@@ -622,6 +658,44 @@ describe('Use in discussion (note -> discussion)', () => {
         });
     });
 
+    test('concurrent retries and a lost response reuse one receipt; a new request posts again', async () => {
+        const args = { userId: ROB, nodeId: noteId, conversationId: conversation.id, requestId: 'concurrent-post' };
+        const before = (await db.get('SELECT COUNT(*) AS c FROM parlor_messages WHERE conversationId = @id', { id: conversation.id })).c;
+        const [first, retry] = await Promise.all([transfers.useNoteInDiscussion(args), transfers.useNoteInDiscussion(args)]);
+        expect(retry.message.id).toBe(first.message.id);
+        expect(retry.transfer.id).toBe(first.transfer.id);
+        expect((await transfers.useNoteInDiscussion(args)).message.id).toBe(first.message.id);
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_messages WHERE conversationId = @id', { id: conversation.id })).c).toBe(before + 1);
+        await expect(transfers.useNoteInDiscussion({ ...args, nodeId: noteId + 100000 })).rejects.toMatchObject({ code: 'REQUEST_CONFLICT' });
+        const intentional = await transfers.useNoteInDiscussion({ ...args, requestId: 'intentional-repost' });
+        expect(intentional.message.id).not.toBe(first.message.id);
+    });
+
+    test('failed receipt writes roll back the transcript message', async () => {
+        const before = (await db.get('SELECT COUNT(*) AS c FROM parlor_messages WHERE conversationId = @id', { id: conversation.id })).c;
+        const insert = db.insert.bind(db);
+        const fail = jest.spyOn(db, 'insert').mockImplementation((sql, params) => {
+            if (sql.includes('INSERT INTO knowledge_transfers')) throw new Error('receipt unavailable');
+            return insert(sql, params);
+        });
+        try {
+            await expect(transfers.useNoteInDiscussion({ userId: ROB, nodeId: noteId, conversationId: conversation.id, requestId: 'rollback-post' }))
+                .rejects.toThrow('receipt unavailable');
+        } finally { fail.mockRestore(); }
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_messages WHERE conversationId = @id', { id: conversation.id })).c).toBe(before);
+        expect(await db.get('SELECT id FROM knowledge_transfers WHERE requestId = @id', { id: 'rollback-post' })).toBeUndefined();
+    });
+
+    test('retry after source deletion returns the receipt but still requires discussion access', async () => {
+        const own = await knowledgeGraphService.createUserNote({ guildId: dmScopeId(SAM), userId: SAM, label: 'Temporary post', content: 'Posted text' });
+        const args = { userId: SAM, nodeId: own.id, conversationId: conversation.id, requestId: 'deleted-source-post' };
+        const first = await transfers.useNoteInDiscussion(args);
+        await knowledgeGraphService.deleteUserNote({ guildId: dmScopeId(SAM), userId: SAM, nodeId: own.id });
+        expect((await transfers.useNoteInDiscussion(args)).message.id).toBe(first.message.id);
+        await db.run('DELETE FROM parlor_members WHERE conversationId = @id AND userId = @userId', { id: conversation.id, userId: SAM });
+        await expect(transfers.useNoteInDiscussion(args)).rejects.toMatchObject({ status: 404 });
+    });
+
     test('a stranger to the discussion is refused', async () => {
         const tia = await login(TIA, 'tia');
         const own = await knowledgeGraphService.createUserNote({
@@ -629,7 +703,7 @@ describe('Use in discussion (note -> discussion)', () => {
         });
         const res = await request({
             method: 'POST', reqPath: `/api/app/spitball/notes/${own.id}/transfers`, headers: { cookie: tia },
-            body: { target: 'discussion', conversationId: conversation.id }
+            body: { target: 'discussion', conversationId: conversation.id, requestId: 'post-note' }
         });
         expect(res.status).toBe(404);
     });
@@ -679,7 +753,7 @@ describe('privacy paths', () => {
     test('the ledger is on the transparency report, the audit and the erasure path', async () => {
         const summary = await transfers.summarizeForUser(ROB);
         expect(summary.publishedToProjects).toBeGreaterThanOrEqual(1);
-        expect(summary.publishedToDiscussions).toBe(1);
+        expect(summary.publishedToDiscussions).toBe(3);
         expect(summary.savedAnswers).toBeGreaterThanOrEqual(1);
 
         const report = await privacyService.buildUserReport({ guildId: dmScopeId(ROB), userId: ROB });
@@ -690,10 +764,12 @@ describe('privacy paths', () => {
         expect(audit.byTable.knowledge_transfers).toBe(rows);
         expect(rows).toBeGreaterThan(0);
 
+        const samRows = (await db.get('SELECT COUNT(*) AS c FROM knowledge_transfers WHERE userId = @u', { u: SAM })).c;
+        expect(samRows).toBeGreaterThan(0);
         const result = await privacyService.forgetUser({ userId: ROB });
         expect(result.knowledgeTransfers).toBe(rows);
         expect((await db.get('SELECT COUNT(*) AS c FROM knowledge_transfers WHERE userId = @u', { u: ROB })).c).toBe(0);
         // Sam's own rows are not Rob's to erase.
-        expect((await db.get('SELECT COUNT(*) AS c FROM knowledge_transfers WHERE userId = @u', { u: SAM })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM knowledge_transfers WHERE userId = @u', { u: SAM })).c).toBe(samRows);
     });
 });

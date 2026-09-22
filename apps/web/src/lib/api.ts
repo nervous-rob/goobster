@@ -571,8 +571,8 @@ export const api = {
     addNoteToProject: (nodeId: number | string, body: { project: string; owner?: string | null; mode: 'reference' | 'copy' }) =>
         request(`/api/app/spitball/notes/${nodeId}/transfers`, { method: 'POST', body: { target: 'project', ...body } }),
     /** Use in discussion: the note becomes a message from you in that transcript. */
-    useNoteInDiscussion: (nodeId: number | string, conversationId: number) =>
-        request(`/api/app/spitball/notes/${nodeId}/transfers`, { method: 'POST', body: { target: 'discussion', conversationId } }),
+    useNoteInDiscussion: (nodeId: number | string, conversationId: number, requestId: string) =>
+        request(`/api/app/spitball/notes/${nodeId}/transfers`, { method: 'POST', body: { target: 'discussion', conversationId, requestId } }),
     /** Drop a reference you made; copies are removed from the project side. */
     removeNoteReference: (transferId: number | string) =>
         request(`/api/app/spitball/transfers/${transferId}`, { method: 'DELETE' }),

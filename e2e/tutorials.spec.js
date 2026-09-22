@@ -5,7 +5,7 @@
  * calls — the harness seeds progress through /e2e/fixtures/tutorial-progress.
  */
 const { test, expect } = require('@playwright/test');
-const { login } = require('./helpers');
+const { login, openRoom } = require('./helpers');
 const C = require('./constants');
 
 async function seedTutorials(page) {
@@ -332,4 +332,64 @@ test('progress pointing at a step the catalog no longer has offers Start over in
     await panel.locator('[data-tour="tutorial-start-over"]').click();
     await expect(panel).toHaveAttribute('data-step-id', 'create-note', { timeout: 10_000 });
     await expect(panel.locator('[data-tour="tutorial-step-title"]')).toContainText('A kept note');
+});
+
+
+test('home and room offers remain independent within one session', async ({ page }) => {
+    await page.request.post('/api/app/tutorials/reset');
+    await page.request.post('/e2e/fixtures/tutorial-progress', { data: { autoStart: true, rows: [] } });
+    await page.goto('/app/');
+    const offer = page.locator('[data-tour="tutorial-offer"]');
+    await expect(offer).toBeVisible();
+    await page.locator('[data-tour="tutorial-offer-start"]').click();
+    const panel = page.locator('[data-tour="tutorial-panel"]');
+    await expect(panel).toHaveAttribute('data-tutorial-id', 'home.orientation');
+    await expect(panel).toHaveAttribute('data-step-id', 'doors');
+    while (await panel.locator('[data-tour="tutorial-next"]').count()) {
+        const step = await panel.getAttribute('data-step-id');
+        await panel.locator('[data-tour="tutorial-next"]').click();
+        await expect(panel).not.toHaveAttribute('data-step-id', step);
+    }
+    await panel.locator('[data-tour="tutorial-finish"]').click();
+    await expect(panel).toHaveCount(0);
+    await openRoom(page, 'Chat');
+    await expect(offer).toContainText('Chat basics');
+    await page.locator('[data-tour="tutorial-offer-dismiss"]').click();
+    await expect(offer).toHaveCount(0);
+    await openRoom(page, 'Knowledge');
+    await expect(offer).toBeVisible();
+    await page.locator('[data-tour="tutorial-offer-start"]').click();
+    await expect(panel).toHaveAttribute('data-tutorial-id', 'knowledge.basics');
+    await page.keyboard.press('Escape');
+    await openRoom(page, 'Chat');
+    await expect(offer).toHaveCount(0);
+    await openRoom(page, 'Knowledge');
+    await expect(panel).toHaveCount(0);
+    await expect(offer).toHaveCount(0);
+});
+
+test('late and replaced anchors stay highlighted, and reduced motion disables animation', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/app/settings/tutorials');
+    await page.locator('.tutorial-row[data-tutorial-id="home.orientation"]').getByRole('button', { name: 'Resume' }).click();
+    // Delay the real Home response beyond the former 1.85-second retry window.
+    await page.route('**/api/app/home', async route => {
+        const response = await route.fetch();
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        await route.fulfill({ response });
+    });
+    await page.locator('[data-tour="tutorial-goto"]').click();
+    const anchor = page.locator('[data-tour="home-create"]');
+    await expect(anchor).toHaveClass(/tour-target/);
+    await expect(anchor).toHaveCSS('animation-name', 'none');
+    // Replace an anchor on the same route, as a loading/refetch boundary can do.
+    await anchor.evaluate(el => {
+        const replacement = el.cloneNode(true);
+        replacement.classList.remove('tour-target');
+        el.replaceWith(replacement);
+    });
+    await expect(anchor).toHaveClass(/tour-target/);
+    await page.locator('[data-tour="tutorial-next"]').click();
+    await expect(anchor).not.toHaveClass(/tour-target/);
+    await expect(page.locator('[data-tour="home-private"]')).toHaveClass(/tour-target/);
 });

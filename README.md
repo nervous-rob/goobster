@@ -192,6 +192,12 @@ AI keys may also come from the environment (`OPENAI_API_KEY`,
 `ELEVENLABS_API_KEY`). Discord credentials are read from `config.json`
 only.
 
+Anthropic chat uses five-minute prompt caching by default; standalone text
+jobs do not. Set `ANTHROPIC_PROMPT_CACHING=false` to disable it. Usage reports
+cache reads and writes separately, within the total input count. See
+[Anthropic prompt caching](documentation/anthropic_prompt_caching.md) for
+controls, tradeoffs, and measurement.
+
 ### Audio via ElevenLabs
 
 A single ElevenLabs API key (config `elevenlabs.apiKey` or the `ELEVENLABS_API_KEY` env var) powers all generated audio:

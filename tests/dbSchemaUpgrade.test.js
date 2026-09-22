@@ -273,6 +273,16 @@ const PRE_PIPELINE_ROWS = [
      VALUES (4, 1, 'u1', 'Render after', 'event', 'job_completed', 'render', '2026-09-01 01:00:05')`
 ];
 
+const PRE_USAGE_CACHE = `
+CREATE TABLE usage_log (
+    id INTEGER PRIMARY KEY, guildId TEXT, userId TEXT,
+    provider TEXT NOT NULL, model TEXT NOT NULL, operation TEXT NOT NULL,
+    inputTokens INTEGER NOT NULL DEFAULT 0, outputTokens INTEGER NOT NULL DEFAULT 0,
+    count INTEGER NOT NULL DEFAULT 1, createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`;
+const PRE_USAGE_ROWS = [`INSERT INTO usage_log (id, provider, model, operation, "inputTokens", "outputTokens") VALUES (1, 'anthropic', 'claude-test', 'chat', 100, 20)`];
+
 describe('SQLite: upgrading an existing database', () => {
     const files = [];
     const opened = [];
@@ -327,6 +337,12 @@ describe('SQLite: upgrading an existing database', () => {
             }
         }
         delete process.env.GOOBSTER_DB_PATH;
+    });
+
+    test('usage cache columns upgrade with zero defaults and preserve historical totals', () => {
+        const upgraded = bootstrap(seedDatabase(PRE_USAGE_CACHE, PRE_USAGE_ROWS));
+        expect(upgraded.prepare('SELECT inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens FROM usage_log').get())
+            .toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 });
     });
 
     test('a pre-scopeKey knowledge graph opens, keeps its rows, and gains scopes', () => {
@@ -664,6 +680,12 @@ describePostgres('Postgres: upgrading an existing database', () => {
         await client.connect();
         for (const name of schemas) await client.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`);
         await client.end();
+    });
+
+    test('usage cache columns upgrade with zero defaults and preserve historical totals', async () => {
+        const upgraded = await bootstrap(await seedSchema(PRE_USAGE_CACHE, PRE_USAGE_ROWS));
+        const result = await upgraded.rawQuery('SELECT "inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens" FROM usage_log');
+        expect(result.rows[0]).toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 });
     });
 
     test('a pre-scopeKey knowledge graph opens, keeps its rows, and gains scopes', async () => {

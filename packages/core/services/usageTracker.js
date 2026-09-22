@@ -11,13 +11,13 @@ const db = require('../db');
 class UsageTracker {
     /**
      * Record one API call.
-     * @param {Object} entry - { provider, model, operation, inputTokens, outputTokens, count, guildId, userId }
+     * @param {Object} entry - { provider, model, operation, inputTokens (total including cache), outputTokens, cacheReadTokens, cacheWriteTokens, count, guildId, userId }
      */
-    async log({ provider, model, operation, inputTokens = 0, outputTokens = 0, count = 1, guildId = null, userId = null }) {
+    async log({ provider, model, operation, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, count = 1, guildId = null, userId = null }) {
         try {
             await db.run(
-                `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, count)
-                 VALUES (@guildId, @userId, @provider, @model, @operation, @inputTokens, @outputTokens, @count)`,
+                `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, count)
+                 VALUES (@guildId, @userId, @provider, @model, @operation, @inputTokens, @outputTokens, @cacheReadTokens, @cacheWriteTokens, @count)`,
                 {
                     guildId,
                     userId,
@@ -26,6 +26,9 @@ class UsageTracker {
                     operation,
                     inputTokens: Math.max(0, Math.round(inputTokens || 0)),
                     outputTokens: Math.max(0, Math.round(outputTokens || 0)),
+                    // Cache counters are subsets of inputTokens, never added here.
+                    cacheReadTokens: Math.max(0, Math.round(cacheReadTokens || 0)),
+                    cacheWriteTokens: Math.max(0, Math.round(cacheWriteTokens || 0)),
                     count
                 }
             );
@@ -98,11 +101,13 @@ class UsageTracker {
             `SELECT provider, model, operation,
                     SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
-                    SUM(outputTokens) AS outputTokens
+                    SUM(outputTokens) AS outputTokens,
+                    SUM(cacheReadTokens) AS cacheReadTokens,
+                    SUM(cacheWriteTokens) AS cacheWriteTokens
              FROM usage_log
              WHERE createdAt >= @daysCutoff ${guildFilter}
              GROUP BY provider, model, operation
-             ORDER BY inputTokens + outputTokens DESC`,
+             ORDER BY SUM(inputTokens) + SUM(outputTokens) DESC`,
             { guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
         );
     }
@@ -132,7 +137,9 @@ class UsageTracker {
         const row = await db.get(
             `SELECT SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
-                    SUM(outputTokens) AS outputTokens
+                    SUM(outputTokens) AS outputTokens,
+                    SUM(cacheReadTokens) AS cacheReadTokens,
+                    SUM(cacheWriteTokens) AS cacheWriteTokens
              FROM usage_log
              WHERE createdAt >= @daysCutoff ${guildFilter}`,
             { guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
@@ -140,7 +147,9 @@ class UsageTracker {
         return {
             calls: row?.calls || 0,
             inputTokens: row?.inputTokens || 0,
-            outputTokens: row?.outputTokens || 0
+            outputTokens: row?.outputTokens || 0,
+            cacheReadTokens: row?.cacheReadTokens || 0,
+            cacheWriteTokens: row?.cacheWriteTokens || 0
         };
     }
 }

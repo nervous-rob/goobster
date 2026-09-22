@@ -237,7 +237,9 @@ class WebDashboardService {
         const totals = await db.get(
             `SELECT COALESCE(SUM(count), 0) AS calls,
                     COALESCE(SUM(inputTokens), 0) AS inputTokens,
-                    COALESCE(SUM(outputTokens), 0) AS outputTokens
+                    COALESCE(SUM(outputTokens), 0) AS outputTokens,
+                    COALESCE(SUM(cacheReadTokens), 0) AS cacheReadTokens,
+                    COALESCE(SUM(cacheWriteTokens), 0) AS cacheWriteTokens
              FROM usage_log
              WHERE userId = @userId
                AND createdAt >= @cutoff`,
@@ -248,7 +250,9 @@ class WebDashboardService {
             `SELECT provider, model,
                     SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
-                    SUM(outputTokens) AS outputTokens
+                    SUM(outputTokens) AS outputTokens,
+                    SUM(cacheReadTokens) AS cacheReadTokens,
+                    SUM(cacheWriteTokens) AS cacheWriteTokens
              FROM usage_log
              WHERE userId = @userId
                AND createdAt >= @cutoff
@@ -273,7 +277,9 @@ class WebDashboardService {
             `SELECT date(createdAt) AS day,
                     SUM(count) AS calls,
                     SUM(inputTokens) AS inputTokens,
-                    SUM(outputTokens) AS outputTokens
+                    SUM(outputTokens) AS outputTokens,
+                    SUM(cacheReadTokens) AS cacheReadTokens,
+                    SUM(cacheWriteTokens) AS cacheWriteTokens
              FROM usage_log
              WHERE userId = @userId
                AND createdAt >= @cutoff
@@ -293,7 +299,9 @@ class WebDashboardService {
             totals: {
                 calls: totals?.calls || 0,
                 inputTokens: totals?.inputTokens || 0,
-                outputTokens: totals?.outputTokens || 0
+                outputTokens: totals?.outputTokens || 0,
+                cacheReadTokens: totals?.cacheReadTokens || 0,
+                cacheWriteTokens: totals?.cacheWriteTokens || 0
             },
             byModel,
             byOperation,

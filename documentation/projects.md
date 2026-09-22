@@ -674,12 +674,14 @@ the note travels, and the server enforces it:
 - **Reference** - only into a private project the caller owns (no accepted
   member, no share link). No row is written to the `PROJECT:` scope; the
   Knowledge view (*Referenced from your private notes*, badge *reference ·
-  only you*) and the project-chat manifest resolve the note at read time
+  only you*) resolves the note at read time
   for the person who referenced it. Sharing the project later does not
   expose it - a collaborator sees neither the note nor a count - and every
   reader that runs *as the project* (graph, `recall_knowledge`,
   expeditions, dashboards) reads only the `PROJECT:` scope, so it never
-  sees a reference. **Stop referencing** (✕) drops it; the note stays.
+  sees a reference. Project chat also excludes references: its transcript may
+  later become shared project knowledge. Publish a copy to use the note there.
+  **Stop referencing** (✕) drops it; the note stays.
 - **Publish a copy** - the only mode for a project with members or a share
   link. The dialog shows the title, text and tags that will be copied and
   names the readers (owner, members, "plus anyone holding the project share

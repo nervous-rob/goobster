@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../lib/api';
@@ -79,6 +79,8 @@ export function TransferNoteModal({
     const [projectKey, setProjectKey] = useState('');
     const [mode, setMode] = useState<TransferMode>('copy');
     const [discussionId, setDiscussionId] = useState('');
+    // Retain the same receipt key when a response is lost and the user retries.
+    const discussionRequests = useRef(new Map<string, string>());
     const [busy, setBusy] = useState(false);
     const [done, setDone] = useState<Done | null>(null);
 
@@ -110,12 +112,13 @@ export function TransferNoteModal({
         retry: false
     });
     const audience = audienceQ.data || null;
-    const canReference = Boolean(project?.private && project?.role !== 'collaborator' && (audience ? audience.private : true));
+    const audienceReady = audienceQ.isSuccess && !audienceQ.isFetching && Boolean(audience);
+    const canReference = Boolean(audienceReady && project?.private && project?.role !== 'collaborator' && audience?.private);
 
     // A shared project cannot hold a private reference (ADR 0010 §3).
     useEffect(() => {
-        if (!canReference && mode === 'reference') setMode('copy');
-    }, [canReference, mode]);
+        if (audienceReady && !canReference && mode === 'reference') setMode('copy');
+    }, [audienceReady, canReference, mode]);
 
     const discussionAudience: TransferAudience | null = discussion
         ? {
@@ -134,6 +137,7 @@ export function TransferNoteModal({
         try {
             if (target === 'project') {
                 if (!project) { toast('Pick a project first.', true); return; }
+                if (!audienceReady) { toast('Check who can read this project before publishing.', true); return; }
                 const result = await api.addNoteToProject(note.id, {
                     project: project.slug,
                     owner: project.ownerId || null,
@@ -147,7 +151,13 @@ export function TransferNoteModal({
                 onTransferred?.(next);
             } else {
                 if (!discussion) { toast('Pick a discussion first.', true); return; }
-                const result = await api.useNoteInDiscussion(note.id, discussion.id) as UseInDiscussionResult;
+                const key = `${note.id}:${discussion.id}`;
+                let requestId = discussionRequests.current.get(key);
+                if (!requestId) {
+                    requestId = globalThis.crypto?.randomUUID?.() || `transfer_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                    discussionRequests.current.set(key, requestId);
+                }
+                const result = await api.useNoteInDiscussion(note.id, discussion.id, requestId) as UseInDiscussionResult;
                 await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
                 await queryClient.invalidateQueries({ queryKey: ['parlor-messages', discussion.id] });
                 await queryClient.invalidateQueries({ queryKey: keys.noteTransfers(note.id) });
@@ -170,7 +180,7 @@ export function TransferNoteModal({
                 <h2>{result.mode === 'reference' ? 'Referenced in' : 'Published to'} {result.project.name}</h2>
                 <p className="hint" data-testid="transfer-done">
                     {result.mode === 'reference'
-                        ? 'The note stays in your private space; the project reads it as you, and only you can see it there. If the project is shared later, the reference stays yours.'
+                        ? 'The note stays private and only you see it in the project’s notes view. Publish a copy to use it in project chat. Sharing the project later does not share this reference.'
                         : `A copy of “${note.label}” now lives in the project’s knowledge. Readers: ${describeAudience(result.audience, me.user.id)}. Your original is untouched.`}
                 </p>
                 <div className="modal-actions">
@@ -292,7 +302,7 @@ export function TransferNoteModal({
                                         <strong>Reference</strong>
                                         <span className="hint">
                                             {canReference
-                                                ? 'The project reads your note as you. Only you see it there; if the project is shared later, the reference stays private.'
+                                                ? 'Only you see this note in the project’s notes view. It stays out of project chat until you publish a copy.'
                                                 : 'Only for a private project you own — this one has other readers, so a reference would be invisible to them.'}
                                         </span>
                                     </span>
@@ -315,10 +325,15 @@ export function TransferNoteModal({
                             </div>
                         </div>
                     )}
-                    {project && mode === 'copy' && (
+                    {project && (
                         <div className="transfer-audience" data-testid="transfer-audience">
                             <strong>Who will read this:</strong>{' '}
-                            {audienceQ.isPending ? 'checking…' : describeAudience(audience, me.user.id)}
+                            {audienceQ.isError ? (
+                                <span role="alert">
+                                    Could not check the audience.{' '}
+                                    <button type="button" className="btn" onClick={() => void audienceQ.refetch()}>Retry</button>
+                                </span>
+                            ) : !audienceReady ? 'checking…' : describeAudience(audience, me.user.id)}
                         </div>
                     )}
                 </>
@@ -373,7 +388,7 @@ export function TransferNoteModal({
                     type="button"
                     className="btn primary"
                     data-testid="transfer-submit"
-                    disabled={busy || (target === 'project' ? !project : !discussion)}
+                    disabled={busy || (target === 'project' ? !project || !audienceReady : !discussion)}
                     onClick={() => void submit()}
                 >
                     {busy

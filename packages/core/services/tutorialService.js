@@ -94,6 +94,26 @@ async function loadProgress(accountId, tutorialId, version, handle = db) {
     return row ? rowToProgress(row) : emptyProgress(accountId, tutorialId, version);
 }
 
+// Lock even a first event/reset: INSERT ... DO NOTHING waits for any competing
+// creator, then FOR UPDATE serializes the read/validate/write on PostgreSQL.
+// SQLite transactions already serialize writers with BEGIN IMMEDIATE.
+async function lockProgress(accountId, tutorialId, version, handle) {
+    await handle.run(
+        `INSERT INTO tutorial_progress (accountId, tutorialId, version)
+         VALUES (@accountId, @tutorialId, @version)
+         ON CONFLICT(accountId, tutorialId, version) DO NOTHING`,
+        { accountId, tutorialId, version }
+    );
+    if (db.engine === 'postgres') {
+        await handle.get(
+            `SELECT accountId FROM tutorial_progress
+             WHERE accountId = @accountId AND tutorialId = @tutorialId AND version = @version FOR UPDATE`,
+            { accountId, tutorialId, version }
+        );
+    }
+    return loadProgress(accountId, tutorialId, version, handle);
+}
+
 async function saveProgress(progress, handle = db) {
     await handle.run(
         `INSERT INTO tutorial_progress (
@@ -238,7 +258,8 @@ async function applyEvent({
     }
 
     return db.transaction(async (tx) => {
-        // Re-check inside the transaction for races.
+        const current = await lockProgress(accountId, tutorialId, version, tx);
+        // Re-check after acquiring the lock for simultaneous retries.
         const raced = await findEvent(accountId, tutorialId, version, eventId, tx);
         if (raced) {
             if (raced.resultJson) {
@@ -246,8 +267,6 @@ async function applyEvent({
             }
             return loadProgress(accountId, tutorialId, version, tx);
         }
-
-        const current = await loadProgress(accountId, tutorialId, version, tx);
 
         if (Number(generation) !== Number(current.generation)) {
             throw new TutorialError(409, 'STALE_GENERATION',
@@ -348,7 +367,7 @@ async function resetOne({ accountId, tutorialId, caps = {} }) {
     }
     const version = tutorial.version;
     return db.transaction(async (tx) => {
-        const current = await loadProgress(accountId, tutorialId, version, tx);
+        const current = await lockProgress(accountId, tutorialId, version, tx);
         const cleared = {
             ...emptyProgress(accountId, tutorialId, version),
             generation: Number(current.generation) + 1,
@@ -361,11 +380,12 @@ async function resetOne({ accountId, tutorialId, caps = {} }) {
 async function resetAll({ accountId, caps = {} }) {
     if (!accountId) throw new TutorialError(401, 'UNAUTHENTICATED', 'Sign in required.');
     const cat = catalog();
-    const permitted = (cat.TUTORIALS || []).filter((t) => isTutorialPermitted(t, caps));
+    const permitted = (cat.TUTORIALS || []).filter((t) => isTutorialPermitted(t, caps))
+        .sort((a, b) => a.id.localeCompare(b.id));
     const results = [];
     await db.transaction(async (tx) => {
         for (const tutorial of permitted) {
-            const current = await loadProgress(accountId, tutorial.id, tutorial.version, tx);
+            const current = await lockProgress(accountId, tutorial.id, tutorial.version, tx);
             const cleared = {
                 ...emptyProgress(accountId, tutorial.id, tutorial.version),
                 generation: Number(current.generation) + 1,

@@ -469,3 +469,70 @@ describe('side-effect boundary', () => {
         expect(applyBlock).not.toMatch(/knowledgeGraphService|createUserNote|keepExample/);
     });
 });
+
+
+describe('concurrent tutorial writes (both database engines)', () => {
+    test('simultaneous first events have one winner, while identical retries share a receipt', async () => {
+        const args = { accountId: ACCOUNT, tutorialId: 'home.orientation', generation: 1, expectedRevision: 0, action: 'start', caps: caps() };
+        const writes = await Promise.allSettled([
+            tutorials.applyEvent({ ...args, eventId: 'first-a' }),
+            tutorials.applyEvent({ ...args, eventId: 'first-b' })
+        ]);
+        expect(writes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+        expect(writes.find(r => r.status === 'rejected').reason.code).toBe('STALE_REVISION');
+        const retries = await Promise.all([
+            tutorials.applyEvent({ ...args, accountId: OTHER, eventId: 'same' }),
+            tutorials.applyEvent({ ...args, accountId: OTHER, eventId: 'same' })
+        ]);
+        expect(retries[0]).toEqual(retries[1]);
+        expect(retries[0].revision).toBe(1);
+    });
+
+    test('a reset waits for an in-flight advance and its generation cannot be resurrected', async () => {
+        await event('home.orientation', 'start');
+        let reached;
+        let release;
+        const waiting = new Promise(resolve => { reached = resolve; });
+        const resume = new Promise(resolve => { release = resolve; });
+        let held = false;
+        // Hold the event after its read, before its write. A competing reset
+        // must wait for the same lock, rather than commit and get overwritten.
+        const txOriginal = db.transaction.bind(db);
+        const txSpy = jest.spyOn(db, 'transaction').mockImplementation(fn => txOriginal(tx => fn({
+            ...tx,
+            get: async (sql, params) => {
+                const result = await tx.get(sql, params);
+                if (!held && sql.includes('SELECT * FROM tutorial_progress')) {
+                    held = true;
+                    reached();
+                    await resume;
+                }
+                return result;
+            }
+        })));
+        try {
+            const advance = event('home.orientation', 'complete_step', { stepId: 'greet' });
+            await waiting;
+            let resetFinished = false;
+            const reset = tutorials.resetOne({ accountId: ACCOUNT, tutorialId: 'home.orientation', caps: caps() })
+                .then(result => { resetFinished = true; return result; });
+            await new Promise(resolve => setTimeout(resolve, 75));
+            expect(resetFinished).toBe(false);
+            release();
+            await advance;
+            expect((await reset).generation).toBe(2);
+            const final = await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'));
+            expect(final).toMatchObject({ generation: 2, revision: 0, status: 'not_started', completedStepIds: [] });
+            await expect(event('home.orientation', 'complete_step', { stepId: 'greet', generation: 1, expectedRevision: 1 }))
+                .rejects.toMatchObject({ code: 'STALE_GENERATION' });
+        } finally { release(); txSpy.mockRestore(); }
+    });
+
+    test('concurrent reset-one and reset-all each increment the generation', async () => {
+        await Promise.all([
+            tutorials.resetOne({ accountId: ACCOUNT, tutorialId: 'home.orientation', caps: caps() }),
+            tutorials.resetAll({ accountId: ACCOUNT, caps: caps() })
+        ]);
+        expect((await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'))).generation).toBe(3);
+    });
+});

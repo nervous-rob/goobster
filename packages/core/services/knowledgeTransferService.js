@@ -270,10 +270,27 @@ class KnowledgeTransferService {
      * @param {Object} params - { userId, nodeId, project, owner?, mode }
      */
     async addNoteToProject({ userId, nodeId, project, owner = null, mode = 'copy' } = {}) {
+        const result = await db.transaction(() => this._addNoteToProject({ userId, nodeId, project, owner, mode }));
+        if (result.mode === 'copy') {
+            try {
+                require('./eventBusService').publish('project-changed', {
+                    userId, projectId: result.project.id, slug: result.project.slug, kind: 'knowledge'
+                });
+            } catch { /* cosmetic */ }
+        }
+        return result;
+    }
+
+    async _addNoteToProject({ userId, nodeId, project, owner, mode }) {
         const cleanMode = mode === 'reference' ? 'reference' : 'copy';
-        const note = await this._requirePersonalNote(userId, nodeId);
         const projectService = require('./projectService');
         const row = await projectService.resolveProject({ userId, project, owner });
+        // Serialize transfers into this project, including first publication.
+        // SQLite's write transaction already provides this exclusion.
+        if (db.engine === 'postgres') {
+            await db.get('SELECT id FROM observatory_projects WHERE id = @id FOR UPDATE', { id: row.id });
+        }
+        const note = await this._requirePersonalNote(userId, nodeId);
         const audience = await this.projectAudience(row);
 
         if (cleanMode === 'reference') {
@@ -321,7 +338,12 @@ class KnowledgeTransferService {
             throw new KnowledgeTransferError(409, 'CONFLICT',
                 `The project already has a note called "${note.label}".`);
         }
-        const upserted = await knowledgeGraphService.upsertNode({
+        const upserted = priorCopy
+            ? await knowledgeGraphService.updateScopedNote({
+                ...coords, nodeId: priorCopy.copyNodeId, label: note.label,
+                content: note.content, type: note.type, tags: note.tags
+            })
+            : await knowledgeGraphService.upsertNode({
             guildId: coords.guildId,
             scopeKey: coords.scopeKey,
             subjectType: 'USER',
@@ -365,11 +387,6 @@ class KnowledgeTransferService {
                 }
             );
         }
-        try {
-            require('./eventBusService').publish('project-changed', {
-                userId, projectId: row.id, slug: row.slug, kind: 'knowledge'
-            });
-        } catch { /* cosmetic */ }
         const copy = await db.get('SELECT id, type, label, content, source, curation, updatedAt FROM kg_nodes WHERE id = @id', { id: upserted.id });
         return {
             mode: 'copy',
@@ -383,41 +400,72 @@ class KnowledgeTransferService {
     /**
      * Post a note into a discussion the caller owns or joined, as a plain
      * transcript message from them. No persona turn runs.
-     * @param {Object} params - { userId, userName?, nodeId, conversationId }
+     * @param {Object} params - { userId, userName?, nodeId, conversationId, requestId }
      */
-    async useNoteInDiscussion({ userId, userName = null, nodeId, conversationId } = {}) {
-        const note = await this._requirePersonalNote(userId, nodeId);
+    async useNoteInDiscussion({ userId, userName = null, nodeId, conversationId, requestId } = {}) {
+        if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(requestId)) {
+            throw new KnowledgeTransferError(400, 'BAD_REQUEST', 'A valid requestId is required.');
+        }
         const parlorService = require('./parlorService');
-        const conversation = await parlorService.requireConversationAccess(userId, conversationId);
-        const audience = await this.discussionAudience(conversation);
-        const message = await parlorService.postMessage({
-            userId,
-            userName,
-            conversationId: conversation.id,
-            content: this.formatNoteMessage(note)
-        });
-        const transferId = await db.insert(
-            `INSERT INTO knowledge_transfers
-                (userId, sourceKind, sourceNodeId, sourceLabel, targetKind, targetId, mode, copyMessageId, audienceJson)
-             VALUES
-                (@userId, 'note', @nodeId, @sourceLabel, 'discussion', @conversationId, 'copy', @messageId, @audienceJson)`,
-            {
-                userId, nodeId: note.id, sourceLabel: note.label, conversationId: conversation.id,
-                messageId: message.id, audienceJson: JSON.stringify(audience)
+        let posted = false;
+        const result = await db.transaction(async () => {
+            // The durable receipt and message commit together. An account-scoped
+            // request lock also covers concurrent retries before a receipt exists.
+            if (db.engine === 'postgres') {
+                await db.rawQuery('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+                    [`knowledge-transfer:${userId}:${requestId}`]);
             }
-        );
-        return {
-            mode: 'copy',
-            discussion: {
-                id: conversation.id,
-                title: conversation.title || null,
-                ownerId: conversation.ownerId,
-                projectId: conversation.projectId || null
-            },
-            audience,
-            message,
-            transfer: await this._transferById(transferId)
-        };
+            const prior = await db.get(
+                'SELECT * FROM knowledge_transfers WHERE userId = @userId AND requestId = @requestId',
+                { userId, requestId }
+            );
+            const note = prior ? null : await this._requirePersonalNote(userId, nodeId);
+            const conversation = await parlorService.requireConversationAccess(userId, conversationId);
+            let message;
+            let transfer;
+            if (prior) {
+                if (prior.targetKind !== 'discussion' || prior.targetId !== Number(conversationId)
+                    || prior.requestSourceNodeId !== Number(nodeId)) {
+                    throw new KnowledgeTransferError(409, 'REQUEST_CONFLICT', 'This requestId was used for another transfer.');
+                }
+                message = await db.get(
+                    'SELECT id, role, content, userId, userName, createdAt FROM parlor_messages WHERE id = @id AND conversationId = @conversationId',
+                    { id: prior.copyMessageId, conversationId: conversation.id }
+                );
+                if (!message) throw new KnowledgeTransferError(410, 'MESSAGE_REMOVED', 'The previously posted message is no longer available.');
+                transfer = await this._transferById(prior.id);
+            } else {
+                const audience = await this.discussionAudience(conversation);
+                message = await parlorService.postMessage({
+                    userId, userName, conversationId: conversation.id,
+                    content: this.formatNoteMessage(note), notify: false
+                });
+                const transferId = await db.insert(
+                    `INSERT INTO knowledge_transfers
+                        (userId, sourceKind, sourceNodeId, sourceLabel, targetKind, targetId, mode,
+                         copyMessageId, audienceJson, requestId, requestSourceNodeId)
+                     VALUES
+                        (@userId, 'note', @nodeId, @sourceLabel, 'discussion', @conversationId, 'copy',
+                         @messageId, @audienceJson, @requestId, @nodeId)`,
+                    {
+                        userId, nodeId: note.id, sourceLabel: note.label, conversationId: conversation.id,
+                        messageId: message.id, audienceJson: JSON.stringify(audience), requestId
+                    }
+                );
+                transfer = await this._transferById(transferId);
+                posted = true;
+            }
+            return {
+                mode: 'copy',
+                discussion: {
+                    id: conversation.id, title: conversation.title || null,
+                    ownerId: conversation.ownerId, projectId: conversation.projectId || null
+                },
+                audience: transfer.audience, message, transfer
+            };
+        });
+        if (posted) await parlorService._notifyTurn(result.discussion.id, userId);
+        return result;
     }
 
     /** The Markdown a shared note becomes in a transcript. */
@@ -604,23 +652,6 @@ class KnowledgeTransferService {
             { nodeId: Number(nodeId) }
         );
         return row?.userId || null;
-    }
-
-    /**
-     * The project-chat manifest's view of the actor's own references: a
-     * bounded plain-text block, or '' when there are none. Read as the
-     * actor, so nobody else's private notes can appear.
-     */
-    async describeReferencesForManifest({ userId, projectId, limit = 8 } = {}) {
-        const refs = await this.listProjectReferences({ readerId: userId, projectId });
-        if (!refs.length) return '';
-        const shown = refs.slice(0, Math.max(1, Number(limit) || 8));
-        const lines = shown.map(ref => {
-            const body = String(ref.content || '').replace(/\s+/g, ' ').trim();
-            return `- ${ref.label}${body ? `: ${body.slice(0, 200)}${body.length > 200 ? '…' : ''}` : ''}`;
-        });
-        if (refs.length > shown.length) lines.push(`… +${refs.length - shown.length} more`);
-        return `Referenced from your private notes (visible only to you):\n${lines.join('\n')}`;
     }
 
     // --- Shapes and privacy --------------------------------------------------

@@ -1515,6 +1515,11 @@ ${excerpt}`;
         guildId, userId, nodeId, label, content, type, tags
     } = {}) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        return this.updateScopedNote({ guildId, scopeKey, nodeId, label, content, type, tags });
+    }
+
+    /** Internal scoped edit. Callers must authorize access to the destination. */
+    async updateScopedNote({ guildId, scopeKey, nodeId, label, content, type, tags } = {}) {
         const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
         if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return null;
 

@@ -1042,7 +1042,7 @@ describe('usage and retention routes', () => {
         const cookie = await login();
         const res = await request({ reqPath: '/api/app/usage?days=7', headers: { Cookie: cookie } });
         expect(res.status).toBe(200);
-        expect(res.json.totals).toEqual({ calls: 1, inputTokens: 100, outputTokens: 50 });
+        expect(res.json.totals).toEqual({ calls: 1, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 });
         expect(res.json.byModel[0].model).toBe('gpt-test');
         await db.run('DELETE FROM usage_log');
     });

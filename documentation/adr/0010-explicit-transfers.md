@@ -53,6 +53,7 @@ and **to whom**:
 | `targetKind`, `targetId` | `note` (the created node), `project` (`observatory_projects.id`) or `discussion` (`parlor_conversations.id`). |
 | `mode` | `reference` or `copy`. |
 | `copyNodeId` | The node created in the target scope (`ON DELETE SET NULL`); for `chat_message → note` this is the note itself. |
+| `requestId`, `requestSourceNodeId` | Discussion retry receipt, unique per user; source identity remains after deletion so a retry cannot post again. |
 | `copyMessageId` | The `parlor_messages` row a discussion copy became. |
 | `audienceJson` | Who could read the destination at transfer time: `{ kind, ownerId, memberIds, shared }`. |
 
@@ -87,7 +88,7 @@ audience the project has **now**, and enforced server-side:
 - **Reference** (`mode = 'reference'`) is allowed only when the caller owns
   the project **and** it is private: no accepted member and no share link.
   Nothing is written to the `PROJECT:` scope. The project's Knowledge view
-  and the project-chat manifest resolve the reference **at read time**: the
+  resolves the reference **at read time**: the
   source node must still exist in the reader's own `USER:` scope, and the
   reader must be the actor who created the reference. Any other reader -
   a collaborator invited later, a share-link visitor, an expedition, the
@@ -96,7 +97,10 @@ audience the project has **now**, and enforced server-side:
   reference under *Referenced from your private notes* (badge *reference ·
   only you*) with **Stop referencing** beside it and points at Knowledge →
   Notes → **Add to project… → Publish a copy** for the day others should
-  read it; collaborators see nothing of it, not even a count.
+  read it; collaborators see nothing of it, not even a count. References are
+  excluded from project-chat manifests, including while the project is private:
+  chat text and replies can later be consolidated into shared project knowledge.
+  Publish a copy explicitly before using a note in project chat.
 - **Copy** (`mode = 'copy'`, the UI's *Publish a copy*) is the only mode
   for a project with members or a share link, and the only mode for a
   discussion. The dialog shows exactly what will be shared (title, text,
@@ -209,3 +213,16 @@ because the invitee cannot open the project until they accept.
   discussion has no scope of its own; personas own `PARLOR:` scopes and a
   shared persona receives only what was published to that discussion. The
   transcript is what every member and persona reads, so that is the copy.
+
+
+### Retry and concurrent-write guarantees
+
+Discussion transfers require a client-generated `requestId` (1–128 letters,
+digits, `_` or `-`). Retrying the same note and discussion with that ID returns
+the original message; an intentional new post uses a new ID. The message and
+receipt commit atomically. Replays still require current discussion access,
+and reusing the ID for another source or destination returns `REQUEST_CONFLICT`.
+The dialog retains the ID after a failed response. Project publication runs in
+a transaction and edits an existing copy by ID, so a source rename or cleared
+body cannot leave an orphaned copy. Audience lookup must succeed before the
+dialog enables publication; failed lookups offer Retry.
