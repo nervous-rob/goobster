@@ -104,6 +104,8 @@ const MAX_BUSY_RETRIES = 60;
 /** Render invocations are bounded like everything else. */
 const RENDER_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_NAME_LENGTH = 60;
+/** The project's goal (observatory_projects.description), a sentence or two. */
+const MAX_DESCRIPTION_LENGTH = 600;
 const SLUG_MAX_LENGTH = 48;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -293,9 +295,29 @@ class ObservatoryService {
         this.runnerId = makeRunnerId();
     }
 
-    /** The Observatory needs both its own switch AND the sandbox it rides on. */
-    get enabled() {
+    /**
+     * Execution: starting or resuming a run, rendering, fetching data, the
+     * agent command turn, trigger dispatch. Needs both the Observatory's own
+     * switch AND the sandbox it rides on. `enabled` is the historical name
+     * for the same gate (the tool registry and the agent tool read it).
+     */
+    get executionEnabled() {
         return this.config.enabled === true && this.sandbox.enabled === true;
+    }
+
+    get enabled() {
+        return this.executionEnabled;
+    }
+
+    /**
+     * Organization: create, list, open and delete projects; members, files,
+     * assets, plans, knowledge, automation definitions, run history,
+     * dashboards, share links and the project parlor. Independent of
+     * execution - ADR 0009. `projectsEnabled` is missing from older
+     * config objects (tests build their own), so absence means on.
+     */
+    get organizationEnabled() {
+        return this.config.projectsEnabled !== false;
     }
 
     // --- Lifecycle -----------------------------------------------------------
@@ -378,9 +400,22 @@ class ObservatoryService {
         }
     }
 
+    /** Guard for anything that spends compute (run, resume, render, fetch, command). */
     async _requireEnabled() {
-        if (!this.enabled) {
-            throw new ObservatoryError(403, 'DISABLED', 'The Observatory is disabled on this server.');
+        if (!this.organizationEnabled) {
+            throw new ObservatoryError(403, 'PROJECTS_DISABLED', 'Projects are turned off on this server.');
+        }
+        if (!this.executionEnabled) {
+            throw new ObservatoryError(403, 'DISABLED',
+                'Code execution is off on this server, so this project can be organized but not run.');
+        }
+        await this._ensureReaped();
+    }
+
+    /** Guard for organizing a project: no execution check, same orphan reap. */
+    async _requireOrganization() {
+        if (!this.organizationEnabled) {
+            throw new ObservatoryError(403, 'PROJECTS_DISABLED', 'Projects are turned off on this server.');
         }
         await this._ensureReaped();
     }
@@ -517,16 +552,20 @@ class ObservatoryService {
     }
 
     /**
-     * Create a named project with a durable workspace.
-     * @param {Object} params - { userId, name }
-     * @returns {{ slug: string, name: string, createdAt: string }}
+     * Create a named project with a durable workspace. An empty
+     * organizational container needs no model call (ADR 0009): the portal's
+     * creation form posts here directly. `description` is the project's
+     * goal in a sentence or two, shown on the Overview.
+     * @param {Object} params - { userId, name, description? }
+     * @returns {{ slug: string, name: string, description: string|null, createdAt: string }}
      */
-    async createProject({ userId, name }) {
-        await this._requireEnabled();
+    async createProject({ userId, name, description = null }) {
+        await this._requireOrganization();
         const cleanName = String(name ?? '').trim().slice(0, MAX_NAME_LENGTH);
         if (!cleanName) {
             throw new ObservatoryError(400, 'BAD_NAME', 'A project needs a name.');
         }
+        const cleanDescription = String(description ?? '').trim().slice(0, MAX_DESCRIPTION_LENGTH) || null;
         const slug = this._slugify(cleanName);
         const existing = await db.get(
             `SELECT COUNT(*) AS c FROM observatory_projects
@@ -553,12 +592,12 @@ class ObservatoryService {
         fs.chmodSync(dir, 0o700);
 
         const row = await db.get(
-            `INSERT INTO observatory_projects (userId, slug, name)
-             VALUES (@userId, @slug, @name)
-             RETURNING id, slug, name, userId, createdAt`,
-            { userId, slug, name: cleanName }
+            `INSERT INTO observatory_projects (userId, slug, name, description)
+             VALUES (@userId, @slug, @name, @description)
+             RETURNING id, slug, name, description, userId, createdAt`,
+            { userId, slug, name: cleanName, description: cleanDescription }
         );
-        return row;
+        return { ...row, ownerId: row.userId };
     }
 
     /**
@@ -614,9 +653,9 @@ class ObservatoryService {
      * @param {string} userId
      */
     async listProjects(userId) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const rows = await db.all(
-            `SELECT p.id, p.slug, p.name, p.userId AS ownerId, p.createdAt, p.updatedAt,
+            `SELECT p.id, p.slug, p.name, p.description, p.userId AS ownerId, p.createdAt, p.updatedAt,
                     CASE WHEN p.userId = @userId THEN 'owner' ELSE 'collaborator' END AS role,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
@@ -637,6 +676,7 @@ class ObservatoryService {
             id: row.id,
             slug: row.slug,
             name: row.name,
+            description: row.description || null,
             ownerId: row.ownerId,
             ownerName: names.get(row.ownerId) || null,
             role: row.role,
@@ -656,7 +696,7 @@ class ObservatoryService {
      * @returns {{ id:number, slug:string, name:string, dir:string, ownerId:string, role:string }}
      */
     async resolveProject({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         return await this.resolveProjectForActor({ userId, project, owner });
     }
 
@@ -780,7 +820,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, owner?, gateway?, client? }
      */
     async deleteProject({ userId, project, owner = null, gateway = null, client = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = this._assertOwner(await this._requireProject(userId, project, owner));
         const running = await db.get(
             `SELECT COUNT(*) AS c FROM observatory_jobs
@@ -848,7 +888,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, path }
      */
     async listFiles({ userId, project, path: relPath = undefined, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const sizeMb = Number(this._dirSizeMb(row.dir).toFixed(2));
         const quotaMb = this.config.maxProjectMb;
@@ -964,7 +1004,7 @@ class ObservatoryService {
      * @returns {{ path: string, name: string }}
      */
     async resolveFile({ userId, project, relPath, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const resolved = path.resolve(row.dir, String(relPath || ''));
         if (resolved !== row.dir && !resolved.startsWith(row.dir + path.sep)) {
@@ -1010,7 +1050,7 @@ class ObservatoryService {
      * @returns {{ relativePath: string, name: string, mime: string, bytes: Buffer, size: number }}
      */
     async readWorkspaceFile({ userId, slug, relativePath, purpose = 'applet', owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath, { mustExist: true }
@@ -1073,7 +1113,7 @@ class ObservatoryService {
     async readWorkspaceText({
         userId, slug, relativePath, offset = 1, limit, owner = null
     }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath, { mustExist: true }
@@ -1135,7 +1175,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, slug, relativePath, bytes }
      */
     async writeWorkspaceFile({ userId, slug, relativePath, bytes, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath
@@ -1193,7 +1233,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, slug, relativePath }
      */
     async deleteWorkspaceFile({ userId, slug, relativePath, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
         const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
             row.dir, relativePath, { mustExist: true }
@@ -1252,10 +1292,10 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      */
     async getProjectDetail({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const registry = await db.get(
-            `SELECT p.id, p.slug, p.name, p.userId AS ownerId, p.createdAt, p.updatedAt,
+            `SELECT p.id, p.slug, p.name, p.description, p.userId AS ownerId, p.createdAt, p.updatedAt,
                     (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
@@ -1271,6 +1311,7 @@ class ObservatoryService {
                 id: registry.id,
                 slug: registry.slug,
                 name: registry.name,
+                description: registry.description || null,
                 ownerId: registry.ownerId,
                 ownerName: await this._displayName(registry.ownerId),
                 role: row.role,
@@ -1569,7 +1610,7 @@ class ObservatoryService {
      * @returns {Promise<{ ok: boolean, project: object, findings: object[], text: string }>}
      */
     async auditSetup({ userId, project, owner = null, _prefetched = null, scanScripts = true } = {}) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const projectAssetService = require('./projectAssetService');
         const detail = _prefetched?.detail
@@ -1648,7 +1689,7 @@ class ObservatoryService {
      * @returns {Promise<{ text: string, results: object[] }>}
      */
     async auditAllSetups({ userId } = {}) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const projects = await this.listProjects(userId);
         const results = [];
         for (const p of projects.slice(0, 40)) {
@@ -1737,7 +1778,7 @@ class ObservatoryService {
     async noteKnowledge({
         userId, project, owner = null, label, content = '', tags = [], edges = []
     } = {}) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const coords = this.knowledgeCoords(row);
         const title = String(label || '').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -1785,7 +1826,7 @@ class ObservatoryService {
 
     /** Scoped retrieval for the project graph. */
     async recallKnowledge({ userId, project, owner = null, query = '', limit = 10 } = {}) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const coords = this.knowledgeCoords(row);
         return knowledgeGraphService.describeForPrompt({
@@ -1798,7 +1839,7 @@ class ObservatoryService {
 
     /** Portal Knowledge-tab graph (Spitball Map shape). */
     async getKnowledgeGraph({ userId, project, owner = null } = {}) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const coords = this.knowledgeCoords(row);
         const view = await knowledgeGraphService.getScopeGraphView({
@@ -1828,7 +1869,7 @@ class ObservatoryService {
     }
 
     async listKnowledgeNotes({ userId, project, owner = null, q = null, limit = 100 } = {}) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const coords = this.knowledgeCoords(row);
         const params = {
@@ -1879,7 +1920,7 @@ class ObservatoryService {
      * @returns {{ path: string, name: string, sizeBytes: number, generatedAt: string }}
      */
     async generateDashboard({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const registry = await db.get(
             `SELECT slug, name, createdAt, updatedAt FROM observatory_projects WHERE id = @id`,
@@ -1981,7 +2022,7 @@ class ObservatoryService {
      * @returns {{ html: string, path: string }}
      */
     async getDashboard({ userId, project, force = false, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         if (force || await this._dashboardStale(row.ownerId, row)) {
             await this.generateDashboard({
@@ -2002,7 +2043,7 @@ class ObservatoryService {
      * @returns {{ token: string, url: string, createdAt: string }}
      */
     async createShareLink({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = this._assertOwner(await this._requireProject(userId, project, owner));
         const existing = await db.get(
             'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
@@ -2026,7 +2067,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      */
     async getShareLink({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this._requireProject(userId, project, owner);
         const link = await db.get(
             'SELECT token, createdAt FROM observatory_share_links WHERE projectId = @projectId',
@@ -2041,7 +2082,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, project }
      */
     async revokeShareLink({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = this._assertOwner(await this._requireProject(userId, project, owner));
         const result = await db.run(
             'DELETE FROM observatory_share_links WHERE projectId = @projectId AND userId = @ownerId',
@@ -2060,7 +2101,7 @@ class ObservatoryService {
      * @returns {{ html: string, name: string }}
      */
     async getSharedDashboard(token) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const clean = String(token || '').trim().toLowerCase();
         if (!SHARE_TOKEN_PATTERN.test(clean)) {
             throw new ObservatoryError(404, 'NOT_FOUND', 'This share link does not exist (or was revoked).');
@@ -2993,7 +3034,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, jobId }
      */
     async getJob({ userId, jobId }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const job = await db.get(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
                     j.stdoutTail, j.stderrTail, j.checkpointAt, j.renderPath, j.error,
@@ -3034,7 +3075,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, project, includeTails }
      */
     async listJobs({ userId, project = null, includeTails = false, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const projectRow = project ? await this._requireProject(userId, project, owner) : null;
         // Provenance (startedBy / triggerId / parentJobId), the failure code,
         // and the per-output contract verdict ride every listing so the
@@ -3074,7 +3115,7 @@ class ObservatoryService {
      * @param {Object} params - { userId, jobId }
      */
     async cancel({ userId, jobId }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const job = await this.getJob({ userId, jobId });
         if (job.status !== 'RUNNING') {
             throw new ObservatoryError(409, 'NOT_RUNNING', `Job #${job.id} is ${job.status}, not running.`);
@@ -3221,7 +3262,7 @@ class ObservatoryService {
      * resolve access and hand over the facts.
      */
     async getProjectParlor({ userId, project, owner = null }) {
-        await this._requireEnabled();
+        await this._requireOrganization();
         const row = await this.resolveProjectForActor({ userId, project, owner });
         const members = await db.all(
             'SELECT userId, userName FROM project_members WHERE projectId = @id',

@@ -10,12 +10,27 @@ const { backgroundJobHint } = require('../../utils/projectSetupContract');
 function mountProjects(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, projectOwner } = h;
 
+    /** May this server run project code? (`enabled` is the older name of the same gate.) */
+    const executionOn = () => (ctx.observatory.executionEnabled ?? ctx.observatory.enabled) === true;
+
     // --- The Observatory (persistent simulation projects) ---------------------
 
     // Project list with sizes and job counts (the pane's overview)
     app.get('/api/app/observatory/projects', requireAuth, chatRoute(async (req) => ({
         projects: await ctx.observatory.listProjects(req.webUser.userId)
     })));
+
+    // Direct creation (ADR 0009): an empty organizational container with a
+    // name and an optional goal, through the same authorized service as the
+    // tool - no model call. Richer setup still goes through ✨ Command.
+    app.post('/api/app/projects', requireAuth, chatRoute(async (req) => {
+        const created = await ctx.observatory.createProject({
+            userId: req.webUser.userId,
+            name: req.body?.name,
+            description: req.body?.goal ?? req.body?.description ?? null
+        });
+        return { project: created };
+    }));
 
     app.get('/api/app/projects/invites', requireAuth, chatRoute(async (req) => ({
         invites: await ctx.observatory.listInvites(req.webUser.userId)
@@ -101,8 +116,11 @@ function mountProjects(app, ctx, h) {
     async function handleProjectChat(req, res, { requiredSlug = null } = {}) {
         let turn;
         try {
-            if (ctx.observatory.enabled !== true) {
-                sendError(res, 403, 'DISABLED', 'The Observatory is disabled on this server.');
+            if (!executionOn()) {
+                // Organizing a project never needs this; the command turn
+                // exists to drive the observatory tool, which runs code.
+                sendError(res, 403, 'DISABLED',
+                    'Code execution is off on this server, so Goobster cannot run commands in this project.');
                 return;
             }
             const userId = req.webUser.userId;
@@ -167,8 +185,8 @@ function mountProjects(app, ctx, h) {
         handleProjectChat(req, res, { requiredSlug: req.params.slug })
     );
     app.get('/api/app/projects/:slug/conversation', requireAuth, chatRoute(async (req) => {
-        if (ctx.observatory.enabled !== true) {
-            const err = new Error('The Observatory is disabled on this server.');
+        if (!executionOn()) {
+            const err = new Error('Code execution is off on this server, so this project has no command conversation.');
             err.status = 403;
             err.code = 'DISABLED';
             throw err;
