@@ -15,6 +15,7 @@ import { queryClient } from './lib/query';
 import { SessionProvider, useSession } from './hooks/useSession';
 import { ToastProvider } from './hooks/useToast';
 import { ConfirmProvider } from './hooks/useConfirm';
+import { TutorialProvider } from './tutorials/TutorialProvider';
 import { AppShell } from './shell/AppShell';
 import { Login } from './shell/Login';
 import { InvitePage } from './shell/InvitePage';
@@ -70,7 +71,9 @@ function Providers({ children }: { children: ReactNode }) {
         <QueryClientProvider client={queryClient}>
             <ToastProvider>
                 <ConfirmProvider>
-                    <SessionProvider>{children}</SessionProvider>
+                    <SessionProvider>
+                        <TutorialProvider>{children}</TutorialProvider>
+                    </SessionProvider>
                 </ConfirmProvider>
             </ToastProvider>
         </QueryClientProvider>

@@ -35,6 +35,7 @@ const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
 const { mountSettings } = require('./routes/settings');
 const { mountInbox } = require('./routes/inbox');
+const { mountTutorials } = require('./routes/tutorials');
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -64,6 +65,7 @@ function createWebAppApp(ctx) {
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
     mountInbox(app, ctx, helpers);
+    mountTutorials(app, ctx, helpers);
     // Last: the static client + API 404 fallback
     mountEventsStatic(app, ctx, helpers);
     return app;

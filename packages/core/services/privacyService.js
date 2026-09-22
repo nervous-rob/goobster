@@ -446,6 +446,7 @@ class PrivacyService {
             })),
             inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
             shareLinks: shareLinks?.c || 0,
+            tutorials: await require('./tutorialService').summarizeForUser(userId),
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
             settingsPreferences,
@@ -607,6 +608,15 @@ class PrivacyService {
             // The in-app inbox: delivered results of unattended work
             // (reminders, task output, watch reports, invites, notices).
             counts.inboxItems = await require('./inboxService').forgetUser(userId, db);
+
+            // Guided-tutorial progress, events, preferences and feedback
+            // (Increment F1). Resetting tutorials never touches notes or
+            // tool visibility; forgetting the account erases the rows.
+            const forgottenTutorials = await require('./tutorialService').forgetUser(userId, db);
+            counts.tutorialProgress = forgottenTutorials.progress;
+            counts.tutorialEvents = forgottenTutorials.events;
+            counts.tutorialPreferences = forgottenTutorials.preferences;
+            counts.tutorialFeedback = forgottenTutorials.feedback;
 
             // The whole attention footprint: the ledger of open loops
             // (provenance cascades), every notice and its feedback, the
@@ -1117,6 +1127,18 @@ class PrivacyService {
             )).c,
             inbox_items: (await db.get(
                 'SELECT COUNT(*) AS c FROM inbox_items WHERE userId = @userId', { userId }
+            )).c,
+            tutorial_progress: (await db.get(
+                'SELECT COUNT(*) AS c FROM tutorial_progress WHERE accountId = @userId', { userId }
+            )).c,
+            tutorial_events: (await db.get(
+                'SELECT COUNT(*) AS c FROM tutorial_events WHERE accountId = @userId', { userId }
+            )).c,
+            tutorial_preferences: (await db.get(
+                'SELECT COUNT(*) AS c FROM tutorial_preferences WHERE accountId = @userId', { userId }
+            )).c,
+            tutorial_feedback: (await db.get(
+                'SELECT COUNT(*) AS c FROM tutorial_feedback WHERE accountId = @userId', { userId }
             )).c,
             web_share_links: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_share_links WHERE userId = @userId', { userId }

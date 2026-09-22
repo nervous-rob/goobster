@@ -734,4 +734,47 @@ export type ChatHistoryPreviewResponse = {
     dataClasses: string[];
 };
 
-export type SettingsSectionId = keyof UserSettingsResponse['sections'];
+export type SettingsSectionId = keyof UserSettingsResponse['sections'] | 'tutorials';
+
+export type TutorialStatus =
+    | 'not_started'
+    | 'in_progress'
+    | 'paused'
+    | 'skipped'
+    | 'completed'
+    | 'finished_with_skips';
+
+export type TutorialProgress = {
+    accountId: string;
+    tutorialId: string;
+    version: number;
+    generation: number;
+    revision: number;
+    status: TutorialStatus;
+    currentStepId: string | null;
+    completedStepIds: string[];
+    skippedStepIds: string[];
+    unavailableStepIds: string[];
+    updatedAt: string | null;
+};
+
+export type TutorialCatalogEntry = {
+    id: string;
+    roomId: string;
+    version: number;
+    title: string;
+    hostOnly: boolean;
+    stepIds: string[];
+    steps: Array<{ id: string; anchorId: string | null }>;
+    launchable: boolean;
+};
+
+export type TutorialsResponse = {
+    catalog: TutorialCatalogEntry[];
+    progress: TutorialProgress[];
+    preferences: {
+        autoStart: boolean;
+        orientationOfferedAt: string | null;
+        updatedAt: string | null;
+    };
+};

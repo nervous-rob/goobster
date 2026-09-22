@@ -38,6 +38,7 @@ export const keys = {
     spitballNotesRoot: (scope: string) => ['spitball-notes', scope] as const,
     /** Where one personal note has gone (ADR 0010). */
     noteTransfers: (nodeId: number | string) => ['note-transfers', String(nodeId)] as const,
+    tutorials: ['tutorials'] as const,
     projectAudience: (slug: string, owner?: string | null) => ['project-audience', slug, owner || ''] as const,
     spitballLenses: ['spitball-lenses'] as const,
     mtga: ['mtga'] as const,

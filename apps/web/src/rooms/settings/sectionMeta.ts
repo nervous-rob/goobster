@@ -89,6 +89,14 @@ export const SECTIONS: SectionMeta[] = [
         scope: 'Your account',
         blurb: 'Who you are signed in as, your login name and password, Discord connection, sessions, and signing out.',
         keywords: ['account', 'user', 'discord', 'sign out', 'logout', 'log out', 'session', 'devices', 'password', 'login', 'connect', 'disconnect']
+    },
+    {
+        id: 'tutorials',
+        title: 'Tutorials',
+        icon: '🎓',
+        scope: 'Your account',
+        blurb: 'Resume, replay, or reset each room tour. Auto-start offers orientation once; resetting never changes your notes or tools.',
+        keywords: ['tutorial', 'tour', 'onboarding', 'guide', 'resume', 'replay', 'reset', 'orientation', 'auto-start', 'walkthrough']
     }
 ];
 
@@ -173,7 +181,10 @@ export const FIELDS: FieldMeta[] = [
     { section: 'account', fieldId: 'sign-in-discord', label: 'Discord connection', keywords: ['discord', 'connect', 'disconnect', 'link', 'unlink'] },
     { section: 'account', fieldId: 'sessions', label: 'Active sessions', keywords: ['devices', 'sessions', 'revoke', 'sign out other'] },
     { section: 'account', fieldId: 'clear-device', label: 'Clear device-local data', keywords: ['clear', 'local storage', 'this device'] },
-    { section: 'account', fieldId: 'sign-out', label: 'Sign out', keywords: ['sign out', 'logout', 'log out', 'leave', 'session'] }
+    { section: 'account', fieldId: 'sign-out', label: 'Sign out', keywords: ['sign out', 'logout', 'log out', 'leave', 'session'] },
+    { section: 'tutorials', fieldId: 'tutorial-auto-start', label: 'Auto-start tours', keywords: ['auto-start', 'orientation', 'offer'] },
+    { section: 'tutorials', fieldId: 'tutorial-list', label: 'Tours', keywords: ['resume', 'replay', 'reset', 'tour', 'progress'] },
+    { section: 'tutorials', fieldId: 'tutorial-reset-all', label: 'Reset all tours', keywords: ['reset all', 'clear tutorials'] }
 ];
 
 export type SearchHit = { field: FieldMeta; section: SectionMeta; score: number };

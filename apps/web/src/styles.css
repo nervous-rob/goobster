@@ -1518,3 +1518,43 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 .delete-note-list { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 8px; font-size: 13.5px; }
 .delete-note-choice { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
 .delete-note-choice input { margin-top: 3px; }
+
+/* Guided tutorials (F1): nonmodal guide panel + Settings list */
+.tutorial-panel {
+  position: fixed;
+  z-index: 40;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  max-width: 420px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--surface, #1c1f26);
+  border: 1px solid var(--border, #2a2f3a);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  color: var(--text, #e8eaed);
+}
+.tutorial-panel.is-soft { opacity: 0.96; }
+.tutorial-panel-title { font-weight: 600; font-size: 14.5px; }
+.tutorial-panel-body { display: grid; gap: 4px; }
+.tutorial-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tutorial-row { align-items: flex-start; }
+.tutorial-row-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+@media (min-width: 720px) {
+  .tutorial-panel {
+    left: auto;
+    right: 24px;
+    bottom: 24px;
+    margin-inline: 0;
+  }
+}
+@media (max-width: 719px) {
+  .tutorial-panel {
+    /* In-flow feel on narrow screens: never cover the whole stage */
+    max-width: none;
+  }
+}

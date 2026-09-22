@@ -213,9 +213,12 @@ this contract, had no route at all; it is now an alias of
 
 ## What this contract does not do
 
-It does not add any tutorial behaviour (F). The room ids and tutorial
-ids it fixes are what that package builds on. The saved knowledge versus
-personal memory boundary (E2) is its own contract in
+It does not author guided-tour steps (F2). The room ids and tutorial
+ids it fixes are what the tutorial framework (F1) and the authored tours
+(F2) build on — see [guided_tutorials_spec.md](guided_tutorials_spec.md).
+F1 ships the state machine, API, Settings list and provider shell with
+empty step lists; F2 fills the chat → note → project curriculum. The
+saved knowledge versus personal memory boundary (E2) is its own contract in
 [knowledge_and_memory.md](knowledge_and_memory.md), the project
 organization contract (E3) is [ADR 0009](adr/0009-project-organization-contract.md),
 and the explicit answer → note → project / discussion transfers (E4) are

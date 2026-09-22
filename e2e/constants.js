@@ -76,5 +76,8 @@ module.exports = {
     CONTACT_MORE_1: 'A second watch fired',
     CONTACT_MORE_2: 'A third watch fired',
     CONTACT_BODY: 'The nightly ingest changed while you were away.',
-    CONTACT_INBOX_TITLE: 'The ingest watch fired (+2 more)'
+    CONTACT_INBOX_TITLE: 'The ingest watch fired (+2 more)',
+
+    // Tutorial framework (F1): a note that Reset all must leave alone.
+    TUTORIAL_SIDE_NOTE: 'Tutorial side-effect note'
 };

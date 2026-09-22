@@ -2820,3 +2820,78 @@ CREATE TABLE IF NOT EXISTS inbox_items (
 
 CREATE INDEX IF NOT EXISTS idx_inbox_items_user ON inbox_items(userId, archivedAt, createdAt);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_dedupe ON inbox_items(userId, dedupeKey);
+
+-- ---------------------------------------------------------------------------
+-- Guided tutorials (Increment F1). Per-account, per-tutorial, versioned
+-- progress with optimistic concurrency. Tour events never write user
+-- knowledge, spend a provider call, or send an invitation. Feedback rows
+-- are optional quality signals (F1 stores the table for erasure; the
+-- feedback API arrives with authored tours). Spec:
+-- documentation/guided_tutorials_spec.md.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS tutorial_progress (
+    accountId TEXT NOT NULL,
+    tutorialId TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    generation INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'not_started'
+        CHECK (status IN (
+            'not_started', 'in_progress', 'paused',
+            'skipped', 'completed', 'finished_with_skips'
+        )),
+    currentStepId TEXT,
+    completedStepIdsJson TEXT NOT NULL DEFAULT '[]',
+    skippedStepIdsJson TEXT NOT NULL DEFAULT '[]',
+    unavailableStepIdsJson TEXT NOT NULL DEFAULT '[]',
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (accountId, tutorialId, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tutorial_progress_account
+    ON tutorial_progress(accountId, updatedAt);
+
+CREATE TABLE IF NOT EXISTS tutorial_events (
+    accountId TEXT NOT NULL,
+    tutorialId TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    eventId TEXT NOT NULL,
+    action TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    stepId TEXT,
+    -- Snapshot of progress after the event (idempotent retries return this)
+    resultJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (accountId, tutorialId, version, eventId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tutorial_events_account
+    ON tutorial_events(accountId, createdAt);
+
+CREATE TABLE IF NOT EXISTS tutorial_preferences (
+    accountId TEXT PRIMARY KEY,
+    -- Account-level auto-start; does not rewrite completion history
+    autoStart INTEGER NOT NULL DEFAULT 1 CHECK (autoStart IN (0, 1)),
+    -- First-login Home orientation offered once (Pause/Escape does not re-seize)
+    orientationOfferedAt TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tutorial_feedback (
+    id INTEGER PRIMARY KEY,
+    accountId TEXT NOT NULL,
+    tutorialId TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    stepId TEXT,
+    signal TEXT NOT NULL
+        CHECK (signal IN ('unclear', 'couldnt_find', 'didnt_work')),
+    freeText TEXT,
+    route TEXT,
+    errorCode TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tutorial_feedback_account
+    ON tutorial_feedback(accountId, createdAt);

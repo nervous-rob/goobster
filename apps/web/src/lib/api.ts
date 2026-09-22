@@ -1,4 +1,4 @@
-import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse } from './types';
+import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -124,6 +124,26 @@ export const api = {
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
     settings: () => request<UserSettingsResponse>('/api/app/settings'),
+
+    tutorials: () => request<TutorialsResponse>('/api/app/tutorials'),
+    tutorialEvent: (id: string, body: {
+        eventId: string;
+        generation: number;
+        expectedRevision: number;
+        action: string;
+        stepId?: string | null;
+    }) => request<TutorialProgress>(`/api/app/tutorials/${encodeURIComponent(id)}/events`, { method: 'POST', body }),
+    resetTutorial: (id: string) =>
+        request<TutorialProgress>(`/api/app/tutorials/${encodeURIComponent(id)}/reset`, { method: 'POST' }),
+    resetAllTutorials: () =>
+        request<{ progress: TutorialProgress[] }>('/api/app/tutorials/reset', { method: 'POST' }),
+    patchTutorialPreferences: (autoStart: boolean) =>
+        request<TutorialsResponse['preferences']>('/api/app/tutorial-preferences', {
+            method: 'PATCH',
+            body: { autoStart }
+        }),
+    markOrientationOffered: () =>
+        request<TutorialsResponse['preferences']>('/api/app/tutorials/orientation-offered', { method: 'POST' }),
     updateSettingsSection: (section: string, body: { expectedRevision?: number | null; changes: Record<string, unknown> }) =>
         request<SectionUpdateResponse>(`/api/app/settings/${encodeURIComponent(section)}`, { method: 'PATCH', body }),
     resetSettingsPreview: (section: string) =>
