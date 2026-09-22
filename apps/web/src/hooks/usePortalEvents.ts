@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { applyInvalidation } from '../lib/query';
+import { sessionChanged } from '../lib/browserAccount';
 
 const KINDS = [
     'hello', 'followup-delivered', 'automation-ran', 'agent-run-updated',
@@ -26,6 +27,9 @@ export function usePortalEvents(enabled: boolean): void {
     useEffect(() => {
         if (!enabled) return;
         const source = new EventSource('/api/app/events');
+        const revoked = () => { source.close(); sessionChanged(); };
+        source.addEventListener('session-revoked', revoked);
+        source.onerror = () => { void client.invalidateQueries({ queryKey: ['me'] }); };
         const onEvent = (event: MessageEvent) => {
             let data: { invalidate?: string[] } = {};
             try { data = JSON.parse(event.data); } catch { return; }

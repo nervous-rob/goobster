@@ -1,3 +1,4 @@
+import { accountFetch } from '../lib/browserAccount';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { diffLines } from 'diff';
@@ -15,6 +16,7 @@ type AssetRow = {
     currentVersion?: number | null;
 };
 type AssetDetail = {
+    revision?: number;
     slug: string;
     name: string;
     kind: string;
@@ -74,6 +76,8 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
     const [wsOpen, setWsOpen] = useState<Record<string, boolean>>({ '': true });
     const [editNote, setEditNote] = useState('');
     const [draft, setDraft] = useState<string | null>(null);
+    const [draftRevision, setDraftRevision] = useState<number | undefined>();
+    const [editConflict, setEditConflict] = useState(false);
     const [diffAgainst, setDiffAgainst] = useState<number | ''>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -108,7 +112,9 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
         setDraft(null);
         setEditNote('');
         setDiffAgainst('');
-    }, [currentAsset, assetDetail.data?.version]);
+        setEditConflict(false);
+        setDraftRevision(undefined);
+    }, [currentAsset]);
 
     const openDirs = useMemo(() => {
         const dirs = new Set<string>(['']);
@@ -149,6 +155,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
         if (!detail || draft == null) return;
         try {
             const saved = await api.saveProjectAsset(slug, {
+                expectedRevision: draftRevision,
                 slug: detail.slug,
                 name: detail.name,
                 kind: detail.kind,
@@ -159,9 +166,11 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
             }, ownerId) as { version: number; deduped?: boolean };
             toast(saved.deduped ? 'Already the head — nothing to save.' : `Saved v${saved.version}.`);
             setDraft(null);
+            setEditConflict(false);
             await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
             onChanged();
         } catch (error) {
+            if ((error as { status?: number }).status === 409) setEditConflict(true);
             toast((error as Error).message, true);
         }
     }
@@ -170,7 +179,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
         if (!currentAsset) return;
         if (!await confirm(`Roll "${assetDetail.data?.name || currentAsset}" back to v${version}? History stays.`)) return;
         try {
-            await api.rollbackProjectAsset(slug, currentAsset, version, ownerId);
+            await api.rollbackProjectAsset(slug, currentAsset, version, ownerId, assetDetail.data?.revision);
             toast(`Rolled back to v${version}.`);
             setDiffAgainst('');
             await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
@@ -339,12 +348,23 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                             )}
                             <button type="button" className="btn primary" disabled={draft == null} onClick={() => void saveAsset()}>Save</button>
                         </div>
+                        {editConflict && <div role="alert" className="panel">
+                            <p>Your draft is kept. Reload the current version to compare it below, then merge your changes before saving.</p>
+                            <button className="btn" onClick={async () => {
+                                const fresh = await assetDetail.refetch();
+                                setDraftRevision(fresh.data?.revision);
+                            }}>Reload current version for comparison</button>
+                            <pre>{assetDetail.data.source}</pre>
+                        </div>}
                         <div className="obs-explorer-split">
                             <div className="obs-explorer-editor">
                                 <CodeEditor
                                     value={headSource}
                                     language={assetDetail.data.language}
-                                    onChange={setDraft}
+                                    onChange={value => {
+                                        if (draft === null) setDraftRevision(assetDetail.data?.revision);
+                                        setDraft(value);
+                                    }}
                                 />
                                 <label className="field" style={{ marginTop: 8 }}>
                                     <span className="hint">Version note</span>
@@ -438,7 +458,7 @@ function WorkspaceFileView({
         if (video) { setKind('video'); return; }
         if (!textExt.includes(ext)) { setKind('binary'); return; }
         setKind('text');
-        fetch(url, { credentials: 'same-origin' })
+        accountFetch(url, { credentials: 'same-origin' })
             .then((res) => {
                 if (!res.ok) throw new Error('Could not read that file.');
                 return res.text();

@@ -13,6 +13,8 @@
  */
 
 const COLUMN_MIGRATIONS = [
+    ['kg_nodes', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
+    ['project_assets', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     ['knowledge_transfers', 'requestId', 'requestId TEXT'],
     ['knowledge_transfers', 'requestSourceNodeId', 'requestSourceNodeId INTEGER'],
     ['parlor_conversations', 'modelConfigJson', 'modelConfigJson TEXT'],

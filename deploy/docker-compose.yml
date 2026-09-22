@@ -78,10 +78,15 @@ services:
       dockerfile: deploy/sandbox.Dockerfile
     environment:
       NODE_ENV: production
+      # Account checks and execution leases use the same DB as bot/api.
+      GOOBSTER_DB_URL: postgres://goobster:${POSTGRES_PASSWORD}@postgres:5432/goobster
       GOOBSTER_INTERNAL_TOKEN: ${GOOBSTER_INTERNAL_TOKEN}
       GOOBSTER_SANDBOX_PORT: "3200"
       GOOBSTER_SANDBOX_ENABLED: "1"
       GOOBSTER_SANDBOX_REQUIRE_STRONG_ISOLATION: "1"
+      GOOBSTER_SANDBOX_MAX_CONCURRENT: ${GOOBSTER_SANDBOX_MAX_CONCURRENT:-1}
+      GOOBSTER_SANDBOX_MAX_PER_ACCOUNT: ${GOOBSTER_SANDBOX_MAX_PER_ACCOUNT:-1}
+      GOOBSTER_SANDBOX_RUNS_PER_WINDOW: ${GOOBSTER_SANDBOX_RUNS_PER_WINDOW:-10}
     volumes:
       # Never mount config.json or the full data volume: a snippet must
       # not be able to read bot secrets or another user's project. The
@@ -93,6 +98,9 @@ services:
         volume:
           subpath: sandbox
     networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3200/health"]
       interval: 30s

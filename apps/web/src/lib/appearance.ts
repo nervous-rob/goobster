@@ -1,3 +1,4 @@
+import { conservatoryStorageKey, clearConservatoryStorage } from '../music-lab/lib/storage';
 /**
  * Device-applied appearance prefs (UI02–UI04). Account values live in
  * user_settings; this paints the current document and keeps a local copy
@@ -97,7 +98,7 @@ export function previewDeviceClear(): { keys: string[]; conservatory: boolean } 
     try {
         for (let i = 0; i < localStorage.length; i += 1) {
             const key = localStorage.key(i);
-            if (key && key.startsWith('goobster.conservatory.')) conservatory = true;
+            if (key && key.startsWith(conservatoryStorageKey(''))) conservatory = true;
         }
     } catch { /* private mode */ }
     return { keys, conservatory };
@@ -107,14 +108,5 @@ export function clearDeviceLocalData({ includeConservatory = false } = {}): void
     for (const key of deviceLocalKeys()) {
         try { localStorage.removeItem(key); } catch { /* private mode */ }
     }
-    if (includeConservatory) {
-        try {
-            const doomed: string[] = [];
-            for (let i = 0; i < localStorage.length; i += 1) {
-                const key = localStorage.key(i);
-                if (key && key.startsWith('goobster.conservatory.')) doomed.push(key);
-            }
-            for (const key of doomed) localStorage.removeItem(key);
-        } catch { /* private mode */ }
-    }
+    if (includeConservatory) clearConservatoryStorage();
 }

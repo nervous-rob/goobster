@@ -3,6 +3,7 @@
  */
 
 const { SSE_HEARTBEAT_MS, sendError } = require('./appHelpers');
+const { createSseChannel } = require('./liveAuthorization');
 
 /**
  * Stream one web chat turn back as Server-Sent Events (the event
@@ -10,28 +11,14 @@ const { SSE_HEARTBEAT_MS, sendError } = require('./appHelpers');
  * composer and the Observatory's custom-command endpoint.
  */
 async function streamWebChatTurn(res, turn, ctx) {
-    res.status(200).set({
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no'
-    });
-    res.flushHeaders();
-
-    let open = true;
-    const send = (event, data) => {
-        if (!open) return;
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
-    const heartbeat = setInterval(() => {
-        if (open) res.write(': ping\n\n');
-    }, SSE_HEARTBEAT_MS);
+    const channel = createSseChannel(res, res.locals?.authorizeResource);
+    const send = channel.send;
+    const heartbeat = setInterval(channel.ping, SSE_HEARTBEAT_MS);
     heartbeat.unref?.();
     // The turn keeps running if the browser disconnects (the reply is
     // stored in history either way) - we just stop writing. NOTE: the
     // listener must be on res, not req - a consumed POST body emits
     // req 'close' immediately, long before the client goes away.
-    res.on('close', () => { open = false; });
 
     try {
         send('start', { conversationId: turn.conversationId });
@@ -47,7 +34,7 @@ async function streamWebChatTurn(res, turn, ctx) {
         send('error', { code: 'INTERNAL', message: 'Something went wrong generating the reply.' });
     } finally {
         clearInterval(heartbeat);
-        if (open) res.end();
+        await channel.end();
     }
 }
 
@@ -56,24 +43,11 @@ async function streamWebChatTurn(res, turn, ctx) {
  * Live-session tap is cosmetic — never breaks the turn.
  */
 async function streamParlorTurn(res, turn, ctx) {
-    res.status(200).set({
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no'
-    });
-    res.flushHeaders();
-
-    let open = true;
-    const send = (event, data) => {
-        if (!open) return;
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
-    const heartbeat = setInterval(() => {
-        if (open) res.write(': ping\n\n');
-    }, SSE_HEARTBEAT_MS);
+    const channel = createSseChannel(res, res.locals?.webUser && ctx.parlor?.requireConversationAccess
+        ? () => ctx.parlor.requireConversationAccess(res.locals.webUser.userId, turn.conversationId) : null);
+    const send = channel.send;
+    const heartbeat = setInterval(channel.ping, SSE_HEARTBEAT_MS);
     heartbeat.unref?.();
-    res.on('close', () => { open = false; });
 
     const observe = (event, data) => {
         try { ctx.parlorLive?.observeTurn(turn.conversationId, event, data); } catch { /* cosmetic */ }
@@ -100,7 +74,7 @@ async function streamParlorTurn(res, turn, ctx) {
         emit('error', { code: 'INTERNAL', message: 'Something went wrong generating the replies.' });
     } finally {
         clearInterval(heartbeat);
-        if (open) res.end();
+        await channel.end();
     }
 }
 
@@ -118,22 +92,10 @@ async function streamParlorTurn(res, turn, ctx) {
  * attach/persist — a retry after A settles cannot hydrate B.
  */
 async function streamLiveTurnProgress(res, { userId, chat, expectedTurnId = null }) {
-    res.status(200).set({
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no'
-    });
-    res.flushHeaders();
-
+    const channel = createSseChannel(res, res.locals?.authorizeResource);
+    const send = channel.send;
     let open = true;
-    const send = (event, data) => {
-        if (!open) return;
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
-    const heartbeat = setInterval(() => {
-        if (open) res.write(': ping\n\n');
-    }, SSE_HEARTBEAT_MS);
+    const heartbeat = setInterval(channel.ping, SSE_HEARTBEAT_MS);
     heartbeat.unref?.();
 
     let unsubscribe = () => {};
@@ -250,7 +212,7 @@ async function streamLiveTurnProgress(res, { userId, chat, expectedTurnId = null
         clearInterval(heartbeat);
         try { unsubscribe(); } catch { /* already dropped */ }
         wakeAll();
-        if (open) res.end();
+        await channel.end();
     }
 }
 

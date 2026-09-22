@@ -211,7 +211,8 @@ async function promoteToProject({
     conversationId = null,
     messageId = null,
     grants = undefined,
-    origin = 'portal'
+    origin = 'portal',
+    expectedRevision = null
 }) {
     const webAppletService = require('./webAppletService');
     let pin = null;
@@ -237,6 +238,7 @@ async function promoteToProject({
     const saved = await projectAssetService.save({
         userId,
         project: projectRef,
+        expectedRevision,
         slug: slug || undefined,
         name: String(name || pin?.title || '').trim() || 'Untitled applet',
         kind: 'app',

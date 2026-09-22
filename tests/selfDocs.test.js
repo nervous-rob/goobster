@@ -487,3 +487,20 @@ describe('the shipped corpus', () => {
         expect(all.some(d => d.slug === 'documentation/self_knowledge' && d.kind === 'guide')).toBe(true);
     });
 });
+
+
+test('operator notes stay outside public lexical, vector and fallback retrieval', async () => {
+    fs.writeFileSync(path.join(OPERATOR_DIR, 'private.md'), '# Private Host Canary\n\nprivatehostcanary telescope kitchen secret');
+    await selfDocsService.seed();
+    await selfDocsService.backfillEmbeddings();
+    for (const fail of [false, true]) {
+        embedState.fail = fail;
+        const result = await selfDocsService.search({ query: 'privatehostcanary telescope kitchen' });
+        expect(result.results.every(row => !row.relPath.startsWith('operator/'))).toBe(true);
+        expect(JSON.stringify(await selfDocsService.listDocs())).not.toContain('privatehostcanary');
+        expect(await selfDocsService.readDoc({ ref: 'operator/private' })).toBeNull();
+    }
+    expect((await selfDocsService.readDoc({ ref: 'operator/private', includeOperator: true })).window.content).toContain('privatehostcanary');
+    const denied = await require('@goobster/core/utils/tools/selfDocs').consultDocs.execute({ action: 'read', slug: 'operator/private' });
+    expect(denied).not.toContain('privatehostcanary');
+});

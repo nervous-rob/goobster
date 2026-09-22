@@ -1560,6 +1560,7 @@ class WebChatService {
         images = null, files = null, incognito = false,
         isAutomation = false, sourceDescription = null, spoken = false
     }) {
+        await require('./resourceAdmissionService').assertActor(userId);
         // Resolve the assistant identity through whichever seam this process
         // has: the live client (bot / lite), the gateway (the api service
         // reaching the bot), or the installation's own assistant identity.
@@ -2234,6 +2235,7 @@ class WebChatService {
         if (!userId || this._kicking.has(userId)) return;
         this._kicking.add(userId);
         try {
+            await require('./resourceAdmissionService').assertActor(userId);
             if (await this._liveTurn(userId)) return;
             const item = await this._popQueue(userId);
             if (!item) return;

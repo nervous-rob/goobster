@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { Outlet } from '@tanstack/react-router';
 import { MenuButton } from '../shell/MenuButton';
 import { SiteNav } from './components/shared/SiteNav';
+import { LegacyRecovery } from './LegacyRecovery';
 import './styles/rhythm.css';
 import './styles/globals.css';
 import './styles/harmony.css';
@@ -21,6 +22,7 @@ export function ConservatoryLayout() {
                 <SiteNav />
             </div>
             <div className="conservatory-body">
+                <LegacyRecovery />
                 <Suspense fallback={<div className="empty">Warming the lab…</div>}>
                     <Outlet />
                 </Suspense>

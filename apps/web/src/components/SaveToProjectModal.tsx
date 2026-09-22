@@ -15,7 +15,7 @@ export type SaveToProjectTarget = {
 };
 
 type ProjectOption = { slug: string; name: string; ownerId?: string; ownerName?: string | null; role?: string };
-type AssetOption = { slug: string; name: string; kind: string; currentVersion?: number | null };
+type AssetOption = { slug: string; name: string; kind: string; currentVersion?: number | null; revision: number };
 
 /**
  * Shared picker for Study "Save to project…" and Workshop "Promote to project…".
@@ -89,6 +89,7 @@ export function SaveToProjectModal({
             const chosen = existing ? appAssets.find((a) => a.slug === assetSlug) : null;
             const body = {
                 slug: existing ? assetSlug : undefined,
+                expectedRevision: existing ? chosen?.revision : 0,
                 name: existing ? (chosen?.name || name.trim()) : name.trim(),
                 kind: 'app',
                 language: target.language,

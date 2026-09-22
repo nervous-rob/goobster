@@ -12,7 +12,8 @@
  * chunk vectors are backfilled in the background and fused in with
  * reciprocal-rank fusion. Vectors are tagged with their model and only
  * compared against a query embedded by the same model (memoryService's
- * rule). None of this is per-user data, so no privacy erasure path applies.
+ * rule). Operator notes are private to the host operator; public readers cannot
+ * search, enumerate or resolve them. No per-user copy is stored here.
  *
  * The in-memory corpus index is transient, re-derivable state (rebuilt
  * from the table on demand, invalidated by a seed in this process, and
@@ -734,11 +735,13 @@ class SelfDocsService {
      * @param {{ query: string, kind?: string|null, limit?: number }} params
      * @returns {Promise<{ mode: 'hybrid'|'keyword'|'none', results: Array<{ slug, relPath, title, kind, headingPath, content, score }> }>}
      */
-    async search({ query, kind = null, limit = 5 }) {
+    async search({ query, kind = null, limit = 5, includeOperator = false }) {
         const text = String(query || '').trim();
         if (!text) return { mode: 'none', results: [] };
         const bounded = Math.max(1, Math.min(Number(limit) || 5, config.maxSearchResults));
-        const corpus = await this._corpus();
+        const all = await this._corpus();
+        // Filter the candidates before lexical/vector ranking or any fallback.
+        const corpus = { ...all, docs: all.docs.filter(d => includeOperator || !d.relPath.startsWith('operator/')) };
         const filtered = kind && KINDS.includes(kind)
             ? { ...corpus, docs: corpus.docs.filter(d => d.kind === kind) }
             : corpus;
@@ -787,10 +790,11 @@ class SelfDocsService {
      * The document index (one row per doc), optionally one kind only.
      * @param {{ kind?: string|null }} [params]
      */
-    async listDocs({ kind = null } = {}) {
+    async listDocs({ kind = null, includeOperator = false } = {}) {
         const corpus = await this._corpus();
         const byDoc = new Map();
         for (const chunk of corpus.docs) {
+            if (!includeOperator && chunk.relPath.startsWith('operator/')) continue;
             if (kind && chunk.kind !== kind) continue;
             const entry = byDoc.get(chunk.slug) || {
                 slug: chunk.slug,
@@ -815,10 +819,10 @@ class SelfDocsService {
      * Resolve a loose reference (slug, path, file name, or title) to a doc.
      * @returns {Promise<{ slug, relPath, title, kind }|null>}
      */
-    async resolveDoc(ref) {
+    async resolveDoc(ref, { includeOperator = false } = {}) {
         const wanted = String(ref || '').trim();
         if (!wanted) return null;
-        const docs = await this.listDocs();
+        const docs = await this.listDocs({ includeOperator });
         const norm = (s) => String(s || '').toLowerCase().replace(/\.md$/i, '').replace(/^\.\//, '');
         const target = norm(wanted);
         const exact = docs.find(d => norm(d.slug) === target || norm(d.relPath) === target || d.title.toLowerCase() === target);
@@ -846,8 +850,8 @@ class SelfDocsService {
      * @param {{ ref: string, section?: string|null, offset?: number, limit?: number }} params
      * @returns {Promise<{ doc, window, sectionMatched: boolean, sections: string[] }|null>}
      */
-    async readDoc({ ref, section = null, offset, limit }) {
-        const doc = await this.resolveDoc(ref);
+    async readDoc({ ref, section = null, offset, limit, includeOperator = false }) {
+        const doc = await this.resolveDoc(ref, { includeOperator });
         if (!doc) return null;
         const corpus = await this._corpus();
         const chunks = corpus.docs.filter(c => c.slug === doc.slug);

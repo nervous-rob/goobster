@@ -1,3 +1,4 @@
+import { accountFetch, accountStoragePrefix } from '../lib/browserAccount';
 /**
  * Capability bridge for sandboxed mini-apps.
  *
@@ -77,7 +78,7 @@ export function contentHash(source) {
 
 function readStoredGrants(key) {
     try {
-        const raw = sessionStorage.getItem(key);
+        const raw = sessionStorage.getItem(accountStoragePrefix() + key);
         if (!raw) return { granted: [], denied: [] };
         const parsed = JSON.parse(raw);
         return {
@@ -91,7 +92,7 @@ function readStoredGrants(key) {
 
 function writeStoredGrants(key, granted, denied) {
     try {
-        sessionStorage.setItem(key, JSON.stringify({
+        sessionStorage.setItem(accountStoragePrefix() + key, JSON.stringify({
             granted: [...granted],
             denied: [...denied]
         }));
@@ -119,7 +120,7 @@ function arrayBufferToBase64(buffer) {
 
 async function fetchObservatoryFile(project, filePath, responseType, owner = null) {
     const url = observatoryContentUrl(project, filePath, owner);
-    const response = await fetch(url, { credentials: 'same-origin' });
+    const response = await accountFetch(url, { credentials: 'same-origin' });
     if (!response.ok) {
         let code = 'READ_FAILED';
         let message = 'Could not read that Observatory file.';

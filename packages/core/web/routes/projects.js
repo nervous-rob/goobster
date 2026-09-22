@@ -139,6 +139,9 @@ function mountProjects(app, ctx, h) {
             const project = projectRef
                 ? await ctx.observatory.resolveProject({ userId, project: projectRef, owner })
                 : null;
+            if (project) res.locals.authorizeResource = () => ctx.observatory.resolveProject({
+                userId, project: project.id, owner: project.ownerId || project.userId
+            });
 
             let manifestText = '';
             if (project && typeof ctx.observatory.buildChatManifest === 'function') {
@@ -498,6 +501,7 @@ function mountProjects(app, ctx, h) {
 
     app.post('/api/app/projects/:slug/assets', requireAuth, chatRoute(async (req) =>
         ctx.projectAssets.save({
+            expectedRevision: req.body?.expectedRevision,
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
@@ -526,6 +530,7 @@ function mountProjects(app, ctx, h) {
 
     app.patch('/api/app/projects/:slug/assets/:asset', requireAuth, chatRoute(async (req) =>
         ctx.projectAssets.update({
+            expectedRevision: req.body?.expectedRevision,
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
@@ -565,6 +570,7 @@ function mountProjects(app, ctx, h) {
 
     app.post('/api/app/projects/:slug/assets/:asset/rollback', requireAuth, chatRoute(async (req) =>
         ctx.projectAssets.rollback({
+            expectedRevision: req.body?.expectedRevision,
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
@@ -807,6 +813,7 @@ function mountProjects(app, ctx, h) {
 
     app.patch('/api/app/projects/:slug/mission', requireAuth, chatRoute(async (req) =>
         ctx.projectMissions.updateDraft({
+            expectedRevision: req.body?.expectedRevision,
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),
@@ -865,6 +872,7 @@ function mountProjects(app, ctx, h) {
 
     app.post('/api/app/projects/:slug/mission/steps', requireAuth, chatRoute(async (req) =>
         ctx.projectMissions.addStep({
+            expectedRevision: req.body?.expectedRevision,
             userId: req.webUser.userId,
             project: req.params.slug,
             owner: projectOwner(req),

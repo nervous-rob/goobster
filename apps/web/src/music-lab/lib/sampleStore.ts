@@ -1,3 +1,4 @@
+import { accountStoragePrefix, ACCOUNT_STORAGE_CHANGED } from '../../lib/browserAccount';
 /**
  * Persistent storage for user-uploaded sample clips. Audio blobs are too big
  * for localStorage, so trimmed WAV clips live in IndexedDB keyed by sample id
@@ -5,7 +6,7 @@
  * cached in-memory so orchestrators can build samplers synchronously.
  */
 
-const DB_NAME = 'goobster-conservatory';
+const dbName = () => `${accountStoragePrefix()}conservatory.samples`;
 const DB_VERSION = 1;
 const STORE = 'samples';
 
@@ -15,7 +16,7 @@ function openDb(): Promise<IDBDatabase> {
       reject(new Error('IndexedDB unavailable'));
       return;
     }
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(dbName(), DB_VERSION);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) {
         request.result.createObjectStore(STORE);
@@ -38,9 +39,12 @@ export function makeSampleId(): string {
 }
 
 export async function saveSampleBlob(id: string, blob: Blob): Promise<void> {
+  const owner = dbName();
   const db = await openDb();
   try {
+    if (dbName() !== owner) throw new DOMException('Account changed', 'AbortError');
     await requestToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).put(blob, id));
+    if (dbName() !== owner) throw new DOMException('Account changed', 'AbortError');
   } finally {
     db.close();
   }
@@ -63,7 +67,7 @@ export function clearSampleStore(): Promise<void> {
   pendingLoads.clear();
   if (typeof indexedDB === 'undefined') return Promise.resolve();
   return new Promise((resolve) => {
-    const request = indexedDB.deleteDatabase(DB_NAME);
+    const request = indexedDB.deleteDatabase(dbName());
     request.onsuccess = () => resolve();
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
@@ -103,6 +107,7 @@ export function ensureSampleBuffer(
   id: string,
   decode: (data: ArrayBuffer) => Promise<AudioBuffer>
 ): Promise<AudioBuffer | null> {
+  const owner = dbName();
   const cached = bufferCache.get(id);
   if (cached) return Promise.resolve(cached);
   const pending = pendingLoads.get(id);
@@ -113,14 +118,17 @@ export function ensureSampleBuffer(
       const blob = await loadSampleBlob(id);
       if (!blob) return null;
       const buffer = await decode(await blob.arrayBuffer());
+      if (dbName() !== owner) return null;
       bufferCache.set(id, buffer);
       return buffer;
     } catch {
       return null;
     } finally {
-      pendingLoads.delete(id);
+      try { if (dbName() === owner) pendingLoads.delete(id); } catch { /* signed out */ }
     }
   })();
   pendingLoads.set(id, load);
   return load;
 }
+
+if (typeof window !== 'undefined') window.addEventListener(ACCOUNT_STORAGE_CHANGED, () => { bufferCache.clear(); pendingLoads.clear(); });

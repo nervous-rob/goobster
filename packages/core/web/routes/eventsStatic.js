@@ -9,6 +9,7 @@ const express = require('express');
 const eventBusService = require('../../services/eventBusService');
 const { workspaceRoot } = require('../../runtimePaths');
 const { SSE_HEARTBEAT_MS } = require('../appHelpers');
+const { createSseChannel } = require('../liveAuthorization');
 
 function mountEventsStatic(app, ctx, h) {
     const { requireAuth, sendError } = h;
@@ -23,27 +24,14 @@ function mountEventsStatic(app, ctx, h) {
     // single process they are the same in-process bus. This is what lets
     // the reactive client (Phase 4) stop polling.
     app.get('/api/app/events', requireAuth, (req, res) => {
-        res.status(200).set({
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache, no-transform',
-            'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'
-        });
-        res.flushHeaders();
-
-        let open = true;
-        const send = (event, data) => {
-            if (!open) return;
-            try {
-                res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-            } catch { open = false; }
-        };
+        const channel = createSseChannel(res);
+        const send = channel.send;
         const heartbeat = setInterval(() => {
-            if (open) res.write(': ping\n\n');
+            channel.ping();
             // An open portal tab holds this stream; touching the session on
             // each beat is what keeps the user "online" for presenceService
             // (closing the tab lets it go stale within the window).
-            if (open) ctx.sessions.touch?.(req.webSessionToken)
+            if (channel.open) ctx.sessions.touch?.(req.webSessionToken)
                 ?.catch(() => { /* presence is cosmetic */ });
         }, SSE_HEARTBEAT_MS);
         heartbeat.unref?.();
@@ -66,7 +54,6 @@ function mountEventsStatic(app, ctx, h) {
         });
 
         res.on('close', () => {
-            open = false;
             clearInterval(heartbeat);
             unsubscribe();
         });

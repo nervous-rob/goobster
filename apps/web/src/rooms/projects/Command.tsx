@@ -16,6 +16,7 @@ export type CommandState = {
     draft: string;
     error: boolean;
     chips: CommandChip[];
+    waiting?: string;
 };
 
 export type CommandTarget = { slug: string; ownerId: string; name?: string } | null;
@@ -57,6 +58,7 @@ export function useProjectCommand() {
                     onTool: (event) => {
                         setCommand((prev) => {
                             if (!prev) return prev;
+                            if (event.phase === 'admission') return { ...prev, waiting: event.resultPreview || '' };
                             const chips = [...prev.chips];
                             if (event.phase === 'start') {
                                 chips.push({ name: event.name, phase: 'start', argsPreview: event.argsPreview });
@@ -118,6 +120,7 @@ export function CommandStrip({ command, onDismiss }: { command: CommandState | n
                     ? <button type="button" className="btn danger" onClick={() => { void api.stop(); }}>◼ Stop</button>
                     : <button type="button" className="btn subtle" onClick={onDismiss}>✕</button>}
             </div>
+            {command.active && command.waiting && <p className="hint" role="status">{command.waiting}</p>}
             <div className="obs-command-strip">
                 {command.chips.map((chip, index) => (
                     <ToolChip

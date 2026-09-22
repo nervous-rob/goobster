@@ -72,7 +72,7 @@ class WebSessionService {
      * @param {string} token
      * @returns {{ id: number, userId: string, userName: string|null, avatar: string|null, authenticatedAt: string|null, sessionVersion: number|null }|null}
      */
-    async get(token) {
+    async get(token, { touch = true } = {}) {
         if (!token || typeof token !== 'string') return null;
         const row = await db.get(
             `SELECT id, userId, userName, avatar, authenticatedAt, sessionVersion FROM web_sessions
@@ -80,7 +80,7 @@ class WebSessionService {
             { tokenHash: hashToken(token) }
         );
         if (!row) return null;
-        await db.run(
+        if (touch) await db.run(
             `UPDATE web_sessions SET lastSeenAt = datetime('now') WHERE id = @id`,
             { id: row.id }
         );

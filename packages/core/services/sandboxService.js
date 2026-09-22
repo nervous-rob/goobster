@@ -653,20 +653,43 @@ class SandboxService {
         }
         this._checkRateLimit(userId);
 
+        const account = userId ? await require('./identityService').getAccount(String(userId)) : null;
+        const accounts = await require('../db').get('SELECT COUNT(*) AS n FROM app_accounts');
+        // The weak fallback is a single-user escape hatch. It never applies
+        // to an invited/open account or a non-operator application account.
+        const strong = this.config.requireStrongIsolation !== false
+            || Number(accounts.n) > 1
+            || Boolean(account && (account.role !== 'operator' || ['invite', 'open'].includes(account.entitlement)));
         const isolation = this._resolveIsolation();
-        if (this.config.requireStrongIsolation !== false && isolation !== 'bwrap') {
+        if (strong && isolation !== 'bwrap') {
             throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
                 'The sandbox refuses to run without bubblewrap filesystem isolation. '
                 + 'Install bubblewrap, or set sandbox.requireStrongIsolation=false only on a single-user host.');
         }
-        if (this.config.requireStrongIsolation !== false && isolation === 'bwrap'
+        if (strong && isolation === 'bwrap'
             && !this.config.allowNetwork && this._bwrapSupportsNetNs() === false) {
             throw new SandboxError(503, 'ISOLATION_UNAVAILABLE',
                 'Network isolation is required but bubblewrap cannot create a network namespace.');
         }
         const lang = LANGUAGES[langKey];
-        const releaseProject = acquireProjectExec(projectDir);
+        const lease = await require('./resourceAdmissionService').acquire({
+            resource: 'sandbox', actorId: userId,
+            scopeId: projectDir ? crypto.createHash('sha256').update(projectDir).digest('hex') : null,
+            limit: this.config.maxConcurrent, perActor: this.config.maxPerAccount || 1, scopeLimit: 1,
+            rateLimit: this.config.runsPerWindow, leaseMs: this.config.timeoutMs + 30000, signal
+        });
+        const controller = new AbortController();
+        signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+        let checking = false;
+        const monitor = setInterval(async () => {
+            if (checking) return;
+            checking = true;
+            try { await lease.renew(); } catch { controller.abort(); } finally { checking = false; }
+        }, 1000);
+        monitor.unref?.();
+        let releaseProject = () => {};
         try {
+            releaseProject = acquireProjectExec(projectDir);
             const runId = crypto.randomBytes(8).toString('hex');
             const workdir = path.join(this._runsRoot(), runId);
             const tmpdir = path.join(workdir, 'tmp');
@@ -703,7 +726,9 @@ class SandboxService {
                 this._active -= 1;
             }
         } finally {
+            clearInterval(monitor);
             releaseProject();
+            await lease.release();
         }
     }
 

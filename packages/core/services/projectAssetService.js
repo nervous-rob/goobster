@@ -100,7 +100,7 @@ class ProjectAssetService {
         }
         const row = await db.get(
             `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                    grantsJson, createdAt, updatedAt
+                    grantsJson, revision, createdAt, updatedAt
              FROM project_assets
              WHERE projectId = @projectId
                AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
@@ -173,6 +173,7 @@ class ProjectAssetService {
             currentVersionId: assetRow.currentVersionId,
             currentVersion: extras.currentVersion
                 ?? (versionRow.id === assetRow.currentVersionId ? versionRow.version : null),
+            revision: Number(assetRow.revision) || 1,
             versionId: versionRow.id,
             version: versionRow.version,
             language: versionRow.language,
@@ -224,7 +225,8 @@ class ProjectAssetService {
         conversationId = null,
         messageId = null,
         grants = undefined,
-        ignoreAssetCap = false
+        ignoreAssetCap = false,
+        expectedRevision = null
     }) {
         const projectRow = await this._requireProject(userId, project, owner);
         const ownerId = projectRow.ownerId || projectRow.userId;
@@ -243,14 +245,18 @@ class ProjectAssetService {
         const legalGrants = legalizeObservatoryGrants(body, grants);
 
         const saved = await db.transaction(async (tx) => {
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             const existing = await tx.get(
                 `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                        grantsJson, createdAt, updatedAt
+                        grantsJson, revision, createdAt, updatedAt
                  FROM project_assets
                  WHERE projectId = @projectId AND slug = @slug`,
                 { projectId: projectRow.id, slug: assetSlug }
             );
 
+            if (expectedRevision != null && Number(expectedRevision) !== Number(existing?.revision || 0)) {
+                throw require('../utils/editConflict').editConflict(existing?.revision || 0);
+            }
             if (existing) {
                 if (existing.kind !== cleanKind) {
                     throw new ProjectAssetError(409, 'KIND_MISMATCH',
@@ -305,7 +311,7 @@ class ProjectAssetService {
                      SET currentVersionId = @versionId,
                          name = @name,
                          grantsJson = @grantsJson,
-                         updatedAt = datetime('now')
+                         revision = revision + 1, updatedAt = datetime('now')
                      WHERE id = @id`,
                     {
                         versionId,
@@ -317,7 +323,7 @@ class ProjectAssetService {
                 await this._pruneVersions(tx, existing.id, versionId);
                 const updated = await tx.get(
                     `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                            grantsJson, createdAt, updatedAt
+                            grantsJson, revision, createdAt, updatedAt
                      FROM project_assets WHERE id = @id`,
                     { id: existing.id }
                 );
@@ -381,7 +387,7 @@ class ProjectAssetService {
             );
             const created = await tx.get(
                 `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                        grantsJson, createdAt, updatedAt
+                        grantsJson, revision, createdAt, updatedAt
                  FROM project_assets WHERE id = @id`,
                 { id: assetId }
             );
@@ -444,7 +450,7 @@ class ProjectAssetService {
         const kindFilter = cleanKind ? 'AND a.kind = @kind' : '';
         if (cleanKind) params.kind = cleanKind;
         const rows = await db.all(
-            `SELECT a.id, a.slug, a.name, a.kind, a.currentVersionId, a.grantsJson,
+            `SELECT a.id, a.slug, a.name, a.kind, a.currentVersionId, a.grantsJson, a.revision,
                     a.createdAt, a.updatedAt,
                     v.version, v.language, v.contentHash, v.note, v.origin, v.createdAt AS versionCreatedAt
              FROM project_assets a
@@ -462,6 +468,7 @@ class ProjectAssetService {
             kind: row.kind,
             currentVersionId: row.currentVersionId,
             currentVersion: row.version ?? null,
+            revision: Number(row.revision) || 1,
             language: row.language || null,
             contentHash: row.contentHash || null,
             note: row.note || null,
@@ -551,105 +558,123 @@ class ProjectAssetService {
     /**
      * Rename or replace grants. Source is immutable (save a new version).
      */
-    async update({ userId, project, asset, name = undefined, grants = undefined, owner = null }) {
-        const projectRow = await this._requireProject(userId, project, owner);
-        const existing = await this._requireAsset(projectRow, asset);
-        const fields = [];
-        const params = { id: existing.id };
-        if (name !== undefined) {
-            const clean = String(name || '').trim().slice(0, MAX_NAME);
-            if (!clean) {
-                throw new ProjectAssetError(400, 'BAD_NAME', 'Name cannot be empty.');
+    async update({ userId, project, asset, name = undefined, grants = undefined, owner = null, expectedRevision = null }) {
+        return db.transaction(async tx => {
+            const projectRow = await this._requireProject(userId, project, owner);
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
+            const existing = await this._requireAsset(projectRow, asset);
+            if (expectedRevision != null && Number(expectedRevision) !== Number(existing.revision)) {
+                throw require('../utils/editConflict').editConflict(existing.revision);
             }
-            fields.push('name = @name');
-            params.name = clean;
-        }
-        if (grants !== undefined) {
-            const head = await this._headVersion(existing);
-            fields.push('grantsJson = @grantsJson');
-            params.grantsJson = JSON.stringify(
-                legalizeObservatoryGrants(head?.source || '', grants)
+            const fields = [];
+            const params = { id: existing.id };
+            if (name !== undefined) {
+                const clean = String(name || '').trim().slice(0, MAX_NAME);
+                if (!clean) {
+                    throw new ProjectAssetError(400, 'BAD_NAME', 'Name cannot be empty.');
+                }
+                fields.push('name = @name');
+                params.name = clean;
+            }
+            if (grants !== undefined) {
+                const head = await this._headVersion(existing);
+                fields.push('grantsJson = @grantsJson');
+                params.grantsJson = JSON.stringify(
+                    legalizeObservatoryGrants(head?.source || '', grants)
+                );
+            }
+            if (fields.length === 0) {
+                return await this.get({
+                    userId, project: projectRow.slug, asset: existing.slug, owner: projectRow.ownerId
+                });
+            }
+            fields.push("revision = revision + 1, updatedAt = datetime('now')");
+            await db.run(
+                `UPDATE project_assets SET ${fields.join(', ')} WHERE id = @id`,
+                params
             );
-        }
-        if (fields.length === 0) {
+            require('./eventBusService').publishProjectChange({
+                userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
+            });
             return await this.get({
                 userId, project: projectRow.slug, asset: existing.slug, owner: projectRow.ownerId
             });
-        }
-        fields.push("updatedAt = datetime('now')");
-        await db.run(
-            `UPDATE project_assets SET ${fields.join(', ')} WHERE id = @id`,
-            params
-        );
-        require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
-        });
-        return await this.get({
-            userId, project: projectRow.slug, asset: existing.slug, owner: projectRow.ownerId
         });
     }
 
     /**
      * Delete an asset and every version (CASCADE).
      */
-    async delete({ userId, project, asset, owner = null }) {
-        const projectRow = await this._requireProject(userId, project, owner);
-        const existing = await this._requireAsset(projectRow, asset);
-        const result = await db.run(
-            'DELETE FROM project_assets WHERE id = @id',
-            { id: existing.id }
-        );
-        if (result.changes === 0) {
-            throw new ProjectAssetError(404, 'NO_SUCH_ASSET',
-                `No asset called "${existing.slug}" in "${projectRow.slug}".`);
-        }
-        require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
+    async delete({ userId, project, asset, owner = null, expectedRevision = null }) {
+        return db.transaction(async tx => {
+            const projectRow = await this._requireProject(userId, project, owner);
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
+            const existing = await this._requireAsset(projectRow, asset);
+            if (expectedRevision != null && Number(expectedRevision) !== Number(existing.revision)) {
+                throw require('../utils/editConflict').editConflict(existing.revision);
+            }
+            const result = await db.run(
+                'DELETE FROM project_assets WHERE id = @id',
+                { id: existing.id }
+            );
+            if (result.changes === 0) {
+                throw new ProjectAssetError(404, 'NO_SUCH_ASSET',
+                    `No asset called "${existing.slug}" in "${projectRow.slug}".`);
+            }
+            require('./eventBusService').publishProjectChange({
+                userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
+            });
+            return { deleted: true, slug: existing.slug };
         });
-        return { deleted: true, slug: existing.slug };
     }
 
     /**
      * Point the head at an existing version. Does not delete history.
      */
-    async rollback({ userId, project, asset, version, owner = null }) {
-        const n = Number(version);
-        if (!Number.isInteger(n) || n < 1) {
-            throw new ProjectAssetError(400, 'BAD_VERSION',
-                'Version must be a positive integer.');
-        }
-        const projectRow = await this._requireProject(userId, project, owner);
-        const assetRow = await this._requireAsset(projectRow, asset);
-        const target = await db.get(
-            `SELECT id, assetId, userId, version, language, source, contentHash,
-                    note, origin, conversationId, messageId, createdAt
-             FROM project_asset_versions
-             WHERE assetId = @assetId AND version = @version`,
-            { assetId: assetRow.id, version: n }
-        );
-        if (!target) {
-            throw new ProjectAssetError(404, 'NO_SUCH_VERSION',
-                `"${assetRow.slug}" has no version ${n}.`);
-        }
-        await db.run(
-            `UPDATE project_assets
-             SET currentVersionId = @versionId, updatedAt = datetime('now')
-             WHERE id = @id`,
-            { versionId: target.id, id: assetRow.id }
-        );
-        const updated = await db.get(
-            `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                    grantsJson, createdAt, updatedAt
-             FROM project_assets WHERE id = @id`,
-            { id: assetRow.id }
-        );
-        const serialized = await this._serialize(updated, target, projectRow.slug, {
-            currentVersion: target.version
+    async rollback({ userId, project, asset, version, owner = null, expectedRevision = null }) {
+        return db.transaction(async tx => {
+            const n = Number(version);
+            if (!Number.isInteger(n) || n < 1) {
+                throw new ProjectAssetError(400, 'BAD_VERSION',
+                    'Version must be a positive integer.');
+            }
+            const projectRow = await this._requireProject(userId, project, owner);
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
+            const assetRow = await this._requireAsset(projectRow, asset);
+            if (expectedRevision != null && Number(expectedRevision) !== Number(assetRow.revision)) {
+                throw require('../utils/editConflict').editConflict(assetRow.revision);
+            }
+            const target = await db.get(
+                `SELECT id, assetId, userId, version, language, source, contentHash,
+                        note, origin, conversationId, messageId, createdAt
+                 FROM project_asset_versions
+                 WHERE assetId = @assetId AND version = @version`,
+                { assetId: assetRow.id, version: n }
+            );
+            if (!target) {
+                throw new ProjectAssetError(404, 'NO_SUCH_VERSION',
+                    `"${assetRow.slug}" has no version ${n}.`);
+            }
+            await db.run(
+                `UPDATE project_assets
+                 SET currentVersionId = @versionId, revision = revision + 1, updatedAt = datetime('now')
+                 WHERE id = @id`,
+                { versionId: target.id, id: assetRow.id }
+            );
+            const updated = await db.get(
+                `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
+                        grantsJson, revision, createdAt, updatedAt
+                 FROM project_assets WHERE id = @id`,
+                { id: assetRow.id }
+            );
+            const serialized = await this._serialize(updated, target, projectRow.slug, {
+                currentVersion: target.version
+            });
+            require('./eventBusService').publishProjectChange({
+                userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
+            });
+            return serialized;
         });
-        require('./eventBusService').publishProjectChange({
-            userId, slug: projectRow.slug, reason: 'asset', projectId: projectRow.id
-        });
-        return serialized;
     }
 
     /**
@@ -689,7 +714,7 @@ class ProjectAssetService {
             if (latest) {
                 await db.run(
                     `UPDATE project_assets
-                     SET currentVersionId = @versionId, updatedAt = datetime('now')
+                     SET currentVersionId = @versionId, revision = revision + 1, updatedAt = datetime('now')
                      WHERE id = @id`,
                     { versionId: latest.id, id: assetId }
                 );

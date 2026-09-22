@@ -170,7 +170,7 @@ class OllamaService {
                     num_predict: policy.maxOutputTokens
                 }
             };
-            const requestConfig = { timeout: opts.timeout ?? 300000 }; // local inference can be slow on a Pi
+            const requestConfig = { timeout: opts.timeout ?? 300000, signal: opts.signal }; // local inference can be slow on a Pi
 
             let content;
             if (useStreaming) {

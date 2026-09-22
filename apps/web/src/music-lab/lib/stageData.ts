@@ -1,3 +1,4 @@
+import { ACCOUNT_STORAGE_CHANGED } from '../../lib/browserAccount';
 import type { MelodyContourStep } from './melodyTheory';
 import type { FoundrySettings } from './harmonyTheory';
 import type { RegisterId, VoicingId } from './harmonyData';
@@ -365,3 +366,5 @@ export function hireCreature(saved: SavedCreature, existingIds: string[]): Perfo
     octaveShift: saved.octaveShift
   };
 }
+
+if (typeof window !== 'undefined') window.addEventListener(ACCOUNT_STORAGE_CHANGED, () => { customContours = []; contoursHydrated = false; });

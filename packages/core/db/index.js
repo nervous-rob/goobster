@@ -182,6 +182,8 @@ async function closeConnection() {
 }
 
 module.exports = {
+    // Cleanup callbacks must not reopen a database after shutdown.
+    get isOpen() { return Boolean(adapter); },
     get engine() { return getAdapter().engine; },
     getDb,
     rawQuery,

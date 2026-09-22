@@ -446,6 +446,7 @@ class PrivacyService {
             })),
             inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
             shareLinks: shareLinks?.c || 0,
+            executionAdmissions: await db.all('SELECT resource, state, createdAt, startedAt, expiresAt FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope }),
             tutorials: await require('./tutorialService').summarizeForUser(userId),
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
@@ -823,6 +824,9 @@ class PrivacyService {
             counts.userSettingRevisions = (await db.run(
                 'DELETE FROM user_setting_revisions WHERE userId = @userId', { userId }
             )).changes;
+            counts.executionAdmissions = (await db.run(
+                'DELETE FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope }
+            )).changes;
 
             // Web app sessions: logging the user out everywhere is part of
             // forgetting them.
@@ -1086,6 +1090,7 @@ class PrivacyService {
     async auditUser({ userId }) {
         const dmScope = dmScopeId(userId);
         const byTable = {
+            execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',
                 { userId, dmScope }

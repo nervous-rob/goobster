@@ -919,9 +919,13 @@ class ParlorService {
                     CASE WHEN c.ownerId = @userId THEN 'owner' ELSE 'member' END AS role,
                     (SELECT COUNT(*) FROM parlor_messages m WHERE m.conversationId = c.id) AS messageCount
              FROM parlor_conversations c
-             WHERE c.ownerId = @userId
+             WHERE (c.ownerId = @userId
                 OR EXISTS (SELECT 1 FROM parlor_members mm
-                           WHERE mm.conversationId = c.id AND mm.userId = @userId)
+                           WHERE mm.conversationId = c.id AND mm.userId = @userId))
+               AND (c.projectId IS NULL OR EXISTS (
+                   SELECT 1 FROM observatory_projects p WHERE p.id = c.projectId
+                     AND (p.userId = @userId OR EXISTS (SELECT 1 FROM project_members pm
+                          WHERE pm.projectId = p.id AND pm.userId = @userId))))
              ORDER BY COALESCE(c.lastMessageAt, c.createdAt) DESC, c.id DESC
              LIMIT @limit`,
             { userId, limit: CONVERSATION_LIST_LIMIT }
@@ -1004,7 +1008,11 @@ class ParlorService {
              WHERE c.id = @conversationId
                AND (c.ownerId = @userId OR EXISTS (
                     SELECT 1 FROM parlor_members m
-                    WHERE m.conversationId = c.id AND m.userId = @userId))`,
+                    WHERE m.conversationId = c.id AND m.userId = @userId))
+               AND (c.projectId IS NULL OR EXISTS (
+                    SELECT 1 FROM observatory_projects p WHERE p.id = c.projectId
+                    AND (p.userId = @userId OR EXISTS (SELECT 1 FROM project_members pm
+                        WHERE pm.projectId = p.id AND pm.userId = @userId))))`,
             { conversationId: Number(conversationId), userId }
         );
         if (!row) throw new ParlorError(404, 'NO_SUCH_CONVERSATION', 'No such discussion.');
@@ -2071,6 +2079,7 @@ class ParlorService {
      * @returns {{ run: (events?: Object) => Promise<void>, abort: () => void, conversationId: number }}
      */
     async startTurn({ userId, userName, conversationId, message, gateway = null, client = null, spoken = false }) {
+        await require('./resourceAdmissionService').assertActor(userId);
         const text = String(message ?? '').trim();
         if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
         if (text.length > MAX_MESSAGE_LENGTH) {

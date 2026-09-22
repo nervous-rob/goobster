@@ -16,6 +16,7 @@ import type { ChatMessage, ToolEvent, TurnStep } from '../lib/types';
 export type LocalTurnMessage = ChatMessage & {
     draft?: boolean;
     typing?: boolean;
+    waiting?: string;
     images?: Array<{ dataUrl: string; name: string }>;
 };
 
@@ -28,6 +29,7 @@ type TurnState = {
     /** Streamed text not yet classified (interstitial vs final answer). */
     draft: string;
     typing: boolean;
+    waiting?: string;
 };
 
 type TurnAction =
@@ -36,7 +38,7 @@ type TurnAction =
     | { kind: 'delta'; text: string }
     | { kind: 'tool'; event: ToolEvent }
     | { kind: 'message'; message: LocalTurnMessage }
-    | { kind: 'hydrate'; progress: { userContent?: string; draft?: string; typing?: boolean; steps?: TurnStep[] } }
+    | { kind: 'hydrate'; progress: { waiting?: string; userContent?: string; draft?: string; typing?: boolean; steps?: TurnStep[] } }
     | { kind: 'end' }
     | { kind: 'reset' };
 
@@ -82,8 +84,9 @@ function reduce(state: TurnState, action: TurnAction): TurnState {
         case 'typing':
             return state.typing ? state : { ...state, typing: true };
         case 'delta':
-            return { ...state, draft: state.draft + action.text, typing: false };
+            return { ...state, draft: state.draft + action.text, typing: false, waiting: '' };
         case 'tool': {
+            if (action.event.phase === 'admission') return { ...state, waiting: action.event.resultPreview || '' };
             if (action.event.phase === 'start') {
                 const steps = [...state.steps];
                 // The streamed text before this tool call is interstitial
@@ -122,6 +125,7 @@ function reduce(state: TurnState, action: TurnAction): TurnState {
                 active: true,
                 steps,
                 draft,
+                waiting: progress.waiting || '',
                 typing: Boolean(progress.typing) || empty
             };
         }
@@ -143,7 +147,7 @@ function reduce(state: TurnState, action: TurnAction): TurnState {
                 };
                 return { active: false, messages: [...state.messages, message], steps: [], draft: '', typing: false };
             }
-            return { ...state, active: false, typing: false };
+            return { ...state, active: false, typing: false, waiting: '' };
         }
         case 'reset':
             return INITIAL;
@@ -173,17 +177,18 @@ export function useChatTurn() {
     }, []);
     const end = useCallback(() => dispatch({ kind: 'end' }), []);
     const reset = useCallback(() => dispatch({ kind: 'reset' }), []);
-    const hydrate = useCallback((progress: { userContent?: string; draft?: string; typing?: boolean; steps?: TurnStep[] } | null | undefined) => {
+    const hydrate = useCallback((progress: { waiting?: string; userContent?: string; draft?: string; typing?: boolean; steps?: TurnStep[] } | null | undefined) => {
         dispatch({ kind: 'hydrate', progress: progress || {} });
     }, []);
 
     // The reply being generated, as a renderable pseudo-message: the steps
     // timeline plus whatever text is currently streaming.
-    const pending: LocalTurnMessage | null = state.active && (state.typing || state.draft !== '' || state.steps.length > 0)
+    const pending: LocalTurnMessage | null = state.active && (state.waiting || state.typing || state.draft !== '' || state.steps.length > 0)
         ? {
             id: 0,
             role: 'assistant',
             content: state.draft,
+            waiting: state.waiting,
             createdAt: '',
             draft: true,
             typing: state.typing && state.draft === '' && state.steps.length === 0,

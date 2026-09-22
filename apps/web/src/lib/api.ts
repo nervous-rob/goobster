@@ -1,5 +1,6 @@
 import type { ModelCatalog, AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
 import { parseSseFrame } from './parseSse.js';
+import { accountFetch, sessionChanged } from './browserAccount';
 
 export class ApiError extends Error {
     status: number;
@@ -25,7 +26,7 @@ function ownerQs(owner?: string | null, extra: Record<string, string | number | 
 }
 
 async function request<T = unknown>(path: string, { method = 'GET', body = null }: { method?: string; body?: unknown } = {}): Promise<T> {
-    const res = await fetch(path, {
+    const res = await accountFetch(path, {
         method,
         headers: body ? { 'Content-Type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : null
@@ -36,6 +37,12 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
         const error = json?.error || {};
         throw new ApiError(res.status, error.code || 'INTERNAL',
             error.message || `Request failed (${res.status})`, error.details || null);
+    }
+    if (path === '/api/app/auth/logout' || path === '/api/app/auth/dev-session'
+        || path === '/api/app/auth/native-login' || path === '/api/app/auth/register'
+        || path === '/api/app/auth/recover'
+        || (path === '/api/app/auth/verify-email' && (json as { kind?: string })?.kind === 'registration')) {
+        sessionChanged();
     }
     return json as T;
 }
@@ -124,6 +131,7 @@ export const api = {
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
     settings: () => request<UserSettingsResponse>('/api/app/settings'),
+    authorizeLegacyLab: () => request('/api/app/settings/legacy-lab', { method: 'POST' }),
 
     tutorials: () => request<TutorialsResponse>('/api/app/tutorials'),
     tutorialEvent: (id: string, body: {
@@ -429,9 +437,9 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions${ownerQs(owner)}`),
     projectAssetVersion: (project: string, asset: string, n: number, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/versions/${n}${ownerQs(owner)}`),
-    rollbackProjectAsset: (project: string, asset: string, version: number, owner?: string | null) =>
+    rollbackProjectAsset: (project: string, asset: string, version: number, owner?: string | null, expectedRevision?: number) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback${ownerQs(owner)}`,
-            { method: 'POST', body: { version, owner: owner || undefined } }),
+            { method: 'POST', body: { version, expectedRevision, owner: owner || undefined } }),
     runProjectAsset: (project: string, asset: string, background = false, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run${ownerQs(owner)}`,
             { method: 'POST', body: { background, owner: owner || undefined } }),
@@ -463,7 +471,7 @@ export const api = {
             .join('/');
         const url = `/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}${ownerQs(owner)}`;
         const isText = typeof content === 'string';
-        const res = await fetch(url, {
+        const res = await accountFetch(url, {
             method: 'PUT',
             headers: isText ? { 'Content-Type': 'application/json' } : {},
             body: isText ? JSON.stringify({ content }) : (() => {
@@ -644,7 +652,7 @@ export async function fetchSpeech(
     signal?: AbortSignal | null,
     opts: { voiceId?: string | null } = {}
 ): Promise<Blob> {
-    const res = await fetch('/api/app/voice/tts', {
+    const res = await accountFetch('/api/app/voice/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts.voiceId ? { text, voiceId: opts.voiceId } : { text }),
@@ -681,7 +689,7 @@ type ParlorHandlers = ChatHandlers & {
 
 async function readSse(url: string, payload: unknown, dispatch: (event: string, data: unknown) => void, signal?: AbortSignal | null) {
     const isGet = payload === null || payload === undefined;
-    const res = await fetch(url, {
+    const res = await accountFetch(url, {
         method: isGet ? 'GET' : 'POST',
         headers: isGet ? {} : { 'Content-Type': 'application/json' },
         body: isGet ? undefined : JSON.stringify(payload),
@@ -707,6 +715,7 @@ async function readSse(url: string, payload: unknown, dispatch: (event: string, 
             buffer = buffer.slice(sep + 2);
             if (!rawEvent.trim() || rawEvent.startsWith(':')) continue;
             const parsed = parseSseFrame(rawEvent);
+            if (parsed?.event === 'session-revoked') { sessionChanged(); return; }
             if (parsed) dispatch(parsed.event, parsed.data);
         }
     }

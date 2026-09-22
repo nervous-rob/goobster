@@ -8,6 +8,14 @@ const userSettingsService = require('../../services/userSettingsService');
 function mountSettings(app, ctx, h) {
     const { requireAuth, chatRoute } = h;
 
+    app.post('/api/app/settings/legacy-lab', requireAuth, h.requireRecentAuth, chatRoute(async req => {
+        if (!['migration', 'bootstrap'].includes(req.actor?.account?.entitlement)) {
+            const error = new Error('Only a verified existing account can recover unowned legacy browser data.');
+            error.status = 403; error.code = 'LEGACY_ACCOUNT_REQUIRED'; throw error;
+        }
+        return { allowed: true };
+    }));
+
     // Read aggregated settings, section revisions, defaults/effective values, and capabilities
     app.get('/api/app/settings', requireAuth, chatRoute(async (req) =>
             userSettingsService.getSettings({

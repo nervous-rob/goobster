@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
-import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { applyAtmosphere } from '../lib/atmosphere';
 import { keys } from '../lib/query';
@@ -38,7 +37,6 @@ export function AppShell() {
     const me = useSession();
     const toast = useToast();
     const navigate = useNavigate();
-    const queryClient = useQueryClient();
     const pathname = useRouterState({ select: (s) => s.location.pathname });
     const [theme, setTheme] = useState<ThemeChoice>(() => getStoredTheme());
     const [drawer, setDrawer] = useState(false);
@@ -191,8 +189,6 @@ export function AppShell() {
 
     async function logout() {
         try { await api.logout(); } catch { /* already out */ }
-        await queryClient.invalidateQueries({ queryKey: keys.me });
-        window.location.reload();
     }
 
     return (

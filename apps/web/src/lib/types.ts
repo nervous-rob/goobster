@@ -10,6 +10,7 @@ export type Scope = {
 };
 
 export type Me = {
+    sessionId?: number;
     user: { id: string; name: string; avatar: string | null };
     /** Application identity (shared-instance): entitlement and sign-in surface. */
     identity?: {
@@ -254,6 +255,7 @@ export type CurationView = 'knowledge' | 'memory' | 'all';
 export type CurationCounts = { saved: number; memory: number; unclassified: number };
 
 export type UserNote = {
+    revision?: number;
     id: number;
     type: string;
     label: string;
@@ -496,6 +498,7 @@ export type TurnStep = {
 
 /** Server snapshot of an in-flight Study turn (thoughts / tools / draft). */
 export type TurnProgress = {
+    waiting?: string;
     userContent?: string;
     draft?: string;
     typing?: boolean;
@@ -516,7 +519,7 @@ export type ChatQueueItem = {
 
 /** SSE `tool` event payload: per-tool progress within a streaming turn. */
 export type ToolEvent = {
-    phase: 'start' | 'result';
+    phase: 'start' | 'result' | 'admission';
     id?: number;
     name: string;
     cached?: boolean;

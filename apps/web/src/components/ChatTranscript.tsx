@@ -48,6 +48,7 @@ export function ChatTranscript({
                     {message.role === 'assistant' && message.steps && message.steps.length > 0 && (
                         <ThinkingSteps steps={message.steps} live={Boolean(message.draft)} defaultOpen={expandDetails || Boolean(message.draft)} />
                     )}
+                    {message.waiting && <p className="hint" role="status">{message.waiting}</p>}
                     {(message.typing || message.content || message.attachments?.length) ? (
                         <div className="msg-bubble">
                             {message.typing

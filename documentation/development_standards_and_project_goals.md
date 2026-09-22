@@ -65,6 +65,15 @@ Goobster is a self-hostable Discord bot designed to provide engaging AI chat, he
 - **Voice cannot work in DMs**: Discord's API does not let bots join DM/group-DM calls (voice connections are guild-scoped; `joinVoiceChannel` requires a guild adapter). Do not attempt to add DM voice - point users at a guild voice channel instead.
 - Privacy: `/what-do-you-know-about-me` reports the user's DM scope when run in a DM; `/forget-me` works from DMs and erases DM-scoped memories (both sides), DM facts, and DM conversation containers/summaries (audited by `privacyService.auditUser`).
 
+### Shared-instance safety (Increment D)
+Full behavior, test evidence and pending actual-host gate: [shared_instance_safety.md](shared_instance_safety.md).
+- Private browser content is keyed by installation and account; session transitions abort work, clear caches and remount account providers. Unowned legacy content needs explicit, authenticated recovery and retains its export source.
+- Long-lived portal streams recheck current session/account and resource membership before delivery and while idle. Authorization failures close the connection without flushing pending private content. Authenticated API responses are never browser-cached.
+- Model, code-run and stream concurrency is admitted through shared database leases. A process-local counter is only a fast local rejection, never the installation-wide authority. Replicas use one database and identical policies. Resource admission is distinct from the spending-reservation work in #248.
+- Human notes/settings/plans/assets carry revision tokens. Reject stale writes; preserve local drafts for comparison. Shared writes recheck membership under the same immutable-project lock used for removal.
+- Operator documentation is private by default. Filter candidates before retrieval/ranking/fallback, and enforce the same audience for enumeration and direct reads.
+- Invited accounts and multi-account installations cannot opt into weak sandbox isolation. Record the canary on the actual execution host before opening shared admission; CI evidence alone does not meet that gate.
+
 ### Application identity (principals, accounts, the actor context)
 Full reference: `documentation/identity.md`. Plan and remaining increments: `documentation/shared_instance_product_spec.md` (its §12 lists the standards amendments each increment must land with).
 - **A user id is a principal id.** `services/identityService.js` owns the `principals` / `auth_identities` / `app_accounts` tables. Legacy principals reuse the Discord snowflake as their id (so `userId`, `dm:<userId>`, `USER:<userId>` and project directories never move); native principals are `usr_<uuid>`. Both are TEXT. Validate with `identityService.isPrincipalId`, not with a bare `^\d{5,20}$` - that regex now means *is this a Discord subject*, and `isSnowflake` says so.

@@ -721,8 +721,16 @@ class ProjectMissionService {
         );
     }
 
-    async _bumpPlanRevision(handle, mission, userId, reason) {
-        const wasApproved = mission.status === 'APPROVED';
+    async _bumpPlanRevision(handle, mission, userId, reason, expectedRevision = mission.planRevision) {
+        await require('../utils/editConflict').lockProjectWrite(handle, mission.projectId, userId);
+        const fresh = await handle.get('SELECT status, planRevision FROM project_missions WHERE id = @id', { id: mission.id });
+        if (!fresh || !['DRAFT', 'APPROVED'].includes(fresh.status)) {
+            throw new ProjectMissionError(409, 'BAD_STATUS', 'This plan is no longer editable.');
+        }
+        if (expectedRevision != null && Number(expectedRevision) !== Number(fresh.planRevision)) {
+            throw require('../utils/editConflict').editConflict(fresh.planRevision);
+        }
+        const wasApproved = fresh.status === 'APPROVED';
         const bumped = await handle.get(
             `UPDATE project_missions
              SET planRevision = planRevision + 1,
@@ -731,13 +739,12 @@ class ProjectMissionService {
                  approvedBy = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedBy END,
                  approvedRevision = CASE WHEN status = 'APPROVED' THEN NULL ELSE approvedRevision END,
                  updatedAt = datetime('now')
-             WHERE id = @id AND status IN ('DRAFT', 'APPROVED')
+             WHERE id = @id AND planRevision = @expectedRevision AND status IN ('DRAFT', 'APPROVED')
              RETURNING planRevision`,
-            { id: mission.id }
+            { id: mission.id, expectedRevision: fresh.planRevision }
         );
         if (!bumped) {
-            throw new ProjectMissionError(409, 'BAD_STATUS',
-                'This mission is no longer a draft, so the plan cannot change.');
+            throw require('../utils/editConflict').editConflict(mission.planRevision);
         }
         const nextRevision = Number(bumped.planRevision);
         if (wasApproved) {
@@ -790,11 +797,14 @@ class ProjectMissionService {
 
     async updateDraft({
         userId, project, owner = null, missionId = null,
-        title, objective, successCriteria, deadline, budget
+        title, objective, successCriteria, deadline, budget, expectedRevision = null
     } = {}) {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['DRAFT', 'APPROVED']
         );
+        if (expectedRevision != null && Number(expectedRevision) !== Number(row.planRevision)) {
+            throw require('../utils/editConflict').editConflict(row.planRevision);
+        }
         const nextTitle = title != null ? clip(title, MAX_TITLE) : row.title;
         const nextObjective = objective != null ? clip(objective, MAX_OBJECTIVE) : row.objective;
         if (!nextTitle || !nextObjective) {
@@ -841,11 +851,14 @@ class ProjectMissionService {
 
     async addStep({
         userId, project, owner = null, missionId = null,
-        kind, title, description, dependsOn, requiresApproval, actionParams, sortOrder
+        kind, title, description, dependsOn, requiresApproval, actionParams, sortOrder, expectedRevision = null
     } = {}) {
         const { project: projectRow, row } = await this._requireOpen(
             userId, project, owner, missionId, ['DRAFT', 'APPROVED']
         );
+        if (expectedRevision != null && Number(expectedRevision) !== Number(row.planRevision)) {
+            throw require('../utils/editConflict').editConflict(row.planRevision);
+        }
         const count = await db.get(
             'SELECT COUNT(*) AS c FROM project_mission_steps WHERE missionId = @missionId',
             { missionId: row.id }
@@ -855,7 +868,7 @@ class ProjectMissionService {
                 `A mission can hold at most ${MAX_STEPS} steps.`);
         }
         await db.transaction(async (tx) => {
-            const planRevision = await this._bumpPlanRevision(tx, row, userId, 'step_added');
+            const planRevision = await this._bumpPlanRevision(tx, row, userId, 'step_added', expectedRevision);
             const stepId = await this._insertStep(tx, {
                 missionId: row.id,
                 userId,
@@ -966,6 +979,7 @@ class ProjectMissionService {
         );
         const planRevision = Number(row.planRevision) || 1;
         await db.transaction(async (tx) => {
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             await this._consumeReceipt(tx, {
                 missionId: row.id, userId, receiptId, nonce, planRevision
             });
@@ -1005,6 +1019,7 @@ class ProjectMissionService {
         }
         let becameReview = false;
         await db.transaction(async (tx) => {
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             const changed = (await tx.run(
                 `UPDATE project_missions
                  SET status = 'ACTIVE', startedAt = datetime('now'), updatedAt = datetime('now'),
@@ -1046,6 +1061,7 @@ class ProjectMissionService {
         // mission while we cancel the linked work, then cancel that work
         // before the mission row itself flips to CANCELLED.
         await db.transaction(async (tx) => {
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             await tx.run(
                 `UPDATE project_mission_steps
                  SET status = CASE WHEN status IN ('DONE', 'SKIPPED', 'FAILED') THEN status ELSE 'SKIPPED' END,
@@ -1059,6 +1075,7 @@ class ProjectMissionService {
             await this._cancelLinkedWork(step, userId);
         }
         await db.transaction(async (tx) => {
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             const changed = (await tx.run(
                 `UPDATE project_missions
                  SET status = 'CANCELLED', completedAt = datetime('now'), updatedAt = datetime('now')
@@ -2008,6 +2025,7 @@ class ProjectMissionService {
         };
         const planRevision = Number(row.planRevision) || 1;
         await db.transaction(async (tx) => {
+            await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             await this._consumeReceipt(tx, {
                 missionId: row.id, userId, receiptId, nonce, planRevision, kind: 'complete'
             });

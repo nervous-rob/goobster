@@ -1,4 +1,4 @@
-import { lazy, StrictMode, Suspense, type ReactNode } from 'react';
+import { lazy, StrictMode, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
     Navigate,
@@ -11,7 +11,9 @@ import {
     useRouterState,
 } from '@tanstack/react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { queryClient } from './lib/query';
+import { createQueryClient, keys } from './lib/query';
+import { bindBrowserAccount, sessionKey, SESSION_CHANGED } from './lib/browserAccount';
+import type { Me } from './lib/types';
 import { SessionProvider, useSession } from './hooks/useSession';
 import { ToastProvider } from './hooks/useToast';
 import { ConfirmProvider } from './hooks/useConfirm';
@@ -67,15 +69,29 @@ function ConservatoryGate() {
 }
 
 function Providers({ children }: { children: ReactNode }) {
+    const [boundary, setBoundary] = useState(() => ({ key: '', client: createQueryClient() }));
+    const onAccount = useCallback((me: Me | null) => {
+        bindBrowserAccount(me);
+        void boundary.client.cancelQueries();
+        boundary.client.clear();
+        const client = createQueryClient();
+        if (me) client.setQueryData(keys.me, me);
+        setBoundary({ key: sessionKey(me), client });
+    }, [boundary.client]);
+    useEffect(() => {
+        const changed = () => onAccount(null);
+        window.addEventListener(SESSION_CHANGED, changed);
+        return () => window.removeEventListener(SESSION_CHANGED, changed);
+    }, [onAccount]);
     return (
-        <QueryClientProvider client={queryClient}>
-            <ToastProvider>
-                <ConfirmProvider>
-                    <SessionProvider>
+        <QueryClientProvider client={boundary.client} key={boundary.key}>
+            <SessionProvider boundKey={boundary.key} onAccount={onAccount}>
+                <ToastProvider>
+                    <ConfirmProvider>
                         <TutorialProvider>{children}</TutorialProvider>
-                    </SessionProvider>
-                </ConfirmProvider>
-            </ToastProvider>
+                    </ConfirmProvider>
+                </ToastProvider>
+            </SessionProvider>
         </QueryClientProvider>
     );
 }
