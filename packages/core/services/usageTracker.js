@@ -107,7 +107,7 @@ class UsageTracker {
              FROM usage_log
              WHERE createdAt >= @daysCutoff ${guildFilter}
              GROUP BY provider, model, operation
-             ORDER BY inputTokens + outputTokens DESC`,
+             ORDER BY SUM(inputTokens) + SUM(outputTokens) DESC`,
             { guildId, daysCutoff: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
         );
     }

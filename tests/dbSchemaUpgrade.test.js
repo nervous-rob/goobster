@@ -281,7 +281,7 @@ CREATE TABLE usage_log (
     count INTEGER NOT NULL DEFAULT 1, createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `;
-const PRE_USAGE_ROWS = ["INSERT INTO usage_log (id, provider, model, operation, inputTokens, outputTokens) VALUES (1, 'anthropic', 'claude-test', 'chat', 100, 20)"];
+const PRE_USAGE_ROWS = [`INSERT INTO usage_log (id, provider, model, operation, "inputTokens", "outputTokens") VALUES (1, 'anthropic', 'claude-test', 'chat', 100, 20)`];
 
 describe('SQLite: upgrading an existing database', () => {
     const files = [];
