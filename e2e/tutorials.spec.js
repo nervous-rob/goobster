@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
 
 test('Settings lists tours; Resume, Replay, Reset one and Reset all work without touching notes or tools', async ({ page }) => {
     await page.goto('/app/settings/tutorials');
-    await expect(page.getByRole('heading', { name: /Tutorials/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Tutorials', exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="tutorial-list"]')).toBeVisible();
 
     const homeRow = page.locator('.tutorial-row[data-tutorial-id="home.orientation"]');
@@ -152,8 +152,11 @@ test('an unknown tutorial id is rejected; a public share never starts a tour', a
 });
 
 test('skipping one tutorial via the API leaves another not_started', async ({ page }) => {
+    // Clear the beforeEach seed so chat stays not_started while we skip home.
+    await page.request.post('/api/app/tutorials/reset');
     await page.request.post('/e2e/fixtures/tutorial-progress', {
         data: {
+            autoStart: false,
             rows: [{
                 tutorialId: 'home.orientation',
                 status: 'in_progress',
@@ -178,6 +181,6 @@ test('skipping one tutorial via the API leaves another not_started', async ({ pa
     expect(list.ok()).toBe(true);
     const payload = await list.json();
     const chat = payload.progress.find((p) => p.tutorialId === 'chat.basics');
-    expect(!chat || chat.status === 'not_started').toBe(true);
+    expect(chat?.status || 'not_started').toBe('not_started');
     expect(payload.catalog.find((c) => c.id === 'admin.instance')).toBeUndefined();
 });

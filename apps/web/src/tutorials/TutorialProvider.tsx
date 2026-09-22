@@ -233,7 +233,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
             return;
         }
 
-        if (!room || room === 'share' || room === 'settings') return;
+        if (!room || room === 'settings') return;
         const roomTutorials = data.catalog.filter((c) => c.roomId === room);
         for (const entry of roomTutorials) {
             const progress = progressFor(data, entry.id);
