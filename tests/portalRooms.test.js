@@ -6,7 +6,7 @@
  * API. Browser wiring is covered by e2e/navigation.spec.js.
  */
 const rooms = require('../apps/web/src/lib/rooms.cjs');
-const { START_PAGES } = require('../packages/core/config/userSettingsSchema');
+const { START_PAGES, TOOL_ROOM_IDS } = require('../packages/core/config/userSettingsSchema');
 
 describe('room registry shape', () => {
     test('exposes exactly the seven primary destinations, in order', () => {
@@ -18,6 +18,7 @@ describe('room registry shape', () => {
     test('keeps Usage, Settings and Host in the account area and specialist rooms under Tools', () => {
         expect(rooms.ACCOUNT_ROOMS.map((room) => room.id)).toEqual(['usage', 'settings', 'host']);
         expect(rooms.TOOL_ROOMS.map((room) => room.id)).toEqual(['music', 'trading', 'decks']);
+        expect(rooms.TOOL_ROOMS.map((room) => room.id)).toEqual(TOOL_ROOM_IDS);
         for (const tool of rooms.TOOL_ROOMS) expect(rooms.parentRoom(tool.id)).toBe('tools');
         expect(rooms.parentRoom('chat')).toBe('chat');
     });
@@ -253,6 +254,16 @@ describe('availability', () => {
         expect(rooms.unavailableReason(host, { identity: { operator: false } })).toMatch(/host/);
         expect(rooms.unavailableReason(projects, { features: {} })).toMatch(/not enabled/);
         expect(rooms.unavailableReason(projects, { features: { projects: true } })).toBeNull();
+    });
+
+    test('hiding a tool drops it from the catalog and leaves the host reason alone', () => {
+        const offline = { discord: { enabled: false } };
+        expect(rooms.catalogTools(['music']).map((room) => room.id)).toEqual(['trading', 'decks']);
+        expect(rooms.catalogTools(['not-a-tool', 'decks']).map((room) => room.id)).toEqual(['music', 'trading']);
+        expect(rooms.catalogTools(['trading']).some((room) => room.id === 'trading')).toBe(false);
+        expect(rooms.isRoomAvailable(trading, offline)).toBe(false);
+        expect(rooms.unavailableReason(trading, offline)).toMatch(/not connected to Discord/);
+        expect(rooms.isRoomAvailable(rooms.ROOM_BY_ID.music, offline)).toBe(true);
     });
 });
 

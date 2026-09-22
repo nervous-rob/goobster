@@ -68,5 +68,13 @@ module.exports = {
     ARTIFACT_IMAGE: 'out/frame.png',
     NOTICE_TITLE: 'Emergence study job failed',
     NOTICE_DETAIL: 'Job exited with code 3.',
-    NOTICE_REASON: 'a failed Observatory job'
+    NOTICE_REASON: 'a failed Observatory job',
+
+    // One _contact delivery of three notices (package E5). Scores stay
+    // below NOTICE_TITLE so journeys.spec.js still acts on that notice first.
+    CONTACT_LEAD: 'The ingest watch fired',
+    CONTACT_MORE_1: 'A second watch fired',
+    CONTACT_MORE_2: 'A third watch fired',
+    CONTACT_BODY: 'The nightly ingest changed while you were away.',
+    CONTACT_INBOX_TITLE: 'The ingest watch fired (+2 more)'
 };

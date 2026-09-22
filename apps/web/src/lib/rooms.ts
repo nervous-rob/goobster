@@ -87,6 +87,7 @@ type Registry = {
     PRIMARY_ROOMS: Room[];
     ACCOUNT_ROOMS: Room[];
     TOOL_ROOMS: Room[];
+    catalogTools: (hiddenIds: readonly string[] | null | undefined) => Room[];
     START_PAGE_OPTIONS: StartPageOption[];
     START_PAGES: StartPage[];
     LEGACY_START_PAGES: Record<string, string>;
@@ -117,6 +118,7 @@ export const ALIASES = rooms.ALIASES;
 export const PRIMARY_ROOMS = rooms.PRIMARY_ROOMS;
 export const ACCOUNT_ROOMS = rooms.ACCOUNT_ROOMS;
 export const TOOL_ROOMS = rooms.TOOL_ROOMS;
+export const catalogTools = rooms.catalogTools;
 export const START_PAGE_OPTIONS = rooms.START_PAGE_OPTIONS;
 export const START_PAGES = rooms.START_PAGES;
 export const normalize = rooms.normalize;

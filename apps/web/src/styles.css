@@ -1455,9 +1455,20 @@ html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
 
 .tools-intro { margin: 0 0 16px; max-width: 640px; }
 .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; max-width: 920px; }
-a.tools-card { text-decoration: none; }
+a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 .tools-card { transform: none; }
+.tools-card-link { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; }
 .tools-card.is-unavailable { cursor: default; opacity: 0.78; }
+.tools-hide { align-self: flex-start; margin-top: 8px; }
+.tools-hidden { margin-top: 22px; max-width: 920px; }
+.tools-hidden-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.tools-hidden-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.activity-correlation { margin-top: 6px; font-size: 13px; color: var(--text-dim); }
+.activity-correlation a { color: var(--accent); }
+.activity-correlation-list { margin: 4px 0 0; padding-left: 18px; }
 .tools-card.is-unavailable:hover { border-color: var(--border); box-shadow: none; }
 .tools-card-head { display: flex; align-items: center; gap: 12px; }
 .tools-card-icon { font-size: 26px; line-height: 1; }

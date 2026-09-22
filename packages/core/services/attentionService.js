@@ -35,6 +35,7 @@
 
 const db = require('../db');
 const aiService = require('./aiService');
+const activityCorrelation = require('./activityCorrelation');
 const attentionLedgerService = require('./attentionLedgerService');
 const attentionPolicyService = require('./attentionPolicyService');
 const domainEventBus = require('./domainEventBus');
@@ -888,7 +889,8 @@ Respond with ONLY JSON:
              LIMIT @limit`,
             params
         );
-        return rows.map(row => this.presentNotice(row));
+        const presented = rows.map(row => this.presentNotice(row));
+        return activityCorrelation.attachToNotices(userId, presented);
     }
 
     presentNotice(row) {
@@ -958,7 +960,9 @@ Respond with ONLY JSON:
             await attentionLedgerService.touchActivity(row.itemId);
         }
         this._publishPortal(userId, row.id);
-        return this.presentNotice({ ...row, status, snoozeUntil });
+        const presented = this.presentNotice({ ...row, status, snoozeUntil });
+        const [withDelivery] = await activityCorrelation.attachToNotices(userId, [presented]);
+        return withDelivery;
     }
 
     /** Mark notices delivered (used by both DM contact and chat mentions). */

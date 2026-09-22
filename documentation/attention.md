@@ -444,6 +444,9 @@ opening) and on unattended turns (a scheduled task is not a conversation).
 Notices, the ledger behind them, armed watches, and the initiative dials. Each
 notice has a **why?** view showing the five score inputs and how they combined:
 a system that decides when to bother you should be able to explain itself.
+A notice that `_contact` also filed in the Inbox says so and links to that
+row; the Inbox row links back. Acknowledge, snooze and dismiss stay on this
+pane. The portal's Activity badge counts the Inbox row, not the notice again.
 
 Two deliberate absences:
 

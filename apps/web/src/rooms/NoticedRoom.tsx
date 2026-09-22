@@ -1,5 +1,6 @@
 import { useDateLabel } from '../hooks/useDateLabel';
 import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -36,6 +37,13 @@ type Notice = {
         actionability: number; interruptionCost: number;
     };
     createdAt: string;
+    /** The Inbox row `_contact` filed for this notice, when there is one. */
+    inboxDelivery?: {
+        itemId: number;
+        read: boolean;
+        archived: boolean;
+        link: string;
+    } | null;
 };
 
 type Item = {
@@ -229,7 +237,7 @@ export function NoticedRoom() {
                         <div className="section-title">Goobster noticed</div>
                         <div className="list-card">
                             {data.notices.map((notice) => (
-                                <div key={notice.id} className="list-row task-row">
+                                <div key={notice.id} id={`notice-${notice.id}`} className="list-row task-row">
                                     <div className="row-body">
                                         <span className="badge">{DISPOSITION_MARK[notice.disposition]} {notice.category}</span>
                                         <strong>{notice.title}</strong>
@@ -241,6 +249,15 @@ export function NoticedRoom() {
                                             <button type="button" className="btn subtle" style={{ padding: '0 4px' }}
                                                 onClick={() => setExplaining(notice)}>why?</button>
                                         </div>
+                                        {notice.inboxDelivery && (
+                                            <div className="activity-correlation" data-testid="notice-inbox-delivery">
+                                                Delivered to your{' '}
+                                                <Link to="/activity/inbox" hash={`inbox-${notice.inboxDelivery.itemId}`}>Inbox</Link>
+                                                {notice.inboxDelivery.archived
+                                                    ? ' · archived there'
+                                                    : notice.inboxDelivery.read ? ' · read there' : ''}
+                                            </div>
+                                        )}
                                     </div>
                                     <button type="button" className="btn subtle"
                                         onClick={() => act(notice, 'act', 'Marked as acted on.')}>Acted</button>

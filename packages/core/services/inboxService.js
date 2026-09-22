@@ -17,6 +17,7 @@
 
 const db = require('../db');
 const eventBus = require('./eventBusService');
+const activityCorrelation = require('./activityCorrelation');
 const { toGateway } = require('../gateway');
 const identityConfig = require('../config/identityConfig');
 
@@ -238,7 +239,12 @@ class InboxService {
         return visible;
     }
 
-    async _publicItem(row) {
+    async _publicItem(row, noticeById = null) {
+        let attention = null;
+        if (row.sourceType === activityCorrelation.SOURCE_TYPE) {
+            const map = noticeById || await activityCorrelation.noticesByIdForRows([row]);
+            attention = activityCorrelation.presentDelivery(row, map);
+        }
         return {
             id: row.id,
             kind: row.kind,
@@ -246,6 +252,10 @@ class InboxService {
             body: row.body || null,
             source: row.sourceType ? { type: row.sourceType, id: row.sourceId } : null,
             link: row.link || null,
+            // The notices this row delivered, when it is an attention contact.
+            // Null for every other kind. Read and archive stay on this row;
+            // the notice statuses are visible here and are not actions.
+            attention,
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
             archived: Boolean(row.archivedAt),
@@ -287,8 +297,9 @@ class InboxService {
             params
         );
         const page = rows.slice(0, bounded);
+        const noticeById = await activityCorrelation.noticesByIdForRows(page);
         return {
-            items: await Promise.all(page.map(row => this._publicItem(row))),
+            items: await Promise.all(page.map(row => this._publicItem(row, noticeById))),
             unread: await this.unreadCount(userId),
             nextCursor: rows.length > bounded ? String(page[page.length - 1].id) : null
         };

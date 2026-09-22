@@ -469,6 +469,47 @@ async function seedInboxAndPeople() {
     }
 }
 
+/**
+ * A real `_contact` delivery: three notices, one inbox row. Seeded after
+ * the archive fixtures so the row is the newest item. Scores stay below
+ * the quiet notice in `seedAttention`, which journeys.spec.js acts on.
+ */
+async function seedAttentionContact(userId) {
+    const specs = [
+        { key: 'e2e-contact-lead', title: C.CONTACT_LEAD, score: 0.2 },
+        { key: 'e2e-contact-more-1', title: C.CONTACT_MORE_1, score: 0.15 },
+        { key: 'e2e-contact-more-2', title: C.CONTACT_MORE_2, score: 0.1 }
+    ];
+    const notices = [];
+    for (const spec of specs) {
+        const notice = await attention._raiseNotice(userId, {
+            key: spec.key,
+            itemId: null,
+            category: 'watch',
+            title: spec.title,
+            detail: C.CONTACT_BODY,
+            urgency: 0.4,
+            importance: 0.4,
+            confidence: 0.6,
+            actionability: 0.5,
+            interruptionCost: 0.2,
+            score: spec.score,
+            disposition: 'dm',
+            reason: 'a watch that fired'
+        });
+        if (!notice) throw new Error(`e2e contact notice ${spec.key} was not raised`);
+        notices.push(notice);
+    }
+    const filed = await attention._contact({
+        userId,
+        gateway: null,
+        notices,
+        message: C.CONTACT_BODY,
+        urgent: false
+    });
+    if (!filed) throw new Error('e2e attention contact did not file an inbox row');
+}
+
 async function seed() {
     const observatory = makeObservatory();
     await seedExpedition(C.OWNER);
@@ -479,6 +520,7 @@ async function seed() {
     await seedTwinProject(observatory, C.MEMBER, C.OWNER);
     await seedAttention(C.OWNER);
     await seedInboxAndPeople();
+    await seedAttentionContact(C.OWNER);
     return observatory;
 }
 
@@ -502,6 +544,26 @@ async function main() {
     });
     app.get('/e2e/inbox-attachment.csv', (_req, res) => {
         res.type('text/csv').send('name,value\nkept attachment,42\n');
+    });
+    // The correlation spec archives the contact row to prove Attention
+    // shows it, then puts the row back so the Archive pagination spec
+    // still sees exactly the 51 seeded rows.
+    app.post('/e2e/fixtures/unarchive-inbox', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || C.OWNER);
+            const title = String(req.body?.title || '');
+            if (!title) {
+                res.status(400).json({ error: 'title required' });
+                return;
+            }
+            await db.run(
+                'UPDATE inbox_items SET archivedAt = NULL WHERE userId = @userId AND title = @title',
+                { userId, title }
+            );
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
     });
     // A distilled row Goobster "inferred" (curation = memory), minted on
     // demand so the transfers spec can prove the picker refuses it without

@@ -54,7 +54,9 @@ incompatible reshape bumps `schemaVersion` and upgrades in `getSettings` —
 never a one-off migration script.
 
 **Privacy:** `forgetUser` / `auditUser` cover `user_settings` and
-`user_setting_revisions`. New per-user stores must stay on that path.
+`user_setting_revisions`. `hiddenToolRooms` is a key in that same
+`preferencesJson`, so the transparency report (`settingsPreferences`) and
+erasure already include it. New per-user stores must stay on that path.
 
 ## Inventory
 
@@ -90,7 +92,7 @@ never a one-off migration script.
 | PR06 | Default new-chat privacy | prefs → Study `newChat` |
 | PR10–PR12 | Export, revoke shares, revoke applet grants | dedicated settings routes |
 | AC02–AC03 | Sessions / sign out other devices; clear device-local prefs | `web_sessions` + browser keys |
-| UI01 V2–UI09, UI12 | System theme + account sync, text size, motion, density, Enter-to-send, detail expansion, start page (room ids from `portal_navigation.md`; older saved values such as `study` or `noticed` stay valid and map onto the current destination), Exchange server, Music Lab link | prefs + device paint |
+| UI01 V2–UI09, UI12 | System theme + account sync, text size, motion, density, Enter-to-send, detail expansion, start page (room ids from `portal_navigation.md`; older saved values such as `study` or `noticed` stay valid and map onto the current destination), hidden tools (`appearance.hiddenToolRooms`: the tool-room ids `music`, `trading`, `decks` from `TOOL_ROOM_IDS`, the same list as the web registry; an unknown id is rejected; hiding removes the tool from Tools and from navigation, leaves host availability alone, and does not block the tool's own URL), Exchange server, Music Lab link | prefs + device paint |
 
 ### Phase 3 (Later runtime policies)
 

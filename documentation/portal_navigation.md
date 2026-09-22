@@ -1,7 +1,7 @@
 ---
 title: "Portal navigation: rooms, canonical routes, and legacy aliases"
 kind: reference
-summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research, Projects' per-project views under /projects/:owner/:slug/:view), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1, E2 and E3).
+summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research, Projects' per-project views under /projects/:owner/:slug/:view), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, how a delivered attention notice is named from both Activity views, the per-account hidden-tool preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1 through E5).
 tags: [portal, navigation, routes, rooms, web, shared-instance, aliases, tutorials]
 ---
 
@@ -139,19 +139,53 @@ Inbox is durable delivery (read/unread, archive, attachments, the Discord
 echo status); Attention is proactive notices (why it exists, acknowledge,
 snooze, dismiss, watches, the opt-in policy); Scheduled is reminders and
 recurring AI tasks. The existing rooms render unchanged under the view
-strip. The sidebar badge is the Inbox unread count **alone**: an attention
-notice that was also delivered to the Inbox is the same item and is never
-counted twice. Merging the underlying stores or correlating duplicates
-across the views is package E5 of the plan, not this contract.
+strip. Refresh and Back stay on the view the address names
+(`/activity/inbox`, `/activity/attention`, `/activity/scheduled`).
+
+The sidebar badge, and the badge on the Inbox tab of this strip, are the
+Inbox unread count **alone** (`me.inbox.unread`). Notice counts are never
+added. A delivered notice is not a second unread item.
+
+An attention notice that `attentionService._contact` also filed in the
+Inbox is one delivery. The inbox row (`kind` `notice`, `sourceType`
+`attention`, `sourceId` the notice ids, comma-joined, `link`
+`/activity/attention`) and the notices stay in their own stores.
+`services/activityCorrelation.js` reads that link when either view is
+loaded. The Inbox row says it is the delivery of the notice or notices and
+links to each one on Attention. Each notice says it was delivered to the
+Inbox and links to that row. One row can name several notices (the
+`(+N more)` title `_contact` already writes). Acknowledge, snooze and
+dismiss stay `attentionService.actOnNotice` and stay on the Attention
+view. Read and archive stay inbox actions and stay on the Inbox view.
+Archiving the row shows on the notice; dismissing, snoozing or acting on
+the notice shows on the row. Neither action moves to the other view.
 
 ## Tools
 
-`/tools` is a landing page of cards for the specialist rooms. Each card
-separates host availability, account permission and connection state from
-personal preference: when a tool cannot open here (the Trading game on an
-installation with no Discord adapter, for instance) the card says why and
-is not a link, instead of opening a room that fails. Per-account show/hide
-of tools is a validated setting that does not exist yet (E5).
+`/tools` is a landing page of cards for the specialist rooms. Three states
+stay visually distinct:
+
+- **Host-unavailable.** `isRoomAvailable` / `unavailableReason` (`requires.feature`,
+  `requires.operator`, `requires.discord` against `me.discord.enabled`).
+  The card is not a link and says why — the Trading game on an installation
+  with no Discord adapter, for instance. Hiding a tool does not change
+  this reason, and this reason does not hide the tool.
+- **Hidden by this account.** `appearance.hiddenToolRooms` is the set of
+  tool-room ids (`music`, `trading`, `decks`) the person has hidden.
+  `userSettingsSchema.TOOL_ROOM_IDS` is the allow-list; the registry's
+  `TOOL_ROOMS` is the same list, and `tests/portalRooms.test.js` fails if
+  they drift. An unknown id is rejected (`BAD_TOOL_ROOMS`). A hidden tool
+  leaves the Tools grid and is not offered in navigation. The page lists
+  it under "Hidden by you" with an unhide control. That list is not the
+  unavailable-card treatment. The same checkboxes live in Settings →
+  Appearance.
+- **A direct URL still opens a hidden tool.** A preference is not a
+  permission. `/conservatory`, `/exchange` and `/decks` do not consult
+  `hiddenToolRooms`. The room itself still explains a host limit (the
+  Exchange still says Discord is off).
+
+`catalogTools(hiddenIds)` is what the grid and any navigation over the
+catalog use. `isRoomAvailable` is unchanged.
 
 ## Start page
 
@@ -179,9 +213,8 @@ this contract, had no route at all; it is now an alias of
 
 ## What this contract does not do
 
-It does not add duplicate-notice correlation or tool visibility
-preferences (E5), or any tutorial behaviour (F). The room ids and tutorial
-ids it fixes are what those packages build on. The saved knowledge versus
+It does not add any tutorial behaviour (F). The room ids and tutorial
+ids it fixes are what that package builds on. The saved knowledge versus
 personal memory boundary (E2) is its own contract in
 [knowledge_and_memory.md](knowledge_and_memory.md), the project
 organization contract (E3) is [ADR 0009](adr/0009-project-organization-contract.md),
@@ -200,7 +233,17 @@ only registers the routes they land on.
   alias rewriting (ids kept, server share excluded, lookalike
   prefixes ignored), room resolution for every canonical and legacy path,
   display names (including `Knowledge · Map`), availability rules,
-  start-page parity and mapping, legacy hash targets.
+  start-page parity and mapping, legacy hash targets, tool-room id parity
+  with `userSettingsSchema.TOOL_ROOM_IDS`, and `catalogTools` (hiding
+  drops a card and leaves `isRoomAvailable` / `unavailableReason` alone).
+- `tests/activityCorrelation.test.js` - one `_contact` is one unread inbox
+  row that names every notice, and each notice names that row; archive
+  stays an inbox action and shows on the notice; dismiss, snooze and act
+  stay attention actions and show on the row; a forged source id cannot
+  read another person's notice; `hiddenToolRooms` rejects an unknown id
+  and a non-list, collapses duplicates, is on the transparency report,
+  and leaves with `forgetUser`; resetting appearance clears it without
+  touching `chat.disabledTools`. SQLite and Postgres.
 - `e2e/navigation.spec.js` - the real router: the legacy → canonical
   matrix with query and hash preserved and the right sidebar entry active,
   the `#room/id` hash, the seven-entry sidebar with Host hidden from a
@@ -209,6 +252,15 @@ only registers the routes they land on.
   Personal memory shortcut, a settings return link from a legacy path, a
   start page saved as `study`, an Inbox row stored with a `/tasks` link, and
   both public share families without a session.
+- `e2e/activityTools.spec.js` - a seeded `_contact` delivery: the Inbox
+  row and the Attention notices point at each other, the sidebar badge
+  matches `me.inbox.unread` on both views, refresh and Back keep the
+  view, archive shows on the notice, and dismiss / snooze / act show on
+  the archived row without moving those buttons. Hiding Music Lab removes
+  it from the Tools grid without the unavailable treatment while Trading
+  still explains Discord; `/conservatory` and `/exchange` still open;
+  unhiding restores the host reason; Settings → Appearance can hide
+  Card decks the same way.
 - `e2e/knowledge.spec.js` - the Knowledge views, the Notes landing for
   `/knowledge` and its aliases, and the rest of the E2 behaviour.
 - `e2e/projects.spec.js` - the Projects list linking to owner-qualified

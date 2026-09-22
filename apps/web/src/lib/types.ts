@@ -47,6 +47,19 @@ export type InboxItem = {
     body: string | null;
     source: { type: string; id: string | null } | null;
     link: string | null;
+    /**
+     * Set when this row is the Inbox delivery of one or more attention
+     * notices (`source.type === 'attention'`). The notices' own actions
+     * stay on Attention; this is the relationship and their current status.
+     */
+    attention: {
+        notices: Array<{
+            id: number;
+            title: string | null;
+            status: string | null;
+            snoozeUntil: string | null;
+        }>;
+    } | null;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -662,6 +675,7 @@ export type UserSettingsResponse = {
             enterToSend: boolean;
             expandChatDetails: boolean;
             startPage: StartPage;
+            hiddenToolRooms: string[];
             preferredExchangeGuild: string | null;
             expeditionDefaultDepth: 'focused' | 'standard' | 'deep';
             expeditionDefaultLens: string;
