@@ -201,6 +201,12 @@ function mountChat(app, ctx, h) {
         models: await ctx.chat.listModels(req.query.provider ? String(req.query.provider) : undefined)
     })));
 
+    // Versioned descriptors for model-aware clients. Keep the ID-only route
+    // for older clients while both use the same registry policy.
+    app.get('/api/app/chat/model-catalog', requireAuth, chatRoute(async (req) =>
+        ctx.chat.listModelCatalog(req.query.provider ? String(req.query.provider) : undefined,
+            req.query.workflow ? String(req.query.workflow) : 'chat')));
+
     // Full-text search across every message in the user's web conversations
     // (the sidebar search box; results deep-link to a message).
     app.get('/api/app/chat/search', requireAuth, chatRoute(async (req) => ({

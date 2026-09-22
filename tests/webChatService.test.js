@@ -34,6 +34,9 @@ jest.mock('pdf-parse', () => ({
     }
 }));
 jest.mock('@goobster/core/services/aiService', () => ({
+    // These fixtures test storage/transport; registry policy has its own contract tests.
+    validateModelSelection: jest.fn((_current, changes) => changes),
+    describeModel: jest.fn((_provider, _model, effort) => ({ supported: true, effectiveEffort: effort || null })),
     generateText: jest.fn().mockResolvedValue('Trains And Hobbies'),
     getThoughtfulPreset: jest.fn(() => ({ provider: 'openai', model: 'gpt-thoughtful', reasoningEffort: 'high' })),
     getDefaultModel: jest.fn(() => 'gpt-everyday'),

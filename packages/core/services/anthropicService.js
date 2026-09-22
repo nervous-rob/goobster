@@ -1,36 +1,11 @@
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
-const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
+const modelRegistry = require('../models/registry');
 const { parseImageDataUrl } = require('../utils/imageDataUrl');
 const usageTracker = require('./usageTracker');
 
 const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com/v1';
 const ANTHROPIC_VERSION = '2023-06-01';
-
-/**
- * Models with always-on adaptive thinking. They reject sampling parameters
- * (`temperature` / `top_p` / `top_k` → 400) and think at effort `high`
- * when none is requested, so the visible-token budget needs headroom even
- * on a default chat turn. OpenAI reasoning models follow the same pattern.
- *
- * Sonnet 5 and Opus 4.7+ joined Fable/Mythos here; older Sonnet 4.x and
- * Opus 4.5/4.6 still accept sampling unless an effort is set.
- */
-function isAdaptiveThinkingModel(model) {
-    const id = String(model || '');
-    return /claude-(fable|mythos)/i.test(id)
-        || /claude-sonnet-5/i.test(id)
-        || /claude-opus-5/i.test(id)
-        || /claude-opus-4-[7-9]/i.test(id);
-}
-
-/**
- * Models supporting the effort parameter (output_config.effort). Haiku and
- * pre-4.6 Sonnet models reject it entirely.
- */
-function supportsEffort(model) {
-    return /claude-(fable|mythos|sonnet-5|opus-4-[5-9]|sonnet-4-6)/i.test(model);
-}
 
 /**
  * Anthropic Claude provider using the Messages API with native tool use.
@@ -80,18 +55,6 @@ class AnthropicService {
 
     getDefaultReasoningEffort() {
         return this.defaultReasoningEffort;
-    }
-
-    /**
-     * Map our provider-agnostic reasoning effort onto Anthropic's effort
-     * parameter (output_config.effort). Claude has no 'minimal' level, so it
-     * maps to 'low'; models without effort support get nothing.
-     */
-    _resolveEffort(effort, model) {
-        if (!effort || !supportsEffort(model)) return null;
-        if (effort === 'minimal') return 'low';
-        if (['low', 'medium', 'high'].includes(effort)) return effort;
-        return null;
     }
 
     /**
@@ -367,7 +330,7 @@ class AnthropicService {
      */
     async chat(messages, opts = {}) {
         this._requireApiKey();
-        const { temperature, top_p, max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
+        const { max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
 
         const modelToUse = model || this.defaultModel;
         const hasTools = Boolean(functions && functions.length > 0);
@@ -382,37 +345,20 @@ class AnthropicService {
             tools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: 5 });
         }
 
-        const effort = this._resolveEffort(reasoning_effort || this.defaultReasoningEffort, modelToUse);
-        // Thinking counts against max_tokens (thinking + text share the
-        // cap), so thinking-capable requests get headroom on top of the
-        // caller's visible budget. Adaptive-thinking models think even
-        // without an explicit effort (their default is 'high').
-        const thinkingEffort = effort || (isAdaptiveThinkingModel(modelToUse) ? 'high' : null);
+        const policy = modelRegistry.resolveRequest('anthropic', modelToUse, {
+            ...opts, max_tokens, reasoning_effort: reasoning_effort || this.defaultReasoningEffort
+        }, messages);
 
         const request = {
-            model: modelToUse,
+            model: policy.model.id,
             messages: anthropicMessages,
             system,
-            max_tokens: withThinkingHeadroom(max_tokens, thinkingEffort),
+            max_tokens: policy.maxOutputTokens,
             tools,
             promptCaching: opts.promptCaching ?? this.promptCaching,
-            effort
+            effort: policy.effort,
+            ...policy.sampling
         };
-
-        // Adaptive-thinking models (Sonnet 5, Fable/Mythos 5, Opus 4.7+)
-        // reject sampling params even without an effort field. Effortful
-        // requests must not carry them either; on older Claude models
-        // temperature and top_p are mutually exclusive, so prefer
-        // temperature and only pass top_p when it's the sole override.
-        if (!isAdaptiveThinkingModel(modelToUse) && !effort) {
-            if (temperature !== undefined) {
-                request.temperature = Math.min(1, temperature);
-            } else if (top_p !== undefined) {
-                request.top_p = top_p;
-            } else {
-                request.temperature = 0.7;
-            }
-        }
 
         try {
             if (typeof onDelta === 'function') {

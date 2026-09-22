@@ -12,6 +12,8 @@ const fs = require('node:fs');
 
 const TEST_DB = path.join(os.tmpdir(), `goobster-usersettings-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
+process.env.OPENAI_API_KEY = 'test-openai';
+process.env.ANTHROPIC_API_KEY = 'test-anthropic';
 
 const db = require('@goobster/core/db');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
@@ -163,10 +165,10 @@ describe('updateSection', () => {
         await expect(userSettingsService.updateSection({ userId, section: 'chat', changes: { reasoningEffort: 'ultra' } }))
             .rejects.toMatchObject({ code: 'BAD_REASONING' });
         const result = await userSettingsService.updateSection({
-            userId, section: 'chat', changes: { model: 'some-model', reasoningEffort: 'low' }
+            userId, section: 'chat', changes: { model: 'gpt-6-sol', reasoningEffort: 'low' }
         });
-        expect(result.data.values).toMatchObject({ model: 'some-model', reasoningEffort: 'low' });
-        expect(result.data.effective.model).toBe('some-model');
+        expect(result.data.values).toMatchObject({ model: 'gpt-6-sol', reasoningEffort: 'low' });
+        expect(result.data.effective.model).toBe('gpt-6-sol');
     });
 
     test('voice: speed bounds, accent legalization, and voice resolution through an injected catalog', async () => {
@@ -540,9 +542,9 @@ describe('Phase 3 later policies', () => {
                 temperature: 0.4,
                 topP: 0.8,
                 parlorProvider: 'openai',
-                parlorModel: 'gpt-test',
+                parlorModel: 'gpt-4o',
                 researchProvider: 'anthropic',
-                researchModel: 'claude-test',
+                researchModel: 'claude-sonnet-5',
                 disabledTools: ['performSearch', 'generateImage'],
                 usageAlertTokens: 50000
             }
@@ -552,8 +554,8 @@ describe('Phase 3 later policies', () => {
             replyMaxTokens: 1024,
             temperature: 0.4,
             topP: 0.8,
-            parlorModel: 'gpt-test',
-            researchModel: 'claude-test',
+            parlorModel: 'gpt-4o',
+            researchModel: 'claude-sonnet-5',
             disabledTools: ['performSearch', 'generateImage'],
             usageAlertTokens: 50000
         });
@@ -666,5 +668,48 @@ describe('error shape', () => {
     test('UserSettingsError carries status, code, and details', () => {
         const error = new UserSettingsError(409, 'SETTINGS_CONFLICT', 'nope', { currentRevision: 3 });
         expect(error).toMatchObject({ name: 'UserSettingsError', status: 409, code: 'SETTINGS_CONFLICT', details: { currentRevision: 3 } });
+    });
+});
+
+describe('model registry settings contract', () => {
+    test('rejects unknown models across chat, Parlor and research before any section write', async () => {
+        const userId = nextUser();
+        for (const changes of [
+            { model: 'gpt-future' },
+            { parlorProvider: 'openai', parlorModel: 'claude-sonnet-5' },
+            { researchProvider: 'openai', researchModel: 'gpt-image-2' }
+        ]) {
+            await expect(userSettingsService.updateSection({ userId, section: 'chat', changes: { ...changes, usageAlertTokens: 90000 } }))
+                .rejects.toMatchObject({ status: 400, code: 'UNSUPPORTED_MODEL' });
+        }
+        expect(await userSettingsService.getRevision(userId, 'chat')).toBe(1);
+        expect(await userSettingsService.getPreference(userId, 'usageAlertTokens')).toBeNull();
+    });
+
+    test('provider and model changes clear inherited choices; unsupported effort is rejected', async () => {
+        const userId = nextUser();
+        await userSettingsService.updateSection({ userId, section: 'chat', changes: { provider: 'openai', model: 'gpt-6-sol', reasoningEffort: 'max' } });
+        const changed = await userSettingsService.updateSection({ userId, section: 'chat', changes: { provider: 'anthropic' } });
+        expect(changed.data.values).toMatchObject({ provider: 'anthropic', model: null, reasoningEffort: null });
+        expect(changed.data.effective).toMatchObject({ model: 'claude-sonnet-5', reasoningEffort: 'high' });
+        await expect(userSettingsService.updateSection({ userId, section: 'chat', changes: { provider: 'openai', model: 'gpt-6-astra', reasoningEffort: 'none' } }))
+            .rejects.toMatchObject({ code: 'BAD_REASONING' });
+    });
+
+    test('unrelated edits and resets remain possible for legacy saved models', async () => {
+        const userId = nextUser();
+        await guildSettings.setGuildAI(dmScopeId(userId), { provider: 'openai', model: 'old-deployment' });
+        const result = await userSettingsService.updateSection({ userId, section: 'chat', changes: { replyMaxTokens: 2048 } });
+        expect(result.data.values.model).toBe('old-deployment');
+        expect(result.data.effective.modelSupported).toBe(false);
+        const reset = await userSettingsService.updateSection({ userId, section: 'chat', changes: { model: null, reasoningEffort: null } });
+        expect(reset.data.values.model).toBeNull();
+    });
+
+    test('feature-provider changes clear the old model instead of sending it to another provider', async () => {
+        const userId = nextUser();
+        await userSettingsService.updateSection({ userId, section: 'chat', changes: { researchProvider: 'openai', researchModel: 'gpt-6-sol' } });
+        const changed = await userSettingsService.updateSection({ userId, section: 'chat', changes: { researchProvider: 'anthropic' } });
+        expect(changed.data.values).toMatchObject({ researchProvider: 'anthropic', researchModel: null });
     });
 });

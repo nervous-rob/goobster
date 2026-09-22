@@ -11,7 +11,7 @@ describe('AnthropicService', () => {
         jest.doMock('@goobster/core/config/aiConfig', () => ({
             anthropic: {
                 apiKey: 'test-anthropic-key',
-                chatModel: 'claude-test-model',
+                chatModel: 'claude-haiku-4-5',
                 promptCaching
             }
         }));
@@ -58,7 +58,7 @@ describe('AnthropicService', () => {
         );
 
         const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-        expect(body.model).toBe('claude-test-model');
+        expect(body.model).toBe('claude-haiku-4-5');
         expect(body.system).toEqual([{ type: 'text', text: 'Be concise.', cache_control: { type: 'ephemeral' } }]);
         expect(body.cache_control).toEqual({ type: 'ephemeral' });
         expect(body.max_tokens).toBe(64);

@@ -800,3 +800,20 @@ export type TutorialsResponse = {
     };
     sample: TutorialSample;
 };
+
+/** Public model contract, supplied by the backend registry. */
+export type ModelDescriptor = {
+    id: string; canonicalId: string; provider: string; displayName: string; description: string;
+    status: 'supported' | 'preview' | 'custom' | 'disabled'; aliases: string[];
+    input: string[]; output: string[]; workflows: string[];
+    capabilities: { imageInput: boolean; tools: 'native' | 'prompt-based' | false; streaming: boolean; nativeSearch: boolean; nativeSearchExcludedEfforts?: string[] };
+    reasoning: { levels: string[]; default: string | null; aliases: Record<string, string> };
+    sampling: { mode: 'always' | 'never' | 'reasoning-off'; temperatureMax: number; exclusive: boolean };
+    contextWindow: number | null; maxOutputTokens: number | null; checkedAt: string | null; sources: string[];
+    availability: 'listed' | 'not-listed' | 'unknown'; selectable: boolean;
+};
+export type ModelCatalog = {
+    version: number; provider: string; workflow: string; models: ModelDescriptor[];
+    discovery: { status: 'live' | 'cached' | 'stale' | 'unavailable' | 'not-configured'; checkedAt: string | null };
+    unregisteredCount: number;
+};

@@ -12,6 +12,9 @@ const TEST_DB = path.join(os.tmpdir(), `goobster-dm-settings-test-${process.pid}
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 jest.mock('@goobster/core/services/aiService', () => ({
+    // These fixtures test storage/transport; registry policy has its own contract tests.
+    validateModelSelection: jest.fn((_current, changes) => changes),
+    describeModel: jest.fn((_provider, _model, effort) => ({ supported: true, effectiveEffort: effort || null })),
     getProvider: () => 'openai',
     getDefaultModel: () => 'test-default-model',
     getThoughtfulPreset: () => ({ provider: 'openai', model: 'test-thoughtful-model', reasoningEffort: 'high' }),

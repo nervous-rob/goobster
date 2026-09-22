@@ -1672,3 +1672,15 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   margin-top: 2px;
 }
+
+/* Model metadata is reachable by hover, keyboard focus, or tap. */
+.model-picker { min-width: 0; width: 100%; }
+.model-picker .select { width: 100%; }
+.model-picker-summary { position: relative; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .5rem; }
+.model-info-panel { box-sizing: border-box; position: absolute; top: 100%; left: 0; z-index: 25; width: min(340px, 100%); padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-raise); box-shadow: 0 8px 28px #0006; }
+.model-info-panel p { margin: .5rem 0; }
+.model-info-panel a { color: var(--text); text-underline-offset: .2em; }
+.model-info-panel dl { display: grid; grid-template-columns: auto 1fr; gap: .35rem .75rem; font-size: .85rem; }
+.model-info-panel dt { opacity: .7; }
+.model-info-panel dd { margin: 0; overflow-wrap: anywhere; }
+.settings-segment { flex-wrap: wrap; }

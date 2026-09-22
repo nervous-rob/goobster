@@ -188,7 +188,8 @@ class UserSettingsService {
         const effectiveProviderKey = aiCurrent.provider || aiService.getProvider();
         const effectiveProviderEntry = providers.find(p => p.key === effectiveProviderKey) || null;
         const effectiveModel = aiCurrent.model || effectiveProviderEntry?.chatModel || aiService.getDefaultModel();
-        const effectiveReasoning = aiCurrent.reasoningEffort || null;
+        const modelState = aiService.describeModel(effectiveProviderKey, effectiveModel, aiCurrent.reasoningEffort);
+        const effectiveReasoning = modelState.effectiveEffort;
 
         const chatSection = {
             revision: revisions.chat || 1,
@@ -205,6 +206,7 @@ class UserSettingsService {
                 providerName: effectiveProviderEntry?.name || effectiveProviderKey,
                 model: effectiveModel,
                 reasoningEffort: effectiveReasoning,
+                modelSupported: modelState.supported,
                 thoughtful: isThoughtful,
                 ...pickSectionPrefs(customPrefs, 'chat')
             },
@@ -1131,6 +1133,27 @@ class UserSettingsService {
         }
 
         const prefPatch = this._collectPreferencePatch('chat', changes);
+
+        try {
+            if (Object.keys(updates).length) {
+                Object.assign(updates, aiService.validateModelSelection(await guildSettings.getGuildAI(dmScope), updates));
+            }
+            for (const workflow of ['parlor', 'research']) {
+                const providerKey = `${workflow}Provider`;
+                const modelKey = `${workflow}Model`;
+                if (!(providerKey in prefPatch) && !(modelKey in prefPatch)) continue;
+                const prefs = await this._loadPreferences(userId);
+                const selection = aiService.validateModelSelection({ provider: prefs[providerKey], model: prefs[modelKey] }, {
+                    ...(providerKey in prefPatch ? { provider: prefPatch[providerKey] } : {}),
+                    ...(modelKey in prefPatch ? { model: prefPatch[modelKey] } : {})
+                }, workflow);
+                if ('provider' in selection) prefPatch[providerKey] = selection.provider;
+                if ('model' in selection) prefPatch[modelKey] = selection.model;
+            }
+        } catch (error) {
+            if (error.name !== 'ModelPolicyError') throw error;
+            throw new UserSettingsError(error.status, error.code, error.message);
+        }
 
         return async (tx) => {
             if (Object.keys(updates).length > 0) {

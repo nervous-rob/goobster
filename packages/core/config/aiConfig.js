@@ -12,8 +12,8 @@ try {
  * Centralized AI configuration.
  *
  * Resolution order for every value: environment variable first, then
- * config.json, then a hardcoded default. All model IDs live here so no
- * service hardcodes them.
+ * config.json, then a hardcoded default. Defaults live here; supported model
+ * contracts live in models/catalog.js.
  */
 module.exports = {
     /** Raw parsed config.json (or {} when absent) for services that need other keys. */
@@ -21,6 +21,9 @@ module.exports = {
 
     /** Requested provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' (null = auto-detect). */
     provider: process.env.AI_PROVIDER || fileConfig.ai?.provider || null,
+
+    /** Explicit compatibility profiles for additional operator-managed models. */
+    customModels: fileConfig.ai?.customModels || [],
 
     openai: {
         apiKey: process.env.OPENAI_API_KEY || fileConfig.openaiKey || null,

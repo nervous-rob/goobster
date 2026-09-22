@@ -1,7 +1,7 @@
 const { OpenAI, toFile } = require('openai');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
-const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
+const modelRegistry = require('../models/registry');
 const usageTracker = require('./usageTracker');
 
 // Default sampling presets (only applied to models that accept sampling params)
@@ -11,15 +11,6 @@ const SAMPLING_PRESETS = {
     deterministic: { temperature: 0.2, top_p: 1,   max_tokens: 1024 },
     code:      { temperature: 0.2, top_p: 0.1, max_tokens: 1024 },
 };
-
-/**
- * Reasoning-capable models (GPT-5/6 families, o-series) use reasoning.effort.
- * Keep sampling presets off these models: temperature/top_p are rejected
- * while reasoning is active.
- */
-function isReasoningModel(model) {
-    return /^(gpt-[56](?:[.-]|$)|o\d)/i.test(model);
-}
 
 /**
  * OpenAI provider built on the Responses API (the modern primitive replacing
@@ -230,42 +221,26 @@ class OpenAIService {
             withToolGuidance: Boolean(functions && functions.length > 0)
         });
 
-        const visibleBudget = max_tokens ?? presetDefaults.max_tokens ?? 1024;
-        let effort = reasoning_effort || this.defaultReasoningEffort;
-        // Goobster's shared effort selector includes 'minimal', which GPT-6
-        // does not accept. Use its lowest enabled reasoning level instead.
-        // https://developers.openai.com/api/docs/guides/latest-model
-        if (/^gpt-6(?:[.-]|$)/i.test(modelToUse) && effort === 'minimal') {
-            effort = 'low';
-        }
+        const policy = modelRegistry.resolveRequest('openai', modelToUse, {
+            ...opts,
+            temperature: temperature ?? presetDefaults.temperature,
+            top_p: top_p ?? presetDefaults.top_p,
+            max_tokens: max_tokens ?? presetDefaults.max_tokens ?? 1024,
+            reasoning_effort: reasoning_effort || this.defaultReasoningEffort
+        }, messageArray);
 
         const request = {
-            model: modelToUse,
+            model: policy.model.id,
             input,
-            // Responses API enforces a minimum of 16 output tokens.
-            // Reasoning models spend hidden reasoning tokens from the same
-            // cap, so they get headroom on top of the caller's visible
-            // budget (models reason at 'medium' by default when no effort
-            // is requested).
-            max_output_tokens: Math.max(16, isReasoningModel(modelToUse)
-                ? withThinkingHeadroom(visibleBudget, effort || 'medium')
-                : visibleBudget),
+            max_output_tokens: policy.maxOutputTokens,
+            ...policy.sampling,
             store: false
         };
         if (instructions) {
             request.instructions = instructions;
         }
 
-        if (isReasoningModel(modelToUse)) {
-            if (effort) {
-                request.reasoning = { effort };
-            }
-            // Omit sampling params for reasoning-capable models, even when
-            // a caller or preset supplies them.
-        } else {
-            request.temperature = temperature ?? presetDefaults.temperature ?? 0.7;
-            request.top_p = top_p ?? presetDefaults.top_p ?? 1;
-        }
+        if (policy.effort) request.reasoning = { effort: policy.effort };
 
         const tools = [];
         if (functions && functions.length > 0) {

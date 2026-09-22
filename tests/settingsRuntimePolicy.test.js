@@ -3,6 +3,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const TEST_DB = path.join(os.tmpdir(), `goobster-settings-runtime-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
+process.env.OPENAI_API_KEY = 'test-openai';
 jest.mock('@goobster/core/utils/imageDetectionHandler', () => ({}));
 const db = require('@goobster/core/db');
 const settings = require('@goobster/core/services/userSettingsService');
@@ -86,18 +87,18 @@ test('execution refuses stale disabled calls before invoking an integration', as
 test('research snapshots survive preference edits and project runs do not inherit personal models', async () => {
     const svc = require('@goobster/core/services/spitballExpeditionService');
     const { SpitballResearchPipeline } = require('@goobster/core/services/spitballResearchPipeline');
-    await settings.updateSection({ userId: USER, section: 'chat', changes: { researchProvider: 'openai', researchModel: 'original-model' } });
+    await settings.updateSection({ userId: USER, section: 'chat', changes: { researchProvider: 'openai', researchModel: 'gpt-6-sol' } });
     const expedition = await svc.createExpedition({ userId: USER, seed: 'Policy fixtures', autoStart: false });
-    await settings.updateSection({ userId: USER, section: 'chat', changes: { researchModel: 'replacement-model' } });
+    await settings.updateSection({ userId: USER, section: 'chat', changes: { researchModel: 'gpt-6-luna' } });
     const saved = await svc.getById(expedition.id);
-    expect(saved.modelConfig).toEqual({ provider: 'openai', model: 'original-model' });
+    expect(saved.modelConfig).toEqual({ provider: 'openai', model: 'gpt-6-sol' });
     const generateText = jest.fn().mockResolvedValue('ok');
     const pipeline = new SpitballResearchPipeline({ ai: { generateText } });
     await pipeline._generate('test', { modelConfig: saved.modelConfig, usageContext: { userId: USER } });
-    expect(generateText).toHaveBeenCalledWith('test', expect.objectContaining({ model: 'original-model' }));
+    expect(generateText).toHaveBeenCalledWith('test', expect.objectContaining({ model: 'gpt-6-sol' }));
     expect(generateText.mock.calls[0][1]).not.toHaveProperty('modelConfig');
     const shared = await policy.snapshotModel(USER, 'research', { personal: false });
-    expect(shared.model).not.toBe('replacement-model');
+    expect(shared.model).not.toBe('gpt-6-luna');
 });
 
 test('starting the event service listens and invalidates bot caches without an SSE subscriber', async () => {

@@ -78,6 +78,7 @@ const fakeChat = {
     setThoughtful: jest.fn(async ({ thoughtful }) => ({ thoughtful, thoughtfulAvailable: true, model: 'gpt-x', provider: null })),
     extractDocumentFiles: jest.fn(async (files) => files),
     listModels: jest.fn(async () => (['gpt-everyday', 'gpt-thoughtful'])),
+    listModelCatalog: jest.fn(async () => ({ version: 1, models: [], discovery: { status: 'unavailable', checkedAt: null } })),
     searchMessages: jest.fn(() => ([
         { conversationId: 7, title: 'Pi plans', messageId: 42, role: 'user', snippet: 'the pi cluster', createdAt: '2026-01-01 00:00:00' }
     ])),
@@ -428,6 +429,16 @@ describe('chat routes', () => {
         expect(res.status).toBe(200);
         expect(res.json.models).toEqual(['gpt-everyday', 'gpt-thoughtful']);
         expect(fakeChat.listModels).toHaveBeenCalledWith('openai');
+    });
+
+    test('model metadata requires a session and delegates provider and workflow', async () => {
+        const reqPath = '/api/app/chat/model-catalog?provider=gemini&workflow=research';
+        expect((await request({ reqPath })).status).toBe(401);
+        const cookie = await login();
+        const res = await request({ reqPath, headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(res.json).toEqual({ version: 1, models: [], discovery: { status: 'unavailable', checkedAt: null } });
+        expect(fakeChat.listModelCatalog).toHaveBeenCalledWith('gemini', 'research');
     });
 
     test('full-text search delegates with the session user', async () => {
