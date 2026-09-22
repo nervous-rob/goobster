@@ -69,6 +69,15 @@ function mountTutorials(app, ctx, h) {
     app.post('/api/app/tutorials/orientation-offered', requireAuth, chatRoute(async (req) =>
         tutorialService.markOrientationOffered(req.webUser.userId)
     ));
+
+    // Explicit Keep this example — not a tour event. Copies allow-listed
+    // sample material into the account after the client showed a preview.
+    app.post('/api/app/tutorials/keep-example', requireAuth, chatRoute(async (req) =>
+        tutorialService.keepExample({
+            accountId: req.webUser.userId,
+            pieceId: req.body?.pieceId
+        })
+    ));
 }
 
 module.exports = { mountTutorials, TutorialError };

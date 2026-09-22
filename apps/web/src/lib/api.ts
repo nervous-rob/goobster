@@ -144,6 +144,11 @@ export const api = {
         }),
     markOrientationOffered: () =>
         request<TutorialsResponse['preferences']>('/api/app/tutorials/orientation-offered', { method: 'POST' }),
+    keepTutorialExample: (pieceId: string) =>
+        request<{ kept: boolean; alreadyHad?: boolean; pieceId: string; note: { id?: number; label: string; curation?: string } }>(
+            '/api/app/tutorials/keep-example',
+            { method: 'POST', body: { pieceId } }
+        ),
     updateSettingsSection: (section: string, body: { expectedRevision?: number | null; changes: Record<string, unknown> }) =>
         request<SectionUpdateResponse>(`/api/app/settings/${encodeURIComponent(section)}`, { method: 'PATCH', body }),
     resetSettingsPreview: (section: string) =>

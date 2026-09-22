@@ -1,20 +1,23 @@
 /**
- * Guided-tutorial framework (Increment F1).
+ * Guided-tutorial framework (F1) + authored E2/E4 demonstration tours (F2).
  *
  * State machine, catalog allow-list, reset/generation concurrency, privacy
- * erasure. Authored tour steps arrive in F2 — tests inject a temporary
- * catalog with steps to exercise skip vs complete and unavailable steps.
+ * erasure, Weekend field notebook samples, and Keep this example. Authored
+ * steps for other catalog entries remain empty; F1-style tests inject a
+ * temporary catalog with steps to exercise skip vs complete and unavailable
+ * steps without depending on production demo copy.
  */
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const TEST_DB = path.join(os.tmpdir(), `goobster-tutorials-f1-${process.pid}.sqlite`);
+const TEST_DB = path.join(os.tmpdir(), `goobster-tutorials-f2-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
 const db = require('@goobster/core/db');
 const catalog = require('@goobster/core/config/tutorialCatalog');
+const samples = require('@goobster/core/config/tutorialSamples');
 const tutorials = require('@goobster/core/services/tutorialService');
 const privacy = require('@goobster/core/services/privacyService');
 const userSettings = require('@goobster/core/services/userSettingsService');
@@ -29,6 +32,7 @@ const TEST_STEPS_CATALOG = {
         if (t.id === 'home.orientation') {
             return {
                 ...t,
+                // Keep production version; only swap steps for the state-machine suite.
                 steps: [
                     { id: 'greet', anchorId: 'home-doors' },
                     { id: 'open-chat', anchorId: 'home-chat' },
@@ -53,6 +57,10 @@ TEST_STEPS_CATALOG.TUTORIAL_BY_ID = Object.fromEntries(
     TEST_STEPS_CATALOG.TUTORIALS.map((t) => [t.id, t])
 );
 
+function versionOf(tutorialId) {
+    return TEST_STEPS_CATALOG.TUTORIAL_BY_ID[tutorialId].version;
+}
+
 function caps(overrides = {}) {
     return {
         isOperator: false,
@@ -69,8 +77,7 @@ function caps(overrides = {}) {
 }
 
 async function event(tutorialId, action, fields = {}) {
-    const progress = await tutorials.loadProgress(ACCOUNT, tutorialId,
-        TEST_STEPS_CATALOG.TUTORIAL_BY_ID[tutorialId].version);
+    const progress = await tutorials.loadProgress(ACCOUNT, tutorialId, versionOf(tutorialId));
     return tutorials.applyEvent({
         accountId: ACCOUNT,
         tutorialId,
@@ -118,6 +125,94 @@ describe('catalog parity with the room registry', () => {
                 rooms.ROOMS.find((r) => r.tutorials.includes(id)).id
             );
         }
+        tutorials._setCatalogForTests(TEST_STEPS_CATALOG);
+    });
+});
+
+describe('F2 authored demonstration tours', () => {
+    test('home, chat, knowledge, and apps tours ship steps with demos and keepables', () => {
+        tutorials._setCatalogForTests(null);
+        const authored = ['home.orientation', 'chat.basics', 'knowledge.basics', 'projects.apps'];
+        for (const id of authored) {
+            const def = catalog.TUTORIAL_BY_ID[id];
+            expect(def.version).toBe(2);
+            expect(def.steps.length).toBeGreaterThan(0);
+        }
+        expect(catalog.TUTORIAL_BY_ID['home.orientation'].steps.some((s) => s.demo === 'chat-to-note')).toBe(true);
+        expect(catalog.TUTORIAL_BY_ID['chat.basics'].steps.find((s) => s.id === 'save-as-note').keepablePieceId)
+            .toBe('note-anemones');
+        expect(catalog.TUTORIAL_BY_ID['knowledge.basics'].steps.find((s) => s.id === 'create-note').keepablePieceId)
+            .toBe('note-anemones');
+        expect(catalog.TUTORIAL_BY_ID['projects.apps'].steps.some((s) => s.demo === 'open-unfiled')).toBe(true);
+        // Other catalog entries stay empty until a later package.
+        expect(catalog.TUTORIAL_BY_ID['projects.basics'].steps).toEqual([]);
+        expect(catalog.TUTORIAL_BY_ID['music.overview'].steps).toEqual([]);
+        tutorials._setCatalogForTests(TEST_STEPS_CATALOG);
+    });
+
+    test('listForAccount attaches the Weekend field notebook sample', async () => {
+        tutorials._setCatalogForTests(null);
+        const listed = await tutorials.listForAccount({ accountId: ACCOUNT, caps: caps() });
+        expect(listed.sample.id).toBe(samples.SAMPLE_SCENARIO_ID);
+        expect(listed.sample.notes).toHaveLength(2);
+        expect(listed.catalog.find((c) => c.id === 'chat.basics').steps.some((s) => s.demo)).toBe(true);
+        expect(listed.catalog.find((c) => c.id === 'chat.basics').launchable).toBe(true);
+        tutorials._setCatalogForTests(TEST_STEPS_CATALOG);
+    });
+
+    test('Keep this example copies a sample note once; unknown pieces are rejected', async () => {
+        tutorials._setCatalogForTests(null);
+        await expect(tutorials.keepExample({ accountId: ACCOUNT, pieceId: 'nope' }))
+            .rejects.toMatchObject({ code: 'UNKNOWN_PIECE', status: 400 });
+
+        const first = await tutorials.keepExample({ accountId: ACCOUNT, pieceId: 'note-anemones' });
+        expect(first.kept).toBe(true);
+        expect(first.alreadyHad).toBeUndefined();
+        expect(first.note.label).toBe('Tide-pool anemones');
+
+        const again = await tutorials.keepExample({ accountId: ACCOUNT, pieceId: 'note-anemones' });
+        expect(again.alreadyHad).toBe(true);
+        expect(again.note.label).toBe('Tide-pool anemones');
+
+        const rows = await db.all(
+            `SELECT label, content FROM kg_nodes WHERE scopeKey = @scope`,
+            { scope: `USER:${ACCOUNT}` }
+        );
+        expect(rows.filter((r) => r.label === 'Tide-pool anemones')).toHaveLength(1);
+        expect(rows[0].content).toMatch(/Weekend field notebook tutorial/);
+
+        // Sample fixtures themselves are not retrieval rows.
+        expect(rows.every((r) => r.label !== samples.SAMPLE.project.name)).toBe(true);
+        tutorials._setCatalogForTests(TEST_STEPS_CATALOG);
+    });
+
+    test('tour events never create knowledge rows; only keepExample does', async () => {
+        tutorials._setCatalogForTests(null);
+        const home = catalog.TUTORIAL_BY_ID['home.orientation'];
+        await tutorials.applyEvent({
+            accountId: ACCOUNT,
+            tutorialId: 'home.orientation',
+            eventId: 'f2-start',
+            generation: 1,
+            expectedRevision: 0,
+            action: 'start',
+            caps: caps()
+        });
+        await tutorials.applyEvent({
+            accountId: ACCOUNT,
+            tutorialId: 'home.orientation',
+            eventId: 'f2-skip-step',
+            generation: 1,
+            expectedRevision: 1,
+            stepId: home.steps[0].id,
+            action: 'skip_step',
+            caps: caps()
+        });
+        const before = (await db.get(
+            `SELECT COUNT(*) AS c FROM kg_nodes WHERE scopeKey = @scope`,
+            { scope: `USER:${ACCOUNT}` }
+        )).c;
+        expect(before).toBe(0);
         tutorials._setCatalogForTests(TEST_STEPS_CATALOG);
     });
 });
@@ -204,7 +299,7 @@ describe('state machine', () => {
         const skipped = await event('home.orientation', 'skip_tutorial');
         expect(skipped.status).toBe('skipped');
 
-        const chat = await tutorials.loadProgress(ACCOUNT, 'chat.basics', 1);
+        const chat = await tutorials.loadProgress(ACCOUNT, 'chat.basics', versionOf('chat.basics'));
         expect(chat.status).toBe('not_started');
         expect(chat.revision).toBe(0);
     });
@@ -253,7 +348,7 @@ describe('state machine', () => {
             caps: caps()
         })).rejects.toMatchObject({ code: 'STALE_GENERATION', status: 409 });
 
-        const after = await tutorials.loadProgress(ACCOUNT, 'home.orientation', 1);
+        const after = await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'));
         expect(after.status).toBe('not_started');
         expect(after.completedStepIds).toEqual([]);
     });
@@ -275,14 +370,14 @@ describe('state machine', () => {
         });
 
         await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: 'home.orientation', caps: caps() });
-        const home = await tutorials.loadProgress(ACCOUNT, 'home.orientation', 1);
+        const home = await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'));
         expect(home.status).toBe('not_started');
         expect(home.generation).toBe(2);
-        const chatStill = await tutorials.loadProgress(ACCOUNT, 'chat.basics', 1);
+        const chatStill = await tutorials.loadProgress(ACCOUNT, 'chat.basics', versionOf('chat.basics'));
         expect(chatStill.status).toBe('in_progress');
 
         await tutorials.resetAll({ accountId: ACCOUNT, caps: caps() });
-        const chat = await tutorials.loadProgress(ACCOUNT, 'chat.basics', 1);
+        const chat = await tutorials.loadProgress(ACCOUNT, 'chat.basics', versionOf('chat.basics'));
         expect(chat.status).toBe('not_started');
         expect(chat.generation).toBe(2);
 
@@ -301,9 +396,9 @@ describe('state machine', () => {
     test('PATCH preferences changes auto-start only', async () => {
         await event('home.orientation', 'start');
         await event('home.orientation', 'complete_step', { stepId: 'greet' });
-        const before = await tutorials.loadProgress(ACCOUNT, 'home.orientation', 1);
+        const before = await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'));
         await tutorials.patchPreferences(ACCOUNT, { autoStart: false });
-        const after = await tutorials.loadProgress(ACCOUNT, 'home.orientation', 1);
+        const after = await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'));
         expect(after.completedStepIds).toEqual(before.completedStepIds);
         expect(after.revision).toBe(before.revision);
         expect((await tutorials.getPreferences(ACCOUNT)).autoStart).toBe(false);
@@ -322,16 +417,16 @@ describe('privacy', () => {
         await tutorials.patchPreferences(ACCOUNT, { autoStart: true });
         await db.run(
             `INSERT INTO tutorial_feedback (accountId, tutorialId, version, stepId, signal, createdAt)
-             VALUES (@u, 'home.orientation', 1, 'greet', 'unclear', datetime('now'))`,
-            { u: ACCOUNT }
+             VALUES (@u, 'home.orientation', @v, 'greet', 'unclear', datetime('now'))`,
+            { u: ACCOUNT, v: versionOf('home.orientation') }
         );
         // Another account's row must survive.
         await db.run(
             `INSERT INTO tutorial_progress (
                 accountId, tutorialId, version, generation, revision, status,
                 completedStepIdsJson, skippedStepIdsJson, unavailableStepIdsJson, updatedAt
-             ) VALUES (@u, 'chat.basics', 1, 1, 1, 'paused', '[]', '[]', '[]', datetime('now'))`,
-            { u: OTHER }
+             ) VALUES (@u, 'chat.basics', @v, 1, 1, 'paused', '[]', '[]', '[]', datetime('now'))`,
+            { u: OTHER, v: versionOf('chat.basics') }
         );
 
         const summary = await tutorials.summarizeForUser(ACCOUNT);
@@ -359,12 +454,19 @@ describe('privacy', () => {
 });
 
 describe('side-effect boundary', () => {
-    test('the tutorial service module does not pull AI, transfers or inbox writers', () => {
+    test('tour events stay off AI, transfers and inbox writers; Keep is an explicit path', () => {
         const src = fs.readFileSync(
             require.resolve('@goobster/core/services/tutorialService'),
             'utf8'
         );
         expect(src).not.toMatch(/aiService|knowledgeTransferService|inboxService|observatoryService/);
         expect(src).toMatch(/tutorial_progress/);
+        // keepExample is the only knowledge write — it is not reachable from applyEvent.
+        expect(src).toMatch(/async function keepExample/);
+        expect(src).toMatch(/knowledgeGraphService/);
+        const applyIdx = src.indexOf('async function applyEvent');
+        const keepIdx = src.indexOf('async function keepExample');
+        const applyBlock = src.slice(applyIdx, keepIdx);
+        expect(applyBlock).not.toMatch(/knowledgeGraphService|createUserNote|keepExample/);
     });
 });

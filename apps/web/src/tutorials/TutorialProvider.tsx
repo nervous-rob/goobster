@@ -4,9 +4,8 @@
  * Mounted inside the authenticated account scope. Public share pages never
  * start a tour (no session → provider is inert). Opening one room does not
  * complete another room's tutorial. Pause / Escape saves position and does
- * not seize focus again. Authored step copy arrives in F2; this shell shows
- * progress, missing-anchor explanations, and the Settings-driven Resume /
- * Replay / Reset controls.
+ * not seize focus again. Authored F2 steps show demos in the panel; Keep
+ * this example is the only knowledge write and goes through a separate API.
  *
  * Tour events go only through /api/app/tutorials — they cannot spend a
  * provider call, send an invitation, or write user knowledge.
@@ -36,6 +35,10 @@ type TutorialContextValue = {
     setAutoStart: (value: boolean) => Promise<void>;
     pause: () => Promise<void>;
     skipTutorial: () => Promise<void>;
+    completeStep: () => Promise<void>;
+    skipStep: () => Promise<void>;
+    finish: () => Promise<void>;
+    keepExample: (pieceId: string) => Promise<{ label: string; alreadyHad?: boolean }>;
     dismissOffer: () => void;
     offer: { tutorialId: string; title: string; kind: 'first_login' | 'existing' | 'room' } | null;
     acceptOffer: () => Promise<void>;
@@ -63,7 +66,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     const room = resolveRoom(pathname);
     // Public share pages render inside the shell with a null session — never start a tour.
     const enabled = Boolean(me);
-    const isShare = room === 'share' || pathname.includes('/share/');
+    const isShare = pathname.includes('/share/');
 
     const tutorialsQ = useQuery({
         queryKey: keys.tutorials,
@@ -189,6 +192,33 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         setActiveId(null);
     }, [activeId, postEvent]);
 
+    const completeStep = useCallback(async () => {
+        if (!activeId || !active?.progress.currentStepId) return;
+        const next = await postEvent(activeId, 'complete_step', active.progress.currentStepId);
+        if (next.status === 'completed' || next.status === 'finished_with_skips') {
+            setActiveId(null);
+        }
+    }, [active, activeId, postEvent]);
+
+    const skipStep = useCallback(async () => {
+        if (!activeId || !active?.progress.currentStepId) return;
+        const next = await postEvent(activeId, 'skip_step', active.progress.currentStepId);
+        if (next.status === 'completed' || next.status === 'finished_with_skips') {
+            setActiveId(null);
+        }
+    }, [active, activeId, postEvent]);
+
+    const finish = useCallback(async () => {
+        if (!activeId) return;
+        try { await postEvent(activeId, 'finish'); } catch { /* */ }
+        setActiveId(null);
+    }, [activeId, postEvent]);
+
+    const keepExample = useCallback(async (pieceId: string) => {
+        const result = await api.keepTutorialExample(pieceId);
+        return { label: result.note.label, alreadyHad: result.alreadyHad };
+    }, []);
+
     const dismissOffer = useCallback(() => {
         setOffer(null);
         offeredRef.current = true;
@@ -257,6 +287,10 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         setAutoStart,
         pause,
         skipTutorial,
+        completeStep,
+        skipStep,
+        finish,
+        keepExample,
         dismissOffer,
         offer,
         acceptOffer
@@ -285,6 +319,10 @@ export function useTutorials(): TutorialContextValue {
             setAutoStart: async () => {},
             pause: async () => {},
             skipTutorial: async () => {},
+            completeStep: async () => {},
+            skipStep: async () => {},
+            finish: async () => {},
+            keepExample: async () => ({ label: '' }),
             dismissOffer: () => {},
             offer: null,
             acceptOffer: async () => {}

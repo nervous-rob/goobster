@@ -1,8 +1,8 @@
 /**
- * Guided-tutorial framework (F1). Settings Resume / Replay / Reset one /
- * Reset all, auto-start preference, unknown-id rejection, public share
- * never starts a tour. No provider calls — the harness seeds progress
- * through /e2e/fixtures/tutorial-progress.
+ * Guided tutorials (F1 framework + F2 authored E2/E4 tours). Settings Resume /
+ * Replay / Reset, auto-start, unknown-id rejection, public share never starts
+ * a tour, sample demos, Keep this example, and skip-one-step. No provider
+ * calls — the harness seeds progress through /e2e/fixtures/tutorial-progress.
  */
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
@@ -17,20 +17,22 @@ async function seedTutorials(page) {
             rows: [
                 {
                     tutorialId: 'home.orientation',
+                    version: 2,
                     status: 'paused',
                     generation: 1,
                     revision: 2,
-                    currentStepId: 'greet',
+                    currentStepId: 'doors',
                     completedStepIds: [],
                     skippedStepIds: []
                 },
                 {
                     tutorialId: 'chat.basics',
+                    version: 2,
                     status: 'completed',
                     generation: 1,
                     revision: 3,
                     currentStepId: null,
-                    completedStepIds: ['composer', 'save-note']
+                    completedStepIds: ['sample-answer', 'save-as-note', 'add-to-project']
                 }
             ]
         }
@@ -39,7 +41,7 @@ async function seedTutorials(page) {
 }
 
 async function confirmModal(page) {
-    const dialog = page.locator('[role="dialog"]').filter({ hasText: /Reset/ });
+    const dialog = page.locator('[role="dialog"]').filter({ hasText: /Reset|Keep/ });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Confirm' }).click();
 }
@@ -59,11 +61,12 @@ test('Settings lists tours; Resume, Replay, Reset one and Reset all work without
     await expect(homeRow).toContainText('Paused');
     await expect(chatRow).toContainText('Completed');
 
-    // Resume opens the nonmodal panel for the paused tour.
+    // Resume opens the nonmodal panel for the paused tour with authored step copy.
     await homeRow.getByRole('button', { name: 'Resume' }).click();
     const panel = page.locator('[data-tour="tutorial-panel"]');
     await expect(panel).toBeVisible();
     await expect(panel).toHaveAttribute('data-tutorial-id', 'home.orientation');
+    await expect(panel.locator('[data-tour="tutorial-step-title"]')).toContainText('Three doors');
     await page.locator('[data-tour="tutorial-pause"]').click();
     await expect(panel).toHaveCount(0);
 
@@ -75,9 +78,13 @@ test('Settings lists tours; Resume, Replay, Reset one and Reset all work without
     await expect(homeRow).toContainText('Not started', { timeout: 10_000 });
     await expect(chatRow).toContainText('Completed');
 
-    // Replay on chat clears it (empty catalog → stays not_started).
+    // Replay on chat clears completed progress and restarts (F2 steps are launchable).
     await chatRow.getByRole('button', { name: 'Replay' }).click();
-    await expect(chatRow).toContainText('Not started', { timeout: 10_000 });
+    await expect(page.locator('[data-tour="tutorial-panel"]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-tour="tutorial-panel"]')).toHaveAttribute('data-tutorial-id', 'chat.basics');
+    await page.locator('[data-tour="tutorial-pause"]').click();
+    await page.goto('/app/settings/tutorials');
+    await expect(chatRow).toContainText(/In progress|Paused|Not started/, { timeout: 10_000 });
 
     // Re-seed, then Reset all.
     await seedTutorials(page);
@@ -125,10 +132,11 @@ test('an unknown tutorial id is rejected; a public share never starts a tour', a
         data: {
             rows: [{
                 tutorialId: 'home.orientation',
+                version: 2,
                 status: 'in_progress',
                 generation: 1,
                 revision: 1,
-                currentStepId: 'greet'
+                currentStepId: 'doors'
             }]
         }
     });
@@ -159,10 +167,11 @@ test('skipping one tutorial via the API leaves another not_started', async ({ pa
             autoStart: false,
             rows: [{
                 tutorialId: 'home.orientation',
+                version: 2,
                 status: 'in_progress',
                 generation: 1,
                 revision: 1,
-                currentStepId: 'greet'
+                currentStepId: 'doors'
             }]
         }
     });
@@ -183,4 +192,69 @@ test('skipping one tutorial via the API leaves another not_started', async ({ pa
     const chat = payload.progress.find((p) => p.tutorialId === 'chat.basics');
     expect(chat?.status || 'not_started').toBe('not_started');
     expect(payload.catalog.find((c) => c.id === 'admin.instance')).toBeUndefined();
+    expect(payload.sample?.id).toBe('weekend-field-notebook');
+});
+
+test('authored demos, skip step, and Keep this example work without a provider', async ({ page }) => {
+    await page.request.post('/api/app/tutorials/reset');
+    await page.request.post('/e2e/fixtures/tutorial-progress', {
+        data: {
+            autoStart: false,
+            rows: [{
+                tutorialId: 'chat.basics',
+                version: 2,
+                status: 'in_progress',
+                generation: 1,
+                revision: 1,
+                currentStepId: 'sample-answer',
+                completedStepIds: [],
+                skippedStepIds: []
+            }]
+        }
+    });
+
+    await page.goto('/app/settings/tutorials');
+    const chatRow = page.locator('.tutorial-row[data-tutorial-id="chat.basics"]');
+    await chatRow.getByRole('button', { name: 'Resume' }).click();
+
+    const panel = page.locator('[data-tour="tutorial-panel"]');
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute('data-tutorial-id', 'chat.basics');
+    await expect(panel.locator('[data-tour="tutorial-step-title"]')).toContainText('A sample answer');
+    await expect(panel.locator('[data-tour="tutorial-demo"]')).toContainText('no provider call');
+    await expect(panel.locator('[data-tour="tutorial-demo"]')).toContainText('coastal walk');
+
+    // Skip one step — records a skip, advances to save-as-note.
+    await panel.locator('[data-tour="tutorial-skip-step"]').click();
+    await expect(panel).toHaveAttribute('data-step-id', 'save-as-note', { timeout: 10_000 });
+    await expect(panel.locator('[data-tour="tutorial-step-title"]')).toContainText('Save as note');
+    await expect(panel.locator('[data-tour="tutorial-demo"]')).toBeVisible();
+    await expect(panel.locator('[data-tour="tutorial-keep-example"]')).toBeVisible();
+
+    // Keep this example is the only knowledge write.
+    await panel.locator('[data-tour="tutorial-keep-example"]').click();
+    await confirmModal(page);
+    await expect(page.getByText(/Kept "Tide-pool anemones"|already have "Tide-pool anemones"/)).toBeVisible({
+        timeout: 10_000
+    });
+
+    const notes = await page.request.get(
+        `/api/app/spitball/notes?scope=${encodeURIComponent(`dm:${C.OWNER}`)}&view=knowledge`
+    );
+    expect(notes.ok()).toBe(true);
+    const payload = await notes.json();
+    expect(payload.notes.some((n) => n.label === 'Tide-pool anemones')).toBe(true);
+
+    // Next advances without a provider call.
+    await panel.locator('[data-tour="tutorial-next"]').click();
+    await expect(panel).toHaveAttribute('data-step-id', 'add-to-project', { timeout: 10_000 });
+    await expect(panel.locator('[data-tour="tutorial-finish"]')).toBeVisible();
+    await panel.locator('[data-tour="tutorial-finish"]').click();
+    await expect(panel).toHaveCount(0, { timeout: 10_000 });
+
+    const list = await page.request.get('/api/app/tutorials');
+    const chat = (await list.json()).progress.find((p) => p.tutorialId === 'chat.basics');
+    expect(chat.status).toMatch(/completed|finished_with_skips/);
+    expect(chat.skippedStepIds).toContain('sample-answer');
+    expect(chat.completedStepIds).toContain('save-as-note');
 });

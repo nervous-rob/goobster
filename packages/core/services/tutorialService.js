@@ -430,10 +430,12 @@ async function markOrientationOffered(accountId) {
 
 /**
  * Permitted catalog entries plus progress rows and the auto-start preference.
+ * Sample content is attached for demos — it is never mixed into retrieval.
  */
 async function listForAccount({ accountId, caps = {} }) {
     if (!accountId) throw new TutorialError(401, 'UNAUTHENTICATED', 'Sign in required.');
     const cat = catalog();
+    const samples = require('../config/tutorialSamples');
     const tutorials = (cat.TUTORIALS || []).filter((t) => isTutorialPermitted(t, caps));
     const progress = [];
     for (const tutorial of tutorials) {
@@ -448,17 +450,70 @@ async function listForAccount({ accountId, caps = {} }) {
             title: t.title,
             hostOnly: Boolean(t.hostOnly),
             stepIds: (t.steps || []).map((s) => s.id),
-            // F1: steps are empty; F2 fills demonstration metadata. The
-            // shell still needs anchors when a later package adds them.
             steps: (t.steps || []).map((s) => ({
                 id: s.id,
-                anchorId: s.anchorId || null
+                title: s.title || s.id,
+                body: s.body || null,
+                anchorId: s.anchorId || null,
+                path: s.path || null,
+                demo: s.demo || null,
+                keepablePieceId: s.keepablePieceId || null
             })),
             launchable: (t.steps || []).some((s) => capabilityMet(s.requires, caps))
         })),
         progress,
-        preferences
+        preferences,
+        sample: samples.getSample()
     };
+}
+
+/**
+ * Copy one allow-listed sample piece into the person's real knowledge.
+ * Explicit, previewed, and never invoked by a tour event. Idempotent on
+ * title within the personal scope (returns the existing note on clash).
+ */
+async function keepExample({ accountId, pieceId }) {
+    if (!accountId) throw new TutorialError(401, 'UNAUTHENTICATED', 'Sign in required.');
+    const samples = require('../config/tutorialSamples');
+    const piece = samples.getKeepable(pieceId);
+    if (!piece || piece.kind !== 'note') {
+        throw new TutorialError(400, 'UNKNOWN_PIECE', `Unknown keepable sample piece: ${pieceId}`);
+    }
+    const knowledgeGraphService = require('./knowledgeGraphService');
+    const { dmScopeId } = require('../utils/dmScope');
+    const guildId = dmScopeId(accountId);
+    try {
+        const node = await knowledgeGraphService.createUserNote({
+            guildId,
+            userId: accountId,
+            label: piece.label,
+            content: `${piece.content}\n\n_(Kept from the Weekend field notebook tutorial.)_`,
+            type: 'concept',
+            tags: piece.tags
+        });
+        return {
+            kept: true,
+            pieceId,
+            note: { id: node.id, label: node.label, curation: node.curation || 'saved' }
+        };
+    } catch (error) {
+        if (error?.code === 'CONFLICT') {
+            const existing = await knowledgeGraphService.getNode(
+                guildId,
+                piece.label,
+                `USER:${accountId}`
+            );
+            return {
+                kept: true,
+                alreadyHad: true,
+                pieceId,
+                note: existing
+                    ? { id: existing.id, label: existing.label, curation: existing.curation || 'saved' }
+                    : { label: piece.label }
+            };
+        }
+        throw error;
+    }
 }
 
 async function forgetUser(userId, handle = db) {
@@ -518,6 +573,7 @@ module.exports = {
     getPreferences,
     patchPreferences,
     markOrientationOffered,
+    keepExample,
     forgetUser,
     countUserData,
     summarizeForUser,

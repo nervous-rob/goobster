@@ -81,10 +81,11 @@ export function HomeRoom() {
                             </div>
                             <div>
                                 <h1 className="home-hello">{greeting(me.user.name || '')}</h1>
-                                <p className="home-sub">
+                                <p className="home-sub" data-tour="home-private">
                                     {me.discord?.enabled === false
                                         ? `${me.assistant.name} lives here. Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.`
                                         : 'Same brain as Discord. Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.'}
+                                    {' '}Your work starts Private.
                                 </p>
                             </div>
                         </header>
@@ -127,7 +128,8 @@ export function HomeRoom() {
                                 extraClass={`home-card-inbox${inbox.unread > 0 ? ' is-live' : ''}`}
                                 onClick={() => navigate({ to: '/activity/inbox' })}
                                 body={(
-                                    inbox.recent.length
+                                    <div data-tour="home-activity">
+                                    {inbox.recent.length
                                         ? (
                                             <ul className="home-list">
                                                 {inbox.recent.map((item) => (
@@ -135,7 +137,8 @@ export function HomeRoom() {
                                                 ))}
                                             </ul>
                                         )
-                                        : <div className="hint">Reminders, task results, notices, and invitations land in your Inbox{me.discord?.enabled ? ' (and in your Discord DMs)' : ''}.</div>
+                                        : <div className="hint">Reminders, task results, notices, and invitations land in your Inbox{me.discord?.enabled ? ' (and in your Discord DMs)' : ''}.</div>}
+                                    </div>
                                 )}
                             />
                             <Card title="Scheduled" action="Open Activity → Scheduled →"

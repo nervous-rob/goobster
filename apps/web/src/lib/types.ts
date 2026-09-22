@@ -765,8 +765,29 @@ export type TutorialCatalogEntry = {
     title: string;
     hostOnly: boolean;
     stepIds: string[];
-    steps: Array<{ id: string; anchorId: string | null }>;
+    steps: Array<{
+        id: string;
+        title: string;
+        body: string | null;
+        anchorId: string | null;
+        path: string | null;
+        demo: string | null;
+        keepablePieceId: string | null;
+    }>;
     launchable: boolean;
+};
+
+export type TutorialSample = {
+    id: string;
+    title: string;
+    question: string;
+    answer: { heading: string; body: string };
+    notes: Array<{ id: string; label: string; content: string; tags: string[]; audience: string }>;
+    source: { id: string; title: string; excerpt: string };
+    claim: { id: string; text: string; distinguishedFrom: string };
+    project: { id: string; name: string; slug: string; goal: string; audience: string };
+    run: { id: string; title: string; status: string; output: string };
+    app: { id: string; title: string; origin: string; version: string };
 };
 
 export type TutorialsResponse = {
@@ -777,4 +798,5 @@ export type TutorialsResponse = {
         orientationOfferedAt: string | null;
         updatedAt: string | null;
     };
+    sample: TutorialSample;
 };

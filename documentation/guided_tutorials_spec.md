@@ -7,7 +7,7 @@ tags: [tutorials, onboarding, settings, accessibility]
 
 # Guided tutorials and onboarding
 
-**Status: F1 framework shipped; authored tour steps are F2.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell with empty step lists. Increment F2 authors the chat → note → project curriculum and the rest of the demonstrations.
+**Status: F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; remaining catalog entries stay empty until a later package.
 
 Updated: 22 September 2026.
 
@@ -19,7 +19,7 @@ All sample content must remain isolated from real user data and external actions
 
 - The first successful login opens a short Home orientation once. Use a nonblocking guide panel so the user can explore or dismiss it.
 - Each room/service starts its own tutorial on first entry, once its permissions, feature flags, and UI are ready. Opening one room must not complete another room's tutorial.
-- Show **Back**, **Next**, **Skip step**, **Skip this tutorial**, and **Pause** throughout. A final step has **Finish** instead of Next. (F1 ships Pause / Skip this tutorial on the shell; step navigation arrives with F2 steps.)
+- Show **Back**, **Next**, **Skip step**, **Skip this tutorial**, and **Pause** throughout. A final step has **Finish** instead of Next. (F2 ships Next / Skip step / Finish on authored tours; Back remains optional until a multi-step history UI needs it.)
 - Skipping a step records a skip, not a completed exercise. The user can finish with skipped steps and revisit them later.
 - Skipping an entire tutorial leaves other tutorials eligible. It does not silently disable all onboarding.
 - Pause or Escape saves position. Returning shows a Resume affordance; it does not seize focus repeatedly.
@@ -32,7 +32,7 @@ All sample content must remain isolated from real user data and external actions
 
 Use a small “Weekend field notebook” example: a question, two tagged notes, a source, a private project, one completed run, and an output. Reuse the same fictional content across Chat, Knowledge, and Projects so their relationship becomes visible.
 
-**F2** supplies the fixtures and demonstration actions. Tour examples are isolated from real knowledge retrieval, personal memory, usage accounting, notifications, and external side effects. Demo actions never send messages, make provider calls, run code, or schedule real work. A separate **Keep this example** action can copy selected material into the account after a clear preview; skipping or resetting does not create duplicate real data. The F1 framework makes it impossible for a tour *event* to perform those side effects — events only mutate `tutorial_progress` / `tutorial_events`.
+**F2** supplies the fixtures (`packages/core/config/tutorialSamples.js`) and demonstration actions for the four authored tours. Tour examples are isolated from real knowledge retrieval, personal memory, usage accounting, notifications, and external side effects. Demo actions never send messages, make provider calls, run code, or schedule real work. A separate **Keep this example** action (`POST /api/app/tutorials/keep-example`) can copy selected material into the account after a clear preview; skipping or resetting does not create duplicate real data. Tour *events* only mutate `tutorial_progress` / `tutorial_events` — they never call Keep.
 
 Each major feature needs a demonstrated action, a visible result, and an explanation of where the result lives. A tooltip that only describes a button does not satisfy the requirement. Optional live practice may follow the example, but real work must be explicitly initiated through the normal product controls.
 
@@ -40,7 +40,7 @@ Each major feature needs a demonstrated action, a visible result, and an explana
 
 Stable tutorial ids live in `packages/core/config/tutorialCatalog.js` and are listed on each room in `apps/web/src/lib/rooms.cjs`. Core never imports the web registry; `tests/portalRooms.test.js` and `tests/tutorialFramework.test.js` fail when the two lists drift. Clients cannot invent tutorial ids or step ids.
 
-The steps below are the minimum authored curriculum (**F2**). Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. F1 ships each id with an empty `steps` array so the Settings list and state machine work before demonstrations exist. A tutorial with no applicable steps does not launch.
+The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. **F2 ships steps for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`**; other ids keep an empty `steps` array so the Settings list and state machine still work. A tutorial with no applicable steps does not launch.
 
 | Stable tutorial ID | Required demonstrations | Advanced overview and documentation source |
 |---|---|---|
@@ -151,8 +151,9 @@ The [parent plan's validation matrix](shared_instance_product_spec.md#10-validat
 - Tutorial progress and feedback rows are erased by `/forget-me` and listed by the transparency report.
 - `tests/tutorialFramework.test.js` on SQLite and Postgres; `e2e/tutorials.spec.js` (no provider).
 
-### F2 (authored tours) — not started
+### F2 (authored tours) — shipped (sample subset)
 
-- Every major feature has a demonstrated action and inspectable result. Advanced documentation links resolve to the matching deployed user-guide version.
-- Demo fixtures stay out of retrieval; **Keep this example** is explicit.
-- Keyboard, screen-reader, narrow-screen, zoom, and reduced-motion journeys pass against the real components with authored steps.
+- `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps` each have demonstrated actions and inspectable in-panel results (Weekend field notebook). Remaining curriculum rows stay empty until a later package.
+- Demo fixtures stay out of retrieval; **Keep this example** is explicit and idempotent on note title.
+- `tests/tutorialFramework.test.js` covers keep/skip/isolation; `e2e/tutorials.spec.js` covers demos, skip step, Keep, and Finish (no provider).
+- Keyboard, screen-reader, narrow-screen, zoom, and reduced-motion journeys against every remaining room's authored steps are deferred with those tours.
