@@ -13,6 +13,7 @@ Implementation notes that have not moved:
   re-export so every existing `require` keeps working)
 - Config / tool / tables: `config/observatoryConfig.js`, the `observatory`
   tool, `observatory_projects` / `observatory_jobs` — names unchanged
-- Portal: the 🔭 Observatory room (`apps/web/src/rooms/ObservatoryRoom.tsx`)
+- Portal: the **Projects** room (`/projects`, `apps/web/src/rooms/projects/*`;
+  "the Observatory" stays as its secondary name)
 - Routes: `/api/app/observatory/*` still work; `/api/app/projects/*` is
   the newer alias for assets and triggers

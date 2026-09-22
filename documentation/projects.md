@@ -17,28 +17,53 @@ routes are unchanged; `projectService.js` is the service-layer name
   `project_asset_versions`, `project_triggers`, `project_members`,
   `project_invites`, `project_missions` (+ steps/evidence/events),
   `project_decisions` in `db/schema.sql`
-- Portal: the 🔭 Observatory room (`apps/web/src/rooms/ObservatoryRoom.tsx`)
-  with an Inbox for leftover Workshop pins and Study discoveries
+- Portal: the **Projects** room (`/projects`, secondary name "the
+  Observatory"; `apps/web/src/rooms/projects/*`) - the list with a direct
+  create form, one project per owner-qualified address, nine registered
+  views, and **Unfiled apps** for leftover Workshop pins and Study discoveries
 
 The older [`observatory.md`](observatory.md) is a pointer here.
 
 ## Enabling it
 
-Off by default, and it additionally requires the sandbox itself to be on —
-a project grants **persistence, never new execution powers**:
+Projects have two switches, decided in
+[ADR 0009](adr/0009-project-organization-contract.md):
+
+**Organizing projects** (`projects.enabled`, **on by default**) - creating,
+listing, opening and deleting; members and invitations; workspace files and
+assets; plans; knowledge; automations (defining them); run history;
+dashboards and share links; the project conversation. This is what the
+Projects room needs, and it is reported to the portal as
+`me.features.projects`. Turn it off with `GOOBSTER_PROJECTS_ENABLED=0` or
+`"projects": { "enabled": false }` to have no Projects room at all.
+
+**Running code in projects** (`observatory.enabled`, off by default, and it
+additionally requires the sandbox itself to be on - a project grants
+**persistence, never new execution powers**):
 
 ```json
 "sandbox":     { "enabled": true, "scope": "web" },
 "observatory": { "enabled": true, "scope": "web" }
 ```
 
-- `GOOBSTER_OBSERVATORY_ENABLED=1` — master switch (equivalent to `observatory.enabled`).
+- `GOOBSTER_OBSERVATORY_ENABLED=1` — execution switch (equivalent to `observatory.enabled`).
 - `GOOBSTER_OBSERVATORY_SCOPE=web|everywhere` — where the tool is offered
   (`web`, the default, limits it to the authenticated web app chat).
 - `GOOBSTER_OBSERVATORY_FFMPEG=/path/to/ffmpeg` — render-pipeline binary.
 
-When disabled (or when the sandbox is disabled), the tool is **not registered
-at all**. It is never added to the voice tool subset.
+Execution covers starting or resuming a run, rendering, `fetch-data`, the
+✨ Command / project-chat agent turn (it exists to drive the `observatory`
+tool) and the trigger runner's dispatch. It is reported as
+`me.features.observatory`. When it is off (or the sandbox is), the tool is
+**not registered at all** and those controls explain locally, on the
+control itself, that code execution is off on this installation; everything
+else in the room keeps working. It is never added to the voice tool subset.
+
+In code: `ObservatoryService.organizationEnabled` and
+`ObservatoryService.executionEnabled` (`enabled` stays as an alias of the
+latter for the tool registry and the agent tool). Organization methods call
+`_requireOrganization()`; execution methods keep `_requireEnabled()`, which
+checks both.
 
 **Unattended automation runs count as a trusted surface** for the `web`
 scope (both for the sandbox and the Observatory): an automation or
@@ -381,30 +406,69 @@ Mini-apps still cannot fetch `/api/app` themselves: they call
 `connectToGoobster()` / `request(port, { type: 'observatory.read', ... })`
 and the trusted parent fetches with the signed-in session.
 
-## Inbox (the former Workshop)
+## Unfiled apps (the former Workshop inbox)
 
-The Observatory room list view has an **Inbox**: unpinned html/svg fences
-discovered in Study chats, plus leftover `web_applets` pins (marked
-Migrated when the Phase 2 startup migration copied them into a `workshop`
-project). Each item can be **promoted to a project** (new asset or new
-version of an existing one). Pinning still works during this deprecation
-window; `web_applets` and its routes stay until a later release. The
-separate Workshop nav entry is gone; `/workshop` redirects here.
+The Projects list has an **Unfiled apps** section: unpinned html/svg fences
+discovered in Chat, plus leftover `web_applets` pins (marked Migrated when
+the Phase 2 startup migration copied them into a `workshop` project). It
+lists **generated apps only** - not files, notes or reports - which is why
+the narrower name. Each item can be **added to a project** (new asset or
+new version of an existing one). Pinning still works during this
+deprecation window; `web_applets` and its routes stay until a later
+release. The separate Workshop nav entry is gone; `/workshop` redirects
+here. A typed listing of every unfiled output is E4 work.
 
 ## The portal pane
 
-Shown only when the feature is enabled, laid out master-detail:
+Shown when organizing projects is on (`me.features.projects`; see
+[Enabling it](#enabling-it)). The contract is
+[ADR 0009](adr/0009-project-organization-contract.md); the registered views
+are in [portal_navigation.md](portal_navigation.md#projects).
 
-- **The project list** — size, running/total job counts, share state, last
-  activity — plus the Inbox.
-- **The project view** — Overview (status chips, quota, **Mission** chip,
-  latest render, job timeline, gallery), **Mission** (one open outcome,
-  criteria, steps, evidence, timeline), **Explorer** (repo-style tree), Apps
-  (rendered applet with version picker + rollback; own-project reads implicit),
-  Automations (trigger list: schedule/event, action, last outcome,
-  enable/disable), **Knowledge** (project Spitball map + notes + expedition
-  launch), ✨ Command.
-- **Explorer** has two honest roots. `assets/` is the DB-backed, versioned
+**Addresses.** `/projects` is the list. One project lives at
+`/projects/:ownerId/:slug/:view` - the owner is part of the address because
+slugs are unique per owner, not globally, and a collaborator on two
+`emergence-study` projects must be able to tell them apart. The bare
+`/projects/:ownerId/:slug` opens Overview. `/projects/:slug` alone is a
+resolver: a unique match among the projects you can see redirects to the
+canonical address, several show a chooser naming each owner ("yours" for
+your own), and no match says so with a way back. Selection and the active
+view live only in the URL, so refresh, Back / Forward, bookmarks and Inbox
+links land where they say.
+
+**Vocabulary.** The room says **Plan** for a mission, **Run** for a job,
+**Files** for the explorer, **Outputs** for the render gallery and
+**Unfiled apps** for the old inbox. Only the visible words changed:
+`project_missions`, `observatory_jobs`, `/api/app/projects/:slug/mission…`,
+the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
+`project-changed` events keep their names.
+
+- **The project list** (`ProjectListView`) — each card links to its
+  owner-qualified address and shows the goal, role (owner / collaborator
+  and who owns it), running / total runs, size and last activity; above it
+  the **Needs you** board and invitations; below it Unfiled apps.
+  **+ New project** opens a form: a name and an optional **goal**, sent to
+  `POST /api/app/projects { name, goal? }` - the same authorized
+  `createProject` the tool uses (per-user cap, slug uniqueness, owner-only
+  workspace), with the goal stored in `observatory_projects.description`
+  and returned on the list and detail payloads. No model call is involved;
+  ✨ Command stays for richer, instruction-driven setup and is
+  execution-gated.
+- **The project shell** (`ProjectShell`) — the header (title, ← Projects,
+  Chat dock toggle, ✨ Command, People, Refresh) and a tab strip of the
+  nine registered views: **Overview** (goal, status line, open plan and its
+  next action, latest runs, outputs, owner actions: render, snapshot,
+  share, delete), **Plan** (one open outcome, criteria, steps, evidence,
+  timeline, earlier plans), **Conversation** (the project parlor as a full
+  view), **Knowledge** (project Spitball map + notes + expedition launch),
+  **Files** (repo-style tree), **Apps** (rendered applet with version
+  picker + rollback; own-project reads implicit), **Runs** (every run,
+  status, provenance, output verdict, cancel / resume), **People** (owner,
+  collaborators, invitations), **Automations** (trigger list:
+  schedule/event, action, last outcome, enable/disable). The chat dock and
+  the People modal remain as secondary presentations of the Conversation
+  and People views.
+- **Files** has two honest roots. `assets/` is the DB-backed, versioned
   source (apps / scripts / notes) with a version-history rail, client-side
   diffs (`diff`), rollback, and CodeMirror 6 editing. Save goes through
   `projectAssetService.save` with `origin='portal'` — same caps, hash
@@ -591,11 +655,13 @@ provenance. Any member may launch one; budgets charge the launcher.
 Launch from Knowledge → Research ("into project X") or the project's
 Knowledge tab.
 
-## Missions
+## Missions (shown as Plans)
 
-A **Mission** is the durable intent and evaluation layer for one project:
+A **Mission** - **Plan** in the portal, per [ADR 0009](adr/0009-project-organization-contract.md) -
+is the durable intent and evaluation layer for one project:
 what outcome we are pursuing, how we will know it worked, and what should
-change afterward. It sits on the existing project — not a new room.
+change afterward. It sits on the existing project — not a new room. The
+identifier stays `mission` everywhere below; only the visible word is Plan.
 
 - Service: `services/projectMissionService.js`
 - Tables: `project_missions`, `project_mission_steps`,
@@ -603,7 +669,9 @@ change afterward. It sits on the existing project — not a new room.
 - Tool: observatory action `mission` (`missionAction`: propose / get /
   update / add_step / start_step / complete_step / add_evidence /
   review / cancel). Approval, start, and complete are human-only.
-- Portal: the **Mission** tab on a project, plus a chip on Overview
+- Portal: the **Plan** view on a project (`/projects/:owner/:slug/plan`;
+  the older `mission` segment still opens it), plus the open plan and its
+  next action on Overview
 - Routes: `/api/app/projects/:slug/mission*`
 
 The model proposes a plan and evaluates evidence. Code owns permissions,
@@ -658,9 +726,9 @@ subsystem (focused expedition into the project graph, background script
 job, or an armed watch). Those settle paths call back into the mission
 so a missed domain event cannot leave a step running forever.
 
-The conversational test: can someone draft a useful Mission in project
+The conversational test: can someone draft a useful plan in project
 chat, approve it in under a minute, and then do less orchestration than
-before? If the tab feels like project-management bureaucracy, it is too
+before? If the view feels like project-management bureaucracy, it is too
 heavy.
 
 ## Privacy
@@ -728,5 +796,18 @@ old-mission deadlines, one decision per completion, evidence assessment,
 settle hooks, attention, erasure, route auth),
 `tests/dbSchemaUpgrade.test.js` (mission unique-index and pre-pipeline
 Observatory upgrade fixtures, both engines),
-`e2e/journeys.spec.js` (Observatory Mission tab: draft → approve →
-review → complete).
+`tests/projectOrganization.test.js` (ADR 0009 through the real routes with
+execution off: `/me` reports `projects` and `observatory` separately;
+direct creation with a goal and its validation; members, share links and
+listing work while render, Command and the conversation turn are refused
+with `DISABLED`; two owners with one slug are both listed with their
+`ownerId` and named from their principal; a bare slug prefers the caller's
+own project and is `AMBIGUOUS_PROJECT` only between memberships),
+`tests/portalRooms.test.js` (the Projects detail pattern and view
+segments),
+`e2e/projects.spec.js` (owner-qualified list links, tabs / refresh / Back /
+deep links agreeing on the view, the slug-only chooser and a missing slug,
+the create form, Plan / Run vocabulary, Conversation and People as views,
+Unfiled apps) and `e2e/journeys.spec.js` (Plan: draft → approve →
+review → complete; run → output → Attention notice; conversation →
+knowledge).

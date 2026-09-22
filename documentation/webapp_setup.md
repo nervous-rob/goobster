@@ -61,11 +61,17 @@ left off).
   Memories with one-by-one deletion, retention and **Forget me** - lives in
   **Settings → Memory & privacy**, one click away from Chat, Knowledge and
   Home's *Personal memory* card. See `documentation/knowledge_and_memory.md`.
-- **Projects (the Observatory, `/projects`)** - shown only when the feature
-  is enabled. Persistent simulation projects on top of the sandbox, plus the
-  unfiled generated apps that used to be the Workshop (`/workshop` and
-  `/observatory` still resolve here). Home grows a Projects card with
-  project and running-job counts. See `documentation/observatory.md`.
+- **Projects (the Observatory, `/projects`)** - on by default for
+  organizing (`projects.enabled`): a list with a direct create form (name +
+  goal), one project per owner-qualified address
+  (`/projects/:ownerId/:slug/:view`) with Overview, Plan, Conversation,
+  Knowledge, Files, Apps, Runs, People and Automations views, plus the
+  **Unfiled apps** that used to be the Workshop (`/workshop` and
+  `/observatory` still resolve here). Running code in a project needs
+  `observatory.enabled` and the sandbox; with those off the room still
+  organizes and says so on the controls that would run something. Home
+  grows a Projects card with project and running-run counts. See
+  `documentation/projects.md`.
 - **Tools (`/tools`)** - the door to the optional specialist rooms: **Music
   Lab** (the Conservatory, `/conservatory`), the **Trading game** (the
   Exchange, `/exchange`) and **Card decks** (MTG Arena, `/decks`). Each card
