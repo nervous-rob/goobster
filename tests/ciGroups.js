@@ -58,6 +58,7 @@ const GROUPS = [
             'dmSettings',
             'geminiService',
             'imageSearchService',
+            'openaiService',
             'promptContext',
             'promptFragments',
             'replyDetection',
