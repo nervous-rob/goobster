@@ -1,6 +1,6 @@
 /**
  * Durability contract for recurring automations (services/automationService
- * against a real SQLite file): an hourly automation fires when due, its
+ * against either database engine): an hourly automation fires when due, its
  * schedule survives a "restart" (a fresh service instance over the same
  * database), each scheduled fire is claimed before it runs so replays and
  * restarts never double-run it, and a failed run waits for its next
@@ -246,13 +246,30 @@ describe('poll-loop wait budget', () => {
         const service = new AutomationService(client);
         service.executionWaitMs = 50;
 
-        handleChatInteraction.mockImplementation(() => new Promise(() => { /* never settles */ }));
+        let releaseRun;
+        const run = new Promise(resolve => { releaseRun = resolve; });
+        handleChatInteraction.mockImplementationOnce(() => run);
+        // A timed-out run intentionally continues. Drain it in cleanup so
+        // no DB writes or mock calls can leak into the following test.
+        const executeClaimed = service._executeClaimedAutomation.bind(service);
+        let completion;
+        jest.spyOn(service, '_executeClaimedAutomation').mockImplementation(automation => {
+            completion = executeClaimed(automation);
+            return completion;
+        });
 
-        const start = Date.now();
-        await service.executeWithTimeout((await service.getDueAutomations())[0]);
-        expect(Date.now() - start).toBeLessThan(5000);
-        // The fire was claimed before the run - the straggler can't be re-run
-        expect(await service.getDueAutomations()).toHaveLength(0);
+        try {
+            const start = Date.now();
+            await service.executeWithTimeout((await service.getDueAutomations())[0]);
+            expect(Date.now() - start).toBeLessThan(5000);
+            // The fire was claimed before the run - the straggler can't be re-run
+            expect(await service.getDueAutomations()).toHaveLength(0);
+            expect(handleChatInteraction).toHaveBeenCalledTimes(1);
+        } finally {
+            releaseRun();
+            await completion;
+            jest.restoreAllMocks();
+        }
     });
 });
 
