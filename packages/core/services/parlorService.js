@@ -2015,6 +2015,38 @@ class ParlorService {
     }
 
     /**
+     * Post a plain user message into a discussion the caller owns or joined
+     * WITHOUT running a persona turn - the transcript write behind "Use in
+     * discussion" (ADR 0010). Every member and every seated persona reads it
+     * on their next turn; no model call is spent here. Refused while a turn
+     * is in flight so the message cannot land mid-reply.
+     * @param {Object} params - { userId, userName, conversationId, content }
+     * @returns {Promise<{ id:number, role:'user', content:string, userId:string, userName:string|null, createdAt:string }>}
+     */
+    async postMessage({ userId, userName = null, conversationId, content }) {
+        const text = String(content ?? '').trim();
+        if (!text) throw new ParlorError(400, 'EMPTY_MESSAGE', 'Message cannot be empty.');
+        if (text.length > MAX_MESSAGE_LENGTH) {
+            throw new ParlorError(400, 'MESSAGE_TOO_LONG',
+                `Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
+        }
+        const conversation = await this._requireConversationAccess(userId, conversationId);
+        this._requireIdleTurn(conversation.id, userId);
+        const message = await db.get(
+            `INSERT INTO parlor_messages (conversationId, role, content, userId, userName)
+             VALUES (@conversationId, 'user', @content, @userId, @userName)
+             RETURNING id, role, content, userId, userName, createdAt`,
+            { conversationId: conversation.id, content: text, userId, userName: userName || null }
+        );
+        await db.run(
+            `UPDATE parlor_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
+            { id: conversation.id }
+        );
+        await this._notifyTurn(conversation.id, userId);
+        return message;
+    }
+
+    /**
      * Validate and reserve one parlor turn: store the user message, then
      * run every participating persona's respond workflow in seat order.
      * Validation errors throw synchronously (before any SSE stream starts).

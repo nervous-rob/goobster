@@ -4,8 +4,10 @@ import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
+import { useConfirm } from '../../hooks/useConfirm';
 import { GraphCanvas } from '../../components/GraphCanvas';
-import type { Expedition } from '../../lib/types';
+import { describeAudience } from '../../components/TransferNoteModal';
+import type { Expedition, TransferAudience } from '../../lib/types';
 
 type GraphNode = {
     id?: string | number;
@@ -32,6 +34,21 @@ type NoteRow = {
     source?: string;
     tags?: string[];
     updatedAt?: string;
+    /** Set on a published copy (ADR 0010): who put it here and from which note. */
+    publishedBy?: string;
+    publishedByName?: string | null;
+    publishedFrom?: string | null;
+    publishedAt?: string;
+    canRemove?: boolean;
+    /** Set on the caller's own private reference, resolved at read time. */
+    reference?: { transferId: number; userId: string; referencedAt: string };
+};
+
+type NotesPayload = {
+    notes: NoteRow[];
+    references: NoteRow[];
+    audience: TransferAudience;
+    role: 'owner' | 'collaborator';
 };
 
 export function KnowledgeTab({
@@ -45,6 +62,7 @@ export function KnowledgeTab({
 }) {
     const me = useMe();
     const toast = useToast();
+    const confirm = useConfirm();
     const queryClient = useQueryClient();
     const [selected, setSelected] = useState<GraphNode | null>(null);
     const [seed, setSeed] = useState('');
@@ -55,7 +73,7 @@ export function KnowledgeTab({
     });
     const notesQ = useQuery({
         queryKey: keys.projectKnowledgeNotes(slug, ownerId),
-        queryFn: () => api.projectKnowledgeNotes(slug, ownerId) as Promise<{ notes: NoteRow[] }>
+        queryFn: () => api.projectKnowledgeNotes(slug, ownerId) as Promise<NotesPayload>
     });
     const expeditionsQ = useQuery({
         queryKey: [...keys.spitball, 'project', projectId || slug],
@@ -78,8 +96,29 @@ export function KnowledgeTab({
         onError: (error) => toast((error as Error).message, true)
     });
 
+    const removeCopy = useMutation({
+        mutationFn: (note: NoteRow) => api.deleteProjectKnowledgeNote(slug, note.id, ownerId),
+        onSuccess: (_result, note) => {
+            toast(`Removed “${note.label}” from this project. The publisher's original note is untouched.`);
+            queryClient.invalidateQueries({ queryKey: keys.projectKnowledgeNotes(slug, ownerId) });
+            queryClient.invalidateQueries({ queryKey: keys.projectKnowledge(slug, ownerId) });
+        },
+        onError: (error) => toast((error as Error).message, true)
+    });
+    const dropReference = useMutation({
+        mutationFn: (note: NoteRow) => api.removeNoteReference(note.reference?.transferId as number),
+        onSuccess: (_result, note) => {
+            toast(`“${note.label}” is no longer referenced here. Your note itself is untouched.`);
+            queryClient.invalidateQueries({ queryKey: keys.projectKnowledgeNotes(slug, ownerId) });
+            queryClient.invalidateQueries({ queryKey: keys.noteTransfers(note.id) });
+        },
+        onError: (error) => toast((error as Error).message, true)
+    });
+
     const graph = graphQ.data;
     const notes = notesQ.data?.notes || [];
+    const references = notesQ.data?.references || [];
+    const audience = notesQ.data?.audience || null;
     const tags = graph?.tags || [];
     const expeditions = expeditionsQ.data?.expeditions || [];
 
@@ -150,26 +189,87 @@ export function KnowledgeTab({
             )}
 
             <div className="section-title">Notes</div>
+            {audience && (
+                <div className="hint" data-testid="project-knowledge-audience">
+                    Readers of this project’s knowledge: {describeAudience(audience, me.user.id)}.
+                    {' '}Add your own notes here from Knowledge → Notes → Add to project…
+                </div>
+            )}
             {notesQ.isPending && <div className="empty">Loading notes…</div>}
             {notesQ.isError && <div className="empty">{(notesQ.error as Error).message}</div>}
             {notes.length === 0 && notesQ.data && (
                 <div className="empty">No notes in this project’s graph yet.</div>
             )}
             {notes.length > 0 && (
-                <div className="list-card">
+                <div className="list-card" data-testid="project-knowledge-notes">
                     {notes.map((note) => (
-                        <div key={note.id} className="list-row">
+                        <div key={note.id} className="list-row" data-testid={`project-note-${note.id}`}>
                             <div className="row-body">
                                 <strong>{note.label}</strong>
+                                {note.publishedBy ? (
+                                    <span className="badge" title={note.publishedFrom ? `Published from “${note.publishedFrom}”` : 'A published copy'}>
+                                        copy · {note.publishedBy === me.user.id ? 'published by you' : `published by ${note.publishedByName || note.publishedBy}`}
+                                    </span>
+                                ) : null}
                                 {note.content ? <div className="row-meta">{note.content}</div> : null}
                                 <div className="row-meta">
                                     {note.type}
                                     {(note.tags || []).length ? ` · ${(note.tags || []).join(', ')}` : ''}
                                 </div>
                             </div>
+                            {note.canRemove ? (
+                                <button
+                                    type="button"
+                                    className="row-delete"
+                                    title="Remove this copy from the project (the original note is untouched)"
+                                    aria-label={`Remove ${note.label} from this project`}
+                                    disabled={removeCopy.isPending}
+                                    onClick={async () => {
+                                        if (!await confirm(`Remove the copy of “${note.label}” from this project? Whoever published it keeps their original note.`)) return;
+                                        removeCopy.mutate(note);
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            ) : null}
                         </div>
                     ))}
                 </div>
+            )}
+
+            {references.length > 0 && (
+                <>
+                    <div className="section-title">Referenced from your private notes</div>
+                    <div className="hint">
+                        Only you can see these here (ADR 0010): the project reads them as you, and they stay
+                        in your own space. Publish a copy from Knowledge → Notes if others should read them.
+                    </div>
+                    <div className="list-card" data-testid="project-knowledge-references">
+                        {references.map((note) => (
+                            <div key={note.id} className="list-row" data-testid={`project-reference-${note.id}`}>
+                                <div className="row-body">
+                                    <strong>{note.label}</strong>
+                                    <span className="badge">reference · only you</span>
+                                    {note.content ? <div className="row-meta">{note.content}</div> : null}
+                                    <div className="row-meta">
+                                        {note.type}
+                                        {(note.tags || []).length ? ` · ${(note.tags || []).join(', ')}` : ''}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="row-delete"
+                                    title="Stop referencing this note here (the note itself stays)"
+                                    aria-label={`Stop referencing ${note.label} here`}
+                                    disabled={dropReference.isPending}
+                                    onClick={() => dropReference.mutate(note)}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </>
             )}
         </div>
     );

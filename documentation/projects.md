@@ -416,7 +416,15 @@ the narrower name. Each item can be **added to a project** (new asset or
 new version of an existing one). Pinning still works during this
 deprecation window; `web_applets` and its routes stay until a later
 release. The separate Workshop nav entry is gone; `/workshop` redirects
-here. A typed listing of every unfiled output is E4 work.
+here. This section is the **one place** outputs without a project are
+listed; there is no second inbox. [ADR 0010 §5](adr/0010-explicit-transfers.md)
+keeps the label: an *output* is a result with a home (asset, workspace
+file, render, generated app), and the generated app is the only kind that
+exists without a project today. "Unfiled outputs" is allowed only once the
+same section also lists files and reports. **Open in Projects** on a
+migrated pin links to the project's owner-qualified Apps view. Adding an
+app needs only `me.features.projects` (organizing) - it works when the
+host cannot run code.
 
 ## The portal pane
 
@@ -655,6 +663,49 @@ provenance. Any member may launch one; budgets charge the launcher.
 Launch from Knowledge → Research ("into project X") or the project's
 Knowledge tab.
 
+### Moving knowledge into a project
+
+A note a person kept in their own space enters a project through
+**Knowledge → Notes → Add to project…** ([ADR 0010](adr/0010-explicit-transfers.md);
+the personal side is [knowledge_and_memory.md](knowledge_and_memory.md#moving-a-note-into-shared-work)).
+Nothing routes through a model; the project's audience **now** decides how
+the note travels, and the server enforces it:
+
+- **Reference** - only into a private project the caller owns (no accepted
+  member, no share link). No row is written to the `PROJECT:` scope; the
+  Knowledge view (*Referenced from your private notes*, badge *reference ·
+  only you*) and the project-chat manifest resolve the note at read time
+  for the person who referenced it. Sharing the project later does not
+  expose it - a collaborator sees neither the note nor a count - and every
+  reader that runs *as the project* (graph, `recall_knowledge`,
+  expeditions, dashboards) reads only the `PROJECT:` scope, so it never
+  sees a reference. **Stop referencing** (✕) drops it; the note stays.
+- **Publish a copy** - the only mode for a project with members or a share
+  link. The dialog shows the title, text and tags that will be copied and
+  names the readers (owner, members, "plus anyone holding the project share
+  link") before anything is sent. The copy is a new `kg_nodes` row in
+  `PROJECT:<id>` (`source = 'user'`, `curation = 'saved'`, tags copied),
+  badged *copy · published by \<name\>* in the Knowledge view. It is a
+  snapshot: editing the original does not change it; publishing the same
+  note again updates the copy in place. The owner or the publisher may
+  **remove** it from the project (`DELETE
+  /api/app/projects/:slug/knowledge/notes/:nodeId`); the publisher's
+  original is untouched either way.
+
+Deleting the original note drops its references and keeps its copies; the
+deletion dialog names each project the note reached and offers to remove
+the copies the person may ([ADR 0010 §4](adr/0010-explicit-transfers.md)).
+Deleting the project takes its copies with it.
+
+`GET /api/app/projects/:slug/knowledge/notes?owner=…` returns `notes`
+(copies carry `publishedBy`, `publishedByName`, `publishedFrom`,
+`publishedAt`, `canRemove`), `references` (the caller's own, or `[]`),
+`audience` and `role`; `GET /api/app/projects/:slug/audience` returns the
+audience alone (`ownerId`, `ownerName`, `members`, `memberIds`, `shared`,
+`private`). Server-written links to a project use
+`/projects/:ownerId/:slug/:view`. Transfers need only `me.features.projects`;
+running anything in the project stays behind `me.features.observatory`.
+
 ## Missions (shown as Plans)
 
 A **Mission** - **Plan** in the portal, per [ADR 0009](adr/0009-project-organization-contract.md) -
@@ -744,7 +795,12 @@ asset left with zero versions), and authored jobs — workspace files and
 project-scope graph nodes stay (they are project data).
 `privacyService.auditUser` counts memberships, invites, authored rows in
 shared projects, and project-scope nodes under the owner. `web_applets`
-stays on the erasure path until that table retires.
+stays on the erasure path until that table retires. The transfer ledger
+(`knowledge_transfers`, [ADR 0010](adr/0010-explicit-transfers.md)) is
+keyed on the actor: `/forget-me` deletes every transfer they made,
+`auditUser` counts them, and the report lists them under
+`knowledgeGraph.transfers`. Copies they published into someone else's
+project are project data and stay.
 
 ## Tests
 
@@ -803,11 +859,20 @@ listing work while render, Command and the conversation turn are refused
 with `DISABLED`; two owners with one slug are both listed with their
 `ownerId` and named from their principal; a bare slug prefers the caller's
 own project and is `AMBIGUOUS_PROJECT` only between memberships),
+`tests/knowledgeTransfers.test.js` (ADR 0010 with execution off: a
+reference only into a private owned project and invisible to a later
+collaborator; a copy in the `PROJECT:` scope naming its audience,
+removable by owner or publisher, republished in place; Add to project
+succeeds while Command is still refused with `DISABLED`; deleting the
+original keeps copies; report, audit, erasure),
 `tests/portalRooms.test.js` (the Projects detail pattern and view
 segments),
 `e2e/projects.spec.js` (owner-qualified list links, tabs / refresh / Back /
 deep links agreeing on the view, the slug-only chooser and a missing slug,
 the create form, Plan / Run vocabulary, Conversation and People as views,
-Unfiled apps) and `e2e/journeys.spec.js` (Plan: draft → approve →
-review → complete; run → output → Attention notice; conversation →
-knowledge).
+Unfiled apps), `e2e/transfers.spec.js` (answer → note → reference into the
+private project, published copy into the shared one with the audience
+named, refresh and Back on the project the transfer opened, the
+collaborator's view, the delete dialog) and `e2e/journeys.spec.js` (Plan:
+draft → approve → review → complete; run → output → Attention notice;
+conversation → knowledge).

@@ -475,6 +475,44 @@ CREATE TABLE IF NOT EXISTS kg_node_revisions (
 
 CREATE INDEX IF NOT EXISTS idx_kg_node_revisions_node ON kg_node_revisions(nodeId, revisionNumber);
 
+-- Explicit transfers (ADR 0010, documentation/knowledge_and_memory.md): a
+-- person's deliberate move of knowledge - an assistant answer saved as a
+-- note, a note referenced from their private project, a note published
+-- (copied) into a shared project or discussion. One row per move: who,
+-- from what, to where, how, and who could read the destination then.
+-- kg_provenance is untouched: it records evidence automated writers attach
+-- to a node, not a person's transfer with an audience.
+CREATE TABLE IF NOT EXISTS knowledge_transfers (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    sourceKind TEXT NOT NULL CHECK (sourceKind IN ('chat_message', 'note')),
+    -- chat_message: the web conversation and the assistant reply it came from
+    sourceConversationId INTEGER,
+    sourceMessageId INTEGER,
+    -- note: the original personal node. Survives its deletion (SET NULL) so
+    -- a published copy can still say it was copied from a note now gone.
+    sourceNodeId INTEGER REFERENCES kg_nodes(id) ON DELETE SET NULL,
+    sourceLabel TEXT,
+    targetKind TEXT NOT NULL CHECK (targetKind IN ('note', 'project', 'discussion')),
+    -- kg_nodes.id / observatory_projects.id / parlor_conversations.id (no FK:
+    -- listings join the target so a deleted destination disappears)
+    targetId INTEGER NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('reference', 'copy')),
+    -- The node created in the destination scope (the note itself for a
+    -- saved answer), or the transcript message a discussion copy became
+    copyNodeId INTEGER REFERENCES kg_nodes(id) ON DELETE SET NULL,
+    copyMessageId INTEGER,
+    -- JSON { kind, ownerId, memberIds, shared } - who could read the
+    -- destination when the transfer happened
+    audienceJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_user ON knowledge_transfers(userId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_source ON knowledge_transfers(sourceNodeId);
+CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_target ON knowledge_transfers(targetKind, targetId);
+CREATE INDEX IF NOT EXISTS idx_knowledge_transfers_copy ON knowledge_transfers(copyNodeId);
+
 -- ---------------------------------------------------------------------------
 -- Server activity counters (counts only, no message content). Feeds the
 -- /wrapped stats. userId becomes NULL when a user runs /forget-me

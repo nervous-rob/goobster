@@ -13,6 +13,10 @@ export type Project = {
     ownerName?: string | null;
     role?: 'owner' | 'collaborator';
     shared?: boolean;
+    /** Accepted members besides the owner. */
+    memberCount?: number;
+    /** Owned by the caller, no members, no share link - a private reference may live here (ADR 0010). */
+    private?: boolean;
     runningJobs?: number;
     totalJobs?: number;
     sizeMb?: number;

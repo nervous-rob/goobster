@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
+import { projectPath } from '../lib/rooms';
+import { useMe } from '../hooks/useSession';
 import { bindTilt } from '../lib/atmosphere';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
@@ -23,6 +25,8 @@ export type InboxApplet = {
     migratedAssetId?: number | null;
     migratedAssetSlug?: string | null;
     migratedProject?: string | null;
+    /** The migrated project's owner - with the slug, its address (ADR 0009). */
+    migratedProjectOwnerId?: string | null;
 };
 
 type AppletsPayload = {
@@ -128,6 +132,7 @@ export function WorkshopInbox({
 }: {
     onPreviewChange?: (applet: InboxApplet | null) => void;
 } = {}) {
+    const me = useMe();
     const toast = useToast();
     const confirm = useConfirm();
     const navigate = useNavigate();
@@ -223,7 +228,14 @@ export function WorkshopInbox({
                             className="btn"
                             onClick={() => {
                                 setCurrent(null);
-                                navigate({ to: '/projects' });
+                                // The project's own address, on its Outputs view -
+                                // never the bare list (ADR 0009 §3).
+                                navigate({
+                                    to: projectPath({
+                                        owner: current.migratedProjectOwnerId || me.user.id,
+                                        slug: current.migratedProject as string
+                                    }, 'apps') as never
+                                });
                             }}
                         >
                             Open in Projects

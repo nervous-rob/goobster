@@ -95,6 +95,65 @@ function mountSpitball(app, ctx, h) {
         })
     ));
 
+    // --- Explicit transfers (ADR 0010) -------------------------------------
+    // Deterministic service actions; no model call. Sources are always the
+    // caller's own private notes / chats, so no scope parameter is needed.
+
+    // Save an assistant answer as a saved personal note with provenance
+    // back to the message. Registered before the :nodeId routes.
+    app.post('/api/app/spitball/notes/from-message', requireAuth, chatRoute(async (req) =>
+        ctx.transfers.saveMessageAsNote({
+            userId: req.webUser.userId,
+            conversationId: req.body?.conversationId,
+            messageId: req.body?.messageId,
+            label: req.body?.label ?? null,
+            content: req.body?.content ?? null,
+            tags: req.body?.tags ?? []
+        })
+    ));
+
+    // Where a note has gone (projects, discussions, the chat it was saved
+    // from) - the "Shared to" line and the deletion dialog.
+    app.get('/api/app/spitball/notes/:nodeId/transfers', requireAuth, chatRoute(async (req) =>
+        ctx.transfers.listNoteDestinations({
+            userId: req.webUser.userId,
+            nodeId: req.params.nodeId
+        })
+    ));
+
+    // Add to project (reference | copy) or Use in discussion.
+    app.post('/api/app/spitball/notes/:nodeId/transfers', requireAuth, chatRoute(async (req) => {
+        const body = req.body || {};
+        const common = { userId: req.webUser.userId, nodeId: req.params.nodeId };
+        if (body.target === 'discussion') {
+            return ctx.transfers.useNoteInDiscussion({
+                ...common,
+                userName: req.webUser.userName,
+                conversationId: body.conversationId
+            });
+        }
+        if (body.target === 'project') {
+            return ctx.transfers.addNoteToProject({
+                ...common,
+                project: body.project,
+                owner: body.owner ?? null,
+                mode: body.mode === 'reference' ? 'reference' : 'copy'
+            });
+        }
+        const error = new Error('target must be "project" or "discussion".');
+        error.status = 400;
+        error.code = 'BAD_REQUEST';
+        throw error;
+    }));
+
+    // Drop a reference the caller made (copies are removed on the project side).
+    app.delete('/api/app/spitball/transfers/:transferId', requireAuth, chatRoute(async (req) =>
+        ctx.transfers.removeReference({
+            userId: req.webUser.userId,
+            transferId: req.params.transferId
+        })
+    ));
+
     // A body that carries only `curation` is a reclassification (Keep /
     // Treat as memory): intent changes, the note's text, source and
     // revision trail do not. Anything else is a human edit, which also

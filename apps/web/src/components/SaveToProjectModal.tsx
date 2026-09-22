@@ -146,7 +146,7 @@ export function SaveToProjectModal({
                 <div className="hint">
                     {promote
                         ? 'No projects yet — promoting will create a Workshop inbox project.'
-                        : 'No projects yet — create one in the Observatory first.'}
+                        : 'No projects yet — create one under Projects first.'}
                 </div>
             )}
             <div className="field">

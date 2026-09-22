@@ -660,6 +660,7 @@ class ObservatoryService {
                     (SELECT COUNT(*) FROM observatory_jobs j
                      WHERE j.projectId = p.id AND j.status = 'RUNNING') AS runningJobs,
                     (SELECT COUNT(*) FROM observatory_jobs j WHERE j.projectId = p.id) AS totalJobs,
+                    (SELECT COUNT(*) FROM project_members m WHERE m.projectId = p.id) AS memberCount,
                     EXISTS (SELECT 1 FROM observatory_share_links s WHERE s.projectId = p.id) AS shared
              FROM observatory_projects p
              WHERE p.userId = @userId
@@ -684,7 +685,11 @@ class ObservatoryService {
             updatedAt: row.updatedAt,
             runningJobs: row.runningJobs,
             totalJobs: row.totalJobs,
+            memberCount: Number(row.memberCount) || 0,
             shared: Boolean(row.shared),
+            // Private = the reference-mode precondition (ADR 0010 §3): the
+            // caller owns it, nobody else sits on it, no share link.
+            private: row.role === 'owner' && Number(row.memberCount) === 0 && !row.shared,
             sizeMb: Number(this._dirSizeMb(this._projectDir(row.ownerId, row.slug)).toFixed(2)),
             quotaMb: this.config.maxProjectMb
         }));
@@ -1409,6 +1414,16 @@ class ObservatoryService {
             if (parts.length) knowledgeText = parts.join('\n');
             knowledgeTruncated = (tags || []).length > knowledgeCap;
         } catch { /* knowledge is optional in the preamble */ }
+        try {
+            // The actor's own private references (ADR 0010 §3), resolved as
+            // them - the only reader who may see them.
+            const referenced = await require('./knowledgeTransferService').describeReferencesForManifest({
+                userId, projectId: row.id, limit: knowledgeCap
+            });
+            if (referenced) {
+                knowledgeText = knowledgeText === '(none)' ? referenced : `${knowledgeText}\n${referenced}`;
+            }
+        } catch { /* references are optional in the preamble */ }
         const lines = [
             `Project manifest for "${row.name}" (slug: ${row.slug}):`,
             `Assets (${assets.length}): ${shownAssets.length
@@ -1902,18 +1917,109 @@ class ObservatoryService {
             params
         );
         const tagMap = await knowledgeGraphService.getTagsForNodes(notes.map(n => n.id));
-        return notes.map(n => ({
-            id: n.id,
-            type: n.type,
-            label: n.label,
-            content: n.content || '',
-            salience: n.salience,
-            confidence: n.confidence,
-            source: n.source,
-            tags: tagMap.get(n.id) || [],
-            createdAt: n.createdAt,
-            updatedAt: n.updatedAt
-        }));
+        const transfers = require('./knowledgeTransferService');
+        const origins = await transfers.copyOriginsForNodes(notes.map(n => n.id));
+        const publisherNames = new Map();
+        for (const origin of origins.values()) {
+            if (!publisherNames.has(origin.userId)) {
+                publisherNames.set(origin.userId, await this._displayName(origin.userId));
+            }
+        }
+        return notes.map(n => {
+            const origin = origins.get(n.id) || null;
+            const shaped = {
+                id: n.id,
+                type: n.type,
+                label: n.label,
+                content: n.content || '',
+                salience: n.salience,
+                confidence: n.confidence,
+                source: n.source,
+                tags: tagMap.get(n.id) || [],
+                createdAt: n.createdAt,
+                updatedAt: n.updatedAt
+            };
+            if (origin) {
+                // A published copy (ADR 0010 §3): who put it here and from
+                // which note; removable by them or the project owner.
+                shaped.publishedBy = origin.userId;
+                shaped.publishedByName = publisherNames.get(origin.userId) || null;
+                shaped.publishedFrom = origin.sourceLabel || null;
+                shaped.publishedAt = origin.createdAt;
+                shaped.canRemove = row.role === 'owner' || origin.userId === userId;
+            }
+            return shaped;
+        });
+    }
+
+    /**
+     * The caller's own private references into a project (ADR 0010 §3),
+     * resolved at read time, plus the project's current audience so the
+     * client can say whether those references are visible to anyone else.
+     * Another member calling this gets an empty list, never a count.
+     */
+    async listKnowledgeReferences({ userId, project, owner = null } = {}) {
+        await this._requireOrganization();
+        const row = await this._requireProject(userId, project, owner);
+        const transfers = require('./knowledgeTransferService');
+        const [references, audience] = await Promise.all([
+            transfers.listProjectReferences({ readerId: userId, projectId: row.id }),
+            transfers.projectAudience(row)
+        ]);
+        return { references, audience, role: row.role };
+    }
+
+    /**
+     * Who can read a project right now (owner, members, share link) - what
+     * the publish dialog names before a copy is made.
+     */
+    async getProjectAudience({ userId, project, owner = null } = {}) {
+        await this._requireOrganization();
+        const row = await this._requireProject(userId, project, owner);
+        const audience = await require('./knowledgeTransferService').projectAudience(row);
+        return { ...audience, role: row.role, project: { id: row.id, slug: row.slug, name: row.name, ownerId: row.ownerId } };
+    }
+
+    /**
+     * Remove one note from the project scope. The owner may remove any;
+     * a collaborator may remove a copy they published. Removing a copy
+     * never touches the original personal note (ADR 0010 §4).
+     */
+    async deleteKnowledgeNote({ userId, project, owner = null, nodeId } = {}) {
+        await this._requireOrganization();
+        const row = await this._requireProject(userId, project, owner);
+        const coords = this.knowledgeCoords(row);
+        const node = await db.get(
+            `SELECT id, label FROM kg_nodes
+             WHERE id = @id AND guildId = @guildId AND scopeKey = @scopeKey`,
+            { id: Number(nodeId), guildId: coords.guildId, scopeKey: coords.scopeKey }
+        );
+        if (!node) {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such note in this project.');
+        }
+        if (row.role !== 'owner') {
+            const publisher = await require('./knowledgeTransferService').publisherOf(node.id);
+            if (publisher !== userId) {
+                throw new ObservatoryError(403, 'NOT_OWNER',
+                    'Only the project owner, or whoever published this copy, can remove it.');
+            }
+        }
+        await db.transaction(async (tx) => {
+            // The ledger row of a removed copy goes with it; the original
+            // note's own rows (saved-from, other destinations) are untouched.
+            await tx.run(
+                `DELETE FROM knowledge_transfers
+                 WHERE mode = 'copy' AND targetKind = 'project' AND copyNodeId = @id`,
+                { id: node.id }
+            );
+            await tx.run('DELETE FROM kg_nodes WHERE id = @id', { id: node.id });
+        });
+        try {
+            require('./eventBusService').publish('project-changed', {
+                userId, projectId: row.id, slug: row.slug, kind: 'knowledge'
+            });
+        } catch { /* cosmetic */ }
+        return { deleted: true, label: node.label };
     }
 
     // --- The dashboard artifact -------------------------------------------------

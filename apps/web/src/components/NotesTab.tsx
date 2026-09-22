@@ -2,10 +2,12 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
+import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
-import { useConfirm } from '../hooks/useConfirm';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import { NoteEditor } from './NoteEditor';
+import { DeleteNoteDialog, isPersonalScope } from './DeleteNoteDialog';
+import { TransferNoteModal, type TransferTarget } from './TransferNoteModal';
 import { TYPE_COLORS } from '../renderers/graph.js';
 import { CURATION_LABEL, CurationBadge } from '../rooms/knowledge/graphParts';
 import type { Curation, CurationView, UserNote, NotesPayload } from '../lib/types';
@@ -36,15 +38,6 @@ function metaLine(note: UserNote): string {
     return parts.join(' · ');
 }
 
-/** What deleting this note does - and does not - remove (ADR 0008 §6). */
-export function deleteNoteWarning(note: UserNote): string {
-    const base = `Delete “${note.label}”? This removes the note, its connections, tags and evidence links from the Map.`;
-    if (note.type === 'fact') {
-        return `${base} It is a distilled fact, so Goobster forgets the fact too. The raw memories and chats it came from are not deleted.`;
-    }
-    return `${base} Raw memories and chat transcripts it was distilled from are not deleted - manage those in Personal memory.`;
-}
-
 /**
  * The Notes list: the caller's personal notes under one server-side
  * curation projection. `knowledge` (the default) is what the person kept
@@ -61,8 +54,8 @@ export function NotesTab({
     view?: CurationView;
     onView?: (view: CurationView) => void;
 }) {
+    const me = useMe();
     const toast = useToast();
-    const confirm = useConfirm();
     const queryClient = useQueryClient();
     const openSettings = useOpenSettings();
     const [q, setQ] = useState('');
@@ -72,6 +65,12 @@ export function NotesTab({
     const [curation, setCuration] = useState<Curation | ''>('');
     const [sort, setSort] = useState<SortKey>('updated');
     const [editor, setEditor] = useState<UserNote | 'new' | null>(null);
+    const [deleting, setDeleting] = useState<UserNote | null>(null);
+    const [transfer, setTransfer] = useState<{ note: UserNote; target: TransferTarget } | null>(null);
+    // Explicit transfers (ADR 0010) start from the caller's own notes only,
+    // and never from distilled memory - the server refuses the same rows.
+    const personal = isPersonalScope(scope);
+    const projectsOn = me.features?.projects !== false;
 
     // The curation chip only means something under "All retained knowledge".
     const effectiveCuration = view === 'all' ? curation : '';
@@ -104,17 +103,6 @@ export function NotesTab({
         queryClient.invalidateQueries({ queryKey: keys.constellationRoot(scope) });
         queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'facts') });
         queryClient.invalidateQueries({ queryKey: keys.memory(scope, 'overview') });
-    }
-
-    async function removeNote(note: UserNote) {
-        if (!await confirm(deleteNoteWarning(note))) return;
-        try {
-            await api.spitballDeleteNote(scope, note.id);
-            toast('Note deleted.');
-            invalidateNotes();
-        } catch (error) {
-            toast((error as Error).message, true);
-        }
     }
 
     async function keepNote(note: UserNote) {
@@ -337,12 +325,36 @@ export function NotesTab({
                                         Keep
                                     </button>
                                 )}
+                                {personal && state !== 'memory' && (
+                                    <span className="notes-row-actions">
+                                        {projectsOn && (
+                                            <button
+                                                type="button"
+                                                className="btn small"
+                                                title="Reference this note in a private project you own, or publish a copy to a shared one"
+                                                data-testid={`note-add-to-project-${item.id}`}
+                                                onClick={() => setTransfer({ note: item, target: 'project' })}
+                                            >
+                                                Add to project…
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            className="btn small"
+                                            title="Post this note into a discussion you belong to"
+                                            data-testid={`note-use-in-discussion-${item.id}`}
+                                            onClick={() => setTransfer({ note: item, target: 'discussion' })}
+                                        >
+                                            Use in discussion…
+                                        </button>
+                                    </span>
+                                )}
                                 <button
                                     type="button"
                                     className="row-delete"
                                     title="Delete"
                                     aria-label={`Delete ${item.label}`}
-                                    onClick={() => removeNote(item)}
+                                    onClick={() => setDeleting(item)}
                                 >
                                     ✕
                                 </button>
@@ -361,6 +373,24 @@ export function NotesTab({
                         setEditor(null);
                         invalidateNotes();
                     }}
+                />
+            )}
+            {deleting && (
+                <DeleteNoteDialog
+                    scope={scope}
+                    note={deleting}
+                    onClose={() => setDeleting(null)}
+                    onDeleted={() => {
+                        setDeleting(null);
+                        invalidateNotes();
+                    }}
+                />
+            )}
+            {transfer && (
+                <TransferNoteModal
+                    note={transfer.note}
+                    initialTarget={transfer.target}
+                    onClose={() => setTransfer(null)}
                 />
             )}
         </div>

@@ -534,6 +534,30 @@ export const api = {
     spitballDeleteNote: (scope: string, nodeId: number | string) =>
         request(`/api/app/spitball/notes/${nodeId}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' }),
 
+    // Explicit transfers (ADR 0010): deterministic service actions, no model call.
+    /** Save an assistant answer as a saved personal note with provenance back to the message. */
+    saveMessageAsNote: (body: {
+        conversationId: number; messageId: number; label?: string; content?: string; tags?: string[];
+    }) => request('/api/app/spitball/notes/from-message', { method: 'POST', body }),
+    /** Where a personal note has gone: the chat it came from, projects, discussions. */
+    noteTransfers: (nodeId: number | string) =>
+        request(`/api/app/spitball/notes/${nodeId}/transfers`),
+    /** Add to project (reference into a private project you own, or a published copy). */
+    addNoteToProject: (nodeId: number | string, body: { project: string; owner?: string | null; mode: 'reference' | 'copy' }) =>
+        request(`/api/app/spitball/notes/${nodeId}/transfers`, { method: 'POST', body: { target: 'project', ...body } }),
+    /** Use in discussion: the note becomes a message from you in that transcript. */
+    useNoteInDiscussion: (nodeId: number | string, conversationId: number) =>
+        request(`/api/app/spitball/notes/${nodeId}/transfers`, { method: 'POST', body: { target: 'discussion', conversationId } }),
+    /** Drop a reference you made; copies are removed from the project side. */
+    removeNoteReference: (transferId: number | string) =>
+        request(`/api/app/spitball/transfers/${transferId}`, { method: 'DELETE' }),
+    /** Who can read a project right now - named before a copy is published. */
+    projectAudience: (slug: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/audience${ownerQs(owner)}`),
+    /** Remove a note from a project's scope (owner, or the publisher of a copy). */
+    deleteProjectKnowledgeNote: (slug: string, nodeId: number | string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(slug)}/knowledge/notes/${nodeId}${ownerQs(owner)}`, { method: 'DELETE' }),
+
     parlorPersonas: () => request('/api/app/parlor/personas'),
     parlorCreatePersona: (persona: Record<string, unknown>) =>
         request('/api/app/parlor/personas', { method: 'POST', body: persona }),

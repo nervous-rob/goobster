@@ -33,7 +33,7 @@ three `views` (see [portal_navigation.md](portal_navigation.md)):
 
 | View | Path | What it is |
 |---|---|---|
-| **Notes** (landing) | `/knowledge/notes` | The list: search, type / tag / source filters, sort, New note, edit, delete, **Keep**. `/knowledge`, `/spitball` and `/library` land here. |
+| **Notes** (landing) | `/knowledge/notes` | The list: search, type / tag / source filters, sort, New note, edit, delete, **Keep**, and on each note you kept **Add to project…** / **Use in discussion…** ([below](#moving-a-note-into-shared-work)). `/knowledge`, `/spitball` and `/library` land here. |
 | **Map** | `/knowledge/map` | The same notes drawn as a graph: typed **Connections** (`kg_edges`) are edges, shared **Tags** are hubs (Group by tag). Two relationships, kept distinct - no new untyped link model. Node detail shows provenance and the research evidence trail (Note → Claim → Source). |
 | **Research** (Expeditions) | `/knowledge/research` | Autonomous research runs ([spitball_expeditions.md](spitball_expeditions.md)). Hidden when the `spitball` feature is off. Notes it produces appear in Notes and on the Map as *kept*. |
 
@@ -74,8 +74,11 @@ Rules that follow from it:
 
 `listUserNotes` and `getPersonalGraphView` take the same `view` argument and
 apply the same SQL predicate (`curationPredicate(view)`), so the Notes
-list, the Map, the facet counts and the future note → project picker (E4)
-can never disagree. The browser has no filter of its own for this boundary.
+list, the Map, the facet counts and the note → project picker can never
+disagree. The browser has no filter of its own for this boundary: the
+transfer actions are drawn on the rows the `knowledge` projection returns,
+and the server refuses a `memory` row (`NOT_KNOWLEDGE`) even when asked
+directly.
 
 | `view` | Rows | In the UI |
 |---|---|---|
@@ -108,6 +111,58 @@ first projection read of a personal scope (once per process),
 `unclassified` and **remain listed** in Notes with the *unsorted* badge and
 a **Keep** button. Nothing is deleted, rescoped or relabelled for
 navigation reasons.
+
+## Moving a note into shared work
+
+The first journey in the product spec is *ask → save the answer as a note →
+add it to a project → run → inspect the output*. Each hop is a button on
+the thing you already selected; none of them routes through a model. The
+contract is [ADR 0010](adr/0010-explicit-transfers.md); the project side is
+in [projects.md](projects.md#moving-knowledge-into-a-project).
+
+**Save as note** (Chat). Every assistant answer in a saved chat has a
+📝 **Save as note** action. The dialog prefills the title from the
+answer's first heading or sentence and the body from the answer (capped at
+the note content limit - the dialog says when it trimmed), lets you edit
+both and add tags, and calls
+`POST /api/app/spitball/notes/from-message { conversationId, messageId,
+label?, content?, tags? }`. The note is created in your private space with
+`curation = 'saved'` and `source = 'user'`, with a `knowledge_transfers`
+row pointing back at the message, so it appears under **Your notes** and on
+the Map through the unchanged `knowledge` projection and never under
+Personal memory. Incognito chats do not offer it: nothing is persisted
+there to point back to. The success state offers the next hop, **Add to
+project…**, on the note just made.
+
+**Add to project…** and **Use in discussion…** (Notes). Both open the same
+dialog on a note you kept (`saved` or *unsorted*; a **memory** row has no
+transfer actions and is refused server-side until you **Keep** it). The
+project picker lists every project you can see, **owner-qualified** - two
+owners may share a slug, so each option says *private*, *shared* or whose
+it is - and the discussion picker lists the discussions you own or joined.
+How the note travels depends on who reads the destination **now**:
+
+| Mode | When | What happens |
+|---|---|---|
+| **Reference** | Only a private project you own (no members, no share link). | Nothing is written into the project. Its Knowledge view and the project-chat manifest resolve the reference at read time, for you alone (*Referenced from your private notes*, badge *reference · only you*). If the project is shared later the reference stays yours: collaborators, share-link visitors, the graph and `recall_knowledge` never see it. **Stop referencing** drops it; the note is untouched. |
+| **Publish a copy** | A project with other readers, or any discussion. | The dialog shows exactly what will be shared (title, text, tags) and **names the audience** (*you and Frieda*, *… plus anyone holding the project share link*). A project copy is a new note in the project's knowledge, badged *copy · published by you / by \<name\>*; a discussion copy is a message from you in the transcript (no persona turn, no model call). A copy is a snapshot: editing the original later does not change it; republishing the same note to the same project updates that copy instead of adding a twin. |
+
+Every transfer lands on the destination the dialog opened - **Open
+project** goes to `/projects/:ownerId/:slug/knowledge`, **Open discussion**
+to `/discussions/:id` - so refresh and Back behave. The transfer needs only
+`features.projects` (organizing); whether the host can run code is a
+separate switch, explained on the Run controls that need it.
+
+API: `GET /api/app/spitball/notes/:nodeId/transfers` (where a note has
+gone, with each destination's audience and whether you may remove that
+copy), `POST /api/app/spitball/notes/:nodeId/transfers { target: 'project',
+project, owner?, mode }` or `{ target: 'discussion', conversationId }`,
+`DELETE /api/app/spitball/transfers/:transferId` (a reference),
+`GET /api/app/projects/:slug/audience?owner=…`, and on the project side
+`GET /api/app/projects/:slug/knowledge/notes` (copies with `publishedBy`,
+your references, the audience) and
+`DELETE /api/app/projects/:slug/knowledge/notes/:nodeId` (owner or
+publisher removes a copy; the original is untouched).
 
 ## Personal memory (Settings → Memory & privacy)
 
@@ -143,13 +198,18 @@ nothing but Forget me claims to erase every copy.
 |---|---|---|
 | **Delete a memory** (Memories) | The `memory_embeddings` row and its vector (`memoryService.cleanupVecIndex`). | Notes distilled from it (their `kg_provenance` row now points at a source that is gone). |
 | **Forget a fact** (Facts) | The `facts` row and its mirrored `type = 'fact'` node (`deleteMirroredFact`). | The memories it was distilled from. |
-| **Delete a note** (Knowledge) | The node and everything that cascades: connections, tags, provenance, revisions, its embedding, its artifact file. If it mirrored a fact, that `facts` row too, so the fact does not resurface on the next sync. | Raw memories and chat transcripts it came from. |
+| **Delete a note** (Knowledge) | The node and everything that cascades: connections, tags, provenance, revisions, its embedding, its artifact file. If it mirrored a fact, that `facts` row too, so the fact does not resurface on the next sync. Its **references** into private projects (a pointer to nothing). | Raw memories and chat transcripts it came from. **Published copies** in projects and messages in discussions - the dialog names each destination the note reached; a project copy you may remove has a checkbox, a transcript message stays and the dialog says so ([ADR 0010 §4](adr/0010-explicit-transfers.md)). |
 | **Chat-history retention** | Study transcripts (and their attachments and shares). | Memories and notes. |
 | **Forget me** / `/forget-me` | Every row: the `USER:` scope, the whole `dm:<userId>` guild, facts, memories, chats, settings, sessions. | Nothing. |
 
-`privacyService` needs no new erasure path: curation is a column on an
-existing per-user table, and the transparency report gains the
-`saved` / `distilled` / `unclassified` breakdown.
+Curation itself needed no new erasure path (a column on an existing per-user
+table); the transparency report gained the `saved` / `distilled` /
+`unclassified` breakdown. The transfer ledger (`knowledge_transfers`) is
+per-user: **Forget me** deletes every transfer you made, `auditUser` counts
+them, and the report lists `knowledgeGraph.transfers` (answers saved from
+chat, references, copies published to projects and discussions). Copies you
+published into someone else's project are project data and stay when you
+are forgotten, like `note_knowledge` rows.
 
 ## Tests
 
@@ -157,8 +217,22 @@ existing per-user table, and the transparency report gains the
   not reclassify, Notes and Map agree under every view, conservative
   backfill leaves ambiguous rows alone, deletion semantics, the PATCH
   curation route, the report breakdown.
+- `tests/knowledgeTransfers.test.js` - ADR 0010 with execution off: a saved
+  answer lands in `knowledge` and not `memory` with provenance; a memory
+  row is refused; reference only into a private owned project, invisible to
+  a collaborator added later; a copy snapshots into the project scope,
+  names its audience, is removable by owner or publisher and republishes in
+  place; Use in discussion posts without a persona turn; deleting the
+  original drops references and keeps copies; report, audit and erasure.
 - `tests/portalRooms.test.js` - the Knowledge views in the registry, path
   resolution, display names, the `#expeditions` hash.
+- `e2e/transfers.spec.js` - the hops clicked: Save as note from a chat
+  answer, the note under Your notes and absent from the memory view; the
+  owner-qualified picker with no actions on a memory row; a reference the
+  owner alone sees; a published copy with the audience named first and the
+  original untouched (checked as the collaborator too); refresh and Back on
+  the project the transfer opened; Use in discussion; the delete dialog
+  naming every scope.
 - `e2e/knowledge.spec.js` - Knowledge opens on Notes; the view strip; the
   bare path and aliases redirect with query and hash intact; distilled rows
   are out of the default projection and counted, legacy rows are listed
