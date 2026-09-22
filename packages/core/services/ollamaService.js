@@ -1,5 +1,6 @@
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
+const modelRegistry = require('../models/registry');
 const { buildPromptBasedToolPrompt, parseToolCall } = require('../utils/toolPromptBuilder');
 const { parseImageDataUrl } = require('../utils/imageDataUrl');
 const usageTracker = require('./usageTracker');
@@ -144,6 +145,9 @@ class OllamaService {
      */
     async chat(messages, opts = {}) {
         const model = opts.model || this.defaultModel;
+        const policy = modelRegistry.resolveRequest('ollama', model, {
+            ...opts, top_p: opts.top_p ?? 0.9
+        }, messages);
         const hasTools = Boolean(opts.functions && opts.functions.length > 0);
 
         let finalMessages = await this._normalizeMessages(messages);
@@ -158,13 +162,12 @@ class OllamaService {
 
         try {
             const requestBody = {
-                model,
+                model: policy.model.id,
                 messages: finalMessages,
                 stream: useStreaming,
                 options: {
-                    temperature: opts.temperature ?? 0.7,
-                    top_p: opts.top_p ?? 0.9,
-                    num_predict: opts.max_tokens ?? 1024
+                    ...policy.sampling,
+                    num_predict: policy.maxOutputTokens
                 }
             };
             const requestConfig = { timeout: opts.timeout ?? 300000 }; // local inference can be slow on a Pi

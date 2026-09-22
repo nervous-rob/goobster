@@ -101,6 +101,7 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
     const aiService = {
         getProvider: () => 'openai',
         getDefaultModel: () => 'gpt-5.4-mini',
+        validateModelSelection: jest.fn((_current, patch) => patch),
         getThoughtfulPreset: (providerKey) => {
             const key = providerKey || 'openai';
             const models = { openai: 'gpt-5.5', anthropic: 'claude-thoughtful', gemini: 'gemini-thoughtful' };

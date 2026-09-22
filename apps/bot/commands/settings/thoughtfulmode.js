@@ -45,7 +45,7 @@ module.exports = {
                 return;
             }
             try {
-                await setGuildAI(scopeId, preset);
+                await setGuildAI(scopeId, aiService.validateModelSelection(currentSettings, preset));
 
                 await interaction.reply({
                     content: `🧠 **Thoughtful Mode enabled for ${scopeLabel}!**\n\nGoobster will use **${preset.model}** (${preset.provider}) with high reasoning effort here. Replies will be smarter but slower and more expensive. Other ${interaction.guildId ? 'servers' : 'conversations'} are unaffected.`,

@@ -11,7 +11,7 @@ describe('GeminiService', () => {
         jest.doMock('@goobster/core/config/aiConfig', () => ({
             gemini: {
                 apiKey: 'test-gemini-key',
-                chatModel: 'gemini-test-model'
+                chatModel: 'gemini-2.5-flash'
             }
         }));
         jest.doMock('@goobster/core/services/usageTracker', () => ({
@@ -52,7 +52,7 @@ describe('GeminiService', () => {
 
         expect(result).toEqual({ content: 'Hello from Gemini', toolCalls: [] });
         expect(global.fetch).toHaveBeenCalledWith(
-            'https://gemini.test/v1beta/models/gemini-test-model:generateContent',
+            'https://gemini.test/v1beta/models/gemini-2.5-flash:generateContent',
             expect.objectContaining({
                 method: 'POST',
                 headers: {
@@ -67,7 +67,7 @@ describe('GeminiService', () => {
         expect(body.generationConfig).toEqual({
             temperature: 0.7,
             topP: 0.8,
-            maxOutputTokens: 64
+            maxOutputTokens: 64 + 8192
         });
     });
 
@@ -188,7 +188,7 @@ describe('GeminiService', () => {
         await service.chat('legacy', { model: 'gemini-2.5-flash', reasoning_effort: 'high', max_tokens: 500 });
         body = JSON.parse(global.fetch.mock.calls[2][1].body);
         expect(body.generationConfig.thinkingConfig).toBeUndefined();
-        expect(body.generationConfig.maxOutputTokens).toBe(500);
+        expect(body.generationConfig.maxOutputTokens).toBe(500 + 8192);
         expect(body.generationConfig.temperature).toBe(0.7);
 
         // Gemini 3.x always thinks: headroom applies even with no requested
@@ -241,7 +241,7 @@ describe('GeminiService', () => {
         const onDelta = jest.fn();
         const result = await service.chat('Stream please.', { onDelta });
 
-        expect(global.fetch.mock.calls[0][0]).toBe('https://gemini.test/v1beta/models/gemini-test-model:streamGenerateContent?alt=sse');
+        expect(global.fetch.mock.calls[0][0]).toBe('https://gemini.test/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse');
         expect(result).toEqual({ content: 'Hello', toolCalls: [] });
         expect(onDelta).toHaveBeenNthCalledWith(1, 'Hel');
         expect(onDelta).toHaveBeenNthCalledWith(2, 'lo');

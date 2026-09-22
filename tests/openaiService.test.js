@@ -24,7 +24,6 @@ describe('OpenAIService request parameters', () => {
         'gpt-6-sol',
         'gpt-6-astra',
         'gpt-6-luna',
-        'gpt-6-sol-2026-09-22',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'o3'
@@ -57,8 +56,7 @@ describe('OpenAIService request parameters', () => {
         ['minimal', 'low', 4096],
         ['low', 'low', 4096],
         ['medium', 'medium', 8192],
-        ['high', 'high', 24576],
-        ['none', 'none', 0]
+        ['high', 'high', 24576]
     ])('GPT-6 Sol maps %s effort to %s and budgets for the effective effort', async (requested, effective, allowance) => {
         const { service, create } = createService();
         await service.chat('Hello', { reasoning_effort: requested, max_tokens: 500 });
@@ -67,6 +65,18 @@ describe('OpenAIService request parameters', () => {
         expect(request.max_output_tokens).toBe(500 + allowance);
         expect(request).not.toHaveProperty('temperature');
         expect(request).not.toHaveProperty('top_p');
+    });
+
+    test('rejects an unreviewed model before sending an API request', async () => {
+        const { service, create } = createService();
+        await expect(service.chat('Hi', { model: 'gpt-6-sol-unreviewed' })).rejects.toMatchObject({ code: 'UNSUPPORTED_MODEL' });
+        expect(create).not.toHaveBeenCalled();
+    });
+
+    test('supports sampling when GPT-6 Sol reasoning is explicitly off', async () => {
+        const { service, create } = createService();
+        await service.chat('Hi', { reasoning_effort: 'none', temperature: 0.4, top_p: 0.8, max_tokens: 500 });
+        expect(create.mock.calls[0][0]).toMatchObject({ reasoning: { effort: 'none' }, temperature: 0.4, top_p: 0.8, max_output_tokens: 500 });
     });
 
     test('normalizes a default minimal effort and lets per-call effort override it', async () => {

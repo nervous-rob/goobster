@@ -1,4 +1,4 @@
-import type { AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
+import type { ModelCatalog, AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
 import { parseSseFrame } from './parseSse.js';
 
 export class ApiError extends Error {
@@ -181,6 +181,8 @@ export const api = {
     listSettingsApplets: () => request<Array<{ id: number; title: string; grants: { observatoryRead?: string[] }; pinned: boolean }>>('/api/app/settings/applets'),
     revokeAppletGrants: (id: number) =>
         request(`/api/app/settings/applets/${id}/revoke-grants`, { method: 'POST' }),
+    modelCatalog: (provider?: string, workflow = 'chat') =>
+        request<ModelCatalog>(`/api/app/chat/model-catalog?workflow=${encodeURIComponent(workflow)}${provider ? `&provider=${encodeURIComponent(provider)}` : ''}`),
     listModels: (provider?: string | null) =>
         request(`/api/app/chat/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
     setThoughtful: (thoughtful: boolean) =>

@@ -105,7 +105,8 @@ const SECTION_METADATA = {
     }
 };
 
-const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+// Union of adapter controls; modelRegistry validates the selected model's subset.
+const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const INITIATIVE_LEVELS = ['observe', 'nudge', 'assist', 'delegate'];
 const THEMES = ['light', 'dark', 'system'];
 const ANSWER_LENGTHS = ['concise', 'balanced', 'detailed'];

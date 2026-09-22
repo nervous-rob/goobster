@@ -1,7 +1,7 @@
 const axios = require('axios');
 const aiConfig = require('../config/aiConfig');
 const { buildNativeToolGuidance } = require('../utils/toolPromptBuilder');
-const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
+const modelRegistry = require('../models/registry');
 const { parseImageDataUrl } = require('../utils/imageDataUrl');
 const usageTracker = require('./usageTracker');
 
@@ -245,41 +245,6 @@ class GeminiService {
         return body;
     }
 
-    /**
-     * Map our provider-agnostic reasoning effort onto Gemini's thinkingLevel.
-     * Only Gemini 3.x models accept thinkingLevel (2.5 uses the legacy
-     * thinkingBudget, which we don't send); Pro models don't support
-     * 'minimal', so it's clamped to 'low' there.
-     */
-    _resolveThinkingLevel(effort, model) {
-        if (!effort || !/^gemini-3/i.test(model)) return null;
-        if (!['minimal', 'low', 'medium', 'high'].includes(effort)) return null;
-        if (effort === 'minimal' && /pro/i.test(model)) return 'low';
-        return effort;
-    }
-
-    /**
-     * The level a Gemini 3.x model thinks at when none is requested (thinking
-     * can't be disabled on these models): 'high' for Pro, 'minimal' for
-     * Flash-Lite, 'medium' for Flash.
-     */
-    _defaultThinkingLevel(model) {
-        if (!/^gemini-3/i.test(model)) return null;
-        if (/pro/i.test(model)) return 'high';
-        if (/lite/i.test(model)) return 'minimal';
-        return 'medium';
-    }
-
-    /**
-     * Gemini 3.x thinking is optimized for the API default temperature (1.0).
-     * Sampling params are deprecated on that generation; sending our
-     * historical 0.7 default can loop or degrade reasoning. Gemini 2.x still
-     * accepts temperature/top_p. Unsupported combos are dropped, not errors.
-     */
-    _allowsSampling(model) {
-        return !/^gemini-3/i.test(model);
-    }
-
     async _postGenerateContent(request, { stream = false, signal = null } = {}) {
         const apiKey = this._requireApiKey();
         const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
@@ -364,27 +329,20 @@ class GeminiService {
      */
     async chat(messages, opts = {}) {
         this._requireApiKey();
-        const { temperature, top_p, max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
+        const { max_tokens = 1024, model, functions, webSearch, onDelta, reasoning_effort } = opts;
 
         const modelToUse = model || this.defaultModel;
         const hasTools = Boolean(functions && functions.length > 0);
+
+        const policy = modelRegistry.resolveRequest('gemini', modelToUse, {
+            ...opts, max_tokens, reasoning_effort: reasoning_effort || this.defaultReasoningEffort
+        }, messages);
         const { systemInstruction, contents } = await this._toGeminiRequest(messages, { withToolGuidance: hasTools });
-
-        const thinkingLevel = this._resolveThinkingLevel(reasoning_effort || this.defaultReasoningEffort, modelToUse);
-        // Thinking tokens count against maxOutputTokens, and Gemini 3.x
-        // models always think, so the caller's visible budget gets headroom
-        // for the effective (requested or default) thinking level.
-        const effectiveLevel = thinkingLevel || this._defaultThinkingLevel(modelToUse);
-
-        const config = {
-            maxOutputTokens: withThinkingHeadroom(max_tokens, effectiveLevel)
-        };
-        if (this._allowsSampling(modelToUse)) {
-            config.temperature = temperature ?? 0.7;
-            if (top_p !== undefined) config.topP = top_p;
-        }
+        const config = { maxOutputTokens: policy.maxOutputTokens };
+        if (policy.sampling.temperature !== undefined) config.temperature = policy.sampling.temperature;
+        if (policy.sampling.top_p !== undefined) config.topP = policy.sampling.top_p;
         if (systemInstruction) config.systemInstruction = systemInstruction;
-        if (thinkingLevel) config.thinkingLevel = thinkingLevel;
+        if (policy.effort) config.thinkingLevel = policy.effort;
 
         const tools = [];
         if (hasTools) {
@@ -399,7 +357,7 @@ class GeminiService {
         }
 
         const request = {
-            model: modelToUse,
+            model: policy.model.id,
             contents,
             config
         };

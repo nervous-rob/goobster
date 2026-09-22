@@ -2643,7 +2643,7 @@ class ParlorService {
                 actorName: projectSeat ? (turnState.startedByName || null) : null
             });
             const toolPolicy = await require('./personalPolicyService').toolPolicy(interactionContext);
-            chatOptions.webSearch = toolPolicy.webSearch && aiService.supportsNativeWebSearch(chatOptions.provider);
+            chatOptions.webSearch = toolPolicy.webSearch && aiService.supportsNativeWebSearch(chatOptions.provider, chatOptions.model, chatOptions.reasoning_effort);
             const result = await runAgentLoop({
                 messages,
                 chatOptions,

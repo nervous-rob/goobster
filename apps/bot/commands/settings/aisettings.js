@@ -34,10 +34,13 @@ module.exports = {
                     option.setName('reasoning')
                         .setDescription('Reasoning effort (OpenAI, Anthropic, and Gemini)')
                         .addChoices(
+                            { name: 'None (when supported)', value: 'none' },
                             { name: 'Minimal', value: 'minimal' },
                             { name: 'Low', value: 'low' },
                             { name: 'Medium', value: 'medium' },
-                            { name: 'High', value: 'high' }
+                            { name: 'High', value: 'high' },
+                            { name: 'Extra high (when supported)', value: 'xhigh' },
+                            { name: 'Maximum (when supported)', value: 'max' }
                         )))
         .addSubcommand(subcommand =>
             subcommand
@@ -78,7 +81,9 @@ module.exports = {
                 });
                 settings = res.data.values;
             } else {
-                settings = await setGuildAI(scopeId, updates);
+                const current = await getGuildAI(scopeId);
+                const checked = aiService.validateModelSelection(current, updates);
+                settings = await setGuildAI(scopeId, checked);
             }
             await interaction.reply({
                 content: `⚙️ **AI settings updated for ${scopeLabel}:**\n` +

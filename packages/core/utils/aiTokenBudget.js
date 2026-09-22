@@ -14,7 +14,9 @@ const THINKING_TOKEN_ALLOWANCE = {
     minimal: 1024,
     low: 4096,
     medium: 8192,
-    high: 24576
+    high: 24576,
+    xhigh: 49152,
+    max: 65536
 };
 
 /**

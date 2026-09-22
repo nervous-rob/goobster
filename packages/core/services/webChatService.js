@@ -1040,6 +1040,10 @@ class WebChatService {
         return await aiService.listModels(providerKey || undefined);
     }
 
+    async listModelCatalog(providerKey, workflow) {
+        return require('./aiService').listModelCatalog(providerKey, workflow);
+    }
+
     /**
      * Update the user's web/DM-scope AI overrides (same storage the
      * /aisettings command uses, so Discord DMs follow along). Only the

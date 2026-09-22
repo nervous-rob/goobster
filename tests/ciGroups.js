@@ -59,6 +59,7 @@ const GROUPS = [
             'geminiService',
             'imageSearchService',
             'openaiService',
+            'modelRegistry',
             'promptContext',
             'promptFragments',
             'replyDetection',

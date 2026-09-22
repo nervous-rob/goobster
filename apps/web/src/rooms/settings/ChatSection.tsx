@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { useCallback } from 'react';
+import { ModelPicker, useModelCatalog, findModel } from '../../components/ModelPicker';
 import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
@@ -40,14 +40,6 @@ const OPTIONAL_TOOLS: Array<{ name: string; label: string }> = [
     { name: 'readGithubFile', label: 'Read GitHub file' },
     { name: 'searchNotion', label: 'Search Notion' },
     { name: 'readNotionPage', label: 'Read Notion page' }
-];
-
-const REASONING = [
-    { value: '', label: 'Default' },
-    { value: 'minimal', label: 'Minimal' },
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' }
 ];
 
 const toDraft = (v: Values): Draft => ({
@@ -124,24 +116,21 @@ export function ChatSection({ section, onDirty }: {
     const effective = section.effective as { provider?: string; providerName?: string; model?: string; reasoningEffort?: string | null };
     const hostDefault = providers.find((p) => p.isDefault);
     const entry = providers.find((p) => p.key === (d.draft.provider || hostDefault?.key));
-    const supportsReasoning = !entry || entry.reasoningEffort !== false;
     const thoughtfulAvailable = section.thoughtfulAvailable !== false && Boolean(entry?.thoughtfulModel || hostDefault?.thoughtfulModel);
 
-    const [models, setModels] = useState<string[]>([]);
-    const [modelsError, setModelsError] = useState<string | null>(null);
-    useEffect(() => {
-        let cancelled = false;
-        setModelsError(null);
-        api.listModels(d.draft.provider || null).then((result) => {
-            if (cancelled) return;
-            setModels(((result as { models?: string[] }).models) || []);
-        }).catch((error: Error) => {
-            if (cancelled) return;
-            setModels([]);
-            setModelsError(error.message || 'Could not load the model catalog.');
-        });
-        return () => { cancelled = true; };
-    }, [d.draft.provider]);
+    const chatCatalog = useModelCatalog(entry?.key, 'chat');
+    const parlorEntry = providers.find(p => p.key === (d.draft.parlorProvider || hostDefault?.key));
+    const researchEntry = providers.find(p => p.key === (d.draft.researchProvider || hostDefault?.key));
+    const parlorCatalog = useModelCatalog(parlorEntry?.key, 'parlor');
+    const researchCatalog = useModelCatalog(researchEntry?.key, 'research');
+    const selectedModel = findModel(chatCatalog.catalog, d.draft.model || entry?.chatModel || '');
+    const reasoningLevels = selectedModel?.reasoning.levels || [];
+    const mappedEffort = selectedModel?.reasoning.aliases[d.draft.reasoningEffort] || d.draft.reasoningEffort;
+    const invalidSavedEffort = Boolean(mappedEffort && reasoningLevels.length && !reasoningLevels.includes(mappedEffort));
+    const effectiveEffort = reasoningLevels.length && mappedEffort ? mappedEffort : selectedModel?.reasoning.default;
+    const samplingAllowed = selectedModel?.sampling.mode === 'always'
+        || (selectedModel?.sampling.mode === 'reasoning-off' && effectiveEffort === 'none');
+    const savedEffortMissing = d.draft.reasoningEffort && !reasoningLevels.includes(d.draft.reasoningEffort);
 
     function setThoughtful(next: boolean) {
         if (next) {
@@ -157,7 +146,6 @@ export function ChatSection({ section, onDirty }: {
         d.set({ ...patch, thoughtful: false });
     }
 
-    const savedModelMissing = d.draft.model && models.length > 0 && !models.includes(d.draft.model);
 
     return (
         <section className="settings-section" aria-labelledby="settings-chat-title">
@@ -182,7 +170,7 @@ export function ChatSection({ section, onDirty }: {
             <Field id="provider" label="Model platform"
                 hint={<>Use host default — currently <strong>{hostDefault?.name || 'auto'}</strong>. Platforms without a key on this host stay listed but can't be chosen.</>}>
                 <select id="provider-input" className="select" value={d.draft.provider}
-                    onChange={(e) => d.set({ provider: e.target.value, model: '', thoughtful: false })}>
+                    onChange={(e) => d.set({ provider: e.target.value, model: '', reasoningEffort: '', thoughtful: false })}>
                     <option value="">Host default ({hostDefault?.name || 'auto'})</option>
                     {providers.map((p) => (
                         <option key={p.key} value={p.key} disabled={!p.configured}>
@@ -192,28 +180,27 @@ export function ChatSection({ section, onDirty }: {
                 </select>
             </Field>
 
-            <Field id="model" label="Model"
-                hint={entry?.chatModel ? <>Provider default is <code>{entry.chatModel}</code>.</> : 'Leave on the provider default unless you have a reason.'}
-                error={modelsError ? `Model list unavailable (${modelsError}). Your saved choice is kept; you can still save other fields.` : null}>
-                <select id="model-input" className="select" value={d.draft.model}
-                    onChange={(e) => setManual({ model: e.target.value })}>
-                    <option value="">{entry?.chatModel ? `Provider default (${entry.chatModel})` : 'Provider default'}</option>
-                    {savedModelMissing && <option value={d.draft.model}>{d.draft.model} (saved; not in current catalog)</option>}
-                    {models.map((id) => <option key={id} value={id}>{id}</option>)}
-                </select>
+            <Field id="model" label="Model" hint="Models with a supported Goobster profile for this platform.">
+                <ModelPicker id="model-input" label="Model" value={d.draft.model} defaultModel={entry?.chatModel}
+                    state={chatCatalog} onChange={model => setManual({ model, reasoningEffort: '' })} />
             </Field>
 
             <Field id="reasoning" label="Reasoning effort"
-                hint={supportsReasoning ? 'How much the model thinks before answering. Higher is slower and costs more.' : `${entry?.name || 'This platform'} doesn't support reasoning effort.`}>
+                hint={reasoningLevels.length ? 'Higher effort allows more reasoning. It can take longer and use more tokens.' : 'This model uses provider defaults; no reasoning control is available.'}>
                 <div className="segment settings-segment" role="radiogroup" aria-label="Reasoning effort" id="reasoning-input">
-                    {REASONING.map((option) => (
-                        <button key={option.value || 'default'} type="button" role="radio"
-                            aria-checked={d.draft.reasoningEffort === option.value}
-                            className={`segment-btn${d.draft.reasoningEffort === option.value ? ' active' : ''}`}
-                            disabled={!supportsReasoning && option.value !== ''}
-                            onClick={() => setManual({ reasoningEffort: option.value })}>{option.label}</button>
+                    {['', ...reasoningLevels, ...(savedEffortMissing ? [d.draft.reasoningEffort] : [])].map(value => (
+                        <button key={value || 'default'} type="button" role="radio"
+                            aria-checked={d.draft.reasoningEffort === value}
+                            className={`segment-btn${d.draft.reasoningEffort === value ? ' active' : ''}`}
+                            disabled={Boolean(value && !reasoningLevels.includes(value))}
+                            onClick={() => setManual({ reasoningEffort: value })}>
+                            {value ? `${value[0].toUpperCase()}${value.slice(1)}` : 'Default'}
+                        </button>
                     ))}
                 </div>
+                {selectedModel && <p className="hint">{invalidSavedEffort
+                    ? 'The saved reasoning level is unsupported. Choose Default or a supported level.'
+                    : <>Effective reasoning: {effectiveEffort || 'provider default'}{savedEffortMissing ? ' (saved preference adapted for this model)' : ''}.</>}</p>}
             </Field>
 
             <Field id="reply-tokens" label="Reply length budget" scope="Private chats & DMs"
@@ -224,12 +211,14 @@ export function ChatSection({ section, onDirty }: {
             </Field>
 
             <Field id="sampling" label="Sampling" scope="Private chats & DMs"
-                hint="Temperature (0–2) and top-p (0–1). Providers that reject sampling drop these instead of failing the turn.">
+                hint={samplingAllowed
+                    ? (selectedModel?.sampling.exclusive ? 'Use temperature or top-p. When both are saved, temperature takes precedence.' : 'Adjust response variation with temperature and top-p.')
+                    : 'Sampling controls are inactive for this model and reasoning setting. Saved values are retained for models that support them.'}>
                 <div className="settings-row" id="sampling-input">
-                    <input className="input" type="number" min={0} max={2} step={0.1} aria-label="Temperature"
+                    <input className="input" type="number" min={0} max={selectedModel?.sampling.temperatureMax ?? 2} step={0.1} aria-label="Temperature" disabled={!samplingAllowed}
                         value={d.draft.temperature} placeholder="Temperature"
                         onChange={(e) => d.set({ temperature: e.target.value })} />
-                    <input className="input" type="number" min={0} max={1} step={0.05} aria-label="Top-p"
+                    <input className="input" type="number" min={0} max={1} step={0.05} aria-label="Top-p" disabled={!samplingAllowed}
                         value={d.draft.topP} placeholder="Top-p"
                         onChange={(e) => d.set({ topP: e.target.value })} />
                 </div>
@@ -247,9 +236,8 @@ export function ChatSection({ section, onDirty }: {
                             </option>
                         ))}
                     </select>
-                    <input className="input" aria-label="Parlor model id" value={d.draft.parlorModel}
-                        placeholder="Provider default model"
-                        onChange={(e) => d.set({ parlorModel: e.target.value })} />
+                    <ModelPicker id="parlor-model-select" label="Parlor model" value={d.draft.parlorModel}
+                        defaultModel={parlorEntry?.chatModel} state={parlorCatalog} onChange={parlorModel => d.set({ parlorModel })} />
                 </div>
             </Field>
 
@@ -265,9 +253,8 @@ export function ChatSection({ section, onDirty }: {
                             </option>
                         ))}
                     </select>
-                    <input className="input" aria-label="Research model id" value={d.draft.researchModel}
-                        placeholder="Provider default model"
-                        onChange={(e) => d.set({ researchModel: e.target.value })} />
+                    <ModelPicker id="research-model-select" label="Research model" value={d.draft.researchModel}
+                        defaultModel={researchEntry?.chatModel} state={researchCatalog} onChange={researchModel => d.set({ researchModel })} />
                 </div>
             </Field>
 

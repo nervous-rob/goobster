@@ -653,7 +653,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                     if (!preset) {
                         throw new PanelError(409, 'NO_THOUGHTFUL_TIER', 'Thoughtful Mode needs a cloud AI provider (OpenAI, Anthropic, or Gemini).');
                     }
-                    await guildSettings.setGuildAI(guildId, preset);
+                    await guildSettings.setGuildAI(guildId, aiService.validateModelSelection(currentAI, preset));
                 } else {
                     await guildSettings.setGuildAI(guildId, { provider: null, model: null, reasoningEffort: null });
                 }
@@ -677,13 +677,14 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             }
             if ('aiReasoningEffort' in patch) {
                 const value = patch.aiReasoningEffort || null;
-                if (value !== null && !['minimal', 'low', 'medium', 'high'].includes(value)) {
-                    throw new PanelError(400, 'BAD_REQUEST', "aiReasoningEffort must be minimal, low, medium, high, or empty for the default.");
+                if (value !== null && !require('../config/userSettingsSchema').REASONING_EFFORTS.includes(value)) {
+                    throw new PanelError(400, 'BAD_REQUEST', "Choose a reasoning level supported by the selected model, or leave it empty for the default.");
                 }
                 aiUpdates.reasoningEffort = value;
             }
             if (Object.keys(aiUpdates).length > 0) {
-                applied.ai = await guildSettings.setGuildAI(guildId, aiUpdates);
+                const currentAI = await guildSettings.getGuildAI(guildId);
+                applied.ai = await guildSettings.setGuildAI(guildId, aiService.validateModelSelection(currentAI, aiUpdates));
             }
 
             if ('personalityDirective' in patch) {
