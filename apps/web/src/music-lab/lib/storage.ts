@@ -1,7 +1,10 @@
+import { accountStoragePrefix } from '../../lib/browserAccount';
+
 export const CONSERVATORY_STORAGE_PREFIX = 'goobster.conservatory.';
 
 export function conservatoryStorageKey(key: string): string {
-    return key.startsWith(CONSERVATORY_STORAGE_PREFIX) ? key : `${CONSERVATORY_STORAGE_PREFIX}${key}`;
+    const suffix = key.startsWith(CONSERVATORY_STORAGE_PREFIX) ? key.slice(CONSERVATORY_STORAGE_PREFIX.length) : key;
+    return `${accountStoragePrefix()}conservatory.${suffix}`;
 }
 
 export function readConservatoryStorage(key: string): string | null {
@@ -38,7 +41,7 @@ export function clearConservatoryStorage(): void {
         const doomed: string[] = [];
         for (let i = 0; i < window.localStorage.length; i += 1) {
             const stored = window.localStorage.key(i);
-            if (stored?.startsWith(CONSERVATORY_STORAGE_PREFIX)) doomed.push(stored);
+            if (stored?.startsWith(conservatoryStorageKey(''))) doomed.push(stored);
         }
         for (const stored of doomed) window.localStorage.removeItem(stored);
     } catch {

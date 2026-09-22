@@ -37,6 +37,7 @@ const GROUPS = [
             'reportIntegrations',
             'safeFetch',
             'singletonLock',
+            'sharedInstanceSafety',
             'slidingWindowLimit',
             'tableManager',
             'userIntegrationService',

@@ -78,7 +78,7 @@ function createAppHelpers(ctx) {
         const token = parseCookies(req)[SESSION_COOKIE];
         const session = token ? await ctx.sessions.get(token) : null;
         if (!session) {
-            sendError(res, 401, 'UNAUTHENTICATED', 'Sign in with Discord to use the web app.');
+            sendError(res, 401, 'UNAUTHENTICATED', 'Sign in to use the web app.');
             return;
         }
         // The session names the principal; the actor context adds the
@@ -94,6 +94,7 @@ function createAppHelpers(ctx) {
             });
         } catch (error) {
             if (error?.status && error?.code) {
+                res.set('X-Goobster-Session-Invalid', '1');
                 sendError(res, error.status, error.code, error.message);
                 return;
             }
@@ -113,6 +114,27 @@ function createAppHelpers(ctx) {
         req.webUser = session;
         req.webSessionToken = token;
         req.actor = actor;
+        // A stale tab must not make a write using a different account's cookie.
+        if ((req.headers['x-goobster-account'] && req.headers['x-goobster-account'] !== session.userId)
+            || (req.headers['x-goobster-session'] && req.headers['x-goobster-session'] !== String(session.id))) {
+            res.set('X-Goobster-Session-Invalid', '1');
+            sendError(res, 409, 'SESSION_CHANGED', 'The signed-in account changed. Reload before continuing.');
+            return;
+        }
+        res.set('Cache-Control', 'no-store');
+        res.locals.webUser = session;
+        let connectionLease;
+        res.locals.authorizeStream = async () => {
+            const auth = require('./liveAuthorization');
+            const alive = () => !res.destroyed && !res.writableEnded;
+            if (!(await auth.authorizeSession(ctx, token, session, alive))) return false;
+            connectionLease ||= auth.reserveConnection(session);
+            const lease = await connectionLease;
+            if (res.destroyed || res.writableEnded) { await lease.release(); return false; }
+            await lease.renew();
+            return true;
+        };
+        res.once('close', () => { connectionLease?.then(lease => lease.release()).catch(() => {}); });
         next();
     }
 

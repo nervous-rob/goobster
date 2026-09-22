@@ -721,14 +721,15 @@ class ObservatoryService {
         const ownerQual = owner != null && String(owner).trim() !== ''
             ? String(owner).trim()
             : null;
-        const matchSql = '(p.slug = @slugRef OR p.name = @ref COLLATE NOCASE)';
+        const matchSql = typeof project === 'number' ? 'p.id = @projectId' : '(p.slug = @slugRef OR p.name = @ref COLLATE NOCASE)';
+        const projectId = typeof project === 'number' ? project : null;
 
         if (ownerQual) {
             const row = await db.get(
                 `SELECT p.id, p.slug, p.name, p.userId
                  FROM observatory_projects p
                  WHERE p.userId = @ownerId AND ${matchSql}`,
-                { ownerId: ownerQual, slugRef, ref }
+                { ownerId: ownerQual, slugRef, ref, projectId }
             );
             if (!row) {
                 throw new ObservatoryError(404, 'NO_SUCH_PROJECT',
@@ -753,7 +754,7 @@ class ObservatoryService {
             `SELECT p.id, p.slug, p.name, p.userId
              FROM observatory_projects p
              WHERE p.userId = @userId AND ${matchSql}`,
-            { userId, slugRef, ref }
+            { userId, slugRef, ref, projectId }
         );
         if (owned) {
             return this._projectForActor(owned, 'owner');
@@ -765,7 +766,7 @@ class ObservatoryService {
              JOIN project_members m ON m.projectId = p.id
              WHERE m.userId = @userId AND ${matchSql}
              ORDER BY p.id ASC`,
-            { userId, slugRef, ref }
+            { userId, slugRef, ref, projectId }
         );
         if (memberships.length === 0) {
             throw new ObservatoryError(404, 'NO_SUCH_PROJECT',
@@ -1194,55 +1195,58 @@ class ObservatoryService {
     async writeWorkspaceFile({ userId, slug, relativePath, bytes, owner = null }) {
         await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
-        const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
-            row.dir, relativePath
-        );
-        if (resolved === path.resolve(row.dir)) {
-            throw new ObservatoryError(400, 'BAD_PATH', 'Cannot overwrite the workspace root.');
-        }
-        const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes == null ? '' : String(bytes));
-        const maxUploadMb = Number(this.config.maxUploadMb) > 0 ? Number(this.config.maxUploadMb) : 50;
-        const maxUploadBytes = Math.floor(maxUploadMb * 1024 * 1024);
-        if (buf.length > maxUploadBytes) {
-            throw new ObservatoryError(413, 'FILE_TOO_LARGE',
-                `That upload is larger than the ${maxUploadMb} MB cap.`);
-        }
-
-        let existingBytes = 0;
-        try {
-            const existing = fs.lstatSync(resolved);
-            if (existing.isSymbolicLink()) {
-                throw new ObservatoryError(400, 'BAD_PATH',
-                    'Symbolic links are not allowed in the project workspace.');
+        return db.transaction(async tx => {
+            await require('../utils/editConflict').lockProjectWrite(tx, row.id, userId);
+            const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
+                row.dir, relativePath
+            );
+            if (resolved === path.resolve(row.dir)) {
+                throw new ObservatoryError(400, 'BAD_PATH', 'Cannot overwrite the workspace root.');
             }
-            if (existing.isDirectory()) {
-                throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is a directory.');
+            const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes == null ? '' : String(bytes));
+            const maxUploadMb = Number(this.config.maxUploadMb) > 0 ? Number(this.config.maxUploadMb) : 50;
+            const maxUploadBytes = Math.floor(maxUploadMb * 1024 * 1024);
+            if (buf.length > maxUploadBytes) {
+                throw new ObservatoryError(413, 'FILE_TOO_LARGE',
+                    `That upload is larger than the ${maxUploadMb} MB cap.`);
             }
-            if (existing.isFile()) existingBytes = existing.size;
-        } catch (error) {
-            if (error?.code === 'BAD_PATH' || error?.code === 'NOT_A_FILE') throw error;
-            /* missing — we will create it */
-        }
 
-        const usedMb = this._dirSizeMb(row.dir);
-        const nextMb = usedMb - (existingBytes / (1024 * 1024)) + (buf.length / (1024 * 1024));
-        if (nextMb > this.config.maxProjectMb) {
-            throw new ObservatoryError(413, 'QUOTA_EXCEEDED',
-                `The project workspace is over its ${this.config.maxProjectMb} MB quota `
-                + `(${usedMb.toFixed(1)} MB). Delete files (or the project) to continue.`);
-        }
+            let existingBytes = 0;
+            try {
+                const existing = fs.lstatSync(resolved);
+                if (existing.isSymbolicLink()) {
+                    throw new ObservatoryError(400, 'BAD_PATH',
+                        'Symbolic links are not allowed in the project workspace.');
+                }
+                if (existing.isDirectory()) {
+                    throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is a directory.');
+                }
+                if (existing.isFile()) existingBytes = existing.size;
+            } catch (error) {
+                if (error?.code === 'BAD_PATH' || error?.code === 'NOT_A_FILE') throw error;
+                /* missing — we will create it */
+            }
 
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        fs.writeFileSync(resolved, buf);
-        await this._touchProject(row.id);
-        require('./eventBusService').publishProjectChange({
-            userId, slug: row.slug, reason: 'workspace', projectId: row.id
+            const usedMb = this._dirSizeMb(row.dir);
+            const nextMb = usedMb - (existingBytes / (1024 * 1024)) + (buf.length / (1024 * 1024));
+            if (nextMb > this.config.maxProjectMb) {
+                throw new ObservatoryError(413, 'QUOTA_EXCEEDED',
+                    `The project workspace is over its ${this.config.maxProjectMb} MB quota `
+                    + `(${usedMb.toFixed(1)} MB). Delete files (or the project) to continue.`);
+            }
+
+            fs.mkdirSync(path.dirname(resolved), { recursive: true });
+            fs.writeFileSync(resolved, buf);
+            await this._touchProject(row.id);
+            require('./eventBusService').publishProjectChange({
+                userId, slug: row.slug, reason: 'workspace', projectId: row.id
+            });
+            return {
+                relativePath: rel,
+                name: path.basename(rel),
+                size: buf.length
+            };
         });
-        return {
-            relativePath: rel,
-            name: path.basename(rel),
-            size: buf.length
-        };
     }
 
     /**
@@ -1252,29 +1256,32 @@ class ObservatoryService {
     async deleteWorkspaceFile({ userId, slug, relativePath, owner = null }) {
         await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
-        const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
-            row.dir, relativePath, { mustExist: true }
-        );
-        if (resolved === path.resolve(row.dir)) {
-            throw new ObservatoryError(400, 'BAD_PATH', 'Cannot delete the workspace root.');
-        }
-        const lst = fs.lstatSync(resolved);
-        if (lst.isDirectory()) {
-            let leftover;
-            try { leftover = fs.readdirSync(resolved); } catch { leftover = ['?']; }
-            if (leftover.length > 0) {
-                throw new ObservatoryError(400, 'NOT_EMPTY',
-                    'That directory is not empty.');
+        return db.transaction(async tx => {
+            await require('../utils/editConflict').lockProjectWrite(tx, row.id, userId);
+            const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
+                row.dir, relativePath, { mustExist: true }
+            );
+            if (resolved === path.resolve(row.dir)) {
+                throw new ObservatoryError(400, 'BAD_PATH', 'Cannot delete the workspace root.');
             }
-            fs.rmdirSync(resolved);
-        } else {
-            fs.unlinkSync(resolved);
-        }
-        await this._touchProject(row.id);
-        require('./eventBusService').publishProjectChange({
-            userId, slug: row.slug, reason: 'workspace', projectId: row.id
+            const lst = fs.lstatSync(resolved);
+            if (lst.isDirectory()) {
+                let leftover;
+                try { leftover = fs.readdirSync(resolved); } catch { leftover = ['?']; }
+                if (leftover.length > 0) {
+                    throw new ObservatoryError(400, 'NOT_EMPTY',
+                        'That directory is not empty.');
+                }
+                fs.rmdirSync(resolved);
+            } else {
+                fs.unlinkSync(resolved);
+            }
+            await this._touchProject(row.id);
+            require('./eventBusService').publishProjectChange({
+                userId, slug: row.slug, reason: 'workspace', projectId: row.id
+            });
+            return { deleted: true, relativePath: rel };
         });
-        return { deleted: true, relativePath: rel };
     }
 
     /** Latest job-owned checkpoint, then the legacy project-root file. */
@@ -3593,6 +3600,10 @@ class ObservatoryService {
                 'This invitation was already settled.');
         }
         const result = await db.transaction(async (tx) => {
+            await tx.run('UPDATE observatory_projects SET id = id WHERE id = @id', { id: invite.projectId });
+            const settled = await tx.run(`UPDATE project_invites SET status = @status, respondedAt = datetime('now')
+                WHERE id = @id AND status = 'pending'`, { id: invite.id, status: accept ? 'accepted' : 'declined' });
+            if (!settled.changes) throw new ObservatoryError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
             if (accept) {
                 const count = (await tx.get(
                     'SELECT COUNT(*) AS c FROM project_members WHERE projectId = @projectId',
@@ -3614,11 +3625,6 @@ class ObservatoryService {
                 );
             }
             const status = accept ? 'accepted' : 'declined';
-            await tx.run(
-                `UPDATE project_invites SET status = @status, respondedAt = datetime('now')
-                 WHERE id = @id`,
-                { status, id: invite.id }
-            );
             return {
                 status,
                 projectId: invite.projectId,
@@ -3658,11 +3664,12 @@ class ObservatoryService {
             throw new ObservatoryError(409, 'INVITE_SETTLED',
                 'This invitation was already settled.');
         }
-        await db.run(
+        const changed = await db.run(
             `UPDATE project_invites SET status = 'revoked', respondedAt = datetime('now')
-             WHERE id = @id`,
+             WHERE id = @id AND status = 'pending'`,
             { id: invite.id }
         );
+        if (!changed.changes) throw new ObservatoryError(409, 'INVITE_SETTLED', 'This invitation was already settled.');
         try {
             require('./eventBusService').publish('project-invite', {
                 userId: invite.inviteeId, projectId: invite.projectId
@@ -3681,11 +3688,14 @@ class ObservatoryService {
             throw new ObservatoryError(403, 'NOT_OWNER',
                 'Only the project owner can remove other people.');
         }
-        const removed = (await db.run(
-            `DELETE FROM project_members
-             WHERE projectId = @projectId AND userId = @target`,
-            { projectId: row.id, target }
-        )).changes;
+        const removed = await db.transaction(async tx => {
+            await require('../utils/editConflict').lockProjectWrite(tx, row.id, userId);
+            return (await tx.run(
+                `DELETE FROM project_members
+                 WHERE projectId = @projectId AND userId = @target`,
+                { projectId: row.id, target }
+            )).changes;
+        });
         if (removed === 0) {
             throw new ObservatoryError(404, 'NO_SUCH_MEMBER',
                 'They are not a member of this project.');

@@ -404,6 +404,10 @@ async function runAgentLoop({
         if (typeof onDelta === 'function') {
             options.onDelta = onDelta;
         }
+        options.onAdmission = waiting => onToolEvent?.({
+            phase: 'admission', name: 'model',
+            resultPreview: waiting ? 'Waiting for model capacity. You can stop this request while it is queued.' : ''
+        });
         return await aiService.chat(messagesForModel, options);
     };
 

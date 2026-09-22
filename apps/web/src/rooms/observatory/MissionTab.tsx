@@ -39,6 +39,7 @@ type Evaluation = {
 };
 type TimelineEvent = { id: number; kind: string; createdAt: string };
 type Mission = {
+    planRevision?: number;
     id: number;
     title: string;
     objective: string;
@@ -123,7 +124,7 @@ export function MissionTab({
                         api.projectMissionCompleteStep(slug, id, note, ownerId, selectedId))}
                     onSkipStep={(id) => run.mutate(() => api.projectMissionSkipStep(slug, id, undefined, ownerId))}
                     onRetryStep={(id) => run.mutate(() => api.projectMissionRetryStep(slug, id, ownerId))}
-                    onAddStep={(body) => run.mutate(() => api.addProjectMissionStep(slug, body, ownerId))}
+                    onAddStep={(body) => run.mutate(() => api.addProjectMissionStep(slug, { ...body, expectedRevision: mission.planRevision }, ownerId))}
                     onAddEvidence={(body) => run.mutate(() => api.addProjectMissionEvidence(slug, body, ownerId))}
                     onReview={(notes, verdict) => run.mutate(() =>
                         api.projectMissionAction(slug, 'review', { notes, verdict }, ownerId))}

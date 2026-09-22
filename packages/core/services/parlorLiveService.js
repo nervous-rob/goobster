@@ -225,6 +225,8 @@ class ParlorLiveService {
                     ({ session, client } = await this._handleJoin(socket, send, {
                         userId, userName, gateway, conversationId: message.conversationId
                     }));
+                    const joinedId = session.conversationId;
+                    socket.authorizeResource = () => this._parlor().requireConversationAccess(userId, joinedId);
                 } else if (!session || session.destroyed) {
                     sendError('NOT_JOINED', 'Join a live session first.');
                 } else if (message.type === 'audio') {

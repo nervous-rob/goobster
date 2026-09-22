@@ -1,3 +1,4 @@
+process.env.GOOBSTER_DB_PATH = require('node:path').join(require('node:os').tmpdir(), 'goobster-sandbox-service-' + process.pid + '.sqlite');
 /**
  * Code sandbox service (services/sandboxService.js).
  *

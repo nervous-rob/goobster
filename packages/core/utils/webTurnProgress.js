@@ -19,6 +19,7 @@ function cloneProgress(progress) {
         userContent: String(src.userContent || ''),
         draft: String(src.draft || ''),
         typing: Boolean(src.typing),
+        ...(src.waiting ? { waiting: String(src.waiting) } : {}),
         steps: Array.isArray(src.steps) ? src.steps.map((step) => ({ ...step })) : []
     };
 }
@@ -40,12 +41,17 @@ function applyProgressEvent(progress, kind, payload) {
         return next;
     }
     if (kind === 'delta') {
+        next.waiting = '';
         next.draft += String(payload || '');
         next.typing = false;
         return next;
     }
     if (kind === 'tool') {
         const event = payload && typeof payload === 'object' ? payload : {};
+        if (event.phase === 'admission') {
+            next.waiting = event.resultPreview || '';
+            return next;
+        }
         if (event.phase === 'start') {
             if (next.draft.trim()) {
                 next.steps.push({ type: 'text', content: next.draft });
@@ -81,6 +87,7 @@ function applyProgressEvent(progress, kind, payload) {
         return next;
     }
     if (kind === 'message') {
+        next.waiting = '';
         next.draft = '';
         next.steps = [];
         next.typing = false;

@@ -1,3 +1,4 @@
+import { accountFetch, ACCOUNT_STORAGE_CHANGED } from '../lib/browserAccount';
 /**
  * Inline renderers for tool-generated / found-on-the-web file attachments
  * (shared by the Study, the Parlor, and history reloads via Markdown.tsx).
@@ -108,6 +109,7 @@ export function attachmentsSignature(attachments) {
 // Per-attachment UI state (collapsed, sort) - outside the disposable DOM.
 
 const uiState = new Map();
+if (typeof window !== 'undefined') window.addEventListener(ACCOUNT_STORAGE_CHANGED, () => uiState.clear());
 
 function stateFor(key) {
     let state = uiState.get(key);
@@ -228,7 +230,7 @@ function fileCard(file, icon, subtitle) {
 }
 
 async function fetchText(url, { signal } = {}) {
-    const response = await fetch(url, { credentials: 'same-origin', signal });
+    const response = await accountFetch(url, { credentials: 'same-origin', signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const length = Number(response.headers.get('content-length') || 0);
     if (length > MAX_FETCH_BYTES) throw new Error('too large to preview');

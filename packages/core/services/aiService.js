@@ -232,14 +232,28 @@ class AIServiceRouter {
     }
 
     async generateText(prompt, opts = {}) {
-        return await this._resolveProvider(opts).generateText(prompt, opts);
+        const provider = this._resolveProvider(opts);
+        return this._admit(opts, signal => provider.generateText(prompt, { ...opts, signal }));
     }
 
     /**
      * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
      */
     async chat(messages, opts = {}) {
-        return await this._resolveProvider(opts).chat(messages, opts);
+        const provider = this._resolveProvider(opts);
+        return this._admit(opts, signal => provider.chat(messages, { ...opts, signal }));
+    }
+
+    async _admit(opts, work) {
+        const policy = require('../config/admissionConfig');
+        const timeout = AbortSignal.timeout(policy.modelTimeoutMs);
+        const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+        return require('./resourceAdmissionService').run({
+            resource: 'model', actorId: opts.usageContext?.actorId || opts.usageContext?.userId || null,
+            scopeId: opts.usageContext?.guildId || null,
+            limit: policy.modelConcurrent, perActor: policy.modelPerAccount,
+            waitMs: policy.modelQueueMs, leaseMs: policy.modelTimeoutMs + 30000, signal, onWaiting: opts.onAdmission
+        }, work);
     }
 
     /**

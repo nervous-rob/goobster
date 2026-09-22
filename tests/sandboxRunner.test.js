@@ -1,3 +1,4 @@
+process.env.GOOBSTER_DB_PATH = require('node:path').join(require('node:os').tmpdir(), 'goobster-sandbox-runner-' + process.pid + '.sqlite');
 /**
  * Sandbox-runner HTTP layer (apps/sandbox/server.js, Phase 5d) and the
  * sandboxService remote-proxy path.

@@ -1,3 +1,4 @@
+import { ACCOUNT_STORAGE_CHANGED } from '../../lib/browserAccount';
 /**
  * Curated voice presets for tonal creatures. Each preset describes both a
  * polyphonic variant (chord organisms) and a monophonic variant (bass/lead
@@ -190,3 +191,5 @@ export function findVoice(id: string | undefined): VoicePreset {
   hydrate();
   return VOICE_PRESETS.find(v => v.id === id) ?? customVoices.find(v => v.id === id) ?? VOICE_PRESETS[0];
 }
+
+if (typeof window !== 'undefined') window.addEventListener(ACCOUNT_STORAGE_CHANGED, () => { customVoices = []; hydrated = false; });

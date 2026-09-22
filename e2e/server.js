@@ -428,6 +428,15 @@ const HARNESS_HTML = `<!doctype html>
 </body></html>`;
 
 function mountRendererHarness(app) {
+    // Renderer modules share the real account lifetime implementation.
+    // Serve its erased JS for this unbundled harness (the app uses Vite).
+    app.get('/e2e/lib/browserAccount', (_req, res) => {
+        const ts = require('typescript');
+        const source = fs.readFileSync(path.join(RENDERERS_DIR, '../lib/browserAccount.ts'), 'utf8');
+        res.type('application/javascript').send(ts.transpileModule(source, {
+            compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
+        }).outputText);
+    });
     app.get('/e2e/renderers/:file', (req, res) => {
         const file = path.basename(req.params.file);
         const abs = path.join(RENDERERS_DIR, file);

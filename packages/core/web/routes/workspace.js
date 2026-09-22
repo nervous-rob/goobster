@@ -344,6 +344,7 @@ function mountWorkspace(app, ctx, h) {
             conversationId: req.body?.conversationId,
             messageId: req.body?.messageId,
             grants: req.body?.grants,
+            expectedRevision: req.body?.expectedRevision,
             origin: req.body?.origin || 'portal'
         })
     ));
@@ -355,6 +356,7 @@ function mountWorkspace(app, ctx, h) {
             project: req.body?.project,
             name: req.body?.name,
             slug: req.body?.slug,
+            expectedRevision: req.body?.expectedRevision,
             origin: req.body?.origin || 'portal'
         })
     ));

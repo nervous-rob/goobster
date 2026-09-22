@@ -405,6 +405,7 @@ function mountAuth(app, ctx, h) {
                 } catch { /* unreachable */ }
             }
             res.json({
+                sessionId: req.webUser.id,
                 user: {
                     id: req.webUser.userId,
                     name: req.webUser.userName,

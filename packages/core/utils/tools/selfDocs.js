@@ -114,27 +114,36 @@ module.exports = {
                 }
             }
         },
-        execute: async ({ action, query, slug, section, kind, limit, offset }) => {
+        execute: async ({ action, query, slug, section, kind, limit, offset, interactionContext }) => {
             const selfDocsService = require('../../services/selfDocsService');
             const config = require('../../config/selfDocsConfig');
             if (!config.enabled) return 'DOCS — self-documentation is disabled on this deployment (selfDocs.enabled = false).';
 
             const want = action || (slug ? 'read' : (query ? 'search' : 'list'));
             try {
+                // Only a freshly authorized operator in their private Study
+                // can retrieve deployment notes. Shared discussions/guilds and
+                // missing actor context get the shipped public documentation.
+                const userId = interactionContext?.user?.id;
+                const privateStudy = userId && !interactionContext.guildId
+                    && interactionContext.channelId?.startsWith(`web:${userId}:`);
+                const account = privateStudy
+                    ? await require('../../services/identityService').getAccount(userId) : null;
+                const includeOperator = account?.status === 'active' && account?.role === 'operator';
                 await selfDocsService.ensureSeeded();
                 if (want === 'list') {
-                    const docs = await selfDocsService.listDocs({ kind: kind || null });
+                    const docs = await selfDocsService.listDocs({ kind: kind || null, includeOperator });
                     return formatList(docs, kind || null);
                 }
                 if (want === 'read') {
                     const ref = slug || query;
                     if (!ref) return 'DOCS — read needs a slug (or title). Use action="list" to see them.';
-                    const result = await selfDocsService.readDoc({ ref, section: section || null, offset, limit });
+                    const result = await selfDocsService.readDoc({ ref, section: section || null, offset, limit, includeOperator });
                     return formatRead(ref, result, section || null);
                 }
                 const text = String(query || '').trim();
                 if (!text) return 'DOCS — search needs a query. Say what you need to know in plain words.';
-                const result = await selfDocsService.search({ query: text, kind: kind || null, limit: limit || 5 });
+                const result = await selfDocsService.search({ query: text, kind: kind || null, limit: limit || 5, includeOperator });
                 return formatSearch(text, result);
             } catch (error) {
                 return `❌ Could not consult the documentation: ${error.message}`;

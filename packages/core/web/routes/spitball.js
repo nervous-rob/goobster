@@ -177,7 +177,8 @@ function mountSpitball(app, ctx, h) {
             label: body.label,
             content: body.content,
             type: body.type,
-            tags: body.tags
+            tags: body.tags,
+            expectedRevision: body.expectedRevision
         });
     }));
 

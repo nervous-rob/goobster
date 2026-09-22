@@ -2902,3 +2902,16 @@ CREATE TABLE IF NOT EXISTS tutorial_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_tutorial_feedback_account
     ON tutorial_feedback(accountId, createdAt);
+-- Short-lived execution admission. Lock rows serialize contenders on both engines.
+CREATE TABLE IF NOT EXISTS admission_locks (resource TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS execution_admissions (
+    id TEXT PRIMARY KEY,
+    resource TEXT NOT NULL,
+    actorId TEXT,
+    scopeId TEXT,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'finished')),
+    createdAt BIGINT NOT NULL,
+    startedAt BIGINT,
+    expiresAt BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_execution_admission_resource ON execution_admissions(resource, expiresAt);

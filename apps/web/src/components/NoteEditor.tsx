@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Modal } from './Modal';
 import { useToast } from '../hooks/useToast';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import type { UserNote } from '../lib/types';
 
 const NODE_TYPES = [
@@ -32,12 +32,15 @@ export function NoteEditor({
     const [content, setContent] = useState(note?.content || '');
     const [type, setType] = useState(note?.type || 'concept');
     const [tags, setTags] = useState((note?.tags || []).join(', '));
+    const [revision, setRevision] = useState(note?.revision);
+    const [currentNote, setCurrentNote] = useState<UserNote | null>(null);
     const save = useMutation({
         mutationFn: async () => {
             const fields = {
                 label: label.trim(),
                 content: content.trim(),
                 type,
+                expectedRevision: revision,
                 tags: parseTags(tags)
             };
             if (note) {
@@ -49,7 +52,12 @@ export function NoteEditor({
             toast(note ? 'Note updated.' : 'Note added.');
             onSaved(result.note);
         },
-        onError: (error) => toast((error as Error).message, true)
+        onError: (error) => {
+            if (error instanceof ApiError && error.code === 'EDIT_CONFLICT') {
+                setCurrentNote((error.details as { note?: UserNote })?.note || null);
+            }
+            toast((error as Error).message, true);
+        }
     });
     return (
         <Modal onClose={onClose} wide className="note-editor-modal">
@@ -103,12 +111,18 @@ export function NoteEditor({
                     onChange={(event) => setTags(event.target.value)}
                 />
             </div>
+            {currentNote && <div role="alert" className="panel">
+                <p>Your draft is kept above. Current saved note:</p>
+                <strong>{currentNote.label}</strong><pre>{currentNote.content}</pre>
+                <p>{currentNote.tags.join(', ')}</p>
+                <button className="btn" onClick={() => { setRevision(currentNote.revision); setCurrentNote(null); }}>I have compared and merged my changes</button>
+            </div>}
             <div className="modal-actions">
                 <button type="button" className="btn" onClick={onClose}>Cancel</button>
                 <button
                     type="button"
                     className="btn primary"
-                    disabled={save.isPending || !label.trim()}
+                    disabled={save.isPending || !label.trim() || Boolean(currentNote)}
                     onClick={() => save.mutate()}
                 >
                     {note ? 'Save' : 'Add note'}

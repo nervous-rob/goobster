@@ -689,36 +689,21 @@ class UserSettingsService {
         // Run updates and revision increment atomically
         let newRevision = currentRevision + 1;
         await db.transaction(async (tx) => {
-            // Re-check revision inside transaction if expectedRevision was provided
-            if (expectedRevision !== null && expectedRevision !== undefined) {
-                const fresh = await (tx || db).get(
-                    'SELECT revision FROM user_setting_revisions WHERE userId = @userId AND section = @section',
-                    { userId, section }
-                );
-                const freshRev = fresh?.revision ? Number(fresh.revision) : 1;
-                if (freshRev !== Number(expectedRevision)) {
-                    throw new UserSettingsError(409, 'SETTINGS_CONFLICT',
-                        'Settings were modified elsewhere. Please review and try again.',
-                        { currentRevision: freshRev, expectedRevision: Number(expectedRevision), section }
-                    );
-                }
+            // Materialize then compare-and-swap the revision BEFORE writing
+            // values. SELECT + a later increment races under Postgres READ COMMITTED.
+            await tx.run(`INSERT INTO user_setting_revisions (userId, section, revision)
+                VALUES (@userId, @section, 1) ON CONFLICT DO NOTHING`, { userId, section });
+            const revRow = await tx.get(`UPDATE user_setting_revisions
+                SET revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                WHERE userId = @userId AND section = @section AND revision = @expected
+                RETURNING revision`, { userId, section, expected: expectedRevision ?? currentRevision });
+            if (!revRow) {
+                throw new UserSettingsError(409, 'SETTINGS_CONFLICT',
+                    'Settings were modified elsewhere. Please review and try again.',
+                    { currentRevision: await this.getRevision(userId, section), section });
             }
-
-            if (commitFn) {
-                await commitFn(tx || db);
-            }
-
-            // Increment revision record
-            const revRow = await (tx || db).get(
-                `INSERT INTO user_setting_revisions (userId, section, revision, updatedAt)
-                 VALUES (@userId, @section, 2, CURRENT_TIMESTAMP)
-                 ON CONFLICT(userId, section) DO UPDATE SET
-                     revision = user_setting_revisions.revision + 1,
-                     updatedAt = CURRENT_TIMESTAMP
-                 RETURNING revision`,
-                { userId, section }
-            );
-            newRevision = revRow?.revision ? Number(revRow.revision) : newRevision;
+            if (commitFn) await commitFn(tx);
+            newRevision = Number(revRow.revision);
         });
 
         // Post-commit cache invalidation & event publishing

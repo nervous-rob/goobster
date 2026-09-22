@@ -637,7 +637,7 @@ class WebDashboardService {
      * Manual edit of a personal note. Ownership is re-checked in the
      * graph service; a missing / foreign note is 404.
      */
-    async updateNote({ gateway, client, scope, userId, discordUserId = userId, nodeId, label, content, type, tags } = {}) {
+    async updateNote({ gateway, client, scope, userId, discordUserId = userId, nodeId, label, content, type, tags, expectedRevision = null } = {}) {
         await this._requireScopeAccess({ gateway: gateway || client, scope, userId, discordUserId });
         try {
             const note = await knowledgeGraphService.updateUserNote({
@@ -647,13 +647,14 @@ class WebDashboardService {
                 label,
                 content,
                 type,
-                tags
+                tags, expectedRevision
             });
             if (!note) {
                 throw new WebDashboardError(404, 'NOT_FOUND', 'Note not found.');
             }
             return { note };
         } catch (err) {
+            if (err?.code === 'EDIT_CONFLICT') throw err;
             if (err && err.status === 409) {
                 throw new WebDashboardError(409, 'CONFLICT', err.message);
             }

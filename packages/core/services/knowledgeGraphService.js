@@ -178,7 +178,7 @@ class KnowledgeGraphService {
                      source = COALESCE(@source, source),
                      subjectType = COALESCE(@subjectType, subjectType),
                      subjectId = COALESCE(@subjectId, subjectId),
-                     updatedAt = CURRENT_TIMESTAMP
+                     revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id`,
                 {
                     id: existing.id,
@@ -1206,6 +1206,7 @@ ${excerpt}`;
         if (!node) return null;
         return {
             id: node.id,
+            revision: Number(node.revision) || 1,
             type: node.type,
             label: node.label,
             content: node.content,
@@ -1512,60 +1513,69 @@ ${excerpt}`;
      * research must not casually overwrite the preferred representation.
      */
     async updateUserNote({
-        guildId, userId, nodeId, label, content, type, tags
+        guildId, userId, nodeId, label, content, type, tags, expectedRevision = null
     } = {}) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
-        return this.updateScopedNote({ guildId, scopeKey, nodeId, label, content, type, tags });
+        return this.updateScopedNote({ guildId, scopeKey, nodeId, label, content, type, tags, expectedRevision });
     }
 
     /** Internal scoped edit. Callers must authorize access to the destination. */
-    async updateScopedNote({ guildId, scopeKey, nodeId, label, content, type, tags } = {}) {
-        const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
-        if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return null;
+    async updateScopedNote({ guildId, scopeKey, nodeId, label, content, type, tags, expectedRevision = null } = {}) {
+        return db.transaction(async () => {
+            const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
+            if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return null;
 
-        const nextLabel = label !== undefined ? normalizeLabel(label) : node.label;
-        if (!nextLabel) {
-            const error = new Error('Title is required.');
-            error.status = 400;
-            error.code = 'BAD_REQUEST';
-            throw error;
-        }
-        if (nextLabel.toLowerCase() !== String(node.label).toLowerCase()) {
-            const clash = await this.getNode(guildId, nextLabel, scopeKey);
-            if (clash && clash.id !== node.id) {
-                const error = new Error('A note with that title already exists.');
-                error.status = 409;
-                error.code = 'CONFLICT';
+            const nextLabel = label !== undefined ? normalizeLabel(label) : node.label;
+            if (!nextLabel) {
+                const error = new Error('Title is required.');
+                error.status = 400;
+                error.code = 'BAD_REQUEST';
                 throw error;
             }
-        }
-        const nextType = type && NODE_TYPES.includes(type) ? type : node.type;
-        const nextContent = content !== undefined
-            ? (content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null)
-            : node.content;
+            if (nextLabel.toLowerCase() !== String(node.label).toLowerCase()) {
+                const clash = await this.getNode(guildId, nextLabel, scopeKey);
+                if (clash && clash.id !== node.id) {
+                    const error = new Error('A note with that title already exists.');
+                    error.status = 409;
+                    error.code = 'CONFLICT';
+                    throw error;
+                }
+            }
+            const nextType = type && NODE_TYPES.includes(type) ? type : node.type;
+            const nextContent = content !== undefined
+                ? (content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null)
+                : node.content;
 
-        // A human edit is the record of the preferred representation and
-        // the clearest statement of intent: the note becomes saved knowledge
-        // whatever wrote it first (ADR 0008 §3).
-        await db.run(
-            `UPDATE kg_nodes SET
-                 label = @label, type = @type, content = @content,
-                 source = 'user', curation = 'saved', updatedAt = CURRENT_TIMESTAMP
-             WHERE id = @id`,
-            { id: node.id, label: nextLabel, type: nextType, content: nextContent }
-        );
-        const materiallyChanged = nextLabel !== node.label
-            || nextType !== node.type
-            || nextContent !== (node.content || null);
-        if (materiallyChanged) {
-            await this._recordRevision(node.id, 'user');
-        }
-        if (Array.isArray(tags)) {
-            await this.setTagsOnNode({ guildId, scopeKey, label: nextLabel, tags });
-        }
-        const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: node.id });
-        const tagMap = await this.getTagsForNodes([node.id]);
-        return this._shapeUserNote(fresh, tagMap.get(node.id) || []);
+            // A human edit is the record of the preferred representation and
+            // the clearest statement of intent: the note becomes saved knowledge
+            // whatever wrote it first (ADR 0008 §3).
+            const changed = await db.run(
+                `UPDATE kg_nodes SET
+                     label = @label, type = @type, content = @content,
+                     source = 'user', curation = 'saved', revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id AND revision = @revision`,
+                { id: node.id, revision: expectedRevision ?? node.revision, label: nextLabel, type: nextType, content: nextContent }
+            );
+            if (!changed.changes) {
+                const current = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: node.id });
+                const error = require('../utils/editConflict').editConflict(current?.revision);
+                const currentTags = await this.getTagsForNodes([node.id]);
+                error.details.note = this._shapeUserNote(current, currentTags.get(node.id) || []);
+                throw error;
+            }
+            const materiallyChanged = nextLabel !== node.label
+                || nextType !== node.type
+                || nextContent !== (node.content || null);
+            if (materiallyChanged) {
+                await this._recordRevision(node.id, 'user');
+            }
+            if (Array.isArray(tags)) {
+                await this.setTagsOnNode({ guildId, scopeKey, label: nextLabel, tags });
+            }
+            const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: node.id });
+            const tagMap = await this.getTagsForNodes([node.id]);
+            return this._shapeUserNote(fresh, tagMap.get(node.id) || []);
+        });
     }
 
     /**

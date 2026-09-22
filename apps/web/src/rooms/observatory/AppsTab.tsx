@@ -23,6 +23,7 @@ type AppVersion = {
     createdAt?: string;
 };
 type AppDetail = {
+    revision?: number;
     slug: string;
     name: string;
     language: string;
@@ -113,7 +114,7 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         if (!currentSlug || viewVersion === '') return;
         if (!await confirm(`Make v${viewVersion} the current version of "${detail.data?.name || currentSlug}"? Older and newer snapshots stay in history.`)) return;
         try {
-            await api.rollbackProjectAsset(slug, currentSlug, viewVersion, ownerId);
+            await api.rollbackProjectAsset(slug, currentSlug, viewVersion, ownerId, detail.data?.revision);
             toast(`v${viewVersion} is now current.`);
             setViewVersion('');
             await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
