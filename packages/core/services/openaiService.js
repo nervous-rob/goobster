@@ -13,11 +13,12 @@ const SAMPLING_PRESETS = {
 };
 
 /**
- * Reasoning models (GPT-5 family, o-series) reject temperature/top_p and use
- * the reasoning.effort parameter instead.
+ * Reasoning-capable models (GPT-5/6 families, o-series) use reasoning.effort.
+ * Keep sampling presets off these models: temperature/top_p are rejected
+ * while reasoning is active.
  */
 function isReasoningModel(model) {
-    return /^(gpt-5|o\d)/i.test(model);
+    return /^(gpt-[56](?:[.-]|$)|o\d)/i.test(model);
 }
 
 /**
@@ -230,7 +231,13 @@ class OpenAIService {
         });
 
         const visibleBudget = max_tokens ?? presetDefaults.max_tokens ?? 1024;
-        const effort = reasoning_effort || this.defaultReasoningEffort;
+        let effort = reasoning_effort || this.defaultReasoningEffort;
+        // Goobster's shared effort selector includes 'minimal', which GPT-6
+        // does not accept. Use its lowest enabled reasoning level instead.
+        // https://developers.openai.com/api/docs/guides/latest-model
+        if (/^gpt-6(?:[.-]|$)/i.test(modelToUse) && effort === 'minimal') {
+            effort = 'low';
+        }
 
         const request = {
             model: modelToUse,
@@ -253,7 +260,8 @@ class OpenAIService {
             if (effort) {
                 request.reasoning = { effort };
             }
-            // Reasoning models reject temperature/top_p; omit them entirely.
+            // Omit sampling params for reasoning-capable models, even when
+            // a caller or preset supplies them.
         } else {
             request.temperature = temperature ?? presetDefaults.temperature ?? 0.7;
             request.top_p = top_p ?? presetDefaults.top_p ?? 1;
