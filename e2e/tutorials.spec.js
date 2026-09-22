@@ -261,3 +261,75 @@ test('authored demos, skip step, and Keep this example work without a provider',
     expect(chat.skippedStepIds).toContain('sample-answer');
     expect(chat.completedStepIds).toContain('save-as-note');
 });
+
+test('a step spotlights its anchor and offers a hop to another view of the same room', async ({ page }) => {
+    await page.request.post('/api/app/tutorials/reset');
+    await page.request.post('/e2e/fixtures/tutorial-progress', {
+        data: {
+            autoStart: false,
+            rows: [{
+                tutorialId: 'knowledge.basics',
+                version: 2,
+                status: 'in_progress',
+                generation: 1,
+                revision: 1,
+                currentStepId: 'create-note',
+                completedStepIds: [],
+                skippedStepIds: []
+            }]
+        }
+    });
+
+    // Resume from Settings, then hop to the Notes view where the anchor lives.
+    await page.goto('/app/settings/tutorials');
+    await page.locator('.tutorial-row[data-tutorial-id="knowledge.basics"]').getByRole('button', { name: 'Resume' }).click();
+    const panel = page.locator('[data-tour="tutorial-panel"]');
+    await expect(panel).toHaveAttribute('data-step-id', 'create-note');
+    // Settings is another room: the panel links to Knowledge · Notes.
+    await expect(panel.locator('[data-tour="tutorial-goto"]')).toContainText('Knowledge · Notes');
+    await panel.locator('[data-tour="tutorial-goto"]').click();
+
+    // On Notes the New note button is the anchor: spotlighted, and no hop link.
+    const anchor = page.locator('[data-tour="knowledge-new-note"]');
+    await expect(anchor).toHaveClass(/tour-target/, { timeout: 10_000 });
+    await expect(panel.locator('[data-tour="tutorial-goto"]')).toHaveCount(0);
+
+    // The next step lives on the Map view of the same room: hop link, no spotlight left behind.
+    await panel.locator('[data-tour="tutorial-next"]').click();
+    await expect(panel).toHaveAttribute('data-step-id', 'connect-tags', { timeout: 10_000 });
+    await expect(anchor).not.toHaveClass(/tour-target/);
+    await expect(panel.locator('[data-tour="tutorial-goto"]')).toContainText('Knowledge · Map');
+    await panel.locator('[data-tour="tutorial-goto"]').click();
+    await expect(page).toHaveURL(/\/app\/knowledge\/map/);
+    await expect(panel).toHaveAttribute('data-step-id', 'connect-tags');
+    await expect(page.locator('[data-tour="knowledge-map"]')).toHaveClass(/tour-target/, { timeout: 10_000 });
+    await expect(panel.locator('[data-tour="tutorial-goto"]')).toHaveCount(0);
+});
+
+test('progress pointing at a step the catalog no longer has offers Start over instead of a dead end', async ({ page }) => {
+    await page.request.post('/api/app/tutorials/reset');
+    await page.request.post('/e2e/fixtures/tutorial-progress', {
+        data: {
+            autoStart: false,
+            rows: [{
+                tutorialId: 'knowledge.basics',
+                version: 2,
+                status: 'in_progress',
+                generation: 1,
+                revision: 3,
+                currentStepId: 'renamed-away',
+                completedStepIds: [],
+                skippedStepIds: []
+            }]
+        }
+    });
+
+    await page.goto('/app/settings/tutorials');
+    await page.locator('.tutorial-row[data-tutorial-id="knowledge.basics"]').getByRole('button', { name: 'Resume' }).click();
+    const panel = page.locator('[data-tour="tutorial-panel"]');
+    await expect(panel.locator('[data-tour="tutorial-stale-step"]')).toBeVisible();
+    await expect(panel.locator('[data-tour="tutorial-next"]')).toHaveCount(0);
+    await panel.locator('[data-tour="tutorial-start-over"]').click();
+    await expect(panel).toHaveAttribute('data-step-id', 'create-note', { timeout: 10_000 });
+    await expect(panel.locator('[data-tour="tutorial-step-title"]')).toContainText('A kept note');
+});

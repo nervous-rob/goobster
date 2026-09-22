@@ -12,7 +12,7 @@ import { useTutorials } from './TutorialProvider';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { ApiError } from '../lib/api';
-import { resolveRoom, roomDisplayName } from '../lib/rooms';
+import { canonicalPath, normalize, resolveRoom, roomDisplayName } from '../lib/rooms';
 import type { TutorialCatalogEntry, TutorialProgress, TutorialSample } from '../lib/types';
 
 type Step = TutorialCatalogEntry['steps'][number];
@@ -159,8 +159,8 @@ function roomLabelFor(path: string): string {
 
 export function TutorialPanel() {
     const {
-        active, offer, data, pause, skipTutorial, completeStep, skipStep,
-        keepExample, acceptOffer, dismissOffer
+        active, anchorFound, offer, data, pause, skipTutorial, completeStep, skipStep,
+        keepExample, acceptOffer, dismissOffer, replay
     } = useTutorials();
     const toast = useToast();
     const confirm = useConfirm();
@@ -203,13 +203,19 @@ export function TutorialPanel() {
     const stepIndex = step ? entry.steps.findIndex((s) => s.id === step.id) : -1;
     const isLast = stepIndex >= 0 && stepIndex === entry.steps.length - 1;
     const noSteps = entry.steps.length === 0;
+    // Progress that names a step the catalog no longer has (or a finished tour
+    // reopened from Settings) must not strand the person in an empty panel.
+    const staleStep = !noSteps && !step;
     const sample = data?.sample;
 
-    const stepRoom = step?.path ? resolveRoom(step.path) : null;
-    const hereRoom = resolveRoom(pathname);
-    const elsewhere = Boolean(stepRoom) && stepRoom !== hereRoom;
-    const anchorMissing = Boolean(step?.anchorId) && typeof document !== 'undefined'
-        && !document.querySelector(`[data-tour="${step!.anchorId}"]`);
+    // A step is "elsewhere" when it lives in another room, or in another view of
+    // this room (Notes vs Map) unless its control turns out to be on screen anyway.
+    const stepPath = step?.path ? normalize(step.path) : null;
+    const herePath = canonicalPath(pathname);
+    const sameRoom = !stepPath || resolveRoom(stepPath) === resolveRoom(herePath);
+    const samePlace = !stepPath || herePath === stepPath || (stepPath !== '/' && herePath.startsWith(`${stepPath}/`));
+    const anchorMissing = Boolean(step?.anchorId) && anchorFound === false;
+    const elsewhere = Boolean(stepPath) && (!sameRoom || (!samePlace && anchorFound !== true));
     const roomLabel = step?.path ? roomLabelFor(step.path) : '';
 
     async function act(label: string, fn: () => Promise<void>) {
@@ -266,6 +272,11 @@ export function TutorialPanel() {
                 {noSteps && (
                     <p className="hint" data-tour="tutorial-no-steps">
                         This tour’s steps arrive in a later update. You can pause, skip, or reset it in Settings — resetting never changes your notes, projects, or hidden tools.
+                    </p>
+                )}
+                {staleStep && (
+                    <p className="hint" data-tour="tutorial-stale-step">
+                        This tour changed since you last opened it. Start it over to see the current steps — your notes, projects, and tools stay as they are.
                     </p>
                 )}
                 {step && (
@@ -331,6 +342,12 @@ export function TutorialPanel() {
                     <button type="button" className="btn primary" data-tour="tutorial-finish" disabled={busy}
                         onClick={() => void act('finish', completeStep)}>
                         Finish
+                    </button>
+                )}
+                {staleStep && (
+                    <button type="button" className="btn primary tutorial-advance" data-tour="tutorial-start-over" disabled={busy}
+                        onClick={() => void act('start over', () => replay(entry.id))}>
+                        Start over
                     </button>
                 )}
             </div>
