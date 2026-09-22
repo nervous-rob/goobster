@@ -126,6 +126,7 @@ const GROUPS = [
             'knowledgeCuration',
             'knowledgeGraphService',
             'knowledgeReflectionService',
+            'knowledgeTransfers',
             'lookupNotesArtifacts',
             'memoryVecIndex',
             'monologueService',

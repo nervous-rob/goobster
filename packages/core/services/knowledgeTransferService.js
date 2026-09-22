@@ -72,7 +72,7 @@ function suggestLabel(text, fallback = 'Saved answer') {
     if (!candidate) {
         const firstLine = source
             .split('\n')
-            .map(line => line.replace(/^[\s>*\-•\d.)]+/, '').trim())
+            .map(line => line.replace(/^(?:\s*(?:[-*•>]|\d+[.)])\s+)+/, '').trim())
             .find(line => line.length > 0) || '';
         const sentence = firstLine.match(/^(.+?[.!?])(\s|$)/);
         candidate = sentence ? sentence[1] : firstLine;
