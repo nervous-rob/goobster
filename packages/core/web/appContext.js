@@ -37,6 +37,7 @@ const webAttentionService = require('../services/webAttentionService');
 const spitballExpeditionService = require('../services/spitballExpeditionService');
 const spitballExpeditionRunner = require('../services/spitballExpeditionRunner');
 const knowledgeTransferService = require('../services/knowledgeTransferService');
+const instanceStateService = require('../services/instanceStateService');
 
 function createWebAppContext({ client = null, gateway = null, config, logger = console, deps = {} }) {
     const webappConfig = config.webapp || {};
@@ -87,6 +88,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         applets: deps.applets || webAppletService,
         suggestions: deps.suggestions || webSuggestionService,
         attention: deps.attention || webAttentionService,
+        instanceState: deps.instanceState || instanceStateService,
         events: deps.events || eventBusService
     };
 }

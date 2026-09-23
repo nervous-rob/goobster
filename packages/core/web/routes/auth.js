@@ -24,6 +24,22 @@ const PRIVATE_PEER = /^(::1$|f[cd][0-9a-f]{2}:|127\.|10\.|192\.168\.|172\.(1[6-9
  * Cloudflare-tunnel profile), stopping at the first public address. Proxies
  * append the connecting address, so any prefix a client supplied is ignored.
  */
+/**
+ * The instance pause flag for /me. A database hiccup here must not take the
+ * whole session payload down; answer "not paused" and let the Host room's
+ * own query surface the error.
+ */
+async function describeInstancePause(ctx) {
+    try {
+        const pause = await ctx.instanceState?.getPause();
+        return pause
+            ? { paused: true, reason: pause.reason, since: pause.since }
+            : { paused: false, reason: null, since: null };
+    } catch {
+        return { paused: false, reason: null, since: null };
+    }
+}
+
 function clientAddress(req) {
     const peer = req.socket?.remoteAddress || req.ip || null;
     const forwarded = req.headers['x-forwarded-for'];
@@ -439,6 +455,9 @@ function mountAuth(app, ctx, h) {
                     reason: discordEnabled ? null : ctx.discordConfig.disabledReason
                 },
                 inbox: { unread: await ctx.inbox.unreadCount(req.webUser.userId).catch(() => 0) },
+                // Paused after a restore: scheduled work is on hold until
+                // the operator resumes (documentation/backup_and_restore.md).
+                instance: await describeInstancePause(ctx),
                 scopes,
                 maxInputLength: ctx.chat.maxInputLength,
                 // Feature switches the client uses to show/hide panes
