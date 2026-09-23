@@ -98,12 +98,12 @@ describe('room registry shape', () => {
         expect(rooms.resolveRoomDetail('knowledge', '/knowledge/notes')).toBeNull();
     });
 
-    test('lists all 28 planned tutorial ids exactly once across rooms', () => {
+    test('lists all 29 planned tutorial ids exactly once across rooms', () => {
         const all = rooms.ROOMS.flatMap((room) => room.tutorials);
         expect(new Set(all).size).toBe(all.length);
-        expect(all).toHaveLength(28);
+        expect(all).toHaveLength(29);
         expect(all).toEqual(expect.arrayContaining([
-            'home.orientation', 'chat.basics', 'knowledge.basics', 'knowledge.research',
+            'home.orientation', 'home.first-task', 'chat.basics', 'knowledge.basics', 'knowledge.research',
             'projects.basics', 'projects.plans', 'projects.runs', 'projects.apps',
             'discussions.basics', 'activity.inbox', 'activity.scheduled', 'tools.overview',
             'music.overview', 'music.intervals', 'music.chords', 'music.rhythm', 'music.harmony',

@@ -110,15 +110,15 @@ afterAll(async () => {
 });
 
 describe('catalog parity with the room registry', () => {
-    test('lists the same 28 tutorial ids as rooms.cjs, each exactly once', () => {
+    test('lists the same 29 tutorial ids as rooms.cjs, each exactly once', () => {
         // Restore production catalog for this assertion.
         tutorials._setCatalogForTests(null);
         const fromRooms = rooms.ROOMS.flatMap((room) => room.tutorials);
         expect(catalog.TUTORIAL_IDS).toEqual(expect.arrayContaining(fromRooms));
-        expect(catalog.TUTORIAL_IDS).toHaveLength(28);
-        expect(new Set(catalog.TUTORIAL_IDS).size).toBe(28);
-        expect(fromRooms).toHaveLength(28);
-        expect(new Set(fromRooms).size).toBe(28);
+        expect(catalog.TUTORIAL_IDS).toHaveLength(29);
+        expect(new Set(catalog.TUTORIAL_IDS).size).toBe(29);
+        expect(fromRooms).toHaveLength(29);
+        expect(new Set(fromRooms).size).toBe(29);
         for (const id of fromRooms) {
             expect(catalog.TUTORIAL_BY_ID[id].roomId).toBe(
                 rooms.ROOMS.find((r) => r.tutorials.includes(id)).id
@@ -534,5 +534,45 @@ describe('concurrent tutorial writes (both database engines)', () => {
             tutorials.resetAll({ accountId: ACCOUNT, caps: caps() })
         ]);
         expect((await tutorials.loadProgress(ACCOUNT, 'home.orientation', versionOf('home.orientation'))).generation).toBe(3);
+    });
+});
+
+
+describe('first-use task (#266)', () => {
+    test('ordered actions, pause/resume, acceptance and reset stay account scoped', async () => {
+        const id = 'home.first-task';
+        const beforeNotes = await db.get('SELECT COUNT(*) AS n FROM kg_nodes');
+        const started = await event(id, 'start');
+        expect(started.currentStepId).toBe('question');
+        await expect(event(id, 'finish')).rejects.toMatchObject({ code: 'TASK_INCOMPLETE' });
+        await expect(event(id, 'complete_step', { stepId: 'accept' })).rejects.toMatchObject({ code: 'TASK_STEP_MISMATCH' });
+        await event(id, 'complete_step', { stepId: 'question' });
+        await event(id, 'pause');
+        await expect(event(id, 'complete_step', { stepId: 'research' })).rejects.toMatchObject({ code: 'TASK_STEP_MISMATCH' });
+        expect((await event(id, 'start')).currentStepId).toBe('research');
+        for (const stepId of ['research', 'evidence']) await event(id, 'complete_step', { stepId });
+        await tutorials.keepExample({ accountId: ACCOUNT, pieceId: 'note-anemones' });
+        for (const stepId of ['keep', 'accept', 'export']) await event(id, 'complete_step', { stepId });
+        const done = await tutorials.loadProgress(ACCOUNT, id, 1);
+        expect(done.status).toBe('completed');
+        expect((await tutorials.loadProgress(OTHER, id, 1)).status).toBe('not_started');
+        const events = await db.all('SELECT action, stepId, createdAt FROM tutorial_events WHERE accountId = @u AND tutorialId = @id', { u: ACCOUNT, id });
+        expect(events.find(e => e.action === 'complete_step' && e.stepId === 'accept').createdAt).toBeTruthy();
+        expect((await db.get('SELECT COUNT(*) AS n FROM kg_nodes')).n).toBe(beforeNotes.n + 1);
+        await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: id });
+        expect((await db.get('SELECT COUNT(*) AS n FROM kg_nodes')).n).toBe(beforeNotes.n + 1);
+        expect((await tutorials.loadProgress(ACCOUNT, id, 1)).generation).toBe(2);
+        await tutorials.forgetUser(ACCOUNT);
+        expect((await tutorials.countUserData(ACCOUNT)).events).toBe(0);
+    });
+
+    test('skipping acceptance cannot claim an exported accepted output', async () => {
+        const id = 'home.first-task';
+        await event(id, 'start');
+        for (const stepId of ['question', 'research', 'evidence', 'keep', 'accept']) await event(id, 'skip_step', { stepId });
+        await expect(event(id, 'complete_step', { stepId: 'export' })).rejects.toMatchObject({ code: 'TASK_NOT_ACCEPTED' });
+        expect((await event(id, 'skip_step', { stepId: 'export' })).status).toBe('finished_with_skips');
+        expect((await db.get('SELECT COUNT(*) AS n FROM kg_nodes')).n).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS n FROM user_settings')).n).toBe(0);
     });
 });

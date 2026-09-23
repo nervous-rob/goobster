@@ -14,6 +14,12 @@ const SAMPLE_SCENARIO_ID = 'weekend-field-notebook';
 const SAMPLE = {
     id: SAMPLE_SCENARIO_ID,
     title: 'Weekend field notebook',
+    firstTask: {
+        question: 'What can we say about the anemones on our walk?',
+        source: 'Fictional Saturday field log: three kinds of anemone were visible at low tide on the north spit. Counts are in the photo roll.',
+        claim: 'Three kinds were observed during this walk; this does not establish all species present on the coast.',
+        brief: '# Sample research brief: coastal walk\n\nFictional practice material — not live research.\n\n## Summary\nThree kinds of anemone were observed at low tide on the north spit. [1]\n\n## Limitations\nOne observation does not establish the full species diversity of the coast. The sample does not include verified species identifications or numeric counts.\n\n## Sources\n[1] Fictional Saturday field log: three kinds visible at low tide on the north spit; counts referenced in a photo roll that is not supplied.\n'
+    },
     question: 'What did we notice on the Saturday coastal walk?',
     answer: {
         heading: 'Coastal walk observations',

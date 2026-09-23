@@ -27,7 +27,7 @@ const ROOMS = [
         path: '/',
         group: 'primary',
         atmosphere: 'room-home',
-        tutorials: ['home.orientation']
+        tutorials: ['home.orientation', 'home.first-task']
     },
     {
         id: 'chat',

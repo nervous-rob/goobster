@@ -7,7 +7,7 @@ tags: [tutorials, onboarding, settings, accessibility]
 
 # Guided tutorials and onboarding
 
-**Status: F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; remaining catalog entries stay empty until a later package.
+**Status: #266 adds the provider-free `home.first-task` practice workflow (observed sessions pending); F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; remaining catalog entries stay empty until a later package.
 
 Updated: 22 September 2026.
 
@@ -157,3 +157,60 @@ The [parent plan's validation matrix](shared_instance_product_spec.md#10-validat
 - Demo fixtures stay out of retrieval; **Keep this example** is explicit and idempotent on note title.
 - `tests/tutorialFramework.test.js` covers keep/skip/isolation; `e2e/tutorials.spec.js` covers demos, skip step, Keep, and Finish (no provider).
 - Keyboard, screen-reader, narrow-screen, zoom, and reduced-motion journeys against every remaining room's authored steps are deferred with those tours.
+
+
+## First research task (#266)
+
+Home → **Start or resume first task**, or Settings → Tutorials → **Your first research task**,
+launches `home.first-task` v1. This is a six-action practice task, using fictional Weekend
+field notebook evidence: choose the sample question in Chat; run one prepared sample
+pass in Research; inspect the source and distinguish an observation from a generalization;
+preview and explicitly keep one private sample note in Notes; accept the sample brief;
+download its Markdown output. Room links take the person to the relevant surface before
+the task action is available. The brief is clearly marked fictional and is not a live
+Expedition artifact or a research-quality baseline result.
+
+There are no provider calls, paid reservations, notifications, execution or scheduling.
+Only **Keep this example** writes Knowledge, through the existing account-scoped,
+idempotent sample-copy API. Everything else writes existing tutorial progress/events.
+The output download stays on the person's device. Memory learning, Attention enrollment,
+permissions and sharing remain unchanged. Live research is a separate, explicit action:
+Knowledge → Research → New expedition → Focused; inspect the displayed cycle/source/note
+limits before starting. Live research and brief generation require a configured provider.
+A missing provider or failed live run is never silently replaced with sample output.
+
+Pause, Skip step, Skip this tutorial, Resume and Reset use the existing framework.
+The task advances in order; a generic Finish event cannot bypass its actions, and an
+export completion requires sample acceptance. Skipping acceptance leaves export available
+only to skip. A reset starts a new generation, preserving notes explicitly kept earlier.
+A download action records the browser's download request, not proof that the file was
+opened or used. It does not imply completion without human help.
+
+### Observed first sessions (human acceptance still pending)
+
+Attach at least five observed sessions to #266. Obtain the participant's agreement;
+use anonymous session labels and avoid copying personal research content into GitHub.
+Record each session using this blank template (no sessions have been observed here):
+
+| Field | Record |
+|---|---|
+| Session label and date | |
+| Mode | Fictional practice / live topic |
+| Prior familiarity | |
+| Started at / first accepted output at | |
+| Active elapsed time / pauses | |
+| Completed without help? | Yes / no, and what help was needed |
+| Step where they stopped or hesitated | |
+| Output accepted, exported, actually used? | Separate answers |
+| Returned to the same topic within seven days? | Date / no / not yet observed |
+| Main obstacle and proposed change | |
+
+Existing `tutorial_events` timestamps for `start` and `complete_step` on `accept` can
+support elapsed-time measurement. Match account, tutorial ID, version and generation;
+use the earliest start and first acceptance within that generation. Pauses inflate wall
+time, so record active time separately. `currentStepId`, skipped steps and status locate
+stopping points; they do not establish why a person stopped. Tutorial data is covered by
+existing account report, audit and erasure. No new analytics store is introduced.
+
+Keep #266 open until the five real observations are attached. Do not count this sample
+task's acceptance toward #254/#265's live brief metrics or #267's owner quality baseline.

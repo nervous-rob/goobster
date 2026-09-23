@@ -280,6 +280,19 @@ async function applyEvent({
                 { generation: current.generation, revision: current.revision });
         }
 
+        // A task records actions in order; the generic finish event must not
+        // turn an unopened sample into an accepted output.
+        if (tutorialId === 'home.first-task') {
+            if (action === 'finish') throw new TutorialError(409, 'TASK_INCOMPLETE', 'Complete or skip each task action.');
+            if (['complete_step', 'skip_step'].includes(action)
+                && (current.status !== 'in_progress' || current.currentStepId !== stepId)) {
+                throw new TutorialError(409, 'TASK_STEP_MISMATCH', 'Resume the current task step before advancing.');
+            }
+            if (action === 'complete_step' && stepId === 'export' && !current.completedStepIds.includes('accept')) {
+                throw new TutorialError(409, 'TASK_NOT_ACCEPTED', 'Accept the sample brief before recording its export.');
+            }
+        }
+
         const { available, unavailable } = partitionSteps(tutorial, caps);
         let next = {
             ...current,
@@ -507,7 +520,7 @@ async function keepExample({ accountId, pieceId }) {
             guildId,
             userId: accountId,
             label: piece.label,
-            content: `${piece.content}\n\n_(Kept from the Weekend field notebook tutorial.)_`,
+            content: `${piece.content}\n\n_(Fictional sample kept from the Weekend field notebook tutorial.)_`,
             type: 'concept',
             tags: piece.tags
         });

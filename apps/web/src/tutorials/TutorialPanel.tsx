@@ -6,6 +6,7 @@
  * missing anchors explain themselves. Tour events never write user knowledge.
  */
 
+import { FirstTask } from './FirstTask';
 import { useState } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useTutorials } from './TutorialProvider';
@@ -283,7 +284,9 @@ export function TutorialPanel() {
                     <>
                         <strong className="tutorial-step-title" data-tour="tutorial-step-title">{step.title}</strong>
                         {step.body && <p className="hint tutorial-step-body" data-tour="tutorial-step-body">{step.body}</p>}
-                        {step.demo && sample && <DemoBlock demo={step.demo} sample={sample} />}
+                        {step.demo && sample && (step.demo === 'first-task'
+                            ? !elsewhere && <FirstTask key={`${progress.generation}:${step.id}`} stepId={step.id} sample={sample} />
+                            : <DemoBlock demo={step.demo} sample={sample} />)}
                         {step.keepablePieceId && (
                             <div className="tutorial-keep">
                                 <span className="hint">Nothing is saved unless you choose to.</span>
@@ -332,13 +335,13 @@ export function TutorialPanel() {
                         Skip step
                     </button>
                 )}
-                {!noSteps && step && !isLast && (
+                {!noSteps && step && step.demo !== 'first-task' && !isLast && (
                     <button type="button" className="btn primary" data-tour="tutorial-next" disabled={busy}
                         onClick={() => void act('continue', completeStep)}>
                         Next
                     </button>
                 )}
-                {!noSteps && step && isLast && (
+                {!noSteps && step && step.demo !== 'first-task' && isLast && (
                     <button type="button" className="btn primary" data-tour="tutorial-finish" disabled={busy}
                         onClick={() => void act('finish', completeStep)}>
                         Finish
