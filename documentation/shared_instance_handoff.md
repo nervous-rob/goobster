@@ -9,7 +9,7 @@ tags: [roadmap, handoff, shared-instance, limits, pilot, operations]
 
 Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) (the plan) and roadmap [#246](https://github.com/nervous-rob/goobster/issues/246) (the sequence and the decisions). This is the handoff note: what has shipped, which seams the next steps hook into, and exactly where the next session picks up. Update the **Where things stand** table and the date as items land; delete a step's brief once its issue closes.
 
-**Last updated:** 2026-09-23, after [PR #279](https://github.com/nervous-rob/goobster/pull/279) shipped #248 with both-engine and browser CI green. This continuation writes the #265 pilot plan and completes the #268 setup/privacy documentation. The pilot and actual-host checks have not been run here.
+**Last updated:** 2026-09-23, after [PR #279](https://github.com/nervous-rob/goobster/pull/279) shipped #248 with both-engine and browser CI green. PR #280 shipped the #265 pilot plan and #268 setup/privacy documentation. This continuation implements the #267 fixed-evidence evaluation harness; the owner-judged baseline is still outstanding. The pilot and actual-host checks have not been run here.
 
 ## Where things stand
 
@@ -21,12 +21,13 @@ Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) 
 | #247 Shared-instance safety | **Shipped** (PR #274, [shared_instance_safety.md](shared_instance_safety.md)) | The **strong-isolation canary on the actual host**, run as the production execution service. Required before a second account. |
 | #248 Token budgets | **Shipped** (PR #279, [work_ledger.md](work_ledger.md#budgets)). | Retention is 90 days by default, host-editable. Caps stay unset while single-user unless deliberately enabled. |
 | #265 Private single-user pilot | **Plan written; execution not started.** [pilot_plan.md](pilot_plan.md), with proposed six weekly cycles. | Owner chooses the topic, dates and thresholds, records the host restore drill, then records cycles and an exit decision. Keep the issue open. |
-| #268 Deployment and privacy promise | **Remaining documentation completed in this continuation.** | README leads with standalone/native-operator setup; runtime and strategy agree. Backup rotation is explicitly host-managed, with no automatic expiry. |
+| #268 Deployment and privacy promise | **Shipped** (PR #280). | README leads with standalone/native-operator setup; runtime and strategy agree. Backup rotation is explicitly host-managed, with no automatic expiry. |
 | #255 Operator second factor, phase 1 | Specified, **required at the second account** | TOTP + recovery codes for operators; host policy gate on account creation. |
-| #267 / #254 Evaluation set and research brief | Not started | Both consume the `work_id` cost join from #256; #254's "accepted" marker is what `costPerResult({ accepted })` divides by. |
+| #267 Evaluation set | **Harness implemented; owner baseline not run.** [research_evaluation.md](research_evaluation.md): 30 fictional fixed-evidence questions, opt-in live generation, separate owner review and work-ledger costs. | Merge after CI, run the selected provider, and have the owner judge all 30 cases. This does not measure live source discovery. |
+| #254 Research brief | **Next engineering step.** | Private immutable Expedition artifact, edit overlay and Markdown export; the four-part quality bar from #267 stays explicit. |
 | #266, #272, #273 | Not started | First-use task, tutorials batch 1, Ask Goobster on Inbox items. |
 
-Order per #246: confirm the pilot choices and record the actual-host restore drill before cycle 1. The next build step is **#267's evaluation set**, followed by **#254's brief artifact**. The host-isolation check and #255 remain required before a second account. **Nothing in stage 4 or 5 starts before the pilot has produced repeat use.**
+Order per #246: confirm the pilot choices and record the actual-host restore drill before cycle 1. The evaluation harness is implemented; the next build step is **#254's brief artifact**, while the owner runs and judges #267's baseline. The host-isolation check and #255 remain required before a second account. **Nothing in stage 4 or 5 starts before the pilot has produced repeat use.**
 
 ## Seams the next steps build on
 
@@ -52,7 +53,9 @@ The [pilot plan](pilot_plan.md) now defines the proposed task, six weekly cycles
 
 Keep private drafts, sources and ids in private notes or project files; only publish a non-sensitive summary in the plan. Capture failures weekly because their retention is 30 days. Expedition costs are only one component: include drafting chat and other attempts, preserve uncertainty flags, and use accepted briefs as the denominator.
 
-The next engineering change is **#267**: version at least 30 questions next to `tests/live/`, covering supported, weak, conflicting, changing, unanswerable and qualification-dependent claims. Reuse `npm run test:live`, keep live calls optional and credential-gated, and prepare the owner-judging record. The actual baseline needs the owner; do not mark it passed from mocked tests or model self-grading. Then implement #254's private immutable brief with edit overlay and Markdown export. The pilot can start with manual drafts while those pieces are built.
+#267 now has the [fixed-evidence evaluation harness](research_evaluation.md): 30 questions across six categories, optional credential-gated generation through `npm run test:live -- --research-evaluation`, owner worksheets and cost snapshots. Unit/CI success checks machinery only. Run and judge the full baseline before claiming a research-quality result; source discovery and real Expedition retrieval remain outside this first baseline.
+
+The next engineering change is **#254**: preserve the original generated brief as a private Expedition artifact, store edits separately, show citations and limitations, and export Markdown with edited text marked. Reuse #267's owner marks and four-part bar; never infer quality from an empty review. The pilot can use manual drafts while this is built.
 
 Update the G row again when the owner records the exit decision. No stage 4 or 5 work before repeat use.
 

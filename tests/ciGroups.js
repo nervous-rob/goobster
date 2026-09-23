@@ -131,6 +131,7 @@ const GROUPS = [
             'graphClusters',
             'graphFilter',
             'kgArtifactService',
+            'researchEvaluation',
             'knowledgeCuration',
             'knowledgeGraphService',
             'knowledgeReflectionService',

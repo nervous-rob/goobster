@@ -40,7 +40,7 @@ The [actual-host recovery test](backup_and_restore.md#the-recovery-test) is the 
 
 Use [#267](https://github.com/nervous-rob/goobster/issues/267)'s owner-judged four-part bar: no unsupported claims on well-supported questions; weak evidence labelled uncertain; both positions represented where sources disagree; wording-only edits, with no factual correction needed. Date changing facts and add missing scope qualifications.
 
-Track **useful after verification** separately from **ready to show a second person**. A corrected brief may still be useful and accepted, but it fails the latter bar. A claim marked `missing a qualification` needs correction and cannot count as wording-only. This manual rubric does not complete #267's separate 30-question evaluation set or its owner-judged baseline. Record “evaluation set not run” until that evidence exists.
+Track **useful after verification** separately from **ready to show a second person**. A corrected brief may still be useful and accepted, but it fails the latter bar. A claim marked `missing a qualification` needs correction and cannot count as wording-only. The [30-question evaluation harness](research_evaluation.md) now exists, but this manual pilot rubric does not complete its owner-judged baseline. Record “evaluation set not run” until that evidence exists.
 
 | Measure | Weekly record | Proposed exit evidence |
 |---|---|---|

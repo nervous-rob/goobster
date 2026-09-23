@@ -13,20 +13,28 @@ const { spawnSync } = require('node:child_process');
 const { inventory } = require('./lib/liveCredentials');
 
 const ROOT = path.join(__dirname, '..');
+const args = process.argv.slice(2);
+if (args.some(arg => arg !== '--research-evaluation')) throw new Error('Supported option: --research-evaluation');
+const evaluationOnly = args.includes('--research-evaluation');
+const liveEnv = evaluationOnly ? { ...process.env, GOOBSTER_RESEARCH_EVAL: '1' } : process.env;
 const resultsDir = process.env.GOOBSTER_TEST_RESULTS_DIR
     || path.join(ROOT, 'test-results', 'groups');
 fs.mkdirSync(resultsDir, { recursive: true });
 
+const evaluation = require('./lib/researchEvaluation').evaluationOptions(liveEnv,
+    require('../tests/live/research-evaluation/questions.v1.json'));
 const outputFile = path.join(resultsDir, 'live-jest.json');
+fs.rmSync(outputFile, { force: true });
 const startedAt = Date.now();
 const jestBin = require.resolve('jest/bin/jest');
 const result = spawnSync(
     process.execPath,
-    [jestBin, '--config', 'jest.live.config.js', '--json', `--outputFile=${outputFile}`],
+    [jestBin, '--config', 'jest.live.config.js', ...(evaluationOnly
+        ? ['--runTestsByPath', 'tests/live/researchEvaluation.live.test.js'] : []), '--json', `--outputFile=${outputFile}`],
     {
         cwd: ROOT,
         stdio: 'inherit',
-        env: process.env
+        env: liveEnv
     }
 );
 
@@ -43,10 +51,12 @@ try {
     report = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
 } catch { /* jest crashed before writing json */ }
 
-const creds = inventory();
+const creds = inventory().filter(row => !evaluationOnly || row.id === evaluation.provider);
 const skipReasons = creds
     .filter((row) => !row.present)
     .map((row) => row.skipReason);
+
+if (evaluation.reason) skipReasons.push(`Research evaluation: ${evaluation.reason}`);
 
 const record = {
     groupId: 'live',
