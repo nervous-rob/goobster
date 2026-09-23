@@ -24,6 +24,10 @@
  *                              singleton lock (Postgres pg_try_advisory_lock;
  *                              no-op acquire on SQLite)
  *   vecAvailable()          -> vector search available (sqlite-vec/pgvector)
+ *   describeStorage()       -> where the data lives ({ engine, path } or
+ *                              { engine, url, schema }) for backup tooling
+ *   listTables()            -> application tables, minus engine internals
+ *                              and the derived vector index tables
  *   closeConnection()       -> close (for shutdown)
  *
  * ¹ lastInsertRowid is SQLite-only and undefined on Postgres.
@@ -165,6 +169,26 @@ function vecAvailable() {
 }
 
 /**
+ * Where the data lives, for backup and restore tooling.
+ * SQLite: { engine, path }. Postgres: { engine, url, schema }.
+ * @returns {Promise<Object>}
+ */
+async function describeStorage() {
+    return getAdapter().describeStorage();
+}
+
+/**
+ * Application tables (sorted), excluding engine internals and - unless
+ * `includeDerived` - the derived vector index tables. Used for row-count
+ * verification around backups.
+ * @param {{includeDerived?: boolean}} [options]
+ * @returns {Promise<string[]>}
+ */
+async function listTables(options = {}) {
+    return getAdapter().listTables(options);
+}
+
+/**
  * Async-compatible connection getter kept so existing call sites that do
  * `await getConnection()` keep working during and after the migration.
  */
@@ -199,4 +223,6 @@ module.exports = {
     closeConnection,
     normalizeValue,
     vecAvailable,
+    describeStorage,
+    listTables,
 };
