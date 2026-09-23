@@ -657,6 +657,7 @@ class SandboxService {
                     kind: 'sandbox_seconds',
                     quantity: Math.max(0, (result.durationMs ?? (Date.now() - startedAt)) / 1000),
                     provider: result.isolation || 'remote',
+                    work: work || (result.runId ? { kind: 'sandbox', id: result.runId } : null),
                     actor
                 });
             }
