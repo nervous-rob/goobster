@@ -1026,7 +1026,8 @@ button.list-row:last-child { border-bottom: 0; }
 }
 
 /* ---------- research briefs (#254) ---------- */
-.brief-block { display: flex; flex-direction: column; gap: 6px; }
+.brief-block { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.brief-block > .brief-text, .brief-block > .brief-editor, .brief-block > .brief-original { align-self: stretch; }
 .brief-block.is-edited { box-shadow: inset 3px 0 0 var(--warn, #e0b455); padding-left: 10px; }
 .brief-text { line-height: 1.55; white-space: pre-wrap; }
 .brief-cites { margin-left: 4px; }
