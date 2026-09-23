@@ -114,7 +114,7 @@ Run this before the invited pilot ([#265](https://github.com/nervous-rob/goobste
 
 ## Privacy
 
-- **A backup is a copy of the data it was taken from.** Rows erased later with `/forget-me` still exist in archives made before the erasure, until those archives rotate out. Keep archives on protected storage, keep a rotation you can state (for example: daily for 14 days, then weekly for 8 weeks), and mention that window in the installation's privacy notice. Nothing in the archive is encrypted except `config.json`.
+- **A backup is a copy of the data it was taken from.** Rows erased later with `/forget-me` still exist in archives made before the erasure. The CLI does not expire or rotate archives automatically: the host must choose, enforce and disclose the retention window. Without rotation, erased data can remain in an archive indefinitely. Keep archives on protected storage; an example policy is daily for 14 days, then weekly for 8 weeks, not a built-in default. Nothing in the archive is encrypted except `config.json`.
 - `work_failures` rows carry a kind, a phase, a machine code, a short reason (clipped to 300 characters) and the actor - **never** a prompt, a reply, a message body or a stack trace. Erasure (`privacyService.forgetUser`) nulls the actor and keeps the row, the same treatment `usage_log` gets; the audit counts them and the transparency report lists a person's own failures. `workFailureService.prune()` drops rows older than 30 days.
 - `instance_state` holds installation-wide flags only (pause, last restore, last resume) - no per-user data.
 

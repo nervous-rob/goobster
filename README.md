@@ -3,8 +3,10 @@
 A self-hostable AI workspace where conversation, computation, knowledge,
 collaboration, and initiative share one persistent substrate. It runs as
 a browser portal with **no Discord at all**, or with Discord connected as
-an additional front door. Optimized for a **Raspberry Pi 4B**: local
-SQLite by default, system FFmpeg, and every cloud integration optional.
+an additional front door. Designed for small hosts, including a
+**Raspberry Pi 4B**, with SQLite by default, system FFmpeg, and optional
+cloud integrations. This is a deployment target, not a measured capacity
+claim for concurrent users, local models or local voice.
 See [Where your data goes](#where-your-data-goes) for what that does and
 does not mean for privacy.
 
@@ -28,6 +30,7 @@ provenance, confidence bounds, and state transitions.
 - [Prerequisites](#prerequisites)
 - [Configuration](#configuration)
 - [Installation](#installation)
+  - [Standalone Installation (no Discord)](#standalone-installation-no-discord)
   - [Raspberry Pi Installation](#raspberry-pi-installation)
   - [Docker Installation](#docker-installation)
   - [Manual Installation](#manual-installation)
@@ -133,11 +136,15 @@ Self-hosted storage does not mean all processing stays local. Plainly:
   sends them. Research runs query public sources (Wikipedia, arXiv, and
   Perplexity when configured) with the topic being researched. Discord,
   when connected, carries the messages exchanged there.
-- **Fully local only with local providers.** With Ollama for chat and
-  embeddings and no cloud keys, chat, memory, knowledge retrieval (BM25),
+- **Local model processing.** With `ai.provider: "ollama"`, Ollama on the
+  host for chat and embeddings, and no cloud keys in config or the
+  environment, chat, memory, knowledge retrieval (BM25),
   projects and the Tavern's deterministic rules run without a cloud
   model provider. Voice, Perplexity web search, image generation and
-  generated audio are unavailable in that setup today.
+  generated audio are unavailable in that setup today. Research still
+  queries public sources without a Perplexity key. Fully offline use also
+  means avoiding web/research tools and remote integrations and restricting
+  outbound network access; removing keys alone is not an offline switch.
 - **Readable by the host operator.** Whoever runs the installation can read
   its database and files. The application keeps each account's private
   data separate from other accounts (adversarial isolation testing is
@@ -146,9 +153,13 @@ Self-hosted storage does not mean all processing stays local. Plainly:
   `/forget-me` report and erase a person's data inside this installation,
   with an audit that checks nothing is left behind. They cannot recall data
   already sent to an external provider, they do not reach into backup
-  archives made before the erasure (those hold the data until they rotate
-  out - see `documentation/backup_and_restore.md`), and they are not a
-  compliance certification.
+  archives made before the erasure, and they are not a compliance
+  certification. **There is no automatic archive expiry:** the host must
+  choose, enforce and disclose a backup-retention window. Older archives
+  can retain erased data indefinitely if the host does not rotate them.
+  Only `config.json` is encrypted in an archive; the database and files
+  need protected storage. See the authoritative
+  [backup privacy contract](documentation/backup_and_restore.md#privacy).
 
 ## Documentation
 
@@ -172,6 +183,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Backup and tested restore (`npm run backup` / `npm run restore`, the paused instance, the recovery test) | `documentation/backup_and_restore.md` |
 | The work ledger (failures, resource events, operator audit, cost per accepted result) | `documentation/work_ledger.md` |
 | Shared-instance roadmap handoff (what shipped, where the next steps hook in) | `documentation/shared_instance_handoff.md` |
+| Private single-user pilot (task, measurements, cycle record and exit decision) | `documentation/pilot_plan.md` |
 
 ### Planned product work
 
@@ -225,30 +237,39 @@ operator and member accounts.
 
 ## Configuration
 
-Copy `config.example.json` to `config.json` and fill in your values. For the
-lite profile only the Discord credentials are required; standalone mode needs
-no Discord keys at all (omit `token`). Everything else degrades gracefully:
+For a new standalone installation, create `config.json` with this minimum
+configuration. Keep the HTTP example on a private local connection. Before
+remote access, set `publicUrl` to your actual HTTPS origin and proxy to
+port 3100. `apps/api` listens on that port; protect it from direct public
+access. Existing installations should merge the relevant keys into their
+configuration instead of replacing it.
 
 ```json
 {
-    "clientId": "<discord bot client id>",
-    "guildIds": ["<discord server id>"],
-    "token": "<discord bot token>",
-    "DEFAULT_PROMPT": "You are Goobster, a quirky and clever Discord bot.",
-
-    "openaiKey": "<optional - openai API key>",
-    "anthropicKey": "<optional - anthropic API key>",
-    "ollama": {
-        "host": "http://127.0.0.1:11434",
-        "model": "llama3.2:3b"
+    "discord": { "enabled": false },
+    "webapp": {
+        "enabled": true,
+        "devMode": false,
+        "publicUrl": "http://localhost:3100"
     },
-    "perplexity": { "apiKey": "<optional - enables web search>" },
-    "spotify": { "clientId": "<optional>", "clientSecret": "<optional>" },
-    "elevenlabs": { "apiKey": "<optional - enables TTS + audio generation>", "voiceId": "21m00Tcm4TlvDq8ikWAM" }
+    "identity": {
+        "nativeLogin": true,
+        "requireAccount": true,
+        "registration": "invite"
+    }
 }
 ```
 
-AI keys may also come from the environment (`OPENAI_API_KEY`,
+Add the provider settings you use from `config.example.json`: for example,
+`openaiKey`, `anthropicKey`, `googleAIKey`, or local `ollama.host` and
+`ollama.model`. Without a configured, reachable model, sign-in and stored
+content still work, but AI work needs one. Email is optional for an
+invitation-based first operator; it enables verified email and self-service
+recovery later. See [identity](documentation/identity.md).
+
+To add Discord, set `discord.enabled: true` and supply `token`, `clientId`
+and `guildIds`; use the lite or full profile below. Never set `devMode` on
+a deployed instance. AI keys may also come from the environment (`OPENAI_API_KEY`,
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`,
 `ELEVENLABS_API_KEY`). Discord credentials are read from `config.json`
 only.
@@ -272,6 +293,39 @@ A single ElevenLabs API key (config `elevenlabs.apiKey` or the `ELEVENLABS_API_K
 
 ## Installation
 
+### Standalone Installation (no Discord)
+
+```bash
+git clone https://github.com/nervous-rob/goobster.git
+cd goobster
+npm ci
+npm run build:web
+# Create config.json using Configuration above; add your model settings.
+```
+
+Before starting the service, create the first operator with the
+[local, one-time invitation procedure](documentation/independent_runtime.md#first-operator-without-discord).
+It uses the normal native registration screen, needs no Discord identity
+or email service, and refuses an installation that already has an account.
+Then start the portal:
+
+```bash
+GOOBSTER_RUNTIME_MODE=standalone npm run start:api
+```
+
+Open the generated invitation link, register, and confirm the Host room is
+available. The API applies the database schema on startup. Check
+`http://localhost:3100/health` for standalone mode and disabled Discord.
+Keep the token cap unset for a single-user pilot unless you choose to set
+one. Complete the [dated restore test](documentation/backup_and_restore.md#the-recovery-test)
+on the actual host before starting the [pilot](documentation/pilot_plan.md).
+
+The Raspberry Pi installer, Docker defaults, `npm start` and the systemd
+example below start the **Discord adapter**. For standalone service
+management, use `npm run start:api` with the same working directory,
+configuration and database as the setup above; do not run both processes
+against one SQLite file.
+
 ### Raspberry Pi Installation
 
 One-shot installer (Raspberry Pi OS 64-bit, Bookworm):
@@ -280,8 +334,7 @@ One-shot installer (Raspberry Pi OS 64-bit, Bookworm):
 git clone https://github.com/nervous-rob/goobster.git
 cd goobster
 ./scripts/install-rpi.sh --service   # --service also installs the systemd unit
-# Edit config.json: add your Discord token for the lite profile,
-# or see "Ways to run it" for standalone mode without Discord
+# Edit config.json: add Discord credentials for this lite-profile service.
 sudo systemctl start goobster
 ```
 
