@@ -24,6 +24,13 @@ module.exports = {
     SOURCE_TITLE: 'Total positivity',
     SOURCE_URL: 'https://arxiv.org/abs/1234.5678',
 
+    // Research brief (#254): what the fake model writes from the seeded
+    // expedition's evidence, and the owner's wording edit in the journey.
+    BRIEF_SUMMARY: 'The positive Grassmannian parametrizes cells, on one preprint.',
+    BRIEF_FINDING: 'The positive Grassmannian parametrizes cells.',
+    BRIEF_LIMITATION: 'A single source carries every finding.',
+    BRIEF_EDITED_SUMMARY: 'One preprint says the positive Grassmannian parametrizes cells.',
+
     // Saved-knowledge curation fixtures (ADR 0008): one note Goobster
     // distilled (memory), one legacy row a tool wrote without saying why
     // (unclassified), one distilled fact, one raw memory.
