@@ -43,7 +43,14 @@ const expeditionService = require('./spitballExpeditionService');
 const { SpitballError } = require('./spitballExpeditionService');
 
 /** Codes that name a cause the person can act on; anything else is a generation failure. */
-const PASSTHROUGH_CODES = new Set(['BUDGET_EXCEEDED', 'CANCELLED', 'BUSY', 'ACCOUNT_DISABLED', 'BRIEF_FORMAT_INVALID']);
+const SAFE_FAILURE_REASONS = Object.freeze({
+    BUDGET_EXCEEDED: 'The token budget was exceeded.',
+    CANCELLED: 'Brief generation was cancelled.',
+    BUSY: 'Generation capacity is busy. Try again later.',
+    ACCOUNT_DISABLED: 'This account is disabled.',
+    BRIEF_FORMAT_INVALID: 'The model returned an invalid brief format.',
+    BRIEF_GENERATION_FAILED: 'The brief could not be generated.'
+});
 /** Visible output allowance; thinking headroom is added by utils/aiTokenBudget.js. */
 const MAX_VISIBLE_TOKENS = 2200;
 
@@ -175,8 +182,9 @@ class ExpeditionBriefService {
                         { id: briefId, generatedJson, generatedHash: brief.hashGenerated(generated), now: utc() }
                     );
                 } catch (error) {
-                    const code = PASSTHROUGH_CODES.has(error?.code) ? error.code : 'BRIEF_GENERATION_FAILED';
-                    const reason = clip(error?.message, 300) || 'The brief could not be generated.';
+                    const code = Object.hasOwn(SAFE_FAILURE_REASONS, error?.code) ? error.code : 'BRIEF_GENERATION_FAILED';
+                    // Provider messages can contain private content or credentials. Never persist them.
+                    const reason = SAFE_FAILURE_REASONS[code];
                     await db.run(
                         `UPDATE expedition_briefs
                          SET status = 'FAILED', errorCode = @code, lastError = @reason, updatedAt = @now

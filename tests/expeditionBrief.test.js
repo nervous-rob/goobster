@@ -561,7 +561,7 @@ describe('failed attempts and the ledger', () => {
         const fixture = await seedExpedition(ROB, { seed: 'failure fixture' });
         modelBehaviour = () => { throw Object.assign(new Error('provider unavailable: model overloaded'), { code: 'PROVIDER_DOWN' }); };
         const detail = await briefs.generate({ expeditionId: fixture.expedition.id, userId: ROB });
-        expect(detail.brief).toMatchObject({ status: 'FAILED', errorCode: 'BRIEF_GENERATION_FAILED', lastError: 'provider unavailable: model overloaded' });
+        expect(detail.brief).toMatchObject({ status: 'FAILED', errorCode: 'BRIEF_GENERATION_FAILED', lastError: 'The brief could not be generated.' });
         expect(detail.generated).toBeNull();
         expect(detail.rendered).toBeNull();
         const failures = await db.all(
@@ -694,5 +694,56 @@ describe('erasure, transparency and the leftover audit', () => {
         const detail = await briefs.generate({ expeditionId: fixture.expedition.id, userId: TIA });
         await db.run('DELETE FROM spitball_expeditions WHERE id = @id', { id: fixture.expedition.id });
         expect(await db.get('SELECT COUNT(*) AS c FROM expedition_briefs WHERE id = @id', { id: detail.brief.id })).toEqual({ c: 0 });
+    });
+});
+
+describe('brief review regressions (#254)', () => {
+    test('summary-only claims use shared citation numbering and unknown ids are dropped', () => {
+        const packet = briefUtils.buildEvidencePacket({
+            expedition: { id: 1, seed: 'citation fixture' },
+            sources: [{ id: 1, accepted: true, title: 'Source' }],
+            claims: [42, 97].map(id => ({ id, sourceId: 1, text: `Claim ${id}`, confidence: .9 }))
+        });
+        const raw = { summary: 'Summary fact.', summaryClaimIds: [97, 9999, 97], findings: [{ id: 'F1', text: 'Finding.', claimIds: [42] }], limitations: [] };
+        const generated = briefUtils.finalizeGenerated(briefUtils.parseGenerated(JSON.stringify(raw), packet), packet);
+        const hash = briefUtils.hashGenerated(generated);
+        expect(generated.summaryClaimIds).toEqual([97]);
+        expect(generated.citations.map(c => [c.claimId, c.n])).toEqual([[97, 1], [42, 2]]);
+        const overlay = { edits: [{ target: 'summary', text: 'Edited summary.', type: 'wording' }] };
+        expect(briefUtils.render(generated, overlay).summary.citations).toEqual([1]);
+        const md = briefUtils.exportMarkdown({ brief: { id: 1 }, generated, overlay });
+        expect(md).toContain('Edited summary. [1]');
+        expect(md).toContain('Finding. [2]');
+        expect(md).toContain('[1] Claim 97');
+        expect(md).toContain('Original generated text: Summary fact.');
+        expect(briefUtils.hashGenerated(generated)).toBe(hash);
+        expect(() => briefUtils.parseGenerated(JSON.stringify({ ...raw, summary: 'Fact [97]' }), packet)).toThrow(/summaryClaimIds/);
+        const uncited = briefUtils.finalizeGenerated(briefUtils.parseGenerated(JSON.stringify({ ...raw, summaryClaimIds: [9999] }), packet), packet);
+        expect(uncited.evidenceNotes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'uncited', text: expect.stringContaining('summary') })]));
+        // Legacy stored artifacts stay byte-for-byte intact and get no invented references.
+        const legacy = { ...generated, promptVersion: 1 };
+        delete legacy.summaryClaimIds;
+        const before = JSON.stringify(legacy);
+        expect(briefUtils.render(legacy, null).summary.citations).toEqual([]);
+        expect(briefUtils.exportMarkdown({ brief: { id: 1 }, generated: legacy })).toContain('Summary fact. _(no stored claim cited)_');
+        expect(JSON.stringify(legacy)).toBe(before);
+    });
+
+    test.each(['PROVIDER_DOWN', 'BRIEF_FORMAT_INVALID', 'BUDGET_EXCEEDED'])('failure %s never retains provider content, including after erasure', async code => {
+        const userId = '700000000000000069';
+        const fixture = await seedExpedition(userId, { seed: 'safe failure fixture' });
+        const marker = 'SYNTHETIC_PRIVATE_CONTENT sk-test-secret https://private.example';
+        modelBehaviour = () => { throw Object.assign(new Error(marker), { code }); };
+        const detail = await briefs.generate({ expeditionId: fixture.expedition.id, userId });
+        expect(detail.brief.status).toBe('FAILED');
+        expect(JSON.stringify(detail)).not.toContain('SYNTHETIC_PRIVATE_CONTENT');
+        const row = await db.get("SELECT * FROM work_failures WHERE kind = 'expedition' AND workId = @w AND phase = 'brief'", { w: String(fixture.expedition.id) });
+        expect(row.reason).toBe(detail.brief.lastError);
+        expect(JSON.stringify(row)).not.toContain('SYNTHETIC_PRIVATE_CONTENT');
+        await briefs.forgetUser(userId);
+        await require('@goobster/core/services/workFailureService').forgetUser(userId);
+        const erased = await db.get('SELECT * FROM work_failures WHERE id = @id', { id: row.id });
+        expect(erased.actor).toBeNull();
+        expect(JSON.stringify(erased)).not.toContain('SYNTHETIC_PRIVATE_CONTENT');
     });
 });

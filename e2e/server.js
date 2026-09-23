@@ -102,6 +102,7 @@ function fakeBriefModel() {
             return {
                 content: JSON.stringify({
                     summary: C.BRIEF_SUMMARY,
+                    summaryClaimIds: claimIds,
                     findings: [{ id: 'F1', text: C.BRIEF_FINDING, claimIds }],
                     limitations: [{ kind: 'weak_evidence', text: C.BRIEF_LIMITATION, claimIds }]
                 })

@@ -641,6 +641,7 @@ export type BriefDetail = {
     generated: {
         promptVersion: number;
         summary: string;
+        summaryClaimIds?: number[];
         findings: Array<{ id: string; text: string; claimIds: number[]; cited: boolean }>;
         limitations: Array<{ id: string; kind: string; text: string; claimIds: number[] }>;
         evidenceNotes: BriefEvidenceNote[];

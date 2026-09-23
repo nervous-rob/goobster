@@ -133,3 +133,17 @@ Errors follow the Spitball contract (`{ error: { code, message } }`).
 ## What #254 does not claim
 
 Implemented is not merged; a green CI is not the owner-judged research-quality baseline (#267) and not a pilot result (#265). The pilot's exit decision, the actual-host restore drill (#249) and the host isolation canary (#247) remain owner and host tasks.
+
+### Citation and failure handling (prompt version 2)
+
+New generations supply `summaryClaimIds` separately from summary prose. The summary,
+findings and limitations share one validated citation map, including evidence cited
+only by the summary. Numeric citation markers in new summary prose are rejected as
+format errors; the application supplies the displayed numbers. Missing or unknown
+summary references produce an uncited warning. Existing artifacts and their hashes
+are unchanged; legacy summaries without structured references remain visibly uncited.
+Edits retain the original citation mapping and must still be verified by the owner.
+
+Generation failures persist controlled messages selected by error code, never raw
+provider or transport messages. This applies to both the private brief and the retained
+failure ledger. Previously stored error messages are not rewritten by this change.
