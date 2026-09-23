@@ -358,11 +358,11 @@ Start a representative load experiment with synthetic identities and mocked prov
 
 Pilot success criteria: two independent native accounts can finish the core journey without Discord; a shared project works through explicit membership; another account cannot access it; tutorials remain optional and recoverable; one user's long research does not prevent another from ordinary navigation and queued chat; the host can suspend an account and revoke its active sessions/work.
 
-## 11. Open naming exploration
+## 11. Naming: decided for the pilot
 
-The application name and the assistant's name can differ. Goobster may remain the assistant or a selectable persona while the platform adopts a different identity. No new name is selected, and this rollout must not rename packages, configuration keys, stored data, or public APIs without a separate decision.
+**Decided in [ADR 0012](adr/0012-name-and-license.md):** the product and the assistant both stay **Goobster** through the pilot, the license stays MIT, and a trademark and domain search is done before any public listing. Nothing is renamed: packages, configuration keys, stored data, and public APIs are unchanged. Jimbucks and the exchange remain inside the optional economy, off by default on new installs.
 
-See [product naming exploration](product_naming_exploration.md) for candidates, tradeoffs, and the checks needed before choosing one.
+The [product naming exploration](product_naming_exploration.md) stays as the record of candidates and the checks a rename would need, should the search or the pilot's exit decision reopen the question.
 
 
 ## 12. Standards amendments on adoption
