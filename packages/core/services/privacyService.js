@@ -274,6 +274,21 @@ class PrivacyService {
                  (SELECT COUNT(*) FROM research_sources WHERE userId = @userId) AS researchSources`,
             { userId }
         );
+        // Research briefs (#254): private artifacts written from an
+        // expedition's evidence, with the owner's edits and review.
+        const briefs = await db.get(
+            `SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN acceptedAt IS NOT NULL THEN 1 ELSE 0 END) AS accepted,
+                    SUM(CASE WHEN usedAt IS NOT NULL THEN 1 ELSE 0 END) AS used,
+                    SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN overlayJson IS NOT NULL AND overlayJson <> '{"edits":[]}' THEN 1 ELSE 0 END) AS edited
+             FROM expedition_briefs WHERE userId = @userId`,
+            { userId }
+        );
+        const briefsPaidForOthers = await db.get(
+            'SELECT COUNT(*) AS c FROM expedition_briefs WHERE payer = @userId AND userId <> @userId',
+            { userId }
+        );
 
         // The attention ledger: the open loops Goobster believes this person
         // is carrying. Bot-wide personal data, and the most important thing
@@ -511,7 +526,15 @@ class PrivacyService {
             spitball: {
                 expeditions: spitball?.expeditions || 0,
                 activeExpeditions: spitball?.activeExpeditions || 0,
-                researchSources: spitball?.researchSources || 0
+                researchSources: spitball?.researchSources || 0,
+                briefs: {
+                    total: Number(briefs?.total || 0),
+                    accepted: Number(briefs?.accepted || 0),
+                    used: Number(briefs?.used || 0),
+                    failed: Number(briefs?.failed || 0),
+                    edited: Number(briefs?.edited || 0),
+                    paidForOthers: Number(briefsPaidForOthers?.c || 0)
+                }
             },
             attention: {
                 initiative: attention?.initiative || null,
@@ -671,6 +694,12 @@ class PrivacyService {
                       WHERE expeditionId IN (SELECT id FROM spitball_expeditions WHERE userId = @userId)) AS claims`,
                 { userId }
             );
+            // Research briefs (#254) cascade with the expedition; they are
+            // deleted first so the count is exact, and briefs someone else
+            // owns that this person paid for keep the row with payer nulled.
+            const briefs = await require('./expeditionBriefService').forgetUser(userId);
+            counts.expeditionBriefs = briefs.deleted;
+            counts.expeditionBriefsPayerAnonymized = briefs.anonymized;
             counts.spitballExpeditions = (await db.run(
                 'DELETE FROM spitball_expeditions WHERE userId = @userId', { userId }
             )).changes;
@@ -1282,6 +1311,9 @@ class PrivacyService {
                 `SELECT COUNT(*) AS c FROM research_claims
                  WHERE expeditionId IN (SELECT id FROM spitball_expeditions WHERE userId = @userId)`,
                 { userId }
+            )).c,
+            expedition_briefs: (await db.get(
+                'SELECT COUNT(*) AS c FROM expedition_briefs WHERE userId = @userId OR payer = @userId', { userId }
             )).c,
             mtga_folders: (await db.get(
                 'SELECT COUNT(*) AS c FROM mtga_folders WHERE userId = @userId', { userId }

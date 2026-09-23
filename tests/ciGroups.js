@@ -127,6 +127,7 @@ const GROUPS = [
         name: 'Knowledge and memory',
         description: 'Spitball, graphs, memory, research expeditions',
         files: files([
+            'expeditionBrief',
             'fileDiscoveryService',
             'graphClusters',
             'graphFilter',

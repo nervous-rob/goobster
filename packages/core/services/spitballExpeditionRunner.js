@@ -27,6 +27,7 @@ const db = require('../db');
 const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const expeditionService = require('./spitballExpeditionService');
+const { payerForExpedition } = expeditionService;
 const defaultPipeline = require('./spitballResearchPipeline');
 
 class SpitballExpeditionRunner {
@@ -136,9 +137,7 @@ class SpitballExpeditionRunner {
         // Every search call, sandbox second and failure inside the loop is
         // this expedition's (utils/workContext.js).
         const owner = await this.service.getById(expeditionId);
-        const payer = owner?.projectId
-            ? (await db.get('SELECT userId FROM observatory_projects WHERE id = @id', { id: owner.projectId }))?.userId
-            : owner?.userId;
+        const payer = await payerForExpedition(owner);
         return workContext.run(
             { kind: 'expedition', id: expeditionId, actor: owner?.userId || null, payer: payer || owner?.userId || null },
             () => this._runCycles(expeditionId),

@@ -1008,7 +1008,7 @@ describe('privacy', () => {
         );
 
         const before = await expeditionService.auditUser(userId);
-        expect(before).toEqual({ expeditions: 1, cycles: 1, researchSources: 1, researchClaims: 1 });
+        expect(before).toEqual({ expeditions: 1, cycles: 1, researchSources: 1, researchClaims: 1, briefs: 0, briefsPaidForOthers: 0 });
 
         const report = await privacyService.buildUserReport({ userId });
         expect(report.spitball).toMatchObject({ expeditions: 1, activeExpeditions: 1, researchSources: 1 });
@@ -1027,7 +1027,7 @@ describe('privacy', () => {
         expect(audit.total).toBe(0);
 
         expect(await expeditionService.auditUser(userId))
-            .toEqual({ expeditions: 0, cycles: 0, researchSources: 0, researchClaims: 0 });
+            .toEqual({ expeditions: 0, cycles: 0, researchSources: 0, researchClaims: 0, briefs: 0, briefsPaidForOthers: 0 });
     });
 });
 

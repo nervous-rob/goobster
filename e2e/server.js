@@ -36,6 +36,7 @@ const C = require('./constants');
 const db = require('@goobster/core/db');
 const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/appApi');
 const { ObservatoryService } = require('@goobster/core/services/observatoryService');
+const { ExpeditionBriefService } = require('@goobster/core/services/expeditionBriefService');
 const observatoryConfig = require('@goobster/core/config/observatoryConfig');
 const expeditionService = require('@goobster/core/services/spitballExpeditionService');
 const knowledgeGraphService = require('@goobster/core/services/knowledgeGraphService');
@@ -86,6 +87,27 @@ function makeObservatory() {
         config: { ...observatoryConfig, enabled: true },
         sandbox: { enabled: true }
     });
+}
+
+/**
+ * The research-brief model stand-in (#254): reads the evidence packet the
+ * real service builds and answers in the brief shape, citing the seeded
+ * claim. No network, no key; the rest of the pipeline is the real thing.
+ */
+function fakeBriefModel() {
+    return {
+        chat: async (messages) => {
+            const packet = JSON.parse(messages[1].content);
+            const claimIds = packet.claims.map((claim) => claim.id);
+            return {
+                content: JSON.stringify({
+                    summary: C.BRIEF_SUMMARY,
+                    findings: [{ id: 'F1', text: C.BRIEF_FINDING, claimIds }],
+                    limitations: [{ kind: 'weak_evidence', text: C.BRIEF_LIMITATION, claimIds }]
+                })
+            };
+        }
+    };
 }
 
 async function seedExpedition(userId) {
@@ -544,7 +566,7 @@ async function main() {
             webapp: { enabled: true, devMode: true }
         },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { observatory }
+        deps: { observatory, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }) }
     });
 
     const app = express();

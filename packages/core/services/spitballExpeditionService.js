@@ -84,6 +84,24 @@ const CYCLE_COUNTERS = [
     'notesCreated', 'notesMerged', 'edgesCreated', 'tagsAdded', 'conflictsFound'
 ];
 
+/**
+ * Who pays for an expedition's model and resource work: the project owner
+ * for a project-targeted expedition, otherwise the person who ran it. One
+ * rule for the runner's work context and the research brief's generation,
+ * exported on its own so a runner given a stub service still resolves it.
+ * @param {{ projectId?: number|string|null, userId?: string }} expedition
+ * @returns {Promise<string|null>} a principal id
+ */
+async function payerForExpedition(expedition) {
+    if (expedition?.projectId) {
+        const project = await db.get(
+            'SELECT userId FROM observatory_projects WHERE id = @id', { id: Number(expedition.projectId) }
+        );
+        if (project?.userId) return String(project.userId);
+    }
+    return expedition?.userId ? String(expedition.userId) : null;
+}
+
 class SpitballExpeditionService {
     constructor(config = spitballConfig) {
         this.config = config;
@@ -256,6 +274,17 @@ class SpitballExpeditionService {
             'SELECT * FROM spitball_expeditions WHERE id = @id', { id: Number(id) }
         );
         return row ? this._shapeExpedition(row) : null;
+    }
+
+    /**
+     * Who pays for this expedition's model and resource work: the project
+     * owner for a project-targeted expedition, otherwise the person who ran
+     * it. The runner's work context and the research brief's generation
+     * call both use this so one billing rule covers the whole work reference.
+     * @returns {Promise<string|null>} a principal id
+     */
+    async payerFor(expedition) {
+        return payerForExpedition(expedition);
     }
 
     /** Ownership-checked fetch: strangers get the same 404 as a missing row. */
@@ -1204,12 +1233,14 @@ class SpitballExpeditionService {
      */
     async forgetUser(userId) {
         const counts = await this.auditUser(userId);
+        await require('./expeditionBriefService').forgetUser(userId);
         await db.run('DELETE FROM spitball_expeditions WHERE userId = @userId', { userId });
         return counts;
     }
 
     /** Row counts for the leftover audit. */
     async auditUser(userId) {
+        const briefs = await require('./expeditionBriefService').auditUser(userId);
         const [expeditions, cycles, sources, claims] = await Promise.all([
             db.get('SELECT COUNT(*) AS c FROM spitball_expeditions WHERE userId = @userId', { userId }),
             db.get(
@@ -1228,7 +1259,9 @@ class SpitballExpeditionService {
             expeditions: expeditions?.c || 0,
             cycles: cycles?.c || 0,
             researchSources: sources?.c || 0,
-            researchClaims: claims?.c || 0
+            researchClaims: claims?.c || 0,
+            briefs: briefs.briefs,
+            briefsPaidForOthers: briefs.paidForOthers
         };
     }
 
@@ -1269,3 +1302,4 @@ module.exports = new SpitballExpeditionService();
 module.exports.SpitballExpeditionService = SpitballExpeditionService;
 module.exports.SpitballError = SpitballError;
 module.exports.ExpeditionInterrupted = ExpeditionInterrupted;
+module.exports.payerForExpedition = payerForExpedition;

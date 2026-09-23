@@ -9,7 +9,7 @@ tags: [roadmap, handoff, shared-instance, limits, pilot, operations]
 
 Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) (the plan) and roadmap [#246](https://github.com/nervous-rob/goobster/issues/246) (the sequence and the decisions). This is the handoff note: what has shipped, which seams the next steps hook into, and exactly where the next session picks up. Update the **Where things stand** table and the date as items land; delete a step's brief once its issue closes.
 
-**Last updated:** 2026-09-23, after [PR #279](https://github.com/nervous-rob/goobster/pull/279) shipped #248 with both-engine and browser CI green. PR #280 shipped the #265 pilot plan and #268 setup/privacy documentation. This continuation implements the #267 fixed-evidence evaluation harness; the owner-judged baseline is still outstanding. The pilot and actual-host checks have not been run here.
+**Last updated:** 2026-09-23, after [PR #279](https://github.com/nervous-rob/goobster/pull/279) shipped #248 with both-engine and browser CI green, PR #280 shipped the #265 pilot plan and #268 setup/privacy documentation, and [PR #281](https://github.com/nervous-rob/goobster/pull/281) merged the #267 fixed-evidence evaluation harness (the owner-judged baseline is still outstanding). This continuation implements **#254's research brief** on a branch; it is implemented, not merged, and CI is not the quality baseline. The pilot and actual-host checks have not been run here.
 
 ## Where things stand
 
@@ -23,11 +23,11 @@ Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) 
 | #265 Private single-user pilot | **Plan written; execution not started.** [pilot_plan.md](pilot_plan.md), with proposed six weekly cycles. | Owner chooses the topic, dates and thresholds, records the host restore drill, then records cycles and an exit decision. Keep the issue open. |
 | #268 Deployment and privacy promise | **Shipped** (PR #280). | README leads with standalone/native-operator setup; runtime and strategy agree. Backup rotation is explicitly host-managed, with no automatic expiry. |
 | #255 Operator second factor, phase 1 | Specified, **required at the second account** | TOTP + recovery codes for operators; host policy gate on account creation. |
-| #267 Evaluation set | **Harness implemented; owner baseline not run.** [research_evaluation.md](research_evaluation.md): 30 fictional fixed-evidence questions, opt-in live generation, separate owner review and work-ledger costs. | Merge after CI, run the selected provider, and have the owner judge all 30 cases. This does not measure live source discovery. |
-| #254 Research brief | **Next engineering step.** | Private immutable Expedition artifact, edit overlay and Markdown export; the four-part quality bar from #267 stays explicit. |
+| #267 Evaluation set | **Harness merged (PR #281); owner baseline not run.** [research_evaluation.md](research_evaluation.md): 30 fictional fixed-evidence questions, opt-in live generation, separate owner review and work-ledger costs. | Run the selected provider and have the owner judge all 30 cases. This does not measure live source discovery. |
+| #254 Research brief | **Implemented on a branch; PR open, not merged.** [research_brief.md](research_brief.md): `expedition_briefs` (write-once generated text + hash, edit overlay, review, acceptance, use), Briefs section and brief view under Knowledge → Research, Markdown export, the pilot measurement read, both-engine and browser specs. | Review and merge after CI. Then the pilot writes real briefs; an unreviewed brief is never a quality pass, and CI proves machinery only. Share links, templates and scheduled briefs deliberately deferred. |
 | #266, #272, #273 | Not started | First-use task, tutorials batch 1, Ask Goobster on Inbox items. |
 
-Order per #246: confirm the pilot choices and record the actual-host restore drill before cycle 1. The evaluation harness is implemented; the next build step is **#254's brief artifact**, while the owner runs and judges #267's baseline. The host-isolation check and #255 remain required before a second account. **Nothing in stage 4 or 5 starts before the pilot has produced repeat use.**
+Order per #246: confirm the pilot choices and record the actual-host restore drill before cycle 1. The evaluation harness is merged and #254's brief artifact is implemented awaiting review; the owner runs and judges #267's baseline and then uses the brief in pilot cycles. The next engineering candidates are #266, #272 and #273. The host-isolation check and #255 remain required before a second account. **Nothing in stage 4 or 5 starts before the pilot has produced repeat use.**
 
 ## Seams the next steps build on
 
@@ -40,7 +40,7 @@ Everything below exists on `main` today. The next steps extend these; they do no
 | Per-payer serialization rows | `admission_locks` (`resource TEXT PRIMARY KEY`); `resourceAdmissionService` already takes a row lock with `INSERT ... ON CONFLICT DO NOTHING` then `UPDATE ... SET resource = resource` | #248 uses resource `budget:<payer>` (build the string in JS). `privacyService.forgetUser` already deletes that row. |
 | Token counts from the provider | Each provider's `_logUsage(response, model, usageContext)` → `services/usageTracker.log({ inputTokens, outputTokens, ... })` → `usage_log` | `usageTracker.log` captures normalized usage in the active provider-call scope; the budget wrapper settles when that call ends. |
 | The reservation table | `usage_reservations` in `db/schema.sql` (`actor`, `payer`, `workKind`, `workId`, `admissionId`, `estimatedTokens`, `actualTokens`, `status` held/settled/released, `idempotencyKey` UNIQUE, `expiresAt`, `createdAt`; indexes on `(payer, createdAt)` and `(workKind, workId)`) | #248 writes it. `costReportService` already reads it (settled → `actualTokens`, held → `estimatedTokens`). |
-| Cost per accepted result | `packages/core/services/costReportService.js` - `workCosts(filter)`, `costPerResult({ workKind, payer, days, accepted })` | #265 measures with it; #254's accepted briefs are its divisor. Settled rows now carry tokens; flagged settlements remain provisional estimates. |
+| Cost per accepted result | `packages/core/services/costReportService.js` - `workCosts(filter)`, `costPerResult({ workKind, payer, days, accepted })` | #265 measures with it; #254's accepted briefs are its divisor (`expeditionBriefService.measure`, `GET /api/app/spitball/briefs/measure`, `perAccepted: null` with nothing accepted). Settled rows now carry tokens; flagged settlements remain provisional estimates. |
 | Failures and resources per person / per account | `workFailureService`, `resourceEventService`, `accountSupportService.view()`; routes `GET /api/app/usage/diagnostics`, `GET /api/app/admin/accounts/:id/support` | #265's "failures you hit"; #248's Host-room limit panel sits next to the support view. |
 | Operator audit | `packages/core/services/operatorAuditService.js`; `ACTIONS` already reserves **`limits.change`**; Host room *Operator audit* panel | #248's cap changes and #255's factor resets write here. Add new actions to `ACTIONS` in the same change. |
 | Ledger retention | `packages/core/services/ledgerRetentionService.js` (coreRuntime step `ledgerRetention`, lock `ledger_retention`; 30 / 90 / 365 days) | #248 now releases expired holds and removes terminal reservations after 90 days by default (host-editable). |
@@ -55,7 +55,7 @@ Keep private drafts, sources and ids in private notes or project files; only pub
 
 #267 now has the [fixed-evidence evaluation harness](research_evaluation.md): 30 questions across six categories, optional credential-gated generation through `npm run test:live -- --research-evaluation`, owner worksheets and cost snapshots. Unit/CI success checks machinery only. Run and judge the full baseline before claiming a research-quality result; source discovery and real Expedition retrieval remain outside this first baseline.
 
-The next engineering change is **#254**: preserve the original generated brief as a private Expedition artifact, store edits separately, show citations and limitations, and export Markdown with edited text marked. Reuse #267's owner marks and four-part bar; never infer quality from an empty review. The pilot can use manual drafts while this is built.
+**#254 is implemented** ([research_brief.md](research_brief.md)): the original generated brief is a private Expedition artifact written once and hash-verified, edits are a separate overlay marked wording/factual, citations and evidence-derived limitations are shown, Markdown export marks edited text and states the review, acceptance and use status, and the measurement read supplies #265's accepted-brief divisor. It reuses #267's marks and four-part bar and never infers quality from an empty review. Until the PR merges, the pilot can keep manual drafts.
 
 Update the G row again when the owner records the exit decision. No stage 4 or 5 work before repeat use.
 
@@ -78,7 +78,7 @@ Creating a second account is the trigger, not a milestone to aim for. When the p
 
 ## Then: the research-brief experiment (#267, #254, #266, #272, #273)
 
-- #254 stores the brief immutable with an edit overlay as a private Expedition artifact. Its **accept** action is the `accepted` input to `costPerResult`; give the brief the expedition's `workId` so the join needs no new column.
+- #254 (implemented, pending merge) stores the brief immutable with an edit overlay as a private Expedition artifact. Its **accept** action is the `accepted` input to the cost join; generation runs inside the expedition's work reference, so the join needed no new column.
 - #267 records per-claim marks and the edit type; the question set lives next to `tests/live/` and runs under `npm run test:live` only.
 - #273 loads the Inbox item server-side into the custom-instructions slot; Inbox items already carry `source`, `link` and (for failures) `failure`.
 

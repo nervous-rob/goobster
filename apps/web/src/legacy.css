@@ -1025,6 +1025,43 @@ button.list-row:last-child { border-bottom: 0; }
   .continuation-banner { flex-direction: column; }
 }
 
+/* ---------- research briefs (#254) ---------- */
+.brief-block { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.brief-block > .brief-text, .brief-block > .brief-editor, .brief-block > .brief-original { align-self: stretch; }
+.brief-block.is-edited { box-shadow: inset 3px 0 0 var(--warn, #e0b455); padding-left: 10px; }
+.brief-text { line-height: 1.55; white-space: pre-wrap; }
+.brief-cites { margin-left: 4px; }
+.brief-cite {
+  font-size: 11.5px; margin-right: 3px; color: var(--accent); text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.brief-cite:hover { text-decoration: underline; }
+.brief-edit-marker { color: var(--warn, #e0b455); font-weight: 600; }
+.brief-generated-marker { opacity: 0.8; }
+.brief-original {
+  margin: 4px 0 0; padding: 8px 12px;
+  border-left: 3px solid var(--border); background: var(--bg-raise);
+  color: var(--text-dim); font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+}
+.brief-editor { display: flex; flex-direction: column; gap: 8px; }
+.brief-editor textarea.input { width: 100%; resize: vertical; line-height: 1.45; }
+.brief-editor-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.brief-editor-row label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.brief-review-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.brief-review-row label { min-width: 200px; flex: 1; }
+.brief-review-row .select { min-width: 180px; }
+.brief-review-row .input { flex: 2; min-width: 200px; }
+.brief-review-row textarea.input { width: 100%; resize: vertical; }
+.brief-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.brief-use-note { min-width: 220px; flex: 1; }
+.brief-evidence-note { opacity: 0.9; }
+.badge.brief-quality.unreviewed { border: 1px dashed var(--border); color: var(--text-dim); }
+.badge.brief-quality.not-ready { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
+.badge.brief-quality.ready-to-show { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
+@media (max-width: 560px) {
+  .brief-review-row label, .brief-review-row .select, .brief-review-row .input { min-width: 0; width: 100%; flex: none; }
+}
+
 @keyframes research-spin { to { transform: rotate(360deg); } }
 @keyframes research-shimmer {
   0% { transform: translateX(-100%); }

@@ -185,6 +185,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Shared-instance roadmap handoff (what shipped, where the next steps hook in) | `documentation/shared_instance_handoff.md` |
 | Private single-user pilot (task, measurements, cycle record and exit decision) | `documentation/pilot_plan.md` |
 | Owner-judged research evaluation (30 fixed-evidence questions, optional live runner and review artifacts) | `documentation/research_evaluation.md` |
+| Research brief (write-once brief from an Expedition's evidence, edit overlay, owner review, acceptance and use, Markdown export, pilot measurement) | `documentation/research_brief.md` |
 
 ### Planned product work
 
