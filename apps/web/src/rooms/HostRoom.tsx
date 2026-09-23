@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
-import type { AdminAccount, Invite, SkippedSchedules } from '../lib/types';
+import type { AdminAccount, Invite, OperatorAuditEntry, SkippedSchedules } from '../lib/types';
 import { useSession } from '../hooks/useSession';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
@@ -434,9 +434,21 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
 function describeDetail(detail: Record<string, unknown> | null): string {
     if (!detail) return '';
     return Object.entries(detail)
-        .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
+        .filter(([key, value]) => key !== 'via' && value !== null && value !== undefined && typeof value !== 'object')
         .map(([key, value]) => `${key}: ${String(value)}`)
         .join(' · ');
+}
+
+/** Who did it: a named account, the CLI that ran it, or a person since erased. */
+function actorLabel(entry: OperatorAuditEntry, nameFor: (id: string) => string): string {
+    if (entry.actor) return nameFor(entry.actor);
+    const via = entry.detail?.via;
+    return typeof via === 'string' && via ? via : 'someone erased';
+}
+
+function targetLabel(entry: OperatorAuditEntry, nameFor: (id: string) => string): string | null {
+    if (!entry.target) return entry.action.startsWith('invite.') ? null : (entry.action.startsWith('account.') ? 'someone erased' : null);
+    return entry.action.startsWith('invite.') ? `invitation #${entry.target}` : nameFor(entry.target);
 }
 
 /** Who changed what, when (documentation/work_ledger.md). Kept one year. */
@@ -450,7 +462,7 @@ function AuditPanel() {
         getNextPageParam: (page) => page.nextCursor
     });
     const names = new Map((accounts.data?.accounts || []).map((account) => [account.principalId, account.loginName || account.displayName || account.principalId]));
-    const nameFor = (id: string | null) => (id ? names.get(id) || id : 'someone erased');
+    const nameFor = (id: string) => names.get(id) || id;
     const entries = audit.data?.pages.flatMap((page) => page.entries) || [];
     return (
         <section className="settings-section" aria-labelledby="host-audit-title" data-testid="host-audit">
@@ -464,8 +476,8 @@ function AuditPanel() {
                     {entries.map((entry) => (
                         <div key={entry.id} className="list-row" data-testid="host-audit-entry">
                             <div className="row-body">
-                                <strong>{nameFor(entry.actor)}</strong> {AUDIT_ACTION_LABEL[entry.action] || entry.action}
-                                {entry.target ? <> for <code>{nameFor(entry.target)}</code></> : null}
+                                <strong>{actorLabel(entry, nameFor)}</strong> {AUDIT_ACTION_LABEL[entry.action] || entry.action}
+                                {targetLabel(entry, nameFor) ? <> for <code>{targetLabel(entry, nameFor)}</code></> : null}
                                 <div className="row-meta">
                                     {whenLabel(entry.createdAt)}
                                     {describeDetail(entry.detail) ? ` · ${describeDetail(entry.detail)}` : ''}
