@@ -79,6 +79,56 @@ export type InstanceStateView = {
 export type InboxKind = 'reminder' | 'task' | 'watch' | 'notice' | 'invite' | 'project' | 'expedition' | 'system';
 
 /** One delivered result of unattended work (GET /api/app/inbox). */
+/** One work_failures row as the portal shows it (never a prompt or a body). */
+export type WorkFailureRef = {
+    id: number | null;
+    kind: string | null;
+    code: string | null;
+    phase: string | null;
+    reason: string | null;
+    workId: string | null;
+    createdAt: string | null;
+};
+
+export type WorkFailureRow = {
+    id: number;
+    kind: string;
+    workId: string | null;
+    phase: string | null;
+    code: string;
+    reason: string | null;
+    createdAt: string;
+};
+
+export type ResourceTotal = { kind: string; unit: string; events: number; quantity: number };
+
+/**
+ * GET /api/app/usage/diagnostics (your own) and
+ * GET /api/app/admin/accounts/:principalId/support (operators).
+ */
+export type AccountSupportView = {
+    principalId: string;
+    days: number;
+    usage: { calls: number; inputTokens: number; outputTokens: number; totalTokens: number };
+    resources: ResourceTotal[];
+    failures: {
+        total: number;
+        byKind: Array<{ kind: string; count: number }>;
+        byCode: Array<{ kind: string; code: string; count: number }>;
+        recent: WorkFailureRow[];
+    };
+};
+
+/** GET /api/app/admin/audit - one operator action. */
+export type OperatorAuditEntry = {
+    id: number;
+    action: string;
+    actor: string | null;
+    target: string | null;
+    detail: Record<string, unknown> | null;
+    createdAt: string;
+};
+
 export type InboxItem = {
     id: number;
     kind: InboxKind;
@@ -99,6 +149,12 @@ export type InboxItem = {
             snoozeUntil: string | null;
         }>;
     } | null;
+    /**
+     * Set when this item reports a failed piece of work
+     * (`source.type === 'work_failure'`): the ledger row it links to. The
+     * fields are null when the row has already been pruned.
+     */
+    failure: WorkFailureRef | null;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -178,6 +234,8 @@ export type AdminAccount = {
     hasPassword: boolean;
     discordLinked: boolean;
     email: { address: string; verified: boolean } | null;
+    /** work_failures rows attributed to this account in the roster's window. */
+    failures?: number;
     createdAt: string;
     updatedAt: string;
 };

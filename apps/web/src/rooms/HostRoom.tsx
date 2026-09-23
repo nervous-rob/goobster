@@ -1,12 +1,14 @@
 import { FormEvent, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import type { AdminAccount, Invite, SkippedSchedules } from '../lib/types';
 import { useSession } from '../hooks/useSession';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
+import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
+import { FailureList, ResourceTotals, failureKindLabel } from '../components/WorkLedger';
 
 const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
@@ -245,6 +247,7 @@ function AccountsPanel() {
     const [principalId, setPrincipalId] = useState('');
     const [reset, setReset] = useState<{ url: string; expiresAt: string; who: string } | null>(null);
     const [busy, setBusy] = useState(false);
+    const [support, setSupport] = useState<string | null>(null);
 
     async function refresh() {
         await queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
@@ -298,6 +301,7 @@ function AccountsPanel() {
     }
 
     const rows = accounts.data?.accounts || [];
+    const failureWindow = accounts.data?.failureWindowDays ?? 30;
     return (
         <section className="settings-section" aria-labelledby="host-accounts-title">
             <h2 id="host-accounts-title">Accounts</h2>
@@ -316,12 +320,18 @@ function AccountsPanel() {
                 {accounts.isPending && <div className="list-row"><span className="hint">Loading…</span></div>}
                 {rows.map((account) => {
                     const self = account.principalId === me?.user.id;
+                    const open = support === account.principalId;
                     return (
-                        <div key={account.principalId} className="list-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                        <div key={account.principalId} className="list-row" style={{ flexWrap: 'wrap', gap: 8 }} data-testid="host-account-row">
                             <span>
                                 <strong>{account.loginName || account.displayName || account.principalId}</strong>
                                 {self && <span className="hint"> (you)</span>}
                                 <span className="hint"> · {account.role} · {account.status} · joined by {account.entitlement}</span>
+                                {(account.failures ?? 0) > 0 && (
+                                    <span className="badge state-unverified" title={`work failures in the last ${failureWindow} days`} data-testid="host-account-failures">
+                                        {' '}{account.failures} failure{account.failures === 1 ? '' : 's'}
+                                    </span>
+                                )}
                                 <div className="hint">
                                     <code>{account.principalId}</code>
                                     {account.discordLinked ? ' · Discord' : ''}{account.hasPassword ? ' · password' : ' · no password'}
@@ -338,11 +348,138 @@ function AccountsPanel() {
                                     {account.role === 'operator' ? 'Make member' : 'Make operator'}
                                 </button>
                                 <button type="button" className="btn subtle small" onClick={() => void issueReset(account)}>Reset link</button>
+                                <button type="button" className={`btn subtle small${open ? ' active' : ''}`} aria-expanded={open}
+                                    onClick={() => setSupport(open ? null : account.principalId)}>
+                                    {open ? 'Hide support' : 'Support'}
+                                </button>
                             </span>
+                            {open && <AccountSupport principalId={account.principalId} />}
                         </div>
                     );
                 })}
             </div>
+        </section>
+    );
+}
+
+/**
+ * The per-account support view (documentation/work_ledger.md): usage
+ * totals, non-token resources and the failure ledger for one account.
+ * Codes and short reasons only - the ledger never holds the person's text.
+ */
+function AccountSupport({ principalId }: { principalId: string }) {
+    const [days, setDays] = useState<7 | 30 | 90>(30);
+    const view = useQuery({
+        queryKey: ['admin-account-support', principalId, days],
+        queryFn: () => api.adminAccountSupport(principalId, days)
+    });
+    const data = view.data;
+    return (
+        <div className="host-support" data-testid="host-account-support" style={{ flexBasis: '100%' }}>
+            <div className="segment" role="tablist" aria-label="Support window" style={{ marginBottom: 10 }}>
+                {([7, 30, 90] as const).map((option) => (
+                    <button key={option} type="button" role="tab" aria-selected={days === option}
+                        className={`segment-btn${days === option ? ' active' : ''}`} onClick={() => setDays(option)}>
+                        {option}d
+                    </button>
+                ))}
+            </div>
+            {view.isPending && <div className="hint">Loading…</div>}
+            {view.isError && <div className="hint">{(view.error as Error).message}</div>}
+            {data && (
+                <>
+                    <div className="stat-grid">
+                        <div className="stat-card">
+                            <div className="stat-label">AI calls</div>
+                            <div className="stat-value">{data.usage.calls.toLocaleString()}</div>
+                            <div className="stat-sub">last {data.days} days</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-label">Tokens</div>
+                            <div className="stat-value">{data.usage.totalTokens.toLocaleString()}</div>
+                            <div className="stat-sub">{data.usage.inputTokens.toLocaleString()} in · {data.usage.outputTokens.toLocaleString()} out</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-label">Failures</div>
+                            <div className="stat-value">{data.failures.total.toLocaleString()}</div>
+                            <div className="stat-sub">{data.failures.byKind.map((row) => `${row.count} ${failureKindLabel(row.kind)}`).join(', ') || 'none'}</div>
+                        </div>
+                    </div>
+                    <ResourceTotals totals={data.resources} days={data.days} />
+                    <div style={{ marginTop: 10 }}>
+                        <FailureList view={data} emptyText={`No failed work for this account in the last ${data.days} days.`} />
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
+
+const AUDIT_KEY = ['admin-audit'];
+
+const AUDIT_ACTION_LABEL: Record<string, string> = {
+    'invite.create': 'created an invitation',
+    'invite.revoke': 'revoked an invitation',
+    'account.grant': 'granted an account',
+    'account.status': 'changed an account status',
+    'account.role': 'changed an account role',
+    'account.recovery': 'issued a reset link',
+    'signup.mail_test': 'sent a test email',
+    'instance.resume': 'resumed the instance',
+    'instance.restore': 'restored the instance',
+    'instance.pause': 'paused the instance',
+    'limits.change': 'changed a limit'
+};
+
+function describeDetail(detail: Record<string, unknown> | null): string {
+    if (!detail) return '';
+    return Object.entries(detail)
+        .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
+        .map(([key, value]) => `${key}: ${String(value)}`)
+        .join(' · ');
+}
+
+/** Who changed what, when (documentation/work_ledger.md). Kept one year. */
+function AuditPanel() {
+    const whenLabel = useDateLabel();
+    const accounts = useQuery({ queryKey: ACCOUNTS_KEY, queryFn: () => api.adminAccounts() });
+    const audit = useInfiniteQuery({
+        queryKey: AUDIT_KEY,
+        queryFn: ({ pageParam }) => api.adminAudit({ before: pageParam, limit: 25 }),
+        initialPageParam: null as string | null,
+        getNextPageParam: (page) => page.nextCursor
+    });
+    const names = new Map((accounts.data?.accounts || []).map((account) => [account.principalId, account.loginName || account.displayName || account.principalId]));
+    const nameFor = (id: string | null) => (id ? names.get(id) || id : 'someone erased');
+    const entries = audit.data?.pages.flatMap((page) => page.entries) || [];
+    return (
+        <section className="settings-section" aria-labelledby="host-audit-title" data-testid="host-audit">
+            <h2 id="host-audit-title">Operator audit</h2>
+            <p className="hint">Every change made from this room - accounts, invitations, sign-up, limits and the instance itself - kept for one year. Never a token or a password.</p>
+            {audit.isPending && <div className="hint">Loading…</div>}
+            {audit.isError && <div className="hint">{(audit.error as Error).message}</div>}
+            {audit.data && entries.length === 0 && <div className="hint">Nothing recorded yet.</div>}
+            {entries.length > 0 && (
+                <div className="list-card">
+                    {entries.map((entry) => (
+                        <div key={entry.id} className="list-row" data-testid="host-audit-entry">
+                            <div className="row-body">
+                                <strong>{nameFor(entry.actor)}</strong> {AUDIT_ACTION_LABEL[entry.action] || entry.action}
+                                {entry.target ? <> for <code>{nameFor(entry.target)}</code></> : null}
+                                <div className="row-meta">
+                                    {whenLabel(entry.createdAt)}
+                                    {describeDetail(entry.detail) ? ` · ${describeDetail(entry.detail)}` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {audit.hasNextPage && (
+                <button type="button" className="btn" disabled={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()} style={{ marginTop: 10 }}>
+                    {audit.isFetchingNextPage ? 'Loading…' : 'Load older entries'}
+                </button>
+            )}
         </section>
     );
 }
@@ -460,6 +597,7 @@ export function HostRoom() {
                         <SignupPanel />
                         <InvitesPanel />
                         <AccountsPanel />
+                        <AuditPanel />
                         <ReportPanel />
                     </>
                 )}

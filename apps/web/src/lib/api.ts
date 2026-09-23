@@ -1,4 +1,4 @@
-import type { ModelCatalog, AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
+import type { ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 
@@ -86,7 +86,18 @@ export const api = {
     adminCreateInvite: (body: { role: 'member' | 'operator'; ttlHours?: number; note?: string }) =>
         request<{ invite: Invite; url: string }>('/api/app/admin/invites', { method: 'POST', body }),
     adminRevokeInvite: (id: number) => request<{ invite: Invite }>(`/api/app/admin/invites/${id}`, { method: 'DELETE' }),
-    adminAccounts: () => request<{ accounts: AdminAccount[]; requireAccount: boolean }>('/api/app/admin/accounts'),
+    adminAccounts: () => request<{ accounts: AdminAccount[]; requireAccount: boolean; failureWindowDays: number }>('/api/app/admin/accounts'),
+    adminAccountSupport: (principalId: string, days = 30) =>
+        request<AccountSupportView>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/support?days=${days}`),
+    adminAudit: (params: { before?: string | null; limit?: number; target?: string | null } = {}) => {
+        const qs = new URLSearchParams();
+        if (params.before) qs.set('before', params.before);
+        if (params.limit) qs.set('limit', String(params.limit));
+        if (params.target) qs.set('target', params.target);
+        const suffix = qs.toString();
+        return request<{ entries: OperatorAuditEntry[]; nextCursor: string | null }>(`/api/app/admin/audit${suffix ? `?${suffix}` : ''}`);
+    },
+    usageDiagnostics: (days = 30) => request<AccountSupportView>(`/api/app/usage/diagnostics?days=${days}`),
     adminGrantAccount: (principalId: string, role: 'member' | 'operator' = 'member') =>
         request<{ account: AdminAccount; created: boolean }>('/api/app/admin/accounts', { method: 'POST', body: { principalId, role } }),
     adminUpdateAccount: (principalId: string, body: { status?: 'active' | 'disabled'; role?: 'member' | 'operator' }) =>

@@ -8,6 +8,7 @@ import { useToast } from '../hooks/useToast';
 import { useMe } from '../hooks/useSession';
 import { Markdown } from '../components/Markdown';
 import { MenuButton } from '../shell/MenuButton';
+import { failureKindLabel } from '../components/WorkLedger';
 import type { InboxItem, InboxKind } from '../lib/types';
 
 /**
@@ -74,6 +75,31 @@ function AttentionDelivery({ item }: { item: InboxItem }) {
                         : ''}
                     .
                 </>
+            )}
+        </div>
+    );
+}
+
+/**
+ * A failure notice links to its work_failures row: the kind, the code and
+ * the short reason the ledger holds - never the text of the work itself.
+ * The row is pruned after 30 days; the notice then keeps only its words.
+ */
+function FailureLink({ item }: { item: InboxItem }) {
+    const failure = item.failure;
+    if (!failure) return null;
+    return (
+        <div className="activity-correlation" data-testid="inbox-failure-link">
+            {failure.code ? (
+                <>
+                    What went wrong: <span className="badge">{failureKindLabel(failure.kind)}</span>{' '}
+                    <code>{failure.code}</code>
+                    {failure.phase ? ` during ${failure.phase}` : ''}
+                    {failure.reason ? ` — ${failure.reason}` : ''}.{' '}
+                    <Link to="/usage">All your failures →</Link>
+                </>
+            ) : (
+                <>The detail for this failure has expired (failures are kept for 30 days).</>
             )}
         </div>
     );
@@ -211,6 +237,7 @@ export function InboxRoom() {
                                             </div>
                                         </button>
                                         <AttentionDelivery item={item} />
+                                        <FailureLink item={item} />
                                         {isOpen && (
                                             <div className="inbox-body">
                                                 {item.body || item.attachments.length > 0
