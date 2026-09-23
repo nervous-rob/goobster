@@ -145,8 +145,10 @@ Self-hosted storage does not mean all processing stays local. Plainly:
 - **What the privacy commands guarantee.** `/what-do-you-know-about-me` and
   `/forget-me` report and erase a person's data inside this installation,
   with an audit that checks nothing is left behind. They cannot recall data
-  already sent to an external provider, and they are not a compliance
-  certification.
+  already sent to an external provider, they do not reach into backup
+  archives made before the erasure (those hold the data until they rotate
+  out - see `documentation/backup_and_restore.md`), and they are not a
+  compliance certification.
 
 ## Documentation
 
@@ -167,6 +169,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Self-knowledge (`consultDocs`) | `documentation/self_knowledge.md` |
 | Application identity (principals, accounts, invitations, native sign-in, verified email, outbound mail) | `documentation/identity.md` |
 | Running without Discord (adapter switch, assistant identity, the Inbox, runtime modes, people discovery) | `documentation/independent_runtime.md` |
+| Backup and tested restore (`npm run backup` / `npm run restore`, the paused instance, the recovery test) | `documentation/backup_and_restore.md` |
 
 ### Planned product work
 

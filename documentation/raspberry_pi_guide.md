@@ -111,12 +111,14 @@ If the screen blanks, disable DPMS (`raspi-config` → Display → Screen Blanki
 
 ## Backups
 
-Everything lives in `data/`. To back up:
+Everything lives in `data/` plus `config.json`. Use the built-in commands rather than copying files by hand - the archive is consistent while the bot runs, `config.json` goes in encrypted, and the restore is tested:
 
 ```bash
-sqlite3 data/goobster.sqlite ".backup data/backup-$(date +%F).sqlite"
-tar czf goobster-backup.tar.gz data/ config.json
+npm run backup -- --out /mnt/usb/goobster-backups      # prompts for a passphrase
+npm run restore -- /mnt/usb/goobster-backups/goobster-backup-<stamp>   # bot stopped first
 ```
+
+The database and files inside the archive are **not** encrypted; keep the destination on protected storage. Full details, what a restore refuses, and the recovery test: [backup_and_restore.md](backup_and_restore.md).
 
 ## Troubleshooting
 

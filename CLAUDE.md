@@ -29,6 +29,8 @@ npm start                         # deploy-commands then apps/bot/index.js
 npm run db-init                   # creates data/goobster.sqlite (schema is also applied on every DB open) and seeds self-docs
 npm run docs:seed                 # seed documentation/** + README.md into self_docs (-- --embed also waits for embeddings)
 npm run docs:check                # parse-only corpus validation, no DB (also runs at Docker image build)
+npm run backup -- --out <dir>     # archive the installation (config.json encrypted under a passphrase); see documentation/backup_and_restore.md
+npm run restore -- <archive dir>  # restore it (bot stopped); refuses another engine/schema; the instance comes back paused
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck:web, build:web, then the Jest matrix as **named groups** (`tests/ciGroups.js`) twice — once on SQLite and once on Postgres (`GOOBSTER_DB_URL` set, pgvector image). A change must pass on **both engines**. A separate `test (playwright)` job runs `npm run test:e2e`. Optional live provider tests run on trusted `main` pushes and `workflow_dispatch` only; missing secrets skip, they do not drop mocked coverage. See `documentation/adr/0007-ci-test-groups.md`.

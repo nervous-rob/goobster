@@ -190,6 +190,12 @@ await runtime.stop();
 - **Discord-bound workers** only with a live client: the guild heartbeat,
   the agent tracker, the monologue, the exchange risk engine. Without one
   they are logged as *skipped*, not failed.
+- **Paused instance** (`instance_state.paused`, the state a restore leaves
+  behind - [backup_and_restore.md](backup_and_restore.md)): only the event
+  bus and history retention start; the startup reconciliation and every
+  scheduler wait, the process polls the flag every `PAUSE_POLL_MS`, and the
+  workers start on their own when the operator resumes from the Host room.
+  The handle reports `pausedAtStart` and the log says `Skipped: paused`.
 
 `apps/bot/index.js` calls it on `ClientReady` with the discord.js client;
 `apps/api/index.js` calls it with `client: null` and the gateway for its
