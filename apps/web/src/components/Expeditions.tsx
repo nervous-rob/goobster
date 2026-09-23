@@ -7,6 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useMe } from '../hooks/useSession';
 import { Modal } from './Modal';
+import { BriefView, ExpeditionBriefs } from './ExpeditionBrief';
 import type { ContinuationProposal, Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
 
 const STATUS_ICONS: Record<string, string> = {
@@ -451,6 +452,7 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
+    const [openBriefId, setOpenBriefId] = useState<number | null>(null);
     const detail = useQuery({
         queryKey: keys.spitballExpedition(id),
         queryFn: () => api.spitballExpedition(id) as Promise<ExpeditionDetail>,
@@ -496,6 +498,7 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
         }
     }
 
+    if (openBriefId !== null) return <BriefView briefId={openBriefId} onBack={() => setOpenBriefId(null)} />;
     if (detail.isPending) return <div className="empty">Loading…</div>;
     if (detail.isError) return <div className="empty">{(detail.error as Error).message}</div>;
     const { expedition, cycles, sources, leads } = detail.data;
@@ -593,6 +596,8 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
                     ))}
                 </div>
             )}
+
+            <ExpeditionBriefs expedition={expedition} onOpen={setOpenBriefId} />
         </div>
     );
 }

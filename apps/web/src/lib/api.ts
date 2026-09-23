@@ -1,4 +1,4 @@
-import type { AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
+import type { AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 
@@ -554,6 +554,24 @@ export const api = {
         request(`/api/app/spitball/expeditions/${id}/cancel`, { method: 'POST' }),
     spitballClaims: (id: number | string) =>
         request(`/api/app/spitball/expeditions/${id}/claims`),
+    // Research briefs (#254): private to the expedition's owner.
+    spitballBriefs: (expeditionId: number | string) =>
+        request<{ briefs: BriefSummary[] }>(`/api/app/spitball/expeditions/${expeditionId}/briefs`),
+    spitballGenerateBrief: (expeditionId: number | string) =>
+        request<BriefDetail>(`/api/app/spitball/expeditions/${expeditionId}/briefs`, { method: 'POST' }),
+    spitballBrief: (briefId: number | string) =>
+        request<BriefDetail>(`/api/app/spitball/briefs/${briefId}`),
+    spitballBriefOverlay: (briefId: number | string, body: { edits: Array<{ target: string; text: string; type: 'wording' | 'factual'; note?: string | null }>; expectedRevision: number }) =>
+        request<BriefDetail>(`/api/app/spitball/briefs/${briefId}/overlay`, { method: 'PUT', body }),
+    spitballBriefReview: (briefId: number | string, body: { marks: Record<string, string | null>; rationale?: Record<string, string>; gates: Record<string, boolean | null>; notes?: string | null; expectedRevision: number }) =>
+        request<BriefDetail>(`/api/app/spitball/briefs/${briefId}/review`, { method: 'PUT', body }),
+    spitballBriefAccept: (briefId: number | string, accepted: boolean) =>
+        request<BriefDetail>(`/api/app/spitball/briefs/${briefId}/accept`, { method: 'POST', body: { accepted } }),
+    spitballBriefUse: (briefId: number | string, used: boolean, note?: string | null) =>
+        request<BriefDetail>(`/api/app/spitball/briefs/${briefId}/use`, { method: 'POST', body: { used, note: note ?? null } }),
+    spitballBriefExportUrl: (briefId: number | string) => `/api/app/spitball/briefs/${briefId}/export.md?download=1`,
+    spitballBriefMeasure: (days = 30) =>
+        request<BriefMeasure>(`/api/app/spitball/briefs/measure?days=${encodeURIComponent(String(days))}`),
     spitballNoteEvidence: (nodeId: number | string) =>
         request(`/api/app/spitball/notes/${nodeId}/evidence`),
     spitballNotes: (scope: string, filters: {

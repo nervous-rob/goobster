@@ -553,6 +553,133 @@ export type ExpeditionDetail = {
     leads: Lead[];
 };
 
+/** Research brief (#254, documentation/research_brief.md). */
+export type BriefEditType = 'none' | 'wording' | 'factual';
+export type BriefClaimMark = 'supported' | 'unsupported' | 'missing a qualification';
+export type BriefQualityStatus = 'unreviewed' | 'not-ready' | 'ready-to-show';
+
+export type BriefMeta = {
+    id: number;
+    expeditionId: number;
+    status: 'GENERATING' | 'READY' | 'FAILED';
+    payer: string | null;
+    generatedAt: string | null;
+    generatedHash: string | null;
+    promptVersion: number | null;
+    model: { provider: string | null; name: string | null };
+    errorCode: string | null;
+    lastError: string | null;
+    overlayRevision: number;
+    reviewRevision: number;
+    acceptedAt: string | null;
+    usedAt: string | null;
+    useNote: string | null;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type BriefSummary = BriefMeta & {
+    editType: BriefEditType | null;
+    quality: BriefQualityStatus | null;
+    findings: number;
+};
+
+export type BriefBlock = {
+    id: string;
+    generated: string;
+    edited: string | null;
+    editType: 'wording' | 'factual' | null;
+    editNote: string | null;
+    editedAt: string | null;
+    text: string;
+    claimIds?: number[];
+    cited?: boolean;
+    citations?: number[];
+    kind?: string;
+};
+
+export type BriefCitation = {
+    n: number;
+    claimId: number;
+    sourceId: number;
+    claimText: string;
+    claimKind: string;
+    confidence: number;
+    sourceLocation: string | null;
+    sourceTitle: string | null;
+    url: string | null;
+    publisher: string | null;
+    author: string | null;
+    publishedAt: string | null;
+    retrievedAt: string | null;
+};
+
+export type BriefEvidenceNote = { kind: string; text: string; findingId?: string };
+
+export type BriefOverlayEdit = { target: string; text: string; type: 'wording' | 'factual'; note: string | null; editedAt: string };
+
+export type BriefReview = {
+    marks: Record<string, BriefClaimMark>;
+    rationale: Record<string, string>;
+    gates: { noUnsupportedClaims: boolean | null; weakEvidenceLabelled: boolean | null; disagreementRepresented: boolean | null };
+    notes: string | null;
+    reviewedAt: string | null;
+};
+
+export type BriefQuality = {
+    status: BriefQualityStatus;
+    parts: { noUnsupportedClaims: boolean | null; weakEvidenceLabelled: boolean | null; disagreementRepresented: boolean | null; editsWordingOnly: boolean };
+    counts: { findings: number; marked: number; supported: number; unsupported: number; missingQualification: number };
+    editType: BriefEditType;
+    reviewedAt: string | null;
+    unreviewed: string[];
+    reasons: string[];
+};
+
+export type BriefDetail = {
+    brief: BriefMeta;
+    generated: {
+        promptVersion: number;
+        summary: string;
+        findings: Array<{ id: string; text: string; claimIds: number[]; cited: boolean }>;
+        limitations: Array<{ id: string; kind: string; text: string; claimIds: number[] }>;
+        evidenceNotes: BriefEvidenceNote[];
+        citations: BriefCitation[];
+        evidence: { expeditionId: number; seed: string; intent: string | null; lens: string | null; cycles: number; sourceCount: number; claimCount: number };
+    } | null;
+    overlay: { edits: BriefOverlayEdit[] };
+    review: BriefReview | null;
+    rendered: {
+        summary: BriefBlock;
+        findings: BriefBlock[];
+        limitations: BriefBlock[];
+        evidenceNotes: BriefEvidenceNote[];
+        citations: BriefCitation[];
+        editType: BriefEditType;
+    } | null;
+    quality: BriefQuality | null;
+    integrity: 'verified' | 'mismatch' | null;
+};
+
+export type BriefMeasure = {
+    days: number;
+    since: string;
+    briefs: {
+        total: number; ready: number; failed: number; generating: number;
+        accepted: number; used: number; acceptedAndUsed: number;
+        editType: Record<BriefEditType, number>;
+        quality: Record<BriefQualityStatus, number>;
+    };
+    expeditions: number;
+    cost: {
+        status: 'unavailable' | 'provisional' | 'settled';
+        totals: { actualTokens: number; estimatedTokens: number; resources: Record<string, number>; failures: number };
+        perAccepted: { actualTokens: number; resources: Record<string, number> } | null;
+        acceptedBriefIds: number[];
+        note: string;
+    };
+};
+
 export type AppConfig = {
     clientId: string;
     devMode: boolean;

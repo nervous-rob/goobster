@@ -32,6 +32,8 @@ export const keys = {
     spitball: ['spitball'] as const,
     spitballExpedition: (id: number | string) => ['spitball', String(id)] as const,
     spitballClaims: (id: number | string) => ['spitball', String(id), 'claims'] as const,
+    spitballBriefs: (expeditionId: number | string) => ['spitball', String(expeditionId), 'briefs'] as const,
+    spitballBrief: (briefId: number | string) => ['spitball-brief', String(briefId)] as const,
     spitballNoteEvidence: (nodeId: number | string) => ['spitball-evidence', String(nodeId)] as const,
     spitballNotes: (scope: string, filters: Record<string, string> = {}) =>
         ['spitball-notes', scope, filters] as const,
