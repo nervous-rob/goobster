@@ -30,8 +30,10 @@ const { dmScopeId } = require('../utils/dmScope');
  *   and the user's Observatory (project registry, job records, and the
  *   whole on-disk workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
- *   counts kept), work_failures (actor nulled, row kept), tavern adventure
- *   createdBy, and tavern log attribution.
+ *   counts kept), work_failures / resource_events / operator_audit (actor,
+ *   payer and target nulled, rows kept), usage_reservations where someone
+ *   else pays (actor nulled; the person's own paid rows are deleted),
+ *   tavern adventure createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
  *   internal-monologue thoughts/scratchpad notes, knowledge-graph nodes,
  *   and tavern adventure-log prose that mention the user by name without
@@ -450,6 +452,15 @@ class PrivacyService {
             executionAdmissions: await db.all('SELECT resource, state, createdAt, startedAt, expiresAt FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope }),
             // Failed work attributed to the person (kind, code, short reason - never a body).
             workFailures: await require('./workFailureService').listForUser(userId, { limit: 100 }),
+            // Non-token cost events, token reservations and operator actions
+            // that name the person (documentation/work_ledger.md).
+            resourceEvents: await require('./resourceEventService').listForUser(userId, { limit: 100 }),
+            usageReservations: await db.all(
+                `SELECT workKind, workId, estimatedTokens, actualTokens, status, createdAt FROM usage_reservations
+                 WHERE actor = @userId OR payer = @userId ORDER BY createdAt DESC LIMIT 100`,
+                { userId }
+            ),
+            operatorAudit: await require('./operatorAuditService').listForUser(userId, { limit: 100 }),
             tutorials: await require('./tutorialService').summarizeForUser(userId),
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
@@ -1041,8 +1052,22 @@ class PrivacyService {
                 'UPDATE command_log SET userId = NULL WHERE userId = @userId', { userId }
             )).changes;
             // work_failures (#256): the actor is nulled, the row stays so
-            // the operator's failure counts stay whole.
+            // the operator's failure counts stay whole. resource_events and
+            // operator_audit get the same treatment (actor / payer / target
+            // nulled, row kept). usage_reservations (#248): the person as
+            // actor is nulled where someone else pays; as payer their rows
+            // and budget lock go - no cap applies to an account that no
+            // longer exists (documentation/work_ledger.md).
             counts.anonymizedWorkFailures = await require('./workFailureService').forgetUser(userId);
+            counts.anonymizedResourceEvents = await require('./resourceEventService').forgetUser(userId);
+            counts.anonymizedOperatorAudit = await require('./operatorAuditService').forgetUser(userId);
+            counts.anonymizedUsageReservations = (await db.run(
+                'UPDATE usage_reservations SET actor = NULL WHERE actor = @userId AND payer <> @userId', { userId }
+            )).changes;
+            counts.deletedUsageReservations = (await db.run(
+                'DELETE FROM usage_reservations WHERE payer = @userId', { userId }
+            )).changes;
+            await db.run('DELETE FROM admission_locks WHERE resource = @lock', { lock: `budget:${userId}` });
 
             // Activity counters likewise: userId nulled, counts kept so
             // server-wide /wrapped totals stay accurate. NULLs are distinct
@@ -1271,6 +1296,11 @@ class PrivacyService {
                 'SELECT COUNT(*) AS c FROM command_log WHERE userId = @userId', { userId }
             )).c,
             work_failures: await require('./workFailureService').countForUser(userId),
+            resource_events: await require('./resourceEventService').countForUser(userId),
+            operator_audit: await require('./operatorAuditService').countForUser(userId),
+            usage_reservations: (await db.get(
+                'SELECT COUNT(*) AS c FROM usage_reservations WHERE actor = @userId OR payer = @userId', { userId }
+            )).c,
             guild_activity: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @userId', { userId }
             )).c,
