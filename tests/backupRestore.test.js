@@ -311,6 +311,35 @@ describe('backup', () => {
         expect(fs.existsSync(path.join(dir, 'config.json.enc'))).toBe(false);
     });
 
+    (PG ? test : test.skip)('a pg_dump older than the server is reported as a version mismatch with the fix, and GOOBSTER_PG_BIN picks the tools', async () => {
+        // The exact failure CI hit: Ubuntu's pg_dump 16 against a Postgres 17 service.
+        const fakeBin = path.join(ROOT, 'fake-pg-bin');
+        fs.mkdirSync(fakeBin, { recursive: true });
+        fs.writeFileSync(path.join(fakeBin, 'pg_dump'), [
+            '#!/bin/sh',
+            'echo "pg_dump: error: aborting because of server version mismatch" >&2',
+            'echo "pg_dump: detail: server version: 17.11 (Debian 17.11-1.pgdg12+2); pg_dump version: 16.15 (Ubuntu 16.15-1.pgdg24.04+2)" >&2',
+            'exit 1'
+        ].join('\n'), { mode: 0o755 });
+        process.env.GOOBSTER_PG_BIN = fakeBin;
+        try {
+            const error = await expectBackupError(
+                backupService.createBackup({ destDir: path.join(ROOT, 'out-mismatch'), includeConfig: false, logger: quiet }),
+                'TOOL_VERSION_MISMATCH'
+            );
+            expect(error.message).toMatch(/server version: 17\.11/);
+            expect(error.message).toMatch(/GOOBSTER_PG_BIN/);
+
+            process.env.GOOBSTER_PG_BIN = path.join(ROOT, 'no-such-bin');
+            await expectBackupError(
+                backupService.createBackup({ destDir: path.join(ROOT, 'out-missing'), includeConfig: false, logger: quiet }),
+                'TOOL_MISSING'
+            );
+        } finally {
+            delete process.env.GOOBSTER_PG_BIN;
+        }
+    });
+
     test('inspect rejects directories that are not archives and manifests it cannot trust', async () => {
         expect(() => backupService.inspectBackup(ROOT)).toThrow(expect.objectContaining({ code: 'NOT_AN_ARCHIVE' }));
         const broken = path.join(ROOT, 'broken-archive');

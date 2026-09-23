@@ -18,6 +18,8 @@ npm run restore  -- <archive dir> [--force] [--accept-schema-change] [--without-
 
 The bot and the api may keep running during a backup (SQLite uses the online-backup API; Postgres uses `pg_dump`). **Stop them before a restore.**
 
+On Postgres the client tools must be **at least the server's major version**: `pg_dump` refuses a newer server (`TOOL_VERSION_MISMATCH`, which names both versions). Install the matching `postgresql-client-<major>` and either put its bin directory first on PATH or set `GOOBSTER_PG_BIN=/usr/lib/postgresql/17/bin` (any directory holding `pg_dump` and `pg_restore`); Debian's `pg_wrapper` otherwise picks the version of the local cluster, not the newest installed. CI installs `postgresql-client-17` for the same reason.
+
 ## What an archive contains
 
 An archive is a directory, `goobster-backup-<UTC stamp>/`, written under `<data dir>/backups/` unless `--out` says otherwise:
@@ -131,4 +133,4 @@ Run this before the invited pilot ([#265](https://github.com/nervous-rob/goobste
 | CLI | `scripts/backup.js`, `scripts/restore.js`, `scripts/lib/passphrase.js` |
 | Tests | `tests/backupRestore.test.js` (CI group `core`, both engines) |
 
-Error codes a restore can stop with: `NOT_AN_ARCHIVE`, `BAD_MANIFEST`, `BAD_FORMAT`, `ENGINE_MISMATCH`, `SCHEMA_MISMATCH`, `BAD_PASSPHRASE`, `TARGET_NOT_EMPTY`, `TOOL_MISSING` (no `pg_dump`/`pg_restore` on PATH), `TOOL_FAILED`. A backup can stop with `PASSPHRASE_REQUIRED` or `EXISTS`.
+Error codes a restore can stop with: `NOT_AN_ARCHIVE`, `BAD_MANIFEST`, `BAD_FORMAT`, `ENGINE_MISMATCH`, `SCHEMA_MISMATCH`, `BAD_PASSPHRASE`, `TARGET_NOT_EMPTY`, `TOOL_MISSING` (no `pg_dump`/`pg_restore` on PATH or under `GOOBSTER_PG_BIN`), `TOOL_VERSION_MISMATCH` (client tools older than the server), `TOOL_FAILED`. A backup can stop with `PASSPHRASE_REQUIRED`, `EXISTS`, or the same three tool codes.

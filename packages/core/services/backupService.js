@@ -168,14 +168,36 @@ function countFiles(dir) {
     return { files, bytes };
 }
 
+/**
+ * Where the PostgreSQL client tools live. `GOOBSTER_PG_BIN` points at a
+ * specific version's bin directory (for example
+ * `/usr/lib/postgresql/17/bin`) when the one on PATH does not match the
+ * server; otherwise PATH decides.
+ */
+function toolPath(command, env = process.env) {
+    return env.GOOBSTER_PG_BIN ? path.join(env.GOOBSTER_PG_BIN, command) : command;
+}
+
 async function runTool(command, args, { env = process.env } = {}) {
+    const executable = toolPath(command, env);
     try {
-        return await execFileAsync(command, args, { env, maxBuffer: 64 * 1024 * 1024 });
+        return await execFileAsync(executable, args, { env, maxBuffer: 64 * 1024 * 1024 });
     } catch (error) {
         if (error.code === 'ENOENT') {
-            throw new BackupError('TOOL_MISSING', `${command} is not installed or not on PATH. Install the PostgreSQL client tools and retry.`, { cause: error });
+            throw new BackupError('TOOL_MISSING',
+                `${executable} is not installed or not on PATH. Install the PostgreSQL client tools matching your server's major version `
+                + '(or point GOOBSTER_PG_BIN at their bin directory) and retry.', { cause: error });
         }
         const stderr = String(error.stderr || '').trim();
+        if (/server version mismatch/i.test(stderr)) {
+            // pg_dump / pg_restore refuse a server of a newer major version.
+            const detail = stderr.split('\n').find(line => /server version:/i.test(line)) || '';
+            throw new BackupError('TOOL_VERSION_MISMATCH',
+                `${command} is older than the database server${detail ? ` (${detail.replace(/^.*?detail:\s*/i, '')})` : ''}. `
+                + 'Install the PostgreSQL client tools for the server\'s major version and put them first on PATH, '
+                + 'or set GOOBSTER_PG_BIN to their bin directory (for example /usr/lib/postgresql/17/bin).',
+                { cause: error, stderr });
+        }
         throw new BackupError('TOOL_FAILED', `${command} failed (exit ${error.code ?? '?'})${stderr ? `: ${stderr.split('\n').slice(-5).join(' | ')}` : ''}`, { cause: error });
     }
 }
