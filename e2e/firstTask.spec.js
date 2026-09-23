@@ -1,10 +1,12 @@
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
-const C = require('./constants');
+// Separate account: this journey deliberately keeps a note; shared owner
+// fixtures have exact note-count assertions in other suites.
+const FIRST_TASK_USER = '990000000000000266';
 
 test('provider-free first task: evidence, explicit keep, acceptance, export, resume and reset', async ({ page }) => {
-    await login(page);
-    await page.request.post('/e2e/fixtures/tutorial-progress', { data: { userId: C.OWNER, autoStart: false, rows: [] } });
+    await login(page, { userId: FIRST_TASK_USER, name: 'First task learner' });
+    await page.request.post('/e2e/fixtures/tutorial-progress', { data: { userId: FIRST_TASK_USER, autoStart: false, rows: [] } });
     let paidCalls = 0;
     page.on('request', request => {
         if (request.method() === 'POST' && /\/expeditions(?:\?|$)|\/briefs(?:\?|$)|\/messages(?:\?|$)/.test(request.url())) paidCalls++;
@@ -50,6 +52,6 @@ test('provider-free first task: evidence, explicit keep, acceptance, export, res
     await row.getByRole('button', { name: 'Reset', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
     await expect(row).toContainText('Not started');
-    const notes = await page.request.get(`/api/app/spitball/notes?scope=${encodeURIComponent(`dm:${C.OWNER}`)}&view=knowledge`);
+    const notes = await page.request.get(`/api/app/spitball/notes?scope=${encodeURIComponent(`dm:${FIRST_TASK_USER}`)}&view=knowledge`);
     expect((await notes.json()).notes.some(note => note.label === 'Tide-pool anemones')).toBe(true);
 });
