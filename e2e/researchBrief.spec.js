@@ -31,6 +31,8 @@ test('write, read, edit, review, accept and export a research brief; another acc
     await expect(view.getByText('not used yet')).toBeVisible();
     const summary = view.locator('.brief-block[data-target="summary"]');
     await expect(summary.locator('.brief-text')).toContainText(C.BRIEF_SUMMARY);
+    await expect(summary.locator('.brief-cite')).toHaveText('[1]');
+    await expect(summary.locator('.brief-cite')).toHaveAttribute('href', '#brief-source-1');
     await expect(summary.locator('.brief-generated-marker')).toHaveText('generated text');
     const finding = view.locator('.brief-block[data-target="finding:F1"]');
     await expect(finding.locator('.brief-text')).toContainText(C.BRIEF_FINDING);
@@ -75,7 +77,7 @@ test('write, read, edit, review, accept and export a research brief; another acc
     expect(markdown).toContain(`# Research brief: ${C.EXPEDITION_SEED}`);
     expect(markdown).toContain('**Review status:** Ready to show a second person (owner-judged).');
     expect(markdown).toMatch(/\*\*Accepted:\*\* yes \(.* UTC\)\. \*\*Used:\*\* no\./);
-    expect(markdown).toContain(C.BRIEF_EDITED_SUMMARY);
+    expect(markdown).toContain(`${C.BRIEF_EDITED_SUMMARY} [1]`);
     expect(markdown).toContain(`✎ Edited (wording) — shorter. Original generated text: ${C.BRIEF_SUMMARY}`);
     expect(markdown).toContain(`**F1.** ${C.BRIEF_FINDING} [1]`);
     expect(markdown).toContain(`[1] ${C.CLAIM_TEXT}`);
