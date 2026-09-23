@@ -97,6 +97,16 @@ function mountWorkspace(app, ctx, h) {
         })
     ));
 
+    // The person's own diagnostics: non-token resources their work spent
+    // and their work_failures rows (documentation/work_ledger.md). The same
+    // read model the operator sees for any account - here, only your own.
+    app.get('/api/app/usage/diagnostics', requireAuth, chatRoute(async (req) =>
+        require('../../services/accountSupportService').view({
+            principalId: req.webUser.userId,
+            days: req.query.days ? Number(req.query.days) : 30
+        })
+    ));
+
     // --- Platform integrations (Notion, GitHub, ...) -------------------------
     // The catalog with per-user connection status (tokens never included)
     app.get('/api/app/integrations', requireAuth, integrationRoute(async (req) => ({

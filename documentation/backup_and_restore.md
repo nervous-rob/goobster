@@ -74,8 +74,8 @@ The restore runs these steps in order and stops at the first that fails; the gat
 2. **A target with data is protected.** If any application table already has rows the restore refuses (`TARGET_NOT_EMPTY`) unless `--force`. On SQLite, `--force` moves the current file (and its `-wal`/`-shm`) to `goobster.sqlite.pre-restore-<stamp>` first; on Postgres the tables in the schema are dropped and recreated by `pg_restore --single-transaction`.
 3. **Database**, then **file sets** (copied over the installation's directories), then **`config.json`**.
 4. **In-flight work is failed, never resumed.** Anything that was running when the backup was taken - Observatory jobs (`RUNNING` or `INTERRUPTED`), expeditions and their open cycle, mission steps, sandbox and integration requests, firing watches, started trigger deliveries, knowledge-reflection runs, and streaming web turns - is set to its failed state with one fixed reason, **`interrupted by restore`**, and gets one `work_failures` row (`code INTERRUPTED_BY_RESTORE`, the owner as `actor`). Process-bound leases and queues (`execution_admissions`, `web_live_turns`, `web_chat_queue`) are cleared. Nothing retries them: the Observatory's auto-resume takes only `INTERRUPTED` jobs and the expedition runner only `QUEUED` ones, and none of these are either any more.
-5. **The instance is paused** (`instance_state.paused`, with the archive name and what was interrupted) and the restore is recorded (`instance_state.lastRestore`).
-6. **Verification.** Every table count in the manifest is compared with the restored database; mismatches are printed. Tables the restore itself writes or clears (`instance_state`, `work_failures`, leases, queues, `self_docs`) are exempt.
+5. **The instance is paused** (`instance_state.paused`, with the archive name and what was interrupted) and the restore is recorded (`instance_state.lastRestore`) - and audited (`operator_audit` rows `instance.restore` and, on resume, `instance.resume`; [work_ledger.md](work_ledger.md)).
+6. **Verification.** Every table count in the manifest is compared with the restored database; mismatches are printed. Tables the restore itself writes or clears (`instance_state`, `work_failures`, `operator_audit`, leases, queues, `self_docs`) are exempt.
 
 The report ends with the **secrets to re-enter**: `config.json` when it was not restored, and every environment secret the manifest says was set.
 
@@ -124,7 +124,7 @@ Run this before the invited pilot ([#265](https://github.com/nervous-rob/goobste
 |---|---|
 | Archive, inspect, restore, interrupt in-flight work | `packages/core/services/backupService.js` |
 | Pause flag, resume, skipped schedules | `packages/core/services/instanceStateService.js` (`instance_state` table) |
-| Failure ledger (#256 groundwork) | `packages/core/services/workFailureService.js` (`work_failures` table) |
+| Failure ledger and operator audit ([work_ledger.md](work_ledger.md), #256) | `packages/core/services/workFailureService.js` (`work_failures`), `packages/core/services/operatorAuditService.js` (`operator_audit`) |
 | Passphrase encryption | `packages/core/utils/passphraseCrypto.js` |
 | Storage description and table listing across engines | `db.describeStorage()`, `db.listTables()` in `packages/core/db/index.js` |
 | Runtime gate | `packages/core/runtime/coreRuntime.js` (`pausedAtStart`, `PAUSE_POLL_MS`) |

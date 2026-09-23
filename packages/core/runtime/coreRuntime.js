@@ -248,6 +248,13 @@ async function startCoreRuntime({
             reflection.start();
             stoppers.push(async () => reflection.stop?.());
         });
+        await step('ledgerRetention', () => {
+            // work_failures / resource_events / operator_audit retention
+            // (documentation/work_ledger.md); lock-guarded like the rest.
+            const ledgerRetention = load('ledgerRetentionService', () => require('../services/ledgerRetentionService'));
+            ledgerRetention.start();
+            stoppers.push(async () => ledgerRetention.stop?.());
+        });
 
         // --- Discord-bound workers (need the live client) ---------------------
         if (withDiscord && client) {

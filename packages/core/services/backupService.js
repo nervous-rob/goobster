@@ -49,7 +49,7 @@ const INTERRUPTED_CODE = 'INTERRUPTED_BY_RESTORE';
  * process-bound leases and queues, and self_docs refills on the next start.
  */
 const COUNT_EXEMPT = new Set([
-    'instance_state', 'work_failures', 'execution_admissions', 'admission_locks',
+    'instance_state', 'work_failures', 'operator_audit', 'execution_admissions', 'admission_locks',
     'web_live_turns', 'web_chat_queue', 'self_docs', 'data_migrations'
 ]);
 

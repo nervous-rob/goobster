@@ -42,6 +42,7 @@ const GROUPS = [
             'slidingWindowLimit',
             'tableManager',
             'userIntegrationService',
+            'workLedger',
             'workshopPinMigration',
             'wrappedService'
         ])

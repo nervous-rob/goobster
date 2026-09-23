@@ -25,6 +25,7 @@
 const crypto = require('node:crypto');
 const db = require('../db');
 const logger = require('../utils/logger');
+const workContext = require('../utils/workContext');
 const expeditionService = require('./spitballExpeditionService');
 const defaultPipeline = require('./spitballResearchPipeline');
 
@@ -132,7 +133,16 @@ class SpitballExpeditionRunner {
     async _runLoop(expeditionId) {
         const claimed = await this.service.claimForRun(expeditionId, { runnerId: this.runnerId });
         if (!claimed) return;
+        // Every search call, sandbox second and failure inside the loop is
+        // this expedition's (utils/workContext.js).
+        const owner = await this.service.getById(expeditionId);
+        return workContext.run(
+            { kind: 'expedition', id: expeditionId, actor: owner?.userId || null },
+            () => this._runCycles(expeditionId)
+        );
+    }
 
+    async _runCycles(expeditionId) {
         while (true) {
             const expedition = await this.service.getById(expeditionId);
             if (!expedition || expedition.status !== 'RUNNING') return; // paused/cancelled externally

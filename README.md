@@ -170,6 +170,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Application identity (principals, accounts, invitations, native sign-in, verified email, outbound mail) | `documentation/identity.md` |
 | Running without Discord (adapter switch, assistant identity, the Inbox, runtime modes, people discovery) | `documentation/independent_runtime.md` |
 | Backup and tested restore (`npm run backup` / `npm run restore`, the paused instance, the recovery test) | `documentation/backup_and_restore.md` |
+| The work ledger (failures, resource events, operator audit, cost per accepted result) | `documentation/work_ledger.md` |
 
 ### Planned product work
 

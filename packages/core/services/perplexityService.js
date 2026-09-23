@@ -41,6 +41,8 @@ class PerplexityService {
         if (!this.apiKey) {
             throw new Error('Web search is not available: Perplexity API key is not configured.');
         }
+        // A paid call, whatever the outcome (documentation/work_ledger.md).
+        await require('./resourceEventService').record({ kind: 'search_call', provider: 'perplexity' });
         try {
             const response = await axios.post(
                 `${this.baseURL}/chat/completions`,
@@ -95,6 +97,7 @@ class PerplexityService {
      */
     async searchImages(query) {
         if (!this.apiKey) return [];
+        await require('./resourceEventService').record({ kind: 'search_call', provider: 'perplexity' });
         try {
             const response = await axios.post(
                 `${this.baseURL}/chat/completions`,

@@ -5,6 +5,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { Link } from '@tanstack/react-router';
 import { MenuButton } from '../shell/MenuButton';
+import { FailureList, ResourceTotals } from '../components/WorkLedger';
 
 type DayRow = { day: string; inputTokens?: number; outputTokens?: number; calls?: number };
 type ModelRow = { provider: string; model: string; calls: number; inputTokens: number; outputTokens: number };
@@ -284,7 +285,37 @@ export function UsageRoom() {
                         )}
                     </>
                 )}
+                <DiagnosticsSection days={days} />
             </div>
         </main>
+    );
+}
+
+/**
+ * The rest of what your work spent, and what went wrong with it
+ * (documentation/work_ledger.md): the same read model the host sees for
+ * any account, shown here for yourself only.
+ */
+function DiagnosticsSection({ days }: { days: number }) {
+    const diagnostics = useQuery({
+        queryKey: ['usage-diagnostics', days],
+        queryFn: () => api.usageDiagnostics(days)
+    });
+    const view = diagnostics.data;
+    return (
+        <section data-testid="usage-diagnostics" style={{ marginTop: 18 }}>
+            <div className="section-title">Other resources</div>
+            {diagnostics.isPending && <div className="hint">Loading…</div>}
+            {diagnostics.isError && <div className="hint">{(diagnostics.error as Error).message}</div>}
+            {view && <ResourceTotals totals={view.resources} days={view.days} />}
+            <div className="section-title" style={{ marginTop: 18 }}>What went wrong</div>
+            {view && (
+                <FailureList view={view}
+                    emptyText={`Nothing failed in the last ${view.days} days. When a chat turn, a research expedition, a project run, a scheduled task or a delivery fails, it is listed here with a code and a short reason - never the text of what you asked.`} />
+            )}
+            <div className="hint" style={{ marginTop: 10 }}>
+                Failures are kept for 30 days, resource counts for 90. Erasing your data keeps the counts but removes your name from them.
+            </div>
+        </section>
     );
 }

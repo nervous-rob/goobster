@@ -345,7 +345,13 @@ class AttentionWatchService {
 
         this._running++;
         try {
-            await this._runTurn(watch, event);
+            // The turn is the watch's work: its cost and any failure inside
+            // the chat pipeline are recorded against the watch.
+            await require('../utils/workContext').run(
+                { kind: 'watch', id: watch.id, actor: watch.userId },
+                () => this._runTurn(watch, event),
+                { replace: true }
+            );
             const completed = (await db.run(
                 `UPDATE attention_watches
                  SET fireCount = fireCount + 1,
@@ -377,6 +383,14 @@ class AttentionWatchService {
                 { id: watch.id, error: String(error.message || error).slice(0, 500) }
             )).changes > 0;
             if (!failed) return;
+            await require('./workFailureService').note({
+                kind: 'watch',
+                workId: watch.id,
+                actor: watch.userId || null,
+                phase: 'fire',
+                code: String(error?.code || 'FIRE_FAILED').slice(0, 64),
+                reason: error.message
+            });
             try {
                 await require('./projectMissionService').onWatchFired({ watchId: watch.id, failed: true });
             } catch { /* mission hook is best-effort */ }

@@ -55,8 +55,34 @@ const {
 const { deliverResponse } = require('./chat/responder');
 const { handleReactionAdd, handleReactionRemove } = require('./chat/reactions');
 const { getThreadName } = require('./chat/threadManager');
+const workContext = require('./workContext');
+const workFailureService = require('../services/workFailureService');
 
+/**
+ * Every chat turn runs as a piece of work (utils/workContext.js): the
+ * failure ledger and the resource ledger key on it. A turn started by an
+ * automation, a watch or an expedition keeps the outer work - its cost
+ * and its failure belong to the thing that woke it.
+ */
 async function handleChatInteraction(interaction, thread = null) {
+    return workContext.run({
+        kind: 'chat',
+        id: interaction.turnId || interaction.id || null,
+        actor: interaction.user?.id || null
+    }, () => runChatInteraction(interaction, thread));
+}
+
+/** Write the failure row for a turn that ended in an error (never throws). */
+function recordTurnFailure(interaction, phase, error) {
+    return workFailureService.note({
+        phase,
+        code: String(error?.code || error?.name || 'TURN_FAILED').slice(0, 64),
+        // The message is an error string, never the prompt or the reply.
+        reason: error?.message || 'the turn failed'
+    });
+}
+
+async function runChatInteraction(interaction, thread = null) {
     let conversationId = null;
     let guildConvId = null;
     let userId = null;
@@ -875,6 +901,7 @@ async function handleChatInteraction(interaction, thread = null) {
                 requestId: `${interaction.id}-${Date.now()}`,
                 channel: interaction.channel?.name || 'unknown'
             });
+            await recordTurnFailure(interaction, 'generate', error);
             
             // Use guaranteed response for AI processing errors
             await guaranteedResponse(
@@ -898,6 +925,7 @@ async function handleChatInteraction(interaction, thread = null) {
         });
 
         const errorMessage = error.message || 'Sorry, I encountered an error while processing your message.';
+        await recordTurnFailure(interaction, 'handler', error);
         
         // Use guaranteed response system for all top-level errors
         await guaranteedResponse(`❌ ${errorMessage}`, true);

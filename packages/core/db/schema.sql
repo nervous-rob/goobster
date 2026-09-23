@@ -2942,3 +2942,60 @@ CREATE TABLE IF NOT EXISTS work_failures (
 );
 CREATE INDEX IF NOT EXISTS idx_work_failures_actor ON work_failures(actor, createdAt);
 CREATE INDEX IF NOT EXISTS idx_work_failures_work ON work_failures(kind, workId);
+
+-- Non-token cost (roadmap #256): search calls, sandbox seconds, retries -
+-- one row per event, keyed by the same (workKind, workId) as work_failures
+-- and usage_reservations so cost per accepted result is one join. Never a
+-- query string or a body. Erasure nulls actor and payer, keeps the row.
+CREATE TABLE IF NOT EXISTS resource_events (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    quantity REAL NOT NULL DEFAULT 1,
+    provider TEXT,
+    workKind TEXT,
+    workId TEXT,
+    actor TEXT,
+    payer TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_resource_events_work ON resource_events(workKind, workId);
+CREATE INDEX IF NOT EXISTS idx_resource_events_actor ON resource_events(actor, createdAt);
+CREATE INDEX IF NOT EXISTS idx_resource_events_time ON resource_events(createdAt);
+
+-- Token budget reservations (roadmap #248, table decided there; created
+-- here so the #256 cost-per-result join has its other half). One row per
+-- reserve: held before a model-backed piece of work starts, settled with
+-- the actual count afterwards, released when the work never ran. The
+-- reserve / settle / release logic and the caps land with #248.
+CREATE TABLE IF NOT EXISTS usage_reservations (
+    id INTEGER PRIMARY KEY,
+    actor TEXT,
+    payer TEXT NOT NULL,
+    workKind TEXT NOT NULL,
+    workId TEXT NOT NULL,
+    admissionId TEXT,
+    estimatedTokens INTEGER NOT NULL DEFAULT 0,
+    actualTokens INTEGER,
+    status TEXT NOT NULL DEFAULT 'held' CHECK (status IN ('held', 'settled', 'released')),
+    idempotencyKey TEXT,
+    expiresAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_reservations_idem ON usage_reservations(idempotencyKey);
+CREATE INDEX IF NOT EXISTS idx_usage_reservations_payer ON usage_reservations(payer, createdAt);
+CREATE INDEX IF NOT EXISTS idx_usage_reservations_work ON usage_reservations(workKind, workId);
+
+-- What the operator changed (roadmap #256): accounts, invitations, sign-up,
+-- limits and instance settings. Shown in the Host room; kept one year.
+-- detailJson is small structured detail (a status, a role), never a token,
+-- a password or an address. Erasure nulls actor and target, keeps the row.
+CREATE TABLE IF NOT EXISTS operator_audit (
+    id INTEGER PRIMARY KEY,
+    action TEXT NOT NULL,
+    actor TEXT,
+    target TEXT,
+    detailJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_operator_audit_time ON operator_audit(createdAt);
+CREATE INDEX IF NOT EXISTS idx_operator_audit_actor ON operator_audit(actor, createdAt);

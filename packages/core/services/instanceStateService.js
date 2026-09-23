@@ -84,7 +84,27 @@ class InstanceStateService {
         if (existing) return existing;
         const record = { reason: String(reason || 'operator'), since: utcText(), by: by == null ? null : String(by), detail };
         await this.set(KEY_PAUSED, record);
+        await this._audit(record.reason === 'restore' ? 'instance.restore' : 'instance.pause', by, {
+            reason: record.reason,
+            archive: detail?.archive ?? undefined,
+            interrupted: detail?.interrupted ?? undefined
+        });
         return record;
+    }
+
+    /**
+     * operator_audit row for an instance change. `by` is a principal id
+     * from the Host room or a tool name from a CLI; only the former is an
+     * actor, the latter is kept as detail.
+     */
+    async _audit(action, by, detail = {}) {
+        const identityService = require('./identityService');
+        const isPrincipal = by != null && identityService.isPrincipalId(String(by));
+        await require('./operatorAuditService').record({
+            action,
+            actor: isPrincipal ? String(by) : null,
+            detail: { ...detail, ...(by != null && !isPrincipal ? { via: String(by) } : {}) }
+        });
     }
 
     /** @returns {Promise<Object|null>} the pause record, or null when running */
@@ -121,6 +141,11 @@ class InstanceStateService {
             return outcome;
         });
         await this._noticeMissedFollowups(skipped.followupNotices);
+        await this._audit('instance.resume', by, {
+            pausedSince: pause?.since || null,
+            pauseReason: pause?.reason || null,
+            skipped: Object.fromEntries(Object.entries(skipped).filter(([, value]) => typeof value === 'number'))
+        });
         logger.info?.(`[instance] Resumed${pause ? ` (paused since ${pause.since} UTC, reason: ${pause.reason})` : ''}; `
             + `skipped ${skipped.automations} automation(s), ${skipped.cronTriggers} cron trigger(s), `
             + `${skipped.eventTriggers} event fire(s), ${skipped.recurringFollowups} recurring follow-up(s); `

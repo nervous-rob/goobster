@@ -163,7 +163,20 @@ class InboxService {
         if (outcome?.ok) return finish('sent');
         const reason = outcome?.error || 'unknown';
         // A missing adapter is a skip, not a failure: nothing to retry.
-        return finish(reason === 'DISCORD_DISABLED' ? 'skipped' : 'failed', reason);
+        if (reason === 'DISCORD_DISABLED') return finish('skipped', reason);
+        // The item exists, so the work is done; the echo that did not reach
+        // Discord is still a failed delivery on the ledger
+        // (documentation/work_ledger.md) - the reason is the gateway's
+        // error, never the item's title or body.
+        await require('./workFailureService').note({
+            kind: 'delivery',
+            workId: row.id,
+            actor: row.userId,
+            phase: 'discord_echo',
+            code: 'DISCORD_ECHO_FAILED',
+            reason
+        });
+        return finish('failed', reason);
     }
 
     /** The compact Discord rendering of an item (the inbox keeps the whole thing). */
@@ -239,12 +252,52 @@ class InboxService {
         return visible;
     }
 
-    async _publicItem(row, noticeById = null) {
+    /**
+     * The work_failures rows behind the failure items in a page, keyed by
+     * row id; only the owner's rows resolve (the item and the row share
+     * an actor). An item whose row has been pruned keeps its text and
+     * shows no detail.
+     */
+    async _failuresByIdForRows(rows) {
+        const workFailureService = require('./workFailureService');
+        const owners = new Map();
+        for (const row of rows) {
+            if (row.sourceType !== workFailureService.INBOX_SOURCE_TYPE || row.sourceId == null) continue;
+            if (!owners.has(row.userId)) owners.set(row.userId, []);
+            owners.get(row.userId).push(row.sourceId);
+        }
+        const map = new Map();
+        for (const [userId, ids] of owners) {
+            for (const failure of await workFailureService.getManyForUser(ids, userId)) {
+                map.set(String(failure.id), failure);
+            }
+        }
+        return map;
+    }
+
+    _presentFailure(row, failureById) {
+        const workFailureService = require('./workFailureService');
+        if (row.sourceType !== workFailureService.INBOX_SOURCE_TYPE) return null;
+        const failure = failureById.get(String(row.sourceId));
+        if (!failure) return { id: Number(row.sourceId) || null, kind: null, code: null, phase: null, reason: null, workId: null, createdAt: null };
+        return {
+            id: Number(failure.id),
+            kind: failure.kind,
+            code: failure.code,
+            phase: failure.phase || null,
+            reason: failure.reason || null,
+            workId: failure.workId || null,
+            createdAt: failure.createdAt
+        };
+    }
+
+    async _publicItem(row, noticeById = null, failureById = null) {
         let attention = null;
         if (row.sourceType === activityCorrelation.SOURCE_TYPE) {
             const map = noticeById || await activityCorrelation.noticesByIdForRows([row]);
             attention = activityCorrelation.presentDelivery(row, map);
         }
+        const failure = this._presentFailure(row, failureById || await this._failuresByIdForRows([row]));
         return {
             id: row.id,
             kind: row.kind,
@@ -256,6 +309,9 @@ class InboxService {
             // Null for every other kind. Read and archive stay on this row;
             // the notice statuses are visible here and are not actions.
             attention,
+            // The work_failures row this item reports, when it is a failure
+            // notice (documentation/work_ledger.md). Null for every other item.
+            failure,
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
             archived: Boolean(row.archivedAt),
@@ -298,8 +354,9 @@ class InboxService {
         );
         const page = rows.slice(0, bounded);
         const noticeById = await activityCorrelation.noticesByIdForRows(page);
+        const failureById = await this._failuresByIdForRows(page);
         return {
-            items: await Promise.all(page.map(row => this._publicItem(row, noticeById))),
+            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById))),
             unread: await this.unreadCount(userId),
             nextCursor: rows.length > bounded ? String(page[page.length - 1].id) : null
         };

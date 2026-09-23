@@ -1017,6 +1017,18 @@ class ProjectTriggerService {
             const current = await db.get('SELECT status FROM project_trigger_deliveries WHERE id = @id', { id: row.id });
             return current?.status ?? null;
         }
+        if (status === DELIVERY.FAILED) {
+            // One ledger row per failed relay (documentation/work_ledger.md);
+            // the detail is the dispatcher's own phrase, never job output.
+            await require('./workFailureService').note({
+                kind: 'trigger',
+                workId: trigger.id,
+                actor: trigger.userId || job.userId || null,
+                phase: 'delivery',
+                code: dispatch.status === DISPATCH.RETRYABLE ? 'DELIVERY_EXHAUSTED' : 'DISPATCH_FAILED',
+                reason: detail || 'the trigger could not start its stage'
+            });
+        }
         if (status === DELIVERY.FAILED && dispatch.status === DISPATCH.RETRYABLE) {
             const gaveUp = `gave up after ${row.attempts} attempts: ${detail || 'still busy'}`;
             await this._recordOutcome(trigger.id, outcomeText('failed', gaveUp));
