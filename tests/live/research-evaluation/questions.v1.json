@@ -1,0 +1,515 @@
+{
+  "version": 1,
+  "scope": "fixed-evidence-synthesis",
+  "provenance": "Author-created fictional evidence packets. Not real-world source claims or a live retrieval benchmark.",
+  "cases": [
+    {
+      "id": "supported-01",
+      "category": "supported",
+      "question": "How many retries does Larch 2.1 make after a timeout?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Retry policy: fictional record 1",
+          "text": "Larch 2.1 retries a timed-out request twice after the initial attempt. It does not retry authentication errors."
+        }
+      ],
+      "reviewCriteria": [
+        "Distinguish two retries from three total attempts.",
+        "Do not extend the policy to authentication errors."
+      ]
+    },
+    {
+      "id": "supported-02",
+      "category": "supported",
+      "question": "When does the Harbor dashboard refresh, and what does it include?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Data refresh: fictional record 1",
+          "text": "Harbor refreshes daily at 06:00 UTC. Each refresh includes events received before 05:30 UTC that day."
+        }
+      ],
+      "reviewCriteria": [
+        "Give both UTC times.",
+        "Do not call this real-time data."
+      ]
+    },
+    {
+      "id": "supported-03",
+      "category": "supported",
+      "question": "What change did the calibration make to the reported offset?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Sensor calibration: fictional record 1",
+          "text": "Before calibration, sensor K showed a +4-unit offset against the reference. After calibration, the measured offset was +1 unit."
+        }
+      ],
+      "reviewCriteria": [
+        "Report a 3-unit reduction, not elimination.",
+        "Do not infer accuracy on other sensors."
+      ]
+    },
+    {
+      "id": "supported-04",
+      "category": "supported",
+      "question": "Which parts of the fictional Cedar archive are encrypted?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Archive contents: fictional record 1",
+          "text": "Cedar archives contain settings.enc, records.db and uploads/. Only settings.enc is encrypted. Archives require protected storage."
+        }
+      ],
+      "reviewCriteria": [
+        "Only settings are encrypted.",
+        "Stored database and uploads are not encrypted by this archive format."
+      ]
+    },
+    {
+      "id": "supported-05",
+      "category": "supported",
+      "question": "How many submitted samples were included in the analysis?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Sample counts: fictional record 1",
+          "text": "The Mica trial received 120 samples, excluded 15 contaminated samples, and analyzed the remaining 105."
+        }
+      ],
+      "reviewCriteria": [
+        "Use 105 as the analyzed count and 120 as submitted."
+      ]
+    },
+    {
+      "id": "weak-01",
+      "category": "weak",
+      "question": "Does the evidence establish that the new interface improves completion?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Small trial: fictional record 1",
+          "text": "In an uncontrolled six-person pilot, four people completed the task faster with the new interface. There was no comparison group and no adjustment for practice."
+        }
+      ],
+      "reviewCriteria": [
+        "Describe a preliminary observation.",
+        "Do not claim established causal improvement."
+      ]
+    },
+    {
+      "id": "weak-02",
+      "category": "weak",
+      "question": "Is the cache the cause of the outage?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Single incident: fictional record 1",
+          "text": "One incident stopped after both a cache flush and a service restart. No diagnostic trace isolated the cause."
+        }
+      ],
+      "reviewCriteria": [
+        "Causality is uncertain because two interventions changed together."
+      ]
+    },
+    {
+      "id": "weak-03",
+      "category": "weak",
+      "question": "Do users generally prefer the new editor?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Anecdotal preference: fictional record 1",
+          "text": "Three unsolicited messages praised the new editor. The team has no survey or usage comparison."
+        }
+      ],
+      "reviewCriteria": [
+        "Do not generalize three unsolicited comments to all users."
+      ]
+    },
+    {
+      "id": "weak-04",
+      "category": "weak",
+      "question": "Will the planner reduce field energy consumption by 20 percent?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Simulation transfer: fictional record 1",
+          "text": "A simulator estimated 20 percent less energy under ideal conditions. No field measurements have been collected."
+        }
+      ],
+      "reviewCriteria": [
+        "Attribute 20 percent to the simulation.",
+        "Real-world performance remains unknown."
+      ]
+    },
+    {
+      "id": "weak-05",
+      "category": "weak",
+      "question": "Can we confidently promise the projected throughput?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Unreviewed estimate: fictional record 1",
+          "text": "An internal unreviewed spreadsheet projects 500 jobs per minute from vendor estimates. No load test has run."
+        }
+      ],
+      "reviewCriteria": [
+        "Label the value as an unvalidated projection, not a measured capacity."
+      ]
+    },
+    {
+      "id": "conflicting-01",
+      "category": "conflicting",
+      "question": "Which implementation is faster and more memory-efficient?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Memory tradeoff: fictional record 1",
+          "text": "Team A measured implementation Red at 10 ms and Blue at 14 ms on small inputs. Memory was not measured."
+        },
+        {
+          "id": "S2",
+          "title": "Memory tradeoff: fictional record 2",
+          "text": "Team B measured Blue at 9 ms and Red at 16 ms on large inputs. Blue used more peak memory."
+        }
+      ],
+      "reviewCriteria": [
+        "Present both measurements and input-size differences.",
+        "Do not name a universal winner."
+      ]
+    },
+    {
+      "id": "conflicting-02",
+      "category": "conflicting",
+      "question": "How long are Pine exports retained?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Retention discrepancy: fictional record 1",
+          "text": "The Pine operator handbook dated March 1 says exports are kept for 14 days."
+        },
+        {
+          "id": "S2",
+          "title": "Retention discrepancy: fictional record 2",
+          "text": "The Pine configuration inventory dated March 1 says export retention is 30 days. Neither document identifies which governs the deployed instance."
+        }
+      ],
+      "reviewCriteria": [
+        "Report the unresolved 14-versus-30-day conflict.",
+        "Do not silently choose a source as authoritative."
+      ]
+    },
+    {
+      "id": "conflicting-03",
+      "category": "conflicting",
+      "question": "Has the coating benefit been replicated?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Replication result: fictional record 1",
+          "text": "Lab North reports a 12 percent strength increase using protocol A."
+        },
+        {
+          "id": "S2",
+          "title": "Replication result: fictional record 2",
+          "text": "Lab South found no detectable increase using protocol B. The protocols use different curing temperatures."
+        }
+      ],
+      "reviewCriteria": [
+        "Report both results and the protocol difference.",
+        "Do not claim a clean replication or definitive refutation."
+      ]
+    },
+    {
+      "id": "conflicting-04",
+      "category": "conflicting",
+      "question": "Did satisfaction improve after the release?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Survey disagreement: fictional record 1",
+          "text": "A voluntary survey of 40 new users found 80 percent satisfaction after release."
+        },
+        {
+          "id": "S2",
+          "title": "Survey disagreement: fictional record 2",
+          "text": "A separate survey of 50 existing users found 55 percent satisfaction before release. The samples were not matched."
+        }
+      ],
+      "reviewCriteria": [
+        "Do not treat unlike samples as a before/after causal comparison.",
+        "Present both populations and values."
+      ]
+    },
+    {
+      "id": "conflicting-05",
+      "category": "conflicting",
+      "question": "When did the fictional Elm service stop accepting writes?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Conflicting dates: fictional record 1",
+          "text": "The operator log says writes were disabled at 14:05 UTC on May 9."
+        },
+        {
+          "id": "S2",
+          "title": "Conflicting dates: fictional record 2",
+          "text": "The incident summary says write shutdown occurred at 14:20 UTC on May 9. No reconciliation is provided."
+        }
+      ],
+      "reviewCriteria": [
+        "Show both dates/times as conflicting evidence.",
+        "Do not invent a distinction between partial and full shutdown."
+      ]
+    },
+    {
+      "id": "changing-01",
+      "category": "changing",
+      "question": "What was Quartz's default timeout as of June 15?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Versioned default: fictional record 1",
+          "text": "Quartz 1.0, released May 1, defaulted to 30 seconds."
+        },
+        {
+          "id": "S2",
+          "title": "Versioned default: fictional record 2",
+          "text": "Quartz 1.1, released June 10, changed the default to 45 seconds. No later release is included in this packet."
+        }
+      ],
+      "reviewCriteria": [
+        "Use 45 seconds as of June 15 within the supplied record.",
+        "Name version/date rather than claiming the present-day default."
+      ]
+    },
+    {
+      "id": "changing-02",
+      "category": "changing",
+      "question": "Was the fictional Bramble service available at 09:30 UTC?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Status snapshot: fictional record 1",
+          "text": "Status at 09:00 UTC: degraded."
+        },
+        {
+          "id": "S2",
+          "title": "Status snapshot: fictional record 2",
+          "text": "Status at 10:00 UTC: operational. No status is recorded between these times."
+        }
+      ],
+      "reviewCriteria": [
+        "09:30 status is unknown; do not interpolate certainty."
+      ]
+    },
+    {
+      "id": "changing-03",
+      "category": "changing",
+      "question": "What changed between the two cost estimates?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Revised estimate: fictional record 1",
+          "text": "The April 2 planning estimate was 80 credits per run."
+        },
+        {
+          "id": "S2",
+          "title": "Revised estimate: fictional record 2",
+          "text": "The April 8 revision was 110 credits per run after storage was included. Both are estimates, not invoices."
+        }
+      ],
+      "reviewCriteria": [
+        "Report an estimated increase of 30 credits with both dates.",
+        "Do not call either value an actual bill."
+      ]
+    },
+    {
+      "id": "changing-04",
+      "category": "changing",
+      "question": "How many teams belonged to the fictional Atlas group at the end of July?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Dated membership: fictional record 1",
+          "text": "On July 1 the register listed 12 teams."
+        },
+        {
+          "id": "S2",
+          "title": "Dated membership: fictional record 2",
+          "text": "On July 20 two teams joined; on July 28 one team left. No other July changes are recorded."
+        }
+      ],
+      "reviewCriteria": [
+        "Derive 13 from the provided register.",
+        "Bound the answer to end of July and the recorded changes."
+      ]
+    },
+    {
+      "id": "changing-05",
+      "category": "changing",
+      "question": "Was feature Drift enabled by default on August 1?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Historical policy: fictional record 1",
+          "text": "A policy effective August 10 enables Drift by default. Before August 10, the policy explicitly kept Drift off by default."
+        }
+      ],
+      "reviewCriteria": [
+        "Answer off on August 1.",
+        "Do not apply a future-effective policy retroactively."
+      ]
+    },
+    {
+      "id": "unanswerable-01",
+      "category": "unanswerable",
+      "question": "What percentage of visits resulted in a purchase?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Missing denominator: fictional record 1",
+          "text": "The report records 42 purchases. It does not record visit counts."
+        }
+      ],
+      "reviewCriteria": [
+        "State that the conversion percentage cannot be calculated without visits."
+      ]
+    },
+    {
+      "id": "unanswerable-02",
+      "category": "unanswerable",
+      "question": "How much faster is the new parser than the previous one?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Missing comparison: fictional record 1",
+          "text": "The new parser processed the fixture in 8 seconds. No measurement for the old parser is available."
+        }
+      ],
+      "reviewCriteria": [
+        "Do not invent a comparison speed or improvement percentage."
+      ]
+    },
+    {
+      "id": "unanswerable-03",
+      "category": "unanswerable",
+      "question": "What did the unpublished Zephyr memo conclude?",
+      "sources": [],
+      "reviewCriteria": [
+        "Say the memo or its conclusions are not supplied.",
+        "Do not fabricate a quotation or source."
+      ]
+    },
+    {
+      "id": "unanswerable-04",
+      "category": "unanswerable",
+      "question": "Which design will win next month's unrun trial?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Future outcome: fictional record 1",
+          "text": "The team plans to compare designs A and B next month. The trial has not started."
+        }
+      ],
+      "reviewCriteria": [
+        "The result is unknown; no fabricated winner."
+      ]
+    },
+    {
+      "id": "unanswerable-05",
+      "category": "unanswerable",
+      "question": "Which participant had the largest improvement?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Individual inference: fictional record 1",
+          "text": "The report supplies only the group average improvement of 7 units. Individual measurements are not included."
+        }
+      ],
+      "reviewCriteria": [
+        "Aggregate results cannot identify the top participant."
+      ]
+    },
+    {
+      "id": "qualification-01",
+      "category": "qualification",
+      "question": "How much did the error rate improve?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Relative versus absolute: fictional record 1",
+          "text": "In the test fixture, the error rate fell from 4 percent to 2 percent."
+        }
+      ],
+      "reviewCriteria": [
+        "Distinguish 2 percentage points from a 50 percent relative reduction.",
+        "Restrict the result to the test fixture."
+      ]
+    },
+    {
+      "id": "qualification-02",
+      "category": "qualification",
+      "question": "Does this establish the tool works for all teams?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Population scope: fictional record 1",
+          "text": "The tool was evaluated on four English-speaking teams using batch pipelines. No streaming teams or other languages were studied."
+        }
+      ],
+      "reviewCriteria": [
+        "Preserve language, sample and workload limits."
+      ]
+    },
+    {
+      "id": "qualification-03",
+      "category": "qualification",
+      "question": "Does a median of 100 ms imply every request is under 100 ms?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Workload percentile: fictional record 1",
+          "text": "The reported median latency is 100 ms. The p95 latency is 700 ms."
+        }
+      ],
+      "reviewCriteria": [
+        "Explain that a median is not a maximum.",
+        "Include the slow-tail evidence."
+      ]
+    },
+    {
+      "id": "qualification-04",
+      "category": "qualification",
+      "question": "Does Juniper support recoverable writes?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Conditional support: fictional record 1",
+          "text": "Juniper supports recoverable writes only when journaling is enabled and the storage device honors flush requests."
+        }
+      ],
+      "reviewCriteria": [
+        "State both conditions; do not promise unconditional recovery."
+      ]
+    },
+    {
+      "id": "qualification-05",
+      "category": "qualification",
+      "question": "Did training cause the productivity difference?",
+      "sources": [
+        {
+          "id": "S1",
+          "title": "Correlation and cause: fictional record 1",
+          "text": "Employees who voluntarily attended training averaged 15 completed tasks; non-attendees averaged 11. There was no random assignment or control for experience."
+        }
+      ],
+      "reviewCriteria": [
+        "Report association and selection/confounding limits.",
+        "Do not claim causal uplift."
+      ]
+    }
+  ]
+}
