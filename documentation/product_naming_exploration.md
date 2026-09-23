@@ -7,9 +7,9 @@ tags: [planning, naming, brand, product]
 
 # Product naming exploration
 
-**Status: exploration only. No name change is selected or implemented.**
+**Status: closed for the pilot. [ADR 0012](adr/0012-name-and-license.md) keeps the name Goobster; no name change is selected or implemented.** The candidates below are kept as a record for the case where the trademark search or the pilot's exit decision reopens the question.
 
-Updated: 20 September 2026.
+Updated: 22 September 2026.
 
 Related: [shared-instance product design and rollout](shared_instance_product_spec.md).
 
