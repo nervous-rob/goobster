@@ -1,7 +1,7 @@
 ---
 title: Shared-instance roadmap - handoff and next steps
 kind: reference
-summary: Where roadmap #246 stands after #249 and #256 shipped, the seams the next steps build on, and a step-by-step brief for each of them - token budgets (#248), the pilot plan (#265), the two actual-host gates (#247, #249), the deployment promise (#268) and what the second account unlocks.
+summary: Where roadmap #246 stands after token budgets shipped in PR 279, the proposed private pilot, the remaining actual-host gates, and the next research-quality and brief work.
 tags: [roadmap, handoff, shared-instance, limits, pilot, operations]
 ---
 
@@ -9,7 +9,7 @@ tags: [roadmap, handoff, shared-instance, limits, pilot, operations]
 
 Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) (the plan) and roadmap [#246](https://github.com/nervous-rob/goobster/issues/246) (the sequence and the decisions). This is the handoff note: what has shipped, which seams the next steps hook into, and exactly where the next session picks up. Update the **Where things stand** table and the date as items land; delete a step's brief once its issue closes.
 
-**Last updated:** 2026-09-23, with #248 implemented on the continuation branch (awaiting merge and CI). Baseline: after [PR #277](https://github.com/nervous-rob/goobster/pull/277) (#256) merged on top of [PR #276](https://github.com/nervous-rob/goobster/pull/276) (#249) and [PR #275](https://github.com/nervous-rob/goobster/pull/275) (#262).
+**Last updated:** 2026-09-23, after [PR #279](https://github.com/nervous-rob/goobster/pull/279) shipped #248 with both-engine and browser CI green. This continuation writes the #265 pilot plan and completes the #268 setup/privacy documentation. The pilot and actual-host checks have not been run here.
 
 ## Where things stand
 
@@ -19,14 +19,14 @@ Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) 
 | #249 Backup and tested restore | **Shipped** (PR #276, [backup_and_restore.md](backup_and_restore.md)) | The **dated recovery test on the actual host** (runbook §"The recovery test"). Record the date and result on #249. |
 | #256 work_failures, resource_events, operator_audit | **Shipped** (PR #277, [work_ledger.md](work_ledger.md)) | Nothing. #248 now supplies the reservation writer. |
 | #247 Shared-instance safety | **Shipped** (PR #274, [shared_instance_safety.md](shared_instance_safety.md)) | The **strong-isolation canary on the actual host**, run as the production execution service. Required before a second account. |
-| #248 Token budgets | **Implemented on the continuation branch; awaiting merge and CI.** | Review the writer, cap policy, Host/Usage controls and tests. Retention is 90 days by default, host-editable. Caps stay unset while single-user. |
-| #265 Private single-user pilot | **Not started.** The measurements it needs exist (cost join, failures, support view). | The pilot plan document and the G row in the spec. Brief below. |
-| #268 Deployment and privacy promise | **First pass merged** (PR #271) | The no-Discord first-operator path in the README, and the backup-retention wording now that #249 is real. |
+| #248 Token budgets | **Shipped** (PR #279, [work_ledger.md](work_ledger.md#budgets)). | Retention is 90 days by default, host-editable. Caps stay unset while single-user unless deliberately enabled. |
+| #265 Private single-user pilot | **Plan written; execution not started.** [pilot_plan.md](pilot_plan.md), with proposed six weekly cycles. | Owner chooses the topic, dates and thresholds, records the host restore drill, then records cycles and an exit decision. Keep the issue open. |
+| #268 Deployment and privacy promise | **Remaining documentation completed in this continuation.** | README leads with standalone/native-operator setup; runtime and strategy agree. Backup rotation is explicitly host-managed, with no automatic expiry. |
 | #255 Operator second factor, phase 1 | Specified, **required at the second account** | TOTP + recovery codes for operators; host policy gate on account creation. |
 | #267 / #254 Evaluation set and research brief | Not started | Both consume the `work_id` cost join from #256; #254's "accepted" marker is what `costPerResult({ accepted })` divides by. |
 | #266, #272, #273 | Not started | First-use task, tutorials batch 1, Ask Goobster on Inbox items. |
 
-Order per #246: finish the two actual-host gates and #268's remainder while building #248's ledger writer (caps stay unset while single-user), then write the #265 pilot plan and start the brief experiment. **Nothing in stage 4 or 5 starts before the pilot has produced repeat use.**
+Order per #246: confirm the pilot choices and record the actual-host restore drill before cycle 1. The next build step is **#267's evaluation set**, followed by **#254's brief artifact**. The host-isolation check and #255 remain required before a second account. **Nothing in stage 4 or 5 starts before the pilot has produced repeat use.**
 
 ## Seams the next steps build on
 
@@ -39,35 +39,24 @@ Everything below exists on `main` today. The next steps extend these; they do no
 | Per-payer serialization rows | `admission_locks` (`resource TEXT PRIMARY KEY`); `resourceAdmissionService` already takes a row lock with `INSERT ... ON CONFLICT DO NOTHING` then `UPDATE ... SET resource = resource` | #248 uses resource `budget:<payer>` (build the string in JS). `privacyService.forgetUser` already deletes that row. |
 | Token counts from the provider | Each provider's `_logUsage(response, model, usageContext)` → `services/usageTracker.log({ inputTokens, outputTokens, ... })` → `usage_log` | `usageTracker.log` captures normalized usage in the active provider-call scope; the budget wrapper settles when that call ends. |
 | The reservation table | `usage_reservations` in `db/schema.sql` (`actor`, `payer`, `workKind`, `workId`, `admissionId`, `estimatedTokens`, `actualTokens`, `status` held/settled/released, `idempotencyKey` UNIQUE, `expiresAt`, `createdAt`; indexes on `(payer, createdAt)` and `(workKind, workId)`) | #248 writes it. `costReportService` already reads it (settled → `actualTokens`, held → `estimatedTokens`). |
-| Cost per accepted result | `packages/core/services/costReportService.js` - `workCosts(filter)`, `costPerResult({ workKind, payer, days, accepted })` | #265 measures with it; #254's accepted briefs are its divisor. Returns zeros for tokens until #248 writes reservations. |
+| Cost per accepted result | `packages/core/services/costReportService.js` - `workCosts(filter)`, `costPerResult({ workKind, payer, days, accepted })` | #265 measures with it; #254's accepted briefs are its divisor. Settled rows now carry tokens; flagged settlements remain provisional estimates. |
 | Failures and resources per person / per account | `workFailureService`, `resourceEventService`, `accountSupportService.view()`; routes `GET /api/app/usage/diagnostics`, `GET /api/app/admin/accounts/:id/support` | #265's "failures you hit"; #248's Host-room limit panel sits next to the support view. |
 | Operator audit | `packages/core/services/operatorAuditService.js`; `ACTIONS` already reserves **`limits.change`**; Host room *Operator audit* panel | #248's cap changes and #255's factor resets write here. Add new actions to `ACTIONS` in the same change. |
 | Ledger retention | `packages/core/services/ledgerRetentionService.js` (coreRuntime step `ledgerRetention`, lock `ledger_retention`; 30 / 90 / 365 days) | #248 now releases expired holds and removes terminal reservations after 90 days by default (host-editable). |
 | Instance pause and resume | `services/instanceStateService.js`, Host room *Instance* panel | Unchanged; the recovery test exercises it. |
 | Host room | `apps/web/src/rooms/HostRoom.tsx` (panels: Instance, Sign-up & mail, Invitations, Accounts + Support, Operator audit, Migration report); admin routes in `packages/core/web/routes/admin.js` behind `[requireAuth, requireOperator]` | #248 adds a *Limits* panel and route; #255 adds the second-factor policy switch. Every mutating route writes an audit row after success. |
 
-## Step 1 - #248 Token budgets on `usage_reservations`
+## Step 1 - Run the #265 plan; build the evaluation set
 
-Implemented in this continuation: `usageBudgetService`, per-call usage capture, the `_admit` wrapper, project-owner attribution, Host/Usage controls, audited cap edits, the serialized second-account gate, privacy report and reservation sweeper. The full runtime contract and 90-day retention decision are now in [work_ledger.md](work_ledger.md#budgets). `tests/usageBudgets.test.js` belongs to CI group `core` and runs on both engines.
+The [pilot plan](pilot_plan.md) now defines the proposed task, six weekly cycles, owner-judged quality bar, time/cost/failure measurements, a cycle record and the exit decision. Its topic, dates and numerical thresholds are proposals. No results or owner acceptance are implied.
 
-Merge only after the CI gates pass. The next build step is **#265's pilot plan**. The actual-host restore and isolation checks remain operator tasks; this implementation does not satisfy them or #255's second-factor requirement. Keep the cap unset for the single-user pilot unless the owner deliberately opts in.
+Keep private drafts, sources and ids in private notes or project files; only publish a non-sensitive summary in the plan. Capture failures weekly because their retention is 30 days. Expedition costs are only one component: include drafting chat and other attempts, preserve uncertainty flags, and use accepted briefs as the denominator.
 
-## Step 2 - #265 The pilot plan
+The next engineering change is **#267**: version at least 30 questions next to `tests/live/`, covering supported, weak, conflicting, changing, unanswerable and qualification-dependent claims. Reuse `npm run test:live`, keep live calls optional and credential-gated, and prepare the owner-judging record. The actual baseline needs the owner; do not mark it passed from mocked tests or model self-grading. Then implement #254's private immutable brief with edit overlay and Markdown export. The pilot can start with manual drafts while those pieces are built.
 
-The issue asks for a short plan in `documentation/`. Suggested file: `documentation/pilot_plan.md` (`kind: guide`). Everything it measures already has a source; fill in the owner's choices.
+Update the G row again when the owner records the exit decision. No stage 4 or 5 work before repeat use.
 
-| Section | Content | Source today |
-|---|---|---|
-| The task | One topic to follow weekly; see what changed; check the evidence; produce a brief you use. | Owner's choice. |
-| Duration and cadence | e.g. six weekly cycles, with a dated entry per cycle. | Owner's choice. |
-| Criteria | Repeat use (briefs produced, topics revisited); time saved after verification; brief quality against #267's bar; cost per accepted result; failures hit; would you pay. | — |
-| Cost per accepted result | `costReportService.costPerResult({ workKind: 'expedition', days: 7, accepted: [...ids] })` per cycle. | Tokens now come from settled reservations; resource events (search calls, retries) are real now. Until #254 exists, "accepted" is a list of expedition ids the owner writes into the plan by hand. |
-| Failures | Usage room → *What went wrong*, or `accountSupportService.view({ principalId })`. | Live now. |
-| Exit decision | Continue single-user / open a second account (then #247 host canary, #248 daily cap, #255 phase 1 become required) / change direction. | — |
-
-Record each cycle in the same file and update the G row in the spec's implementation-status table when the plan is written and again at the exit decision. A tiny script under `scripts/` that prints the week's `costPerResult` and failure summary for the owner's account would remove most of the friction; it is optional.
-
-## Step 3 - The two actual-host gates
+## Step 2 - The two actual-host gates
 
 Both are runbook steps, not code. Neither can be satisfied from CI or a developer VM.
 
@@ -76,15 +65,11 @@ Both are runbook steps, not code. Neither can be satisfied from CI or a develope
 
 Cloud/dev VMs need `bubblewrap` installed for the strong-isolation path; a shared instance (more than one `app_accounts` row) refuses the weak fallback by design.
 
-## Step 4 - #268 The remaining promise
-
-Two edits: lead the README setup with the standalone path (`apps/api`, `GOOBSTER_RUNTIME_MODE=standalone`, no token) and present Discord as an optional adapter; and state the backup retention window once in the privacy section (archives hold erased rows until they rotate out; only `config.json` in them is encrypted - the sentence already exists in the standards doc and `backup_and_restore.md`). `npm run docs:check` must pass; README, `independent_runtime.md` and `differentiation_strategy.md` must agree.
-
 ## What the second account unlocks (do not start early)
 
 Creating a second account is the trigger, not a milestone to aim for. When the pilot's exit decision says "open it":
 
-1. #247 host canary recorded (Step 3).
+1. #247 host canary recorded (Step 2).
 2. #248 daily cap set in the Host room (writes `limits.change`), and the creation refusal lifted by the cap being present.
 3. #255 phase 1: TOTP + single-use recovery codes for operators, enrollment behind `REAUTH_REQUIRED`, removal bumps the session version, operator-assisted recovery written to `operator_audit` (add actions such as `account.factor_reset` to `ACTIONS`), tests in the style of `tests/nativeAuth.test.js` on both engines.
 

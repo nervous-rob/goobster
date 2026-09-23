@@ -24,8 +24,10 @@ around one outcome:
 That gives Projects, Research (Expeditions), Knowledge, Attention and the
 Inbox a common purpose. The biggest missing piece is evidence about which
 recurring task makes someone come back and eventually pay, so the first
-step is a pilot with one segment, a named user and buyer, and explicit
-success criteria (issue #265).
+step is the [private single-user pilot](pilot_plan.md) (#265): the owner is
+both user and buyer. The proposed six weekly cycles measure one recurring
+task. Topic, dates and thresholds need the owner's choice; no results or
+independent customer demand are claimed yet.
 
 **Sequence.**
 
@@ -41,7 +43,9 @@ success criteria (issue #265).
    source, a complete export, a read-only MCP server, push notifications,
    user-provided keys (#253, #250, #251, #257, #269).
 5. Expand distribution and optional capabilities after repeat use and
-   operating costs are understood (#259, #258, #252, #270, #260).
+   operating costs are understood (#259, #258, #252, #270). The plugin SDK
+   (#260) is closed; MCP is the chosen extension mechanism when a task
+   needs it.
 
 **What to measure.** These replace the guild-oriented metrics further down
 for the workspace product:
@@ -60,9 +64,17 @@ for the workspace product:
 - Self-hosted storage does not mean all processing stays local: configured
   model, search, speech and integration providers receive data, and the
   host operator can read the database and files. The README's
-  *Where your data goes* section is the reference wording.
+  [Where your data goes](../README.md#where-your-data-goes) section is the
+  reference wording. Its [standalone setup](../README.md#standalone-installation-no-discord)
+  includes a first native operator without Discord or email. Removing cloud
+  keys does not make Research offline: it still queries public sources.
 - Erasure tests demonstrate application behaviour, not blanket
-  confidentiality or compliance.
+  confidentiality or compliance. The host chooses, enforces and discloses
+  backup retention; the CLI does not rotate archives. Only configuration
+  is encrypted in an archive. See [backup privacy](backup_and_restore.md#privacy).
+- Raspberry Pi is a deployment target, not a published capacity benchmark
+  for local models, local voice or concurrent users. Record the actual
+  host/provider combination and observed workload in the pilot.
 - Features such as MCP support, agents, automations and research exist in
   other self-hosted assistants. Differentiation has to come from a better
   workflow or outcome, shown with pilot evidence.

@@ -15,6 +15,84 @@ with the adapter switched off; only Discord-specific actions (server scopes,
 the Exchange, "Connect Discord") report the integration as unavailable, and
 they say so specifically.
 
+## First operator without Discord
+
+For a **fresh installation with no accounts**, follow the README's
+[standalone installation](../README.md#standalone-installation-no-discord):
+install dependencies, build the client, and create `config.json` with
+`discord.enabled: false`, `webapp.enabled: true`, `webapp.devMode: false`,
+`identity.nativeLogin: true`, `identity.requireAccount: true` and
+`identity.registration: "invite"`. No Discord token, email provider or
+open sign-up is needed. Configure a model provider separately for AI work.
+
+With the application stopped, run the following **on the host, from the
+repository root, as its service user**, using the same database settings
+as the application. This issues a one-hour operator invitation through the
+existing native-auth service. It refuses an existing account or a live
+invitation. There is no public “first visitor becomes operator” endpoint.
+Run only one copy of this offline bootstrap at a time.
+
+```bash
+node <<'NODE'
+const db = require('@goobster/core/db');
+const auth = require('@goobster/core/services/nativeAuthService');
+const audit = require('@goobster/core/services/operatorAuditService');
+const config = require('./config.json');
+
+(async () => {
+    const base = new URL(config.webapp.publicUrl);
+    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
+        throw new Error('Set webapp.publicUrl to the portal origin.');
+    }
+    if (await db.get('SELECT 1 AS present FROM app_accounts LIMIT 1')) {
+        throw new Error('An account already exists. Use its Host room or account recovery.');
+    }
+    if (await db.get(`SELECT 1 AS present FROM account_invites
+        WHERE consumedAt IS NULL AND revokedAt IS NULL
+          AND expiresAt > datetime('now') LIMIT 1`)) {
+        throw new Error('A live invitation already exists. Use it, or wait for it to expire.');
+    }
+    const { token, invite } = await auth.createInvite({
+        issuedBy: 'host-bootstrap', role: 'operator', ttlHours: 1
+    });
+    await audit.record({ action: 'invite.create', target: String(invite.id),
+        detail: { role: 'operator', source: 'host-bootstrap', expiresAt: invite.expiresAt } });
+    const url = new URL('/app/invite', base);
+    url.searchParams.set('token', token);
+    console.log(url.href);
+})().catch(error => { console.error(error.message); process.exitCode = 1; })
+    .finally(() => db.closeConnection());
+NODE
+```
+
+Keep the printed link private: it grants the operator role to whoever
+redeems it first. Only its hash is stored; the audit contains no token.
+Start `GOOBSTER_RUNTIME_MODE=standalone npm run start:api`, open that link,
+and choose your login name and password. Verify that **Host** appears,
+sign out, and sign back in without Discord. `GET /health` should report
+`mode: "standalone"` and `discord: "disabled"`. Once an account exists,
+use Host → Invitations for any further invitations; a second account
+requires the cap, host-isolation and second-factor gates in the
+[pilot plan](pilot_plan.md#cycle-record-and-exit-decision).
+
+If there are already Discord-backed accounts, keep their principal ids
+and data. Follow [identity migration and credential enrollment](identity.md)
+instead of using this empty-installation recipe. The existing
+`identity:report -- --bootstrap-operators` command accepts Discord ids;
+it does not create a native login.
+
+## Deployment and privacy promise
+
+The README's [Where your data goes](../README.md#where-your-data-goes) is
+the authoritative statement. Turning off Discord changes the transport,
+not provider processing or the host operator's access to stored data.
+Local chat/embeddings require local Ollama and no cloud credentials;
+Research still contacts public sources without a Perplexity key. A fully
+offline deployment also avoids web/research tools and remote integrations
+and restricts outbound network access. Backup retention is chosen and
+enforced by the host; the backup CLI does not prune archives automatically.
+See the [backup privacy contract](backup_and_restore.md#privacy).
+
 ## The Discord adapter switch
 
 `packages/core/config/discordConfig.js` answers one question for the whole

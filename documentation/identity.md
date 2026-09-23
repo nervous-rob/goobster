@@ -426,6 +426,12 @@ in `identity.operators` (config.json) or `GOOBSTER_IDENTITY_OPERATORS` get a
 `bootstrap` account with the `operator` role (an existing account is
 promoted). There is no "first visitor becomes admin" path.
 
+For a fresh installation **without any Discord identity**, use the
+[first native operator procedure](independent_runtime.md#first-operator-without-discord).
+It issues an operator invitation locally while the application is stopped,
+then uses the normal registration screen. Do not invent a Discord id or
+enable dev mode to bootstrap a production account.
+
 ## Configuration
 
 `config.json` `identity` block (environment variable overrides in brackets):
