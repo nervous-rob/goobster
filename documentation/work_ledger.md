@@ -65,6 +65,7 @@ Where each kind is written:
 |---|---|---|---|
 | `chat` | `generate`, `handler` | `chatHandler` when the AI call or the turn throws | the error's `code` or `name`, else `TURN_FAILED` |
 | `expedition` | `cycle` | `spitballExpeditionService.failExpedition` (+ Inbox notice, link `/knowledge/research`) | `CYCLE_FAILED` |
+| `expedition` | `brief` | `expeditionBriefService.generate` when writing a [research brief](research_brief.md) fails; the FAILED brief row stays on record | the error's `code` when it is `BUDGET_EXCEEDED`, `CANCELLED`, `BUSY`, `ACCOUNT_DISABLED` or `BRIEF_FORMAT_INVALID`, else `BRIEF_GENERATION_FAILED` |
 | `job` | `run` | `projectService._finishJob` when a job ends `FAILED` / `TIMED_OUT` | the job's error code (`TIMED_OUT`, `EXIT_NONZERO`, ...) |
 | `sandbox` | `sandbox` | `sandboxService.run` when a run exits non-zero, times out or cannot start (outside a job) | `TIMED_OUT`, `EXIT_<n>`, or the `SandboxError` code |
 | `automation` | `run` | `automationService._notifyRunFailure` on every failed run (+ Inbox notice once per streak, link `/activity/scheduled`) | the error's `code`, else `RUN_FAILED` |
@@ -104,6 +105,8 @@ The `reason` is the error's message or a phrase derived from the code. It is nev
 const report = await costReportService.costPerResult({ workKind: 'expedition', days: 30, accepted: acceptedIds });
 report.perAccepted // { actualTokens, resources: { search_call, sandbox_seconds, retry } }
 ```
+
+[Research briefs](research_brief.md) are generated inside the expedition's work reference, so their tokens and failures land in the same `(expedition, id)` rows; `expeditionBriefService.measure()` is the consumer that supplies the accepted brief ids and returns `perAccepted: null` - not `0` - when nothing was accepted or no reservation exists.
 
 `usage_log` is deliberately outside this join: it has no work id and no payer, and erasure nulls its `userId`.
 

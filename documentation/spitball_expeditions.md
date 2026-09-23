@@ -263,7 +263,23 @@ POST   /api/app/spitball/expeditions/:id/pause
 POST   /api/app/spitball/expeditions/:id/continue
 POST   /api/app/spitball/expeditions/:id/extend      (accept a more-cycles proposal)
 POST   /api/app/spitball/expeditions/:id/cancel
+GET    /api/app/spitball/expeditions/:id/briefs      (research briefs, #254)
+POST   /api/app/spitball/expeditions/:id/briefs      (write one from the stored evidence)
+GET    /api/app/spitball/briefs/measure              (?days= - accepted/used/cost for the pilot)
+GET    /api/app/spitball/briefs/:briefId
+PUT    /api/app/spitball/briefs/:briefId/overlay     (edit overlay; the generated text is immutable)
+PUT    /api/app/spitball/briefs/:briefId/review      (#267 marks and gates)
+POST   /api/app/spitball/briefs/:briefId/accept
+POST   /api/app/spitball/briefs/:briefId/use
+GET    /api/app/spitball/briefs/:briefId/export.md
 ```
+
+A finished expedition can be written up as a **research brief**: a private
+artifact generated once from its stored sources and claims, edited only
+through a separate overlay, reviewed against the four-part bar, accepted
+and used as explicit records, and exported as Markdown. The Briefs section
+sits under Sources on the expedition detail. Spec:
+[research_brief.md](research_brief.md).
 
 The evidence layer is user-visible: each accepted source in the expedition
 detail expands to the claims extracted from it, and selecting a note on the
@@ -279,7 +295,10 @@ Research state is user data. `/forget-me` deletes the user's expeditions
 (cycles, sources, and claims cascade) inside the main erasure transaction;
 `auditUser` counts all four tables; the transparency report includes
 expedition/source counts. Research-generated `kg_*` knowledge is already
-covered by the existing personal-graph deletion.
+covered by the existing personal-graph deletion. Research briefs
+(`expedition_briefs`) are deleted in the same transaction, their `payer` is
+nulled on briefs someone else owns, and the report lists them under
+`spitball.briefs` ([research_brief.md](research_brief.md#private-artifact)).
 
 ## Relationship to neighbors
 
@@ -426,6 +445,10 @@ All stage parsers live in `utils/researchSources.js` (pure, no I/O — the
   regression suites (`tests/spitballExpeditionService.test.js`,
   `tests/spitballResearchPipeline.test.js`, `tests/spitballAttention.test.js`
   — both engines).
+- **Implemented, pending merge (#254):** the [research brief](research_brief.md)
+  — `expedition_briefs`, `expeditionBriefService`, the Briefs section and
+  brief view, Markdown export, the pilot measurement read,
+  `tests/expeditionBrief.test.js` and `e2e/researchBrief.spec.js`.
 - **Later:** more source adapters (Crossref / PubMed / user artifacts /
   uploaded PDFs), note-detail provenance and revision UX in the portal
   (including revert), saved Map views filtered by expedition, and guild-scope
