@@ -247,7 +247,7 @@ export function AppShell() {
                     )}
                 </div>
             </aside>
-            <div id="stage">
+            <div id="stage" className={me?.instance?.paused ? 'has-instance-banner' : undefined}>
                 {me?.instance?.paused && (
                     <div className="instance-banner" role="status">
                         <span>
