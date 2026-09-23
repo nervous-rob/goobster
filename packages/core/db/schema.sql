@@ -2405,6 +2405,58 @@ CREATE TABLE IF NOT EXISTS research_claims (
 CREATE INDEX IF NOT EXISTS idx_research_claims_source ON research_claims(sourceId);
 CREATE INDEX IF NOT EXISTS idx_research_claims_expedition ON research_claims(expeditionId, cycleId);
 
+-- Research briefs (roadmap #254, documentation/research_brief.md): a private
+-- artifact written from one Expedition's stored sources and claims. The
+-- generated text is immutable once the row is READY - generatedJson and its
+-- hash are written exactly once and no code path updates them; every later
+-- change lives in the separate edit overlay (overlayJson) or the owner's
+-- review record (reviewJson). Acceptance and actual use are explicit owner
+-- actions, recorded apart from generation success and apart from the
+-- owner-judged quality gates. Rows cascade with the expedition and are
+-- denormalized on userId (the expedition's owner) for erasure and audit;
+-- payer records who was charged for the generation call (the expedition's
+-- billing rule: the project owner for a project expedition).
+CREATE TABLE IF NOT EXISTS expedition_briefs (
+    id INTEGER PRIMARY KEY,
+    expeditionId INTEGER NOT NULL REFERENCES spitball_expeditions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    payer TEXT,
+    status TEXT NOT NULL DEFAULT 'GENERATING'
+        CHECK (status IN ('GENERATING', 'READY', 'FAILED')),
+    -- Immutable once READY: { summary, findings, limitations, citations,
+    -- evidenceNotes, evidence } plus its sha256 for integrity checks
+    generatedJson TEXT,
+    generatedHash TEXT,
+    generatedAt TEXT,
+    promptVersion INTEGER,
+    modelProvider TEXT,
+    modelName TEXT,
+    -- A failed generation keeps its row (the attempt counts toward cost);
+    -- the machine code and clipped message, never model output
+    errorCode TEXT,
+    lastError TEXT,
+    -- The edit overlay: { edits: [{ target, text, type, note, editedAt }] };
+    -- target is 'summary', 'finding:<id>' or 'limitation:<id>', type is
+    -- 'wording' | 'factual'. Optimistic concurrency through overlayRevision.
+    overlayJson TEXT,
+    overlayRevision INTEGER NOT NULL DEFAULT 0,
+    -- The owner's review: per-finding marks (supported / unsupported /
+    -- missing a qualification), the three judged gates and notes. Every
+    -- field starts unset; a blank field is unreviewed, never a pass.
+    reviewJson TEXT,
+    reviewRevision INTEGER NOT NULL DEFAULT 0,
+    -- Explicit owner actions, independent of generation and of quality
+    acceptedAt TEXT,
+    usedAt TEXT,
+    useNote TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_expedition_briefs_expedition ON expedition_briefs(expeditionId, id);
+CREATE INDEX IF NOT EXISTS idx_expedition_briefs_user ON expedition_briefs(userId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_expedition_briefs_payer ON expedition_briefs(payer) WHERE payer IS NOT NULL;
+
 -- ---------------------------------------------------------------------------
 -- Project Missions: durable intent and evaluation for one piece of project
 -- work (services/projectMissionService.js). The model proposes a plan;

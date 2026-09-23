@@ -258,6 +258,23 @@ class SpitballExpeditionService {
         return row ? this._shapeExpedition(row) : null;
     }
 
+    /**
+     * Who pays for this expedition's model and resource work: the project
+     * owner for a project-targeted expedition, otherwise the person who ran
+     * it. The runner's work context and the research brief's generation
+     * call both use this so one billing rule covers the whole work reference.
+     * @returns {Promise<string|null>} a principal id
+     */
+    async payerFor(expedition) {
+        if (expedition?.projectId) {
+            const project = await db.get(
+                'SELECT userId FROM observatory_projects WHERE id = @id', { id: Number(expedition.projectId) }
+            );
+            if (project?.userId) return String(project.userId);
+        }
+        return expedition?.userId ? String(expedition.userId) : null;
+    }
+
     /** Ownership-checked fetch: strangers get the same 404 as a missing row. */
     async getExpedition(id, { userId } = {}) {
         this._requireEnabled();
@@ -1204,12 +1221,14 @@ class SpitballExpeditionService {
      */
     async forgetUser(userId) {
         const counts = await this.auditUser(userId);
+        await require('./expeditionBriefService').forgetUser(userId);
         await db.run('DELETE FROM spitball_expeditions WHERE userId = @userId', { userId });
         return counts;
     }
 
     /** Row counts for the leftover audit. */
     async auditUser(userId) {
+        const briefs = await require('./expeditionBriefService').auditUser(userId);
         const [expeditions, cycles, sources, claims] = await Promise.all([
             db.get('SELECT COUNT(*) AS c FROM spitball_expeditions WHERE userId = @userId', { userId }),
             db.get(
@@ -1228,7 +1247,9 @@ class SpitballExpeditionService {
             expeditions: expeditions?.c || 0,
             cycles: cycles?.c || 0,
             researchSources: sources?.c || 0,
-            researchClaims: claims?.c || 0
+            researchClaims: claims?.c || 0,
+            briefs: briefs.briefs,
+            briefsPaidForOthers: briefs.paidForOthers
         };
     }
 

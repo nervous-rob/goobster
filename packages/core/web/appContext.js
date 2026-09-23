@@ -36,6 +36,7 @@ const webSuggestionService = require('../services/webSuggestionService');
 const webAttentionService = require('../services/webAttentionService');
 const spitballExpeditionService = require('../services/spitballExpeditionService');
 const spitballExpeditionRunner = require('../services/spitballExpeditionRunner');
+const expeditionBriefService = require('../services/expeditionBriefService');
 const knowledgeTransferService = require('../services/knowledgeTransferService');
 const instanceStateService = require('../services/instanceStateService');
 
@@ -83,6 +84,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         projectMissions: deps.projectMissions || projectMissionService,
         spitball: deps.spitball || spitballExpeditionService,
         spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
+        briefs: deps.briefs || expeditionBriefService,
         transfers: deps.transfers || knowledgeTransferService,
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,

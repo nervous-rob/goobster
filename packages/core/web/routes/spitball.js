@@ -222,6 +222,84 @@ function mountSpitball(app, ctx, h) {
         ctx.spitball.cancelExpedition(req.params.id, { userId: req.webUser.userId })
     ));
 
+    // --- Research briefs (#254, documentation/research_brief.md) ------------
+    // Private to the expedition's owner: the service resolves the expedition
+    // through the owner-only read and re-checks the brief's userId on every
+    // path, so an id alone grants nothing. The generated text is immutable;
+    // edits, review, acceptance and use are separate writes.
+
+    app.get('/api/app/spitball/expeditions/:id/briefs', requireAuth, chatRoute(async (req) => ({
+        briefs: await ctx.briefs.list({ expeditionId: req.params.id, userId: req.webUser.userId })
+    })));
+
+    app.post('/api/app/spitball/expeditions/:id/briefs', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.generate({ expeditionId: req.params.id, userId: req.webUser.userId })
+    ));
+
+    // The measurement read (#265): registered before :briefId so the
+    // literal segment is never taken for an id.
+    app.get('/api/app/spitball/briefs/measure', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.measure({ userId: req.webUser.userId, days: req.query.days })
+    ));
+
+    app.get('/api/app/spitball/briefs/:briefId', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.get(req.params.briefId, { userId: req.webUser.userId })
+    ));
+
+    app.put('/api/app/spitball/briefs/:briefId/overlay', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.updateOverlay(req.params.briefId, {
+            userId: req.webUser.userId,
+            edits: req.body?.edits,
+            expectedRevision: req.body?.expectedRevision ?? null
+        })
+    ));
+
+    app.put('/api/app/spitball/briefs/:briefId/review', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.updateReview(req.params.briefId, {
+            userId: req.webUser.userId,
+            marks: req.body?.marks,
+            rationale: req.body?.rationale,
+            gates: req.body?.gates,
+            notes: req.body?.notes,
+            expectedRevision: req.body?.expectedRevision ?? null
+        })
+    ));
+
+    app.post('/api/app/spitball/briefs/:briefId/accept', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.setAccepted(req.params.briefId, {
+            userId: req.webUser.userId,
+            accepted: req.body?.accepted !== false
+        })
+    ));
+
+    app.post('/api/app/spitball/briefs/:briefId/use', requireAuth, chatRoute(async (req) =>
+        ctx.briefs.setUsed(req.params.briefId, {
+            userId: req.webUser.userId,
+            used: req.body?.used !== false,
+            note: req.body?.note ?? null
+        })
+    ));
+
+    // Markdown export: a file, not JSON, with the same error contract.
+    app.get('/api/app/spitball/briefs/:briefId/export.md', requireAuth, async (req, res) => {
+        try {
+            const { filename, markdown } = await ctx.briefs.exportMarkdown(req.params.briefId, { userId: req.webUser.userId });
+            res.status(200).set({
+                'Content-Type': 'text/markdown; charset=utf-8',
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Disposition': `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${filename.replace(/["\r\n]/g, '')}"`
+            }).send(markdown);
+        } catch (error) {
+            if (error?.status && error?.code) {
+                h.sendError(res, error.status, error.code, error.message, error.details || null);
+                return;
+            }
+            ctx.logger.error?.('Brief export failed:', error.message);
+            h.sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
     // --- MTGA deck library (import Arena deck exports into folders) ----------
     // User-scoped personal data, like tasks: no guild in any key, so plain
     // requireAuth is the whole access model. chatRoute already translates
