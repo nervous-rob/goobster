@@ -77,7 +77,16 @@ class FollowupDeliveryService {
                 logger.info?.(`[followups] Delivered follow-up #${followup.id}${recurring ? ` (recurring, next at ${nextDueAt} UTC)` : ''}: ${followup.note}`);
             } catch (error) {
                 logger.error?.(`[followups] Follow-up #${followup.id} failed: ${error.message}`);
-                // Leave PENDING so the next pass retries
+                // Leave PENDING so the next pass retries; the attempt is on
+                // the ledger (documentation/work_ledger.md) - the note is not.
+                await require('./workFailureService').note({
+                    kind: 'followup',
+                    workId: followup.id,
+                    actor: followup.userId || null,
+                    phase: 'delivery',
+                    code: String(error?.code || 'DELIVERY_FAILED').slice(0, 64),
+                    reason: error.message
+                });
             }
         }
         return { delivered, left };

@@ -877,6 +877,23 @@ class SpitballExpeditionService {
                 expeditionId: expedition.id,
                 stopReason: 'FAILED'
             });
+            // The failure ledger row and the Inbox notice that links to it
+            // (documentation/work_ledger.md). The reason is the error text,
+            // never the seed, the plan or any note content.
+            await require('./workFailureService').notify({
+                kind: 'expedition',
+                workId: expedition.id,
+                actor: expedition.userId,
+                phase: 'cycle',
+                code: 'CYCLE_FAILED',
+                reason: error,
+                userId: expedition.userId,
+                title: `Research expedition #${expedition.id} stopped: a cycle failed`,
+                body: 'The expedition is marked failed and will not continue on its own. '
+                    + 'Open it to see the last cycle and resume or start a new one.',
+                link: '/knowledge/research',
+                dedupeKey: `expedition:${expedition.id}:failed`
+            });
             try {
                 await require('./projectMissionService').onExpeditionSettled({
                     expeditionId: expedition.id,

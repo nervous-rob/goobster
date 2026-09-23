@@ -1881,6 +1881,9 @@ class WebChatService {
 
         const interaction = {
             id: `web-${userId}-${Date.now()}`,
+            // The durable turn id (web_live_turns): the work id the failure
+            // and resource ledgers key on for this turn.
+            turnId: turnState?.turnId || null,
             user: { id: userId, username: userName || `user_${userId}` },
             guild: null,
             guildId: null,

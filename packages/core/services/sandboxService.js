@@ -624,7 +624,68 @@ class SandboxService {
      *   files:Array<{path:string,name:string,size:number,isImage:boolean}>
      * }>}
      */
-    async run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, signal = null } = {}) {
+    async run({ record = true, ...params } = {}) {
+        const startedAt = Date.now();
+        let result;
+        try {
+            result = await this._run(params);
+        } catch (error) {
+            if (record) await this._ledger(params, { error, startedAt });
+            throw error;
+        }
+        if (record) await this._ledger(params, { result, startedAt });
+        return result;
+    }
+
+    /**
+     * The seconds a run took go to resource_events; a run that could not
+     * happen (busy, rate-limited, no isolation, runner down) or that timed
+     * out / exited non-zero goes to work_failures - unless it ran inside an
+     * Observatory job, which settles its own verdict. Both are attributed
+     * to the current piece of work (utils/workContext.js), else to the run
+     * itself. Never stdout, stderr or the code (documentation/work_ledger.md).
+     * The dedicated runner passes `record: false`: the caller records.
+     */
+    async _ledger({ userId = null } = {}, { result = null, error = null, startedAt }) {
+        try {
+            const workContext = require('../utils/workContext');
+            const work = workContext.current();
+            const actor = work?.actor ?? (userId == null ? null : String(userId));
+            if (result?.aborted) return;
+            if (result) {
+                await require('./resourceEventService').record({
+                    kind: 'sandbox_seconds',
+                    quantity: Math.max(0, (result.durationMs ?? (Date.now() - startedAt)) / 1000),
+                    provider: result.isolation || 'remote',
+                    actor
+                });
+            }
+            if (work?.kind === 'job') return;
+            const workFailureService = require('./workFailureService');
+            const failure = {
+                kind: work?.kind || 'sandbox',
+                workId: work?.id ?? result?.runId ?? null,
+                actor,
+                phase: 'sandbox'
+            };
+            if (error) {
+                if (error.code === 'ABORTED') return;
+                await workFailureService.note({ ...failure, code: error.code || error.name || 'RUN_ERROR', reason: error.message });
+            } else if (result && !result.ok) {
+                await workFailureService.note({
+                    ...failure,
+                    code: result.timedOut ? 'TIMED_OUT' : `EXIT_${result.exitCode ?? 'UNKNOWN'}`,
+                    reason: result.timedOut
+                        ? 'the run hit its time limit'
+                        : `the code exited with code ${result.exitCode ?? 'unknown'}${result.signal ? ` (signal ${result.signal})` : ''}`
+                });
+            }
+        } catch (ledgerError) {
+            logger.warn?.(`[sandbox] Ledger write failed: ${ledgerError.message}`);
+        }
+    }
+
+    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, signal = null } = {}) {
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
@@ -709,6 +770,7 @@ class SandboxService {
                 this._pruneOldRuns();
                 return {
                     ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
+                    runId,
                     exitCode: result.exitCode,
                     signal: result.signal,
                     timedOut: result.timedOut,

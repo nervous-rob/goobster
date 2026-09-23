@@ -45,6 +45,7 @@ const { spawnSync } = require('node:child_process');
 const db = require('../db');
 const { toGateway, isGatewayUnavailable } = require('../gateway');
 const logger = require('../utils/logger');
+const workContext = require('../utils/workContext');
 const observatoryConfig = require('../config/observatoryConfig');
 const sandboxService = require('./sandboxService');
 const { buildDashboard } = require('./observatoryDashboard');
@@ -2708,7 +2709,14 @@ class ObservatoryService {
     /** Register the lease, then spawn (never await) the segment loop. */
     async _startJobLoop(jobId, { client = null, leaseToken } = {}) {
         const handle = await this._registerJobHandle(jobId, leaseToken);
-        this._jobLoop(jobId, handle.controller, client, leaseToken)
+        // A background job is its own piece of work: the sandbox seconds it
+        // spends are the job's, not the turn's that started it.
+        const owner = await db.get('SELECT userId FROM observatory_jobs WHERE id = @jobId', { jobId }).catch(() => null);
+        workContext.run(
+            { kind: 'job', id: jobId, actor: owner?.userId || null },
+            () => this._jobLoop(jobId, handle.controller, client, leaseToken),
+            { replace: true }
+        )
             .catch(error => logger.error?.(`[observatory] Job #${jobId} loop crashed: ${error.message}`))
             .finally(() => this._disposeJobHandle(jobId));
         return handle;
@@ -2784,8 +2792,34 @@ class ObservatoryService {
                 leaseToken
             }
         )).changes > 0;
+        if (finished && (status === 'FAILED' || status === 'TIMED_OUT')) {
+            await this._recordJobFailure(jobId, status, { exitCode, errorCode });
+        }
         if (finished && !silent) await this._publishJobEvent(jobId, status);
         return finished;
+    }
+
+    /**
+     * The work_failures row for a job that ended FAILED or TIMED_OUT
+     * (documentation/work_ledger.md). The reason is derived from the code
+     * and the exit status - never the stderr tail, which is program output.
+     */
+    async _recordJobFailure(jobId, status, { exitCode = null, errorCode = null } = {}) {
+        const row = await db.get('SELECT userId FROM observatory_jobs WHERE id = @jobId', { jobId }).catch(() => null);
+        const code = status === 'TIMED_OUT' ? JOB_ERROR_CODES.TIMED_OUT : (errorCode || 'FAILED');
+        const reason = status === 'TIMED_OUT'
+            ? 'the run hit its time limit'
+            : code === JOB_ERROR_CODES.EXIT_NONZERO && exitCode != null
+                ? `the code exited with code ${exitCode}`
+                : code.toLowerCase().replace(/_/g, ' ');
+        await require('./workFailureService').note({
+            kind: 'job',
+            workId: jobId,
+            actor: row?.userId || null,
+            phase: 'run',
+            code,
+            reason
+        });
     }
 
     /**

@@ -102,7 +102,10 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
                 userId: req.body?.userId || null,
                 projectDir: req.body?.projectDir || null,
                 runDir: req.body?.runDir || null,
-                signal: controller.signal
+                signal: controller.signal,
+                // The submitting process records the ledger rows: it knows
+                // which piece of work this run belongs to.
+                record: false
             });
             if (!res.headersSent) res.json({ ...result, runId });
         } catch (error) {

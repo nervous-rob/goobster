@@ -34,6 +34,7 @@
 
 const axios = require('axios');
 const perplexityService = require('./perplexityService');
+const resourceEventService = require('./resourceEventService');
 const logger = require('../utils/logger');
 
 const WIKIPEDIA_API = 'https://en.wikipedia.org/w/api.php';
@@ -176,6 +177,8 @@ const arxivProvider = {
 const perplexityProvider = {
     name: 'perplexity',
     sourceTypes: ['search_synthesis'],
+    /** perplexityService.searchDetailed records the resource event itself. */
+    recordsOwnCalls: true,
 
     isAvailable() {
         return perplexityService.isConfigured();
@@ -245,6 +248,12 @@ class SpitballSearchService {
                     const wanted = preferred
                         && (provider.sourceTypes || []).some(type => preferred.has(type));
                     if (!wanted) continue;
+                }
+                // One resource event per provider call, attributed to the
+                // expedition (or turn) on the work context. Adapters whose
+                // underlying service already records itself opt out.
+                if (!provider.recordsOwnCalls) {
+                    await resourceEventService.record({ kind: 'search_call', provider: provider.name });
                 }
                 const results = await provider.search(query, { limit: limitPerProvider });
                 for (const draft of results || []) {

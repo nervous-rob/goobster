@@ -2,6 +2,7 @@ const db = require('../db');
 const { CronExpressionParser } = require('cron-parser');
 const { handleChatInteraction } = require('../utils/chatHandler');
 const { isDmScopeId } = require('../utils/dmScope');
+const workContext = require('../utils/workContext');
 const { toGateway } = require('../gateway');
 const { isInboxChannelId } = require('./inboxService');
 
@@ -263,19 +264,43 @@ class AutomationService {
      * clears the flag and re-arms the notification.
      */
     async _notifyRunFailure(automation, error) {
+        // Every failed run is a work_failures row (documentation/work_ledger.md);
+        // the notice below is what the person sees, once per streak.
+        const workFailureService = require('./workFailureService');
+        const failure = {
+            kind: 'automation',
+            workId: automation.id,
+            actor: automation.userId,
+            phase: 'run',
+            code: String(error?.code || error?.name || 'RUN_FAILED').slice(0, 64),
+            reason: error?.message || 'the run failed'
+        };
         const meta = this._parseMetadata(automation.metadata);
-        if (meta.failureNotified) return;
+        if (meta.failureNotified) {
+            await workFailureService.note(failure);
+            return;
+        }
         meta.failureNotified = true;
         await db.run(
             'UPDATE automations SET metadata = @metadata WHERE id = @id',
             { id: automation.id, metadata: JSON.stringify(meta) }
         );
-        this._notifyChannel(
-            automation,
-            `⚠️ Automation "${automation.name}" failed this run: ${String(error?.message || error).slice(0, 300)}\n`
+        const content = `⚠️ Automation "${automation.name}" failed this run: ${String(error?.message || error).slice(0, 300)}\n`
             + 'It stays scheduled and will try again at its next fire. '
-            + 'I\'ll stay quiet about further failures until it succeeds again.'
-        );
+            + 'I\'ll stay quiet about further failures until it succeeds again.';
+        if (isInboxChannelId(automation.channelId) || !this.client) {
+            await workFailureService.notify({
+                ...failure,
+                userId: automation.userId,
+                title: `Scheduled task "${automation.name}" failed`,
+                body: content,
+                link: '/activity/scheduled',
+                discord: this.gateway ? { gateway: this.gateway } : false
+            });
+            return;
+        }
+        await workFailureService.note(failure);
+        this._notifyChannel(automation, content);
     }
 
     async executeAutomation(automation) {
@@ -287,6 +312,16 @@ class AutomationService {
 
     /** Internal execution body; callers must finish claimDueRun first. */
     async _executeClaimedAutomation(automation) {
+        // The run is one piece of work: a turn that fails inside it, and
+        // every search or sandbox second it spends, is the automation's.
+        return workContext.run(
+            { kind: 'automation', id: automation.id, actor: automation.userId },
+            () => this._runClaimedAutomation(automation),
+            { replace: true }
+        );
+    }
+
+    async _runClaimedAutomation(automation) {
         try {
             // Inbox-delivered automations (every task created from the
             // portal) run the unattended turn and file the reply in the

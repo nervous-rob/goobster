@@ -507,6 +507,11 @@ async function runAgentLoop({
         // retry the finalization call once before falling back.
         content = '';
         for (let attempt = 0; attempt < 2 && content.trim() === ''; attempt++) {
+            if (attempt > 0) {
+                // A second model call for the same answer is a cost the
+                // ledger counts (documentation/work_ledger.md).
+                await require('../../services/resourceEventService').record({ kind: 'retry', provider: 'finalize' });
+            }
             try {
                 const response = await callModel(roundsUsed);
                 roundsUsed += 1;
