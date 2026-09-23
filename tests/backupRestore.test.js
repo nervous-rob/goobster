@@ -15,7 +15,9 @@
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
+const http = require('node:http');
 const { execFileSync } = require('node:child_process');
+const express = require('express');
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-backup-restore-'));
 const SOURCE_DB = path.join(ROOT, 'source', 'goobster.sqlite');
@@ -635,6 +637,97 @@ describe('work_failures and privacy', () => {
         await db.run('UPDATE work_failures SET createdAt = @old WHERE id = @id', { old: ago(31 * 24), id });
         expect(await workFailures.prune()).toBe(1);
         expect(await db.get('SELECT id FROM work_failures WHERE id = @id', { id })).toBeFalsy();
+    });
+});
+
+describe('portal: the Host room sees the pause and resumes it', () => {
+    const HOST = '100000000000000077';
+    const MEMBER = '100000000000000078';
+    let server;
+    let port;
+
+    function request({ method = 'GET', reqPath, headers = {}, body = null }) {
+        const payload = body ? JSON.stringify(body) : null;
+        return new Promise((resolve, reject) => {
+            const req = http.request({
+                host: '127.0.0.1', port, method, path: reqPath,
+                headers: {
+                    ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+                    ...headers
+                }
+            }, (res) => {
+                let data = '';
+                res.on('data', chunk => { data += chunk; });
+                res.on('end', () => {
+                    let json = null;
+                    try { json = JSON.parse(data); } catch { /* non-JSON */ }
+                    resolve({ status: res.statusCode, headers: res.headers, json });
+                });
+            });
+            req.on('error', reject);
+            if (payload) req.write(payload);
+            req.end();
+        });
+    }
+
+    async function cookieFor(userId, name) {
+        const res = await request({ method: 'POST', reqPath: '/api/app/auth/dev-session', body: { userId, name } });
+        const setCookie = (res.headers['set-cookie'] || []).find(c => c.startsWith('goobster_web_session='));
+        return setCookie.split(';')[0];
+    }
+
+    beforeAll(async () => {
+        const identityService = require('@goobster/core/services/identityService');
+        await identityService.ensureLegacyPrincipal({ discordId: HOST, displayName: 'host' });
+        await identityService.grantAccount({ principalId: HOST, entitlement: 'bootstrap', role: 'operator' });
+        await identityService.ensureLegacyPrincipal({ discordId: MEMBER, displayName: 'member' });
+        await identityService.grantAccount({ principalId: MEMBER, entitlement: 'migration' });
+
+        const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/appApi');
+        const ctx = createWebAppContext({
+            gateway: new DisabledGateway(),
+            config: { webapp: { enabled: true, devMode: true } },
+            logger: quiet
+        });
+        const app = express();
+        app.use(createWebAppApp(ctx));
+        await new Promise(resolve => { server = app.listen(0, '127.0.0.1', resolve); });
+        port = server.address().port;
+        await instanceState.pause({ reason: 'restore', by: 'npm run restore', detail: { archive: path.basename(archive) } });
+    });
+
+    afterAll(async () => {
+        if (server) await new Promise(resolve => server.close(resolve));
+    });
+
+    test('/me tells everyone the instance is paused; the admin routes are operator-only', async () => {
+        const member = await cookieFor(MEMBER, 'member');
+        const me = await request({ reqPath: '/api/app/me', headers: { cookie: member } });
+        expect(me.status).toBe(200);
+        expect(me.json.instance).toMatchObject({ paused: true, reason: 'restore' });
+        expect(typeof me.json.instance.since).toBe('string');
+        expect((await request({ reqPath: '/api/app/admin/instance', headers: { cookie: member } })).status).toBe(403);
+        expect((await request({ method: 'POST', reqPath: '/api/app/admin/instance/resume', headers: { cookie: member } })).status).toBe(403);
+        expect(await instanceState.isPaused()).toBe(true);
+    });
+
+    test('the host reads the state and resumes; /me clears', async () => {
+        const host = await cookieFor(HOST, 'host');
+        const state = await request({ reqPath: '/api/app/admin/instance', headers: { cookie: host } });
+        expect(state.status).toBe(200);
+        expect(state.json.paused).toMatchObject({ reason: 'restore', by: 'npm run restore', detail: { archive: path.basename(archive) } });
+        expect(state.json.lastRestore).toMatchObject({ archive: path.basename(archive) });
+
+        const resumed = await request({ method: 'POST', reqPath: '/api/app/admin/instance/resume', headers: { cookie: host } });
+        expect(resumed.status).toBe(200);
+        expect(resumed.json.paused).toBeNull();
+        expect(resumed.json.skipped).toMatchObject({ automations: 0, oneShotFollowups: 0 });
+        expect(resumed.json.state.paused).toBeNull();
+        expect(resumed.json.state.lastResume).toMatchObject({ by: HOST, pauseReason: 'restore' });
+
+        expect(await instanceState.isPaused()).toBe(false);
+        const me = await request({ reqPath: '/api/app/me', headers: { cookie: host } });
+        expect(me.json.instance).toEqual({ paused: false, reason: null, since: null });
     });
 });
 

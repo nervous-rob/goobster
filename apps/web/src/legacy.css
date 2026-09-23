@@ -186,6 +186,16 @@ body {
 .host-body { display: flex; flex-direction: column; gap: 22px; max-width: 900px; }
 .host-invite-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
 .host-invite-form .input { min-width: 180px; }
+.host-instance-paused { border-left: 3px solid var(--warn); }
+/* Installation paused (after a restore): one strip over the stage, every room. */
+.instance-banner {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center;
+  max-width: min(92%, 820px); padding: 9px 14px; z-index: 40;
+  background: var(--bg-raise-2); border: 1px solid var(--warn); border-radius: 12px;
+  font-size: 13px; color: var(--text); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+.instance-banner strong { color: var(--warn); }
 .badge.state-open { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
 .badge.state-redeemed { background: rgba(124, 140, 255, 0.16); }
 .badge.state-revoked, .badge.state-expired { background: rgba(255, 107, 122, 0.16); color: var(--danger); }

@@ -248,6 +248,20 @@ export function AppShell() {
                 </div>
             </aside>
             <div id="stage">
+                {me?.instance?.paused && (
+                    <div className="instance-banner" role="status">
+                        <span>
+                            ⏸️ <strong>Scheduled work is paused</strong>
+                            {me.instance.reason === 'restore' ? ' after a restore' : ''}
+                            {me.instance.since ? ` (since ${me.instance.since} UTC)` : ''}.
+                            {' '}Chat and the rooms work; reminders, automations and triggers wait
+                            {me.identity?.operator ? ' until you resume them.' : ' until the host resumes them.'}
+                        </span>
+                        {me.identity?.operator && (
+                            <Link to="/host" className="btn small primary" onClick={() => setDrawer(false)}>Open Host →</Link>
+                        )}
+                    </div>
+                )}
                 <Outlet />
             </div>
             {forgetOpen && <ForgetModal onClose={() => setForgetOpen(false)} toast={toast} />}

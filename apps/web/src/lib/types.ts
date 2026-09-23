@@ -36,6 +36,44 @@ export type Me = {
     maxInputLength: number;
     /** `projects` = organizing projects (ADR 0009); `observatory` = running code in them. */
     features: { projects?: boolean; observatory?: boolean; spitball?: boolean };
+    /** Installation pause (a restore leaves the instance this way until the host resumes it). */
+    instance?: { paused: boolean; reason: string | null; since: string | null };
+};
+
+/** Skipped-schedule counts a resume reports (documentation/backup_and_restore.md). */
+export type SkippedSchedules = {
+    automations: number;
+    cronTriggers: number;
+    eventTriggers: number;
+    recurringFollowups: number;
+    oneShotFollowups: number;
+};
+
+/** GET /api/app/admin/instance - pause state and the last restore / resume. */
+export type InstanceStateView = {
+    paused: {
+        reason: string;
+        since: string;
+        by: string | null;
+        detail?: { archive?: string; archiveCreatedAt?: string; interrupted?: Record<string, number> };
+    } | null;
+    lastRestore: {
+        at: string;
+        archive: string;
+        archiveCreatedAt: string;
+        engine: string;
+        schemaChanged: boolean;
+        configRestored: boolean;
+        interrupted: Record<string, number>;
+        by: string | null;
+    } | null;
+    lastResume: {
+        at: string;
+        by: string | null;
+        pausedSince: string | null;
+        pauseReason: string | null;
+        skipped: SkippedSchedules;
+    } | null;
 };
 
 export type InboxKind = 'reminder' | 'task' | 'watch' | 'notice' | 'invite' | 'project' | 'expedition' | 'system';
