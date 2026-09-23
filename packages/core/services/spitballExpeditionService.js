@@ -84,6 +84,24 @@ const CYCLE_COUNTERS = [
     'notesCreated', 'notesMerged', 'edgesCreated', 'tagsAdded', 'conflictsFound'
 ];
 
+/**
+ * Who pays for an expedition's model and resource work: the project owner
+ * for a project-targeted expedition, otherwise the person who ran it. One
+ * rule for the runner's work context and the research brief's generation,
+ * exported on its own so a runner given a stub service still resolves it.
+ * @param {{ projectId?: number|string|null, userId?: string }} expedition
+ * @returns {Promise<string|null>} a principal id
+ */
+async function payerForExpedition(expedition) {
+    if (expedition?.projectId) {
+        const project = await db.get(
+            'SELECT userId FROM observatory_projects WHERE id = @id', { id: Number(expedition.projectId) }
+        );
+        if (project?.userId) return String(project.userId);
+    }
+    return expedition?.userId ? String(expedition.userId) : null;
+}
+
 class SpitballExpeditionService {
     constructor(config = spitballConfig) {
         this.config = config;
@@ -266,13 +284,7 @@ class SpitballExpeditionService {
      * @returns {Promise<string|null>} a principal id
      */
     async payerFor(expedition) {
-        if (expedition?.projectId) {
-            const project = await db.get(
-                'SELECT userId FROM observatory_projects WHERE id = @id', { id: Number(expedition.projectId) }
-            );
-            if (project?.userId) return String(project.userId);
-        }
-        return expedition?.userId ? String(expedition.userId) : null;
+        return payerForExpedition(expedition);
     }
 
     /** Ownership-checked fetch: strangers get the same 404 as a missing row. */
@@ -1290,3 +1302,4 @@ module.exports = new SpitballExpeditionService();
 module.exports.SpitballExpeditionService = SpitballExpeditionService;
 module.exports.SpitballError = SpitballError;
 module.exports.ExpeditionInterrupted = ExpeditionInterrupted;
+module.exports.payerForExpedition = payerForExpedition;
