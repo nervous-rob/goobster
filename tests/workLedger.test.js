@@ -394,11 +394,11 @@ describe('retention: 30 days for failures, 90 for resource events, a year for th
         await db.run('UPDATE operator_audit SET createdAt = @at WHERE id = @id', { at: daysAgo(366), id: oldAudit });
         await db.run('UPDATE operator_audit SET createdAt = @at WHERE id = @id', { at: daysAgo(364), id: keptAudit });
 
-        expect(await ledgerRetention.sweep()).toEqual({ skipped: false, workFailures: 1, resourceEvents: 1, operatorAudit: 1 });
+        expect(await ledgerRetention.sweep()).toEqual({ skipped: false, workFailures: 1, resourceEvents: 1, operatorAudit: 1, usageReservations: { released: 0, removed: 0 } });
         expect((await db.all('SELECT id FROM work_failures')).map(row => row.id)).toEqual([fresh]);
         expect((await db.all('SELECT id FROM resource_events')).map(row => row.id)).toEqual([keptEvent]);
         expect((await db.all('SELECT id FROM operator_audit')).map(row => row.id)).toEqual([keptAudit]);
-        expect(await ledgerRetention.sweep()).toEqual({ skipped: false, workFailures: 0, resourceEvents: 0, operatorAudit: 0 });
+        expect(await ledgerRetention.sweep()).toEqual({ skipped: false, workFailures: 0, resourceEvents: 0, operatorAudit: 0, usageReservations: { released: 0, removed: 0 } });
     });
 
     test('the core runtime starts the sweep with the other schedulers', async () => {

@@ -1,3 +1,4 @@
+import { TokenUsage } from '../components/TokenLimits';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -304,6 +305,7 @@ function DiagnosticsSection({ days }: { days: number }) {
     const view = diagnostics.data;
     return (
         <section data-testid="usage-diagnostics" style={{ marginTop: 18 }}>
+            <TokenUsage />
             <div className="section-title">Other resources</div>
             {diagnostics.isPending && <div className="hint">Loading…</div>}
             {diagnostics.isError && <div className="hint">{(diagnostics.error as Error).message}</div>}

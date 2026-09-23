@@ -24,7 +24,8 @@ async function sweep() {
     pending = db.withSingletonLock(LOCK, async () => ({
         workFailures: await require('./workFailureService').prune(),
         resourceEvents: await require('./resourceEventService').prune(),
-        operatorAudit: await require('./operatorAuditService').prune()
+        operatorAudit: await require('./operatorAuditService').prune(),
+        usageReservations: await require('./usageBudgetService').prune()
     })).then(outcome => (outcome.acquired ? { skipped: false, ...outcome.result } : { skipped: true }))
         .finally(() => { pending = null; });
     return pending;

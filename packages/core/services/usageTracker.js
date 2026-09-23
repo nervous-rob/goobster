@@ -13,7 +13,8 @@ class UsageTracker {
      * Record one API call.
      * @param {Object} entry - { provider, model, operation, inputTokens (total including cache), outputTokens, cacheReadTokens, cacheWriteTokens, count, guildId, userId }
      */
-    async log({ provider, model, operation, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, count = 1, guildId = null, userId = null }) {
+    async log({ provider, model, operation, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, count = 1, guildId = null, userId = null, usageKnown = true }) {
+        require('./usageBudgetService').recordUsage({ operation, inputTokens, outputTokens, usageKnown });
         try {
             await db.run(
                 `INSERT INTO usage_log (guildId, userId, provider, model, operation, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, count)

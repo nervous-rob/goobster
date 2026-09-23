@@ -317,7 +317,8 @@ class AnthropicService {
             }
         }
 
-        return { content, toolCalls, usage: this._normalizeUsage(rawUsage) };
+        return { content, toolCalls, usage: this._normalizeUsage(rawUsage),
+            usageKnown: Number.isFinite(rawUsage.input_tokens) && Number.isFinite(rawUsage.output_tokens) };
     }
 
     /**
@@ -363,14 +364,15 @@ class AnthropicService {
         try {
             if (typeof onDelta === 'function') {
                 const response = await this._postMessages(request, { stream: true, signal: opts.signal });
-                const { content, toolCalls, usage } = await this._consumeStream(response, onDelta);
-                await this._logUsage(usage, modelToUse, opts.usageContext);
+                const { content, toolCalls, usage, usageKnown } = await this._consumeStream(response, onDelta);
+                await this._logUsage(usage, modelToUse, opts.usageContext, usageKnown);
                 return { content, toolCalls };
             }
 
             const httpResponse = await this._postMessages(request, { signal: opts.signal });
             const response = await httpResponse.json();
-            await this._logUsage(this._normalizeUsage(response.usage), modelToUse, opts.usageContext);
+            await this._logUsage(this._normalizeUsage(response.usage), modelToUse, opts.usageContext,
+                Number.isFinite(response.usage?.input_tokens) && Number.isFinite(response.usage?.output_tokens));
             return this._parseResponse(response);
         } catch (error) {
             console.error('Anthropic API Error:', error.message);
@@ -392,11 +394,12 @@ class AnthropicService {
         };
     }
 
-    async _logUsage(usage, model, usageContext = {}) {
+    async _logUsage(usage, model, usageContext = {}, usageKnown = true) {
         await usageTracker.log({
             provider: 'anthropic',
             model,
             operation: 'chat',
+            usageKnown,
             inputTokens: usage?.inputTokens || 0,
             outputTokens: usage?.outputTokens || 0,
             cacheReadTokens: usage?.cacheReadTokens || 0,

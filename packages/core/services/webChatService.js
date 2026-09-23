@@ -1561,6 +1561,7 @@ class WebChatService {
         isAutomation = false, sourceDescription = null, spoken = false
     }) {
         await require('./resourceAdmissionService').assertActor(userId);
+        if (!isAutomation) await require('./usageBudgetService').assertAvailable(userId);
         // Resolve the assistant identity through whichever seam this process
         // has: the live client (bot / lite), the gateway (the api service
         // reaching the bot), or the installation's own assistant identity.
@@ -1740,7 +1741,8 @@ class WebChatService {
             conversationId: conversation?.id ?? null,
             abort: turnState.abort,
             release,
-            run: async (events = {}) => {
+            run: async (events = {}) => require('../utils/workContext').run(
+                { kind: 'chat', id: turnId, actor: userId }, async () => {
                 const sseListener = {
                     onTyping: events.onTyping,
                     onDelta: events.onDelta,
@@ -1792,6 +1794,7 @@ class WebChatService {
                         spoken
                     });
                     await handleChatInteraction(interaction);
+                    if (interaction.budgetError) throw interaction.budgetError;
                     if (incognito) {
                         this._appendIncognito(userId, composed, false);
                         for (const reply of capturedReplies) {
@@ -1802,7 +1805,7 @@ class WebChatService {
                     turnState.listeners.delete(sseListener);
                     await release();
                 }
-            }
+            })
         };
     }
 

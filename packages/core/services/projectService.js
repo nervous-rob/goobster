@@ -2711,9 +2711,10 @@ class ObservatoryService {
         const handle = await this._registerJobHandle(jobId, leaseToken);
         // A background job is its own piece of work: the sandbox seconds it
         // spends are the job's, not the turn's that started it.
-        const owner = await db.get('SELECT userId FROM observatory_jobs WHERE id = @jobId', { jobId }).catch(() => null);
+        const owner = await db.get(`SELECT j.userId, p.userId AS payer FROM observatory_jobs j
+            JOIN observatory_projects p ON p.id = j.projectId WHERE j.id = @jobId`, { jobId });
         workContext.run(
-            { kind: 'job', id: jobId, actor: owner?.userId || null },
+            { kind: 'job', id: jobId, actor: owner?.userId || null, payer: owner?.payer || owner?.userId || null },
             () => this._jobLoop(jobId, handle.controller, client, leaseToken),
             { replace: true }
         )

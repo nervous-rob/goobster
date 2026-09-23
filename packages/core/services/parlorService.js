@@ -2634,6 +2634,7 @@ class ParlorService {
                 hasTools: functionDefs.length > 0, projectSeat, spoken
             });
             const chatOptions = {
+                background: true,
                 max_tokens: REPLY_MAX_TOKENS,
                 webSearch: aiService.supportsNativeWebSearch(),
                 usageContext: { guildId: dmScopeId(ownerId), userId: ownerId }

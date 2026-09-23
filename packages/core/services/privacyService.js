@@ -456,7 +456,7 @@ class PrivacyService {
             // that name the person (documentation/work_ledger.md).
             resourceEvents: await require('./resourceEventService').listForUser(userId, { limit: 100 }),
             usageReservations: await db.all(
-                `SELECT workKind, workId, estimatedTokens, actualTokens, status, createdAt FROM usage_reservations
+                `SELECT workKind, workId, estimatedTokens, actualTokens, status, reconcile, createdAt FROM usage_reservations
                  WHERE actor = @userId OR payer = @userId ORDER BY createdAt DESC LIMIT 100`,
                 { userId }
             ),

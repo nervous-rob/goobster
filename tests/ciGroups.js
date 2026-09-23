@@ -43,6 +43,7 @@ const GROUPS = [
             'tableManager',
             'userIntegrationService',
             'workLedger',
+            'usageBudgets',
             'workshopPinMigration',
             'wrappedService'
         ])

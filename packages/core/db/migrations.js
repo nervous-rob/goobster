@@ -13,6 +13,7 @@
  */
 
 const COLUMN_MIGRATIONS = [
+    ['usage_reservations', 'reconcile', 'reconcile INTEGER NOT NULL DEFAULT 0'],
     ['kg_nodes', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     ['project_assets', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     ['knowledge_transfers', 'requestId', 'requestId TEXT'],

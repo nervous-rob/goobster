@@ -140,7 +140,7 @@ describe('OpenAIService request parameters', () => {
         });
         expect(request).not.toHaveProperty('temperature');
         expect(request).not.toHaveProperty('top_p');
-        expect(create.mock.calls[0][1]).toEqual({ signal });
+        expect(create.mock.calls[0][1]).toEqual({ signal, maxRetries: 0 });
         expect(onDelta).toHaveBeenCalledWith('Hello');
         expect(result).toEqual({
             content: 'Hello', toolCalls: [{ id: 'call-1', name: 'echo', arguments: '{"text":"hi"}' }]

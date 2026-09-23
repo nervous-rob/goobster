@@ -146,6 +146,7 @@ class OpenAIService {
             provider: 'openai',
             model,
             operation: 'chat',
+            usageKnown: Number.isFinite(response.usage?.input_tokens) && Number.isFinite(response.usage?.output_tokens),
             inputTokens: response.usage?.input_tokens || 0,
             outputTokens: response.usage?.output_tokens || 0,
             guildId: usageContext?.guildId,
@@ -256,7 +257,7 @@ class OpenAIService {
 
         try {
             const client = this._requireClient();
-            const requestOptions = signal ? { signal } : undefined;
+            const requestOptions = { ...(signal ? { signal } : {}), maxRetries: 0 };
 
             if (typeof onDelta === 'function') {
                 const stream = await client.responses.create({ ...request, stream: true }, requestOptions);

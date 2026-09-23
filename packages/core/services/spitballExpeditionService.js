@@ -134,8 +134,8 @@ class SpitballExpeditionService {
      * Create a durable Expedition. Personal expeditions write into the user's
      * personal graph scope: guildId defaults to the portal DM scope and
      * scopeKey is always USER:<userId>. A project-targeted expedition writes
-     * into guildId dm:<ownerId>, scopeKey PROJECT:<projectId> — budgets still
-     * charge the launcher. Budgets are resolved from the depth preset at
+     * into guildId dm:<ownerId>, scopeKey PROJECT:<projectId> — token budgets
+     * charge the project owner. Research limits are resolved from the depth preset at
      * creation time.
      * @returns {Promise<Object>} the created expedition row (shaped)
      */

@@ -9,7 +9,14 @@ export type Scope = {
     graphAvailable?: boolean;
 };
 
+export type TokenLimits = { dailyTokens: number | null; windowHours: number; retentionDays: number };
+export type TokenUsage = TokenLimits & {
+    windowStart: string; resetsAt: string; usedTokens: number; remainingTokens: number | null; waitingRequests: number;
+};
+export type AdminLimits = TokenLimits & { accounts: Array<TokenUsage & { principalId: string; displayName: string }> };
+
 export type Me = {
+    limits?: TokenUsage;
     sessionId?: number;
     user: { id: string; name: string; avatar: string | null };
     /** Application identity (shared-instance): entitlement and sign-in surface. */
