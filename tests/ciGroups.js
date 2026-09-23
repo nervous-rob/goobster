@@ -17,6 +17,7 @@ const GROUPS = [
             'activityGatewayAccess',
             'activityService',
             'autoUpdate',
+            'backupRestore',
             'ciGroups',
             'cliResolver',
             'cursorAgentService',
