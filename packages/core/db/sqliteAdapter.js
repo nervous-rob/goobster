@@ -531,6 +531,28 @@ async function closeConnection() {
     }
 }
 
+/** Where the data lives, for backup and restore tooling. */
+function describeStorage() {
+    return { engine: 'sqlite', path: process.env.GOOBSTER_DB_PATH || DEFAULT_DB_PATH };
+}
+
+/**
+ * Application tables, sorted. Excludes SQLite internals and, unless asked,
+ * the derived sqlite-vec tables (memory_vec_* and their shadow tables),
+ * which memoryService rebuilds from memory_embeddings.
+ * @param {{includeDerived?: boolean}} [options]
+ * @returns {Promise<string[]>}
+ */
+async function listTables({ includeDerived = false } = {}) {
+    return getDb()
+        .prepare(`SELECT name FROM sqlite_master
+                  WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                    AND (@includeDerived = 1 OR name NOT LIKE 'memory_vec_%')
+                  ORDER BY name`)
+        .all({ includeDerived: includeDerived ? 1 : 0 })
+        .map(row => row.name);
+}
+
 /**
  * SQLite is one process, so the lock cannot be contended. Always run fn.
  * @param {string} _name
@@ -552,4 +574,6 @@ module.exports = {
     transaction,
     closeConnection,
     withAdvisoryLock,
+    describeStorage,
+    listTables,
 };

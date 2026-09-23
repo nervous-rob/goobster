@@ -186,6 +186,20 @@ body {
 .host-body { display: flex; flex-direction: column; gap: 22px; max-width: 900px; }
 .host-invite-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
 .host-invite-form .input { min-width: 180px; }
+.host-instance-paused { border-left: 3px solid var(--warn); }
+/* Installation paused (after a restore): one strip above every room. The
+   stage normally positions panes absolutely; with the strip present it lays
+   them out under it in normal flow, the way the Activity shell does. */
+#stage.has-instance-banner { display: flex; flex-direction: column; }
+#stage.has-instance-banner > .pane,
+#stage.has-instance-banner > .activity-shell { position: relative; inset: auto; flex: 1; min-height: 0; }
+.instance-banner {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin: 10px 12px 0; padding: 9px 14px; z-index: 2;
+  background: var(--bg-raise-2); border: 1px solid var(--warn); border-radius: 12px;
+  font-size: 13px; color: var(--text);
+}
+.instance-banner strong { color: var(--warn); }
 .badge.state-open { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
 .badge.state-redeemed { background: rgba(124, 140, 255, 0.16); }
 .badge.state-revoked, .badge.state-expired { background: rgba(255, 107, 122, 0.16); color: var(--danger); }

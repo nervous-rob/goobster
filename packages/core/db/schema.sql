@@ -2915,3 +2915,30 @@ CREATE TABLE IF NOT EXISTS execution_admissions (
     expiresAt BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_execution_admission_resource ON execution_admissions(resource, expiresAt);
+
+-- Installation-wide state that must survive a restart and be seen by every
+-- process (documentation/backup_and_restore.md). One JSON value per key;
+-- the 'paused' key is what a restored instance comes back with.
+CREATE TABLE IF NOT EXISTS instance_state (
+    key TEXT PRIMARY KEY,
+    valueJson TEXT NOT NULL,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per failed piece of work (roadmap #256): chat turns, research
+-- runs, code runs, automations, deliveries. workId is the join key shared
+-- with usage_reservations and resource_events. Never a prompt or a message
+-- body - `reason` is a short operator-readable phrase. Erasure nulls the
+-- actor and keeps the row, as usage_log does.
+CREATE TABLE IF NOT EXISTS work_failures (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    workId TEXT,
+    phase TEXT,
+    code TEXT NOT NULL,
+    reason TEXT,
+    actor TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_work_failures_actor ON work_failures(actor, createdAt);
+CREATE INDEX IF NOT EXISTS idx_work_failures_work ON work_failures(kind, workId);

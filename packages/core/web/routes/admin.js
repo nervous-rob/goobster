@@ -126,6 +126,19 @@ function mountAdmin(app, ctx, h) {
     // --- Migration report --------------------------------------------------
 
     app.get('/api/app/admin/identity/report', ...guard, authRoute(async () => ctx.identity.migrationReport()));
+
+    // --- Instance state (paused after a restore) ---------------------------
+
+    // The pause flag, and the last restore / resume records
+    // (documentation/backup_and_restore.md).
+    app.get('/api/app/admin/instance', ...guard, authRoute(async () => ctx.instanceState.describe()));
+
+    // Resume: every missed schedule moves to its next future time first, so
+    // nothing that came due during the downtime fires late.
+    app.post('/api/app/admin/instance/resume', ...guard, authRoute(async (req) => {
+        const outcome = await ctx.instanceState.resume({ by: req.webUser.userId });
+        return { ...outcome, state: await ctx.instanceState.describe() };
+    }));
 }
 
 module.exports = { mountAdmin };

@@ -1,4 +1,4 @@
-import type { ModelCatalog, AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
+import type { ModelCatalog, AccountSummary, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 
@@ -95,6 +95,9 @@ export const api = {
         request<{ url: string; expiresAt: string; loginName: string | null }>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/recovery`, { method: 'POST' }),
     adminIdentityReport: () => request<MigrationReport>('/api/app/admin/identity/report'),
     adminInstallation: () => request<InstallationView>('/api/app/admin/installation'),
+    adminInstance: () => request<InstanceStateView>('/api/app/admin/instance'),
+    adminInstanceResume: () =>
+        request<{ paused: null; skipped: SkippedSchedules; state: InstanceStateView }>('/api/app/admin/instance/resume', { method: 'POST' }),
     adminTestMail: (to: string) => request<{ ok: true; provider: string }>('/api/app/admin/mail/test', { method: 'POST', body: { to } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),

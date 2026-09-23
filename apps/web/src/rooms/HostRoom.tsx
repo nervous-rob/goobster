@@ -1,7 +1,8 @@
 import { FormEvent, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import type { AdminAccount, Invite } from '../lib/types';
+import { keys } from '../lib/query';
+import type { AdminAccount, Invite, SkippedSchedules } from '../lib/types';
 import { useSession } from '../hooks/useSession';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
@@ -11,6 +12,117 @@ const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
 const REPORT_KEY = ['admin-identity-report'];
 const INSTALLATION_KEY = ['admin-installation'];
+const INSTANCE_KEY = ['admin-instance'];
+
+function describeInterrupted(interrupted: Record<string, number> | undefined): string {
+    const entries = Object.entries(interrupted || {}).filter(([, n]) => n > 0);
+    if (entries.length === 0) return 'nothing was in flight';
+    return entries.map(([kind, n]) => `${n} ${kind.replace('_', ' ')}${n === 1 ? '' : 's'}`).join(', ');
+}
+
+function describeSkipped(skipped: SkippedSchedules | undefined): string {
+    if (!skipped) return '';
+    const parts = [
+        [skipped.automations, 'automation'],
+        [skipped.cronTriggers, 'scheduled trigger'],
+        [skipped.eventTriggers, 'event trigger fire'],
+        [skipped.recurringFollowups, 'recurring reminder'],
+        [skipped.oneShotFollowups, 'one-time reminder (cancelled, owner told)']
+    ] as Array<[number, string]>;
+    const shown = parts.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}${n === 1 ? '' : 's'}`);
+    return shown.length > 0 ? `Skipped ${shown.join(', ')}.` : 'Nothing had come due.';
+}
+
+/**
+ * Pause state, and Resume. A restore (`npm run restore`) leaves the
+ * installation paused: sign-in and chat work, scheduled work waits, and
+ * whatever came due while the box was down is skipped - not fired late -
+ * the moment the host resumes here.
+ */
+function InstancePanel() {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+    const state = useQuery({ queryKey: INSTANCE_KEY, queryFn: () => api.adminInstance(), refetchInterval: 15_000 });
+    const [busy, setBusy] = useState(false);
+    const data = state.data;
+
+    async function resume() {
+        const ok = await confirm(
+            'Resume this installation? Scheduled work starts again. Anything that came due while it was paused moves to its '
+            + 'next scheduled time; one-time reminders that were missed are cancelled and their owners told in their Inbox. Nothing runs late.'
+        );
+        if (!ok) return;
+        setBusy(true);
+        try {
+            const result = await api.adminInstanceResume();
+            toast(`Resumed. ${describeSkipped(result.skipped)}`);
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: INSTANCE_KEY }),
+                queryClient.invalidateQueries({ queryKey: keys.me })
+            ]);
+        } catch (error) {
+            toast((error as ApiError).message, true);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <section className="settings-section" aria-labelledby="host-instance-title">
+            <h2 id="host-instance-title">Instance</h2>
+            <p className="hint">
+                Whether scheduled work is running. <code>npm run restore</code> brings an installation back paused so nothing that came due
+                during the downtime fires late; resume it here once the secrets are back in place. Backups: <code>npm run backup</code>.
+            </p>
+            {state.isPending && <div className="hint">Loading…</div>}
+            {data && (
+                <div className={`list-card${data.paused ? ' host-instance-paused' : ''}`}>
+                    <div className="list-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                        <span>Scheduled work</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            {data.paused
+                                ? <><strong className="settings-danger">Paused</strong><span className="hint"> since {data.paused.since} UTC · {data.paused.reason}{data.paused.by ? ` · by ${data.paused.by}` : ''}</span></>
+                                : <strong>Running</strong>}
+                            {data.paused && (
+                                <button type="button" className="btn small primary" onClick={resume} disabled={busy}>
+                                    {busy ? 'Resuming…' : 'Resume'}
+                                </button>
+                            )}
+                        </span>
+                    </div>
+                    {data.paused?.detail?.archive && (
+                        <div className="list-row">
+                            <span className="hint">Restored from <code>{data.paused.detail.archive}</code> (taken {data.paused.detail.archiveCreatedAt} UTC) · interrupted: {describeInterrupted(data.paused.detail.interrupted)}</span>
+                        </div>
+                    )}
+                    {data.lastRestore && (
+                        <div className="list-row">
+                            <span>Last restore</span>
+                            <span className="hint">
+                                {data.lastRestore.at} UTC from <code>{data.lastRestore.archive}</code>
+                                {' · '}{data.lastRestore.engine}{data.lastRestore.schemaChanged ? ' · schema migrated forward' : ''}
+                                {' · '}config.json {data.lastRestore.configRestored ? 'restored' : 'not restored'}
+                            </span>
+                        </div>
+                    )}
+                    {data.lastResume && (
+                        <div className="list-row">
+                            <span>Last resume</span>
+                            <span className="hint">
+                                {data.lastResume.at} UTC{data.lastResume.by ? ` by ${data.lastResume.by}` : ''}
+                                {data.lastResume.pausedSince ? ` · paused since ${data.lastResume.pausedSince} UTC` : ''} · {describeSkipped(data.lastResume.skipped)}
+                            </span>
+                        </div>
+                    )}
+                    {!data.paused && !data.lastRestore && !data.lastResume && (
+                        <div className="list-row"><span className="hint">Never restored or paused.</span></div>
+                    )}
+                </div>
+            )}
+        </section>
+    );
+}
 
 function absolute(url: string): string {
     return url.startsWith('http') ? url : `${window.location.origin}${url}`;
@@ -344,6 +456,7 @@ export function HostRoom() {
                 {!operator && <div className="empty">Only the host of this installation can open this room.</div>}
                 {operator && (
                     <>
+                        <InstancePanel />
                         <SignupPanel />
                         <InvitesPanel />
                         <AccountsPanel />

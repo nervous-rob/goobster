@@ -30,7 +30,8 @@ const { dmScopeId } = require('../utils/dmScope');
  *   and the user's Observatory (project registry, job records, and the
  *   whole on-disk workspace tree; live jobs are cancelled first).
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
- *   counts kept), tavern adventure createdBy, and tavern log attribution.
+ *   counts kept), work_failures (actor nulled, row kept), tavern adventure
+ *   createdBy, and tavern log attribution.
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
  *   internal-monologue thoughts/scratchpad notes, knowledge-graph nodes,
  *   and tavern adventure-log prose that mention the user by name without
@@ -447,6 +448,8 @@ class PrivacyService {
             inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
             shareLinks: shareLinks?.c || 0,
             executionAdmissions: await db.all('SELECT resource, state, createdAt, startedAt, expiresAt FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope }),
+            // Failed work attributed to the person (kind, code, short reason - never a body).
+            workFailures: await require('./workFailureService').listForUser(userId, { limit: 100 }),
             tutorials: await require('./tutorialService').summarizeForUser(userId),
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
@@ -1037,6 +1040,9 @@ class PrivacyService {
             counts.anonymizedUsageRows += (await db.run(
                 'UPDATE command_log SET userId = NULL WHERE userId = @userId', { userId }
             )).changes;
+            // work_failures (#256): the actor is nulled, the row stays so
+            // the operator's failure counts stay whole.
+            counts.anonymizedWorkFailures = await require('./workFailureService').forgetUser(userId);
 
             // Activity counters likewise: userId nulled, counts kept so
             // server-wide /wrapped totals stay accurate. NULLs are distinct
@@ -1264,6 +1270,7 @@ class PrivacyService {
             command_log: (await db.get(
                 'SELECT COUNT(*) AS c FROM command_log WHERE userId = @userId', { userId }
             )).c,
+            work_failures: await require('./workFailureService').countForUser(userId),
             guild_activity: (await db.get(
                 'SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @userId', { userId }
             )).c,

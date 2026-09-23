@@ -586,6 +586,40 @@ async function closeConnection() {
     }
 }
 
+/**
+ * Where the data lives, for backup and restore tooling: the connection
+ * URL and the schema this process reads (the isolation schema under
+ * GOOBSTER_PG_TEST_ISOLATE, otherwise 'public').
+ */
+async function describeStorage() {
+    await ensureReady();
+    const result = await getPool().query('SELECT current_schema() AS schema');
+    return {
+        engine: 'postgres',
+        url: process.env.GOOBSTER_DB_URL,
+        schema: result.rows[0]?.schema || schemaName || 'public'
+    };
+}
+
+/**
+ * Application tables in this process's schema, sorted. Excludes, unless
+ * asked, the derived pgvector index tables (memory_vec_*), which
+ * memoryService rebuilds from memory_embeddings.
+ * @param {{includeDerived?: boolean}} [options]
+ * @returns {Promise<string[]>}
+ */
+async function listTables({ includeDerived = false } = {}) {
+    await ensureReady();
+    const result = await getPool().query(
+        `SELECT table_name AS name FROM information_schema.tables
+         WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
+           AND ($1::boolean OR table_name NOT LIKE 'memory_vec_%')
+         ORDER BY table_name`,
+        [includeDerived]
+    );
+    return result.rows.map(row => row.name);
+}
+
 module.exports = {
     engine: 'postgres',
     getDb,
@@ -596,6 +630,8 @@ module.exports = {
     insert,
     transaction,
     closeConnection,
+    describeStorage,
+    listTables,
     rawQuery,
     listenNotifications,
     notificationChannel,

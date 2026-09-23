@@ -148,6 +148,24 @@ jobs:
 
       - uses: ./.github/actions/setup-ffmpeg
 
+      # The backup/restore suite shells out to pg_dump / pg_restore, which
+      # refuse a server of a newer major version. The runner image ships the
+      # Ubuntu default (16); the service container is 17, so install the
+      # matching client and put its bin dir first on PATH (pg_wrapper would
+      # otherwise pick the runner's own cluster version). Small package,
+      # pgdg repo is already configured on ubuntu-latest.
+      - name: Install PostgreSQL 17 client tools
+        run: |
+          if ! ls /etc/apt/sources.list.d/pgdg* >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-common
+            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 

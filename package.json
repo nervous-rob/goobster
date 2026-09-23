@@ -20,6 +20,8 @@
     "start": "npm run deploy-commands && node apps/bot/index.js",
     "dev": "nodemon apps/bot/index.js",
     "db-init": "node scripts/initDb.js",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
     "docs:seed": "node scripts/seed-self-docs.js",
     "docs:check": "node scripts/seed-self-docs.js --check",
     "identity:report": "node scripts/identity-report.js",
