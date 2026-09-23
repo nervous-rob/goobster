@@ -396,8 +396,11 @@ class GeminiService {
             provider: 'gemini',
             model,
             operation: 'chat',
+            usageKnown: Number.isFinite(usageMetadata?.promptTokenCount) && Number.isFinite(usageMetadata?.candidatesTokenCount),
             inputTokens: usageMetadata?.promptTokenCount || 0,
-            outputTokens: usageMetadata?.candidatesTokenCount || 0,
+            // Gemini reports reasoning separately from visible candidates.
+            // Both are generated output (ai.google.dev/gemini-api/docs/thinking).
+            outputTokens: (usageMetadata?.candidatesTokenCount || 0) + (usageMetadata?.thoughtsTokenCount || 0),
             guildId: usageContext?.guildId,
             userId: usageContext?.userId
         });

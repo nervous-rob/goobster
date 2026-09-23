@@ -85,6 +85,11 @@
         "enabled": null
     },
 
+    "limits": {
+        "dailyTokens": null,
+        "windowHours": 24,
+        "retentionDays": 90
+    },
     "identity": {
         "installationId": "local",
         "installationName": "Goobster",

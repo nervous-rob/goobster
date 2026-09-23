@@ -28,6 +28,21 @@ function mountAdmin(app, ctx, h) {
         action, actor: req.webUser.userId, target, detail
     });
 
+    // --- Token limits ----------------------------------------------------
+    app.get('/api/app/admin/limits', ...guard, authRoute(async () => {
+        const budgets = require('../../services/usageBudgetService');
+        const accounts = await ctx.identity.listAccounts();
+        return { ...await budgets.policy(), accounts: await Promise.all(accounts.map(async account => ({
+            principalId: account.principalId, displayName: account.displayName || account.loginName || account.principalId,
+            ...await budgets.describe(account.principalId)
+        }))) };
+    }));
+    app.patch('/api/app/admin/limits', ...guard, authRoute(async req => {
+        const limits = await require('../../services/usageBudgetService').setPolicy(req.body);
+        await audit(req, 'limits.change', null, limits);
+        return limits;
+    }));
+
     // --- Invitations -----------------------------------------------------
 
     app.get('/api/app/admin/invites', ...guard, authRoute(async () => ({

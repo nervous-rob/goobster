@@ -136,9 +136,13 @@ class SpitballExpeditionRunner {
         // Every search call, sandbox second and failure inside the loop is
         // this expedition's (utils/workContext.js).
         const owner = await this.service.getById(expeditionId);
+        const payer = owner?.projectId
+            ? (await db.get('SELECT userId FROM observatory_projects WHERE id = @id', { id: owner.projectId }))?.userId
+            : owner?.userId;
         return workContext.run(
-            { kind: 'expedition', id: expeditionId, actor: owner?.userId || null },
-            () => this._runCycles(expeditionId)
+            { kind: 'expedition', id: expeditionId, actor: owner?.userId || null, payer: payer || owner?.userId || null },
+            () => this._runCycles(expeditionId),
+            { replace: true }
         );
     }
 

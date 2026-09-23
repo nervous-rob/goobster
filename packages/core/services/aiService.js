@@ -233,7 +233,7 @@ class AIServiceRouter {
 
     async generateText(prompt, opts = {}) {
         const provider = this._resolveProvider(opts);
-        return this._admit(opts, signal => provider.generateText(prompt, { ...opts, signal }));
+        return this._admit(opts, signal => provider.generateText(prompt, { ...opts, signal }), prompt);
     }
 
     /**
@@ -241,19 +241,28 @@ class AIServiceRouter {
      */
     async chat(messages, opts = {}) {
         const provider = this._resolveProvider(opts);
-        return this._admit(opts, signal => provider.chat(messages, { ...opts, signal }));
+        return this._admit(opts, signal => provider.chat(messages, { ...opts, signal }), messages);
     }
 
-    async _admit(opts, work) {
+    async _admit(opts, work, input = '') {
+        const providerKey = opts.provider || currentProviderKey;
+        const provider = PROVIDERS[providerKey];
+        const request = modelRegistry.resolveRequest(providerKey, opts.model || this.defaultModelFor(providerKey), {
+            ...opts, reasoning_effort: opts.reasoning_effort || provider?.getDefaultReasoningEffort?.()
+        }, Array.isArray(input) ? input : []);
+        // Conservative text estimate, including tool definitions and framing.
+        // No prompt content is persisted. Provider usage replaces the hold.
+        const promptBytes = Buffer.byteLength(JSON.stringify({ input, functions: opts.functions || [] }), 'utf8');
+        const estimatedTokens = promptBytes + 1024 + request.maxOutputTokens;
         const policy = require('../config/admissionConfig');
         const timeout = AbortSignal.timeout(policy.modelTimeoutMs);
         const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-        return require('./resourceAdmissionService').run({
+        return require('./usageBudgetService').run({ estimatedTokens, background: opts.background === true, admissionOptions: {
             resource: 'model', actorId: opts.usageContext?.actorId || opts.usageContext?.userId || null,
             scopeId: opts.usageContext?.guildId || null,
             limit: policy.modelConcurrent, perActor: policy.modelPerAccount,
             waitMs: policy.modelQueueMs, leaseMs: policy.modelTimeoutMs + 30000, signal, onWaiting: opts.onAdmission
-        }, work);
+        } }, work);
     }
 
     /**

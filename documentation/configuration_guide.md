@@ -184,4 +184,28 @@ data/
 2. **Manual Intervention**
    - Clear cache directories
    - Reset API keys
-   - Restart services 
+   - Restart services
+
+## Account token limits
+
+Single-user use is unlimited unless the host sets a cap. The reservation ledger still records token usage for cost reports.
+
+```json
+{
+  "limits": {
+    "dailyTokens": null,
+    "windowHours": 24,
+    "retentionDays": 90
+  }
+}
+```
+
+| Key | Environment default | Meaning |
+|---|---|---|
+| `limits.dailyTokens` | `GOOBSTER_LIMITS_DAILY_TOKENS` | Positive token cap per account per window; null/unset means unlimited. |
+| `limits.windowHours` | `GOOBSTER_LIMITS_WINDOW_HOURS` | Integer 1–24; defaults to a 24-hour window resetting at midnight UTC. |
+| `limits.retentionDays` | `GOOBSTER_LIMITS_RETENTION_DAYS` | Integer 1–3,650; settled/released token reservations default to 90 days. |
+
+Resolution on a fresh installation is environment → `config.json` → default. **Host → Limits** saves an override in the database, effective for new reservations without restart. That saved override takes precedence over startup defaults. `identity.requireAccount: true` requires a cap before a second account can be created, including invitation and open-registration paths. It also prevents clearing the cap while multiple accounts exist.
+
+The cap covers routed model chat/text calls, including reasoning output. Images, speech, search and embeddings have separate resource records and no token cap here. Foreground requests fail with the named limit; background requests wait up to `admission.modelQueueMs` (default 30 seconds), then report the failure. No in-flight model stream is preempted. See [work_ledger.md](work_ledger.md#budgets) for reservations, estimates, reset times and reconciliation.

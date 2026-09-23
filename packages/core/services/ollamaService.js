@@ -220,6 +220,7 @@ class OllamaService {
             provider: 'ollama',
             model,
             operation: 'chat',
+            usageKnown: Number.isFinite(stats?.prompt_eval_count) && Number.isFinite(stats?.eval_count),
             inputTokens: stats?.prompt_eval_count || 0,
             outputTokens: stats?.eval_count || 0,
             guildId: usageContext?.guildId,

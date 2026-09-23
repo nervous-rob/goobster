@@ -2962,11 +2962,9 @@ CREATE INDEX IF NOT EXISTS idx_resource_events_work ON resource_events(workKind,
 CREATE INDEX IF NOT EXISTS idx_resource_events_actor ON resource_events(actor, createdAt);
 CREATE INDEX IF NOT EXISTS idx_resource_events_time ON resource_events(createdAt);
 
--- Token budget reservations (roadmap #248, table decided there; created
--- here so the #256 cost-per-result join has its other half). One row per
--- reserve: held before a model-backed piece of work starts, settled with
--- the actual count afterwards, released when the work never ran. The
--- reserve / settle / release logic and the caps land with #248.
+-- Token budget reservations (#248): held before admission, settled from
+-- provider usage, released if work never started. Uncertain paid outcomes
+-- settle at the estimate with reconcile = 1; never automatically retried.
 CREATE TABLE IF NOT EXISTS usage_reservations (
     id INTEGER PRIMARY KEY,
     actor TEXT,
@@ -2976,6 +2974,7 @@ CREATE TABLE IF NOT EXISTS usage_reservations (
     admissionId TEXT,
     estimatedTokens INTEGER NOT NULL DEFAULT 0,
     actualTokens INTEGER,
+    reconcile INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'held' CHECK (status IN ('held', 'settled', 'released')),
     idempotencyKey TEXT,
     expiresAt TEXT,

@@ -303,6 +303,7 @@ class NativeAuthService {
         const principalId = identityService.newNativeId();
 
         const result = await db.transaction(async (tx) => {
+            await require('./usageBudgetService').assertAccountCreation(tx);
             const claimed = await tx.run(
                 `UPDATE account_invites SET consumedAt = @now, consumedBy = @principalId
                  WHERE tokenHash = @tokenHash AND consumedAt IS NULL AND revokedAt IS NULL AND expiresAt > @now`,
@@ -951,6 +952,7 @@ class NativeAuthService {
     async _completeSignup(pending, invalid) {
         const now = nowUtc();
         return db.transaction(async (tx) => {
+            await require('./usageBudgetService').assertAccountCreation(tx);
             const claimed = await tx.run(
                 'DELETE FROM pending_registrations WHERE id = @id AND expiresAt > @now',
                 { id: pending.id, now }

@@ -901,11 +901,13 @@ async function runChatInteraction(interaction, thread = null) {
                 requestId: `${interaction.id}-${Date.now()}`,
                 channel: interaction.channel?.name || 'unknown'
             });
-            await recordTurnFailure(interaction, 'generate', error);
+            if (error.code === 'BUDGET_EXCEEDED') interaction.budgetError = error;
+            else await recordTurnFailure(interaction, 'generate', error);
             
             // Use guaranteed response for AI processing errors
             await guaranteedResponse(
-                "I apologize, but I encountered an error while processing your request. Please try again.", 
+                error.code === 'BUDGET_EXCEEDED' ? error.message
+                    : "I apologize, but I encountered an error while processing your request. Please try again.",
                 true
             );
         }
@@ -925,7 +927,8 @@ async function runChatInteraction(interaction, thread = null) {
         });
 
         const errorMessage = error.message || 'Sorry, I encountered an error while processing your message.';
-        await recordTurnFailure(interaction, 'handler', error);
+        if (error.code === 'BUDGET_EXCEEDED') interaction.budgetError = error;
+        else await recordTurnFailure(interaction, 'handler', error);
         
         // Use guaranteed response system for all top-level errors
         await guaranteedResponse(`❌ ${errorMessage}`, true);

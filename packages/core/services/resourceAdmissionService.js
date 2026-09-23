@@ -1,4 +1,4 @@
-/** Installation-wide execution admission. Spending reservations belong to #248. */
+/** Installation-wide concurrency admission; usageBudgetService layers token reservations on top. */
 const crypto = require('node:crypto');
 const db = require('../db');
 
@@ -17,7 +17,7 @@ async function assertActor(actorId) {
 class ResourceAdmissionService {
     async acquire({ resource, actorId = null, scopeId = null, limit = 1, perActor = 1,
         scopeLimit = null, rateLimit = null, windowMs = 300000, leaseMs = 60000,
-        waitMs = 0, maxQueued = 64, maxQueuedPerActor = 4, signal = null, onWaiting = null } = {}) {
+        waitMs = 0, maxQueued = 64, maxQueuedPerActor = 4, signal = null, onWaiting = null, fair = true } = {}) {
         const id = crypto.randomUUID();
         const actor = actorId ? String(actorId) : null;
         const deadline = Date.now() + waitMs;
@@ -59,7 +59,9 @@ class ResourceAdmissionService {
                     // that account. A recursive producer cannot jump another user.
                     const lastStart = actor => Math.max(0, ...rows.filter(r => r.actorId === actor).map(r => Number(r.startedAt) || 0));
                     candidates.sort((a, b) => lastStart(a.actorId) - lastStart(b.actorId) || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-                    if (active.length >= limit || candidates[0]?.id !== id) return false;
+                    // Budget wait slots admit any eligible caller immediately; model/sandbox
+                    // queues retain the default account-fair ordering.
+                    if (active.length >= limit || (fair ? candidates[0]?.id !== id : !candidates.some(r => r.id === id))) return false;
                     if (rateLimit && rows.filter(r => r.actorId === actor && Number(r.startedAt) > now - windowMs).length >= rateLimit) {
                         throw new AdmissionError('RATE_LIMITED', 'Your code-run allowance is used for this window. Try again later.');
                     }
@@ -113,7 +115,7 @@ class ResourceAdmissionService {
             try { await lease.renew(); } catch { controller.abort(); } finally { renewing = false; }
         }, Math.min(1000, Math.max(250, (options.leaseMs || 60000) / 3)));
         timer.unref?.();
-        try { return await work(signal); }
+        try { return await work(signal, lease); }
         finally { clearInterval(timer); await lease.release(); }
     }
 }

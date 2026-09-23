@@ -1,3 +1,4 @@
+import { LimitsPanel } from '../components/TokenLimits';
 import { FormEvent, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
@@ -606,6 +607,7 @@ export function HostRoom() {
                 {operator && (
                     <>
                         <InstancePanel />
+            <LimitsPanel />
                         <SignupPanel />
                         <InvitesPanel />
                         <AccountsPanel />

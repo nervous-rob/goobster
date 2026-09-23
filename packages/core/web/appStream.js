@@ -31,7 +31,9 @@ async function streamWebChatTurn(res, turn, ctx) {
         send('done', { ok: true, conversationId: turn.conversationId });
     } catch (error) {
         ctx.logger.error?.('Web chat turn failed:', error.message);
-        send('error', { code: 'INTERNAL', message: 'Something went wrong generating the reply.' });
+        send('error', error.code === 'BUDGET_EXCEEDED'
+            ? { code: error.code, message: error.message, details: error.details }
+            : { code: 'INTERNAL', message: 'Something went wrong generating the reply.' });
     } finally {
         clearInterval(heartbeat);
         await channel.end();
@@ -71,7 +73,9 @@ async function streamParlorTurn(res, turn, ctx) {
         emit('done', { ok: true, conversationId: turn.conversationId });
     } catch (error) {
         ctx.logger.error?.('Parlor turn failed:', error.message);
-        emit('error', { code: 'INTERNAL', message: 'Something went wrong generating the replies.' });
+        emit('error', error.code === 'BUDGET_EXCEEDED'
+            ? { code: error.code, message: error.message, details: error.details }
+            : { code: 'INTERNAL', message: 'Something went wrong generating the replies.' });
     } finally {
         clearInterval(heartbeat);
         await channel.end();

@@ -738,6 +738,7 @@ Respond with ONLY JSON:
             const response = await aiService.generateText(prompt, {
                 temperature: 0.3,
                 max_tokens: 400,
+                background: true,
                 usageContext: { guildId: dmScopeId(ctx.userId), userId: ctx.userId }
             });
             const parsed = parseJsonBlock(response);

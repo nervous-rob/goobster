@@ -458,6 +458,7 @@ function mountAuth(app, ctx, h) {
                 // Paused after a restore: scheduled work is on hold until
                 // the operator resumes (documentation/backup_and_restore.md).
                 instance: await describeInstancePause(ctx),
+                limits: await require('../../services/usageBudgetService').describe(req.webUser.userId),
                 scopes,
                 maxInputLength: ctx.chat.maxInputLength,
                 // Feature switches the client uses to show/hide panes

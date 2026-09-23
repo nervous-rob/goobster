@@ -9,7 +9,7 @@ tags: [roadmap, handoff, shared-instance, limits, pilot, operations]
 
 Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) (the plan) and roadmap [#246](https://github.com/nervous-rob/goobster/issues/246) (the sequence and the decisions). This is the handoff note: what has shipped, which seams the next steps hook into, and exactly where the next session picks up. Update the **Where things stand** table and the date as items land; delete a step's brief once its issue closes.
 
-**Last updated:** 2026-09-23, after [PR #277](https://github.com/nervous-rob/goobster/pull/277) (#256) merged on top of [PR #276](https://github.com/nervous-rob/goobster/pull/276) (#249) and [PR #275](https://github.com/nervous-rob/goobster/pull/275) (#262).
+**Last updated:** 2026-09-23, with #248 implemented on the continuation branch (awaiting merge and CI). Baseline: after [PR #277](https://github.com/nervous-rob/goobster/pull/277) (#256) merged on top of [PR #276](https://github.com/nervous-rob/goobster/pull/276) (#249) and [PR #275](https://github.com/nervous-rob/goobster/pull/275) (#262).
 
 ## Where things stand
 
@@ -17,9 +17,9 @@ Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) 
 |---|---|---|
 | #262 Name and license | **Shipped** ([ADR 0012](adr/0012-name-and-license.md), PR #275) | Trademark and domain search before any public listing (#259 depends on it). |
 | #249 Backup and tested restore | **Shipped** (PR #276, [backup_and_restore.md](backup_and_restore.md)) | The **dated recovery test on the actual host** (runbook §"The recovery test"). Record the date and result on #249. |
-| #256 work_failures, resource_events, operator_audit | **Shipped** (PR #277, [work_ledger.md](work_ledger.md)) | Nothing. `usage_reservations` exists as a table; its writer is #248. |
+| #256 work_failures, resource_events, operator_audit | **Shipped** (PR #277, [work_ledger.md](work_ledger.md)) | Nothing. #248 now supplies the reservation writer. |
 | #247 Shared-instance safety | **Shipped** (PR #274, [shared_instance_safety.md](shared_instance_safety.md)) | The **strong-isolation canary on the actual host**, run as the production execution service. Required before a second account. |
-| #248 Token budgets | **Not started.** Table and erasure path exist (from #256). | The reservation writer, the cap policy, the Host-room limit controls, `limits.change` audit rows. Brief below. |
+| #248 Token budgets | **Implemented on the continuation branch; awaiting merge and CI.** | Review the writer, cap policy, Host/Usage controls and tests. Retention is 90 days by default, host-editable. Caps stay unset while single-user. |
 | #265 Private single-user pilot | **Not started.** The measurements it needs exist (cost join, failures, support view). | The pilot plan document and the G row in the spec. Brief below. |
 | #268 Deployment and privacy promise | **First pass merged** (PR #271) | The no-Discord first-operator path in the README, and the backup-retention wording now that #249 is real. |
 | #255 Operator second factor, phase 1 | Specified, **required at the second account** | TOTP + recovery codes for operators; host policy gate on account creation. |
@@ -34,37 +34,23 @@ Everything below exists on `main` today. The next steps extend these; they do no
 
 | Seam | Where | Used by |
 |---|---|---|
-| Work reference on `AsyncLocalStorage`: `{ kind, id, actor, payer }` | `packages/core/utils/workContext.js` - `run(work, fn, { replace })`, `current()` | #248 reads `payer` and `(kind, id)` for a reservation without threading ids; today `payer` defaults to the actor. Set it from the budget owner (a project's owner for project work) when #248 defines payers. |
-| Model admission (concurrency, fairness, waiting) | `packages/core/services/resourceAdmissionService.js` (`run`, `acquire`), called from `aiService._admit()` around every `chat()` / `generateText()` | #248 wraps this: reserve budget → admit → call → settle → release. `_admit` is the one place to do it. |
+| Work reference on `AsyncLocalStorage`: `{ kind, id, actor, payer }` | `packages/core/utils/workContext.js` - `run(work, fn, { replace })`, `current()` | #248 reads the work and payer directly. Jobs and project expeditions use the project owner; other work defaults to its actor. |
+| Model admission (concurrency, fairness, waiting) | `packages/core/services/resourceAdmissionService.js` (`run`, `acquire`), called from `aiService._admit()` around every `chat()` / `generateText()` | #248 wraps this: reserve budget → admit → call → settle → release. `_admit` is the single hook. |
 | Per-payer serialization rows | `admission_locks` (`resource TEXT PRIMARY KEY`); `resourceAdmissionService` already takes a row lock with `INSERT ... ON CONFLICT DO NOTHING` then `UPDATE ... SET resource = resource` | #248 uses resource `budget:<payer>` (build the string in JS). `privacyService.forgetUser` already deletes that row. |
-| Token counts from the provider | Each provider's `_logUsage(response, model, usageContext)` → `services/usageTracker.log({ inputTokens, outputTokens, ... })` → `usage_log` | #248's settlement needs the same numbers; return them from the provider call (or have `usageTracker.log` also settle the open reservation on the current work) rather than re-deriving. |
+| Token counts from the provider | Each provider's `_logUsage(response, model, usageContext)` → `services/usageTracker.log({ inputTokens, outputTokens, ... })` → `usage_log` | `usageTracker.log` captures normalized usage in the active provider-call scope; the budget wrapper settles when that call ends. |
 | The reservation table | `usage_reservations` in `db/schema.sql` (`actor`, `payer`, `workKind`, `workId`, `admissionId`, `estimatedTokens`, `actualTokens`, `status` held/settled/released, `idempotencyKey` UNIQUE, `expiresAt`, `createdAt`; indexes on `(payer, createdAt)` and `(workKind, workId)`) | #248 writes it. `costReportService` already reads it (settled → `actualTokens`, held → `estimatedTokens`). |
 | Cost per accepted result | `packages/core/services/costReportService.js` - `workCosts(filter)`, `costPerResult({ workKind, payer, days, accepted })` | #265 measures with it; #254's accepted briefs are its divisor. Returns zeros for tokens until #248 writes reservations. |
 | Failures and resources per person / per account | `workFailureService`, `resourceEventService`, `accountSupportService.view()`; routes `GET /api/app/usage/diagnostics`, `GET /api/app/admin/accounts/:id/support` | #265's "failures you hit"; #248's Host-room limit panel sits next to the support view. |
 | Operator audit | `packages/core/services/operatorAuditService.js`; `ACTIONS` already reserves **`limits.change`**; Host room *Operator audit* panel | #248's cap changes and #255's factor resets write here. Add new actions to `ACTIONS` in the same change. |
-| Ledger retention | `packages/core/services/ledgerRetentionService.js` (coreRuntime step `ledgerRetention`, lock `ledger_retention`; 30 / 90 / 365 days) | #248 adds its own prune of `usage_reservations` here (expired `held` rows; settled rows past the window - 90 days proposed, the open point on #246). |
+| Ledger retention | `packages/core/services/ledgerRetentionService.js` (coreRuntime step `ledgerRetention`, lock `ledger_retention`; 30 / 90 / 365 days) | #248 now releases expired holds and removes terminal reservations after 90 days by default (host-editable). |
 | Instance pause and resume | `services/instanceStateService.js`, Host room *Instance* panel | Unchanged; the recovery test exercises it. |
 | Host room | `apps/web/src/rooms/HostRoom.tsx` (panels: Instance, Sign-up & mail, Invitations, Accounts + Support, Operator audit, Migration report); admin routes in `packages/core/web/routes/admin.js` behind `[requireAuth, requireOperator]` | #248 adds a *Limits* panel and route; #255 adds the second-factor policy switch. Every mutating route writes an audit row after success. |
 
 ## Step 1 - #248 Token budgets on `usage_reservations`
 
-Design is decided on the issue; this is the implementation map against the code as it stands.
+Implemented in this continuation: `usageBudgetService`, per-call usage capture, the `_admit` wrapper, project-owner attribution, Host/Usage controls, audited cap edits, the serialized second-account gate, privacy report and reservation sweeper. The full runtime contract and 90-day retention decision are now in [work_ledger.md](work_ledger.md#budgets). `tests/usageBudgets.test.js` belongs to CI group `core` and runs on both engines.
 
-**Build now, cap unset.** A missing cap skips the count and inserts directly (single-user unlimited). The daily cap becomes required when a second account is created (#265).
-
-1. **Service** `packages/core/services/usageBudgetService.js` (new):
-   - `reserve({ payer, actor, work, estimatedTokens, admissionId, idempotencyKey, windowStart, cap })` → row id or throws `BudgetError(429, 'BUDGET_EXCEEDED')`. Inside one `db.transaction`: lock `budget:<payer>` via `admission_locks` exactly as `resourceAdmissionService` does; `SELECT COALESCE(SUM(CASE status WHEN 'held' THEN estimatedTokens WHEN 'settled' THEN actualTokens ELSE 0 END), 0)` over `payer = @payer AND createdAt >= @windowStart`; refuse or insert. **Never hold the transaction across a model call or network I/O.** Compute `windowStart` as UTC text in JS and bind it (the dialect rewrites only literal `datetime('now', ...)` modifiers).
-   - `settle(id, { actualTokens })`, `release(id)`; both conditional updates on `status = 'held'`.
-   - `usedInWindow(payer, windowStart)` for the panel and `/me`.
-   - `prune({ now })`: drop `held` rows past `expiresAt` (release, do not settle) and settled rows past the retention window. Register it in `ledgerRetentionService.sweep()`.
-   - Uncertain outcome (abort after the request was sent, timeout) settles **at the estimate** and sets a reconciliation flag - #274's rule that uncertain paid outcomes are never auto-retried. Column to add: `reconcile INTEGER NOT NULL DEFAULT 0` (or a `status` value; pick one and document it in work_ledger.md).
-2. **Hook** in `aiService._admit()`: reserve (estimate from the prompt token count, `utils/aiTokenBudget.js` already sizes visible-reply budgets) → `resourceAdmissionService.run` → provider call → settle from the provider's usage → release admission. Admission refused / timed out / cancelled → `release()`. Streaming turns settle when the stream ends. Payer comes from `workContext.current()?.payer` with the actor as fallback; a project's work should set `payer` to the project owner when the context is opened (`projectService._startJobLoop`, `spitballExpeditionRunner`).
-3. **Config** `packages/core/config/limitsConfig.js` (new): `limits.dailyTokens` per account (null = unset), `limits.windowHours` (24). Read env → `config.json` → default like the other config modules. Host-editable value lives in `instance_state` (key `limits`) so the Host room can change it without a restart; the config value is the floor for a fresh install.
-4. **Routes** in `routes/admin.js`: `GET /api/app/admin/limits` (cap, window, per-account used totals) and `PATCH /api/app/admin/limits` → `audit(req, 'limits.change', null, { dailyTokens, windowHours })`. Refuse creating a second account (`POST /api/app/admin/accounts`, invitation redemption in `nativeAuthService`) while `identity.requireAccount` is on, more than one account would exist and no cap is set - that is the #265 trigger. Expose the person's own usage against the cap on `GET /api/app/me` (`me.limits`) and in the Usage room next to *Other resources*.
-5. **Errors surface, never crash:** `BUDGET_EXCEEDED` is a `429` on the web routes with the reset time; in chat it is a normal reply through `guaranteedResponse`, and it writes a `work_failures` row (`code BUDGET_EXCEEDED`, phase `reserve`) so the support view shows who is hitting the cap.
-6. **Erasure** is already done for the table (`privacyService.forgetUser` deletes the person's paid rows and the `budget:` lock, nulls them as actor elsewhere). Extend `buildUserReport` if you add columns.
-7. **Tests** `tests/usageBudgets.test.js` (group `core` in `tests/ciGroups.js`), both engines: two concurrent reservations for one payer serialize and the second sees the first (spawn with `Promise.all`); different payers do not block; an unset cap inserts without counting; the idempotency key refuses a double hold; settle writes `actualTokens` and the window sum switches from estimate to actual; release on admission refusal; uncertain outcome settles at the estimate and flags; expired holds are pruned; the cost join now returns real `actualTokens` for a seeded turn; the audit row for a cap change; the second-account refusal without a cap; `/me` shows the cap. Run with `GOOBSTER_DB_URL=... GOOBSTER_PG_TEST_ISOLATE=1 npx jest tests/usageBudgets.test.js` as well as on SQLite.
-8. **Docs:** a "Budgets" section in `work_ledger.md` (replace the "writer lands with #248" sentences), the *Limits and cost* bullets in `development_standards_and_project_goals.md` (§ The work ledger), the spec's status table, `configuration_guide.md` for the new keys. Close the open point on #246 (settled-row retention) by writing the number down.
+Merge only after the CI gates pass. The next build step is **#265's pilot plan**. The actual-host restore and isolation checks remain operator tasks; this implementation does not satisfy them or #255's second-factor requirement. Keep the cap unset for the single-user pilot unless the owner deliberately opts in.
 
 ## Step 2 - #265 The pilot plan
 
@@ -75,7 +61,7 @@ The issue asks for a short plan in `documentation/`. Suggested file: `documentat
 | The task | One topic to follow weekly; see what changed; check the evidence; produce a brief you use. | Owner's choice. |
 | Duration and cadence | e.g. six weekly cycles, with a dated entry per cycle. | Owner's choice. |
 | Criteria | Repeat use (briefs produced, topics revisited); time saved after verification; brief quality against #267's bar; cost per accepted result; failures hit; would you pay. | — |
-| Cost per accepted result | `costReportService.costPerResult({ workKind: 'expedition', days: 7, accepted: [...ids] })` per cycle. | Tokens are zero until #248 writes reservations; resource events (search calls, retries) are real now. Until #254 exists, "accepted" is a list of expedition ids the owner writes into the plan by hand. |
+| Cost per accepted result | `costReportService.costPerResult({ workKind: 'expedition', days: 7, accepted: [...ids] })` per cycle. | Tokens now come from settled reservations; resource events (search calls, retries) are real now. Until #254 exists, "accepted" is a list of expedition ids the owner writes into the plan by hand. |
 | Failures | Usage room → *What went wrong*, or `accountSupportService.view({ principalId })`. | Live now. |
 | Exit decision | Continue single-user / open a second account (then #247 host canary, #248 daily cap, #255 phase 1 become required) / change direction. | — |
 
@@ -120,7 +106,7 @@ Creating a second account is the trigger, not a milestone to aim for. When the p
 ## Rough edges noticed while shipping #256
 
 - `ledgerRetentionService` starts with the other schedulers, so it does not sweep while the instance is paused after a restore. Harmless for a short pause; move the step next to `chatHistoryRetention` in `coreRuntime.js` if always-on retention is wanted.
-- `operator_audit` action `limits.change` is reserved and unused until #248.
-- `costReportService` reports `actualTokens: 0` for live work until #248; `resource_events` are real.
+- `operator_audit` action `limits.change` now records successful Host limit changes.
+- `costReportService` now reads settled token reservations for live model work; uncertain counts carry `reconcile = 1`.
 - The unit suites print a "worker failed to exit gracefully" warning from `musicService`'s memory-usage timer; pre-existing, not a failure.
 - `sandboxService` refuses the weak isolation fallback as soon as a second `app_accounts` row exists; demos and tests that run the sandbox after creating accounts need `bwrap`.

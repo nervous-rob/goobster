@@ -266,14 +266,17 @@ class IdentityService {
         if (!(await this.getPrincipal(principalId))) {
             throw new IdentityError(404, 'PRINCIPAL_NOT_FOUND', 'That principal does not exist.');
         }
-        const existing = await this.getAccount(principalId);
-        if (existing) return { account: existing, created: false };
-        await db.run(
-            `INSERT INTO app_accounts (principalId, loginName, role, entitlement)
-             VALUES (@principalId, @loginName, @role, @entitlement)`,
-            { principalId, loginName: loginName ? String(loginName).toLowerCase() : null, role, entitlement }
-        );
-        return { account: await this.getAccount(principalId), created: true };
+        return db.transaction(async tx => {
+            await require('./usageBudgetService').assertAccountCreation(tx, principalId);
+            const existing = await tx.get('SELECT * FROM app_accounts WHERE principalId = @principalId', { principalId });
+            if (existing) return { account: existing, created: false };
+            await tx.run(
+                `INSERT INTO app_accounts (principalId, loginName, role, entitlement)
+                 VALUES (@principalId, @loginName, @role, @entitlement)`,
+                { principalId, loginName: loginName ? String(loginName).toLowerCase() : null, role, entitlement }
+            );
+            return { account: await this.getAccount(principalId), created: true };
+        });
     }
 
     /** @param {string} principalId @param {'active'|'disabled'} status */
