@@ -192,8 +192,13 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         if (!activeId) return;
         try { await postEvent(activeId, 'pause'); } catch { /* already paused / finished */ }
         pausedRef.current.add(activeId);
+        // Pause means let me work, not offer a sibling tour immediately.
+        const roomId = entryFor(data, activeId)?.roomId;
+        for (const entry of data?.catalog || []) {
+            if (entry.roomId === roomId) offeredRef.current.add(entry.id);
+        }
         setActiveId(null);
-    }, [activeId, postEvent]);
+    }, [activeId, data, postEvent]);
 
     const skipTutorial = useCallback(async () => {
         if (!activeId) return;
@@ -299,6 +304,10 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
 
     // First login / room-entry offers. Never on public shares. Never after Pause.
     useEffect(() => {
+        if (offer?.kind === 'room' && data && entryFor(data, offer.tutorialId)?.roomId !== room) {
+            setOffer(null);
+            return;
+        }
         if (!enabled || isShare || !data || activeId || offer) return;
         if (!data.preferences.autoStart) return;
 
