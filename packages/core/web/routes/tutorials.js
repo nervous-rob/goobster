@@ -48,6 +48,7 @@ function mountTutorials(app, ctx, h) {
             expectedRevision: body.expectedRevision,
             stepId: body.stepId ?? null,
             action: body.action,
+            feedbackKind: body.feedbackKind,
             caps: capsFromReq(req, ctx)
         });
     }));

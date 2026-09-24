@@ -231,6 +231,7 @@ async function applyEvent({
     generation,
     expectedRevision,
     stepId = null,
+    feedbackKind = null,
     action,
     caps = {}
 }) {
@@ -301,7 +302,30 @@ async function applyEvent({
             skippedStepIds: [...(current.skippedStepIds || [])]
         };
 
-        if (action === 'start') {
+        if (action === 'back') {
+            if (current.status !== 'in_progress') throw new TutorialError(409, 'NOT_IN_PROGRESS', 'Resume this tutorial before going back.');
+            const index = available.findIndex(s => s.id === current.currentStepId);
+            const previous = available[index - 1];
+            if (!previous) throw new TutorialError(409, 'NO_PREVIOUS_STEP', 'This is the first available step.');
+            next.currentStepId = previous.id;
+            // Reopen the previous step only. Explicitly kept notes and external
+            // actions are never undone. Later completed steps remain recorded.
+            next.completedStepIds = next.completedStepIds.filter(id => id !== previous.id);
+            next.skippedStepIds = next.skippedStepIds.filter(id => id !== previous.id);
+        } else if (action === 'feedback') {
+            if (!['unclear', 'couldnt_find', 'didnt_work'].includes(feedbackKind)) {
+                throw new TutorialError(400, 'BAD_FEEDBACK', 'Choose a supported feedback signal.');
+            }
+            if (current.status !== 'in_progress' || current.currentStepId !== stepId
+                || !available.some(s => s.id === stepId)) {
+                throw new TutorialError(409, 'BAD_FEEDBACK_STEP', 'Feedback must name the current available step.');
+            }
+            await tx.run(
+                `INSERT INTO tutorial_feedback (accountId, tutorialId, version, stepId, signal)
+                 VALUES (@accountId, @tutorialId, @version, @stepId, @signal)`,
+                { accountId, tutorialId, version, stepId, signal: feedbackKind }
+            );
+        } else if (action === 'start') {
             if (available.length === 0) {
                 throw new TutorialError(409, 'NO_APPLICABLE_STEPS',
                     'This tutorial has no applicable steps right now.');

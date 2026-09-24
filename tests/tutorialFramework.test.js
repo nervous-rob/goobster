@@ -84,6 +84,7 @@ async function event(tutorialId, action, fields = {}) {
         generation: fields.generation ?? progress.generation,
         expectedRevision: fields.expectedRevision ?? progress.revision,
         stepId: fields.stepId ?? null,
+        feedbackKind: fields.feedbackKind,
         action,
         caps: fields.caps || caps()
     });
@@ -574,5 +575,44 @@ describe('first-use task (#266)', () => {
         expect((await event(id, 'skip_step', { stepId: 'export' })).status).toBe('finished_with_skips');
         expect((await db.get('SELECT COUNT(*) AS n FROM kg_nodes')).n).toBe(0);
         expect((await db.get('SELECT COUNT(*) AS n FROM user_settings')).n).toBe(0);
+    });
+});
+
+
+describe('research tutorial controls (#272)', () => {
+    const id = 'knowledge.research';
+    test('Back reopens the previous available step without undoing kept data, and rejects stale events', async () => {
+        expect(catalog.TUTORIAL_BY_ID[id].version).toBe(2);
+        await event(id, 'start');
+        await expect(event(id, 'back')).rejects.toMatchObject({ code: 'NO_PREVIOUS_STEP' });
+        await event(id, 'complete_step', { stepId: 'question-budget' });
+        const back = await event(id, 'back', { eventId: 'back-once' });
+        expect(back.currentStepId).toBe('question-budget');
+        expect(back.completedStepIds).not.toContain('question-budget');
+        expect(await event(id, 'back', { eventId: 'back-once' })).toEqual(back);
+        await expect(event(id, 'complete_step', { stepId: 'question-budget', expectedRevision: back.revision - 1 })).rejects.toMatchObject({ code: 'STALE_REVISION' });
+        await tutorials.keepExample({ accountId: ACCOUNT, pieceId: 'note-anemones' });
+        await event(id, 'complete_step', { stepId: 'question-budget' });
+        await event(id, 'back');
+        expect((await db.get('SELECT COUNT(*) AS n FROM kg_nodes')).n).toBe(1);
+    });
+
+    test('feedback is scoped, allow-listed, idempotent, non-advancing and erased', async () => {
+        const start = await event(id, 'start');
+        const fields = { stepId: start.currentStepId, feedbackKind: 'unclear', eventId: 'feedback-once' };
+        const saved = await event(id, 'feedback', fields);
+        expect(saved.currentStepId).toBe(start.currentStepId);
+        expect(saved.completedStepIds).toEqual([]);
+        expect(await event(id, 'feedback', fields)).toEqual(saved);
+        expect((await tutorials.countUserData(ACCOUNT)).feedback).toBe(1);
+        expect((await tutorials.countUserData(OTHER)).feedback).toBe(0);
+        for (const feedbackKind of ['couldnt_find', 'didnt_work']) await event(id, 'feedback', { stepId: start.currentStepId, feedbackKind });
+        await expect(event(id, 'feedback', { stepId: start.currentStepId, feedbackKind: 'private free text' })).rejects.toMatchObject({ code: 'BAD_FEEDBACK' });
+        await expect(event(id, 'feedback', { stepId: 'review-export', feedbackKind: 'unclear' })).rejects.toMatchObject({ code: 'BAD_FEEDBACK_STEP' });
+        await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: id });
+        await expect(event(id, 'feedback', { ...fields, eventId: 'old-tab', generation: 1 })).rejects.toMatchObject({ code: 'STALE_GENERATION' });
+        expect((await tutorials.summarizeForUser(ACCOUNT)).feedbackRows).toBe(3);
+        await tutorials.forgetUser(ACCOUNT);
+        expect((await tutorials.countUserData(ACCOUNT)).feedback).toBe(0);
     });
 });

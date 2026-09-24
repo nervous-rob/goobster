@@ -155,6 +155,7 @@ export const api = {
         generation: number;
         expectedRevision: number;
         action: string;
+        feedbackKind?: string;
         stepId?: string | null;
     }) => request<TutorialProgress>(`/api/app/tutorials/${encodeURIComponent(id)}/events`, { method: 'POST', body }),
     resetTutorial: (id: string) =>

@@ -177,7 +177,17 @@ const TUTORIALS = [
             }
         ]
     },
-    { id: 'knowledge.research', roomId: 'knowledge', version: 1, title: 'Research', steps: [] },
+    {
+        id: 'knowledge.research', roomId: 'knowledge', version: 2, title: 'Research',
+        steps: [
+            { id: 'question-budget', title: 'A question and a small budget', path: '/knowledge/research', demo: 'research-budget', body: 'Research follows a question through sources, claims and notes. Start Focused and inspect the displayed cycle, source and note limits before committing. This tour uses prepared fictional evidence and never starts a live run.' },
+            { id: 'progress-stop', title: 'Read progress and stop safely', path: '/knowledge/research', demo: 'research-progress', body: 'A live run can be queued, researching, stopped or failed. Stop prevents more work; it does not erase evidence already collected. A budget stop is not proof that the question is answered. This sample has already stopped.' },
+            { id: 'source-claim', title: 'Check the source behind a claim', path: '/knowledge/research', demo: 'research-evidence', body: 'Compare the stored source text with the claim. Check its date, scope and uncertainty. A citation gives you something to verify; it does not make a claim true.' },
+            { id: 'keep-note', title: 'Keep what is useful', path: '/knowledge/notes', demo: 'create-note', keepablePieceId: 'note-anemones', body: 'Keeping a note is an explicit choice. Preview this fictional sample before copying it into your private Knowledge. Resetting the tour leaves a note you kept in place.' },
+            { id: 'review-export', title: 'Review a brief before using it', path: '/knowledge/research', demo: 'research-brief', body: 'A real brief preserves its generated text and stores edits separately. Check citations, uncertainty and both sides of disagreements; factual corrections fail the ready-to-show bar. Acceptance, actual use and export are separate actions. The sample below is not owner-reviewed.' },
+            { id: 'failure-recovery', title: 'When research cannot run', path: '/knowledge/research', demo: 'research-recovery', body: 'Live Research must be enabled by the host and needs a working configured provider. Missing credentials, exhausted budgets and failed calls need attention before retrying. Read the failure reason and inspect any saved evidence first. This tour cannot enable providers, change budgets or restart work.' }
+        ]
+    },
     { id: 'projects.basics', roomId: 'projects', version: 1, title: 'Projects basics', requires: { feature: 'projects' }, steps: [] },
     { id: 'projects.plans', roomId: 'projects', version: 1, title: 'Plans', requires: { feature: 'projects' }, steps: [] },
     { id: 'projects.runs', roomId: 'projects', version: 1, title: 'Runs', requires: { feature: 'projects' }, steps: [] },
@@ -255,6 +265,8 @@ const STATUSES = [
 
 const ACTIONS = [
     'start',
+    'back',
+    'feedback',
     'complete_step',
     'skip_step',
     'pause',
