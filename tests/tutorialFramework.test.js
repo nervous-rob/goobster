@@ -145,7 +145,7 @@ describe('F2 authored demonstration tours', () => {
             .toBe('note-anemones');
         expect(catalog.TUTORIAL_BY_ID['projects.apps'].steps.some((s) => s.demo === 'open-unfiled')).toBe(true);
         // Other catalog entries stay empty until a later package.
-        expect(catalog.TUTORIAL_BY_ID['projects.basics'].steps).toEqual([]);
+        expect(catalog.TUTORIAL_BY_ID['projects.basics'].steps.length).toBeGreaterThan(0);
         expect(catalog.TUTORIAL_BY_ID['music.overview'].steps).toEqual([]);
         tutorials._setCatalogForTests(TEST_STEPS_CATALOG);
     });
@@ -614,5 +614,37 @@ describe('research tutorial controls (#272)', () => {
         expect((await tutorials.summarizeForUser(ACCOUNT)).feedbackRows).toBe(3);
         await tutorials.forgetUser(ACCOUNT);
         expect((await tutorials.countUserData(ACCOUNT)).feedback).toBe(0);
+    });
+});
+
+describe('Projects and Activity authored tours (#272)', () => {
+    const workflows = require('@goobster/core/config/workflowTutorials');
+    test.each(workflows.map(t => [t.id, t]))('%s has safe previews and completes without domain writes', async (id, def) => {
+        expect(def.version).toBe(2);
+        expect(def.steps.length).toBeGreaterThanOrEqual(5);
+        expect(new Set(def.steps.map(s => s.id)).size).toBe(def.steps.length);
+        const tables = ['kg_nodes', 'observatory_projects', 'spitball_expeditions', 'usage_reservations', 'resource_events'];
+        const before = await Promise.all(tables.map(t => db.get(`SELECT COUNT(*) AS n FROM ${t}`)));
+        const listed = await tutorials.listForAccount({ accountId: ACCOUNT, caps: caps() });
+        const entry = listed.catalog.find(t => t.id === id);
+        expect(entry.launchable).toBe(true);
+        await event(id, 'start');
+        for (const step of entry.steps) {
+            expect(step.demo).toBe('workflow');
+            expect(step.preview).toEqual({ before: expect.any(String), action: expect.any(String), after: expect.any(String) });
+            await event(id, 'complete_step', { stepId: step.id });
+        }
+        expect((await tutorials.loadProgress(ACCOUNT, id, def.version)).status).toBe('completed');
+        expect((await tutorials.loadProgress(OTHER, id, def.version)).status).toBe('not_started');
+        await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: id, caps: caps() });
+        const after = await Promise.all(tables.map(t => db.get(`SELECT COUNT(*) AS n FROM ${t}`)));
+        expect(after).toEqual(before);
+    });
+    test('project tours respect organization capability while activity samples remain available', async () => {
+        const disabled = caps({ features: { projects: false, observatory: false } });
+        const list = await tutorials.listForAccount({ accountId: ACCOUNT, caps: disabled });
+        expect(list.catalog.some(t => t.id === 'projects.runs')).toBe(false);
+        expect(list.catalog.find(t => t.id === 'activity.scheduled').launchable).toBe(true);
+        await expect(event('projects.runs', 'start', { caps: disabled })).rejects.toMatchObject({ code: 'TUTORIAL_FORBIDDEN' });
     });
 });

@@ -22,6 +22,7 @@
  *   anchorId?: string|null,
  *   path?: string|null,
  *   demo?: string|null,
+ *   preview?: { before: string, action: string, after: string },
  *   keepablePieceId?: string|null,
  *   requires?: object|null
  * }} TutorialStep */
@@ -35,8 +36,11 @@
  *   steps: TutorialStep[]
  * }} TutorialDef */
 
+const workflowTutorials = require('./workflowTutorials');
+
 /** @type {TutorialDef[]} */
 const TUTORIALS = [
+    ...workflowTutorials,
     {
         id: 'home.first-task', roomId: 'home', version: 1, title: 'Your first research task',
         steps: [
@@ -188,9 +192,6 @@ const TUTORIALS = [
             { id: 'failure-recovery', title: 'When research cannot run', path: '/knowledge/research', demo: 'research-recovery', body: 'Live Research must be enabled by the host and needs a working configured provider. Missing credentials, exhausted budgets and failed calls need attention before retrying. Read the failure reason and inspect any saved evidence first. This tour cannot enable providers, change budgets or restart work.' }
         ]
     },
-    { id: 'projects.basics', roomId: 'projects', version: 1, title: 'Projects basics', requires: { feature: 'projects' }, steps: [] },
-    { id: 'projects.plans', roomId: 'projects', version: 1, title: 'Plans', requires: { feature: 'projects' }, steps: [] },
-    { id: 'projects.runs', roomId: 'projects', version: 1, title: 'Runs', requires: { feature: 'projects' }, steps: [] },
     {
         id: 'projects.apps',
         roomId: 'projects',
@@ -230,8 +231,6 @@ const TUTORIALS = [
         ]
     },
     { id: 'discussions.basics', roomId: 'discussions', version: 1, title: 'Discussions basics', steps: [] },
-    { id: 'activity.inbox', roomId: 'activity', version: 1, title: 'Inbox', steps: [] },
-    { id: 'activity.scheduled', roomId: 'activity', version: 1, title: 'Scheduled', steps: [] },
     { id: 'tools.overview', roomId: 'tools', version: 1, title: 'Tools overview', steps: [] },
     { id: 'music.overview', roomId: 'music', version: 1, title: 'Music Lab overview', steps: [] },
     { id: 'music.intervals', roomId: 'music', version: 1, title: 'Intervals', steps: [] },
