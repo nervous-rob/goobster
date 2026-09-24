@@ -1012,6 +1012,7 @@ export type TutorialCatalogEntry = {
 };
 
 export type TutorialSample = {
+    firstTask: { question: string; source: string; claim: string; brief: string };
     id: string;
     title: string;
     question: string;

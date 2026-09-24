@@ -6,6 +6,8 @@ import { keys } from '../lib/query';
 import { bindTilt, formatClock, formatRelativeTime, greeting } from '../lib/atmosphere';
 import { useMe } from '../hooks/useSession';
 import { MenuButton } from '../shell/MenuButton';
+import { useTutorials } from '../tutorials/TutorialProvider';
+import { useToast } from '../hooks/useToast';
 import { PRIMARY_ROOMS, isRoomAvailable } from '../lib/rooms';
 
 type HomePayload = {
@@ -45,6 +47,8 @@ function Card({
 
 export function HomeRoom() {
     const me = useMe();
+    const tutorials = useTutorials();
+    const toast = useToast();
     const navigate = useNavigate();
     const homeQuery = useQuery({ queryKey: keys.home, queryFn: () => api.home() as Promise<HomePayload> });
     const [clock, setClock] = useState(formatClock());
@@ -106,6 +110,11 @@ export function HomeRoom() {
                                 if (last) navigate({ to: '/chat/$conversationId', params: { conversationId: String(last.id) } });
                                 else navigate({ to: '/chat' });
                             }}>Pick up the last chat</button>
+                        </div>
+                        <div className="list-card">
+                            <strong>Your first research task</strong>
+                            <p>Practice checking evidence, keeping a note, and exporting a brief. Fictional sample, no AI key needed.</p>
+                            <button type="button" className="btn" disabled={tutorials.loading} onClick={() => void tutorials.resume('home.first-task').catch(error => toast(error.message, true))}>Start or resume first task</button>
                         </div>
                         <div className="home-grid">
                             <Card title="Personal memory" action="Inspect in Settings → Memory & privacy →"

@@ -38,6 +38,17 @@
 /** @type {TutorialDef[]} */
 const TUTORIALS = [
     {
+        id: 'home.first-task', roomId: 'home', version: 1, title: 'Your first research task',
+        steps: [
+            { id: 'question', title: 'Choose a question', body: 'Try a small question with fictional field notes. This practice task needs no provider and costs no tokens.', path: '/chat', demo: 'first-task' },
+            { id: 'research', title: 'Run sample research', body: 'One sample pass, two records, one note. Nothing calls a provider or starts background work. For your own topic, open Knowledge → Research, choose Focused, and inspect the displayed limits before starting. Live research and brief generation need a configured provider.', path: '/knowledge/research', demo: 'first-task' },
+            { id: 'evidence', title: 'Check a claim', body: 'Read the source behind the claim. A useful brief must distinguish an observation from a conclusion the evidence cannot support.', path: '/knowledge/research', demo: 'first-task' },
+            { id: 'keep', title: 'Keep one note', body: 'Preview the note before choosing Keep this example. This is the only step that writes Knowledge. It stays private and is labelled as fictional sample material.', path: '/knowledge/notes', demo: 'first-task' },
+            { id: 'accept', title: 'Decide whether the brief is useful', body: 'Check the citation and limitation. Accept only if this is useful for the sample task; skip if it is not. Acceptance here is practice, not a live research-quality result.', path: '/knowledge/notes', demo: 'first-task' },
+            { id: 'export', title: 'Take your output with you', body: 'Download the sample brief as Markdown. Then try your own topic in Research. Return to that topic within a week and check what changed. Resetting this task never deletes the note you chose to keep.', path: '/knowledge/notes', demo: 'first-task' }
+        ]
+    },
+    {
         id: 'home.orientation',
         roomId: 'home',
         version: 2,
