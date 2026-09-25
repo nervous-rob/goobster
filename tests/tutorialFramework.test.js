@@ -648,3 +648,42 @@ describe('Projects and Activity authored tours (#272)', () => {
         await expect(event('projects.runs', 'start', { caps: disabled })).rejects.toMatchObject({ code: 'TUTORIAL_FORBIDDEN' });
     });
 });
+
+
+describe('Account and Host authored tours (#272)', () => {
+    const definitions = require('@goobster/core/config/accountTutorials');
+    test.each(definitions.map(t => [t.id, t]))('%s completes without changing account or operator data', async (id, def) => {
+        const access = caps({ isOperator: def.hostOnly === true });
+        const tables = ['user_settings', 'memory_embeddings', 'facts', 'kg_nodes', 'attention_policies',
+            'app_accounts', 'account_invites', 'operator_audit', 'usage_reservations'];
+        const snapshot = () => Promise.all(tables.map(t => db.all(`SELECT * FROM ${t}`)));
+        const before = await snapshot();
+        const list = await tutorials.listForAccount({ accountId: ACCOUNT, caps: access });
+        const entry = list.catalog.find(t => t.id === id);
+        expect(entry.launchable).toBe(true);
+        expect(entry.version).toBe(2);
+        expect(entry.steps.length).toBeGreaterThanOrEqual(5);
+        await event(id, 'start', { caps: access });
+        for (const step of entry.steps) {
+            expect(step.preview).toEqual({ before: expect.any(String), action: expect.any(String), after: expect.any(String) });
+            await event(id, 'complete_step', { stepId: step.id, caps: access });
+        }
+        expect((await tutorials.loadProgress(ACCOUNT, id, 2)).status).toBe('completed');
+        expect((await tutorials.loadProgress(OTHER, id, 2)).status).toBe('not_started');
+        await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: id, caps: access });
+        expect(await snapshot()).toEqual(before);
+    });
+    test('Host catalog and mutations reject members, including after operator access is removed', async () => {
+        const list = await tutorials.listForAccount({ accountId: ACCOUNT, caps: caps() });
+        expect(list.catalog.some(t => t.id === 'admin.instance')).toBe(false);
+        await expect(event('admin.instance', 'start')).rejects.toMatchObject({ code: 'TUTORIAL_FORBIDDEN' });
+        await event('admin.instance', 'start', { caps: caps({ isOperator: true }) });
+        for (const action of ['complete_step', 'back', 'feedback']) {
+            await expect(event('admin.instance', action, { stepId: 'invite', feedbackKind: 'unclear' }))
+                .rejects.toMatchObject({ code: 'TUTORIAL_FORBIDDEN' });
+        }
+        await expect(tutorials.resetOne({ accountId: ACCOUNT, tutorialId: 'admin.instance', caps: caps() }))
+            .rejects.toMatchObject({ code: 'TUTORIAL_FORBIDDEN' });
+        expect((await tutorials.countUserData(ACCOUNT)).feedback).toBe(0);
+    });
+});

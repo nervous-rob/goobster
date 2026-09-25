@@ -559,6 +559,12 @@ async function seed() {
 async function main() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const observatory = await seed();
+    // Dedicated operator identities for safe Host tutorial journeys only.
+    for (let mode = 0; mode < 3; mode++) {
+        const principalId = `9900000000000039${mode}`;
+        await identityService.ensureLegacyPrincipal({ discordId: principalId, displayName: 'Account learner' });
+        await identityService.grantAccount({ principalId, entitlement: 'bootstrap', role: 'operator' });
+    }
 
     const ctx = createWebAppContext({
         gateway: fakeGateway(),

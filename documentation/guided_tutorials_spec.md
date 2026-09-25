@@ -7,7 +7,7 @@ tags: [tutorials, onboarding, settings, accessibility]
 
 # Guided tutorials and onboarding
 
-**Status: #266 adds the provider-free `home.first-task` practice workflow (observed sessions pending); F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; The #272 additions author Research, Projects basics, Plans, Runs, Inbox and Scheduled v2 with Back and fixed-signal feedback; unimplemented catalog entries stay empty until a later package.
+**Status: #266 adds the provider-free `home.first-task` practice workflow (observed sessions pending); F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; The #272 additions author all ten batch-1 tours (Research, Projects basics, Plans, Runs, Inbox, Scheduled, Memory, Settings, Usage and Host) at v2 with Back and fixed-signal feedback; unimplemented catalog entries stay empty until a later package.
 
 Updated: 22 September 2026.
 
@@ -40,7 +40,7 @@ Each major feature needs a demonstrated action, a visible result, and an explana
 
 Stable tutorial ids live in `packages/core/config/tutorialCatalog.js` and are listed on each room in `apps/web/src/lib/rooms.cjs`. Core never imports the web registry; `tests/portalRooms.test.js` and `tests/tutorialFramework.test.js` fail when the two lists drift. Clients cannot invent tutorial ids or step ids.
 
-The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. **F2 ships steps for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`**. #266 adds `home.first-task`; #272 adds `knowledge.research`, `projects.basics`, `projects.plans`, `projects.runs`, `activity.inbox` and `activity.scheduled`. Other ids keep an empty `steps` array so the Settings list and state machine still work. A tutorial with no applicable steps does not launch.
+The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. **F2 ships steps for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`**. #266 adds `home.first-task`; #272 adds `knowledge.research`, `projects.basics`, `projects.plans`, `projects.runs`, `activity.inbox`, `activity.scheduled`, `memory.basics`, `settings.basics`, `usage.basics` and operator-only `admin.instance`. Other ids keep an empty `steps` array so the Settings list and state machine still work. A tutorial with no applicable steps does not launch.
 
 | Stable tutorial ID | Required demonstrations | Advanced overview and documentation source |
 |---|---|---|
@@ -224,7 +224,7 @@ All demonstrations remain usable without a provider and never start a real Exped
 The live prerequisites (host enablement, configured provider, remaining budget) are
 explained, not bypassed. Missing live capabilities do not turn a sample into real work.
 The next slice authors Projects basics, Plans, Runs, Inbox and Scheduled (below).
-Memory, Settings, Usage and Host remain open in batch 1, followed by later batches.
+The third slice authors Memory, Settings, Usage and Host (below), completing the batch-1 curriculum. Later batches and human validation remain open.
 
 **Back** is an idempotent `back` tutorial event guarded by generation/revision. It reopens
 the previous currently available catalog step, removing that step's completion/skip mark;
@@ -273,3 +273,32 @@ journeys covering every tour with keyboard, narrow and zoom-equivalent viewports
 reduced motion, feedback, Back, pause/reload/resume and completion. The browser
 checks reject non-tutorial application mutations. Human screen-reader and observed
 first-task sessions remain separate evidence requirements.
+
+## Account and Host tours (#272, third PR)
+
+`accountTutorials.js` authors v2 steps for `memory.basics`, `settings.basics`,
+`usage.basics` and `admin.instance`, using the same fictional interactive previews.
+All ten batch-1 tours now have authored steps. The Host catalog and every event/reset
+remain operator-only; a member cannot launch a tour by guessing its ID. A loss of
+operator access blocks subsequent Host events.
+
+Memory distinguishes transcripts, personal facts, raw memories and saved notes,
+provenance, deletion scope, learning versus recall, retention and export/erasure.
+Settings covers scope, display, model/voice availability, memory, quiet hours,
+connections/sessions and tutorial replay/reset. Usage distinguishes reporting
+periods, model/operation totals, reserved estimates versus settled tokens, alerts
+versus caps, waiting reasons and smaller/paused work. Host covers invitation
+issue/revoke, account disable versus erasure, capacity, token caps and integration
+failures. Previews never change settings, memory, retention, enrollment, budgets,
+accounts or invitations, and never create exports or send a test message.
+
+`tests/tutorialFramework.test.js` checks full domain snapshots before and after
+completion/reset, account isolation, and operator permission loss.
+`e2e/accountTutorials.spec.js` exercises every tour in keyboard, narrow-screen and
+zoom-equivalent modes with reduced motion, Back, feedback and pause/reload/resume;
+it also checks member visibility and server rejection for Host. Browser requests
+are checked for non-tutorial mutations. These automated checks do not claim a human
+screen-reader review or replace #266's five observed first sessions.
+
+After batch 1, #273 adds contextual Chat from Inbox; #272 remains open for batch 2
+(collaboration/connections) and batch 3 (optional tools, after host switches).
