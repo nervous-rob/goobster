@@ -59,9 +59,21 @@ function Hop({ from, to, note }: { from: string; to: string; note?: string }) {
     );
 }
 
-function DemoBlock({ demo, sample }: { demo: string; sample: TutorialSample }) {
+function WorkflowPreview({ preview }: { preview: NonNullable<Step['preview']> }) {
+    const [shown, setShown] = useState(false);
+    return <div className="tutorial-demo">
+        <div className="tutorial-demo-kicker">Fictional simulation · no account actions</div>
+        <p>{preview.before}</p>
+        <button type="button" className="btn subtle" aria-expanded={shown} onClick={() => setShown(!shown)}>{preview.action}</button>
+        {shown && <p role="status">{preview.after}</p>}
+    </div>;
+}
+
+function DemoBlock({ demo, sample, preview }: { demo: string; sample: TutorialSample; preview?: Step['preview'] }) {
     const anemones = sample.notes[0];
     switch (demo) {
+        case 'workflow':
+            return preview ? <WorkflowPreview preview={preview} /> : null;
         case 'research-budget':
             return <div className="tutorial-demo"><strong>Sample question</strong><p>{sample.firstTask.question}</p><p>One prepared pass · two sample records · one note · no token cost.</p></div>;
         case 'research-progress':
@@ -296,7 +308,7 @@ export function TutorialPanel() {
                         {step.body && <p className="hint tutorial-step-body" data-tour="tutorial-step-body">{step.body}</p>}
                         {step.demo && sample && (step.demo === 'first-task'
                             ? !elsewhere && <FirstTask key={`${progress.generation}:${step.id}`} stepId={step.id} sample={sample} />
-                            : <DemoBlock demo={step.demo} sample={sample} />)}
+                            : <DemoBlock key={`${entry.id}:${step.id}`} demo={step.demo} sample={sample} preview={step.preview} />)}
                         <div role="group" aria-label="Step feedback" className="tutorial-panel-actions">
                             {([['unclear', 'Unclear'], ['couldnt_find', "Couldn’t find it"], ['didnt_work', 'Didn’t work']] as const).map(([kind, label]) => (
                                 <button type="button" className="btn subtle small" key={kind} disabled={busy}

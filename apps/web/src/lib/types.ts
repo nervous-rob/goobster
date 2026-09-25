@@ -1006,6 +1006,7 @@ export type TutorialCatalogEntry = {
         anchorId: string | null;
         path: string | null;
         demo: string | null;
+        preview?: { before: string; action: string; after: string } | null;
         keepablePieceId: string | null;
     }>;
     launchable: boolean;

@@ -514,6 +514,7 @@ async function listForAccount({ accountId, caps = {} }) {
                 anchorId: s.anchorId || null,
                 path: s.path || null,
                 demo: s.demo || null,
+                preview: s.preview || null,
                 keepablePieceId: s.keepablePieceId || null
             })),
             launchable: (t.steps || []).some((s) => capabilityMet(s.requires, caps))
