@@ -59,9 +59,31 @@ function Hop({ from, to, note }: { from: string; to: string; note?: string }) {
     );
 }
 
-function DemoBlock({ demo, sample }: { demo: string; sample: TutorialSample }) {
+function WorkflowPreview({ preview }: { preview: NonNullable<Step['preview']> }) {
+    const [shown, setShown] = useState(false);
+    return <div className="tutorial-demo">
+        <div className="tutorial-demo-kicker">Fictional simulation · no account actions</div>
+        <p>{preview.before}</p>
+        <button type="button" className="btn subtle" aria-expanded={shown} onClick={() => setShown(!shown)}>{preview.action}</button>
+        {shown && <p role="status">{preview.after}</p>}
+    </div>;
+}
+
+function DemoBlock({ demo, sample, preview }: { demo: string; sample: TutorialSample; preview?: Step['preview'] }) {
     const anemones = sample.notes[0];
     switch (demo) {
+        case 'workflow':
+            return preview ? <WorkflowPreview preview={preview} /> : null;
+        case 'research-budget':
+            return <div className="tutorial-demo"><strong>Sample question</strong><p>{sample.firstTask.question}</p><p>One prepared pass · two sample records · one note · no token cost.</p></div>;
+        case 'research-progress':
+            return <div className="tutorial-demo"><strong>Sample run: stopped at its limit</strong><p>Evidence collected → claim extracted → note available. No background work is running.</p><p>Remaining gap: verified species identifications and counts.</p></div>;
+        case 'research-evidence':
+            return <div className="tutorial-demo"><strong>Fictional source</strong><blockquote>{sample.firstTask.source}</blockquote><strong>Claim to check</strong><p>{sample.firstTask.claim}</p><p>The source describes one walk, not a complete survey.</p></div>;
+        case 'research-brief':
+            return <div className="tutorial-demo"><strong>Sample only · unreviewed · not accepted</strong><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{sample.firstTask.brief}</pre><p>A wording edit preserves the facts. A factual correction means the original brief did not pass review.</p></div>;
+        case 'research-recovery':
+            return <div className="tutorial-demo"><strong>Sample failure: budget exceeded</strong><p>Inspect the budget and saved results. Ask the host about configuration if a provider is missing. Retry only when you choose to; this tour sends no requests to a provider.</p></div>;
         case 'sample-answer':
             return <SampleAnswer sample={sample} />;
         case 'chat-to-note':
@@ -161,7 +183,7 @@ function roomLabelFor(path: string): string {
 export function TutorialPanel() {
     const {
         active, anchorFound, offer, data, pause, skipTutorial, completeStep, skipStep,
-        keepExample, acceptOffer, dismissOffer, replay
+        back, feedback, keepExample, acceptOffer, dismissOffer, replay
     } = useTutorials();
     const toast = useToast();
     const confirm = useConfirm();
@@ -286,7 +308,13 @@ export function TutorialPanel() {
                         {step.body && <p className="hint tutorial-step-body" data-tour="tutorial-step-body">{step.body}</p>}
                         {step.demo && sample && (step.demo === 'first-task'
                             ? !elsewhere && <FirstTask key={`${progress.generation}:${step.id}`} stepId={step.id} sample={sample} />
-                            : <DemoBlock demo={step.demo} sample={sample} />)}
+                            : <DemoBlock key={`${entry.id}:${step.id}`} demo={step.demo} sample={sample} preview={step.preview} />)}
+                        <div role="group" aria-label="Step feedback" className="tutorial-panel-actions">
+                            {([['unclear', 'Unclear'], ['couldnt_find', "Couldn’t find it"], ['didnt_work', 'Didn’t work']] as const).map(([kind, label]) => (
+                                <button type="button" className="btn subtle small" key={kind} disabled={busy}
+                                    onClick={() => void act('save feedback', async () => { await feedback(kind); toast('Step feedback saved.'); })}>{label}</button>
+                            ))}
+                        </div>
                         {step.keepablePieceId && (
                             <div className="tutorial-keep">
                                 <span className="hint">Nothing is saved unless you choose to.</span>
@@ -321,6 +349,8 @@ export function TutorialPanel() {
                 )}
             </div>
             <div className="tutorial-panel-actions">
+                {step && <button type="button" className="btn subtle" data-tour="tutorial-back" disabled={busy || stepIndex <= 0 || !entry.steps.slice(0, stepIndex).some(s => !progress.unavailableStepIds.includes(s.id))}
+                    onClick={() => void act('go back', back)}>Back</button>}
                 <button type="button" className="btn subtle" data-tour="tutorial-pause" title="Pause (Esc)" disabled={busy}
                     onClick={() => void act('pause', pause)}>
                     Pause

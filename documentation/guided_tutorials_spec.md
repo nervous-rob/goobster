@@ -7,7 +7,7 @@ tags: [tutorials, onboarding, settings, accessibility]
 
 # Guided tutorials and onboarding
 
-**Status: #266 adds the provider-free `home.first-task` practice workflow (observed sessions pending); F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; remaining catalog entries stay empty until a later package.
+**Status: #266 adds the provider-free `home.first-task` practice workflow (observed sessions pending); F1 framework shipped; F2 demonstration tours shipped for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`.** This document is the contract for launch rules, the catalog, state and API, accessibility, and feedback. Increment F1 implements the state machine, endpoints, Settings list, and provider shell. Increment F2 authors the chat → note → project curriculum samples and those four tours; The #272 additions author Research, Projects basics, Plans, Runs, Inbox and Scheduled v2 with Back and fixed-signal feedback; unimplemented catalog entries stay empty until a later package.
 
 Updated: 22 September 2026.
 
@@ -19,7 +19,7 @@ All sample content must remain isolated from real user data and external actions
 
 - The first successful login opens a short Home orientation once. Use a nonblocking guide panel so the user can explore or dismiss it.
 - Each room/service starts its own tutorial on first entry, once its permissions, feature flags, and UI are ready. Opening one room must not complete another room's tutorial.
-- Show **Back**, **Next**, **Skip step**, **Skip this tutorial**, and **Pause** throughout. A final step has **Finish** instead of Next. (F2 ships Next / Skip step / Finish on authored tours; Back remains optional until a multi-step history UI needs it.)
+- Show **Back**, **Next**, **Skip step**, **Skip this tutorial**, and **Pause** throughout. A final step has **Finish** instead of Next. (F2 ships Next / Skip step / Finish on authored tours; Back is now available on active authored tours. It reopens the previous available step without undoing notes or other explicit actions.)
 - Skipping a step records a skip, not a completed exercise. The user can finish with skipped steps and revisit them later.
 - Skipping an entire tutorial leaves other tutorials eligible. It does not silently disable all onboarding.
 - Pause or Escape saves position. Returning shows a Resume affordance; it does not seize focus repeatedly.
@@ -40,7 +40,7 @@ Each major feature needs a demonstrated action, a visible result, and an explana
 
 Stable tutorial ids live in `packages/core/config/tutorialCatalog.js` and are listed on each room in `apps/web/src/lib/rooms.cjs`. Core never imports the web registry; `tests/portalRooms.test.js` and `tests/tutorialFramework.test.js` fail when the two lists drift. Clients cannot invent tutorial ids or step ids.
 
-The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. **F2 ships steps for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`**; other ids keep an empty `steps` array so the Settings list and state machine still work. A tutorial with no applicable steps does not launch.
+The steps below are the minimum authored curriculum. Every semicolon-separated action becomes a stable step or an explicit subordinate tour. Advanced topics link to user-facing help; the rightmost column identifies existing source material to adapt, not a claim that the future help route already exists. **F2 ships steps for `home.orientation`, `chat.basics`, `knowledge.basics`, and `projects.apps`**. #266 adds `home.first-task`; #272 adds `knowledge.research`, `projects.basics`, `projects.plans`, `projects.runs`, `activity.inbox` and `activity.scheduled`. Other ids keep an empty `steps` array so the Settings list and state machine still work. A tutorial with no applicable steps does not launch.
 
 | Stable tutorial ID | Required demonstrations | Advanced overview and documentation source |
 |---|---|---|
@@ -132,7 +132,7 @@ On mobile, use an in-flow guide card or a collapsible sheet that never covers th
 
 Serve version-matched user guides from the app, including offline/self-hosted deployments. A manifest maps tutorial `docId` values to allowlisted user-facing pages. Build checks reject broken IDs and anchors. Existing operator/setup docs can supply material, but should not be linked indiscriminately into user tours or seeded into a public corpus.
 
-Offer optional per-step feedback: “Unclear,” “Couldn't find it,” and “Didn't work,” plus free text. Record tutorial version, step, route, capabilities and error code; do not collect chat/note contents by default. The `tutorial_feedback` table exists for erasure/transparency; the feedback API and UI arrive with authored tours. Record aggregated starts, completions, skips, pauses and failures. Skips alone do not prove bad design. Combine them with observed usability sessions and failed task completion.
+Offer optional per-step feedback: “Unclear,” “Couldn't find it,” and “Didn't work,” plus free text. Record tutorial version, step, route, capabilities and error code; do not collect chat/note contents by default. The `tutorial_feedback` table exists for erasure/transparency; the three fixed-signal feedback controls now ship with authored tours. Free text and capability/error diagnostics remain deferred; the API deliberately accepts no content-bearing diagnostics. Record aggregated starts, completions, skips, pauses and failures. Skips alone do not prove bad design. Combine them with observed usability sessions and failed task completion.
 
 Acceptance criterion for the redesign: a new person can explain what becomes a conversation, note, memory, project, and output, then perform one cross-feature task without the host narrating every click.
 
@@ -214,3 +214,62 @@ existing account report, audit and erasure. No new analytics store is introduced
 
 Keep #266 open until the five real observations are attached. Do not count this sample
 task's acceptance toward #254/#265's live brief metrics or #267's owner quality baseline.
+
+
+## Research tour and recovery controls (#272, first PR)
+
+`knowledge.research` v2 authors six safe demonstrations: question/budget, progress/stop,
+source/claim verification, explicit Keep, brief review/export, and failure recovery.
+All demonstrations remain usable without a provider and never start a real Expedition.
+The live prerequisites (host enablement, configured provider, remaining budget) are
+explained, not bypassed. Missing live capabilities do not turn a sample into real work.
+The next slice authors Projects basics, Plans, Runs, Inbox and Scheduled (below).
+Memory, Settings, Usage and Host remain open in batch 1, followed by later batches.
+
+**Back** is an idempotent `back` tutorial event guarded by generation/revision. It reopens
+the previous currently available catalog step, removing that step's completion/skip mark;
+it never undoes a kept note or external action. On the first available step it is disabled.
+Pause/resume and reset keep their existing semantics. A stale tab cannot restore reset
+progress. Changing the Research steps bumps that tour to v2; shared controls do not
+rewrite the content versions of unchanged tours.
+
+**Step feedback** uses the existing `POST /api/app/tutorials/:id/events` endpoint with
+`action: "feedback"`, the current `stepId`, and `feedbackKind` of `unclear`, `couldnt_find`
+or `didnt_work`. The authenticated account supplies ownership. The server validates the
+current available step and tutorial permission under the same progress lock, inserts the
+signal, advances the revision without completing the step, and records the idempotent
+event in one transaction. Repeating the same event ID does not add another signal.
+No free text, route, user content or provider error is accepted/stored in this release.
+Existing report/audit/erasure cover `tutorial_feedback`; reset preserves feedback history.
+
+Automated browser checks cover named regions/buttons/groups, keyboard activation,
+375px width, a 640×400 viewport equivalent to 200% zoom from 1280×800, reduced motion,
+Back, feedback, skip and resume. These checks do not substitute for human screen-reader
+or usability sessions. The provider-free journeys use isolated accounts and do not Keep
+notes, call providers, or schedule work.
+
+## Projects and Activity tours (#272, second PR)
+
+`projects.basics`, `projects.plans`, `projects.runs`, `activity.inbox`, and
+`activity.scheduled` now have v2 authored steps in `workflowTutorials.js`. They use
+a shared interactive preview: inspect the fictional starting state, activate a named
+action, and read the prepared result. These previews never create projects, approvals,
+runs, invitations, notices or schedules, and never call a provider. Only tutorial
+progress and explicit step feedback persist; preview state resets on step changes.
+The three Projects tours require the Projects room capability. Missing execution,
+provider or scheduling support does not prevent the safe demonstrations.
+
+Projects covers goals, private references versus published copies, conversations,
+artifacts, plans, output inspection and collaboration/revocation. Plans covers criteria,
+dependencies, approval, evidence, blocked work and conclusions. Runs covers queues,
+logs, cancellation, uncertain external outcomes, recovery and output verification.
+Inbox covers source/reason, notice actions, approval and quiet controls. Scheduled
+covers reminders versus recurring AI work, timezone, delivery, pause/resume, failure
+and deletion. Inbox contextual Chat remains a separate #273 follow-up.
+
+The five tours have account-isolation, capability and domain-write checks in
+`tests/tutorialFramework.test.js`. `e2e/workflowTutorials.spec.js` adds fifteen
+journeys covering every tour with keyboard, narrow and zoom-equivalent viewports,
+reduced motion, feedback, Back, pause/reload/resume and completion. The browser
+checks reject non-tutorial application mutations. Human screen-reader and observed
+first-task sessions remain separate evidence requirements.

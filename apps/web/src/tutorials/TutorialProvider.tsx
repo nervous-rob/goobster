@@ -38,6 +38,8 @@ type TutorialContextValue = {
     pause: () => Promise<void>;
     skipTutorial: () => Promise<void>;
     completeStep: () => Promise<void>;
+    back: () => Promise<void>;
+    feedback: (kind: string) => Promise<void>;
     skipStep: () => Promise<void>;
     finish: () => Promise<void>;
     keepExample: (pieceId: string) => Promise<{ label: string; alreadyHad?: boolean }>;
@@ -97,7 +99,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         return { tutorialId: activeId, progress, entry };
     }, [activeId, data]);
 
-    const postEvent = useCallback(async (tutorialId: string, action: string, stepId?: string | null) => {
+    const postEvent = useCallback(async (tutorialId: string, action: string, stepId?: string | null, feedbackKind?: string) => {
         const progress = progressFor(queryClient.getQueryData<TutorialsResponse>(keys.tutorials), tutorialId)
             || progressFor(data, tutorialId);
         if (!progress) throw new Error('Tutorial progress not loaded.');
@@ -107,6 +109,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
                 generation: progress.generation,
                 expectedRevision: progress.revision,
                 action,
+                feedbackKind,
                 stepId: stepId ?? null
             });
             queryClient.setQueryData<TutorialsResponse>(keys.tutorials, (prev) => {
@@ -189,14 +192,26 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         if (!activeId) return;
         try { await postEvent(activeId, 'pause'); } catch { /* already paused / finished */ }
         pausedRef.current.add(activeId);
+        // Pause means let me work, not offer a sibling tour immediately.
+        const roomId = entryFor(data, activeId)?.roomId;
+        for (const entry of data?.catalog || []) {
+            if (entry.roomId === roomId) offeredRef.current.add(entry.id);
+        }
         setActiveId(null);
-    }, [activeId, postEvent]);
+    }, [activeId, data, postEvent]);
 
     const skipTutorial = useCallback(async () => {
         if (!activeId) return;
         try { await postEvent(activeId, 'skip_tutorial'); } catch { /* */ }
         setActiveId(null);
     }, [activeId, postEvent]);
+
+    const back = useCallback(async () => {
+        if (activeId) await postEvent(activeId, 'back');
+    }, [activeId, postEvent]);
+    const feedback = useCallback(async (kind: string) => {
+        if (activeId && active?.progress.currentStepId) await postEvent(activeId, 'feedback', active.progress.currentStepId, kind);
+    }, [activeId, active, postEvent]);
 
     const completeStep = useCallback(async () => {
         if (!activeId || !active?.progress.currentStepId) return;
@@ -289,6 +304,10 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
 
     // First login / room-entry offers. Never on public shares. Never after Pause.
     useEffect(() => {
+        if (offer?.kind === 'room' && data && entryFor(data, offer.tutorialId)?.roomId !== room) {
+            setOffer(null);
+            return;
+        }
         if (!enabled || isShare || !data || activeId || offer) return;
         if (!data.preferences.autoStart) return;
 
@@ -329,6 +348,8 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         pause,
         skipTutorial,
         completeStep,
+        back,
+        feedback,
         skipStep,
         finish,
         keepExample,
@@ -362,6 +383,8 @@ export function useTutorials(): TutorialContextValue {
             pause: async () => {},
             skipTutorial: async () => {},
             completeStep: async () => {},
+            back: async () => {},
+            feedback: async () => {},
             skipStep: async () => {},
             finish: async () => {},
             keepExample: async () => ({ label: '' }),
