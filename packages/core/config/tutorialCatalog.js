@@ -37,10 +37,12 @@
  * }} TutorialDef */
 
 const workflowTutorials = require('./workflowTutorials');
+const accountTutorials = require('./accountTutorials');
 
 /** @type {TutorialDef[]} */
 const TUTORIALS = [
     ...workflowTutorials,
+    ...accountTutorials,
     {
         id: 'home.first-task', roomId: 'home', version: 1, title: 'Your first research task',
         steps: [
@@ -243,11 +245,7 @@ const TUTORIALS = [
     { id: 'music.studio', roomId: 'music', version: 1, title: 'Studio', steps: [] },
     { id: 'trading.basics', roomId: 'trading', version: 1, title: 'Trading basics', requires: { discord: true }, steps: [] },
     { id: 'decks.basics', roomId: 'decks', version: 1, title: 'Decks basics', steps: [] },
-    { id: 'usage.basics', roomId: 'usage', version: 1, title: 'Usage basics', steps: [] },
-    { id: 'settings.basics', roomId: 'settings', version: 1, title: 'Settings basics', steps: [] },
-    { id: 'memory.basics', roomId: 'settings', version: 1, title: 'Memory basics', steps: [] },
     { id: 'connections.basics', roomId: 'settings', version: 1, title: 'Connections basics', steps: [] },
-    { id: 'admin.instance', roomId: 'host', version: 1, title: 'Host administration', hostOnly: true, requires: { operator: true }, steps: [] }
 ];
 
 const TUTORIAL_IDS = TUTORIALS.map((t) => t.id);
