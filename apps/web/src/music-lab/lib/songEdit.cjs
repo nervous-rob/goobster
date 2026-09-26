@@ -492,6 +492,20 @@ function parseSongProjectFile(text, makeId) {
     if (!isRecord(project) || !Array.isArray(project.sections) || !Array.isArray(project.tracks)) {
         return { ok: false, error: 'That file does not look like a Song Studio export.' };
     }
+    return sanitizeSongProject(project, makeId);
+}
+
+/**
+ * Turns an untrusted project object into one the Studio can trust. With
+ * `preserveIds` the song and clip ids survive (a shared song must keep the
+ * ids every collaborator patches by); without it they are minted fresh so
+ * an import never clobbers an existing song. Section and track ids are
+ * always kept when unique — clips point at them.
+ */
+function sanitizeSongProject(project, makeId, { preserveIds = false } = {}) {
+    if (!isRecord(project) || !Array.isArray(project.sections) || !Array.isArray(project.tracks)) {
+        return { ok: false, error: 'That does not look like a Song Studio song.' };
+    }
 
     const sections = project.sections.slice(0, LIMITS.maxSections).map(s => sanitizeSection(s, makeId)).filter(Boolean);
     if (!sections.length) return { ok: false, error: 'The song has no playable sections.' };
@@ -512,13 +526,17 @@ function parseSongProjectFile(text, makeId) {
     });
 
     const totalMeasures = sections.reduce((a, s) => a + s.measures, 0);
+    const usedClipIds = new Set();
     const clips = (Array.isArray(project.clips) ? project.clips : [])
         .slice(0, LIMITS.maxClips)
         .filter(c => isRecord(c) && usedTrackIds.has(c.trackId))
         .map(c => {
             const start = int(c.startMeasure, [0, Math.max(0, totalMeasures - 1)], 0);
             const length = int(c.lengthMeasures, [1, Math.max(1, totalMeasures - start)], 1);
-            return { id: makeId('clip'), trackId: c.trackId, startMeasure: start, lengthMeasures: length };
+            let id = preserveIds ? str(c.id, makeId('clip'), 64) : makeId('clip');
+            while (usedClipIds.has(id)) id = makeId('clip');
+            usedClipIds.add(id);
+            return { id, trackId: c.trackId, startMeasure: start, lengthMeasures: length };
         })
         .filter(c => c.startMeasure < totalMeasures);
 
@@ -530,8 +548,8 @@ function parseSongProjectFile(text, makeId) {
     return {
         ok: true,
         project: {
-            id: makeId('song'),
-            name: str(project.name, 'Imported song', LIMITS.maxNameLength),
+            id: preserveIds ? str(project.id, makeId('song'), 64) : makeId('song'),
+            name: str(project.name, preserveIds ? 'Shared song' : 'Imported song', LIMITS.maxNameLength),
             bpm: int(project.bpm, LIMITS.bpm, 100),
             swing: num(project.swing, LIMITS.swing, 0),
             keyRoot: NOTE_NAMES.includes(project.keyRoot) ? project.keyRoot : 'C',
@@ -579,5 +597,6 @@ module.exports = {
     formatClock,
     serializeSongProject,
     parseSongProjectFile,
+    sanitizeSongProject,
     songFileName
 };

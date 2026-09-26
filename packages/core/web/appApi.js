@@ -37,6 +37,7 @@ const { mountSettings } = require('./routes/settings');
 const { mountInbox } = require('./routes/inbox');
 const { mountFollowedSources } = require('./routes/followedSources');
 const { mountTutorials } = require('./routes/tutorials');
+const { mountStudio } = require('./routes/studio');
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -68,6 +69,7 @@ function createWebAppApp(ctx) {
     mountInbox(app, ctx, helpers);
     mountFollowedSources(app, ctx, helpers);
     mountTutorials(app, ctx, helpers);
+    mountStudio(app, ctx, helpers);
     // Last: the static client + API 404 fallback
     mountEventsStatic(app, ctx, helpers);
     return app;

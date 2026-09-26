@@ -1,5 +1,6 @@
 /**
- * Portal live WebSockets: Parlor Live and Study voice transcription.
+ * Portal live WebSockets: Parlor Live, Study voice transcription, and Song
+ * Studio collaboration.
  * Auth happens BEFORE the upgrade completes (same httpOnly session cookie
  * and Origin rule as the REST router).
  */
@@ -10,12 +11,13 @@ const { authorizeSession, authorizedChannel, reserveConnection } = require('./li
 
 const LIVE_WS_MAX_PAYLOAD = 2 * 1024 * 1024;
 const LIVE_WS_HEARTBEAT_MS = 30 * 1000;
-const LIVE_WS_PATHS = new Set(['/api/app/parlor/live', '/api/app/voice/live']);
+const LIVE_WS_PATHS = new Set(['/api/app/parlor/live', '/api/app/voice/live', '/api/app/studio/live']);
 
 /**
  * Attach the web app's live WebSockets to an already-listening HTTP server:
  *  - /api/app/parlor/live  -> Parlor Live (multi-persona voice sessions)
  *  - /api/app/voice/live   -> Study voice chat streaming transcription
+ *  - /api/app/studio/live  -> Song Studio shared-song collaboration
  * noServer + a path check on upgrade so they coexist with the Activity /
  * screen-vision / GBA sockets on the same server (the gbaRunApi pattern).
  */
@@ -98,6 +100,10 @@ function attachWebAppWebSocket(server, ctx) {
         socket.on('pong', () => { socket.isAlive = true; });
         if (pathname === '/api/app/voice/live') {
             ctx.voiceLive.handleConnection(socket, { userId: session.userId });
+            return;
+        }
+        if (pathname === '/api/app/studio/live') {
+            ctx.studioLive.handleConnection(socket, { userId: session.userId, userName: session.userName });
             return;
         }
         ctx.parlorLive.handleConnection(socket, {

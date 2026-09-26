@@ -112,4 +112,9 @@ export const formatClock = songEdit.formatClock as (seconds: number) => string;
 
 export const serializeSongProject = songEdit.serializeSongProject as (project: SongProject, exportedAt?: string) => string;
 export const parseSongProjectFile = songEdit.parseSongProjectFile as (text: string, makeId: MakeId) => ParsedSongFile;
+export const sanitizeSongProject = songEdit.sanitizeSongProject as (
+  project: unknown,
+  makeId: MakeId,
+  options?: { preserveIds?: boolean }
+) => ParsedSongFile;
 export const songFileName = songEdit.songFileName as (name: string, extension: string) => string;
