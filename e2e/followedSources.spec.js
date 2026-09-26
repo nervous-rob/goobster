@@ -1,0 +1,52 @@
+const { test, expect } = require('@playwright/test');
+const { login } = require('./helpers');
+for (const narrow of [false, true]) {
+    test(`follow a project source, inspect changes and prepare private research (${narrow ? 'narrow' : 'desktop'})`, async ({ page }) => {
+        const userId = narrow ? '800000000000000032' : '800000000000000031';
+        if (narrow) await page.setViewportSize({ width: 390, height: 844 });
+        await login(page, { userId, name: 'Source reader' });
+        const seeded = await page.request.post('/e2e/fixtures/followed-sources', { data: { userId } });
+        expect(seeded.ok()).toBe(true);
+        const { project } = await seeded.json();
+        await page.goto(`/app/projects/${userId}/${project.slug}/knowledge`);
+        await page.getByText('Follow sources for this project', { exact: true }).click();
+        await expect(page.getByText(/Your follows and saved changes are private/)).toBeVisible();
+        await page.getByLabel('Source URL', { exact: true }).fill('https://example.org/feed');
+        await page.getByLabel('Label (optional)').fill('Fictional research feed');
+        await page.getByRole('button', { name: 'Follow source', exact: true }).click();
+        const source = page.getByRole('article', { name: 'Fictional research feed' });
+        await expect(source).toContainText('Waiting for baseline');
+        await source.getByRole('button', { name: 'Check now' }).click();
+        await expect(source).toContainText('Following');
+        await expect(source.getByText(/Recent changes/)).toHaveCount(0);
+        await page.request.post('/e2e/fixtures/followed-sources', { data: { userId, advance: true } });
+        await source.getByRole('button', { name: 'Check now' }).click();
+        await source.getByText('Recent changes (1)').click();
+        await expect(source.getByRole('link', { name: /Observed source change/ })).toBeVisible();
+        await source.getByRole('button', { name: 'Keep change', exact: true }).click();
+        await expect(source).toContainText('1 kept');
+        await page.locator('.followed-sources').screenshot({ path: test.info().outputPath('followed-sources.png') });
+        await source.getByRole('button', { name: 'Prepare private research' }).click();
+        await expect(source.getByRole('link', { name: 'Review research draft' })).toBeVisible();
+        const drafts = await (await page.request.get('/api/app/spitball/expeditions')).json();
+        expect(drafts.expeditions).toEqual([expect.objectContaining({ status: 'DRAFT', projectId: null })]);
+        await source.getByRole('button', { name: 'Pause source' }).click();
+        await expect(source.getByRole('button', { name: 'Check now' })).toBeDisabled();
+        await page.reload();
+        await page.getByText('Follow sources for this project', { exact: true }).click();
+        await expect(source.getByRole('button', { name: 'Resume source' })).toBeVisible();
+        await source.getByRole('button', { name: 'Resume source' }).click();
+        await source.getByRole('button', { name: 'Unfollow', exact: true }).click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
+        await expect(source).toHaveCount(0);
+        // Same panel from a personal Knowledge topic, without changing its scope.
+        await page.goto('/app/knowledge/notes');
+        await page.getByRole('button', { name: 'Follow sources for Followed topic fixture' }).click();
+        await expect(page.getByRole('dialog').getByRole('heading', { name: 'Followed sources' })).toBeVisible();
+        await page.getByRole('dialog').getByLabel('Source URL', { exact: true }).fill('https://example.org/topic.xml');
+        await page.getByRole('dialog').getByRole('button', { name: 'Follow source', exact: true }).click();
+        await expect(page.getByRole('dialog').getByRole('article')).toHaveCount(1);
+        await page.getByRole('button', { name: 'Close sources' }).click();
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+    });
+}

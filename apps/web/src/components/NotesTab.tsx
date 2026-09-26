@@ -1,3 +1,5 @@
+import { FollowedSources } from './FollowedSources';
+import { Modal } from './Modal';
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -65,6 +67,7 @@ export function NotesTab({
     const [curation, setCuration] = useState<Curation | ''>('');
     const [sort, setSort] = useState<SortKey>('updated');
     const [editor, setEditor] = useState<UserNote | 'new' | null>(null);
+    const [following, setFollowing] = useState<UserNote | null>(null);
     const [deleting, setDeleting] = useState<UserNote | null>(null);
     const [transfer, setTransfer] = useState<{ note: UserNote; target: TransferTarget } | null>(null);
     // Explicit transfers (ADR 0010) start from the caller's own notes only,
@@ -327,6 +330,7 @@ export function NotesTab({
                                 )}
                                 {personal && state !== 'memory' && (
                                     <span className="notes-row-actions">
+                                        <button type="button" className="btn small" onClick={() => setFollowing(item)} aria-label={`Follow sources for ${item.label}`}>Follow sources…</button>
                                         {projectsOn && (
                                             <button
                                                 type="button"
@@ -364,6 +368,7 @@ export function NotesTab({
                 </div>
             )}
 
+            {following && <Modal wide onClose={() => setFollowing(null)}><div className="modal-body"><button className="btn small" onClick={() => setFollowing(null)}>Close sources</button><h2>{following.label}</h2><FollowedSources topicNodeId={following.id} /></div></Modal>}
             {editor && (
                 <NoteEditor
                     scope={scope}

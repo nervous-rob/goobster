@@ -477,6 +477,10 @@ async function generateUnconfirmedLoops(ctx) {
 class AttentionService {
     constructor() {
         this._generators = new Map();
+        this.registerGenerator('followed_source', {
+            description: 'A followed feed or web page has a meaningful change',
+            run: ctx => require('./followedSourceService').candidates(ctx)
+        });
         this.registerGenerator('deadline', {
             description: 'A tracked deadline is inside the horizon',
             run: generateDeadlines
@@ -819,6 +823,8 @@ Respond with ONLY JSON:
      * @returns {Promise<Object|null>} the notice, or null when it already existed
      */
     async _raiseNotice(userId, candidate) {
+        if (candidate.key.startsWith('followed_source:')
+            && !await require('./followedSourceService').canRaise(userId, candidate.key)) return null;
         const existing = await db.get(
             'SELECT id FROM attention_notices WHERE userId = @userId AND dedupeKey = @key',
             { userId, key: candidate.key }
@@ -890,7 +896,11 @@ Respond with ONLY JSON:
              LIMIT @limit`,
             params
         );
-        const presented = rows.map(row => this.presentNotice(row));
+        const presented = await Promise.all(rows.map(async row => ({
+            ...this.presentNotice(row),
+            sourceChange: row.dedupeKey.startsWith('followed_source:')
+                ? await require('./followedSourceService').noticeSource(userId, row.dedupeKey) : null
+        })));
         return activityCorrelation.attachToNotices(userId, presented);
     }
 

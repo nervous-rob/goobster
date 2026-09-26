@@ -322,3 +322,7 @@ with fictional content and no domain writes.
 
 Validation: `tests/inboxAsk.test.js`, the instructions-slot regression in
 `tests/chatHandlerAgentTurn.test.js`, and `e2e/inboxAsk.spec.js`.
+
+### Follow a research source
+
+On a personal Knowledge note, use **Follow sources…**. In a Project's Knowledge view, expand **Follow sources for this project**. Follows are private to you. Add an RSS/Atom feed or public HTTPS page, then enable research Attention explicitly in Settings if it is off. The first check saves a quiet baseline. Later meaningful changes appear through Attention's normal policy; the source panel retains provenance and supports keeping a change, pausing, unfollowing, and preparing a private research draft. Review and explicitly start that draft in Knowledge → Research. See `attention.md` for detection, fetching and retention limits.

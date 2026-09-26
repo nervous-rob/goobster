@@ -511,6 +511,7 @@ function ExpeditionDetailView({ id, onBack }: { id: number; onBack: () => void }
                 <button type="button" className="btn small" onClick={onBack}>← Expeditions</button>
                 <span className="key">{STATUS_ICONS[expedition.status]} {expedition.status.toLowerCase()}</span>
                 {active && <button type="button" className="btn small" onClick={() => act('pause')}>Pause</button>}
+                {expedition.status === 'DRAFT' && <button type="button" className="btn small primary" onClick={() => act('continue')}>Start research</button>}
                 {expedition.status === 'PAUSED' && <button type="button" className="btn small" onClick={() => act('continue')}>Continue</button>}
                 {!['COMPLETED', 'FAILED', 'CANCELLED'].includes(expedition.status) && (
                     <button type="button" className="btn small danger" onClick={() => act('cancel')}>Cancel</button>

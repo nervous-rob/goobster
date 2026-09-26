@@ -30,7 +30,7 @@ const INBOX_SOURCE_TYPE = 'work_failure';
 /** Every kind of work that can fail into this ledger. */
 const KINDS = new Set([
     'chat', 'expedition', 'job', 'sandbox', 'automation', 'trigger', 'delivery',
-    'mission_step', 'watch', 'followup', 'integration_action', 'reflection'
+    'mission_step', 'watch', 'followup', 'integration_action', 'reflection', 'followed_source'
 ]);
 
 function clip(text, max) {

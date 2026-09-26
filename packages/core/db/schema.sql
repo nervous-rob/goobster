@@ -3068,3 +3068,60 @@ CREATE TABLE IF NOT EXISTS conversation_contexts (
     UNIQUE (parlorConversationId, userId)
 );
 CREATE INDEX IF NOT EXISTS idx_conversation_contexts_owner ON conversation_contexts(userId, inboxItemId);
+
+-- Private follows. Project membership and personal topic ownership are rechecked at use.
+CREATE TABLE IF NOT EXISTS followed_sources (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    projectId INTEGER REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    topicNodeId INTEGER REFERENCES kg_nodes(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    label TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('feed', 'page')),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    disabledCount INTEGER NOT NULL DEFAULT 0,
+    initialized INTEGER NOT NULL DEFAULT 0,
+    etag TEXT,
+    lastModified TEXT,
+    lastHash TEXT,
+    lastText TEXT,
+    lastCheckedAt TEXT,
+    nextCheckAt TEXT,
+    lastError TEXT,
+    claimToken TEXT,
+    claimUntil TEXT,
+    latestEntryId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK ((projectId IS NOT NULL AND topicNodeId IS NULL) OR (projectId IS NULL AND topicNodeId IS NOT NULL)),
+    UNIQUE (userId, projectId, url),
+    UNIQUE (userId, topicNodeId, url)
+);
+CREATE INDEX IF NOT EXISTS idx_followed_sources_due ON followed_sources(userId, enabled, nextCheckAt);
+
+-- Retain feed keys even when an old entry leaves the remote feed.
+CREATE TABLE IF NOT EXISTS followed_source_entries (
+    id INTEGER PRIMARY KEY,
+    sourceId INTEGER NOT NULL REFERENCES followed_sources(id) ON DELETE CASCADE,
+    entryKey TEXT NOT NULL,
+    guid TEXT,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    author TEXT,
+    publishedAt TEXT,
+    retrievedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    contentHash TEXT NOT NULL,
+    extractedText TEXT,
+    isChange INTEGER NOT NULL DEFAULT 1,
+    expeditionId INTEGER REFERENCES spitball_expeditions(id) ON DELETE SET NULL,
+    kept INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (sourceId, entryKey)
+);
+CREATE INDEX IF NOT EXISTS idx_followed_source_entries_source ON followed_source_entries(sourceId, id);
+
+-- Shared courtesy budget: no account data or source paths in the host cache.
+CREATE TABLE IF NOT EXISTS source_fetch_hosts (
+    host TEXT PRIMARY KEY,
+    nextRequestAt TEXT,
+    robotsText TEXT,
+    robotsCheckedAt TEXT
+);

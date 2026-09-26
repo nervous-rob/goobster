@@ -1,4 +1,4 @@
-import type { AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 
@@ -284,6 +284,13 @@ export const api = {
         if (cursor) params.set('cursor', cursor);
         return request<InboxList>(`/api/app/inbox?${params}`);
     },
+    followedSources: (target: { projectId?: number; topicNodeId?: number }) => request<FollowedSources>(`/api/app/followed-sources${ownerQs(null, target)}`),
+    followSource: (body: { projectId?: number; topicNodeId?: number; url: string; label: string; kind: 'feed' | 'page' }) => request('/api/app/followed-sources', { method: 'POST', body }),
+    sourceEnabled: (id: number, enabled: boolean) => request(`/api/app/followed-sources/${id}/enabled`, { method: 'POST', body: { enabled } }),
+    sourceCheck: (id: number) => request<{ status: string; message?: string }>(`/api/app/followed-sources/${id}/check`, { method: 'POST' }),
+    sourceRemove: (id: number) => request(`/api/app/followed-sources/${id}`, { method: 'DELETE' }),
+    sourceKeep: (id: number, entryId: number, kept: boolean) => request(`/api/app/followed-sources/${id}/entries/${entryId}/keep`, { method: 'POST', body: { kept } }),
+    sourceResearch: (id: number, entryId: number) => request<{ expeditionId: number }>(`/api/app/followed-sources/${id}/entries/${entryId}/research`, { method: 'POST' }),
     inboxItem: (id: number) => request<InboxItem>(`/api/app/inbox/${id}`),
     inboxAsk: (id: number, inProject = false) => request<{ kind: 'chat' | 'project'; conversationId: number; path: string; suggestedQuestion: string }>(
         `/api/app/inbox/${id}/ask`, { method: 'POST', body: { inProject } }),

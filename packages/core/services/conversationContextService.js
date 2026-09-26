@@ -108,6 +108,10 @@ async function noticesFor(row) {
         FROM attention_notices WHERE userId = @userId AND id IN (${ids.map((_, i) => `@id${i}`).join(',')}) ORDER BY id`, params);
 }
 async function noticeSource(row, notice) {
+    if (notice.dedupeKey.startsWith('followed_source:')) {
+        const source = await require('./followedSourceService').noticeSource(row.userId, notice.dedupeKey);
+        return { ids: source ? { followedSourceId: source.sourceId, sourceEntryId: source.entryId } : {}, project: source?.project || null };
+    }
     // These are structured server keys from attentionService's generators,
     // never ids extracted from model-written titles or notice prose.
     const match = /^(observatory\.job|research\.expedition|mission):(\d+):/.exec(notice.dedupeKey);

@@ -463,6 +463,9 @@ class PrivacyService {
                 nextRun: row.nextRun
             })),
             inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
+            followedSources: await db.all('SELECT id, projectId, topicNodeId, url, label, kind, enabled FROM followed_sources WHERE userId = @userId', { userId }),
+            followedSourceEntries: await db.all('SELECT e.* FROM followed_source_entries e JOIN followed_sources s ON s.id = e.sourceId WHERE s.userId = @userId ORDER BY e.id DESC LIMIT 200', { userId }),
+            followedSourceEntryCount: (await db.get('SELECT COUNT(*) AS c FROM followed_source_entries e JOIN followed_sources s ON s.id = e.sourceId WHERE s.userId = @userId', { userId })).c,
             conversationContexts: await db.all('SELECT inboxItemId, webConversationId, parlorConversationId FROM conversation_contexts WHERE userId = @userId', { userId }),
             shareLinks: shareLinks?.c || 0,
             executionAdmissions: await db.all('SELECT resource, state, createdAt, startedAt, expiresAt FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope }),
@@ -662,6 +665,9 @@ class PrivacyService {
             // initiative policy, the heartbeat state, and any armed watch -
             // a watch left behind would run an agent turn for a user who
             // asked to be forgotten.
+            counts.followedSources = (await db.run('DELETE FROM followed_sources WHERE userId = @userId', { userId })).changes;
+            await require('./followedSourceService').pruneHostCache();
+            await db.run('DELETE FROM admission_locks WHERE resource = @resource', { resource: `followed_sources:${userId}` });
             counts.attentionItems = (await db.run(
                 'DELETE FROM attention_items WHERE userId = @userId', { userId }
             )).changes;
@@ -1258,6 +1264,7 @@ class PrivacyService {
             email_tokens: (await db.get(
                 'SELECT COUNT(*) AS c FROM email_tokens WHERE principalId = @userId', { userId }
             )).c,
+            followed_sources: (await db.get('SELECT COUNT(*) AS c FROM followed_sources WHERE userId = @userId', { userId }))?.c || 0,
             conversation_contexts: (await db.get(
                 'SELECT COUNT(*) AS c FROM conversation_contexts WHERE userId = @userId', { userId }
             )).c,

@@ -1059,3 +1059,14 @@ export type ModelCatalog = {
     discovery: { status: 'live' | 'cached' | 'stale' | 'unavailable' | 'not-configured'; checkedAt: string | null };
     unregisteredCount: number;
 };
+
+export type FollowedSourceEntry = {
+    id: number; url: string; title: string; author: string | null; publishedAt: string | null;
+    retrievedAt: string; contentHash: string; extractedText: string | null; kept: number; expeditionId: number | null;
+};
+export type FollowedSource = {
+    id: number; label: string; url: string; kind: 'feed' | 'page'; enabled: boolean; initialized: boolean;
+    lastCheckedAt: string | null; nextCheckAt: string | null; lastError: string | null; disabledCount: number;
+    entries: FollowedSourceEntry[]; metrics: { acted: number; dismissed: number; snoozed: number; kept: number };
+};
+export type FollowedSources = { sources: FollowedSource[]; attentionEnabled: boolean };

@@ -1,3 +1,4 @@
+import { FollowedSources } from '../../components/FollowedSources';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -124,6 +125,7 @@ export function KnowledgeTab({
 
     return (
         <div className="obs-knowledge">
+            {projectId && <details className="followed-sources-disclosure"><summary>Follow sources for this project</summary><FollowedSources projectId={projectId} /></details>}
             {me.features?.spitball && projectId ? (
                 <div className="obs-knowledge-launch">
                     <div className="section-title">Research into this project</div>

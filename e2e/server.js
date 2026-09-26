@@ -575,6 +575,13 @@ async function main() {
         await identityService.grantAccount({ principalId, entitlement: 'bootstrap', role: 'operator' });
     }
 
+    // Source-following journeys use isolated accounts and an in-memory remote feed.
+    let sourceNow = Date.now();
+    let sourceVersion = 1;
+    const { FollowedSourceService } = require('@goobster/core/services/followedSourceService');
+    const followedSources = new FollowedSourceService({ now: () => sourceNow, fetch: async () => ({
+        status: 200, headers: {}, text: `<rss><channel><item><guid>${sourceVersion}</guid><title>Observed source change ${sourceVersion}</title><link>https://example.org/paper/${sourceVersion}</link><description>A bounded fictional research result with provenance.</description></item></channel></rss>`
+    }) });
     const ctx = createWebAppContext({
         gateway: fakeGateway(),
         config: {
@@ -582,10 +589,19 @@ async function main() {
             webapp: { enabled: true, devMode: true }
         },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { observatory, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }) }
+        deps: { observatory, followedSources, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }) }
     });
 
     const app = express();
+    app.post('/e2e/fixtures/followed-sources', express.json(), async (req, res) => {
+        const userId = String(req.body.userId);
+        if (req.body.advance) { sourceNow += 3600_000; sourceVersion++; res.json({ ok: true }); return; }
+        await db.run('DELETE FROM followed_sources WHERE userId = @userId', { userId });
+        await policies.enroll({ userId, initiative: 'observe' });
+        const project = await observatory.createProject({ userId, name: 'Source following fixture' });
+        await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user', mutations: { upsert: [{ type: 'concept', label: 'Followed topic fixture', content: 'An explicitly kept research topic.' }] } });
+        res.json({ project });
+    });
     app.get('/health', (_req, res) => {
         res.json({ ok: true, db: DB_PATH });
     });
