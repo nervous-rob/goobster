@@ -514,6 +514,16 @@
   }
 }
 
+/* Inspector columns are narrow; compact pills so short groups stay on one row. */
+.studio-engine .st-inspectors .re-pills {
+  gap: 0.35rem;
+}
+
+.studio-engine .st-inspectors .re-pill {
+  padding: 0.4rem 0.65rem;
+  white-space: nowrap;
+}
+
 .studio-engine .st-chord-chips {
   display: flex;
   flex-wrap: wrap;
