@@ -42,8 +42,12 @@ __tests__
 docs
 *.md
 !README.md
+!documentation/*.md
+!documentation/**/*.md
+!apps/web/docs/
+!apps/web/docs/**
 
 # Docker files
 Dockerfile
 .dockerignore
-docker-compose.yml 
+docker-compose.yml

@@ -65,6 +65,7 @@ exists so `tests/portalRooms.test.js` can `require()` it.
 | Card decks | `/decks` | unchanged |
 | Usage & limits, Settings, Host | `/usage`, `/settings`, `/settings/:section`, `/host` | unchanged |
 | Shared conversation | `/share/:token` | unchanged (public, renders inside the shell without a session) |
+| Documentation | `/docs` → `/docs/getting-started`, `/docs/:slug#section` | public, linked from the sidebar footer; generated from selected repository Markdown |
 | Shared project dashboard | `/app/observatory/share/:token` | **server-handled**, never a SPA route - the registry excludes it so a public share is never swallowed by the Projects route |
 
 Every alias is its own typed route whose only component redirects through

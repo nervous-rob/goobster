@@ -96,6 +96,7 @@ export function Login() {
                         <button className="btn primary" type="submit">Enter</button>
                     </form>
                 )}
+                <Link to="/docs/$slug" params={{ slug: 'getting-started' }} className="btn subtle">Documentation</Link>
             </div>
         </div>
     );

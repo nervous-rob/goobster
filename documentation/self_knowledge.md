@@ -13,6 +13,11 @@ the model one tool, `consultDocs`, to search it, read a document or section, and
 list the corpus - including **skill guides**, authored procedures for specific
 jobs (troubleshooting, project examples, working guidelines).
 
+People can browse selected shipped files through the portal's **Documentation**
+link at `/app/docs`. The [documentation wiki](documentation_wiki.md) builds a
+public reader and local search index from an explicit repository manifest.
+It does not query this service, seed a database, or include operator notes.
+
 - Service: `packages/core/services/selfDocsService.js`
 - Config: `packages/core/config/selfDocsConfig.js` (env → `config.json` → defaults)
 - Tool: `consultDocs` in `packages/core/utils/tools/selfDocs.js` (via the
@@ -86,7 +91,10 @@ ones split on blank lines, aiming at ~1,800 characters. Every chunk carries a
 ## The tool
 
 `consultDocs` is offered on every surface (guild, DM, portal, automations) - the
-corpus is public repository documentation, not user data.
+shipped corpus is public repository documentation, not user data. Operator
+notes are filtered from search, listing, and document resolution unless a
+currently active operator is using their private portal Chat. Shared
+discussions, guilds, and missing actor context receive only shipped docs.
 
 | Action | Parameters | Returns |
 |---|---|---|
@@ -127,9 +135,10 @@ guides: *Troubleshooting tactics*, *Project examples*, *Working guidelines*.
 
 Drop Markdown into `data/self-docs/` (or `selfDocs.operatorDir`) to teach a
 deployment about itself - the production host, who owns which credential,
-house rules for a server. They are seeded like shipped docs and returned by
-`consultDocs`. Front matter works the same way; `kind: skill` makes a note a
-procedure.
+house rules for a server. They are seeded like shipped docs but returned by
+`consultDocs` only to an authorized operator in their private portal Chat.
+They never appear in the public documentation wiki. Front matter works the
+same way; `kind: skill` makes a note a procedure.
 
 ## Configuration
 
@@ -143,8 +152,9 @@ procedure.
 
 ## Invariants
 
-- The corpus is **not per-user data**: no privacy erasure path, no scope. Do not
-  seed anything private into it.
+- Shipped documentation is public, **not per-user data**. Do not put private
+  content in repository sources. Deployment notes belong in the protected
+  operator directory, never in the public wiki manifest.
 - Seeding must stay idempotent and hash-compared; a restart with unchanged docs
   writes nothing and preserves embeddings.
 - Retrieval must keep working with no credentials; embeddings are an

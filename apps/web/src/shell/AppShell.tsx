@@ -180,6 +180,9 @@ export function AppShell() {
     useEffect(() => {
         // The pre-router client addressed rooms as `#room/id`; those links
         // still resolve through the registry.
+        // Documentation fragments are article headings, even when named
+        // `projects`, `settings`, or another old room id.
+        if (resolveRoom(window.location.pathname) === 'docs') return;
         const dest = legacyHashTarget(window.location.hash);
         if (dest) {
             navigate({ to: dest as never, replace: true });
@@ -224,6 +227,9 @@ export function AppShell() {
                     <ActiveFriends />
                 </div>
                 <div className="sidebar-footer">
+                    <Link to="/docs/$slug" params={{ slug: 'getting-started' }}
+                        className={`nav-btn${room === 'docs' ? ' active' : ''}`} aria-current={room === 'docs' ? 'page' : undefined}
+                        onClick={() => setDrawer(false)}><span aria-hidden="true">📖</span> Documentation</Link>
                     <button type="button" className="btn subtle" title="Toggle light/dark (more in Settings → Appearance)"
                         onClick={() => setStoredTheme(resolveTheme(theme) === 'light' ? 'dark' : 'light')}>
                         {resolveTheme(theme) === 'light' ? '☀️ Theme' : '🌙 Theme'}

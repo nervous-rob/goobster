@@ -49,6 +49,14 @@ import { SettingsRoom } from './rooms/settings/SettingsRoom';
 import { canonicalPath } from './lib/rooms';
 import './styles.css';
 
+const Documentation = lazy(() => import('./docs/Documentation').then((m) => ({ default: m.Documentation })));
+
+function DocumentationGate() {
+    return <Suspense fallback={<main className="pane next-pane is-in"><div className="empty" role="status">Opening documentation…</div></main>}>
+        <Documentation />
+    </Suspense>;
+}
+
 const ConservatoryLayout = lazy(() => import('./music-lab/ConservatoryLayout').then((m) => ({ default: m.ConservatoryLayout })));
 const ConservatoryHome = lazy(() => import('./music-lab/ConservatoryHome').then((m) => ({ default: m.ConservatoryHome })));
 const IntervalExplorer = lazy(() => import('./music-lab/components/intervals/IntervalExplorer').then((m) => ({ default: m.IntervalExplorer })));
@@ -124,6 +132,19 @@ const shareRoute = createRoute({
     getParentRoute: () => shareShellRoute,
     path: '/share/$token',
     component: SharePage,
+});
+
+// Public, curated repository docs; no account or runtime self_docs read.
+const docsIndexRoute = createRoute({
+    getParentRoute: () => shareShellRoute,
+    path: '/docs',
+    component: () => <Navigate to="/docs/$slug" params={{ slug: 'getting-started' }} hash={true} replace />,
+});
+
+const docsPageRoute = createRoute({
+    getParentRoute: () => shareShellRoute,
+    path: '/docs/$slug',
+    component: DocumentationGate,
 });
 
 // Invitation and password-reset landing pages are public by design: the
@@ -435,7 +456,7 @@ const legacyRoutes = [
 ].map(legacyAlias);
 
 const routeTree = rootRoute.addChildren([
-    shareShellRoute.addChildren([shareRoute]),
+    shareShellRoute.addChildren([shareRoute, docsIndexRoute, docsPageRoute]),
     inviteRoute,
     recoverRoute,
     registerRoute,

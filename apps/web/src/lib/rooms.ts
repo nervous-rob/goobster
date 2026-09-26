@@ -44,7 +44,7 @@ export type RoomId =
     | 'home' | 'chat' | 'knowledge' | 'projects' | 'discussions' | 'activity' | 'tools'
     | 'music' | 'trading' | 'decks'
     | 'usage' | 'settings' | 'host'
-    | 'share';
+    | 'share' | 'docs';
 
 export type Room = {
     id: RoomId;

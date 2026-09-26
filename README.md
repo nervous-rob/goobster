@@ -1,5 +1,10 @@
 # Goobster
 
+**Using the app?** Open **Documentation** in the portal sidebar, or visit
+`/app/docs` for [Getting started](documentation/getting_started.md), searchable
+guides, hosting instructions, and technical reference. These pages are built
+from this repository and update with `npm run build:web`.
+
 A self-hostable AI workspace where conversation, computation, knowledge,
 collaboration, and initiative share one persistent substrate. It runs as
 a browser portal with **no Discord at all**, or with Discord connected as

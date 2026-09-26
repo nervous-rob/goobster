@@ -89,6 +89,7 @@ const GROUPS = [
             'appStream',
             'friendService',
             'markdownRenderer',
+            'documentationWiki',
             'panelServer',
             'panelService',
             'parlorLiveService',
