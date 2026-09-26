@@ -15,6 +15,8 @@ interface StudioTransportProps {
   swing: number;
   loop: boolean;
   loopRegionLabel: string;
+  metronome: boolean;
+  onMetronomeChange: (on: boolean) => void;
   positionMeasure: number | null;
   positionSub: number | null;
   totalMeasures: number;
@@ -67,6 +69,8 @@ export function StudioTransport({
   swing,
   loop,
   loopRegionLabel,
+  metronome,
+  onMetronomeChange,
   positionMeasure,
   positionSub,
   totalMeasures,
@@ -194,9 +198,19 @@ export function StudioTransport({
         className={`stage-transport-loop${loop ? ' on' : ''}`}
         onClick={() => onLoopChange(!loop)}
         aria-pressed={loop}
-        title={`Loop region: ${loopRegionLabel}`}
+        title={loop ? `Looping: ${loopRegionLabel} (L to toggle)` : 'Loop is off — the song plays once (L to toggle)'}
       >
         Loop · {loopRegionLabel}
+      </button>
+
+      <button
+        type="button"
+        className={`stage-transport-loop st-click${metronome ? ' on' : ''}`}
+        onClick={() => onMetronomeChange(!metronome)}
+        aria-pressed={metronome}
+        title={metronome ? 'Metronome click is on (not recorded)' : 'Metronome click on every beat — never in the recording'}
+      >
+        Click
       </button>
 
       <div className="stage-transport-position">

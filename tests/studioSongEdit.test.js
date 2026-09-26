@@ -372,9 +372,9 @@ describe('song files', () => {
             masterVolume: 40,
             reverbWet: 3,
             tracks: [
-                track('t-kick', 'kick'),
+                { ...track('t-kick', 'kick'), pan: 'left' },
                 { id: 'evil', role: 'laser', name: 'nope' },
-                track('t-lead', 'melody', { octaveShift: 12, voicingOverride: 'nonsense', registerOverride: 'high' })
+                { ...track('t-lead', 'melody', { octaveShift: 12, voicingOverride: 'nonsense', registerOverride: 'high' }), pan: -7 }
             ],
             clips: [
                 { id: 'c-1', trackId: 't-kick', startMeasure: -5, lengthMeasures: 400 },
@@ -408,6 +408,9 @@ describe('song files', () => {
         expect(p.tracks[1].performer.octaveShift).toBe(2);
         expect(p.tracks[1].performer.voicingOverride).toBeUndefined();
         expect(p.tracks[1].performer.registerOverride).toBe('high');
+        // Pan: a non-number is dropped (centre), an out-of-range number is clamped.
+        expect(p.tracks[0].pan).toBeUndefined();
+        expect(p.tracks[1].pan).toBe(-1);
 
         // 16 + 4 = 20 measures: the kick clip is clamped to the song, the
         // orphan is dropped, the lead clip is trimmed to the end.

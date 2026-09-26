@@ -24,7 +24,12 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
         onContextMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      <button type="button" className="st-track-name" onClick={onSelect} title="Open track inspector">
+      <button
+        type="button"
+        className="st-track-name"
+        onClick={onSelect}
+        title={isSelected ? 'Deselect track' : 'Select track and open it in the Track inspector'}
+      >
         <span
           className="st-track-badge"
           style={hue !== null ? { background: `hsla(${hue}, 80%, 60%, 0.25)`, color: `hsl(${hue}, 85%, 72%)` } : undefined}
@@ -39,7 +44,7 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           className={`st-mini-btn${track.mute ? ' on mute' : ''}`}
           onClick={() => onChange({ mute: !track.mute })}
           aria-pressed={track.mute}
-          title="Mute"
+          title={track.mute ? 'Unmute (M with the track selected)' : 'Mute (M with the track selected)'}
         >
           M
         </button>
@@ -48,7 +53,7 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           className={`st-mini-btn${track.solo ? ' on solo' : ''}`}
           onClick={() => onChange({ solo: !track.solo })}
           aria-pressed={track.solo}
-          title="Solo"
+          title={track.solo ? 'Unsolo (S with the track selected)' : 'Solo (S with the track selected)'}
         >
           S
         </button>
@@ -60,8 +65,8 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           step={1}
           value={track.volume}
           onChange={e => onChange({ volume: parseInt(e.target.value, 10) })}
-          title={`${track.volume} dB`}
-          aria-label={`${track.name} volume`}
+          title={`Level ${track.volume} dB — fine control in the Track inspector`}
+          aria-label={`${track.name} level`}
         />
         <button type="button" className="st-mini-btn remove" onClick={onRemove} title="Remove track">
           ×

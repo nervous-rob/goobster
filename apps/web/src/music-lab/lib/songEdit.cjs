@@ -18,6 +18,7 @@ const LIMITS = {
     sectionMeasures: [1, 16],
     sectionChords: [1, 8],
     volume: [-24, 0],
+    pan: [-1, 1],
     masterVolume: [-24, 0],
     reverbWet: [0, 0.6],
     maxSections: 64,
@@ -455,7 +456,7 @@ function sanitizePerformer(raw, role, id) {
 function sanitizeTrack(raw, makeId) {
     if (!isRecord(raw) || !ROLES.includes(raw.role)) return null;
     const id = str(raw.id, makeId(`track-${raw.role}`), 64);
-    return {
+    const track = {
         id,
         name: str(raw.name, raw.role, 28),
         role: raw.role,
@@ -464,6 +465,8 @@ function sanitizeTrack(raw, makeId) {
         solo: Boolean(raw.solo),
         volume: num(raw.volume, LIMITS.volume, -8)
     };
+    if (typeof raw.pan === 'number' && Number.isFinite(raw.pan)) track.pan = num(raw.pan, LIMITS.pan, 0);
+    return track;
 }
 
 /**

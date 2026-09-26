@@ -46,6 +46,11 @@ measure timeline from bar 1 to the end.
 
 ### Songs
 
+The **Song** settings inspector holds the song's name, **Key** (seeds the
+chords of new sections and anchors written leads — forged chords are not
+transposed), **Meter** (time signature and beat grouping), automatic
+**Drum fills**, and the master bus (level and reverb send).
+
 The **Song** selector at the top of the toolbar switches between the
 songs stored in this browser. Alongside it:
 
@@ -84,10 +89,24 @@ another song (pieces on tracks the other song lacks are dropped).
 ### Tracks and clips
 
 Each track is one performer with a role (`kick`, `snare`, `hihat`,
-`chords`, `bass`, `melody`), a **M**ute, **S**olo, volume and a creature.
-Click the track name to open the **Track** inspector and edit its
-creature — drum grids for the rhythm trio, voice / contour / register for
-the tonal performers, and the melody editor for written notes.
+`chords`, `bass`, `melody`), a **M**ute, **S**olo, level fader and a
+creature. Click the track name to select it (the whole row highlights) and
+open it in the **Track** inspector:
+
+- **Name**, **Level** (dB, mirrored by the header fader) and **Pan**
+  (`L100`…`C`…`R100`; double-click the slider to re-centre) for every
+  track. Drum roles share one bus each and stay centred, so their pan
+  slider is locked.
+- Drum tracks: the **step pattern** for one bar (highlighted steps fall on
+  the beat), with **Clear**, **Reset pattern** (the role's default for the
+  current meter) and **Every beat** shortcuts. The pattern repeats every
+  bar wherever the track has a clip.
+- Tonal tracks: **Voice**, and either the **Contour** loop and register,
+  the written-lead melody editor, or the chord track's voicing / register
+  overrides.
+
+While any track is soloed, every other track's clips dim to show they are
+silent. `M` and `S` toggle mute and solo on the selected track.
 
 **+ Add track** (the button under the track headers) opens the *Add a
 track* panel with three ways to add a performer:
@@ -122,7 +141,8 @@ Clips gate the track: a performer is audible only inside its clips.
   a right-clicked bar. **Duplicate** / `Ctrl+D` drops a copy directly
   after the clip; if the song ends there a notice says so.
 - **Delete clip** in the inspector or the `Delete` / `Backspace` key
-  removes the selected clip.
+  removes the selected clip; `←` / `→` nudge it one bar, stopping at the
+  ends of the song.
 - **Move track up / down** and **Duplicate track** (clones the performer
   and its clips) live in the Track inspector header.
 
@@ -148,11 +168,19 @@ elsewhere, or scrolling closes it; arrow keys move, `Enter` activates):
 
 The transport bar has play/pause, stop, record, the groove picker, BPM
 (type a number, then `Enter` or leave the field to commit; it is clamped
-to 40–200), swing, a loop toggle, and the position readout: current
-`bar.beat / total bars`, plus an elapsed / total clock (`m:ss`).
+to 40–200), swing, a loop toggle, a metronome **Click**, and the position
+readout: current `bar.beat / total bars`, plus an elapsed / total clock
+(`m:ss`). The status pill in the header reads *Audio off · press Play*
+until the first play gesture wakes the browser's audio, then *Audio
+ready*, *Playing* or *Recording*.
 
+- **Click** — a metronome on every beat, accented on the downbeat. It is
+  wired past the master bus, so it is never in a recording. The setting
+  is remembered per browser.
 - **Loop region** — *Whole song* or the selected *Section*.
-- **Zoom** — pixels per bar.
+- **Zoom** — pixels per bar: the slider, `−` / `+` buttons (also the `-`
+  and `+` keys), and **Fit**, which picks the zoom that shows the whole
+  song in the visible lane area and scrolls back to bar 1.
 - **Follow** — when on, the timeline pages horizontally so the playhead
   stays in view during playback and after a seek. Turn it off to pan
   freely while the song plays.
@@ -174,7 +202,10 @@ Shortcuts are inactive while a text field has focus or the wizard is open.
 | `Space` | Play / pause |
 | `Home` | Stop and rewind to the loop region start |
 | `Delete` / `Backspace` | Remove the selected clip |
+| `←` / `→` | Nudge the selected clip one bar |
 | `L` | Toggle loop |
+| `M` / `S` | Mute / solo the selected track |
+| `+` / `-` | Zoom in / out |
 | `Ctrl`/`Cmd` + `Z` | Undo |
 | `Ctrl`/`Cmd` + `Shift` + `Z`, `Ctrl` + `Y` | Redo |
 | `Ctrl`/`Cmd` + `C` / `X` | Copy / cut the selected clip (else the selected section) |
@@ -214,7 +245,8 @@ fails the browser's native `webm` recording is downloaded instead).
 treated as untrusted: names are trimmed and capped, numbers are clamped
 to the studio's ranges (BPM 40–200, swing 0–0.5, section length 1–16
 bars, at most 8 chords per section, volume −24–0 dB, reverb 0–0.6), chord
-settings fall back to defaults when unknown, clips whose track is missing
+settings fall back to defaults when unknown, a track `pan` outside −1…1 is
+clamped (a non-numeric one is dropped), clips whose track is missing
 are dropped and the rest are clamped to the song, duplicate section and
 track ids are re-issued, and the imported song always gets a fresh id so
 it never overwrites an existing one. Files with a newer `version` or
@@ -231,6 +263,7 @@ All keys are under the `goobster.conservatory.` prefix in `localStorage`.
 | `studioZoom` | Pixels per bar |
 | `studioLoop` | Loop toggle |
 | `studioFollow` | Follow-playhead toggle |
+| `studioClick` | Metronome click toggle |
 | `studioHandoff` | A pending handoff from another room (consumed on open) |
 | `creatureLibrary` | Saved creatures shared with the Stage |
 | `customVoices` | Voices built in the Voice Builder (sample audio lives in IndexedDB) |
