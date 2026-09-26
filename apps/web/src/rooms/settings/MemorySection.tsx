@@ -12,6 +12,7 @@ import { SCOPE_FOR } from './sectionMeta';
 import { useForgetOpener } from '../../shell/AppShell';
 import { useMe } from '../../hooks/useSession';
 import { PersonalMemoryPanel, type ReportPayload } from '../../components/memory/PersonalMemoryPanel';
+import { AccountExport } from '../../components/AccountExport';
 
 const RETENTION_OPTIONS: Array<{ value: number | null; label: string }> = [
     { value: null, label: 'Keep forever' },
@@ -178,6 +179,7 @@ export function MemorySection({ section, userId, onDirty }: {
             }[k] || k)} />
 
             <SharesAndExport busy={busy} setBusy={setBusy} />
+            <AccountExport />
 
             <Field id="retention" label="Auto-delete memories"
                 hint="Raw memories from your DMs and Study chats older than this window are deleted — immediately when you shorten it, then nightly. Distilled facts and chat transcripts are separate and are not affected. Servers set their own window with /privacy.">

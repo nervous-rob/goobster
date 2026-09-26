@@ -270,6 +270,7 @@ const GROUPS = [
             'exchangePrivacy',
             'memoryPrivacy',
             'privacyService',
+            'accountExport',
             'sandboxConfig',
             'sandboxPackages',
             'sandboxPython',

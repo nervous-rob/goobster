@@ -525,6 +525,7 @@ describe('paused runtime and resume', () => {
         return {
             eventBusService: worker('eventBus'),
             chatHistoryRetentionService: worker('retention'),
+            accountExportService: worker('exports'),
             selfDocsService: { seedOnStartup: async () => { log.push('selfDocs'); return { acquired: false }; } },
             workshopPinMigration: { runOnStartup: async () => ({ acquired: false }) },
             observatoryService: { autoResumeInterrupted: async () => { log.push('observatoryResume'); return []; } },
@@ -541,7 +542,7 @@ describe('paused runtime and resume', () => {
 
     let resumeResult;
 
-    test('a paused instance starts only the event bus and history retention, then picks the workers up on resume', async () => {
+    test('a paused instance keeps interactive exports and retention available, then picks autonomous workers up on resume', async () => {
         expect(await instanceState.isPaused()).toBe(true);
         const log = [];
         const warnings = [];
@@ -551,12 +552,12 @@ describe('paused runtime and resume', () => {
         });
         try {
             expect(runtime.pausedAtStart).toBe(true);
-            expect(runtime.started).toEqual(['eventBus', 'chatHistoryRetention']);
+            expect(runtime.started).toEqual(['eventBus', 'chatHistoryRetention', 'accountExports']);
             expect(runtime.skipped).toContain('paused');
             expect(warnings.join('\n')).toMatch(/Instance is PAUSED since .* \(restore\)/);
-            expect(log).toEqual(['start:eventBus', 'start:retention']);
+            expect(log).toEqual(['start:eventBus', 'start:retention', 'start:exports']);
             await sleep(80);
-            expect(log).toEqual(['start:eventBus', 'start:retention']);
+            expect(log).toEqual(['start:eventBus', 'start:retention', 'start:exports']);
 
             resumeResult = await instanceState.resume({ by: USER });
             const deadline = Date.now() + 3000;

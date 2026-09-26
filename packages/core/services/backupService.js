@@ -50,7 +50,7 @@ const INTERRUPTED_CODE = 'INTERRUPTED_BY_RESTORE';
  */
 const COUNT_EXEMPT = new Set([
     'instance_state', 'work_failures', 'operator_audit', 'execution_admissions', 'admission_locks',
-    'web_live_turns', 'web_chat_queue', 'self_docs', 'data_migrations'
+    'web_live_turns', 'web_chat_queue', 'self_docs', 'data_migrations', 'account_exports'
 ]);
 
 /**
@@ -364,6 +364,8 @@ async function interruptInFlightWork({ now = new Date() } = {}) {
     const bump = (kind, n = 1) => { counts[kind] = (counts[kind] || 0) + n; };
 
     await db.transaction(async () => {
+        // Temporary account archives are not part of an instance backup.
+        await db.run('DELETE FROM account_exports');
         for (const job of await db.all(
             `SELECT id, userId, status FROM observatory_jobs WHERE status IN ('RUNNING', 'INTERRUPTED')`
         )) {

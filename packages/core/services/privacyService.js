@@ -464,6 +464,7 @@ class PrivacyService {
             })),
             inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
             followedSources: await db.all('SELECT id, projectId, topicNodeId, url, label, kind, enabled FROM followed_sources WHERE userId = @userId', { userId }),
+            accountExports: await db.all('SELECT id, status, createdAt, expiresAt FROM account_exports WHERE userId = @userId', { userId }),
             followedSourceEntries: await db.all('SELECT e.* FROM followed_source_entries e JOIN followed_sources s ON s.id = e.sourceId WHERE s.userId = @userId ORDER BY e.id DESC LIMIT 200', { userId }),
             followedSourceEntryCount: (await db.get('SELECT COUNT(*) AS c FROM followed_source_entries e JOIN followed_sources s ON s.id = e.sourceId WHERE s.userId = @userId', { userId })).c,
             conversationContexts: await db.all('SELECT inboxItemId, webConversationId, parlorConversationId FROM conversation_contexts WHERE userId = @userId', { userId }),
@@ -598,6 +599,7 @@ class PrivacyService {
 
         const counts = await db.transaction(async () => {
             const counts = { knownNames };
+            counts.accountExports = await require('./accountExportService').forgetUser(userId);
             const memoryService = require('./memoryService');
 
             const memoryIds = (await db.all(
@@ -1265,6 +1267,7 @@ class PrivacyService {
                 'SELECT COUNT(*) AS c FROM email_tokens WHERE principalId = @userId', { userId }
             )).c,
             followed_sources: (await db.get('SELECT COUNT(*) AS c FROM followed_sources WHERE userId = @userId', { userId }))?.c || 0,
+            account_exports: (await db.get('SELECT COUNT(*) AS c FROM account_exports WHERE userId = @userId', { userId }))?.c || 0,
             conversation_contexts: (await db.get(
                 'SELECT COUNT(*) AS c FROM conversation_contexts WHERE userId = @userId', { userId }
             )).c,
