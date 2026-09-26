@@ -1,5 +1,11 @@
 /* Song Studio — REAPER-style arrangement timeline, inspectors, and wizard. */
 
+.studio-engine {
+  /* Sticky track-header column width; the timeline's playhead and inner
+     width read this so the two can never drift apart across breakpoints. */
+  --st-head-w: 184px;
+}
+
 /* --- Toolbar --- */
 
 .studio-engine .st-handoff-note {
@@ -10,6 +16,12 @@
   background: rgba(245, 158, 11, 0.08);
   color: var(--re-accent);
   font-size: 0.74rem;
+}
+
+.studio-engine .st-handoff-note.error {
+  border-color: #b91c1c;
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
 }
 
 .studio-engine .st-toolbar {
@@ -36,9 +48,60 @@
   min-width: 10rem;
 }
 
+/* The shared secondary button is a full-width block elsewhere in the lab;
+   in the toolbar it is one of a row of compact tools. */
+.studio-engine .st-tool-btn {
+  width: auto;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.72rem;
+  border-radius: 0.5rem;
+  white-space: nowrap;
+}
+
+.studio-engine .st-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .studio-engine .st-danger:hover {
   border-color: #ef4444;
   color: #ef4444;
+}
+
+.studio-engine .st-danger.armed {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+}
+
+.studio-engine .st-history-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.studio-engine .st-shortcuts {
+  margin: 1rem 0 0;
+  font-size: 0.68rem;
+  color: var(--re-text-faint);
+  line-height: 1.8;
+}
+
+.studio-engine .st-shortcuts kbd {
+  font-family: var(--re-mono);
+  font-size: 0.62rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--re-border);
+  border-bottom-width: 2px;
+  border-radius: 0.3rem;
+  background: var(--re-panel);
+  color: var(--re-text-dim);
+}
+
+.studio-engine .st-clock {
+  color: var(--re-accent);
 }
 
 .studio-engine .st-zoom input[type='range'] {
@@ -84,8 +147,8 @@
   position: sticky;
   left: 0;
   z-index: 5;
-  flex: 0 0 184px;
-  width: 184px;
+  flex: 0 0 var(--st-head-w);
+  width: var(--st-head-w);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -313,6 +376,104 @@
   box-sizing: border-box;
 }
 
+.studio-engine .st-section-block {
+  cursor: grab;
+  touch-action: pan-x pan-y;
+}
+
+.studio-engine .st-ruler-sections.dragging,
+.studio-engine .st-ruler-sections.dragging .st-section-block {
+  cursor: grabbing;
+}
+
+.studio-engine .st-section-block.dragged {
+  z-index: 3;
+  opacity: 0.85;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  transition: none;
+}
+
+.studio-engine .st-section-drop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--re-accent);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* --- Right-click menus --- */
+
+.studio-engine .st-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 190px;
+  padding: 0.3rem;
+  border: 1px solid var(--re-border);
+  border-radius: 0.6rem;
+  background: var(--re-panel);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.studio-engine .st-context-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  width: 100%;
+  padding: 0.42rem 0.65rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--re-text);
+  font-family: var(--re-mono);
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.studio-engine .st-context-item:hover:not(:disabled),
+.studio-engine .st-context-item:focus-visible {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--re-accent);
+  outline: none;
+}
+
+.studio-engine .st-context-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.studio-engine .st-context-item.danger:not(:disabled) {
+  color: #fca5a5;
+}
+
+.studio-engine .st-context-item.danger:hover:not(:disabled),
+.studio-engine .st-context-item.danger:focus-visible {
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+}
+
+.studio-engine .st-context-item kbd {
+  font-family: var(--re-mono);
+  font-size: 0.6rem;
+  color: var(--re-text-faint);
+}
+
+.studio-engine .st-context-sep {
+  height: 1px;
+  margin: 0.25rem 0.4rem;
+  background: var(--re-border);
+}
+
 .studio-engine .st-section-block.selected {
   background: hsla(var(--st-section-hue, 160), 70%, 50%, 0.38);
   border-color: hsl(var(--st-section-hue, 160), 80%, 70%);
@@ -451,6 +612,16 @@
   }
 }
 
+/* Inspector columns are narrow; compact pills so short groups stay on one row. */
+.studio-engine .st-inspectors .re-pills {
+  gap: 0.35rem;
+}
+
+.studio-engine .st-inspectors .re-pill {
+  padding: 0.4rem 0.65rem;
+  white-space: nowrap;
+}
+
 .studio-engine .st-chord-chips {
   display: flex;
   flex-wrap: wrap;
@@ -512,8 +683,36 @@
 }
 
 .studio-engine .st-me-clear {
+  width: auto;
   padding: 0.35rem 0.7rem;
   font-size: 0.7rem;
+}
+
+/* --- Track inspector extras --- */
+
+.studio-engine .st-track-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+}
+
+.studio-engine .st-track-actions .vb-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.studio-engine .st-clip-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px dashed var(--re-border);
+  border-radius: 0.55rem;
+}
+
+.studio-engine .st-clip-inspector .re-pill:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .studio-engine .st-me-scroll {
@@ -1018,9 +1217,8 @@
     min-width: 0;
   }
 
-  .studio-engine .st-track-head {
-    flex-basis: 148px;
-    width: 148px;
+  .studio-engine {
+    --st-head-w: 148px;
   }
 
   .studio-engine .st-mini-btn {

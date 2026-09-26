@@ -1,5 +1,10 @@
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { GroovePicker } from '@music-lab/components/shared/GroovePicker';
 import type { LibraryGroove } from '@music-lab/lib/genreLibrary';
+import { formatClock } from '@music-lab/lib/songEdit';
+
+export const BPM_MIN = 40;
+export const BPM_MAX = 200;
 
 interface StudioTransportProps {
   isPlaying: boolean;
@@ -13,6 +18,9 @@ interface StudioTransportProps {
   positionMeasure: number | null;
   positionSub: number | null;
   totalMeasures: number;
+  /** Wall-clock position and length of the song at the current tempo. */
+  elapsedSeconds: number;
+  totalSeconds: number;
   rhythmLabel: string;
   grooveId: string;
   onGrooveSelect: (groove: LibraryGroove) => void;
@@ -62,6 +70,8 @@ export function StudioTransport({
   positionMeasure,
   positionSub,
   totalMeasures,
+  elapsedSeconds,
+  totalSeconds,
   rhythmLabel,
   grooveId,
   onGrooveSelect,
@@ -77,6 +87,33 @@ export function StudioTransport({
     positionMeasure !== null
       ? `${positionMeasure + 1}.${(positionSub ?? 0) + 1} / ${totalMeasures}`
       : `1.1 / ${totalMeasures}`;
+
+  // The BPM box is a draft while focused: clamping on every keystroke made
+  // "120" impossible to type (the "1" snapped to 40). Commit on blur/Enter.
+  const [bpmDraft, setBpmDraft] = useState(String(bpm));
+  useEffect(() => {
+    setBpmDraft(String(bpm));
+  }, [bpm]);
+
+  const commitBpm = () => {
+    const parsed = parseInt(bpmDraft, 10);
+    if (Number.isNaN(parsed)) {
+      setBpmDraft(String(bpm));
+      return;
+    }
+    const next = Math.min(BPM_MAX, Math.max(BPM_MIN, parsed));
+    setBpmDraft(String(next));
+    if (next !== bpm) onBpmChange(next);
+  };
+
+  const onBpmKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur();
+    } else if (e.key === 'Escape') {
+      setBpmDraft(String(bpm));
+      e.currentTarget.blur();
+    }
+  };
 
   return (
     <div className="stage-transport" role="toolbar" aria-label="Studio transport">
@@ -123,13 +160,13 @@ export function StudioTransport({
           <input
             id="studio-bpm"
             type="number"
-            min={40}
-            max={200}
-            value={bpm}
-            onChange={e => {
-              const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v)) onBpmChange(Math.min(200, Math.max(40, v)));
-            }}
+            inputMode="numeric"
+            min={BPM_MIN}
+            max={BPM_MAX}
+            value={bpmDraft}
+            onChange={e => setBpmDraft(e.target.value)}
+            onBlur={commitBpm}
+            onKeyDown={onBpmKey}
           />
           <button type="button" className="stage-transport-nudge" onClick={() => onBpmNudge(1)} aria-label="Increase BPM">
             +
@@ -165,6 +202,9 @@ export function StudioTransport({
       <div className="stage-transport-position">
         <span className="stage-transport-label">Position</span>
         <strong>{positionLabel}</strong>
+        <span className="stage-transport-meta st-clock" aria-label="Elapsed time and song length">
+          {formatClock(elapsedSeconds)} / {formatClock(totalSeconds)}
+        </span>
         <span className="stage-transport-meta">
           {rhythmLabel} · {totalMeasures} measures
         </span>

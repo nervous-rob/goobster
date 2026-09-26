@@ -74,6 +74,15 @@ export function queueStudioHandoff(handoff: StudioHandoff): void {
   write(STUDIO_HANDOFF_KEY, handoff);
 }
 
+/** True when a payload is waiting, without consuming it. */
+export function hasStudioHandoff(): boolean {
+  try {
+    return Boolean(readConservatoryStorage(STUDIO_HANDOFF_KEY));
+  } catch {
+    return false;
+  }
+}
+
 /** Reads and clears the pending handoff (consumed by StudioEngine on mount). */
 export function takeStudioHandoff(): StudioHandoff | null {
   try {
