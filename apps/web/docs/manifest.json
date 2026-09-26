@@ -13,6 +13,7 @@
     ["voice", "Voice chat", "documentation/voice_commands.md"],
     ["commands", "Discord commands", "documentation/commands.md"],
     ["music", "Music playback", "documentation/music_system.md"],
+    ["music-lab", "Music Lab and Song Studio", "documentation/music_lab.md"],
     ["trading", "Trading game", "documentation/jimbucks_exchange.md"]
   ] },
   { "title": "Hosting and accounts", "pages": [
