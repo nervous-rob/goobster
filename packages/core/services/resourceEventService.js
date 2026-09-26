@@ -27,6 +27,7 @@ const RETENTION_DAYS = 90;
 /** Event kinds and the unit each quantity is counted in. */
 const KINDS = Object.freeze({
     search_call: 'calls',
+    source_check: 'checks',
     sandbox_seconds: 'seconds',
     retry: 'retries',
     image_generation: 'images',

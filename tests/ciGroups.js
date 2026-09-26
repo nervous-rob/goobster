@@ -160,6 +160,7 @@ const GROUPS = [
             'attentionLedger',
             'attentionScore',
             'attentionService',
+            'followedSources',
             'automationCronUtc',
             'automationDurability',
             'automationManagerService',

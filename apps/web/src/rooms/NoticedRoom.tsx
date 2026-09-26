@@ -23,6 +23,7 @@ import { useOpenSettings } from '../hooks/useOpenSettings';
 
 type Notice = {
     id: number;
+    sourceChange?: { url: string; path: string; name: string } | null;
     itemId: number | null;
     itemSubject: string | null;
     category: string;
@@ -249,6 +250,7 @@ export function NoticedRoom() {
                                             <button type="button" className="btn subtle" style={{ padding: '0 4px' }}
                                                 onClick={() => setExplaining(notice)}>why?</button>
                                         </div>
+                                        {notice.sourceChange && <p className="hint"><a href={notice.sourceChange.url} target="_blank" rel="noreferrer">Open changed source</a>{' · '}<Link to={notice.sourceChange.path as never}>Manage follows for {notice.sourceChange.name}</Link></p>}
                                         {notice.inboxDelivery && (
                                             <div className="activity-correlation" data-testid="notice-inbox-delivery">
                                                 Delivered to your{' '}

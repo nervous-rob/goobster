@@ -90,6 +90,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         applets: deps.applets || webAppletService,
         suggestions: deps.suggestions || webSuggestionService,
         attention: deps.attention || webAttentionService,
+        followedSources: deps.followedSources || require('../services/followedSourceService'),
         instanceState: deps.instanceState || instanceStateService,
         events: deps.events || eventBusService
     };
