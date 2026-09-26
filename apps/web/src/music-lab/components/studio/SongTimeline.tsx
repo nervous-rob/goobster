@@ -1,4 +1,11 @@
-import { useCallback, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent
+} from 'react';
 import { isDrumRole } from '@music-lab/lib/stageData';
 import { findVoice } from '@music-lab/lib/voiceData';
 import { makeClip, type SongClip, type SongProject, type SongTrack } from '@music-lab/lib/songData';
@@ -6,7 +13,12 @@ import type { FlattenedSong } from '@music-lab/lib/songTheory';
 import { SectionStrip } from './SectionStrip';
 import { TrackHeader } from './TrackHeader';
 
-export const TIMELINE_HEADER_W = 184;
+/**
+ * Sticky header column width. The CSS owns the real value (it shrinks on
+ * phones via `--st-head-w`); this is only the fallback for measuring before
+ * first layout.
+ */
+const HEADER_W_FALLBACK = 184;
 
 interface ClipDrag {
   mode: 'move' | 'resize-l' | 'resize-r' | 'create';
@@ -27,6 +39,8 @@ interface SongTimelineProps {
   zoom: number;
   subdivisions: number;
   playhead: { measure: number; sub: number } | null;
+  /** Keep the playhead in view by paging the lanes while the song rolls. */
+  followPlayhead: boolean;
   loopRegion: { start: number; end: number } | null;
   selectedSectionId: string | null;
   selectedTrackId: string | null;
@@ -58,6 +72,7 @@ export function SongTimeline({
   zoom,
   subdivisions,
   playhead,
+  followPlayhead,
   loopRegion,
   selectedSectionId,
   selectedTrackId,
@@ -74,9 +89,29 @@ export function SongTimeline({
 }: SongTimelineProps) {
   const dragRef = useRef<ClipDrag | null>(null);
   const [dragView, setDragView] = useState<ClipDrag | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const cornerRef = useRef<HTMLDivElement | null>(null);
 
   const total = flat.totalMeasures;
   const laneWidth = total * zoom;
+
+  const playheadX =
+    playhead && subdivisions > 0 ? (playhead.measure + playhead.sub / subdivisions) * zoom : null;
+
+  // Auto-scroll: when the playhead leaves the visible lane area, page the
+  // view so it re-enters just right of the sticky headers (DAW "follow").
+  useEffect(() => {
+    if (!followPlayhead || playheadX === null) return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const headerW = cornerRef.current?.offsetWidth ?? HEADER_W_FALLBACK;
+    const visibleStart = scroller.scrollLeft;
+    const visibleEnd = visibleStart + scroller.clientWidth - headerW;
+    const margin = Math.min(zoom, 24);
+    if (playheadX < visibleStart || playheadX > visibleEnd - margin) {
+      scroller.scrollLeft = Math.max(0, playheadX - margin);
+    }
+  }, [followPlayhead, playheadX, zoom]);
 
   const measureAt = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -209,21 +244,16 @@ export function SongTimeline({
     [onClipsChange, onSelectClip, project.clips, total, zoom]
   );
 
-  const playheadLeft =
-    playhead && subdivisions > 0
-      ? TIMELINE_HEADER_W + (playhead.measure + playhead.sub / subdivisions) * zoom
-      : null;
-
   const laneStyle: CSSProperties = {
     width: laneWidth,
     backgroundSize: `${zoom}px 100%`
   };
 
   return (
-    <div className="st-timeline-scroll">
-      <div className="st-timeline-inner" style={{ width: TIMELINE_HEADER_W + laneWidth }}>
+    <div className="st-timeline-scroll" ref={scrollRef}>
+      <div className="st-timeline-inner" style={{ width: `calc(var(--st-head-w) + ${laneWidth}px)` }}>
         <div className="st-row st-ruler-row">
-          <div className="st-track-head st-corner">
+          <div className="st-track-head st-corner" ref={cornerRef}>
             <span className="re-micro-label">Sections / Bars</span>
           </div>
           <SectionStrip
@@ -284,7 +314,7 @@ export function SongTimeline({
                           '--st-clip-hue': hue
                         } as CSSProperties
                       }
-                      title={`${track.name} · bars ${start + 1}–${start + length} (double-click to delete)`}
+                      title={`${track.name} · bars ${start + 1}–${start + length} · drag to move, edges to resize, Delete or double-click to remove`}
                     >
                       <span className="st-clip-handle l" data-handle="l" />
                       <span className="st-clip-label">{track.name}</span>
@@ -319,7 +349,9 @@ export function SongTimeline({
           <div className="st-lane st-lane-empty" style={{ width: laneWidth }} />
         </div>
 
-        {playheadLeft !== null ? <div className="st-playhead" style={{ left: playheadLeft }} aria-hidden /> : null}
+        {playheadX !== null ? (
+          <div className="st-playhead" style={{ left: `calc(var(--st-head-w) + ${playheadX}px)` }} aria-hidden />
+        ) : null}
       </div>
     </div>
   );

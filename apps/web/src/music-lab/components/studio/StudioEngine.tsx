@@ -7,9 +7,24 @@ import { buildHarmonyGenome, nameChord, type FoundrySettings } from '@music-lab/
 import { RHYTHMS } from '@music-lab/lib/rhythmData';
 import { useRhythmOptions } from '@music-lab/hooks/useRhythmOptions';
 import { GRID_STEP_LABEL, gridGrouping, totalSubdivisions } from '@music-lab/lib/rhythmTheory';
-import { takeStudioHandoff } from '@music-lab/lib/handoff';
+import { hasStudioHandoff, takeStudioHandoff } from '@music-lab/lib/handoff';
 import { findLibraryDrumPattern, stretchDrumSteps, type LibraryGroove } from '@music-lab/lib/genreLibrary';
 import { downloadBlob, recordingToWavBlob } from '@music-lab/lib/audioExport';
+import {
+  createHistory,
+  duplicateTrack,
+  elapsedSeconds,
+  moveTrack,
+  parseSongProjectFile,
+  recordHistory,
+  redoHistory,
+  serializeSongProject,
+  songDurationSeconds,
+  songFileName,
+  splitClipAt,
+  undoHistory,
+  type EditHistory
+} from '@music-lab/lib/songEdit';
 import {
   CREATURE_LIBRARY_KEY,
   MELODY_BASE_OCTAVE,
@@ -57,7 +72,7 @@ import { makeBlankProject } from '@music-lab/lib/songTemplates';
 import { useLocalStorage } from '@music-lab/hooks/useLocalStorage';
 import { useSongOrchestrator, type SongRuntimeTrack } from '@music-lab/hooks/useSongOrchestrator';
 import { ChordSlotEditor } from '@music-lab/components/stage/ChordSlotEditor';
-import { StudioTransport } from './StudioTransport';
+import { BPM_MAX, BPM_MIN, StudioTransport } from './StudioTransport';
 import { SongTimeline } from './SongTimeline';
 import { SongWizard } from './SongWizard';
 import { MelodyEditor } from './MelodyEditor';
@@ -80,6 +95,9 @@ interface ChordEditTarget {
 const HARMONY_HOLD = 0.96;
 const MIN_ZOOM = 12;
 const MAX_ZOOM = 96;
+const HISTORY_LIMIT = 100;
+const NOTICE_MS = 7000;
+const DELETE_CONFIRM_MS = 4000;
 
 export function StudioEngine() {
   const [projects, setProjects] = useLocalStorage<SongProject[]>(STUDIO_PROJECTS_KEY, []);
@@ -87,6 +105,7 @@ export function StudioEngine() {
   const [library, setLibrary] = useLocalStorage<SavedCreature[]>(CREATURE_LIBRARY_KEY, []);
   const [zoom, setZoom] = useLocalStorage<number>('studioZoom', 40);
   const [loop, setLoop] = useLocalStorage<boolean>('studioLoop', true);
+  const [followPlayhead, setFollowPlayhead] = useLocalStorage<boolean>('studioFollow', true);
 
   const { allVoices } = useVoiceLibrary();
   const { allContours } = useContourLibrary();
@@ -99,6 +118,22 @@ export function StudioEngine() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [addTrackOpen, setAddTrackOpen] = useState(false);
   const [melodyEditorTrackId, setMelodyEditorTrackId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  // One transient status line for handoffs, imports, undo, and errors.
+  const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const showNotice = useCallback((text: string, tone: 'info' | 'error' = 'info') => {
+    setNotice({ text, tone });
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
 
   const {
     audioReady,
@@ -121,13 +156,69 @@ export function StudioEngine() {
     [projects, currentId]
   );
 
+  // --- Edits and undo history ---
+  // `latestProjectRef` is the project as of the most recent edit in this
+  // tick, so two updateProject calls in one handler chain instead of the
+  // second clobbering the first. Histories are per song and per session.
+  const latestProjectRef = useRef<SongProject | null>(null);
+  latestProjectRef.current = project;
+  const historiesRef = useRef<Map<string, EditHistory<SongProject>>>(new Map());
+  const [, setHistoryTick] = useState(0);
+
+  const historyFor = useCallback((id: string): EditHistory<SongProject> => {
+    let history = historiesRef.current.get(id);
+    if (!history) {
+      history = createHistory<SongProject>(HISTORY_LIMIT);
+      historiesRef.current.set(id, history);
+    }
+    return history;
+  }, []);
+
+  const replaceProject = useCallback(
+    (next: SongProject) => {
+      latestProjectRef.current = next;
+      setProjects(prev => prev.map(p => (p.id === next.id ? next : p)));
+    },
+    [setProjects]
+  );
+
   const updateProject = useCallback(
     (updater: (p: SongProject) => SongProject) => {
-      if (!project) return;
-      setProjects(prev => prev.map(p => (p.id === project.id ? updater(p) : p)));
+      const current = latestProjectRef.current;
+      if (!current) return;
+      const next = updater(current);
+      if (next === current) return;
+      historiesRef.current.set(current.id, recordHistory(historyFor(current.id), current, Date.now()));
+      setHistoryTick(t => t + 1);
+      replaceProject(next);
     },
-    [project, setProjects]
+    [historyFor, replaceProject]
   );
+
+  const undo = useCallback(() => {
+    const current = latestProjectRef.current;
+    if (!current) return;
+    const result = undoHistory(historyFor(current.id), current);
+    if (!result) return;
+    historiesRef.current.set(current.id, result.history);
+    setHistoryTick(t => t + 1);
+    setChordEdit(null);
+    replaceProject(result.snapshot);
+  }, [historyFor, replaceProject]);
+
+  const redo = useCallback(() => {
+    const current = latestProjectRef.current;
+    if (!current) return;
+    const result = redoHistory(historyFor(current.id), current);
+    if (!result) return;
+    historiesRef.current.set(current.id, result.history);
+    setHistoryTick(t => t + 1);
+    setChordEdit(null);
+    replaceProject(result.snapshot);
+  }, [historyFor, replaceProject]);
+
+  const canUndo = project ? (historiesRef.current.get(project.id)?.past.length ?? 0) > 0 : false;
+  const canRedo = project ? (historiesRef.current.get(project.id)?.future.length ?? 0) > 0 : false;
 
   const { rhythms, findRhythm } = useRhythmOptions();
   const rhythm = useMemo(() => findRhythm(project?.rhythmId ?? '4-4'), [findRhythm, project?.rhythmId]);
@@ -323,16 +414,57 @@ export function StudioEngine() {
     adoptProject({ ...project, id: makeSongId('song'), name: `${project.name} (copy)` });
   }, [adoptProject, project]);
 
+  // Delete is two taps: the first arms the button for a few seconds.
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const timer = window.setTimeout(() => setConfirmDelete(false), DELETE_CONFIRM_MS);
+    return () => window.clearTimeout(timer);
+  }, [confirmDelete]);
+
   const handleDelete = useCallback(() => {
     if (!project) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
     stop();
+    historiesRef.current.delete(project.id);
     setProjects(prev => prev.filter(p => p.id !== project.id));
     setCurrentId(null);
     setSelectedSectionId(null);
     setSelectedTrackId(null);
     setSelectedClipId(null);
     setChordEdit(null);
-  }, [project, setCurrentId, setProjects, stop]);
+    showNotice(`Deleted “${project.name}”.`);
+  }, [confirmDelete, project, setCurrentId, setProjects, showNotice, stop]);
+
+  const handleExport = useCallback(() => {
+    if (!project) return;
+    const blob = new Blob([serializeSongProject(project)], { type: 'application/json' });
+    downloadBlob(blob, songFileName(project.name, 'json'));
+  }, [project]);
+
+  const handleImportFile = useCallback(
+    async (file: File | null | undefined) => {
+      if (!file) return;
+      let text = '';
+      try {
+        text = await file.text();
+      } catch {
+        showNotice('Could not read that file.', 'error');
+        return;
+      }
+      const parsed = parseSongProjectFile(text, makeSongId);
+      if (!parsed.ok) {
+        showNotice(parsed.error, 'error');
+        return;
+      }
+      adoptProject(parsed.project);
+      showNotice(`Imported “${parsed.project.name}” as a new song.`);
+    },
+    [adoptProject, showNotice]
+  );
 
   const handleSwitchProject = useCallback(
     (id: string) => {
@@ -343,9 +475,37 @@ export function StudioEngine() {
       setSelectedClipId(null);
       setChordEdit(null);
       setPlayhead(null);
+      setConfirmDelete(false);
     },
     [setCurrentId, stop]
   );
+
+  // --- Clip ops ---
+  const removeClip = useCallback(
+    (clipId: string) => {
+      updateProject(p => ({ ...p, clips: p.clips.filter(c => c.id !== clipId) }));
+      setSelectedClipId(prev => (prev === clipId ? null : prev));
+    },
+    [updateProject]
+  );
+
+  const selectedClip = useMemo(
+    () => project?.clips.find(c => c.id === selectedClipId) ?? null,
+    [project?.clips, selectedClipId]
+  );
+
+  /** The bar the playhead sits on, when it is strictly inside the selected clip. */
+  const splitMeasure = useMemo(() => {
+    if (!selectedClip || !playhead) return null;
+    const m = playhead.measure;
+    if (m <= selectedClip.startMeasure || m >= selectedClip.startMeasure + selectedClip.lengthMeasures) return null;
+    return m;
+  }, [playhead, selectedClip]);
+
+  const splitSelectedClip = useCallback(() => {
+    if (!selectedClip || splitMeasure === null) return;
+    updateProject(p => ({ ...p, clips: splitClipAt(p.clips, selectedClip.id, splitMeasure, makeSongId) }));
+  }, [selectedClip, splitMeasure, updateProject]);
 
   // --- Section ops ---
   const clampClips = useCallback((clips: SongClip[], sections: SongSection[]): SongClip[] => {
@@ -383,11 +543,16 @@ export function StudioEngine() {
   );
 
   // --- Handoff inbox: payloads queued by the Rhythm / Harmony engines ---
-  const [handoffNotice, setHandoffNotice] = useState<string | null>(null);
   const handoffAppliedRef = useRef(false);
 
   useEffect(() => {
-    if (handoffAppliedRef.current || !project) return;
+    if (handoffAppliedRef.current) return;
+    if (!project) {
+      // Nothing to land on yet: open a blank canvas so the payload is not
+      // stranded in storage until the person happens to make a song.
+      if (hasStudioHandoff()) adoptProject(makeBlankProject('Song 1', 'C'));
+      return;
+    }
     handoffAppliedRef.current = true;
     const handoff = takeStudioHandoff();
     if (!handoff) return;
@@ -395,12 +560,12 @@ export function StudioEngine() {
     if (handoff.type === 'groove') {
       updateProject(p => ({
         ...p,
-        bpm: Math.min(200, Math.max(40, Math.round(handoff.bpm))),
+        bpm: Math.min(BPM_MAX, Math.max(BPM_MIN, Math.round(handoff.bpm))),
         swing: Math.max(0, Math.min(0.5, handoff.swing)),
         rhythmId: handoff.rhythmId,
         grooveId: undefined
       }));
-      setHandoffNotice(`Groove from the Rhythm Engine applied: ${handoff.label} at ${Math.round(handoff.bpm)} BPM.`);
+      showNotice(`Groove from the Rhythm Engine applied: ${handoff.label} at ${Math.round(handoff.bpm)} BPM.`);
     } else {
       const fresh: SongSection = {
         id: makeSongId('section'),
@@ -412,10 +577,9 @@ export function StudioEngine() {
       };
       updateProject(p => ({ ...p, sections: [...p.sections, fresh] }));
       setSelectedSectionId(fresh.id);
-      setHandoffNotice(`“${handoff.name}” from the Harmony Engine landed as a new section at the end of the song.`);
+      showNotice(`“${handoff.name}” from the Harmony Engine landed as a new section at the end of the song.`);
     }
-    window.setTimeout(() => setHandoffNotice(null), 7000);
-  }, [project, updateProject]);
+  }, [adoptProject, project, showNotice, updateProject]);
 
   const addSectionAfter = useCallback(
     (id: string | null) => {
@@ -493,6 +657,30 @@ export function StudioEngine() {
       setSelectedTrackId(prev => (prev === id ? null : prev));
       setSelectedClipId(null);
       setMelodyEditorTrackId(prev => (prev === id ? null : prev));
+    },
+    [updateProject]
+  );
+
+  const handleMoveTrack = useCallback(
+    (id: string, direction: -1 | 1) => {
+      updateProject(p => {
+        const tracks = moveTrack(p.tracks, id, direction);
+        return tracks === p.tracks ? p : { ...p, tracks };
+      });
+    },
+    [updateProject]
+  );
+
+  const handleDuplicateTrack = useCallback(
+    (id: string) => {
+      let cloneId: string | null = null;
+      updateProject(p => {
+        const next = duplicateTrack(p, id, makeSongId);
+        const index = p.tracks.findIndex(t => t.id === id);
+        cloneId = next.tracks[index + 1]?.id ?? null;
+        return next;
+      });
+      if (cloneId) setSelectedTrackId(cloneId);
     },
     [updateProject]
   );
@@ -597,6 +785,69 @@ export function StudioEngine() {
 
   const positionSection = playhead ? sectionAtMeasure(flat, playhead.measure) : null;
 
+  // --- Transport clock ---
+  const totalSeconds = useMemo(
+    () =>
+      project
+        ? songDurationSeconds({ totalMeasures: flat.totalMeasures, subdivisions, bpm: project.bpm, resolution })
+        : 0,
+    [flat.totalMeasures, project, resolution, subdivisions]
+  );
+  const elapsed =
+    project && playhead
+      ? elapsedSeconds({ measure: playhead.measure, sub: playhead.sub, subdivisions, bpm: project.bpm, resolution })
+      : 0;
+
+  // --- Keyboard shortcuts (DAW muscle memory) ---
+  // Space play/pause · Home stop · Delete/Backspace removes the selected clip
+  // · L toggles loop · Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z or Ctrl+Y redo.
+  // Never while typing, and never while the wizard owns the screen.
+  const hasProject = project !== null;
+  useEffect(() => {
+    if (!hasProject || wizardOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = (target?.tagName ?? '').toLowerCase();
+      if (tag === 'input' || tag === 'select' || tag === 'textarea' || target?.isContentEditable) return;
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && key === 'y') {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (mod || e.altKey) return;
+      if (e.code === 'Space') {
+        // A focused button already toggles on Space natively.
+        if (tag === 'button') return;
+        e.preventDefault();
+        if (!e.repeat) void toggle();
+        return;
+      }
+      if (e.key === 'Home') {
+        e.preventDefault();
+        handleStop();
+        return;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedClipId) {
+          e.preventDefault();
+          removeClip(selectedClipId);
+        }
+        return;
+      }
+      if (key === 'l' && !e.repeat) setLoop(v => !v);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [handleStop, hasProject, redo, removeClip, selectedClipId, setLoop, toggle, undo, wizardOpen]);
+
   // --- Empty state ---
   if (!project) {
     return (
@@ -681,6 +932,8 @@ export function StudioEngine() {
         positionMeasure={playhead?.measure ?? null}
         positionSub={playhead?.sub ?? null}
         totalMeasures={flat.totalMeasures}
+        elapsedSeconds={elapsed}
+        totalSeconds={totalSeconds}
         rhythmLabel={`${rhythm.label}${resolution === 'sixteenth' ? ' · 16ths' : ''}`}
         grooveId={project.grooveId ?? ''}
         onGrooveSelect={applyGroove}
@@ -688,14 +941,14 @@ export function StudioEngine() {
         onPlay={() => void toggle()}
         onStop={handleStop}
         onBpmChange={bpm => updateProject(p => ({ ...p, bpm }))}
-        onBpmNudge={delta => updateProject(p => ({ ...p, bpm: Math.min(200, Math.max(40, p.bpm + delta)) }))}
+        onBpmNudge={delta => updateProject(p => ({ ...p, bpm: Math.min(BPM_MAX, Math.max(BPM_MIN, p.bpm + delta)) }))}
         onSwingChange={swing => updateProject(p => ({ ...p, swing }))}
         onLoopChange={setLoop}
       />
 
-      {handoffNotice ? (
-        <p className="st-handoff-note" role="status">
-          {handoffNotice}
+      {notice ? (
+        <p className={`st-handoff-note${notice.tone === 'error' ? ' error' : ''}`} role="status">
+          {notice.text}
         </p>
       ) : null}
 
@@ -711,18 +964,76 @@ export function StudioEngine() {
               </option>
             ))}
           </select>
-          <button type="button" className="re-secondary-btn" onClick={handleOpenWizard}>
+          <button type="button" className="re-secondary-btn st-tool-btn" onClick={handleOpenWizard}>
             ✨ Wizard
           </button>
-          <button type="button" className="re-secondary-btn" onClick={handleBlankSong}>
+          <button type="button" className="re-secondary-btn st-tool-btn" onClick={handleBlankSong}>
             + Blank
           </button>
-          <button type="button" className="re-secondary-btn" onClick={handleDuplicate}>
+          <button type="button" className="re-secondary-btn st-tool-btn" onClick={handleDuplicate}>
             Duplicate
           </button>
-          <button type="button" className="re-secondary-btn st-danger" onClick={handleDelete}>
-            Delete
+          <button
+            type="button"
+            className="re-secondary-btn st-tool-btn"
+            onClick={handleExport}
+            title="Download this song as a .json file you can back up or share"
+          >
+            Export
           </button>
+          <button
+            type="button"
+            className="re-secondary-btn st-tool-btn"
+            onClick={() => importInputRef.current?.click()}
+            title="Import a song exported from the Studio"
+          >
+            Import
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="st-file-input"
+            aria-label="Import a song file"
+            onChange={e => {
+              void handleImportFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            className={`re-secondary-btn st-tool-btn st-danger${confirmDelete ? ' armed' : ''}`}
+            onClick={handleDelete}
+            aria-live="polite"
+            title={confirmDelete ? 'Tap again to delete this song for good' : 'Delete this song'}
+          >
+            {confirmDelete ? 'Really delete?' : 'Delete'}
+          </button>
+        </div>
+        <div className="st-toolbar-group">
+          <span className="re-micro-label">History</span>
+          <div className="re-pills">
+            <button
+              type="button"
+              className="re-pill st-history-btn"
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Ctrl/Cmd+Z)"
+              aria-label="Undo"
+            >
+              ↶ Undo
+            </button>
+            <button
+              type="button"
+              className="re-pill st-history-btn"
+              onClick={redo}
+              disabled={!canRedo}
+              title="Redo (Ctrl/Cmd+Shift+Z)"
+              aria-label="Redo"
+            >
+              ↷ Redo
+            </button>
+          </div>
         </div>
         <div className="st-toolbar-group">
           <span className="re-micro-label">Loop region</span>
@@ -758,6 +1069,15 @@ export function StudioEngine() {
             value={zoom}
             onChange={e => setZoom(parseInt(e.target.value, 10))}
           />
+          <button
+            type="button"
+            className={`re-pill${followPlayhead ? ' on' : ''}`}
+            onClick={() => setFollowPlayhead(v => !v)}
+            aria-pressed={followPlayhead}
+            title="Scroll the timeline to keep the playhead in view while the song plays"
+          >
+            Follow
+          </button>
           <span className="st-position-hint">
             {positionSection ? positionSection.section.name : '—'}
           </span>
@@ -770,6 +1090,7 @@ export function StudioEngine() {
         zoom={zoom}
         subdivisions={subdivisions}
         playhead={playhead}
+        followPlayhead={followPlayhead}
         loopRegion={loopRegion}
         selectedSectionId={selectedSectionId}
         selectedTrackId={selectedTrackId}
@@ -1171,7 +1492,66 @@ export function StudioEngine() {
               <h3>Track</h3>
               <p>{selectedTrack ? selectedTrack.name : 'Select a track header in the timeline'}</p>
             </div>
+            {selectedTrack ? (
+              <div className="st-track-actions">
+                <button
+                  type="button"
+                  className="vb-icon-btn"
+                  onClick={() => handleMoveTrack(selectedTrack.id, -1)}
+                  disabled={project.tracks[0]?.id === selectedTrack.id}
+                  title="Move track up"
+                  aria-label="Move track up"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  className="vb-icon-btn"
+                  onClick={() => handleMoveTrack(selectedTrack.id, 1)}
+                  disabled={project.tracks[project.tracks.length - 1]?.id === selectedTrack.id}
+                  title="Move track down"
+                  aria-label="Move track down"
+                >
+                  ▼
+                </button>
+                <button
+                  type="button"
+                  className="vb-icon-btn"
+                  onClick={() => handleDuplicateTrack(selectedTrack.id)}
+                  title="Duplicate track (with its clips)"
+                  aria-label="Duplicate track"
+                >
+                  ⧉
+                </button>
+              </div>
+            ) : null}
           </div>
+
+          {selectedTrack && selectedClip && selectedClip.trackId === selectedTrack.id ? (
+            <div className="st-clip-inspector">
+              <span className="re-micro-label">
+                Clip · bars {selectedClip.startMeasure + 1}–{selectedClip.startMeasure + selectedClip.lengthMeasures}
+              </span>
+              <div className="re-pills">
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={splitSelectedClip}
+                  disabled={splitMeasure === null}
+                  title={
+                    splitMeasure === null
+                      ? 'Seek inside the clip (click a bar in the ruler) to split it there'
+                      : `Split at bar ${splitMeasure + 1}`
+                  }
+                >
+                  ✂ Split{splitMeasure !== null ? ` at bar ${splitMeasure + 1}` : ''}
+                </button>
+                <button type="button" className="re-pill st-danger" onClick={() => removeClip(selectedClip.id)} title="Delete clip (Delete key)">
+                  Delete clip
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {selectedTrack ? (
             isDrumRole(selectedTrack.role) ? (
@@ -1365,11 +1745,17 @@ export function StudioEngine() {
           ) : (
             <p className="stage-perf-flavor">
               Click a track name to edit its creature: drum grids for the rhythm trio, voice / contour / register for
-              the tonal performers.
+              the tonal performers. Click a clip to select it; drag empty lane space to paint a new one.
             </p>
           )}
         </div>
       </div>
+
+      <p className="st-shortcuts" aria-label="Keyboard shortcuts">
+        <kbd>Space</kbd> play / pause · <kbd>Home</kbd> stop · <kbd>Del</kbd> remove clip · <kbd>L</kbd> loop ·{' '}
+        <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · double-click a lane to
+        drop a one-bar clip
+      </p>
 
       {wizardOpen ? (
         <SongWizard
