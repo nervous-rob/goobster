@@ -14,6 +14,13 @@ const {
     redoHistory,
     splitClipAt,
     mergeAdjacentClips,
+    pasteClip,
+    duplicateClip,
+    sectionSpans,
+    reorderSections,
+    duplicateSection,
+    copySectionPayload,
+    pasteSection,
     moveTrack,
     copyName,
     duplicateTrack,
@@ -161,6 +168,99 @@ describe('clips', () => {
         ]);
         expect(merged.find(c => c.id === 'e')).toEqual(clips[4]);
         expect(mergeAdjacentClips(clips, 't2')).toBe(clips);
+    });
+});
+
+describe('clip clipboard', () => {
+    test('pasteClip lands a copy at the target bar, trimmed to the song', () => {
+        const clips = project().clips;
+        const pasted = pasteClip(clips, clips[2], { trackId: 't-bass', startMeasure: 14, totalMeasures: 16 }, makeId);
+        expect(pasted).toHaveLength(4);
+        expect(pasted[3]).toMatchObject({ trackId: 't-bass', startMeasure: 14, lengthMeasures: 2 });
+        expect(pasted[3].id).not.toBe('c-3');
+        expect(pasteClip(clips, clips[2], { trackId: 't-bass', startMeasure: 16, totalMeasures: 16 }, makeId)).toBe(clips);
+        expect(pasteClip(clips, null, { trackId: 't-bass', startMeasure: 0, totalMeasures: 16 }, makeId)).toBe(clips);
+    });
+
+    test('duplicateClip drops the copy right after the original on the same track', () => {
+        const clips = project().clips;
+        const next = duplicateClip(clips, 'c-3', 16, makeId);
+        expect(next[3]).toMatchObject({ trackId: 't-lead', startMeasure: 8, lengthMeasures: 4 });
+        // A clip that already reaches the end has nowhere to go.
+        expect(duplicateClip(clips, 'c-2', 16, makeId)).toBe(clips);
+        expect(duplicateClip(clips, 'missing', 16, makeId)).toBe(clips);
+    });
+});
+
+describe('sections', () => {
+    const byTrack = (clips, trackId) =>
+        clips.filter(c => c.trackId === trackId).sort((a, b) => a.startMeasure - b.startMeasure)
+            .map(c => [c.startMeasure, c.lengthMeasures]);
+
+    test('sectionSpans walks the sections end to end', () => {
+        expect(sectionSpans(project().sections)).toEqual([
+            { id: 'sec-a', start: 0, end: 8 },
+            { id: 'sec-b', start: 8, end: 16 }
+        ]);
+    });
+
+    test('reorderSections carries the clips inside each section with it', () => {
+        const next = reorderSections(project(), 'sec-b', 0, makeId);
+        expect(next.sections.map(s => s.id)).toEqual(['sec-b', 'sec-a']);
+        // The kick spanned both sections: split at the seam, then healed once adjacent again.
+        expect(byTrack(next.clips, 't-kick')).toEqual([[0, 16]]);
+        expect(next.clips.find(c => c.trackId === 't-kick').id).toBe('c-1');
+        // The bass only played in the chorus, which is now first.
+        expect(byTrack(next.clips, 't-bass')).toEqual([[0, 8]]);
+        expect(next.clips.find(c => c.trackId === 't-bass').id).toBe('c-2');
+        // The lead sat in bars 5-8 of the verse, which now starts at bar 9.
+        expect(byTrack(next.clips, 't-lead')).toEqual([[12, 4]]);
+    });
+
+    test('reorderSections is a no-op for the same slot or an unknown section', () => {
+        const p = project();
+        expect(reorderSections(p, 'sec-a', 0, makeId)).toBe(p);
+        expect(reorderSections(p, 'nope', 1, makeId)).toBe(p);
+        expect(reorderSections(p, 'sec-a', 99, makeId).sections.map(s => s.id)).toEqual(['sec-b', 'sec-a']);
+    });
+
+    test('duplicateSection copies the section and what plays in it, shifting the rest right', () => {
+        const next = duplicateSection(project(), 'sec-a', makeId);
+        expect(next.sections.map(s => s.name)).toEqual(['Verse', 'Verse (copy)', 'Chorus']);
+        expect(next.sections[1].id).not.toBe('sec-a');
+        expect(next.sections[1].chords).toEqual(project().sections[0].chords);
+        expect(next.sections[1].chords).not.toBe(next.sections[0].chords);
+        // Kick: verse + copy + chorus are all covered and healed into one clip.
+        expect(byTrack(next.clips, 't-kick')).toEqual([[0, 24]]);
+        // Lead appears in both verses.
+        expect(byTrack(next.clips, 't-lead')).toEqual([[4, 4], [12, 4]]);
+        // Bass only in the chorus, which moved 8 bars right.
+        expect(byTrack(next.clips, 't-bass')).toEqual([[16, 8]]);
+        const same = project();
+        expect(duplicateSection(same, 'nope', makeId)).toBe(same);
+    });
+
+    test('copySectionPayload / pasteSection round-trip a section with relative clips', () => {
+        const p = project();
+        const payload = copySectionPayload(p, 'sec-a');
+        expect(payload.section.id).toBe('sec-a');
+        expect(payload.pieces).toEqual([
+            { trackId: 't-kick', offset: 0, length: 8 },
+            { trackId: 't-lead', offset: 4, length: 4 }
+        ]);
+        // Paste at the end (after index 1).
+        const next = pasteSection(p, payload, 1, makeId);
+        expect(next.sections.map(s => s.name)).toEqual(['Verse', 'Chorus', 'Verse (copy)']);
+        expect(byTrack(next.clips, 't-kick')).toEqual([[0, 24]]);
+        expect(byTrack(next.clips, 't-lead')).toEqual([[4, 4], [20, 4]]);
+        // Paste at the front (-1); pieces for tracks the song lacks are dropped.
+        const foreign = { ...payload, pieces: [...payload.pieces, { trackId: 'ghost', offset: 0, length: 8 }] };
+        const front = pasteSection(p, foreign, -1, makeId);
+        expect(front.sections.map(s => s.name)).toEqual(['Verse (copy)', 'Verse', 'Chorus']);
+        expect(front.clips.some(c => c.trackId === 'ghost')).toBe(false);
+        expect(byTrack(front.clips, 't-lead')).toEqual([[4, 4], [12, 4]]);
+        expect(copySectionPayload(p, 'nope')).toBeNull();
+        expect(pasteSection(p, null, 0, makeId)).toBe(p);
     });
 });
 

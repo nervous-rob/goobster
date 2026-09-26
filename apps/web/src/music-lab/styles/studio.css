@@ -376,6 +376,104 @@
   box-sizing: border-box;
 }
 
+.studio-engine .st-section-block {
+  cursor: grab;
+  touch-action: pan-x pan-y;
+}
+
+.studio-engine .st-ruler-sections.dragging,
+.studio-engine .st-ruler-sections.dragging .st-section-block {
+  cursor: grabbing;
+}
+
+.studio-engine .st-section-block.dragged {
+  z-index: 3;
+  opacity: 0.85;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  transition: none;
+}
+
+.studio-engine .st-section-drop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--re-accent);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* --- Right-click menus --- */
+
+.studio-engine .st-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 190px;
+  padding: 0.3rem;
+  border: 1px solid var(--re-border);
+  border-radius: 0.6rem;
+  background: var(--re-panel);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.studio-engine .st-context-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  width: 100%;
+  padding: 0.42rem 0.65rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--re-text);
+  font-family: var(--re-mono);
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.studio-engine .st-context-item:hover:not(:disabled),
+.studio-engine .st-context-item:focus-visible {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--re-accent);
+  outline: none;
+}
+
+.studio-engine .st-context-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.studio-engine .st-context-item.danger:not(:disabled) {
+  color: #fca5a5;
+}
+
+.studio-engine .st-context-item.danger:hover:not(:disabled),
+.studio-engine .st-context-item.danger:focus-visible {
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+}
+
+.studio-engine .st-context-item kbd {
+  font-family: var(--re-mono);
+  font-size: 0.6rem;
+  color: var(--re-text-faint);
+}
+
+.studio-engine .st-context-sep {
+  height: 1px;
+  margin: 0.25rem 0.4rem;
+  background: var(--re-border);
+}
+
 .studio-engine .st-section-block.selected {
   background: hsla(var(--st-section-hue, 160), 70%, 50%, 0.38);
   border-color: hsl(var(--st-section-hue, 160), 80%, 70%);

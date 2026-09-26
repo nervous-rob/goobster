@@ -1,7 +1,7 @@
 // ESM façade so Vite/TS named-import the CommonJS Studio editing helpers
 // (`songEdit.cjs` stays plain CommonJS so Jest can require() it).
 import songEdit from './songEdit.cjs';
-import type { SongClip, SongProject, SongTrack } from './songData';
+import type { SongClip, SongProject, SongSection, SongTrack } from './songData';
 import type { GridResolution } from './rhythmTheory';
 
 export interface EditHistory<T> {
@@ -47,6 +47,54 @@ export const splitClipAt = songEdit.splitClipAt as (
   makeId: MakeId
 ) => SongClip[];
 export const mergeAdjacentClips = songEdit.mergeAdjacentClips as (clips: SongClip[], trackId: string) => SongClip[];
+export const pasteClip = songEdit.pasteClip as (
+  clips: SongClip[],
+  clip: Pick<SongClip, 'lengthMeasures'>,
+  target: { trackId: string; startMeasure: number; totalMeasures: number },
+  makeId: MakeId
+) => SongClip[];
+export const duplicateClip = songEdit.duplicateClip as (
+  clips: SongClip[],
+  clipId: string,
+  totalMeasures: number,
+  makeId: MakeId
+) => SongClip[];
+
+export interface SectionSpan {
+  id: string;
+  start: number;
+  end: number;
+}
+
+/** A section plus the clips inside it, offsets relative to the section start. */
+export interface SectionPayload {
+  section: SongSection;
+  pieces: { trackId: string; offset: number; length: number }[];
+}
+
+export const sectionSpans = songEdit.sectionSpans as (sections: SongSection[]) => SectionSpan[];
+export const reorderSections = songEdit.reorderSections as (
+  project: SongProject,
+  sectionId: string,
+  toIndex: number,
+  makeId: MakeId
+) => SongProject;
+export const duplicateSection = songEdit.duplicateSection as (
+  project: SongProject,
+  sectionId: string,
+  makeId: MakeId
+) => SongProject;
+export const copySectionPayload = songEdit.copySectionPayload as (
+  project: SongProject,
+  sectionId: string
+) => SectionPayload | null;
+export const pasteSection = songEdit.pasteSection as (
+  project: SongProject,
+  payload: SectionPayload,
+  afterIndex: number,
+  makeId: MakeId
+) => SongProject;
+
 export const moveTrack = songEdit.moveTrack as (tracks: SongTrack[], trackId: string, direction: -1 | 1) => SongTrack[];
 export const copyName = songEdit.copyName as (name: string, taken?: string[]) => string;
 export const duplicateTrack = songEdit.duplicateTrack as (

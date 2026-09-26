@@ -111,6 +111,175 @@ function mergeAdjacentClips(clips, trackId) {
     return [...clips.filter(c => c.trackId !== trackId), ...merged];
 }
 
+/**
+ * Places a copy of `clip` on `trackId` starting at `startMeasure`, trimmed to
+ * the song. Returns the same array when there is no room (start past the end).
+ */
+function pasteClip(clips, clip, { trackId, startMeasure, totalMeasures }, makeId) {
+    const start = Math.max(0, Math.round(startMeasure));
+    if (!clip || !trackId || start >= totalMeasures) return clips;
+    const length = Math.max(1, Math.min(Math.round(clip.lengthMeasures) || 1, totalMeasures - start));
+    return [...clips, { id: makeId('clip'), trackId, startMeasure: start, lengthMeasures: length }];
+}
+
+/** Drops a copy of a clip directly after it on the same track (DAW Ctrl+D). */
+function duplicateClip(clips, clipId, totalMeasures, makeId) {
+    const clip = clips.find(c => c.id === clipId);
+    if (!clip) return clips;
+    return pasteClip(
+        clips,
+        clip,
+        { trackId: clip.trackId, startMeasure: clip.startMeasure + clip.lengthMeasures, totalMeasures },
+        makeId
+    );
+}
+
+// --- Sections --------------------------------------------------------------
+
+/** `[start, end)` measure spans for each section, in order. */
+function sectionSpans(sections) {
+    let cursor = 0;
+    return sections.map(section => {
+        const span = { id: section.id, start: cursor, end: cursor + section.measures };
+        cursor = span.end;
+        return span;
+    });
+}
+
+/**
+ * Cuts every clip at the section boundaries it crosses and tags each piece
+ * with the section it lies in. Pieces are relative to their section start so
+ * they can be re-laid after sections move.
+ */
+function clipPiecesBySection(clips, spans) {
+    const pieces = [];
+    clips.forEach(clip => {
+        const clipEnd = clip.startMeasure + clip.lengthMeasures;
+        spans.forEach(span => {
+            const start = Math.max(clip.startMeasure, span.start);
+            const end = Math.min(clipEnd, span.end);
+            if (end > start) {
+                pieces.push({
+                    sourceId: clip.id,
+                    trackId: clip.trackId,
+                    sectionId: span.id,
+                    offset: start - span.start,
+                    length: end - start
+                });
+            }
+        });
+    });
+    return pieces;
+}
+
+/**
+ * Lays pieces back out under a (possibly reordered) section list and heals
+ * the seams. The first piece of each original clip keeps its id so a
+ * selection survives the move.
+ */
+function layoutPieces(pieces, sections, makeId) {
+    const spans = sectionSpans(sections);
+    const byId = new Map(spans.map(s => [s.id, s]));
+    const used = new Set();
+    let clips = pieces
+        .filter(piece => byId.has(piece.sectionId))
+        .sort((a, b) => (byId.get(a.sectionId).start + a.offset) - (byId.get(b.sectionId).start + b.offset))
+        .map(piece => {
+            const keep = piece.sourceId && !used.has(piece.sourceId);
+            const id = keep ? piece.sourceId : makeId('clip');
+            used.add(id);
+            return {
+                id,
+                trackId: piece.trackId,
+                startMeasure: byId.get(piece.sectionId).start + piece.offset,
+                lengthMeasures: piece.length
+            };
+        });
+    new Set(clips.map(c => c.trackId)).forEach(trackId => {
+        clips = mergeAdjacentClips(clips, trackId);
+    });
+    return clips;
+}
+
+/**
+ * Moves a section to `toIndex`. The clips inside each section travel with
+ * it, so the arrangement follows the structure: moving the chorus moves what
+ * plays during the chorus. Clips that crossed a boundary are split there and
+ * re-joined wherever the pieces land adjacent again.
+ */
+function reorderSections(project, sectionId, toIndex, makeId) {
+    const from = project.sections.findIndex(s => s.id === sectionId);
+    const to = Math.max(0, Math.min(project.sections.length - 1, Math.round(toIndex)));
+    if (from < 0 || from === to) return project;
+    const pieces = clipPiecesBySection(project.clips, sectionSpans(project.sections));
+    const sections = [...project.sections];
+    const [moved] = sections.splice(from, 1);
+    sections.splice(to, 0, moved);
+    return { ...project, sections, clips: layoutPieces(pieces, sections, makeId) };
+}
+
+/**
+ * Inserts a copy of a section right after the original, carrying the clips
+ * that play inside it. Other clips keep their place relative to their own
+ * sections (everything after the copy shifts right by its length).
+ */
+function duplicateSection(project, sectionId, makeId) {
+    const index = project.sections.findIndex(s => s.id === sectionId);
+    if (index < 0 || project.sections.length >= LIMITS.maxSections) return project;
+    const source = project.sections[index];
+    const copy = {
+        ...source,
+        id: makeId('section'),
+        name: copyName(source.name, project.sections.map(s => s.name)),
+        chords: source.chords.map(c => ({ ...c }))
+    };
+    const pieces = clipPiecesBySection(project.clips, sectionSpans(project.sections));
+    pieces
+        .filter(piece => piece.sectionId === source.id)
+        .forEach(piece => pieces.push({ ...piece, sourceId: undefined, sectionId: copy.id }));
+    const sections = [...project.sections];
+    sections.splice(index + 1, 0, copy);
+    return { ...project, sections, clips: layoutPieces(pieces, sections, makeId) };
+}
+
+/**
+ * Snapshot of a section plus the clips inside it (offsets relative to the
+ * section start), for the clipboard. Track ids are kept so a paste into the
+ * same song lands on the same tracks; unknown tracks are dropped on paste.
+ */
+function copySectionPayload(project, sectionId) {
+    const spans = sectionSpans(project.sections);
+    const span = spans.find(s => s.id === sectionId);
+    const section = project.sections.find(s => s.id === sectionId);
+    if (!span || !section) return null;
+    const pieces = clipPiecesBySection(project.clips, [span]).map(({ trackId, offset, length }) => ({
+        trackId,
+        offset,
+        length
+    }));
+    return { section: { ...section, chords: section.chords.map(c => ({ ...c })) }, pieces };
+}
+
+/** Inserts a copied section (see copySectionPayload) after `afterIndex` (-1 = front). */
+function pasteSection(project, payload, afterIndex, makeId) {
+    if (!payload || !payload.section || project.sections.length >= LIMITS.maxSections) return project;
+    const trackIds = new Set(project.tracks.map(t => t.id));
+    const copy = {
+        ...payload.section,
+        id: makeId('section'),
+        name: copyName(payload.section.name, project.sections.map(s => s.name)),
+        chords: (payload.section.chords || []).map(c => ({ ...c }))
+    };
+    const pieces = clipPiecesBySection(project.clips, sectionSpans(project.sections));
+    (payload.pieces || [])
+        .filter(piece => trackIds.has(piece.trackId))
+        .forEach(piece => pieces.push({ ...piece, sectionId: copy.id }));
+    const at = Math.max(0, Math.min(project.sections.length, Math.round(afterIndex) + 1));
+    const sections = [...project.sections];
+    sections.splice(at, 0, copy);
+    return { ...project, sections, clips: layoutPieces(pieces, sections, makeId) };
+}
+
 // --- Tracks ----------------------------------------------------------------
 
 function moveTrack(tracks, trackId, direction) {
@@ -391,6 +560,13 @@ module.exports = {
     redoHistory,
     splitClipAt,
     mergeAdjacentClips,
+    pasteClip,
+    duplicateClip,
+    sectionSpans,
+    reorderSections,
+    duplicateSection,
+    copySectionPayload,
+    pasteSection,
     moveTrack,
     copyName,
     duplicateTrack,

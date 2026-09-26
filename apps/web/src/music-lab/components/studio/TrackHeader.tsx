@@ -1,6 +1,7 @@
 import { ROLE_META, isDrumRole } from '@music-lab/lib/stageData';
 import { findVoice } from '@music-lab/lib/voiceData';
 import type { SongTrack } from '@music-lab/lib/songData';
+import type { MenuPoint } from './SectionStrip';
 
 interface TrackHeaderProps {
   track: SongTrack;
@@ -8,14 +9,21 @@ interface TrackHeaderProps {
   onSelect: () => void;
   onChange: (partial: Partial<SongTrack>) => void;
   onRemove: () => void;
+  onContextMenu: (at: MenuPoint) => void;
 }
 
 /** Sticky left cell of a timeline row: identity, mute/solo, level. */
-export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove }: TrackHeaderProps) {
+export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, onContextMenu }: TrackHeaderProps) {
   const hue = isDrumRole(track.role) ? null : findVoice(track.performer.voiceId).hue;
 
   return (
-    <div className={`st-track-head${isSelected ? ' selected' : ''}`}>
+    <div
+      className={`st-track-head${isSelected ? ' selected' : ''}`}
+      onContextMenu={e => {
+        e.preventDefault();
+        onContextMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
       <button type="button" className="st-track-name" onClick={onSelect} title="Open track inspector">
         <span
           className="st-track-badge"

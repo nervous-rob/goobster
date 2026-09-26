@@ -12,19 +12,26 @@ import { findLibraryDrumPattern, stretchDrumSteps, type LibraryGroove } from '@m
 import { downloadBlob, recordingToWavBlob } from '@music-lab/lib/audioExport';
 import {
   copyName,
+  copySectionPayload,
   createHistory,
+  duplicateClip,
+  duplicateSection,
   duplicateTrack,
   elapsedSeconds,
   moveTrack,
   parseSongProjectFile,
+  pasteClip,
+  pasteSection,
   recordHistory,
   redoHistory,
+  reorderSections,
   serializeSongProject,
   songDurationSeconds,
   songFileName,
   splitClipAt,
   undoHistory,
-  type EditHistory
+  type EditHistory,
+  type SectionPayload
 } from '@music-lab/lib/songEdit';
 import {
   CREATURE_LIBRARY_KEY,
@@ -74,7 +81,9 @@ import { useLocalStorage } from '@music-lab/hooks/useLocalStorage';
 import { useSongOrchestrator, type SongRuntimeTrack } from '@music-lab/hooks/useSongOrchestrator';
 import { ChordSlotEditor } from '@music-lab/components/stage/ChordSlotEditor';
 import { BPM_MAX, BPM_MIN, StudioTransport } from './StudioTransport';
-import { SongTimeline } from './SongTimeline';
+import { SongTimeline, type StudioMenuTarget } from './SongTimeline';
+import type { MenuPoint } from './SectionStrip';
+import { ContextMenu, type MenuItem } from './ContextMenu';
 import { SongWizard } from './SongWizard';
 import { MelodyEditor } from './MelodyEditor';
 
@@ -92,6 +101,11 @@ interface ChordEditTarget {
   sectionId: string;
   chordIndex: number;
 }
+
+/** In-memory clipboard: survives switching songs, not a reload. */
+type StudioClipboard = { kind: 'clip'; clip: SongClip; trackName: string } | { kind: 'section'; payload: SectionPayload };
+
+const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
 const HARMONY_HOLD = 0.96;
 const MIN_ZOOM = 12;
@@ -120,6 +134,8 @@ export function StudioEngine() {
   const [addTrackOpen, setAddTrackOpen] = useState(false);
   const [melodyEditorTrackId, setMelodyEditorTrackId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [clipboard, setClipboard] = useState<StudioClipboard | null>(null);
+  const [menu, setMenu] = useState<{ target: StudioMenuTarget; at: MenuPoint } | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   // One transient status line for handoffs, imports, undo, and errors.
@@ -528,17 +544,37 @@ export function StudioEngine() {
     [clampClips, updateProject]
   );
 
+  /** Sections carry their clips when they move (see reorderSections). */
+  const reorderSection = useCallback(
+    (id: string, toIndex: number) => {
+      updateProject(p => reorderSections(p, id, toIndex, makeSongId));
+    },
+    [updateProject]
+  );
+
   const moveSection = useCallback(
     (id: string, dir: -1 | 1) => {
+      const index = project?.sections.findIndex(s => s.id === id) ?? -1;
+      if (index < 0) return;
+      reorderSection(id, index + dir);
+    },
+    [project?.sections, reorderSection]
+  );
+
+  const handleDuplicateSection = useCallback(
+    (id: string) => {
+      let copyId: string | null = null;
       updateProject(p => {
+        const next = duplicateSection(p, id, makeSongId);
+        if (next === p) return p;
         const index = p.sections.findIndex(s => s.id === id);
-        const target = index + dir;
-        if (index < 0 || target < 0 || target >= p.sections.length) return p;
-        const sections = [...p.sections];
-        const [moved] = sections.splice(index, 1);
-        sections.splice(target, 0, moved);
-        return { ...p, sections };
+        copyId = next.sections[index + 1]?.id ?? null;
+        return next;
       });
+      if (copyId) {
+        setSelectedSectionId(copyId);
+        setChordEdit(null);
+      }
     },
     [updateProject]
   );
@@ -617,6 +653,124 @@ export function StudioEngine() {
     },
     [clampClips, updateProject]
   );
+
+  // --- Clipboard: clips and sections, Ctrl+C / X / V / D and the context menus ---
+  const copyClipToClipboard = useCallback(
+    (clipId: string) => {
+      const clip = project?.clips.find(c => c.id === clipId);
+      if (!clip) return;
+      const trackName = project?.tracks.find(t => t.id === clip.trackId)?.name ?? 'clip';
+      setClipboard({ kind: 'clip', clip: { ...clip }, trackName });
+    },
+    [project?.clips, project?.tracks]
+  );
+
+  const cutClip = useCallback(
+    (clipId: string) => {
+      copyClipToClipboard(clipId);
+      removeClip(clipId);
+    },
+    [copyClipToClipboard, removeClip]
+  );
+
+  const pasteClipAt = useCallback(
+    (trackId: string, startMeasure: number) => {
+      if (clipboard?.kind !== 'clip') return;
+      let pastedId: string | null = null;
+      updateProject(p => {
+        const total = p.sections.reduce((a, s) => a + s.measures, 0);
+        const clips = pasteClip(p.clips, clipboard.clip, { trackId, startMeasure, totalMeasures: total }, makeSongId);
+        if (clips === p.clips) return p;
+        pastedId = clips[clips.length - 1].id;
+        return { ...p, clips };
+      });
+      if (pastedId) {
+        setSelectedClipId(pastedId);
+        setSelectedTrackId(trackId);
+      }
+    },
+    [clipboard, updateProject]
+  );
+
+  const duplicateSelectedClip = useCallback(
+    (clipId: string) => {
+      let copyId: string | null = null;
+      updateProject(p => {
+        const total = p.sections.reduce((a, s) => a + s.measures, 0);
+        const clips = duplicateClip(p.clips, clipId, total, makeSongId);
+        if (clips === p.clips) return p;
+        copyId = clips[clips.length - 1].id;
+        return { ...p, clips };
+      });
+      if (copyId) setSelectedClipId(copyId);
+      else showNotice('No room after that clip — the song ends there.');
+    },
+    [showNotice, updateProject]
+  );
+
+  const copySectionToClipboard = useCallback(
+    (sectionId: string) => {
+      if (!project) return;
+      const payload = copySectionPayload(project, sectionId);
+      if (payload) setClipboard({ kind: 'section', payload });
+    },
+    [project]
+  );
+
+  const pasteSectionAfter = useCallback(
+    (afterId: string | null) => {
+      if (clipboard?.kind !== 'section') return;
+      let copyId: string | null = null;
+      updateProject(p => {
+        const afterIndex = afterId ? p.sections.findIndex(s => s.id === afterId) : p.sections.length - 1;
+        const next = pasteSection(p, clipboard.payload, afterIndex, makeSongId);
+        if (next === p) return p;
+        copyId = next.sections[afterIndex + 1]?.id ?? null;
+        return next;
+      });
+      if (copyId) {
+        setSelectedSectionId(copyId);
+        setChordEdit(null);
+      }
+    },
+    [clipboard, updateProject]
+  );
+
+  /** Ctrl+C: the selected clip wins over the selected section. */
+  const copySelection = useCallback(() => {
+    if (selectedClipId) copyClipToClipboard(selectedClipId);
+    else if (selectedSectionId) copySectionToClipboard(selectedSectionId);
+  }, [copyClipToClipboard, copySectionToClipboard, selectedClipId, selectedSectionId]);
+
+  const cutSelection = useCallback(() => {
+    if (selectedClipId) {
+      cutClip(selectedClipId);
+    } else if (selectedSectionId && project && project.sections.length > 1) {
+      copySectionToClipboard(selectedSectionId);
+      removeSection(selectedSectionId);
+    }
+  }, [copySectionToClipboard, cutClip, project, removeSection, selectedClipId, selectedSectionId]);
+
+  /** Ctrl+V: clips land at the playhead on the selected (else source) track; sections after the selected one. */
+  const pasteSelection = useCallback(() => {
+    if (!clipboard || !project) return;
+    if (clipboard.kind === 'clip') {
+      const trackId =
+        selectedTrackId ?? (project.tracks.some(t => t.id === clipboard.clip.trackId) ? clipboard.clip.trackId : null);
+      if (!trackId) {
+        showNotice('Select a track to paste the clip onto.');
+        return;
+      }
+      pasteClipAt(trackId, playhead?.measure ?? 0);
+    } else {
+      pasteSectionAfter(selectedSectionId);
+    }
+  }, [clipboard, pasteClipAt, pasteSectionAfter, playhead?.measure, project, selectedSectionId, selectedTrackId, showNotice]);
+
+  const duplicateSelection = useCallback(() => {
+    if (selectedClipId) duplicateSelectedClip(selectedClipId);
+    else if (selectedSectionId) handleDuplicateSection(selectedSectionId);
+  }, [duplicateSelectedClip, handleDuplicateSection, selectedClipId, selectedSectionId]);
 
   const updateSectionChord = useCallback(
     (sectionId: string, index: number, settings: FoundrySettings) => {
@@ -823,7 +977,25 @@ export function StudioEngine() {
         redo();
         return;
       }
+      if (mod && (key === 'c' || key === 'x' || key === 'd')) {
+        if (!selectedClipId && !selectedSectionId) return;
+        e.preventDefault();
+        if (key === 'c') copySelection();
+        else if (key === 'x') cutSelection();
+        else if (!e.repeat) duplicateSelection();
+        return;
+      }
+      if (mod && key === 'v') {
+        if (!clipboard) return;
+        e.preventDefault();
+        if (!e.repeat) pasteSelection();
+        return;
+      }
       if (mod || e.altKey) return;
+      if (e.key === 'Escape' && menu) {
+        setMenu(null);
+        return;
+      }
       if (e.code === 'Space') {
         // A focused button already toggles on Space natively.
         if (tag === 'button') return;
@@ -847,7 +1019,235 @@ export function StudioEngine() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [handleStop, hasProject, redo, removeClip, selectedClipId, setLoop, toggle, undo, wizardOpen]);
+  }, [
+    clipboard,
+    copySelection,
+    cutSelection,
+    duplicateSelection,
+    handleStop,
+    hasProject,
+    menu,
+    pasteSelection,
+    redo,
+    removeClip,
+    selectedClipId,
+    selectedSectionId,
+    setLoop,
+    toggle,
+    undo,
+    wizardOpen
+  ]);
+
+  // --- Right-click menus: one builder per target kind ---
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  const playFrom = useCallback(
+    (measure: number) => {
+      handleSeek(measure);
+      if (!isPlaying) void toggle();
+    },
+    [handleSeek, isPlaying, toggle]
+  );
+
+  const openMenu = useCallback((target: StudioMenuTarget, at: MenuPoint) => {
+    setMenu({ target, at });
+  }, []);
+
+  const menuItems = useMemo<MenuItem[]>(() => {
+    if (!menu || !project) return [];
+    const { target } = menu;
+    const total = flat.totalMeasures;
+    const clipOnClipboard = clipboard?.kind === 'clip';
+    const sectionOnClipboard = clipboard?.kind === 'section';
+
+    if (target.kind === 'clip') {
+      const clip = project.clips.find(c => c.id === target.clipId);
+      if (!clip) return [];
+      const inside = target.measure > clip.startMeasure && target.measure < clip.startMeasure + clip.lengthMeasures;
+      const sectionHere = sectionAtMeasure(flat, target.measure);
+      return [
+        { id: 'copy', label: 'Copy clip', shortcut: `${MOD_KEY}+C`, onSelect: () => copyClipToClipboard(clip.id) },
+        { id: 'cut', label: 'Cut clip', shortcut: `${MOD_KEY}+X`, onSelect: () => cutClip(clip.id) },
+        { id: 'dup', label: 'Duplicate after', shortcut: `${MOD_KEY}+D`, onSelect: () => duplicateSelectedClip(clip.id) },
+        { separator: true },
+        {
+          id: 'split',
+          label: `Split at bar ${target.measure + 1}`,
+          disabled: !inside,
+          onSelect: () => updateProject(p => ({ ...p, clips: splitClipAt(p.clips, clip.id, target.measure, makeSongId) }))
+        },
+        {
+          id: 'fit',
+          label: sectionHere ? `Fit to “${sectionHere.section.name}”` : 'Fit to section',
+          disabled: !sectionHere,
+          onSelect: () => {
+            if (!sectionHere) return;
+            updateProject(p => ({
+              ...p,
+              clips: p.clips.map(c =>
+                c.id === clip.id
+                  ? { ...c, startMeasure: sectionHere.startMeasure, lengthMeasures: sectionHere.endMeasure - sectionHere.startMeasure }
+                  : c
+              )
+            }));
+          }
+        },
+        { id: 'seek', label: 'Play from clip start', onSelect: () => playFrom(clip.startMeasure) },
+        { separator: true },
+        { id: 'delete', label: 'Delete clip', shortcut: 'Del', danger: true, onSelect: () => removeClip(clip.id) }
+      ];
+    }
+
+    if (target.kind === 'lane') {
+      const sectionHere = sectionAtMeasure(flat, target.measure);
+      return [
+        {
+          id: 'paste',
+          label: clipOnClipboard ? `Paste clip at bar ${target.measure + 1}` : 'Paste clip',
+          shortcut: `${MOD_KEY}+V`,
+          disabled: !clipOnClipboard,
+          onSelect: () => pasteClipAt(target.trackId, target.measure)
+        },
+        {
+          id: 'new',
+          label: `New 1-bar clip at bar ${target.measure + 1}`,
+          onSelect: () => {
+            const clip = makeClip(target.trackId, target.measure, 1);
+            updateProject(p => ({ ...p, clips: [...p.clips, clip] }));
+            setSelectedClipId(clip.id);
+          }
+        },
+        {
+          id: 'section-clip',
+          label: sectionHere ? `Clip across “${sectionHere.section.name}”` : 'Clip across section',
+          disabled: !sectionHere,
+          onSelect: () => {
+            if (!sectionHere) return;
+            const clip = makeClip(target.trackId, sectionHere.startMeasure, sectionHere.endMeasure - sectionHere.startMeasure);
+            updateProject(p => ({ ...p, clips: [...p.clips, clip] }));
+            setSelectedClipId(clip.id);
+          }
+        },
+        {
+          id: 'song-clip',
+          label: 'Clip across the whole song',
+          disabled: total === 0,
+          onSelect: () => {
+            const clip = makeClip(target.trackId, 0, total);
+            updateProject(p => ({ ...p, clips: [...p.clips, clip] }));
+            setSelectedClipId(clip.id);
+          }
+        },
+        { separator: true },
+        { id: 'seek', label: `Play from bar ${target.measure + 1}`, onSelect: () => playFrom(target.measure) }
+      ];
+    }
+
+    if (target.kind === 'track') {
+      const index = project.tracks.findIndex(t => t.id === target.trackId);
+      const track = project.tracks[index];
+      if (!track) return [];
+      return [
+        { id: 'mute', label: track.mute ? 'Unmute' : 'Mute', onSelect: () => updateTrack(track.id, { mute: !track.mute }) },
+        { id: 'solo', label: track.solo ? 'Unsolo' : 'Solo', onSelect: () => updateTrack(track.id, { solo: !track.solo }) },
+        { separator: true },
+        { id: 'up', label: 'Move up', disabled: index === 0, onSelect: () => handleMoveTrack(track.id, -1) },
+        {
+          id: 'down',
+          label: 'Move down',
+          disabled: index === project.tracks.length - 1,
+          onSelect: () => handleMoveTrack(track.id, 1)
+        },
+        { id: 'dup', label: 'Duplicate track', onSelect: () => handleDuplicateTrack(track.id) },
+        {
+          id: 'paste',
+          label: 'Paste clip at playhead',
+          shortcut: `${MOD_KEY}+V`,
+          disabled: !clipOnClipboard,
+          onSelect: () => pasteClipAt(track.id, playhead?.measure ?? 0)
+        },
+        { separator: true },
+        { id: 'delete', label: 'Delete track', danger: true, onSelect: () => removeTrack(track.id) }
+      ];
+    }
+
+    const index = project.sections.findIndex(s => s.id === target.sectionId);
+    const section = project.sections[index];
+    if (!section) return [];
+    return [
+      { id: 'copy', label: 'Copy section', shortcut: `${MOD_KEY}+C`, onSelect: () => copySectionToClipboard(section.id) },
+      {
+        id: 'cut',
+        label: 'Cut section',
+        shortcut: `${MOD_KEY}+X`,
+        disabled: project.sections.length <= 1,
+        onSelect: () => {
+          copySectionToClipboard(section.id);
+          removeSection(section.id);
+        }
+      },
+      {
+        id: 'paste',
+        label: 'Paste section after',
+        shortcut: `${MOD_KEY}+V`,
+        disabled: !sectionOnClipboard,
+        onSelect: () => pasteSectionAfter(section.id)
+      },
+      { id: 'dup', label: 'Duplicate section', shortcut: `${MOD_KEY}+D`, onSelect: () => handleDuplicateSection(section.id) },
+      { id: 'add', label: 'Add empty section after', onSelect: () => addSectionAfter(section.id) },
+      { separator: true },
+      { id: 'left', label: 'Move left', disabled: index === 0, onSelect: () => moveSection(section.id, -1) },
+      {
+        id: 'right',
+        label: 'Move right',
+        disabled: index === project.sections.length - 1,
+        onSelect: () => moveSection(section.id, 1)
+      },
+      { separator: true },
+      {
+        id: 'loop',
+        label: `Loop “${section.name}”`,
+        onSelect: () => {
+          setSelectedSectionId(section.id);
+          setLoopMode('section');
+          setLoop(true);
+        }
+      },
+      { id: 'seek', label: 'Play from here', onSelect: () => playFrom(flat.sectionSpans[index]?.startMeasure ?? 0) },
+      { separator: true },
+      {
+        id: 'delete',
+        label: 'Delete section',
+        danger: true,
+        disabled: project.sections.length <= 1,
+        onSelect: () => removeSection(section.id)
+      }
+    ];
+  }, [
+    addSectionAfter,
+    clipboard,
+    copyClipToClipboard,
+    copySectionToClipboard,
+    cutClip,
+    duplicateSelectedClip,
+    flat,
+    handleDuplicateSection,
+    handleDuplicateTrack,
+    handleMoveTrack,
+    menu,
+    moveSection,
+    pasteClipAt,
+    pasteSectionAfter,
+    playFrom,
+    playhead?.measure,
+    project,
+    removeClip,
+    removeSection,
+    removeTrack,
+    setLoop,
+    updateProject,
+    updateTrack
+  ]);
 
   // --- Empty state ---
   if (!project) {
@@ -1101,6 +1501,8 @@ export function StudioEngine() {
           setSelectedSectionId(prev => (prev === id ? null : id));
           setChordEdit(null);
         }}
+        onReorderSection={reorderSection}
+        onContextMenu={openMenu}
         onSelectTrack={setSelectedTrackId}
         onSelectClip={setSelectedClipId}
         onEditChord={handleEditChord}
@@ -1109,6 +1511,24 @@ export function StudioEngine() {
         onRemoveTrack={removeTrack}
         onAddTrack={() => setAddTrackOpen(v => !v)}
       />
+
+      {menu && menuItems.length ? (
+        <ContextMenu
+          x={menu.at.x}
+          y={menu.at.y}
+          label={
+            menu.target.kind === 'clip'
+              ? 'Clip actions'
+              : menu.target.kind === 'lane'
+                ? 'Lane actions'
+                : menu.target.kind === 'track'
+                  ? 'Track actions'
+                  : 'Section actions'
+          }
+          items={menuItems}
+          onClose={closeMenu}
+        />
+      ) : null}
 
       {addTrackOpen ? (
         <div className="st-add-menu re-panel">
@@ -1448,14 +1868,51 @@ export function StudioEngine() {
               </div>
 
               <div className="re-pills">
-                <button type="button" className="re-pill" onClick={() => moveSection(selectedSection.id, -1)}>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => moveSection(selectedSection.id, -1)}
+                  disabled={project.sections[0]?.id === selectedSection.id}
+                  title="Move left (or drag the block in the ruler)"
+                >
                   ← Move
                 </button>
-                <button type="button" className="re-pill" onClick={() => moveSection(selectedSection.id, 1)}>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => moveSection(selectedSection.id, 1)}
+                  disabled={project.sections[project.sections.length - 1]?.id === selectedSection.id}
+                  title="Move right (or drag the block in the ruler)"
+                >
                   Move →
                 </button>
                 <button type="button" className="re-pill" onClick={() => addSectionAfter(selectedSection.id)}>
                   + Add after
+                </button>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => handleDuplicateSection(selectedSection.id)}
+                  title="Duplicate this section with the clips that play in it (Ctrl+D)"
+                >
+                  ⧉ Duplicate
+                </button>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => copySectionToClipboard(selectedSection.id)}
+                  title="Copy this section and its clips (Ctrl+C)"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => pasteSectionAfter(selectedSection.id)}
+                  disabled={clipboard?.kind !== 'section'}
+                  title={clipboard?.kind === 'section' ? `Paste “${clipboard.payload.section.name}” after this one (Ctrl+V)` : 'Copy a section first'}
+                >
+                  Paste after
                 </button>
               </div>
 
@@ -1547,8 +2004,40 @@ export function StudioEngine() {
                 >
                   ✂ Split{splitMeasure !== null ? ` at bar ${splitMeasure + 1}` : ''}
                 </button>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => copyClipToClipboard(selectedClip.id)}
+                  title="Copy clip (Ctrl+C)"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => duplicateSelectedClip(selectedClip.id)}
+                  title="Drop a copy right after this clip (Ctrl+D)"
+                >
+                  ⧉ Duplicate
+                </button>
                 <button type="button" className="re-pill st-danger" onClick={() => removeClip(selectedClip.id)} title="Delete clip (Delete key)">
                   Delete clip
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {selectedTrack && clipboard?.kind === 'clip' && !(selectedClip && selectedClip.trackId === selectedTrack.id) ? (
+            <div className="st-clip-inspector">
+              <span className="re-micro-label">Clipboard · {clipboard.trackName} clip · {clipboard.clip.lengthMeasures} bars</span>
+              <div className="re-pills">
+                <button
+                  type="button"
+                  className="re-pill"
+                  onClick={() => pasteClipAt(selectedTrack.id, playhead?.measure ?? 0)}
+                  title="Paste onto this track at the playhead (Ctrl+V)"
+                >
+                  Paste at bar {(playhead?.measure ?? 0) + 1}
                 </button>
               </div>
             </div>
@@ -1754,8 +2243,9 @@ export function StudioEngine() {
 
       <p className="st-shortcuts" aria-label="Keyboard shortcuts">
         <kbd>Space</kbd> play / pause · <kbd>Home</kbd> stop · <kbd>Del</kbd> remove clip · <kbd>L</kbd> loop ·{' '}
-        <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · double-click a lane to
-        drop a one-bar clip
+        <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd> /{' '}
+        <kbd>X</kbd> / <kbd>V</kbd> copy / cut / paste clip or section · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · drag a section
+        block to reorder · right-click clips, lanes, tracks and sections for more
       </p>
 
       {wizardOpen ? (

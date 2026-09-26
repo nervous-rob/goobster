@@ -10,8 +10,15 @@ import { isDrumRole } from '@music-lab/lib/stageData';
 import { findVoice } from '@music-lab/lib/voiceData';
 import { makeClip, type SongClip, type SongProject, type SongTrack } from '@music-lab/lib/songData';
 import type { FlattenedSong } from '@music-lab/lib/songTheory';
-import { SectionStrip } from './SectionStrip';
+import { SectionStrip, type MenuPoint } from './SectionStrip';
 import { TrackHeader } from './TrackHeader';
+
+/** What was right-clicked, so the engine can build the matching menu. */
+export type StudioMenuTarget =
+  | { kind: 'clip'; clipId: string; trackId: string; measure: number }
+  | { kind: 'lane'; trackId: string; measure: number }
+  | { kind: 'track'; trackId: string }
+  | { kind: 'section'; sectionId: string };
 
 /**
  * Sticky header column width. The CSS owns the real value (it shrinks on
@@ -47,6 +54,8 @@ interface SongTimelineProps {
   selectedClipId: string | null;
   onSeek: (measure: number) => void;
   onSelectSection: (id: string) => void;
+  onReorderSection: (id: string, toIndex: number) => void;
+  onContextMenu: (target: StudioMenuTarget, at: MenuPoint) => void;
   onSelectTrack: (id: string | null) => void;
   onSelectClip: (id: string | null) => void;
   onEditChord: (sectionId: string, chordIndex: number) => void;
@@ -79,6 +88,8 @@ export function SongTimeline({
   selectedClipId,
   onSeek,
   onSelectSection,
+  onReorderSection,
+  onContextMenu,
   onSelectTrack,
   onSelectClip,
   onEditChord,
@@ -244,6 +255,26 @@ export function SongTimeline({
     [onClipsChange, onSelectClip, project.clips, total, zoom]
   );
 
+  const handleLaneContextMenu = useCallback(
+    (track: SongTrack) => (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (total === 0) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const measure = clamp(Math.floor((e.clientX - rect.left) / zoom), 0, total - 1);
+      const clipEl = (e.target as HTMLElement).closest('[data-clip-id]') as HTMLElement | null;
+      const at = { x: e.clientX, y: e.clientY };
+      onSelectTrack(track.id);
+      if (clipEl) {
+        const clipId = clipEl.dataset.clipId as string;
+        onSelectClip(clipId);
+        onContextMenu({ kind: 'clip', clipId, trackId: track.id, measure }, at);
+      } else {
+        onContextMenu({ kind: 'lane', trackId: track.id, measure }, at);
+      }
+    },
+    [onContextMenu, onSelectClip, onSelectTrack, total, zoom]
+  );
+
   const laneStyle: CSSProperties = {
     width: laneWidth,
     backgroundSize: `${zoom}px 100%`
@@ -262,6 +293,8 @@ export function SongTimeline({
             selectedSectionId={selectedSectionId}
             loopRegion={loopRegion}
             onSelectSection={onSelectSection}
+            onReorderSection={onReorderSection}
+            onSectionContextMenu={(sectionId, at) => onContextMenu({ kind: 'section', sectionId }, at)}
             onSeek={onSeek}
             onEditChord={onEditChord}
           />
@@ -281,6 +314,7 @@ export function SongTimeline({
                 onSelect={() => onSelectTrack(selectedTrackId === track.id ? null : track.id)}
                 onChange={partial => onTrackChange(track.id, partial)}
                 onRemove={() => onRemoveTrack(track.id)}
+                onContextMenu={at => onContextMenu({ kind: 'track', trackId: track.id }, at)}
               />
               <div
                 className="st-lane"
@@ -289,6 +323,7 @@ export function SongTimeline({
                 onPointerMove={handleLaneMove(track)}
                 onPointerUp={handleLaneUp(track)}
                 onDoubleClick={handleLaneDoubleClick(track)}
+                onContextMenu={handleLaneContextMenu(track)}
               >
                 {flat.sectionSpans.slice(1).map(span => (
                   <span
@@ -314,7 +349,7 @@ export function SongTimeline({
                           '--st-clip-hue': hue
                         } as CSSProperties
                       }
-                      title={`${track.name} · bars ${start + 1}–${start + length} · drag to move, edges to resize, Delete or double-click to remove`}
+                      title={`${track.name} · bars ${start + 1}–${start + length} · drag to move, edges to resize, right-click for actions`}
                     >
                       <span className="st-clip-handle l" data-handle="l" />
                       <span className="st-clip-label">{track.name}</span>
