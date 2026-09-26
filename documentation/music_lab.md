@@ -53,7 +53,9 @@ songs stored in this browser. Alongside it:
   genre-library band, key, section plan), *Feel* (tempo, swing, groove),
   *Fill the parts* (which creature plays each part), *Review*.
 - **+ Blank** — an empty song in the current key with no sections.
-- **Duplicate** — copies the current song (name suffixed "(copy)").
+- **Duplicate** — copies the current song. Copies are numbered — *Song (copy)*,
+  *Song (copy 2)* — never *Song (copy) (copy)*; the same rule names
+  duplicated tracks.
 - **Export** / **Import** — a portable `.json` file, see below.
 - **Delete** — two-step: the button arms and reads *Really delete?* for
   four seconds; a second click deletes the song and its undo history.
@@ -193,7 +195,8 @@ Pure, unit-tested helpers sit in `lib/songEdit.cjs` with a typed façade in
 `lib/songEdit.ts`: undo history (`createHistory`, `recordHistory`,
 `undoHistory`, `redoHistory`), clip surgery (`splitClipAt`,
 `mergeAdjacentClips`), track operations (`moveTrack`, `duplicateTrack`),
-clock math (`songDurationSeconds`, `elapsedSeconds`, `formatClock`) and
+naming (`copyName`), clock math (`songDurationSeconds`, `elapsedSeconds`,
+`formatClock`) and
 the file format (`serializeSongProject`, `parseSongProjectFile`,
 `songFileName`). Tests are in `tests/studioSongEdit.test.js` (CI group
 `portal`). Layout shares the `--st-head-w` CSS variable between the track
