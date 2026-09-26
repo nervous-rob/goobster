@@ -105,7 +105,14 @@
 }
 
 .studio-engine .st-zoom input[type='range'] {
-  width: 9rem;
+  width: 7rem;
+}
+
+.studio-engine .st-zoom-btn {
+  min-width: 28px;
+  padding-left: 0.45rem;
+  padding-right: 0.45rem;
+  font-family: var(--re-mono);
 }
 
 .studio-engine .st-position-hint {
@@ -261,6 +268,20 @@
 .studio-engine .st-lane-empty {
   cursor: default;
   background-image: none;
+}
+
+.studio-engine .st-lane-hint {
+  margin: 0;
+  align-self: center;
+  padding: 0 0.75rem;
+  font-size: 0.72rem;
+  color: var(--re-text-faint);
+}
+
+/* The selected track's lane picks up a faint wash so the header highlight
+   reads across the whole row. */
+.studio-engine .st-row.selected .st-lane {
+  background-color: rgba(245, 158, 11, 0.05);
 }
 
 .studio-engine .st-section-line {
@@ -824,6 +845,15 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
+}
+
+.studio-engine .st-mix-row input[type='range'] {
+  width: 100%;
+}
+
+.studio-engine .st-mix-row input[type='range']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .studio-engine .st-step {

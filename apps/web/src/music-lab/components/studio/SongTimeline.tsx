@@ -4,7 +4,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent
+  type PointerEvent as ReactPointerEvent,
+  type RefObject
 } from 'react';
 import { isDrumRole } from '@music-lab/lib/stageData';
 import { findVoice } from '@music-lab/lib/voiceData';
@@ -48,6 +49,8 @@ interface SongTimelineProps {
   playhead: { measure: number; sub: number } | null;
   /** Keep the playhead in view by paging the lanes while the song rolls. */
   followPlayhead: boolean;
+  /** Owner-supplied ref to the horizontal scroller (zoom-to-fit measures it). */
+  scrollerRef?: RefObject<HTMLDivElement | null>;
   loopRegion: { start: number; end: number } | null;
   selectedSectionId: string | null;
   selectedTrackId: string | null;
@@ -82,6 +85,7 @@ export function SongTimeline({
   subdivisions,
   playhead,
   followPlayhead,
+  scrollerRef,
   loopRegion,
   selectedSectionId,
   selectedTrackId,
@@ -100,11 +104,13 @@ export function SongTimeline({
 }: SongTimelineProps) {
   const dragRef = useRef<ClipDrag | null>(null);
   const [dragView, setDragView] = useState<ClipDrag | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const ownScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = scrollerRef ?? ownScrollRef;
   const cornerRef = useRef<HTMLDivElement | null>(null);
 
   const total = flat.totalMeasures;
   const laneWidth = total * zoom;
+  const anySolo = project.tracks.some(t => t.solo);
 
   const playheadX =
     playhead && subdivisions > 0 ? (playhead.measure + playhead.sub / subdivisions) * zoom : null;
@@ -304,10 +310,11 @@ export function SongTimeline({
           const hue = isDrumRole(track.role) ? 210 : findVoice(track.performer.voiceId).hue;
           const trackClips = project.clips.filter(c => c.trackId === track.id);
           const isCreateGhost = dragView?.mode === 'create' && dragView.trackId === track.id && dragView.moved;
-          const dimmed = track.mute;
+          // Silent either way: muted outright, or another track is soloed.
+          const dimmed = track.mute || (anySolo && !track.solo);
 
           return (
-            <div key={track.id} className="st-row">
+            <div key={track.id} className={`st-row${selectedTrackId === track.id ? ' selected' : ''}`}>
               <TrackHeader
                 track={track}
                 isSelected={selectedTrackId === track.id}
@@ -349,7 +356,7 @@ export function SongTimeline({
                           '--st-clip-hue': hue
                         } as CSSProperties
                       }
-                      title={`${track.name} · bars ${start + 1}–${start + length} · drag to move, edges to resize, right-click for actions`}
+                      title={`${track.name} · bars ${start + 1}–${start + length} (${length} ${length === 1 ? 'bar' : 'bars'}) · drag to move, edges to resize, right-click for actions`}
                     >
                       <span className="st-clip-handle l" data-handle="l" />
                       <span className="st-clip-label">{track.name}</span>
@@ -381,7 +388,11 @@ export function SongTimeline({
               + Add track
             </button>
           </div>
-          <div className="st-lane st-lane-empty" style={{ width: laneWidth }} />
+          {project.tracks.length === 0 ? (
+            <p className="st-lane-hint">Add a track to start arranging — every new track gets a clip across the song.</p>
+          ) : (
+            <div className="st-lane st-lane-empty" style={{ width: laneWidth }} />
+          )}
         </div>
 
         {playheadX !== null ? (

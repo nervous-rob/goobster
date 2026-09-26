@@ -119,6 +119,12 @@ const ROLE_LABEL: Record<PerformerRole, string> = {
   melody: 'lead'
 };
 
+function formatPan(pan: number): string {
+  const pct = Math.round(Math.abs(pan) * 100);
+  if (pct === 0) return 'C';
+  return pan < 0 ? `L${pct}` : `R${pct}`;
+}
+
 function voiceEngineLabel(voice: VoicePreset): string {
   return voice.engine === 'sample' ? 'Sample' : voice.engine === 'fm' ? 'FM synth' : 'Analog synth';
 }
@@ -126,6 +132,7 @@ function voiceEngineLabel(voice: VoicePreset): string {
 const HARMONY_HOLD = 0.96;
 const MIN_ZOOM = 12;
 const MAX_ZOOM = 96;
+const ZOOM_STEP = 4;
 const HISTORY_LIMIT = 100;
 const NOTICE_MS = 7000;
 const DELETE_CONFIRM_MS = 4000;
@@ -137,6 +144,8 @@ export function StudioEngine() {
   const [zoom, setZoom] = useLocalStorage<number>('studioZoom', 40);
   const [loop, setLoop] = useLocalStorage<boolean>('studioLoop', true);
   const [followPlayhead, setFollowPlayhead] = useLocalStorage<boolean>('studioFollow', true);
+  const [metronome, setMetronome] = useLocalStorage<boolean>('studioClick', false);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
 
   const { allVoices, customVoices } = useVoiceLibrary();
   const { allContours } = useContourLibrary();
@@ -295,6 +304,7 @@ export function StudioEngine() {
         role: track.role,
         mute,
         volume: track.volume,
+        pan: track.pan ?? 0,
         voiceId: p.voiceId,
         audible: coverage
       };
@@ -375,9 +385,10 @@ export function StudioEngine() {
       loopEndMeasure: loopRegion?.end ?? flat.totalMeasures,
       masterVolume: project.masterVolume,
       reverbWet: project.reverbWet,
+      metronome,
       tracks: runtimeTracks
     });
-  }, [project, grid, resolution, flat.totalMeasures, fillMeasures, fillLengthSubs, loop, loopRegion, runtimeTracks, setConfig]);
+  }, [project, grid, resolution, flat.totalMeasures, fillMeasures, fillLengthSubs, loop, loopRegion, metronome, runtimeTracks, setConfig]);
 
   // --- Recording: capture the master bus while the song plays, then download ---
 
@@ -915,6 +926,24 @@ export function StudioEngine() {
     [updateProject]
   );
 
+  // --- Zoom ---
+  const zoomBy = useCallback(
+    (delta: number) => setZoom(z => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z + delta))),
+    [setZoom]
+  );
+
+  /** Pixels per bar so the whole song sits in the visible lane area. */
+  const zoomToFit = useCallback(() => {
+    const scroller = timelineScrollRef.current;
+    if (!scroller || !flat.totalMeasures) return;
+    const headW = scroller.querySelector<HTMLElement>('.st-corner')?.offsetWidth ?? 184;
+    const available = scroller.clientWidth - headW - 2;
+    if (available <= 0) return;
+    const fit = Math.floor(available / flat.totalMeasures / ZOOM_STEP) * ZOOM_STEP;
+    setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, fit)));
+    scroller.scrollLeft = 0;
+  }, [flat.totalMeasures, setZoom]);
+
   // --- Transport / seek ---
   const handleSeek = useCallback(
     (measure: number) => {
@@ -977,10 +1006,38 @@ export function StudioEngine() {
       ? elapsedSeconds({ measure: playhead.measure, sub: playhead.sub, subdivisions, bpm: project.bpm, resolution })
       : 0;
 
+  /** Slides the selected clip by whole bars, staying inside the song. */
+  const nudgeSelectedClip = useCallback(
+    (deltaBars: number) => {
+      if (!selectedClipId) return;
+      updateProject(p => {
+        const total = p.sections.reduce((a, s) => a + s.measures, 0);
+        const clip = p.clips.find(c => c.id === selectedClipId);
+        if (!clip) return p;
+        const start = Math.max(0, Math.min(total - clip.lengthMeasures, clip.startMeasure + deltaBars));
+        if (start === clip.startMeasure) return p;
+        return { ...p, clips: p.clips.map(c => (c.id === clip.id ? { ...c, startMeasure: start } : c)) };
+      });
+    },
+    [selectedClipId, updateProject]
+  );
+
+  const toggleSelectedTrack = useCallback(
+    (field: 'mute' | 'solo') => {
+      if (!selectedTrackId) return;
+      updateProject(p => ({
+        ...p,
+        tracks: p.tracks.map(t => (t.id === selectedTrackId ? { ...t, [field]: !t[field] } : t))
+      }));
+    },
+    [selectedTrackId, updateProject]
+  );
+
   // --- Keyboard shortcuts (DAW muscle memory) ---
   // Space play/pause · Home stop · Delete/Backspace removes the selected clip
-  // · L toggles loop · Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z or Ctrl+Y redo.
-  // Never while typing, and never while the wizard owns the screen.
+  // · L toggles loop · M/S mute/solo the selected track · ←/→ nudge the
+  // selected clip a bar · +/− zoom · Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z or
+  // Ctrl+Y redo. Never while typing, and never while the wizard owns the screen.
   const hasProject = project !== null;
   useEffect(() => {
     if (!hasProject || wizardOpen) return;
@@ -1039,7 +1096,26 @@ export function StudioEngine() {
         }
         return;
       }
-      if (key === 'l' && !e.repeat) setLoop(v => !v);
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (!selectedClipId) return;
+        e.preventDefault();
+        nudgeSelectedClip(e.key === 'ArrowLeft' ? -1 : 1);
+        return;
+      }
+      if (key === '+' || key === '=') {
+        e.preventDefault();
+        zoomBy(ZOOM_STEP);
+        return;
+      }
+      if (key === '-' || key === '_') {
+        e.preventDefault();
+        zoomBy(-ZOOM_STEP);
+        return;
+      }
+      if (e.repeat) return;
+      if (key === 'l') setLoop(v => !v);
+      else if (key === 'm') toggleSelectedTrack('mute');
+      else if (key === 's') toggleSelectedTrack('solo');
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -1051,6 +1127,7 @@ export function StudioEngine() {
     handleStop,
     hasProject,
     menu,
+    nudgeSelectedClip,
     pasteSelection,
     redo,
     removeClip,
@@ -1058,8 +1135,10 @@ export function StudioEngine() {
     selectedSectionId,
     setLoop,
     toggle,
+    toggleSelectedTrack,
     undo,
-    wizardOpen
+    wizardOpen,
+    zoomBy
   ]);
 
   // --- Right-click menus: one builder per target kind ---
@@ -1286,7 +1365,7 @@ export function StudioEngine() {
               <h2 className="re-title">
                 Song Studio <span className="re-accent-text">TIMELINE</span>
               </h2>
-              <p className="re-subtitle">Arrange your creatures into a full song · sections · clips · one timeline</p>
+              <p className="re-subtitle">Arrange sections, tracks and clips into a full song on one timeline</p>
             </div>
           </div>
         </header>
@@ -1329,7 +1408,7 @@ export function StudioEngine() {
             <h2 className="re-title">
               Song Studio <span className="re-accent-text">TIMELINE</span>
             </h2>
-            <p className="re-subtitle">Arrange your creatures into a full song · sections · clips · one timeline</p>
+            <p className="re-subtitle">Arrange sections, tracks and clips into a full song on one timeline</p>
           </div>
         </div>
         <div className="stage-links">
@@ -1337,10 +1416,19 @@ export function StudioEngine() {
           <Link to={conservatoryPath('/melody') as never}>Melody Engine</Link>
           <Link to={conservatoryPath('/harmony') as never}>Harmony Engine</Link>
         </div>
-        <div className="re-status">
+        <div
+          className="re-status"
+          title={
+            isPlaying
+              ? 'The song is playing'
+              : audioReady
+                ? 'Audio is running — press Space or Play'
+                : 'Browsers start audio on a click: the first Play wakes it'
+          }
+        >
           <span className={`re-status-dot${audioReady ? ' on' : ''}`} />
           <span className={audioReady ? 're-status-text on' : 're-status-text'}>
-            {isPlaying ? 'Song Rolling' : audioReady ? 'Studio Ready' : 'Studio Cold'}
+            {isPlaying ? (isRecording ? 'Recording' : 'Playing') : audioReady ? 'Audio ready' : 'Audio off · press Play'}
           </span>
         </div>
       </header>
@@ -1354,6 +1442,8 @@ export function StudioEngine() {
         swing={project.swing}
         loop={loop}
         loopRegionLabel={loopMode === 'section' && selectedSection ? selectedSection.name : 'Song'}
+        metronome={metronome}
+        onMetronomeChange={setMetronome}
         positionMeasure={playhead?.measure ?? null}
         positionSub={playhead?.sub ?? null}
         totalMeasures={flat.totalMeasures}
@@ -1485,15 +1575,45 @@ export function StudioEngine() {
           <label className="re-micro-label" htmlFor="st-zoom">
             Zoom
           </label>
+          <button
+            type="button"
+            className="re-pill st-zoom-btn"
+            onClick={() => zoomBy(-ZOOM_STEP)}
+            disabled={zoom <= MIN_ZOOM}
+            title="Zoom out (−)"
+            aria-label="Zoom out"
+          >
+            −
+          </button>
           <input
             id="st-zoom"
             type="range"
             min={MIN_ZOOM}
             max={MAX_ZOOM}
-            step={4}
+            step={ZOOM_STEP}
             value={zoom}
             onChange={e => setZoom(parseInt(e.target.value, 10))}
+            title={`${zoom} px per bar`}
           />
+          <button
+            type="button"
+            className="re-pill st-zoom-btn"
+            onClick={() => zoomBy(ZOOM_STEP)}
+            disabled={zoom >= MAX_ZOOM}
+            title="Zoom in (+)"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="re-pill"
+            onClick={zoomToFit}
+            disabled={!flat.totalMeasures}
+            title="Zoom so the whole song fits in view"
+          >
+            Fit
+          </button>
           <button
             type="button"
             className={`re-pill${followPlayhead ? ' on' : ''}`}
@@ -1516,6 +1636,7 @@ export function StudioEngine() {
         subdivisions={subdivisions}
         playhead={playhead}
         followPlayhead={followPlayhead}
+        scrollerRef={timelineScrollRef}
         loopRegion={loopRegion}
         selectedSectionId={selectedSectionId}
         selectedTrackId={selectedTrackId}
@@ -1665,7 +1786,7 @@ export function StudioEngine() {
           <div className="re-panel-head">
             <div>
               <h3>Song settings</h3>
-              <p>Identity, key seed, groove, master bus</p>
+              <p>Name, key, meter, drum fills, master bus</p>
             </div>
           </div>
           <div className="re-stack-sm">
@@ -1684,13 +1805,14 @@ export function StudioEngine() {
           <div className="he-row-2">
             <div className="re-stack-sm">
               <label className="re-micro-label" htmlFor="st-key">
-                Key (seeds new chords)
+                Key
               </label>
               <select
                 id="st-key"
                 className="re-select"
                 value={project.keyRoot}
                 onChange={e => updateProject(p => ({ ...p, keyRoot: e.target.value as NoteName }))}
+                title="Seeds new sections' chords and anchors written leads; existing chords stay as forged"
               >
                 {NOTE_NAMES.map(n => (
                   <option key={n} value={n}>
@@ -1701,13 +1823,14 @@ export function StudioEngine() {
             </div>
             <div className="re-stack-sm">
               <label className="re-micro-label" htmlFor="st-rhythm">
-                Locomotion
+                Meter
               </label>
               <select
                 id="st-rhythm"
                 className="re-select"
                 value={project.rhythmId}
                 onChange={e => updateProject(p => ({ ...p, rhythmId: e.target.value }))}
+                title="Time signature and beat grouping for every bar"
               >
                 {rhythms.map(r => (
                   <option key={r.id} value={r.id}>
@@ -1793,7 +1916,7 @@ export function StudioEngine() {
           <div className="re-panel-head">
             <div>
               <h3>Section</h3>
-              <p>{selectedSection ? `${selectedSection.name} · ${selectedSection.measures} measures` : 'Select a section block in the ruler'}</p>
+              <p>{selectedSection ? `${selectedSection.name} · ${selectedSection.measures} bars` : 'Click a section block in the ruler'}</p>
             </div>
             {selectedSection ? (
               <button
@@ -1846,7 +1969,7 @@ export function StudioEngine() {
               <div className="he-row-2">
                 <div className="re-stack-sm">
                   <label className="re-micro-label" htmlFor="st-sec-measures">
-                    Measures
+                    Bars
                   </label>
                   <input
                     id="st-sec-measures"
@@ -1883,7 +2006,7 @@ export function StudioEngine() {
               </div>
 
               <div className="re-stack-sm">
-                <span className="re-micro-label">Chord lane — tap to forge</span>
+                <span className="re-micro-label">Chords — click one to edit, + to append</span>
                 <div className="st-chord-chips">
                   {selectedSection.chords.map((c, i) => (
                     <button
@@ -2011,7 +2134,11 @@ export function StudioEngine() {
           <div className="re-panel-head">
             <div>
               <h3>Track</h3>
-              <p>{selectedTrack ? selectedTrack.name : 'Select a track header in the timeline'}</p>
+              <p>
+                {selectedTrack
+                  ? `${ROLE_LABEL[selectedTrack.role]} · ${selectedTrack.volume} dB${selectedTrack.mute ? ' · muted' : ''}${selectedTrack.solo ? ' · solo' : ''}`
+                  : 'Click a track name in the timeline'}
+              </p>
             </div>
             {selectedTrack ? (
               <div className="st-track-actions">
@@ -2107,9 +2234,77 @@ export function StudioEngine() {
           ) : null}
 
           {selectedTrack ? (
+            <>
+              <div className="re-stack-sm">
+                <label className="re-micro-label" htmlFor="st-track-name">
+                  Name
+                </label>
+                <input
+                  id="st-track-name"
+                  className="re-select"
+                  type="text"
+                  maxLength={28}
+                  value={selectedTrack.name}
+                  onChange={e =>
+                    updateProject(p => ({
+                      ...p,
+                      tracks: p.tracks.map(t =>
+                        t.id === selectedTrack.id
+                          ? { ...t, name: e.target.value, performer: { ...t.performer, displayName: e.target.value } }
+                          : t
+                      )
+                    }))
+                  }
+                />
+              </div>
+              <div className="he-row-2 st-mix-row">
+                <div>
+                  <div className="re-slider-head sm">
+                    <label htmlFor="st-track-level">Level</label>
+                    <span className="re-slider-val sm">{selectedTrack.volume} dB</span>
+                  </div>
+                  <input
+                    id="st-track-level"
+                    type="range"
+                    min={-24}
+                    max={0}
+                    step={1}
+                    value={selectedTrack.volume}
+                    onChange={e => updateTrack(selectedTrack.id, { volume: parseInt(e.target.value, 10) })}
+                  />
+                </div>
+                <div>
+                  <div className="re-slider-head sm">
+                    <label htmlFor="st-track-pan">Pan</label>
+                    <span className="re-slider-val sm">{formatPan(selectedTrack.pan ?? 0)}</span>
+                  </div>
+                  <input
+                    id="st-track-pan"
+                    type="range"
+                    min={-1}
+                    max={1}
+                    step={0.05}
+                    value={selectedTrack.pan ?? 0}
+                    disabled={isDrumRole(selectedTrack.role)}
+                    onChange={e => updateTrack(selectedTrack.id, { pan: parseFloat(e.target.value) })}
+                    onDoubleClick={() => updateTrack(selectedTrack.id, { pan: 0 })}
+                    title={
+                      isDrumRole(selectedTrack.role)
+                        ? 'Drum roles share one bus each and stay centred'
+                        : 'Stereo position — double-click to re-centre'
+                    }
+                  />
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {selectedTrack ? (
             isDrumRole(selectedTrack.role) ? (
               <div className="re-stack-sm">
-                <span className="re-micro-label">Step pattern · {subdivisions} {GRID_STEP_LABEL[resolution]}</span>
+                <span className="re-micro-label">
+                  Step pattern · {subdivisions} {GRID_STEP_LABEL[resolution]} per bar · click to toggle
+                </span>
                 <div className="st-step-grid">
                   {Array.from({ length: subdivisions }, (_, i) => {
                     const steps =
@@ -2122,6 +2317,8 @@ export function StudioEngine() {
                         key={i}
                         type="button"
                         className={`st-step${on ? ' on' : ''}${strongSubs.includes(i) ? ' strong' : ''}`}
+                        aria-pressed={on}
+                        title={`Step ${i + 1}${strongSubs.includes(i) ? ' · on the beat' : ''}`}
                         onClick={() => {
                           const next = steps.map((s, j) => (j === i ? !s : s));
                           updateTrackPerformer(selectedTrack.id, { drumSteps: next });
@@ -2132,31 +2329,46 @@ export function StudioEngine() {
                     );
                   })}
                 </div>
+                <div className="re-pills">
+                  <button
+                    type="button"
+                    className="re-pill"
+                    onClick={() => updateTrackPerformer(selectedTrack.id, { drumSteps: Array(subdivisions).fill(false) })}
+                    title="Silence every step"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    className="re-pill"
+                    onClick={() =>
+                      updateTrackPerformer(selectedTrack.id, {
+                        drumSteps: seedDrumPattern(selectedTrack.role as 'kick' | 'snare' | 'hihat', grid)
+                      })
+                    }
+                    title="Back to the role's default pattern for this meter"
+                  >
+                    Reset pattern
+                  </button>
+                  <button
+                    type="button"
+                    className="re-pill"
+                    onClick={() =>
+                      updateTrackPerformer(selectedTrack.id, {
+                        drumSteps: Array.from({ length: subdivisions }, (_, i) => strongSubs.includes(i))
+                      })
+                    }
+                    title="One hit on every beat"
+                  >
+                    Every beat
+                  </button>
+                </div>
+                <p className="stage-perf-flavor">
+                  The pattern repeats every bar wherever this track has a clip. Drum fills are set per song in Song settings.
+                </p>
               </div>
             ) : (
               <>
-                <div className="re-stack-sm">
-                  <label className="re-micro-label" htmlFor="st-track-name">
-                    Name
-                  </label>
-                  <input
-                    id="st-track-name"
-                    className="re-select"
-                    type="text"
-                    maxLength={28}
-                    value={selectedTrack.name}
-                    onChange={e =>
-                      updateProject(p => ({
-                        ...p,
-                        tracks: p.tracks.map(t =>
-                          t.id === selectedTrack.id
-                            ? { ...t, name: e.target.value, performer: { ...t.performer, displayName: e.target.value } }
-                            : t
-                        )
-                      }))
-                    }
-                  />
-                </div>
                 <div className="re-stack-sm">
                   <label className="re-micro-label" htmlFor="st-track-voice">
                     Voice
@@ -2297,15 +2509,17 @@ export function StudioEngine() {
             )
           ) : (
             <p className="stage-perf-flavor">
-              Click a track name to edit its creature: drum grids for the rhythm trio, voice / contour / register for
-              the tonal performers. Click a clip to select it; drag empty lane space to paint a new one.
+              Click a track name to open it here: name, level and pan for every track, the step grid for drums, voice /
+              contour / register for tonal parts. Click a clip to select it, drag empty lane space to paint a new one,
+              and right-click anything for more.
             </p>
           )}
         </div>
       </div>
 
       <p className="st-shortcuts" aria-label="Keyboard shortcuts">
-        <kbd>Space</kbd> play / pause · <kbd>Home</kbd> stop · <kbd>Del</kbd> remove clip · <kbd>L</kbd> loop ·{' '}
+        <kbd>Space</kbd> play / pause · <kbd>Home</kbd> stop · <kbd>L</kbd> loop · <kbd>M</kbd> / <kbd>S</kbd> mute / solo
+        track · <kbd>←</kbd> <kbd>→</kbd> nudge clip a bar · <kbd>Del</kbd> remove clip · <kbd>+</kbd> / <kbd>−</kbd> zoom ·{' '}
         <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd> /{' '}
         <kbd>X</kbd> / <kbd>V</kbd> copy / cut / paste clip or section · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · drag a section
         block to reorder · right-click clips, lanes, tracks and sections for more

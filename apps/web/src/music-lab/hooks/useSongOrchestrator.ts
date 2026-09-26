@@ -7,6 +7,7 @@ import { findVoice } from '@music-lab/lib/voiceData';
 import {
   buildMonoSynth,
   buildPolySynth,
+  createClickSynth,
   createDrumSynths,
   createSharedNodes,
   dbToGain,
@@ -29,6 +30,8 @@ export interface SongRuntimeTrack {
   mute: boolean;
   /** Channel level in dB. */
   volume: number;
+  /** Stereo position -1…1; ignored for drum roles (shared buses). */
+  pan?: number;
   voiceId?: string;
   /** Per absolute measure: clip coverage × solo logic. */
   audible: boolean[];
@@ -60,6 +63,8 @@ export interface SongOrchestratorConfig {
   loopEndMeasure: number;
   masterVolume: number;
   reverbWet: number;
+  /** Metronome click on every beat (never recorded). */
+  metronome?: boolean;
   tracks: SongRuntimeTrack[];
 }
 
@@ -107,6 +112,7 @@ function playRegion(cfg: SongOrchestratorConfig): PlayRegion {
 export function useSongOrchestrator() {
   const toneRef = useRef<ToneModule | null>(null);
   const drumsRef = useRef<DrumSynths | null>(null);
+  const clickRef = useRef<import('tone').Synth | null>(null);
   const sharedRef = useRef<SharedNodes | null>(null);
   const instrumentsRef = useRef<Map<string, TonalInstrument>>(new Map());
   const repeatEventRef = useRef<number | null>(null);
@@ -141,6 +147,7 @@ export function useSongOrchestrator() {
         (inst.samplerPending && !samplerPendingFor(findVoice(inst.voiceId)))
       ) {
         inst.synth.dispose();
+        inst.panner?.dispose();
         inst.bus.dispose();
         instruments.delete(id);
       }
@@ -150,21 +157,30 @@ export function useSongOrchestrator() {
       if (instruments.has(id)) return;
       const voice = findVoice(track.voiceId);
       const bus = new Tone.Gain(0);
+      const panner = new Tone.Panner(track.pan ?? 0);
+      panner.connect(bus);
       let synth: TonalSynth;
       if (track.role === 'chords') {
         synth = buildPolySynth(Tone, voice);
-        synth.connect(bus);
+        synth.connect(panner);
         bus.connect(shared.chordChorus);
       } else {
         synth = buildMonoSynth(Tone, voice);
-        synth.connect(bus);
+        synth.connect(panner);
         if (track.role === 'melody') {
           bus.connect(shared.leadChorus);
         } else {
           bus.connect(shared.master);
         }
       }
-      instruments.set(id, { voiceId: voice.id, role: track.role, synth, bus, samplerPending: samplerPendingFor(voice) });
+      instruments.set(id, {
+        voiceId: voice.id,
+        role: track.role,
+        synth,
+        bus,
+        panner,
+        samplerPending: samplerPendingFor(voice)
+      });
     });
   }, []);
 
@@ -181,7 +197,10 @@ export function useSongOrchestrator() {
         // Drum tracks share role buses; the loudest unmuted track wins the bus.
         return;
       }
-      instrumentsRef.current.get(t.id)?.bus.gain.rampTo(level, 0.05);
+      const inst = instrumentsRef.current.get(t.id);
+      if (!inst) return;
+      inst.bus.gain.rampTo(level, 0.05);
+      inst.panner?.pan.rampTo(Math.max(-1, Math.min(1, t.pan ?? 0)), 0.05);
     });
 
     (['kick', 'snare', 'hihat'] as const).forEach(role => {
@@ -213,6 +232,7 @@ export function useSongOrchestrator() {
 
     toneRef.current = Tone;
     drumsRef.current = createDrumSynths(Tone, shared);
+    clickRef.current = createClickSynth(Tone);
     sharedRef.current = shared;
     setAudioReady(true);
     ensureInstruments();
@@ -286,6 +306,11 @@ export function useSongOrchestrator() {
       const stepSeconds = Tone.Time(GRID_NOTATION[cfg.resolution ?? 'eighth']).toSeconds();
       const measureSeconds = subs * stepSeconds;
       const fired: { id: string; intensity: number; midi?: number }[] = [];
+
+      // Metronome: a click on every beat, accented on the downbeat.
+      if (cfg.metronome && isStrong && clickRef.current) {
+        clickRef.current.triggerAttackRelease(sub === 0 ? 'A5' : 'A4', '32n', time, sub === 0 ? 0.9 : 0.55);
+      }
 
       // Automatic drum fill: occupies the tail of designated measures.
       // Snare and hats yield to the fill run; the kick keeps driving.
@@ -526,12 +551,15 @@ export function useSongOrchestrator() {
 
       instrumentsRef.current.forEach(inst => {
         inst.synth.dispose();
+        inst.panner?.dispose();
         inst.bus.dispose();
       });
       instrumentsRef.current.clear();
 
       const drums = drumsRef.current;
       if (drums) disposeDrumSynths(drums);
+      clickRef.current?.dispose();
+      clickRef.current = null;
       const shared = sharedRef.current;
       if (shared) disposeSharedNodes(shared);
 

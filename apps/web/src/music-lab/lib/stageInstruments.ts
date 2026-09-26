@@ -31,6 +31,8 @@ export interface TonalInstrument {
   role: PerformerRole;
   synth: TonalSynth;
   bus: import('tone').Gain;
+  /** Stereo position between the synth and its bus (Studio tracks only). */
+  panner?: import('tone').Panner;
   /** Sample voice whose buffer wasn't loaded yet — rebuilt once it arrives. */
   samplerPending?: boolean;
 }
@@ -194,6 +196,20 @@ export async function createSharedNodes(
   await chordReverb.generate().catch(() => undefined);
 
   return { master, compressor, drumBuses, chordChorus, chordReverb, leadChorus };
+}
+
+/**
+ * Metronome click. Wired straight to the destination, bypassing the master
+ * chain, so the click is audible while writing but never ends up in a
+ * recording.
+ */
+export function createClickSynth(Tone: ToneModule): import('tone').Synth {
+  const click = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.03 }
+  }).toDestination();
+  click.volume.value = -10;
+  return click;
 }
 
 export function createDrumSynths(Tone: ToneModule, shared: SharedNodes): DrumSynths {
