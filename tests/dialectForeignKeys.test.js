@@ -68,9 +68,10 @@ describe('extractCreateTableForeignKeys', () => {
     });
 
     test('schema.sql has no leftover REFERENCES after the strip pass', () => {
+        const statements = splitStatements(SCHEMA);
         const leftover = [];
         let extracted = 0;
-        for (const statement of splitStatements(SCHEMA)) {
+        for (const statement of statements) {
             if (!/^\s*CREATE\s+TABLE\b/i.test(statement)) continue;
             const { sql, fks } = extractCreateTableForeignKeys(statement);
             extracted += fks.length;
@@ -78,7 +79,8 @@ describe('extractCreateTableForeignKeys', () => {
         }
         expect(leftover).toEqual([]);
         expect(extracted).toBeGreaterThan(40);
-        const declared = [...SCHEMA.matchAll(/\bREFERENCES\b/gi)].length;
+        // Count SQL declarations, not prose such as "Inbox context references".
+        const declared = [...statements.join('\n').matchAll(/\bREFERENCES\b/gi)].length;
         expect(extracted).toBe(declared);
     });
 });
