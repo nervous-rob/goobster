@@ -7,6 +7,21 @@ const userSettingsService = require('../../services/userSettingsService');
 
 function mountSettings(app, ctx, h) {
     const { requireAuth, chatRoute } = h;
+    const exports = ctx.accountExports;
+    app.get('/api/app/settings/exports', requireAuth, chatRoute(req => exports.list(req.webUser.userId)));
+    app.post('/api/app/settings/exports', requireAuth, chatRoute(req => exports.request(req.webUser.userId)));
+    app.delete('/api/app/settings/exports/:id', requireAuth, chatRoute(req => exports.remove(req.webUser.userId, req.params.id)));
+    app.get('/api/app/settings/exports/:id/download', requireAuth, async (req, res) => {
+        try {
+            const file = await exports.download(req.webUser.userId, req.params.id);
+            res.set({ 'Content-Type': 'application/gzip', 'Content-Length': String(file.size),
+                'Content-Disposition': `attachment; filename="${file.name}"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+            const stream = file.handle.createReadStream();
+            res.on('close', () => stream.destroy());
+            stream.on('error', () => res.destroy());
+            stream.pipe(res);
+        } catch (error) { res.status(error.status || 500).json({ error: error.status ? error.message : 'Export download failed.', code: error.code || 'EXPORT_FAILED' }); }
+    });
 
     app.post('/api/app/settings/legacy-lab', requireAuth, h.requireRecentAuth, chatRoute(async req => {
         if (!['migration', 'bootstrap'].includes(req.actor?.account?.entitlement)) {

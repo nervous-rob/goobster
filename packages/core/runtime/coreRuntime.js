@@ -106,9 +106,15 @@ async function startCoreRuntime({
         stoppers.push(async () => { await retention.stop?.(); });
     });
 
+    if (schedulers) await step('accountExports', () => {
+        const exports = load('accountExportService', () => require('../services/accountExportService'));
+        exports.start();
+        stoppers.push(async () => { await exports.stop(); });
+    });
+
     // --- Paused? (a restored instance comes back this way) -----------------
-    // Nothing scheduled and no startup catch-up runs until the operator
-    // resumes from the Host room; interactive use is unaffected. The flag
+    // No autonomous work or startup catch-up runs until the operator
+    // resumes from the Host room; interactive exports and retention remain available. The flag
     // is in the database, so every process sees the same answer and picks
     // the work up on its own once it clears.
     const instanceState = load('instanceStateService', () => require('../services/instanceStateService'));

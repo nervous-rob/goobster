@@ -91,6 +91,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         suggestions: deps.suggestions || webSuggestionService,
         attention: deps.attention || webAttentionService,
         followedSources: deps.followedSources || require('../services/followedSourceService'),
+        accountExports: deps.accountExports || require('../services/accountExportService'),
         instanceState: deps.instanceState || instanceStateService,
         events: deps.events || eventBusService
     };

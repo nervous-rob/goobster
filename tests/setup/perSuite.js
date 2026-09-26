@@ -16,6 +16,7 @@ if (process.env.GOOBSTER_DB_URL) {
 }
 
 afterAll(async () => {
+    try { await require('@goobster/core/services/accountExportService').stop(); } catch { /* never started */ }
     // Fire-and-forget reflection runs (and any other scheduled tick) must
     // settle before we drop the isolation schema / close the pool.
     try { await require('@goobster/core/services/knowledgeReflectionService').stop(); } catch { /* never started */ }

@@ -3125,3 +3125,22 @@ CREATE TABLE IF NOT EXISTS source_fetch_hosts (
     robotsText TEXT,
     robotsCheckedAt TEXT
 );
+
+-- Private temporary account archives; files are on the shared data volume.
+CREATE TABLE IF NOT EXISTS account_exports (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'QUEUED' CHECK (status IN ('QUEUED', 'RUNNING', 'READY', 'FAILED', 'EXPIRED')),
+    claimToken TEXT,
+    leaseUntil TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    finishedAt TEXT,
+    expiresAt TEXT NOT NULL,
+    sizeBytes INTEGER,
+    fileCount INTEGER,
+    warningCount INTEGER,
+    errorCode TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_account_exports_owner ON account_exports(userId, createdAt);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_exports_active ON account_exports(userId)
+    WHERE status IN ('QUEUED', 'RUNNING');
