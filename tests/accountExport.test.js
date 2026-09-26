@@ -34,7 +34,8 @@ async function fixture() {
     const user = await db.insert('INSERT INTO users (discordUsername, discordId, username) VALUES (@userId, @userId, @userId)', { userId: U });
     const project = await db.insert("INSERT INTO observatory_projects (userId, slug, name) VALUES (@userId, 'topic', 'Research project')", { userId: U });
     const otherProject = await db.insert("INSERT INTO observatory_projects (userId, slug, name) VALUES (@userId, 'secret', 'PRIVATE_SENTINEL')", { userId: V });
-    const addNote = (userId, label, scopeKey = `USER:${userId}`) => db.insert("INSERT INTO kg_nodes (guildId, scopeKey, label, content, curation) VALUES (@guildId, @scopeKey, @label, @label, 'saved')", { guildId: `dm:${userId}`, scopeKey, label });
+    // PostgreSQL stores labels as citext and content as text: bind separately.
+    const addNote = (userId, label, scopeKey = `USER:${userId}`) => db.insert("INSERT INTO kg_nodes (guildId, scopeKey, label, content, curation) VALUES (@guildId, @scopeKey, @label, @content, 'saved')", { guildId: `dm:${userId}`, scopeKey, label, content: label });
     const note = await addNote(U, 'Kept note'); const linked = await addNote(U, 'Linked note');
     const privateNote = await addNote(V, 'PRIVATE_SENTINEL'); const copy = await addNote(U, 'Published copy', `PROJECT:${project}`);
     await db.run("INSERT INTO knowledge_transfers (userId, sourceKind, sourceNodeId, sourceLabel, targetKind, targetId, mode, copyNodeId) VALUES (@userId, 'note', @sourceNodeId, 'PRIVATE_SENTINEL', 'project', @project, 'copy', @copy)", { userId: V, sourceNodeId: privateNote, project, copy });
