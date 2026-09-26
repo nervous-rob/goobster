@@ -136,7 +136,13 @@ export type OperatorAuditEntry = {
     createdAt: string;
 };
 
+export type InboxAsk = {
+    available: boolean; reason: string | null;
+    project: { id: number; slug: string; name: string; ownerId: string } | null;
+    conversations: Array<{ title: string; path: string }>;
+};
 export type InboxItem = {
+    ask?: InboxAsk;
     id: number;
     kind: InboxKind;
     title: string;

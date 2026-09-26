@@ -4,7 +4,7 @@ const step = (id, title, body, path, before, action, after, extra = {}) => ({
     id, title, body, path, demo: 'workflow', preview: { before, action, after }, ...extra
 });
 const project = (id, title, steps) => ({ id, title, roomId: 'projects', version: 2, requires: { feature: 'projects' }, steps });
-const activity = (id, title, steps) => ({ id, title, roomId: 'activity', version: 2, steps });
+const activity = (id, title, steps) => ({ id, title, roomId: 'activity', version: id === 'activity.inbox' ? 3 : 2, steps });
 const P = '/projects';
 const I = '/activity/inbox';
 const S = '/activity/scheduled';
@@ -37,10 +37,11 @@ module.exports = [
     ]),
     activity('activity.inbox', 'Inbox', [
         step('result', 'Open a result and its source', 'Inbox is the delivery record for results, reminders and invitations. Follow the source to inspect the underlying work.', I, 'Sample Inbox item: field report ready.', 'Open sample result', 'Source: Weekend field notebook → sample run → report.md. No real item is opened or marked read.'),
+        step('ask', 'Ask about an Inbox item', 'Ask Goobster opens private Chat with a removable context chip and an editable question. Nothing is sent until you send. Ask in the project uses its shared Conversation; members can see the reply.', I, 'Sample failed run: a required input is missing.', 'Preview Ask Goobster', 'Private Chat draft: “Why did this fail, and what should I do next?” Context chip: sample failed run. Remove the chip to ask without it. No real conversation, item or provider request is created.'),
         step('why', 'Understand why it appeared', 'A scheduled result, invitation and proactive notice have different causes. Look at the source before deciding what to do.', I, 'Sample notice: review the field report.', 'Inspect sample reason', 'Reason: a sample run completed. Proactive Attention is a separate opt-in feature, not enabled by this tour.'),
         step('notice-actions', 'Choose the appropriate notice action', 'Read and Archive affect Inbox. Act, Snooze and Dismiss apply to linked Attention notices when offered; archiving does not cancel the underlying work.', I, 'Sample linked notice: awaiting your attention.', 'Preview action choices', 'Act: record that you handled the notice. Snooze: revisit later. Dismiss: remove the notice. None of these sample choices changes an account item.'),
         step('approval', 'Review an approval request', 'Inspect who is asking, what would happen, and which project is involved. Approve only an action you intend.', I, 'Sample approval request: publish the private field report.', 'Preview declining approval', 'Sample decision: decline until audience and content are reviewed. No approval is sent and nothing is published.'),
-        step('quiet-controls', 'Find quiet hours and proactive controls', 'Delivery preferences and Attention enrollment are separate controls. Change them deliberately in Settings; this preview changes neither.', '/settings', 'Sample delivery: Inbox, with quiet hours to inspect.', 'Inspect sample controls', 'Review quiet hours and delivery destination in Settings → Initiative. Attention enrollment remains unchanged. To discuss an item, open Chat and provide the relevant context.')
+        step('quiet-controls', 'Find quiet hours and proactive controls', 'Delivery preferences and Attention enrollment are separate controls. Change them deliberately in Settings; this preview changes neither.', '/settings', 'Sample delivery: Inbox, with quiet hours to inspect.', 'Inspect sample controls', 'Review quiet hours and delivery destination in Settings → Initiative. Attention enrollment remains unchanged. Use Ask Goobster on an Inbox item to bring its context into private Chat.')
     ]),
     activity('activity.scheduled', 'Scheduled', [
         step('reminder', 'Preview a one-time reminder', 'A reminder delivers your saved text at a time you choose. This sample creates no task.', S, 'Sample reminder: review the field report.', 'Preview reminder', 'Draft reminder: tomorrow at 09:00 in your selected timezone. Nothing scheduled.'),

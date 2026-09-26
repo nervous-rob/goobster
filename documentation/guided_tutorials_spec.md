@@ -302,3 +302,11 @@ screen-reader review or replace #266's five observed first sessions.
 
 After batch 1, #273 adds contextual Chat from Inbox; #272 remains open for batch 2
 (collaboration/connections) and batch 3 (optional tools, after host switches).
+
+
+### Inbox context update (#273)
+
+`activity.inbox` v3 adds a provider-free preview of **Ask Goobster**: an editable
+private Chat draft, removable context chip, and the explicit shared audience
+of **Ask in the project**. The preview creates no conversation or Inbox write.
+Existing v2 progress follows the framework's normal version-change behavior.

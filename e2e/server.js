@@ -48,6 +48,8 @@ const attention = require('@goobster/core/services/attentionService');
 const policies = require('@goobster/core/services/attentionPolicyService');
 const eventBusService = require('@goobster/core/services/eventBusService');
 const inboxService = require('@goobster/core/services/inboxService');
+// Explicit fake-local capability for Inbox draft journeys; they never send.
+require('@goobster/core/config/aiConfig').provider = 'ollama';
 const identityService = require('@goobster/core/services/identityService');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
 
@@ -482,6 +484,13 @@ async function seedInboxAndPeople() {
     await identityService.createNativePrincipal({ id: C.NATIVE_MEMBER, displayName: C.NATIVE_MEMBER_NAME });
     await identityService.grantAccount({ principalId: C.NATIVE_MEMBER, entitlement: 'invite', loginName: 'native-colleague' });
     await inboxService.deliver({ userId: C.OWNER, kind: 'task', title: C.INBOX_TITLE, body: C.INBOX_BODY });
+    const askProject = await db.get('SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug', { userId: C.OWNER, slug: C.PROJECT_SLUG });
+    const askJob = await db.insert("INSERT INTO observatory_jobs (projectId, userId, language, code, status) VALUES (@projectId, @userId, 'python', '# fictional', 'FAILED')", { projectId: askProject.id, userId: C.OWNER });
+    await require('@goobster/core/services/workFailureService').notify({
+        kind: 'job', workId: askJob, actor: C.OWNER, code: 'FITS_HEADER_REJECTED', reason: 'Non-ASCII header',
+        title: 'JWST Atlas: run failed', body: 'The FITS inspector rejected a non-ASCII header.',
+        link: `/projects/${C.OWNER}/${C.PROJECT_SLUG}/runs`
+    });
     // A row stored under a pre-consolidation portal path: the client's
     // route aliases must still take it to Activity → Scheduled.
     await inboxService.deliver({

@@ -484,7 +484,7 @@ async function runChatInteraction(interaction, thread = null) {
             sourceDescription: interaction.sourceDescription || null,
             skipHistory,
             personalityDirective,
-            userInstructions,
+            userInstructions: [userInstructions, interaction.inboxInstructions].filter(Boolean).join('\n\n') || null,
             mood,
             innerLife,
             attentionContext,

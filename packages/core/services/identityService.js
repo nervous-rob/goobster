@@ -35,6 +35,7 @@ const OWNER_COLUMNS = [
     { table: 'user_settings', column: 'userId' },
     { table: 'web_sessions', column: 'userId' },
     { table: 'web_conversations', column: 'userId' },
+    { table: 'conversation_contexts', column: 'userId' },
     { table: 'web_share_links', column: 'userId' },
     { table: 'web_applets', column: 'userId' },
     { table: 'web_generated_files', column: 'userId' },

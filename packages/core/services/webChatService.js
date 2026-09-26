@@ -1620,6 +1620,9 @@ class WebChatService {
         // Incognito turns never touch web_conversations - their window
         // lives in memory only and evaporates.
         const conversation = incognito ? null : await this._requireConversation(userId, conversationId);
+        let inboxInstructions = conversation ? await require('./conversationContextService').instructions({
+            userId, kind: 'chat', conversationId: conversation.id
+        }) : null;
         await this._checkRateLimit(userId);
 
         // The abort controller hard-cancels the in-flight provider
@@ -1758,6 +1761,9 @@ class WebChatService {
                 };
                 try {
                     if (conversation) {
+                        inboxInstructions = await require('./conversationContextService').instructions({
+                            userId, kind: 'chat', conversationId: conversation.id
+                        });
                         await db.run(
                             `UPDATE web_conversations SET lastMessageAt = datetime('now') WHERE id = @id`,
                             { id: conversation.id }
@@ -1793,6 +1799,7 @@ class WebChatService {
                         sourceDescription,
                         spoken
                     });
+                    interaction.inboxInstructions = inboxInstructions;
                     await handleChatInteraction(interaction);
                     if (interaction.budgetError) throw interaction.budgetError;
                     if (incognito) {

@@ -271,3 +271,54 @@ only registers the routes they land on.
   addresses, tabs / refresh / Back / deep links agreeing on the view, two
   owners with one slug and the slug-only chooser, direct creation with a
   goal, Conversation and People as views, Unfiled apps on the list.
+
+
+## Ask Goobster from Inbox
+
+Open an Inbox item and choose **Ask Goobster**. This opens a saved private
+Chat with a removable context chip and a suggested question you can edit.
+The compact row action does the same; on narrow screens, expand the item.
+The question stays in this browser tab until **Send**. Opening the draft
+makes no provider request and reserves no tokens. It marks the item read;
+**Asked in …** links back to conversations that still reference the item.
+Refresh keeps the conversation and chip. Back returns to the open Inbox item.
+
+An item linked to a project also offers **Ask in the project** when you are
+an owner or member. It opens that project's **Conversation**. Its reply and
+any context quoted in the reply are visible to project members. Private Chat
+is the default. Each member has their own chip; another member's sends do not
+silently reuse your personal Inbox item. Selecting another item for that
+project replaces your previous chip. The same chip appears in Discussions.
+
+The conversation stores only the item reference in `conversation_contexts`.
+On each send, the server reloads the current title, body, kind, timestamp,
+source link, owner-scoped Attention notice and failure detail, and available
+project/job/task/Expedition ids. It checks item ownership and current project
+membership again. The snapshot is reference data in the system instructions
+slot, before the question. Normal agent tools, token budgets and privacy rules
+still apply, including with Discord off. This action never enables incognito.
+
+Remove the chip to stop including the item in future sends. This does not
+retract earlier messages, replies or learned information. Deleted or inaccessible
+items fail closed with a removable unavailable chip. Archiving an item does not
+remove its context. Deleting a conversation removes its references; account
+erasure removes all references belonging to that account, including project
+chips. Read-only chat shares expose the existing transcript, not the live chip
+or its source. Drafts are account-scoped tab storage and disappear when the tab
+is closed; ordinary and incognito drafts keep their existing behavior.
+
+When no chat provider is configured, expanded details explain why Ask is
+unavailable. Explicit local Ollama configuration also enables it; availability
+here does not probe the model server. Old job reminders without a structured
+job reference still support private Chat, but cannot infer a project from prose.
+New job-completion reminders retain that reference for project navigation and
+failure correlation.
+
+API: `POST /api/app/inbox/:itemId/ask` accepts only `{ inProject?: boolean }`.
+`GET /api/app/conversation-context/{chat|project}/:conversationId` lists your
+chip; `DELETE …/:contextId` removes it. Client-supplied snapshots are ignored.
+The `activity.inbox` tutorial v3 demonstrates the draft and audience choice
+with fictional content and no domain writes.
+
+Validation: `tests/inboxAsk.test.js`, the instructions-slot regression in
+`tests/chatHandlerAgentTurn.test.js`, and `e2e/inboxAsk.spec.js`.

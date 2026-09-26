@@ -463,6 +463,7 @@ class PrivacyService {
                 nextRun: row.nextRun
             })),
             inbox: { count: Number(inbox?.c || 0), unread: Number(inbox?.unread || 0) },
+            conversationContexts: await db.all('SELECT inboxItemId, webConversationId, parlorConversationId FROM conversation_contexts WHERE userId = @userId', { userId }),
             shareLinks: shareLinks?.c || 0,
             executionAdmissions: await db.all('SELECT resource, state, createdAt, startedAt, expiresAt FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope }),
             // Failed work attributed to the person (kind, code, short reason - never a body).
@@ -917,6 +918,10 @@ class PrivacyService {
             counts.projectMissions = forgottenMissions.missions;
             counts.projectDecisions = forgottenMissions.decisions;
 
+            counts.conversationContexts = (await db.run(
+                'DELETE FROM conversation_contexts WHERE userId = @userId', { userId }
+            )).changes;
+
             // Web chat conversation containers (their messages/summaries are
             // already gone via the DM-scope deletions above).
             counts.webConversations = (await db.run(
@@ -1252,6 +1257,9 @@ class PrivacyService {
             )).c,
             email_tokens: (await db.get(
                 'SELECT COUNT(*) AS c FROM email_tokens WHERE principalId = @userId', { userId }
+            )).c,
+            conversation_contexts: (await db.get(
+                'SELECT COUNT(*) AS c FROM conversation_contexts WHERE userId = @userId', { userId }
             )).c,
             web_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_conversations WHERE userId = @userId', { userId }

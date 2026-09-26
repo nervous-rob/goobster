@@ -3176,9 +3176,9 @@ class ObservatoryService {
             + `${job.renderPath ? ' A rendered video is waiting in the project workspace.' : ''}`
             + `${job.error ? ` Detail: ${job.error}` : ''}`).slice(0, 500);
         await db.run(
-            `INSERT INTO followups (guildId, channelId, userId, note, dueAt)
-             VALUES (@scope, @channelId, @userId, @note, datetime('now'))`,
-            { scope: dmScopeId(job.userId), channelId, userId: job.userId, note }
+            `INSERT INTO followups (guildId, channelId, userId, note, dueAt, jobId)
+             VALUES (@scope, @channelId, @userId, @note, datetime('now'), @jobId)`,
+            { scope: dmScopeId(job.userId), channelId, userId: job.userId, note, jobId: job.id }
         );
     }
 

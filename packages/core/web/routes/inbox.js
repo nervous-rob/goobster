@@ -38,6 +38,22 @@ function mountInbox(app, ctx, h) {
         ctx.inbox.get({ userId: req.webUser.userId, itemId: req.params.itemId })
     ));
 
+    app.post('/api/app/inbox/:itemId/ask', requireAuth, inboxRoute(async (req) =>
+        require('../../services/conversationContextService').ask({
+            userId: req.webUser.userId, itemId: req.params.itemId, inProject: req.body?.inProject === true
+        })
+    ));
+
+    for (const kind of ['chat', 'project']) {
+        const base = `/api/app/conversation-context/${kind}/:conversationId`;
+        app.get(base, requireAuth, inboxRoute(req => require('../../services/conversationContextService').list({
+            userId: req.webUser.userId, kind, conversationId: req.params.conversationId
+        })));
+        app.delete(`${base}/:contextId`, requireAuth, inboxRoute(req => require('../../services/conversationContextService').remove({
+            userId: req.webUser.userId, kind, conversationId: req.params.conversationId, contextId: req.params.contextId
+        })));
+    }
+
     // Read state is a toggle: { read: false } puts an item back to unread.
     app.post('/api/app/inbox/:itemId/read', requireAuth, inboxRoute(async (req) =>
         ctx.inbox.markRead({

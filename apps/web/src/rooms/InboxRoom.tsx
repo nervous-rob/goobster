@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from '@tanstack/react-router';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { seedInboxDraft } from '../hooks/useInboxDraft';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useDateLabel } from '../hooks/useDateLabel';
@@ -114,11 +115,23 @@ function echoLabel(item: InboxItem, discordEnabled: boolean): string | null {
 
 export function InboxRoom() {
     const me = useMe();
+    const navigate = useNavigate();
+    const hash = useLocation({ select: location => location.hash });
+    const hashId = Number(/^#?inbox-(\d+)$/.exec(hash)?.[1]) || null;
+    const [asking, setAsking] = useState(false);
     const whenLabel = useDateLabel();
     const toast = useToast();
     const queryClient = useQueryClient();
     const [view, setView] = useState<View>('open');
     const [selected, setSelected] = useState<InboxItem | null>(null);
+
+    const selectedQ = useQuery({
+        queryKey: ['inbox', 'item', hashId], queryFn: () => api.inboxItem(hashId!), enabled: hashId != null, retry: false
+    });
+    useEffect(() => {
+        if (selectedQ.data && hashId === selectedQ.data.id) setSelected(selectedQ.data);
+        if (!hashId) setSelected(null);
+    }, [hashId, selectedQ.data]);
 
     const list = useInfiniteQuery({
         queryKey: keys.inbox(view),
@@ -137,6 +150,7 @@ export function InboxRoom() {
         // Keep the open message independently of the filtered list: marking
         // it read removes it from Unread, but must not close its contents.
         setSelected(next);
+        void navigate({ to: '/activity/inbox', hash: next ? `inbox-${next.id}` : '', replace: true });
         if (next !== null && !item.read) {
             try {
                 const updated = await api.inboxRead(item.id, true);
@@ -144,6 +158,21 @@ export function InboxRoom() {
                 await invalidate();
             } catch (error) { toast((error as Error).message, true); }
         }
+    }
+
+    async function ask(item: InboxItem, inProject = false) {
+        if (asking) return;
+        setAsking(true);
+        try {
+            await navigate({ to: '/activity/inbox', hash: `inbox-${item.id}`, replace: true });
+            const result = await api.inboxAsk(item.id, inProject);
+            seedInboxDraft(result.kind, result.conversationId, result.suggestedQuestion);
+            await invalidate();
+            await queryClient.invalidateQueries({ queryKey: ['inbox-context'] });
+            await queryClient.invalidateQueries({ queryKey: keys.conversations });
+            await navigate({ to: result.path as never });
+        } catch (error) { toast((error as Error).message, true); }
+        finally { setAsking(false); }
     }
 
     async function toggleRead(item: InboxItem) {
@@ -192,12 +221,13 @@ export function InboxRoom() {
                     {(['open', 'unread', 'archived'] as View[]).map((option) => (
                         <button key={option} type="button" role="tab" aria-selected={view === option}
                             className={`segment-btn${view === option ? ' active' : ''}`}
-                            onClick={() => { setView(option); setSelected(null); }}>
+                            onClick={() => { setView(option); setSelected(null); void navigate({ to: '/activity/inbox', hash: '', replace: true }); }}>
                             {option === 'open' ? 'Inbox' : option === 'unread' ? 'Unread' : 'Archive'}
                         </button>
                     ))}
                 </div>
 
+                {selectedQ.isError && <div role="alert" className="hint">{(selectedQ.error as Error).message}</div>}
                 {list.isPending && <div className="empty">Loading…</div>}
                 {list.isError && <div className="empty">{(list.error as Error).message}</div>}
 
@@ -236,10 +266,20 @@ export function InboxRoom() {
                                                 {item.attachments.length > 0 ? ` · ${item.attachments.length} attachment${item.attachments.length === 1 ? '' : 's'}` : ''}
                                             </div>
                                         </button>
+                                        {item.ask?.conversations.map(conversation => <div className="hint" key={conversation.path}>
+                                            Asked in <Link to={conversation.path as never}>{conversation.title}</Link>
+                                        </div>)}
                                         <AttentionDelivery item={item} />
                                         <FailureLink item={item} />
                                         {isOpen && (
                                             <div className="inbox-body">
+                                                <div className="inbox-ask-details">
+                                                    {item.ask?.available ? <>
+                                                        <button type="button" className="btn primary" disabled={asking} onClick={() => void ask(item)}>Ask Goobster</button>
+                                                        {item.ask.project && <button type="button" className="btn" disabled={asking} onClick={() => void ask(item, true)}>Ask in the project</button>}
+                                                    </> : <div className="hint">{item.ask?.reason}</div>}
+                                                    {item.ask?.project && <div className="hint">Ask Goobster opens private Chat. Ask in the project opens its shared Conversation.</div>}
+                                                </div>
                                                 {item.body || item.attachments.length > 0
                                                     ? <Markdown source={item.body || ''} attachments={item.attachments.map((a) => ({ url: a.url, name: a.name || undefined }))} />
                                                     : <div className="hint">No details - the title is the whole message.</div>}
@@ -250,6 +290,8 @@ export function InboxRoom() {
                                         {item.link && (
                                             <Link to={item.link as never} className="btn subtle" title="Open where this came from">Open →</Link>
                                         )}
+                                        {item.ask?.available && <button type="button" className="btn subtle inbox-ask-compact" aria-label={`Ask Goobster about ${item.title}`} disabled={asking}
+                                            onClick={() => void ask(item)}>Ask Goobster</button>}
                                         <button type="button" className="btn subtle" onClick={() => toggleRead(item)}>
                                             {item.read ? 'Unread' : 'Read'}
                                         </button>
