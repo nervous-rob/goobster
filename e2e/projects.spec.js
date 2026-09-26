@@ -49,7 +49,9 @@ test('the list links each project to its owner-qualified address; opening one la
     // Plan / Run words on the Overview; the old ones are gone.
     await expect(page.getByRole('heading', { name: 'Plan' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Latest runs' })).toBeVisible();
-    await expect(page.getByText(/Run #\d+/)).toBeVisible();
+    // Select this journey's Bash run; Inbox Ask adds a Python run here too.
+    const run = page.getByTestId(/^run-\d+$/).filter({ hasText: /bash ·/ });
+    await expect(run.getByText(/Run #\d+/)).toBeVisible();
     await expect(page.getByText(/Job #\d+/)).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Outputs' })).toBeVisible();
 });
@@ -60,8 +62,9 @@ test('the active view lives in the URL: tabs, refresh, Back/Forward and deep lin
     await tabs.getByRole('link', { name: /Runs/ }).click();
     await expect(page).toHaveURL(new RegExp(`${MINE}/runs$`));
     await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible();
-    await expect(page.getByText('❌ FAILED')).toBeVisible();
-    await expect(page.getByText(/Run #\d+/)).toBeVisible();
+    const run = page.getByTestId(/^run-\d+$/).filter({ hasText: /bash ·/ });
+    await expect(run.getByText('❌ FAILED')).toBeVisible();
+    await expect(run.getByText(/Run #\d+/)).toBeVisible();
 
     await tabs.getByRole('link', { name: /Files/ }).click();
     await expect(page).toHaveURL(new RegExp(`${MINE}/files$`));

@@ -65,8 +65,10 @@ test('project Parlor → transcript → project knowledge', async ({ page }) => 
 test('project run → output → Attention notice', async ({ page }) => {
     await openRoom(page, /Projects/);
     await page.getByTestId(`project-card-${C.OWNER}-${C.PROJECT_SLUG}`).click();
-    await expect(page.getByText('❌ FAILED')).toBeVisible();
-    await expect(page.getByText(/Run #/)).toBeVisible();
+    // Inbox Ask also seeds a failed Python run in this shared project.
+    const run = page.getByTestId(/^run-\d+$/).filter({ hasText: /bash ·/ });
+    await expect(run.getByText('❌ FAILED')).toBeVisible();
+    await expect(run.getByText(/Run #\d+/)).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Outputs' })).toBeVisible();
     await page.getByRole('button', { name: 'Browse all files' }).click();
     await expect(page).toHaveURL(new RegExp(`/app/projects/${C.OWNER}/${C.PROJECT_SLUG}/files$`));
@@ -76,15 +78,16 @@ test('project run → output → Attention notice', async ({ page }) => {
     await openRoom(page, /Activity/);
     await page.getByRole('navigation', { name: 'Activity views' }).getByRole('link', { name: /Attention/ }).click();
     await expect(page.getByRole('heading', { name: /^Attention/ })).toBeVisible();
-    await expect(page.getByText(C.NOTICE_TITLE)).toBeVisible();
-    await expect(page.getByText(C.NOTICE_DETAIL)).toBeVisible();
+    const notice = page.locator('[id^="notice-"]').filter({ hasText: C.NOTICE_TITLE });
+    await expect(notice.getByText(C.NOTICE_TITLE)).toBeVisible();
+    await expect(notice.getByText(C.NOTICE_DETAIL)).toBeVisible();
 
-    await page.getByRole('button', { name: 'why?' }).click();
+    await notice.getByRole('button', { name: 'why?' }).click();
     await expect(page.getByRole('heading', { name: 'Why he raised this' })).toBeVisible();
     await expect(page.getByText('Urgency')).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
 
-    await page.getByRole('button', { name: 'Acted' }).click();
+    await notice.getByRole('button', { name: 'Acted' }).click();
     await expect(page.getByText(C.NOTICE_TITLE)).toHaveCount(0);
 });
 
