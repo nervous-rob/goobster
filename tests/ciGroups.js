@@ -105,6 +105,7 @@ const GROUPS = [
             'userSettingsApi',
             'userSettingsService',
             'settingsRuntimePolicy',
+            'studioSongEdit',
             'independentRuntime',
             'inboxPagination',
             'webAppApi',
