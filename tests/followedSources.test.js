@@ -144,6 +144,18 @@ test('pause, keep and source removal preserve per-owner boundaries and delete ev
     await service.remove({ userId: V, sourceId: source.id }); expect(await row(source)).toBeTruthy();
     await service.remove({ userId: U, sourceId: source.id }); expect(await db.all('SELECT * FROM followed_source_entries')).toEqual([]);
 });
+test('pause counts only enabled-to-paused transitions, including after resume', async () => {
+    const source = await create();
+    const setEnabled = enabled => service.setEnabled({ userId: U, sourceId: source.id, enabled });
+    await setEnabled(true);
+    expect(await row(source)).toMatchObject({ enabled: 1, disabledCount: 0 });
+    await setEnabled(false); await setEnabled(false);
+    expect(await row(source)).toMatchObject({ enabled: 0, disabledCount: 1 });
+    await setEnabled(true); await setEnabled(true);
+    expect(await row(source)).toMatchObject({ enabled: 1, disabledCount: 1 });
+    await setEnabled(false);
+    expect(await row(source)).toMatchObject({ enabled: 0, disabledCount: 2 });
+});
 test('robots denies, caches and enforces a shared host interval with validators', async () => {
     const request = jest.fn(async url => response(url.endsWith('/robots.txt') ? 'User-agent: *\nDisallow: /private\nCrawl-delay: 10' : feed()));
     const f = new FollowedSourceFetcher({ request, now: () => now });

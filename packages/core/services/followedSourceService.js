@@ -88,7 +88,9 @@ class FollowedSourceService {
     async setEnabled({ userId, sourceId, enabled }) {
         if (typeof enabled !== 'boolean') throw new FollowedSourceError(400, 'BAD_ENABLED', 'Choose pause or resume.');
         await this.require(userId, sourceId);
-        await db.run(`UPDATE followed_sources SET enabled = @enabled,
+        // The Postgres schema uses BIGINT flags; the same parameter also appears
+        // beside an integer literal below, so make its type explicit.
+        await db.run(`UPDATE followed_sources SET enabled = CAST(@enabled AS BIGINT),
             disabledCount = disabledCount + CASE WHEN enabled = 1 AND @enabled = 0 THEN 1 ELSE 0 END,
             claimToken = NULL, claimUntil = NULL WHERE id = @id AND userId = @userId`, { id: id(sourceId), userId, enabled: enabled ? 1 : 0 });
         return { ok: true };
