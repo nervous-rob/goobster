@@ -2,6 +2,7 @@ import type { NoteName } from './musicData';
 import type { FoundrySettings } from './harmonyTheory';
 import type { GridResolution } from './rhythmTheory';
 import { seedDrumPattern, type PerformerRole, type PerformerState, type SavedCreature } from './stageData';
+import type { VoicePreset } from './voiceData';
 
 /**
  * Studio song data model: a SongProject is an ordered list of sections (each
@@ -205,6 +206,24 @@ export function makeTrackFromCreature(saved: SavedCreature): SongTrack {
     mute: false,
     solo: false,
     volume: role === 'bass' ? -7 : -8
+  };
+}
+
+/** The tonal roles a voice can be dropped straight onto from the Add-a-track panel. */
+export type VoiceTrackRole = Extract<PerformerRole, 'melody' | 'bass' | 'chords'>;
+
+export const VOICE_TRACK_ROLES: VoiceTrackRole[] = ['melody', 'bass', 'chords'];
+
+/**
+ * A role track whose performer plays a specific voice (typically one built in
+ * the Voice Builder). Contour, register and mix defaults come from the role.
+ */
+export function makeTrackFromVoice(voice: VoicePreset, role: VoiceTrackRole, grouping: number[]): SongTrack {
+  const track = makeTrackFromRole(role, grouping);
+  return {
+    ...track,
+    name: voice.name,
+    performer: { ...track.performer, displayName: voice.name, voiceId: voice.id }
   };
 }
 

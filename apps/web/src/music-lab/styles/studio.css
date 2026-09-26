@@ -597,6 +597,16 @@
   gap: 0.75rem;
 }
 
+/* Saved voices in the Add-a-track panel: swatch · name · one pill per tonal role. */
+.studio-engine .st-voice-row {
+  flex-wrap: wrap;
+}
+
+.studio-engine .st-voice-roles {
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+
 /* --- Inspectors --- */
 
 .studio-engine .st-inspectors {

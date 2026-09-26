@@ -89,6 +89,24 @@ Click the track name to open the **Track** inspector and edit its
 creature — drum grids for the rhythm trio, voice / contour / register for
 the tonal performers, and the melody editor for written notes.
 
+**+ Add track** (the button under the track headers) opens the *Add a
+track* panel with three ways to add a performer:
+
+- **Core roles** — `+ kick`, `+ snare`, `+ hihat`, `+ chords`, `+ bass`,
+  `+ lead`, and `+ written lead` (a lead with the piano-roll melody
+  editor). These start on the role's default voice.
+- **Your voices** — every voice saved in the Voice Builder (on the Melody
+  or Harmony Engine), each with `+ lead`, `+ bass` and `+ chords` buttons
+  that add a track of that role already playing the voice. The track is
+  named after the voice.
+- **Creature library** — creatures saved on the Stage or bred in the
+  Melody Engine; **Hire** adds a lead or bass track carrying the
+  creature's voice, contour and register.
+
+A new track gets one clip across the whole song. Any track's voice can be
+changed afterwards in the Track inspector's **Voice** menu, which lists
+the core presets followed by your saved voices.
+
 Clips gate the track: a performer is audible only inside its clips.
 
 - Double-click empty lane space to drop a one-bar clip; drag on empty
@@ -215,6 +233,7 @@ All keys are under the `goobster.conservatory.` prefix in `localStorage`.
 | `studioFollow` | Follow-playhead toggle |
 | `studioHandoff` | A pending handoff from another room (consumed on open) |
 | `creatureLibrary` | Saved creatures shared with the Stage |
+| `customVoices` | Voices built in the Voice Builder (sample audio lives in IndexedDB) |
 
 Clearing site data removes all of them; export songs you care about first.
 
