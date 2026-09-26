@@ -20,7 +20,10 @@
      (e.g. the Song Wizard overlay), pinning them to the panel instead of
      the viewport. */
   margin-inline: auto;
-  width: min(1320px, 94vw);
+  /* Sized against the room, not the viewport: the portal sidebar takes a
+     slice of the window, so a vw-based width overflowed the pane and gave
+     the whole lab a horizontal scrollbar. */
+  width: min(1320px, calc(100% - 32px));
   background: var(--re-bg);
   color: var(--re-text);
   border: 1px solid var(--re-border);
