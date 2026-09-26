@@ -212,6 +212,33 @@ test.describe('Song Studio', () => {
         await expect(page.locator('.st-section-block.selected .st-section-name')).toHaveText(names[2]);
     });
 
+    test('voices saved in the Voice Builder are offered by Add track', async ({ page }) => {
+        // Build a voice on the Melody Engine, the same store the Studio reads.
+        await page.goto('/app/conservatory/melody');
+        await page.locator('#me-vb-name').fill('Doop');
+        await page.getByRole('button', { name: 'Save voice' }).click();
+        await expect(page.locator('.vb-flash')).toContainText('Saved “Doop”');
+
+        await page.goto('/app/conservatory/studio');
+        await expect(page.locator('.st-clip:not(.ghost)').first()).toBeVisible();
+        await page.getByRole('button', { name: '+ Add track' }).click();
+
+        const list = page.getByTestId('studio-voice-list');
+        await expect(list.locator('.st-voice-row')).toHaveCount(1);
+        await expect(list).toContainText('Doop');
+
+        const heads = page.locator('.st-track-head:not(.st-corner):not(.st-add-head)');
+        const before = await heads.count();
+        await list.getByRole('group', { name: 'Add a track playing Doop' }).getByRole('button', { name: '+ bass' }).click();
+
+        // The new track is named after the voice, selected, and its inspector
+        // shows the saved voice chosen in the Voice menu.
+        await expect(heads).toHaveCount(before + 1);
+        await expect(page.locator('.st-track-label', { hasText: 'Doop' })).toHaveCount(1);
+        await expect(page.locator('#st-track-voice option:checked')).toHaveText(/^Doop — /);
+        await expect(page.locator('.st-add-menu')).toHaveCount(0);
+    });
+
     test('track menu mutes the track', async ({ page }) => {
         const head = page.locator('.st-track-head').nth(1);
         await head.click({ button: 'right' });

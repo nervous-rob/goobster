@@ -44,7 +44,7 @@ import {
   type SavedCreature
 } from '@music-lab/lib/stageData';
 import { useContourLibrary } from '@music-lab/hooks/useContourLibrary';
-import { findVoice } from '@music-lab/lib/voiceData';
+import { findVoice, type VoicePreset } from '@music-lab/lib/voiceData';
 import { useVoiceLibrary } from '@music-lab/hooks/useVoiceLibrary';
 import {
   CORE_STUDIO_ROLES,
@@ -56,16 +56,19 @@ import {
   SECTION_KIND_META,
   STUDIO_CURRENT_KEY,
   STUDIO_PROJECTS_KEY,
+  VOICE_TRACK_ROLES,
   makeClip,
   makeSongId,
   makeTrackFromCreature,
   makeTrackFromRole,
+  makeTrackFromVoice,
   type FillFrequency,
   type SongClip,
   type SongProject,
   type SongSection,
   type SongTrack,
-  type SectionKind
+  type SectionKind,
+  type VoiceTrackRole
 } from '@music-lab/lib/songData';
 import {
   buildChordEvents,
@@ -107,6 +110,19 @@ type StudioClipboard = { kind: 'clip'; clip: SongClip; trackName: string } | { k
 
 const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
+const ROLE_LABEL: Record<PerformerRole, string> = {
+  kick: 'kick',
+  snare: 'snare',
+  hihat: 'hihat',
+  chords: 'chords',
+  bass: 'bass',
+  melody: 'lead'
+};
+
+function voiceEngineLabel(voice: VoicePreset): string {
+  return voice.engine === 'sample' ? 'Sample' : voice.engine === 'fm' ? 'FM synth' : 'Analog synth';
+}
+
 const HARMONY_HOLD = 0.96;
 const MIN_ZOOM = 12;
 const MAX_ZOOM = 96;
@@ -122,7 +138,7 @@ export function StudioEngine() {
   const [loop, setLoop] = useLocalStorage<boolean>('studioLoop', true);
   const [followPlayhead, setFollowPlayhead] = useLocalStorage<boolean>('studioFollow', true);
 
-  const { allVoices } = useVoiceLibrary();
+  const { allVoices, customVoices } = useVoiceLibrary();
   const { allContours } = useContourLibrary();
   const [loopMode, setLoopMode] = useState<'song' | 'section'>('song');
   const [playhead, setPlayhead] = useState<{ measure: number; sub: number } | null>(null);
@@ -841,13 +857,21 @@ export function StudioEngine() {
   );
 
   const addTrack = useCallback(
-    (role: PerformerRole | { creature: SavedCreature } | { writtenLead: true }) => {
+    (
+      role:
+        | PerformerRole
+        | { creature: SavedCreature }
+        | { voice: VoicePreset; role: VoiceTrackRole }
+        | { writtenLead: true }
+    ) => {
       if (!project) return;
       let track: SongTrack;
       if (typeof role === 'string') {
         track = makeTrackFromRole(role, grid);
       } else if ('creature' in role) {
         track = makeTrackFromCreature(role.creature);
+      } else if ('voice' in role) {
+        track = makeTrackFromVoice(role.voice, role.role, grid);
       } else {
         track = makeTrackFromRole('melody', grid);
         track.name = 'Lead Sheet';
@@ -1535,13 +1559,13 @@ export function StudioEngine() {
           <div className="re-panel-head">
             <div>
               <h3>Add a track</h3>
-              <p>Core roles, extra organisms, or hire from your creature library</p>
+              <p>Core roles, your saved voices, or hire from your creature library</p>
             </div>
           </div>
           <div className="re-pills">
             {CORE_STUDIO_ROLES.map(role => (
               <button key={role} type="button" className="re-pill" onClick={() => addTrack(role)}>
-                + {role === 'melody' ? 'lead' : role}
+                + {ROLE_LABEL[role]}
               </button>
             ))}
             <button
@@ -1553,28 +1577,67 @@ export function StudioEngine() {
               + written lead ✏
             </button>
           </div>
-          {library.length ? (
-            <div className="stage-hire-list">
-              {library.map(saved => (
-                <div key={saved.id} className="stage-hire-row">
-                  <div>
-                    <strong>{saved.name}</strong>
-                    <span>
-                      {saved.kind === 'bass' ? 'Bass Serpent' : 'Melody Wisp'} · {findVoice(saved.voiceId).name} ·{' '}
-                      {findContour(saved.contourId).name}
-                    </span>
+          <div className="re-stack-sm">
+            <span className="re-micro-label">Your voices ({customVoices.length})</span>
+            {customVoices.length ? (
+              <div className="vb-voice-list st-voice-list" data-testid="studio-voice-list">
+                {customVoices.map(voice => (
+                  <div key={voice.id} className="vb-voice-row st-voice-row">
+                    <span className="vb-swatch sm" style={{ background: `hsl(${voice.hue} 70% 58%)` }} aria-hidden />
+                    <div className="vb-voice-info">
+                      <strong>{voice.name}</strong>
+                      <span>{voiceEngineLabel(voice)}</span>
+                    </div>
+                    <div className="re-pills st-voice-roles" role="group" aria-label={`Add a track playing ${voice.name}`}>
+                      {VOICE_TRACK_ROLES.map(role => (
+                        <button
+                          key={role}
+                          type="button"
+                          className="re-pill"
+                          onClick={() => addTrack({ voice, role })}
+                          title={`Add a ${ROLE_LABEL[role]} track that plays ${voice.name}`}
+                        >
+                          + {ROLE_LABEL[role]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <button type="button" className="stage-perf-btn on" onClick={() => addTrack({ creature: saved })}>
-                    Hire
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="stage-perf-flavor">
-              No saved creatures yet — breed some in the <Link to={conservatoryPath('/melody') as never}>Melody Engine</Link>.
-            </p>
-          )}
+                ))}
+              </div>
+            ) : (
+              <p className="stage-perf-flavor">
+                No saved voices yet — build some in the Voice Builder on the{' '}
+                <Link to={conservatoryPath('/melody') as never}>Melody</Link> or{' '}
+                <Link to={conservatoryPath('/harmony') as never}>Harmony</Link> Engine. Any track&apos;s voice can also be
+                changed later in the Track inspector.
+              </p>
+            )}
+          </div>
+          <div className="re-stack-sm">
+            <span className="re-micro-label">Creature library ({library.length})</span>
+            {library.length ? (
+              <div className="stage-hire-list">
+                {library.map(saved => (
+                  <div key={saved.id} className="stage-hire-row">
+                    <div>
+                      <strong>{saved.name}</strong>
+                      <span>
+                        {saved.kind === 'bass' ? 'Bass Serpent' : 'Melody Wisp'} · {findVoice(saved.voiceId).name} ·{' '}
+                        {findContour(saved.contourId).name}
+                      </span>
+                    </div>
+                    <button type="button" className="stage-perf-btn on" onClick={() => addTrack({ creature: saved })}>
+                      Hire
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="stage-perf-flavor">
+                No saved creatures yet — breed some in the <Link to={conservatoryPath('/melody') as never}>Melody Engine</Link>.
+              </p>
+            )}
+          </div>
         </div>
       ) : null}
 
