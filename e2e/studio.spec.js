@@ -129,6 +129,98 @@ test.describe('Song Studio', () => {
         await expect(options).toHaveCount(before - 1);
     });
 
+    test('right-click menus copy a clip and paste it onto another lane', async ({ page }) => {
+        const clips = page.locator('.st-clip:not(.ghost)');
+        const before = await clips.count();
+        const menu = page.getByRole('menu');
+
+        await page.locator('.st-clip', { hasText: 'Melody Wisp' }).first().click({ button: 'right' });
+        await expect(menu).toHaveAttribute('aria-label', 'Clip actions');
+        await menu.getByRole('menuitem', { name: 'Copy clip' }).click();
+        await expect(menu).toHaveCount(0);
+
+        // Bar 3 of the Bass Serpent lane at the default 40px zoom.
+        await page.locator('.st-lane').nth(4).click({ button: 'right', position: { x: 85, y: 12 } });
+        await expect(menu).toHaveAttribute('aria-label', 'Lane actions');
+        await menu.getByRole('menuitem', { name: 'Paste clip at bar 3' }).click();
+        await expect(clips).toHaveCount(before + 1);
+        await expect(page.locator('.st-clip.selected')).toHaveAttribute('title', /Bass Serpent · bars 3–/);
+
+        await page.locator('.st-clip', { hasText: 'Melody Wisp' }).first().click({ button: 'right' });
+        await page.keyboard.press('Escape');
+        await expect(menu).toHaveCount(0);
+    });
+
+    test('Ctrl+C / Ctrl+V paste the selected clip at the playhead', async ({ page }) => {
+        const clips = page.locator('.st-clip:not(.ghost)');
+        const before = await clips.count();
+        await page.locator('.st-clip', { hasText: 'Kick Stomper' }).first().click();
+        await page.keyboard.press('Control+c');
+        await page.locator('.st-tick').nth(39).click();
+        await page.keyboard.press('Control+v');
+        await expect(clips).toHaveCount(before + 1);
+        await expect(page.locator('.st-clip.selected')).toHaveAttribute('title', /Kick Stomper · bars 40–/);
+    });
+
+    test('dragging a section block reorders the song and carries its clips', async ({ page }) => {
+        const blocks = page.locator('.st-section-block');
+        const names = () => page.locator('.st-section-block .st-section-name').allTextContents();
+        const before = await names();
+        const bassBars = async () => {
+            const titles = await page.locator('.st-clip', { hasText: 'Bass Serpent' }).evaluateAll(
+                els => els.map(el => el.getAttribute('title'))
+            );
+            return titles.map(t => /bars (\d+)–(\d+)/.exec(t)).map(m => [Number(m[1]), Number(m[2]) - Number(m[1]) + 1]);
+        };
+        const bassBefore = await bassBars();
+
+        const last = blocks.nth(before.length - 1);
+        await last.scrollIntoViewIfNeeded();
+        const from = await last.boundingBox();
+        const to = await blocks.nth(0).boundingBox();
+        await page.mouse.move(from.x + 20, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(from.x + 30, from.y + from.height / 2);
+        await page.mouse.move(to.x + 4, from.y + from.height / 2, { steps: 8 });
+        await expect(page.locator('.st-section-drop')).toHaveCount(1);
+        await page.mouse.up();
+
+        const after = await names();
+        expect(after[0]).toBe(before[before.length - 1]);
+        expect(after.slice(1)).toEqual(before.slice(0, -1));
+        // Clips were re-laid under the new order: the layout changed but the
+        // bars the bass covers are exactly the same in total.
+        const bassAfter = await bassBars();
+        expect(bassAfter).not.toEqual(bassBefore);
+        expect(bassAfter.reduce((a, [, len]) => a + len, 0)).toBe(bassBefore.reduce((a, [, len]) => a + len, 0));
+        await expect(page.locator('.st-section-block.selected')).toHaveCount(0);
+
+        await page.keyboard.press('Control+z');
+        expect(await names()).toEqual(before);
+    });
+
+    test('section menu duplicates a section as a numbered copy', async ({ page }) => {
+        const blocks = page.locator('.st-section-block');
+        const count = await blocks.count();
+        await blocks.nth(1).click({ button: 'right' });
+        const menu = page.getByRole('menu');
+        await expect(menu).toHaveAttribute('aria-label', 'Section actions');
+        await menu.getByRole('menuitem', { name: 'Duplicate section' }).click();
+        await expect(blocks).toHaveCount(count + 1);
+        const names = await page.locator('.st-section-block .st-section-name').allTextContents();
+        expect(names[2]).toBe(`${names[1]} (copy)`);
+        await expect(page.locator('.st-section-block.selected .st-section-name')).toHaveText(names[2]);
+    });
+
+    test('track menu mutes the track', async ({ page }) => {
+        const head = page.locator('.st-track-head').nth(1);
+        await head.click({ button: 'right' });
+        const menu = page.getByRole('menu');
+        await expect(menu).toHaveAttribute('aria-label', 'Track actions');
+        await menu.getByRole('menuitem', { name: 'Mute' }).click();
+        await expect(head.locator('.st-mini-btn.mute')).toHaveCount(1);
+    });
+
     test('playhead stays aligned with the header column on a phone', async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         const tick = page.locator('.st-tick').first();

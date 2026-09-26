@@ -70,6 +70,17 @@ value. Click a block in the ruler to open it in the **Section** inspector;
 **+ Add section** appends one. Sections chain end to end, so lengthening
 one shifts everything after it.
 
+**Drag a block left or right to reorder the song** (mouse or pen; on touch
+the timeline keeps scrolling and the inspector's *← Move* / *Move →*
+buttons do the same). An amber marker shows where the section will land.
+The clips that play inside a section travel with it, so moving the chorus
+moves what plays during the chorus: clips that cross a section boundary
+are split there and joined back together wherever the pieces land next to
+each other again. *Duplicate* (also `Ctrl+D`) inserts a numbered copy
+right after the original with the same clips; *Copy* / *Paste after*
+carry a section and its clips through the clipboard, including into
+another song (pieces on tracks the other song lacks are dropped).
+
 ### Tracks and clips
 
 Each track is one performer with a role (`kick`, `snare`, `hihat`,
@@ -80,19 +91,40 @@ the tonal performers, and the melody editor for written notes.
 
 Clips gate the track: a performer is audible only inside its clips.
 
-- Double-click empty lane space to drop a one-bar clip.
+- Double-click empty lane space to drop a one-bar clip; drag on empty
+  space to paint a longer one.
 - Drag a clip to move it; drag its right edge to resize.
 - Click a clip to select it (this also selects its track).
 - **Split at bar N** in the Track inspector cuts the selected clip where
   the playhead sits (the button is disabled unless the playhead is
   strictly inside the clip).
+- **Copy** / `Ctrl+C`, `Ctrl+X` and **Paste** / `Ctrl+V`: a copied clip
+  pastes onto the selected track at the playhead (the Track inspector
+  shows a *Paste at bar N* button while a clip is on the clipboard), or at
+  a right-clicked bar. **Duplicate** / `Ctrl+D` drops a copy directly
+  after the clip; if the song ends there a notice says so.
 - **Delete clip** in the inspector or the `Delete` / `Backspace` key
   removes the selected clip.
 - **Move track up / down** and **Duplicate track** (clones the performer
   and its clips) live in the Track inspector header.
 
+The clipboard is in memory for the session: it survives switching songs
+but not a reload, and it never touches the system clipboard.
+
 Drum roles share one synth each. Two kick tracks that hit the same step
 sound once and both light up.
+
+### Right-click menus
+
+Every part of the timeline has a context menu (`Escape`, a click
+elsewhere, or scrolling closes it; arrow keys move, `Enter` activates):
+
+| Target | Actions |
+| --- | --- |
+| Clip | Copy, Cut, Duplicate after, Split at the clicked bar, Fit to the section under the cursor, Play from clip start, Delete |
+| Empty lane | Paste clip at the clicked bar, New 1-bar clip here, Clip across the section under the cursor, Clip across the whole song, Play from here |
+| Track header | Mute / Solo, Move up / down, Duplicate track, Paste clip at playhead, Delete track |
+| Section block | Copy, Cut, Paste section after, Duplicate, Add empty section after, Move left / right, Loop this section, Play from here, Delete |
 
 ### Transport
 
@@ -127,6 +159,9 @@ Shortcuts are inactive while a text field has focus or the wizard is open.
 | `L` | Toggle loop |
 | `Ctrl`/`Cmd` + `Z` | Undo |
 | `Ctrl`/`Cmd` + `Shift` + `Z`, `Ctrl` + `Y` | Redo |
+| `Ctrl`/`Cmd` + `C` / `X` | Copy / cut the selected clip (else the selected section) |
+| `Ctrl`/`Cmd` + `V` | Paste: a clip at the playhead on the selected track, a section after the selected one |
+| `Ctrl`/`Cmd` + `D` | Duplicate the selected clip (else section) right after itself |
 
 ### Handoffs
 
@@ -194,11 +229,18 @@ internal step counter over the flattened song (`lib/songTheory.ts`).
 Pure, unit-tested helpers sit in `lib/songEdit.cjs` with a typed façade in
 `lib/songEdit.ts`: undo history (`createHistory`, `recordHistory`,
 `undoHistory`, `redoHistory`), clip surgery (`splitClipAt`,
-`mergeAdjacentClips`), track operations (`moveTrack`, `duplicateTrack`),
+`mergeAdjacentClips`, `pasteClip`, `duplicateClip`), section structure
+(`sectionSpans`, `reorderSections`, `duplicateSection`,
+`copySectionPayload`, `pasteSection` — all of which cut clips into
+per-section pieces, re-lay them under the new order and heal the seams),
+track operations (`moveTrack`, `duplicateTrack`),
 naming (`copyName`), clock math (`songDurationSeconds`, `elapsedSeconds`,
 `formatClock`) and
 the file format (`serializeSongProject`, `parseSongProjectFile`,
 `songFileName`). Tests are in `tests/studioSongEdit.test.js` (CI group
 `portal`). Layout shares the `--st-head-w` CSS variable between the track
 header column, the lane width and the playhead so they stay aligned at
-every breakpoint.
+every breakpoint. `ContextMenu.tsx` is the shared right-click menu;
+`StudioEngine` builds the item list per target (`StudioMenuTarget` in
+`SongTimeline.tsx`), and `SectionStrip.tsx` owns the pointer-based section
+drag.
