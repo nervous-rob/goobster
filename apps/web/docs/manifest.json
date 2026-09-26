@@ -1,0 +1,45 @@
+[
+  { "title": "Start here", "pages": [
+    ["getting-started", "Getting started", "documentation/getting_started.md"],
+    ["rooms", "Find your way around", "documentation/portal_navigation.md"]
+  ] },
+  { "title": "Using Goobster", "pages": [
+    ["knowledge", "Knowledge and memory", "documentation/knowledge_and_memory.md"],
+    ["research", "Research expeditions", "documentation/spitball_expeditions.md"],
+    ["briefs", "Research briefs", "documentation/research_brief.md"],
+    ["projects", "Projects", "documentation/projects.md"],
+    ["attention", "Attention and scheduled work", "documentation/attention.md"],
+    ["settings", "User settings", "documentation/user_settings.md"],
+    ["voice", "Voice chat", "documentation/voice_commands.md"],
+    ["commands", "Discord commands", "documentation/commands.md"],
+    ["music", "Music playback", "documentation/music_system.md"],
+    ["trading", "Trading game", "documentation/jimbucks_exchange.md"]
+  ] },
+  { "title": "Hosting and accounts", "pages": [
+    ["install", "Installation and privacy", "README.md"],
+    ["standalone", "Running without Discord", "documentation/independent_runtime.md"],
+    ["accounts", "Accounts and sign-in", "documentation/identity.md"],
+    ["web-app", "Web app setup", "documentation/webapp_setup.md"],
+    ["configuration", "Configuration reference", "documentation/configuration.md"],
+    ["configuration-guide", "Configuration guide", "documentation/configuration_guide.md"],
+    ["discord", "Discord setup", "documentation/discord_setup.md"],
+    ["docker", "Docker deployment", "documentation/docker_deployment.md"],
+    ["raspberry-pi", "Raspberry Pi", "documentation/raspberry_pi_guide.md"],
+    ["postgres", "PostgreSQL", "documentation/postgres_setup.md"],
+    ["backups", "Backup and restore", "documentation/backup_and_restore.md"],
+    ["shared-instances", "Shared-instance safety", "documentation/shared_instance_safety.md"]
+  ] },
+  { "title": "Technical reference", "pages": [
+    ["architecture", "Architecture", "documentation/architecture.md"],
+    ["execution", "Project execution", "documentation/observatory.md"],
+    ["sandbox", "Code sandbox", "documentation/code_sandbox.md"],
+    ["work-ledger", "Usage and work ledger", "documentation/work_ledger.md"],
+    ["search", "Search service", "documentation/search_service.md"],
+    ["self-knowledge", "Goobster's own documentation", "documentation/self_knowledge.md"],
+    ["documentation-wiki", "Documentation publishing", "documentation/documentation_wiki.md"],
+    ["tutorials", "Tutorial coverage and behavior", "documentation/guided_tutorials_spec.md"],
+    ["troubleshooting", "Troubleshooting", "documentation/skills/troubleshooting.md"],
+    ["project-examples", "Project examples", "documentation/skills/project-examples.md"],
+    ["testing", "Testing", "documentation/testing_guide.md"]
+  ] }
+]

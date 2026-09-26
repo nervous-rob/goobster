@@ -199,6 +199,15 @@ const ROOMS = [
         tutorials: ['admin.instance']
     },
     {
+        id: 'docs',
+        name: 'Documentation',
+        icon: '📖',
+        path: '/docs',
+        group: 'public',
+        atmosphere: 'room-home',
+        tutorials: []
+    },
+    {
         id: 'share',
         name: 'Shared conversation',
         icon: '🔗',
