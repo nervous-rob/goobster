@@ -7,6 +7,7 @@
  * Nothing here starts audio: Tone.js needs a user gesture per context and
  * headless playback timing is not what these checks are about.
  */
+/* global document, getComputedStyle */
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

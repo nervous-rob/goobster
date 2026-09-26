@@ -48,6 +48,7 @@ export const splitClipAt = songEdit.splitClipAt as (
 ) => SongClip[];
 export const mergeAdjacentClips = songEdit.mergeAdjacentClips as (clips: SongClip[], trackId: string) => SongClip[];
 export const moveTrack = songEdit.moveTrack as (tracks: SongTrack[], trackId: string, direction: -1 | 1) => SongTrack[];
+export const copyName = songEdit.copyName as (name: string, taken?: string[]) => string;
 export const duplicateTrack = songEdit.duplicateTrack as (
   project: SongProject,
   trackId: string,

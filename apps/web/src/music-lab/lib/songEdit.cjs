@@ -123,13 +123,28 @@ function moveTrack(tracks, trackId, direction) {
     return next;
 }
 
+/**
+ * Names a duplicate without stacking suffixes: "Kick" → "Kick (copy)",
+ * "Kick (copy)" → "Kick (copy 2)", skipping names already in `taken`.
+ */
+function copyName(name, taken = []) {
+    const base = String(name ?? '').replace(/\s*\(copy(?: \d+)?\)\s*$/u, '').trim() || 'Untitled';
+    const used = new Set(taken.map(n => String(n).trim()));
+    const room = LIMITS.maxNameLength;
+    for (let n = 1; ; n += 1) {
+        const suffix = n === 1 ? ' (copy)' : ` (copy ${n})`;
+        const candidate = `${base.slice(0, Math.max(1, room - suffix.length))}${suffix}`;
+        if (!used.has(candidate)) return candidate;
+    }
+}
+
 /** Clones a track (and its clips) directly beneath the original. */
 function duplicateTrack(project, trackId, makeId) {
     const index = project.tracks.findIndex(t => t.id === trackId);
     if (index < 0) return project;
     const source = project.tracks[index];
     const id = makeId(`track-${source.role}`);
-    const name = `${source.name} (copy)`.slice(0, LIMITS.maxNameLength);
+    const name = copyName(source.name, project.tracks.map(t => t.name));
     const clone = {
         ...source,
         id,
@@ -377,6 +392,7 @@ module.exports = {
     splitClipAt,
     mergeAdjacentClips,
     moveTrack,
+    copyName,
     duplicateTrack,
     stepSeconds,
     songDurationSeconds,

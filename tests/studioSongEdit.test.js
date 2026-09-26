@@ -15,6 +15,7 @@ const {
     splitClipAt,
     mergeAdjacentClips,
     moveTrack,
+    copyName,
     duplicateTrack,
     songDurationSeconds,
     elapsedSeconds,
@@ -187,6 +188,25 @@ describe('tracks', () => {
         expect(cloneClips).toEqual([expect.objectContaining({ startMeasure: 4, lengthMeasures: 4 })]);
         // The source's clips are still there.
         expect(next.clips.filter(c => c.trackId === 't-lead')).toHaveLength(1);
+    });
+
+    test('copyName numbers repeated copies instead of stacking suffixes', () => {
+        expect(copyName('Kick')).toBe('Kick (copy)');
+        expect(copyName('Kick (copy)', ['Kick', 'Kick (copy)'])).toBe('Kick (copy 2)');
+        expect(copyName('Kick (copy 2)', ['Kick', 'Kick (copy)', 'Kick (copy 2)'])).toBe('Kick (copy 3)');
+        expect(copyName('Kick', ['Kick (copy)'])).toBe('Kick (copy 2)');
+        expect(copyName('   ')).toBe('Untitled (copy)');
+        expect(copyName('x'.repeat(60)).length).toBeLessThanOrEqual(40);
+        expect(copyName('x'.repeat(60))).toMatch(/ \(copy\)$/);
+    });
+
+    test('duplicating a duplicate yields "(copy 2)", not "(copy) (copy)"', () => {
+        const once = duplicateTrack(project(), 't-lead', makeId);
+        const cloneId = once.tracks[3].id;
+        const twice = duplicateTrack(once, cloneId, makeId);
+        expect(twice.tracks.map(t => t.name)).toEqual([
+            'kick track', 'bass track', 'melody track', 'melody track (copy)', 'melody track (copy 2)'
+        ]);
     });
 });
 

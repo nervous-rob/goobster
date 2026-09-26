@@ -11,6 +11,7 @@ import { hasStudioHandoff, takeStudioHandoff } from '@music-lab/lib/handoff';
 import { findLibraryDrumPattern, stretchDrumSteps, type LibraryGroove } from '@music-lab/lib/genreLibrary';
 import { downloadBlob, recordingToWavBlob } from '@music-lab/lib/audioExport';
 import {
+  copyName,
   createHistory,
   duplicateTrack,
   elapsedSeconds,
@@ -411,8 +412,8 @@ export function StudioEngine() {
 
   const handleDuplicate = useCallback(() => {
     if (!project) return;
-    adoptProject({ ...project, id: makeSongId('song'), name: `${project.name} (copy)` });
-  }, [adoptProject, project]);
+    adoptProject({ ...project, id: makeSongId('song'), name: copyName(project.name, projects.map(p => p.name)) });
+  }, [adoptProject, project, projects]);
 
   // Delete is two taps: the first arms the button for a few seconds.
   useEffect(() => {
