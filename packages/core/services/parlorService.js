@@ -2093,6 +2093,9 @@ class ParlorService {
             throw new ParlorError(400, 'NO_PARTICIPANTS',
                 'This discussion has no personas - add one first.');
         }
+        const inboxInstructions = conversation.projectId ? await require('./conversationContextService').instructions({
+            userId, kind: 'project', conversationId: conversation.id
+        }) : null;
         this._requireIdleTurn(conversation.id, userId);
         await this._checkRateLimit(userId);
 
@@ -2100,7 +2103,8 @@ class ParlorService {
             aborted: false,
             abort: () => { turnState.aborted = true; },
             startedBy: userId,
-            startedByName: userName || null
+            startedByName: userName || null,
+            inboxInstructions
         };
         this._activeTurns.set(conversation.id, turnState);
         const service = this;
@@ -2110,6 +2114,12 @@ class ParlorService {
             abort: turnState.abort,
             run: async (events = {}) => {
                 try {
+                    if (conversation.projectId) {
+                        await service.requireConversationAccess(userId, conversation.id);
+                        turnState.inboxInstructions = await require('./conversationContextService').instructions({
+                            userId, kind: 'project', conversationId: conversation.id
+                        });
+                    }
                     const userMessage = await db.get(
                         `INSERT INTO parlor_messages (conversationId, role, content, userId, userName)
                          VALUES (@conversationId, 'user', @content, @userId, @userName)
@@ -2369,6 +2379,9 @@ class ParlorService {
             throw new ParlorError(400, 'NOT_SEATED',
                 `${persona.name} is not part of this discussion - add them first.`);
         }
+        const inboxInstructions = conversation.projectId ? await require('./conversationContextService').instructions({
+            userId, kind: 'project', conversationId: conversation.id
+        }) : null;
         this._requireIdleTurn(conversation.id, userId);
         await this._checkRateLimit(userId);
 
@@ -2376,7 +2389,8 @@ class ParlorService {
             aborted: false,
             abort: () => { turnState.aborted = true; },
             startedBy: userId,
-            startedByName: userName || null
+            startedByName: userName || null,
+            inboxInstructions
         };
         this._activeTurns.set(conversation.id, turnState);
         const service = this;
@@ -2554,13 +2568,11 @@ class ParlorService {
 
         // The built-in seat at a project table works against the PROJECT
         // scope instead of a persona workspace (§14 of the Projects spec).
-        const linkedProjectId = persona.builtin
-            ? (await db.get(
-                'SELECT projectId FROM parlor_conversations WHERE id = @id',
-                { id: conversationId }
-            ))?.projectId ?? null
-            : null;
-        const projectSeat = linkedProjectId != null;
+        const linkedProjectId = (await db.get(
+            'SELECT projectId FROM parlor_conversations WHERE id = @id',
+            { id: conversationId }
+        ))?.projectId ?? null;
+        const projectSeat = Boolean(persona.builtin) && linkedProjectId != null;
         const knowledgeCoords = projectSeat
             ? {
                 guildId: dmScopeId(ownerId),
@@ -2569,6 +2581,12 @@ class ParlorService {
             : null;
 
         try {
+            if (linkedProjectId != null) {
+                await this.requireConversationAccess(turnState.startedBy || ownerId, conversationId);
+                turnState.inboxInstructions = await require('./conversationContextService').instructions({
+                    userId: turnState.startedBy || ownerId, kind: 'project', conversationId
+                });
+            }
             const history = (await db.all(
                 `SELECT role, personaId, personaName, userName, content FROM parlor_messages
                  WHERE conversationId = @conversationId
@@ -2631,7 +2649,7 @@ class ParlorService {
             const collector = { files: [] };
             const messages = this._buildPersonaMessages({
                 persona, ownerName, history, retrieved,
-                hasTools: functionDefs.length > 0, projectSeat, spoken
+                hasTools: functionDefs.length > 0, projectSeat, spoken, userInstructions: turnState.inboxInstructions
             });
             const chatOptions = {
                 background: true,
@@ -2649,8 +2667,8 @@ class ParlorService {
                 ownerId, ownerName, conversationId, collector,
                 // The seat acts as whoever spoke; owner-reserved project
                 // actions stay refused by actor resolution over there.
-                actorId: projectSeat ? (turnState.startedBy || ownerId) : null,
-                actorName: projectSeat ? (turnState.startedByName || null) : null
+                actorId: (projectSeat || turnState.inboxInstructions) ? (turnState.startedBy || ownerId) : null,
+                actorName: (projectSeat || turnState.inboxInstructions) ? (turnState.startedByName || null) : null
             });
             const toolPolicy = await require('./personalPolicyService').toolPolicy(interactionContext);
             chatOptions.webSearch = toolPolicy.webSearch && aiService.supportsNativeWebSearch(chatOptions.provider, chatOptions.model, chatOptions.reasoning_effort);
@@ -2746,7 +2764,7 @@ class ParlorService {
      * context as the system prompt, the discussion window as user/assistant
      * turns (other speakers arrive as labeled user messages).
      */
-    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false, spoken = false }) {
+    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false, spoken = false, userInstructions = null }) {
         const workspaceBlock = retrieved.length > 0
             ? retrieved.map(note =>
                 `[note #${note.id}] ${note.title}` +
@@ -2788,7 +2806,7 @@ class ParlorService {
             ] : [])
         ].join('\n');
 
-        const messages = [{ role: 'system', content: system }];
+        const messages = [{ role: 'system', content: [system, userInstructions].filter(Boolean).join('\n\n') }];
         for (const entry of history) {
             if (entry.role === 'persona' && entry.personaId === persona.id) {
                 messages.push({ role: 'assistant', content: entry.content });

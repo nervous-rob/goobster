@@ -108,6 +108,7 @@ const GROUPS = [
             'studioSongEdit',
             'independentRuntime',
             'inboxPagination',
+            'inboxAsk',
             'webAppApi',
             'webAppletService',
             'webChatBranchShare',

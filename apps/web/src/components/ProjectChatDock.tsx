@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamParlorChat, streamParlorNudge } from '../lib/api';
+import { InboxContextChips } from './InboxContextChips';
+import { useInboxDraft } from '../hooks/useInboxDraft';
 import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
@@ -48,6 +50,7 @@ export function ProjectChatDock({
         retry: false
     });
     const conversationId = parlorQ.data?.conversation?.id ?? null;
+    useInboxDraft('project', conversationId, composer, setComposer);
 
     // Same key the Parlor room uses, so parlor-turn invalidation hints
     // (other members talking) refresh this transcript live too.
@@ -224,6 +227,7 @@ export function ProjectChatDock({
                             />
                         )}
                     </div>
+                    <InboxContextChips kind="project" conversationId={conversationId} disabled={sending} />
                     <form
                         className="obs-chat-dock-composer"
                         onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}

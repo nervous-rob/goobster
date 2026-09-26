@@ -312,6 +312,7 @@ class InboxService {
             // The work_failures row this item reports, when it is a failure
             // notice (documentation/work_ledger.md). Null for every other item.
             failure,
+            ask: await require('./conversationContextService').describeItem(row),
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
             archived: Boolean(row.archivedAt),

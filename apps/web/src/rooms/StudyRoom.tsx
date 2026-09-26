@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
+import { InboxContextChips, useInboxContext } from '../components/InboxContextChips';
+import { useInboxDraft } from '../hooks/useInboxDraft';
 import { api, fetchSpeech, streamChat, streamLiveTurn, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
@@ -108,6 +110,9 @@ export function StudyRoom() {
     const [composer, setComposer] = useState('');
     const [sending, setSending] = useState(false);
     const [incognito, setIncognito] = useState(false);
+    useInboxDraft('chat', incognito ? null : activeId, composer, setComposer);
+    const inboxContext = useInboxContext('chat', incognito ? null : activeId);
+    const hasInboxContext = Boolean(inboxContext.data?.contexts.length);
     const [search, setSearch] = useState('');
     const [hits, setHits] = useState<SearchHit[]>([]);
     const [images, setImages] = useState<PendingImage[]>([]);
@@ -158,6 +163,7 @@ export function StudyRoom() {
     // null falls back to the static samples for new/contextless users.
     const suggestionsQ = useQuery({
         queryKey: ['chat-suggestions'],
+        enabled: activeId === null && routeId === null && !incognito,
         queryFn: () => api.chatSuggestions(),
         staleTime: 60 * 60 * 1000,
         retry: false
@@ -840,16 +846,17 @@ export function StudyRoom() {
                     {display.length === 0 && (
                         <div className="empty-state">
                             <img className="empty-logo" src="/app/icons/goobster.svg" alt="" width={60} height={60} />
-                            <div className="empty-title">What can Goobster do for you?</div>
-                            <div className="suggestions">
+                            <div className="empty-title">{hasInboxContext ? 'Ask about this Inbox item' : 'What can Goobster do for you?'}</div>
+                            {hasInboxContext ? <div className="hint">Review the question below, then send when you are ready.</div> : <div className="suggestions">
                                 {suggestions.map((text) => (
                                     <button key={text} type="button" className="suggestion" onClick={() => { setComposer(text); }}>{text}</button>
                                 ))}
-                            </div>
+                            </div>}
                         </div>
                     )}
                 </div>
                 <div className="composer-wrap">
+                    {!incognito && <InboxContextChips kind="chat" conversationId={activeId} disabled={liveTurn} />}
                     {(images.length > 0 || files.length > 0) && (
                         <div className="image-tray">
                             {images.map((image, index) => (

@@ -620,7 +620,7 @@ describe('research tutorial controls (#272)', () => {
 describe('Projects and Activity authored tours (#272)', () => {
     const workflows = require('@goobster/core/config/workflowTutorials');
     test.each(workflows.map(t => [t.id, t]))('%s has safe previews and completes without domain writes', async (id, def) => {
-        expect(def.version).toBe(2);
+        expect(def.version).toBe(id === 'activity.inbox' ? 3 : 2);
         expect(def.steps.length).toBeGreaterThanOrEqual(5);
         expect(new Set(def.steps.map(s => s.id)).size).toBe(def.steps.length);
         const tables = ['kg_nodes', 'observatory_projects', 'spitball_expeditions', 'usage_reservations', 'resource_events'];

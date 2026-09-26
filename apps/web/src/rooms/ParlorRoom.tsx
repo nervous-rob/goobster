@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
+import { InboxContextChips } from '../components/InboxContextChips';
+import { useInboxDraft } from '../hooks/useInboxDraft';
 import { api, streamParlorChat, streamParlorNudge } from '../lib/api';
 import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
@@ -23,6 +25,7 @@ type Member = { userId: string; userName?: string | null };
 type Conversation = {
     id: number; title?: string | null; role?: string;
     ownerId?: string;
+    projectId?: number | null;
     ownerName?: string | null;
     participants?: Persona[];
     members?: Member[];
@@ -110,6 +113,7 @@ export function ParlorRoom() {
     const conversations = convsQ.data?.conversations || [];
     const invites = invitesQ.data?.invites || [];
     const conversation = conversations.find((c) => c.id === activeId) || null;
+    useInboxDraft('project', conversation?.projectId ? activeId : null, composer, setComposer);
     const history = messagesQ.data?.messages || [];
     const display = useMemo(() => [...history, ...streamMessages], [history, streamMessages]);
 
@@ -603,6 +607,7 @@ export function ParlorRoom() {
                         )}
                     </div>
                     <div className="composer-wrap">
+                        {conversation?.projectId && <InboxContextChips kind="project" conversationId={activeId} disabled={sending} />}
                         {mentionSuggestions.length > 0 && (
                             <div className="mention-pop" role="listbox" aria-label="Mention someone">
                                 {mentionSuggestions.map((option, index) => (

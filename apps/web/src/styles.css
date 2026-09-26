@@ -1684,3 +1684,15 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 .model-info-panel dt { opacity: .7; }
 .model-info-panel dd { margin: 0; overflow-wrap: anywhere; }
 .settings-segment { flex-wrap: wrap; }
+
+/* Inbox-to-conversation context. */
+.inbox-ask-details { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.inbox-ask-details .hint { flex-basis: 100%; }
+.inbox-context { padding: 8px 12px; }
+.inbox-context-chip { display: inline-flex; gap: 8px; align-items: center; max-width: 100%; padding: 2px 4px 2px 12px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-raise); }
+.inbox-context-chip a { overflow-wrap: anywhere; color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.inbox-row .hint a { color: var(--accent); }
+@media (max-width: 700px) {
+    .inbox-row:not(.open) .inbox-ask-compact { display: none; }
+    .inbox-row.open .inbox-ask-compact { display: none; }
+}

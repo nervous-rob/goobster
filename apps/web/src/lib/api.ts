@@ -284,6 +284,13 @@ export const api = {
         if (cursor) params.set('cursor', cursor);
         return request<InboxList>(`/api/app/inbox?${params}`);
     },
+    inboxItem: (id: number) => request<InboxItem>(`/api/app/inbox/${id}`),
+    inboxAsk: (id: number, inProject = false) => request<{ kind: 'chat' | 'project'; conversationId: number; path: string; suggestedQuestion: string }>(
+        `/api/app/inbox/${id}/ask`, { method: 'POST', body: { inProject } }),
+    conversationContext: (kind: 'chat' | 'project', id: number) => request<{ contexts: Array<{ id: number; itemId: number; title: string; unavailable: boolean }> }>(
+        `/api/app/conversation-context/${kind}/${id}`),
+    removeConversationContext: (kind: 'chat' | 'project', id: number, contextId: number) => request(
+        `/api/app/conversation-context/${kind}/${id}/${contextId}`, { method: 'DELETE' }),
     inboxRead: (id: number, read = true) =>
         request<InboxItem>(`/api/app/inbox/${id}/read`, { method: 'POST', body: { read } }),
     inboxReadAll: () => request<{ updated: number }>('/api/app/inbox/read-all', { method: 'POST' }),

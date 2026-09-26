@@ -229,6 +229,8 @@ CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(guildId, subjectType, subj
 
 CREATE TABLE IF NOT EXISTS followups (
     id INTEGER PRIMARY KEY,
+    -- Server-authored job-completion reminders preserve their source (#273).
+    jobId INTEGER,
     guildId TEXT NOT NULL,
     channelId TEXT NOT NULL,
     userId TEXT,
@@ -3050,3 +3052,19 @@ CREATE TABLE IF NOT EXISTS operator_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_operator_audit_time ON operator_audit(createdAt);
 CREATE INDEX IF NOT EXISTS idx_operator_audit_actor ON operator_audit(actor, createdAt);
+
+-- Inbox context references. No snapshot or draft content is stored here.
+-- Deliberately no Inbox FK: a deleted item remains a removable, unavailable
+-- chip and fails closed at send, rather than silently changing the question.
+CREATE TABLE IF NOT EXISTS conversation_contexts (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    inboxItemId INTEGER NOT NULL,
+    webConversationId INTEGER REFERENCES web_conversations(id) ON DELETE CASCADE,
+    parlorConversationId INTEGER REFERENCES parlor_conversations(id) ON DELETE CASCADE,
+    CHECK ((webConversationId IS NOT NULL AND parlorConversationId IS NULL)
+        OR (webConversationId IS NULL AND parlorConversationId IS NOT NULL)),
+    UNIQUE (webConversationId, userId),
+    UNIQUE (parlorConversationId, userId)
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_contexts_owner ON conversation_contexts(userId, inboxItemId);

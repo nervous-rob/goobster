@@ -116,13 +116,24 @@ Respond with ONLY the message text.`,
     async _deliverPersonal(followup, gateway) {
         const message = await this._compose(followup);
         const note = String(followup.note || '').trim();
+        // Only server-authored completion reminders carry jobId. Resolve it
+        // under the reminder owner's identity; never infer ids from prose.
+        const db = require('../db');
+        const job = followup.jobId ? await db.get(
+            `SELECT j.id, p.userId AS ownerId, p.slug FROM observatory_jobs j
+             JOIN observatory_projects p ON p.id = j.projectId
+             WHERE j.id = @id AND j.userId = @userId`,
+            { id: followup.jobId, userId: followup.userId }) : null;
+        const failure = job ? await db.get(
+            `SELECT id FROM work_failures WHERE kind = 'job' AND workId = @workId AND actor = @userId
+             ORDER BY id DESC LIMIT 1`, { workId: String(job.id), userId: followup.userId }) : null;
         await inboxService.deliver({
             userId: followup.userId,
             kind: 'reminder',
             title: `Reminder: ${note.length > 80 ? `${note.slice(0, 79)}…` : note}`,
             body: message,
-            source: { type: 'followup', id: followup.id },
-            link: '/activity/scheduled',
+            source: failure ? { type: 'work_failure', id: failure.id } : job ? { type: 'job', id: job.id } : { type: 'followup', id: followup.id },
+            link: job ? `/projects/${encodeURIComponent(job.ownerId)}/${encodeURIComponent(job.slug)}/runs` : '/activity/scheduled',
             dedupeKey: `followup:${followup.id}:${followup.dueAt}`,
             discord: gateway ? { gateway, payload: { content: `⏰ ${message}`, allowedMentions: { users: [], roles: [] } } } : false
         });

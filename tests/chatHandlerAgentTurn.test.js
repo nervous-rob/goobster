@@ -238,3 +238,16 @@ test.each(['portal', 'discord-dm', 'guild'])('private runtime preferences stay s
         expect(params.functionDefs).toEqual([]);
     }
 });
+
+
+test('Inbox context reaches the shared instructions slot ahead of the user message', async () => {
+    aiService.chat.mockResolvedValue({ content: 'The header was rejected.', toolCalls: [] });
+    const { interaction } = webInteraction({ text: 'Why did this fail?' });
+    interaction.inboxInstructions = 'INBOX CONTEXT: server-reloaded failure evidence';
+    await handleChatInteraction(interaction);
+    const { messages } = orchestrator.runAgentLoop.mock.calls[0][0];
+    const system = messages.findIndex(message => message.role === 'system' && message.content.includes(interaction.inboxInstructions));
+    const user = messages.findIndex(message => message.role === 'user' && message.content.includes('Why did this fail?'));
+    expect(system).toBeGreaterThanOrEqual(0);
+    expect(user).toBeGreaterThan(system);
+});
