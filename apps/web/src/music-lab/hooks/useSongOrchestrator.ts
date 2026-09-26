@@ -304,21 +304,30 @@ export function useSongOrchestrator() {
         }
       }
 
+      // Drum roles share one synth each; two tracks of the same role hitting
+      // the same step must trigger it once (Tone throws on a same-time restart)
+      // while every track still lights up.
+      const drumRolesHit = new Set<'kick' | 'snare' | 'hihat'>();
+
       cfg.tracks.forEach(t => {
         if (t.mute || !t.audible[measure]) return;
 
         if (t.role === 'kick' || t.role === 'snare' || t.role === 'hihat') {
           if (inFill && t.role !== 'kick') return;
           if (!t.drumSteps?.[sub]) return;
+          const first = !drumRolesHit.has(t.role);
+          drumRolesHit.add(t.role);
           if (t.role === 'kick') {
-            drums.kick.triggerAttackRelease('C1', '8n', time);
+            if (first) drums.kick.triggerAttackRelease('C1', '8n', time);
             fired.push({ id: t.id, intensity: isStrong ? 1 : 0.7 });
           } else if (t.role === 'snare') {
-            drums.snareNoise.triggerAttackRelease('8n', time);
-            drums.snareBody.triggerAttackRelease('G3', '8n', time);
+            if (first) {
+              drums.snareNoise.triggerAttackRelease('8n', time);
+              drums.snareBody.triggerAttackRelease('G3', '8n', time);
+            }
             fired.push({ id: t.id, intensity: 0.85 });
           } else {
-            drums.hihat.triggerAttackRelease(400, '32n', time);
+            if (first) drums.hihat.triggerAttackRelease(400, '32n', time);
             fired.push({ id: t.id, intensity: 0.5 });
           }
           return;
