@@ -5,6 +5,7 @@
  * api app passes a RemoteGateway.
  */
 
+const path = require('node:path');
 const { toGateway } = require('../gateway');
 const eventBusService = require('../services/eventBusService');
 const webSessionService = require('../services/webSessionService');
@@ -41,6 +42,7 @@ const spitballExpeditionRunner = require('../services/spitballExpeditionRunner')
 const expeditionBriefService = require('../services/expeditionBriefService');
 const knowledgeTransferService = require('../services/knowledgeTransferService');
 const instanceStateService = require('../services/instanceStateService');
+const { workspaceRoot } = require('../runtimePaths');
 
 function createWebAppContext({ client = null, gateway = null, config, logger = console, deps = {} }) {
     const webappConfig = config.webapp || {};
@@ -53,6 +55,10 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         config,
         logger,
         devMode: webappConfig.devMode === true,
+        // Where the built React client lives. Tests point this at a
+        // throwaway directory so parallel suites never share (or delete)
+        // one another's index.html fixture.
+        webDistDir: deps.webDistDir || path.join(workspaceRoot, 'apps/web/dist'),
         clientId: config.clientId,
         // Shared with the Activity: one Discord application, one secret.
         clientSecret: process.env.DISCORD_CLIENT_SECRET

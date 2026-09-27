@@ -40,9 +40,9 @@ const NATIVE_USER = 'usr_0f7f5d0e-1111-4a2b-9c3d-000000000001';
 const NATIVE_PEER = 'usr_0f7f5d0e-2222-4a2b-9c3d-000000000002';
 const GUILD = '200000000000000001';
 
-const DIST_DIR = path.join(__dirname, '../apps/web/dist');
+// A private dist directory so parallel suites never share one fixture.
+const DIST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-web-dist-'));
 const DIST_INDEX = path.join(DIST_DIR, 'index.html');
-let wroteDistFixture = false;
 
 let server;
 let port;
@@ -90,15 +90,12 @@ async function member(id, displayName, loginName) {
 
 beforeAll((done) => {
     discordConfig.setEnabledForTests(false);
-    if (!fs.existsSync(DIST_INDEX)) {
-        fs.mkdirSync(DIST_DIR, { recursive: true });
-        fs.writeFileSync(DIST_INDEX, '<!doctype html><html><body><div id="root"></div></body></html>');
-        wroteDistFixture = true;
-    }
+    fs.writeFileSync(DIST_INDEX, '<!doctype html><html><body><div id="root"></div></body></html>');
     const ctx = createWebAppContext({
         gateway: new DisabledGateway(),
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
-        logger: { error: () => {}, warn: () => {}, info: () => {} }
+        logger: { error: () => {}, warn: () => {}, info: () => {} },
+        deps: { webDistDir: DIST_DIR }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -116,10 +113,7 @@ afterAll(async () => {
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
     }
-    if (wroteDistFixture) {
-        try { fs.unlinkSync(DIST_INDEX); } catch { /* already gone */ }
-        try { fs.rmdirSync(DIST_DIR); } catch { /* dist had other files */ }
-    }
+    fs.rmSync(DIST_DIR, { recursive: true, force: true });
 });
 
 beforeEach(async () => {

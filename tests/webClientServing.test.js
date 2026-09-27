@@ -17,7 +17,9 @@ const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/app
 const eventBusService = require('@goobster/core/services/eventBusService');
 
 const BOT = '900000000000000001';
-const DIST_DIR = path.join(__dirname, '../apps/web/dist');
+// A private dist directory: parallel suites must never share (or delete)
+// one another's index.html, and the real apps/web/dist stays untouched.
+const DIST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-web-dist-'));
 const DIST_INDEX = path.join(DIST_DIR, 'index.html');
 const FIXTURE = '<!doctype html><html><head><title>spa-fixture</title><link rel="stylesheet" href="/app/style.css"></head><body><div id="root"></div></body></html>';
 
@@ -64,7 +66,7 @@ function mount() {
         client: fakeClient,
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { chat: fakeChat }
+        deps: { chat: fakeChat, webDistDir: DIST_DIR }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -105,26 +107,12 @@ describe('parseSse', () => {
 });
 
 describe('React client serving', () => {
-    let wroteFixture = false;
-    let existingIndex = null;
-
     beforeAll(() => {
-        if (fs.existsSync(DIST_INDEX)) {
-            existingIndex = fs.readFileSync(DIST_INDEX, 'utf8');
-        } else {
-            fs.mkdirSync(DIST_DIR, { recursive: true });
-            wroteFixture = true;
-        }
         fs.writeFileSync(DIST_INDEX, FIXTURE);
     });
 
     afterAll(async () => {
-        if (wroteFixture) {
-            try { fs.unlinkSync(DIST_INDEX); } catch { /* already gone */ }
-            try { fs.rmdirSync(DIST_DIR); } catch { /* dist had other files */ }
-        } else if (existingIndex !== null) {
-            fs.writeFileSync(DIST_INDEX, existingIndex);
-        }
+        fs.rmSync(DIST_DIR, { recursive: true, force: true });
         await eventBusService.close();
         await db.closeConnection();
         for (const suffix of ['', '-wal', '-shm']) {
@@ -165,16 +153,23 @@ describe('React client serving', () => {
     });
 
     test('a missing build answers WEB_CLIENT_UNBUILT, never a fallback client', async () => {
-        const backup = DIST_INDEX + '.bak-test';
-        fs.renameSync(DIST_INDEX, backup);
-        const { server, port } = await mount();
+        const unbuilt = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-web-unbuilt-'));
+        const ctx = createWebAppContext({
+            client: fakeClient,
+            config: { clientId: '123', webapp: { enabled: true, devMode: true } },
+            logger: { error: () => {}, warn: () => {}, info: () => {} },
+            deps: { chat: fakeChat, webDistDir: unbuilt }
+        });
+        const app = express();
+        app.use(createWebAppApp(ctx));
+        const { server, port } = await listen(app);
         try {
             const page = await request(port, { reqPath: '/app/' });
             expect(page.status).toBe(503);
             expect(page.json.error.code).toBe('WEB_CLIENT_UNBUILT');
         } finally {
-            fs.renameSync(backup, DIST_INDEX);
             await new Promise((resolve) => server.close(resolve));
+            fs.rmSync(unbuilt, { recursive: true, force: true });
         }
     });
 
