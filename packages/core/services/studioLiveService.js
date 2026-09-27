@@ -12,13 +12,20 @@
  * another editor re-apply its own edit on top so every browser converges
  * on the stored document.
  *
- * Playback is deliberately not synchronised: each browser plays the shared
- * arrangement with its own transport and its own audio engine.
+ * Playback is shared at the transport level only: the room remembers one
+ * transport state (playing or not, the grid step it started from, the
+ * server time it started, who pressed the button) and relays every
+ * play / pause / stop / seek to everybody, sender included. Each browser
+ * still renders the audio with its own engine - the server never touches
+ * sound - and a `ping` / `pong` pair lets a client estimate the server
+ * clock so it can join a running playback at the right step.
  *
  * Messages in:  join { songId } · patch { opId, patch } · presence { trackId,
- *               sectionId, clipId } · sync · leave
+ *               sectionId, clipId, cell } · transport { action, step } ·
+ *               ping { t } · sync · leave
  * Messages out: joined · patch · snapshot · peer_joined · peer_left ·
- *               peer_presence · members · song_deleted · removed · error
+ *               peer_presence · transport · pong · members · song_deleted ·
+ *               removed · error
  */
 
 const studioSongService = require('./studioSongService');
@@ -27,6 +34,25 @@ const { consumeWindow } = require('../utils/slidingWindowLimit');
 const JOIN_RATE_LIMIT = 60;
 const JOIN_RATE_WINDOW_MS = 10 * 60 * 1000;
 const MAX_PEERS_PER_ROOM = 32;
+const TRANSPORT_ACTIONS = new Set(['play', 'pause', 'stop', 'seek']);
+/** Grid steps are bounded by the sanitizer's 4096 measures × 64 subdivisions. */
+const MAX_STEP = 4096 * 64;
+
+function intInRange(value, min, max) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min || n > max) return null;
+    return n;
+}
+
+/** A piano-roll cell somebody is hovering: { measure, sub, pitch } or null. */
+function pickCell(value) {
+    if (!value || typeof value !== 'object') return null;
+    const measure = intInRange(value.measure, 0, 4096);
+    const sub = intInRange(value.sub, 0, 64);
+    const pitch = intInRange(value.pitch, -48, 48);
+    if (measure === null || sub === null || pitch === null) return null;
+    return { measure, sub, pitch };
+}
 
 class StudioLiveError extends Error {
     constructor(status, code, message) {
@@ -47,7 +73,7 @@ class StudioLiveService {
     constructor({ songs = studioSongService, logger = null } = {}) {
         this._songs = songs;
         this._logger = logger;
-        /** @type {Map<string, { songId: string, clients: Set<object>, queue: Promise<void> }>} */
+        /** @type {Map<string, { songId: string, clients: Set<object>, queue: Promise<void>, transport: object|null }>} */
         this._rooms = new Map();
         this.StudioLiveError = StudioLiveError;
     }
@@ -62,6 +88,12 @@ class StudioLiveService {
         return room ? [...room.clients].map(c => this._peerView(c)) : [];
     }
 
+    /** Test/inspection seam: the room's shared transport, if anyone set one. */
+    transportOf(songId) {
+        const room = this._rooms.get(String(songId));
+        return room?.transport ?? null;
+    }
+
     _peerView(client) {
         return { peerId: client.peerId, userId: client.userId, userName: client.userName };
     }
@@ -69,7 +101,7 @@ class StudioLiveService {
     _room(songId) {
         let room = this._rooms.get(songId);
         if (!room) {
-            room = { songId, clients: new Set(), queue: Promise.resolve() };
+            room = { songId, clients: new Set(), queue: Promise.resolve(), transport: null };
             this._rooms.set(songId, room);
         }
         return room;
@@ -181,7 +213,9 @@ class StudioLiveService {
             ownerId: song.ownerId,
             project: song.project,
             members: song.members,
-            peers
+            peers,
+            transport: room.transport,
+            serverTime: Date.now()
         });
         this._broadcast(room, 'peer_joined', { songId: song.id, ...this._peerView(client) }, { except: client });
     }
@@ -245,8 +279,35 @@ class StudioLiveService {
             userId: client.userId,
             trackId: pick('trackId'),
             sectionId: pick('sectionId'),
-            clipId: pick('clipId')
+            clipId: pick('clipId'),
+            cell: pickCell(message.cell)
         }, { except: client });
+    }
+
+    /**
+     * Shared transport. The room keeps the latest state so a late joiner can
+     * fall in; the broadcast goes to the sender too, so every browser -
+     * including the one that pressed the button - reacts to the same stamped
+     * message. Steps are grid steps (measure × subdivisions + sub), which is
+     * what the Studio's conductor counts in, so no tempo math lives here.
+     */
+    _transport(client, message) {
+        const room = client.room;
+        const action = TRANSPORT_ACTIONS.has(message.action) ? message.action : null;
+        if (!action) throw new StudioLiveError(400, 'BAD_TRANSPORT', 'transport needs an action: play, pause, stop or seek.');
+        const step = intInRange(message.step, 0, MAX_STEP) ?? 0;
+        const previous = room.transport;
+        const playing = action === 'play' || (action === 'seek' && Boolean(previous?.playing));
+        room.transport = {
+            playing,
+            step: action === 'stop' ? 0 : step,
+            at: Date.now(),
+            action,
+            by: client.peerId,
+            userId: client.userId,
+            userName: client.userName
+        };
+        this._broadcast(room, 'transport', { songId: room.songId, ...room.transport });
     }
 
     /**
@@ -285,6 +346,10 @@ class StudioLiveService {
                     await this._patch(client, message);
                 } else if (message.type === 'presence') {
                     this._presence(client, message);
+                } else if (message.type === 'transport') {
+                    this._transport(client, message);
+                } else if (message.type === 'ping') {
+                    this._send(client, 'pong', { t: Number.isFinite(Number(message.t)) ? Number(message.t) : null, serverTime: Date.now() });
                 } else if (message.type === 'sync') {
                     await this._sync(client);
                 } else if (message.type === 'leave') {

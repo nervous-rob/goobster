@@ -440,17 +440,66 @@ describe('live room /api/app/studio/live', () => {
         expect(bad.code).toBe('EMPTY_PATCH');
         expect(friend.ofType('error')).toHaveLength(0);
 
-        // Presence relays to peers, never back to the sender.
-        owner.send({ type: 'presence', trackId: 't1', sectionId: null });
+        // Presence relays to peers, never back to the sender. A piano-roll
+        // cell rides along when it is well-formed and is dropped otherwise.
+        owner.send({ type: 'presence', trackId: 't1', sectionId: null, cell: { measure: 2, sub: 3, pitch: -5 } });
         const presence = await friend.waitFor('peer_presence');
-        expect(presence).toMatchObject({ userId: OWNER, trackId: 't1', sectionId: null });
+        expect(presence).toMatchObject({ userId: OWNER, trackId: 't1', sectionId: null, cell: { measure: 2, sub: 3, pitch: -5 } });
         expect(owner.ofType('peer_presence')).toHaveLength(0);
+        owner.send({ type: 'presence', trackId: 't1', cell: { measure: 'x', sub: 1, pitch: 0 } });
+        const noCell = await friend.waitFor(m => m.type === 'peer_presence' && m.cell === null);
+        expect(noCell.trackId).toBe('t1');
 
         // sync answers with the current document.
         friend.send({ type: 'sync' });
         const snapshot = await friend.waitFor('snapshot');
         expect(snapshot.version).toBe(4);
         expect(snapshot.project.bpm).toBe(111);
+
+        owner.close();
+        friend.close();
+    });
+
+    test('shared transport is stamped, relayed to everyone and handed to late joiners', async () => {
+        const song = await studioSongs.createSong({ ownerId: OWNER, project: project() });
+        await studioSongs.addMember({ userId: OWNER, songId: song.id, memberId: FRIEND });
+        const owner = await joinLive({ userId: OWNER, userName: 'Rob', songId: song.id });
+        expect(owner.ofType('joined')[0].transport).toBeNull();
+        expect(typeof owner.ofType('joined')[0].serverTime).toBe('number');
+        const ownerPeer = owner.ofType('joined')[0].peerId;
+
+        // The clock probe answers with the caller's stamp and server time.
+        owner.send({ type: 'ping', t: 12345 });
+        const pong = await owner.waitFor('pong');
+        expect(pong.t).toBe(12345);
+        expect(Math.abs(pong.serverTime - Date.now())).toBeLessThan(5000);
+
+        const before = Date.now();
+        owner.send({ type: 'transport', action: 'play', step: 16 });
+        const played = await owner.waitFor('transport');
+        expect(played).toMatchObject({ songId: song.id, playing: true, step: 16, action: 'play', by: ownerPeer, userId: OWNER, userName: 'Rob' });
+        expect(played.at).toBeGreaterThanOrEqual(before);
+        expect(liveService.transportOf(song.id)).toMatchObject({ playing: true, step: 16 });
+
+        // Someone joining mid-song gets the running transport in `joined`.
+        const friend = await joinLive({ userId: FRIEND, userName: 'Sam', songId: song.id });
+        expect(friend.ofType('joined')[0].transport).toMatchObject({ playing: true, step: 16, by: ownerPeer });
+
+        // Anyone may drive it; a seek while playing keeps it playing, a stop resets.
+        friend.send({ type: 'transport', action: 'seek', step: 40 });
+        const sought = await owner.waitFor(m => m.type === 'transport' && m.action === 'seek');
+        expect(sought).toMatchObject({ playing: true, step: 40, userId: FRIEND });
+        friend.send({ type: 'transport', action: 'pause', step: 44 });
+        await owner.waitFor(m => m.type === 'transport' && m.action === 'pause');
+        expect(liveService.transportOf(song.id)).toMatchObject({ playing: false, step: 44 });
+        friend.send({ type: 'transport', action: 'stop', step: 999 });
+        const stopped = await owner.waitFor(m => m.type === 'transport' && m.action === 'stop');
+        expect(stopped).toMatchObject({ playing: false, step: 0 });
+
+        // Junk is refused on the sender's socket only.
+        friend.send({ type: 'transport', action: 'rewind' });
+        expect((await friend.waitFor('error')).code).toBe('BAD_TRANSPORT');
+        expect(owner.ofType('error')).toHaveLength(0);
 
         owner.close();
         friend.close();
