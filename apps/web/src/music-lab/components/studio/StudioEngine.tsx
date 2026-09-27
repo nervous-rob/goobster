@@ -302,8 +302,7 @@ export function StudioEngine() {
           return;
         }
         if (audioReadyRef.current) {
-          seekStep(step);
-          void start();
+          void start({ stepAt: () => liveStepOf(transport, serverNowRef.current()) ?? step });
         } else {
           setPlayhead(stepToPlayhead(step));
           showNotice(`${who} pressed Play — press Play here to listen in sync.`);
@@ -1292,15 +1291,15 @@ export function StudioEngine() {
     if (isShared && followTransportRef.current && remote?.playing && remote.by !== shared?.peerId) {
       const liveStep = liveStepOf(remote, serverNowRef.current());
       if (liveStep !== null) {
-        seekStep(liveStep);
-        await start();
+        // Audio may still need unlocking here; take the position once it has.
+        await start({ stepAt: () => liveStepOf(remote, serverNowRef.current()) ?? liveStep });
         return;
       }
     }
     await start();
     // Read after start(): it may have snapped the step back into the play region.
     announce('play', currentStep());
-  }, [announce, currentStep, isShared, liveStepOf, pause, seekStep, start]);
+  }, [announce, currentStep, isShared, liveStepOf, pause, start]);
 
   // Fully stop (not pause) so the song's Transport event is cleared before
   // the wizard's audition orchestrator takes over the shared Transport.

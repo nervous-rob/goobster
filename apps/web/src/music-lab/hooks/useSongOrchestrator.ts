@@ -410,7 +410,14 @@ export function useSongOrchestrator() {
     callbacksRef.current.onPlayState?.(false);
   }, []);
 
-  const start = useCallback(async () => {
+  /**
+   * Start (or resume) playback. `stepAt`, when given, is asked for the step
+   * to start from *after* audio and instruments are ready — unlocking audio
+   * and decoding samples can take a good part of a second on a first Play,
+   * and a browser falling in with a shared transport wants the position as
+   * of the moment sound actually starts, not as of the button press.
+   */
+  const start = useCallback(async (opts?: { stepAt?: () => number }) => {
     await initAudio();
     const Tone = toneRef.current;
     if (!Tone) return;
@@ -423,6 +430,13 @@ export function useSongOrchestrator() {
     applyTransportSettings();
     ensureInstruments();
     applyMix();
+
+    if (opts?.stepAt) {
+      const subs = Math.max(1, totalSubdivisions(cfg.grouping));
+      const lastStep = Math.max(0, cfg.totalMeasures * subs - 1);
+      stepRef.current = Math.max(0, Math.min(Math.round(opts.stepAt()), lastStep));
+      releaseAllChords();
+    }
 
     if (pausedRef.current) {
       Tone.Transport.start();
@@ -451,7 +465,7 @@ export function useSongOrchestrator() {
     pausedRef.current = false;
     setIsPlaying(true);
     callbacksRef.current.onPlayState?.(true);
-  }, [applyMix, applyTransportSettings, clearRepeat, ensureInstruments, initAudio, tick]);
+  }, [applyMix, applyTransportSettings, clearRepeat, ensureInstruments, initAudio, releaseAllChords, tick]);
 
   const toggle = useCallback(async () => {
     if (playingRef.current) {
