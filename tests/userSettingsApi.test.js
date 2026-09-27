@@ -24,9 +24,9 @@ const BOT = '900000000000000001';
 let server;
 let port;
 
-const DIST_DIR = path.join(__dirname, '../apps/web/dist');
+// A private dist directory so parallel suites never share one fixture.
+const DIST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-web-dist-'));
 const DIST_INDEX = path.join(DIST_DIR, 'index.html');
-let wroteDistFixture = false;
 
 const fakeClient = {
     user: { id: BOT, username: 'Goobster' },
@@ -71,16 +71,12 @@ let cookie;
 const authed = (opts) => request({ ...opts, headers: { Cookie: cookie, ...(opts.headers || {}) } });
 
 beforeAll((done) => {
-    if (!fs.existsSync(DIST_INDEX)) {
-        fs.mkdirSync(DIST_DIR, { recursive: true });
-        fs.writeFileSync(DIST_INDEX, '<!doctype html><html><body><div id="root"></div></body></html>');
-        wroteDistFixture = true;
-    }
+    fs.writeFileSync(DIST_INDEX, '<!doctype html><html><body><div id="root"></div></body></html>');
     const ctx = createWebAppContext({
         client: fakeClient,
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { voice: fakeVoice }
+        deps: { voice: fakeVoice, webDistDir: DIST_DIR }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -95,7 +91,7 @@ afterAll(async () => {
     await new Promise(resolve => server.close(resolve));
     await db.closeConnection();
     for (const suffix of ['', '-wal', '-shm']) fs.rmSync(TEST_DB + suffix, { force: true });
-    if (wroteDistFixture) fs.rmSync(DIST_INDEX, { force: true });
+    fs.rmSync(DIST_DIR, { recursive: true, force: true });
 });
 
 describe('auth', () => {
