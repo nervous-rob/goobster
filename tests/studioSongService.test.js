@@ -414,13 +414,19 @@ describe('live room /api/app/studio/live', () => {
         await friend.waitFor(m => m.type === 'patch' && m.opId === 'op-2');
         await owner.waitFor(m => m.type === 'patch' && m.opId === 'op-f');
 
+        // The friend's patch travels on another socket, so where it lands
+        // relative to op-1/op-2 is up to arrival order. What the room does
+        // guarantee: one sender's patches keep their order, versions climb
+        // by one per accepted patch, and every client sees the same sequence.
         const echoes = owner.ofType('patch').filter(m => m.from === ownerPeer);
         expect(echoes.map(m => m.opId)).toEqual(['op-1', 'op-2']);
-        expect(echoes[0].version).toBe(2);
-        expect(echoes[1].version).toBe(3);
+        expect(echoes[1].version).toBeGreaterThan(echoes[0].version);
         const relayed = friend.ofType('patch').filter(m => m.from === ownerPeer);
         expect(relayed.map(m => m.opId)).toEqual(['op-1', 'op-2']);
         expect(relayed[0].patch).toEqual({ settings: { bpm: 111 } });
+        const sequence = client => client.ofType('patch').map(m => `${m.opId}@${m.version}`);
+        expect(sequence(owner)).toEqual(sequence(friend));
+        expect(owner.ofType('patch').map(m => m.version)).toEqual([2, 3, 4]);
 
         const stored = await studioSongs.getSong(OWNER, song.id);
         expect(stored.version).toBe(4);
