@@ -593,6 +593,16 @@ async function main() {
     });
 
     const app = express();
+    app.post('/e2e/fixtures/account-export', express.json(), async (req, res) => {
+        const userId = String(req.body.userId);
+        const project = await observatory.createProject({ userId, name: 'Portable account fixture' });
+        await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user',
+            mutations: { upsert: [{ type: 'concept', label: 'Portable evidence fixture', content: 'This saved knowledge belongs in the account archive.' }] } });
+        const directory = path.join(DATA_DIR, 'sandbox', 'projects', userId, project.slug);
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(path.join(directory, 'result.csv'), 'observation,value\nfictional,42\n');
+        res.json({ project });
+    });
     app.post('/e2e/fixtures/followed-sources', express.json(), async (req, res) => {
         const userId = String(req.body.userId);
         if (req.body.advance) { sourceNow += 3600_000; sourceVersion++; res.json({ ok: true }); return; }

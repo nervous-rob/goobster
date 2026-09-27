@@ -141,6 +141,54 @@ preview → confirm pattern as memory retention.
   Saved knowledge artifacts and project files retain their independent lifecycles.
 - Preferred microphone selection applies to batch and live capture. A removed device
   retries with the system mic and reports the fallback; permission denial does not retry.
-- Export currently contains settings and the transparency report, as its label states.
-  A complete portable account archive (including owned content and asset bytes) remains
-  a separate unshipped part of PR10; this download does not claim to provide it.
+- The small settings + transparency report JSON download remains available alongside
+  the portable account archive described below.
+
+## Portable account export
+
+In **Settings → Memory & privacy → Export your account**, choose **Create account
+export**. Preparation runs in the background; you can leave the page. Inbox tells
+you when the archive is ready, or when preparation fails. Return to this section
+to download or delete it. Exporting does not run models or restart saved work.
+
+The download is a `.tar.gz` archive. Extract it with your archive utility (or
+`tar -xzf goobster-account-YYYY-MM-DD.tar.gz`), then open `README.md`.
+
+| Location | Contents |
+| --- | --- |
+| `notes/`, `tags/` | Markdown notes with tags, curation, sources, provenance and links to related notes |
+| `chats/` | Retained private chats and owned discussions, with author attribution and attachment links |
+| `projects/` | Owned project plans, workspace files, saved asset versions and run outputs retained in the workspace |
+| `research/` | Ready research briefs as Markdown, preserving citations, edits and review status |
+| `data/` | JSON records for the above plus personal memory text, facts, settings, tasks, automations, research evidence, followed sources, Inbox, applets and tutorial progress |
+| `attachments/` | Available local files referenced by included chats, Inbox items and knowledge artifacts |
+| `manifest.json` | Original IDs, JSON pointers, relationships, file sizes and SHA-256 hashes, plus unavailable-file warnings |
+| `settings-and-report.json` | The existing settings and transparency report |
+
+The account archive includes private data and owned projects/discussions. Published
+copies retain their publisher attribution; another person's private original and
+its audience are excluded. Joined projects, server transcripts, credentials,
+integration secrets, login/share tokens, caches, vector indexes and optional
+game/trading/deck stores are outside this archive. External URLs remain references;
+exporting never downloads them. This is not an instance backup. Import is a separate
+future feature; the manifest preserves IDs and relationships for that work.
+
+Database records come from one consistent snapshot. Files are copied afterwards;
+a file changing during its copy fails the export so you can retry when work is
+idle. A missing file, link, or unsafe path is explicitly recorded in the manifest
+and shown as a warning count in Settings. Check these warnings before treating
+the archive as a complete copy of your attachments. Symlinked files/directories
+and hard-linked files are excluded.
+
+Archives are private, **unencrypted**, and available only to the signed-in owner.
+They expire 24 hours after the request. Delete removes an archive or cancels its
+generation without deleting the source content. Forget-me also removes export
+jobs and files. Already downloaded copies remain your responsibility. Restoring
+an instance backup invalidates temporary export jobs; request a fresh archive.
+
+The worker handles one export at a time, including while autonomous work is
+paused. Each account may have one active request and two available archives,
+with a one-minute interval between requests. Preparation is bounded to 15 minutes,
+100,000 database records / 64 MiB of record text, 50,000 archive entries and 5 GiB
+of uncompressed content. Exceeding a limit fails visibly instead of publishing
+truncated records. Expired/failed job metadata is retained for up to seven days.

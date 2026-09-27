@@ -1,6 +1,7 @@
 import type { StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
+import type { AccountExportJob } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -189,6 +190,9 @@ export const api = {
     applyChatHistoryRetention: (days: number | null, expectedRevision?: number | null) =>
         request<SectionUpdateResponse & { purged: number }>('/api/app/settings/memory/chat-history', { method: 'POST', body: { days, expectedRevision } }),
     exportSettings: () => request('/api/app/settings/export'),
+    accountExports: () => request('/api/app/settings/exports') as Promise<{ exports: AccountExportJob[] }>,
+    createAccountExport: () => request('/api/app/settings/exports', { method: 'POST' }) as Promise<AccountExportJob>,
+    deleteAccountExport: (id: string) => request(`/api/app/settings/exports/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     listSettingsSessions: () => request<{
         id: number; userName: string | null; avatar: string | null;
         createdAt: string; lastSeenAt: string | null; expiresAt: string; current: boolean;

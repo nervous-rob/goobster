@@ -1078,3 +1078,16 @@ export type StudioSongSummary = {
     memberCount: number; createdAt: string; updatedAt: string;
 };
 export type StudioSongDetail = StudioSongSummary & { project: unknown; members: StudioSongMember[] };
+
+export type AccountExportJob = {
+    id: string;
+    status: 'QUEUED' | 'RUNNING' | 'READY' | 'FAILED' | 'EXPIRED';
+    createdAt: string;
+    finishedAt: string | null;
+    expiresAt: string;
+    sizeBytes: number | null;
+    fileCount: number | null;
+    warningCount: number | null;
+    error: string | null;
+    downloadUrl: string | null;
+};
