@@ -68,7 +68,9 @@ describe.each([
         };
         const patch = diffProject(before, after);
         expect(patch.tracks.remove).toEqual(['t1']);
-        expect(patch.tracks.upsert.map(t => t.id)).toEqual(['t2', 't3']);
+        // t2 already exists on both sides, so its change is a field edit.
+        expect(patch.tracks.edit).toEqual([{ id: 't2', set: { volume: -3 } }]);
+        expect(patch.tracks.upsert.map(t => t.id)).toEqual(['t3']);
         expect(patch.tracks.order).toEqual(['t2', 't3']);
         expect(patch.clips.remove).toEqual(['c1']);
         expect(patch.clips.upsert.map(c => c.id)).toEqual(['c3']);
@@ -132,6 +134,126 @@ describe.each([
         expect(peerB).toEqual(serverState);
         expect(serverState.tracks[0].volume).toBe(-10);
         expect(serverState.bpm).toBe(130);
+    });
+
+    // --- Field-level track edits -------------------------------------------
+
+    function withLead(notes, extra = {}) {
+        const base = project();
+        return {
+            ...base,
+            tracks: base.tracks.map(t => (t.id === 't2'
+                ? { ...t, performer: { ...t.performer, melodyMode: 'written', writtenNotes: notes, ...extra } }
+                : t))
+        };
+    }
+    const note = (id, measure, sub, pitch = 0, durSubs = 1) => ({ id, measure, sub, pitch, durSubs });
+    const lead = p => p.tracks.find(t => t.id === 't2');
+    const kick = p => p.tracks.find(t => t.id === 't1');
+
+    test('a changed existing track travels as a field-level edit, a new track as a whole upsert', () => {
+        const before = withLead([note('n1', 0, 0)]);
+        const after = {
+            ...before,
+            tracks: before.tracks.map(t => (t.id === 't2'
+                ? { ...t, name: 'Lead 2', volume: -4, performer: { ...t.performer, octaveShift: 1, writtenNotes: [note('n1', 0, 0), note('n2', 0, 4, 7)] } }
+                : t))
+        };
+        const patch = diffProject(before, after);
+        expect(patch.tracks.upsert).toBeUndefined();
+        expect(patch.tracks.order).toBeUndefined();
+        expect(patch.tracks.edit).toEqual([{
+            id: 't2',
+            set: { name: 'Lead 2', volume: -4 },
+            performer: { set: { octaveShift: 1 }, notes: { upsert: [note('n2', 0, 4, 7)] } }
+        }]);
+        expect(applyPatch(before, patch)).toEqual(after);
+
+        const added = { ...before, tracks: [...before.tracks, { ...before.tracks[0], id: 't3', name: 'Snare', role: 'snare' }] };
+        const addPatch = diffProject(before, added);
+        expect(addPatch.tracks.edit).toBeUndefined();
+        expect(addPatch.tracks.upsert.map(t => t.id)).toEqual(['t3']);
+        expect(addPatch.tracks.order).toEqual(['t1', 't2', 't3']);
+    });
+
+    test('notes written by two people on the same track both survive', () => {
+        const base = withLead([note('n1', 0, 0)]);
+        const editA = withLead([note('n1', 0, 0), note('a1', 1, 0, 4)]);
+        const editB = withLead([note('n1', 0, 0), note('b1', 2, 2, 9)], { octaveShift: -1 });
+        const patchA = diffProject(base, editA);
+        const patchB = diffProject(base, editB);
+        expect(patchA.tracks.edit[0].performer.notes).toEqual({ upsert: [note('a1', 1, 0, 4)] });
+
+        const serverState = applyPatch(applyPatch(base, patchA), patchB);
+        const peerA = applyPatch(applyPatch(editA, patchA), patchB);
+        const peerB = applyPatch(applyPatch(editB, patchA), patchB);
+        expect(lead(serverState).performer.writtenNotes.map(n => n.id).sort()).toEqual(['a1', 'b1', 'n1']);
+        expect(lead(serverState).performer.octaveShift).toBe(-1);
+        expect(peerA).toEqual(serverState);
+        expect(peerB).toEqual(serverState);
+    });
+
+    test('a removed note stays removed and a resized note keeps its new length', () => {
+        const base = withLead([note('n1', 0, 0), note('n2', 0, 4)]);
+        const removeN1 = withLead([note('n2', 0, 4)]);
+        const growN2 = withLead([note('n1', 0, 0), note('n2', 0, 4, 0, 3)]);
+        const patchRemove = diffProject(base, removeN1);
+        const patchGrow = diffProject(base, growN2);
+        expect(patchRemove.tracks.edit[0].performer.notes).toEqual({ remove: ['n1'] });
+        const merged = applyPatch(applyPatch(base, patchRemove), patchGrow);
+        expect(lead(merged).performer.writtenNotes).toEqual([note('n2', 0, 4, 0, 3)]);
+    });
+
+    test('two notes landing on one step: the later accepted one keeps the lane monophonic', () => {
+        const base = withLead([]);
+        const a = withLead([note('a1', 3, 2, 4)]);
+        const b = withLead([note('b1', 3, 2, 11)]);
+        const merged = applyPatch(applyPatch(base, diffProject(base, a)), diffProject(base, b));
+        expect(lead(merged).performer.writtenNotes).toEqual([note('b1', 3, 2, 11)]);
+    });
+
+    test('drum steps toggle independently, and a pattern of a new length replaces the whole grid', () => {
+        const steps = n => Array.from({ length: 8 }, (_, i) => n.includes(i));
+        const withKick = (pattern, extra = {}) => {
+            const base = project();
+            return { ...base, tracks: base.tracks.map(t => (t.id === 't1' ? { ...t, performer: { ...t.performer, drumSteps: pattern, ...extra } } : t)) };
+        };
+        const base = withKick(steps([0, 4]));
+        const a = withKick(steps([0, 2, 4]));
+        const b = withKick(steps([4]), { volume: -1 });
+        const patchA = diffProject(base, a);
+        const patchB = diffProject(base, b);
+        expect(patchA.tracks.edit[0].performer).toEqual({ steps: { 2: true } });
+        expect(patchB.tracks.edit[0].performer).toEqual({ set: { volume: -1 }, steps: { 0: false } });
+        const merged = applyPatch(applyPatch(base, patchA), patchB);
+        expect(kick(merged).performer.drumSteps).toEqual(steps([2, 4]));
+        expect(kick(merged).performer.volume).toBe(-1);
+
+        const longer = withKick(Array.from({ length: 16 }, (_, i) => i % 4 === 0));
+        const patchLonger = diffProject(base, longer);
+        expect(patchLonger.tracks.edit[0].performer.set.drumSteps).toHaveLength(16);
+        expect(kick(applyPatch(base, patchLonger)).performer.drumSteps).toHaveLength(16);
+    });
+
+    test('an edit for a track somebody removed first is dropped, and malformed edits are ignored', () => {
+        const base = withLead([note('n1', 0, 0)]);
+        const removed = { ...base, tracks: base.tracks.filter(t => t.id !== 't2') };
+        const edited = withLead([note('n1', 0, 0), note('n2', 1, 0)]);
+        const merged = applyPatch(applyPatch(base, diffProject(base, removed)), diffProject(base, edited));
+        expect(merged.tracks.map(t => t.id)).toEqual(['t1']);
+        expect(merged.clips.map(c => c.id)).toEqual(['c1']);
+
+        const junk = applyPatch(base, {
+            tracks: { edit: [null, 'x', { id: 'nope', set: { name: 'ghost' } }, { id: 't1', set: { id: 'hijack', name: 'Boom' }, performer: { steps: { 99: true, '-1': true, x: true } } }] }
+        });
+        expect(junk.tracks.map(t => t.id)).toEqual(['t1', 't2']);
+        expect(kick(junk).name).toBe('Boom');
+        expect(kick(junk).performer.drumSteps).toBeUndefined();
+    });
+
+    test('a field-level edit counts as a non-empty patch', () => {
+        expect(isEmptyPatch({ tracks: { edit: [] } })).toBe(true);
+        expect(isEmptyPatch({ tracks: { edit: [{ id: 't1', set: { name: 'x' } }] } })).toBe(false);
     });
 });
 

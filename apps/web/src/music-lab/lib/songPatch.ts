@@ -3,11 +3,27 @@
 // the same patch the same way).
 import songPatch from './songPatch.cjs';
 import type { SongClip, SongProject, SongSection, SongTrack } from './songData';
+import type { PerformerState, WrittenNote } from './stageData';
 
 export interface CollectionPatch<T> {
   upsert?: T[];
   remove?: string[];
   order?: string[];
+}
+
+/** Field-level edit of one existing track (see songPatch.cjs header). */
+export interface TrackEdit {
+  id: string;
+  set?: Partial<Record<Exclude<keyof SongTrack, 'id' | 'performer'>, unknown>>;
+  performer?: {
+    set?: Partial<Record<Exclude<keyof PerformerState, 'writtenNotes' | 'drumSteps'>, unknown>>;
+    notes?: { upsert?: WrittenNote[]; remove?: string[] };
+    steps?: Record<string, boolean>;
+  };
+}
+
+export interface TrackCollectionPatch extends CollectionPatch<SongTrack> {
+  edit?: TrackEdit[];
 }
 
 export type SongSettingsPatch = Partial<{
@@ -18,7 +34,7 @@ export type SongSettingsPatch = Partial<{
 export interface SongPatch {
   settings?: SongSettingsPatch;
   sections?: CollectionPatch<SongSection>;
-  tracks?: CollectionPatch<SongTrack>;
+  tracks?: TrackCollectionPatch;
   clips?: CollectionPatch<SongClip>;
 }
 

@@ -1,10 +1,12 @@
 /**
  * Browser mirror of packages/core/utils/songPatch.js — id-keyed,
- * last-writer-wins patches for Song Studio projects. Keep the two files
+ * last-writer-wins patches for Song Studio projects, with field-level
+ * track edits (notes by id, drum steps by index). Keep the two files
  * behaviourally identical (tests/studioSongPatch.test.js runs both against
  * the same fixtures). CommonJS so Jest can require() it; Vite interops it
  * behind the `songPatch.ts` façade.
  */
+
 const SETTINGS_KEYS = [
     'name', 'bpm', 'swing', 'keyRoot', 'rhythmId', 'resolution',
     'grooveId', 'fills', 'masterVolume', 'reverbWet'
@@ -12,9 +14,13 @@ const SETTINGS_KEYS = [
 
 const COLLECTIONS = [
     { key: 'sections', ordered: true },
-    { key: 'tracks', ordered: true },
+    { key: 'tracks', ordered: true, mergeable: true },
     { key: 'clips', ordered: false }
 ];
+
+/** Performer keys handled per element rather than as one value. */
+const PERFORMER_NOTES_KEY = 'writtenNotes';
+const PERFORMER_STEPS_KEY = 'drumSteps';
 
 const MAX_ID_LENGTH = 64;
 
@@ -38,6 +44,83 @@ function byId(list) {
     return map;
 }
 
+function allHaveIds(list) {
+    return Array.isArray(list) && list.every(item => isRecord(item) && validId(item.id));
+}
+
+/**
+ * Field-level diff of two flat records (keys in `skip` are handled by the
+ * caller). A key that vanished is sent as null.
+ */
+function diffFields(prev, next, skip) {
+    const set = {};
+    let changed = false;
+    const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+    for (const key of keys) {
+        if (skip.has(key)) continue;
+        const before = prev[key];
+        const after = next[key];
+        if (before === undefined && after === undefined) continue;
+        if (sameJson(before, after)) continue;
+        set[key] = after === undefined ? null : after;
+        changed = true;
+    }
+    return changed ? set : null;
+}
+
+/**
+ * Diff two versions of one track into an edit entry, or null when the pair
+ * cannot be merged field by field (then the caller upserts the whole track).
+ */
+function diffTrack(prev, next) {
+    if (!isRecord(prev.performer) || !isRecord(next.performer)) return null;
+    const edit = { id: next.id };
+    const trackSet = diffFields(prev, next, new Set(['id', 'performer']));
+    if (trackSet) edit.set = trackSet;
+
+    const performer = {};
+    const perfSet = diffFields(prev.performer, next.performer, new Set([PERFORMER_NOTES_KEY, PERFORMER_STEPS_KEY])) || {};
+
+    const notesBefore = prev.performer[PERFORMER_NOTES_KEY];
+    const notesAfter = next.performer[PERFORMER_NOTES_KEY];
+    if (!sameJson(notesBefore, notesAfter)) {
+        if (allHaveIds(notesBefore) && allHaveIds(notesAfter)) {
+            const before = byId(notesBefore);
+            const after = byId(notesAfter);
+            const notes = {};
+            const upsert = [];
+            for (const [id, note] of after) {
+                const old = before.get(id);
+                if (!old || !sameJson(old, note)) upsert.push(note);
+            }
+            const remove = [...before.keys()].filter(id => !after.has(id));
+            if (upsert.length) notes.upsert = upsert;
+            if (remove.length) notes.remove = remove;
+            if (Object.keys(notes).length) performer.notes = notes;
+        } else {
+            perfSet[PERFORMER_NOTES_KEY] = notesAfter === undefined ? null : notesAfter;
+        }
+    }
+
+    const stepsBefore = prev.performer[PERFORMER_STEPS_KEY];
+    const stepsAfter = next.performer[PERFORMER_STEPS_KEY];
+    if (!sameJson(stepsBefore, stepsAfter)) {
+        if (Array.isArray(stepsBefore) && Array.isArray(stepsAfter) && stepsBefore.length === stepsAfter.length) {
+            const steps = {};
+            stepsAfter.forEach((on, index) => {
+                if (Boolean(on) !== Boolean(stepsBefore[index])) steps[String(index)] = Boolean(on);
+            });
+            if (Object.keys(steps).length) performer.steps = steps;
+        } else {
+            perfSet[PERFORMER_STEPS_KEY] = stepsAfter === undefined ? null : stepsAfter;
+        }
+    }
+
+    if (Object.keys(perfSet).length) performer.set = perfSet;
+    if (Object.keys(performer).length) edit.performer = performer;
+    return edit.set || edit.performer ? edit : null;
+}
+
 /**
  * Diff two projects into a patch, or null when nothing changed.
  * Only the keys that actually differ appear; a setting that vanished is
@@ -59,17 +142,26 @@ function diffProject(prev, next) {
     }
     if (settingsChanged) patch.settings = settings;
 
-    for (const { key, ordered } of COLLECTIONS) {
+    for (const { key, ordered, mergeable } of COLLECTIONS) {
         const before = byId(prev[key]);
         const after = byId(next[key]);
         const change = {};
         const upsert = [];
+        const edit = [];
         for (const [id, item] of after) {
             const old = before.get(id);
-            if (!old || !sameJson(old, item)) upsert.push(item);
+            if (!old) {
+                upsert.push(item);
+                continue;
+            }
+            if (sameJson(old, item)) continue;
+            const merged = mergeable ? diffTrack(old, item) : null;
+            if (merged) edit.push(merged);
+            else upsert.push(item);
         }
         const remove = [...before.keys()].filter(id => !after.has(id));
         if (upsert.length) change.upsert = upsert;
+        if (edit.length) change.edit = edit;
         if (remove.length) change.remove = remove;
         if (ordered) {
             const beforeOrder = [...before.keys()].filter(id => after.has(id));
@@ -84,6 +176,67 @@ function diffProject(prev, next) {
     return Object.keys(patch).length ? patch : null;
 }
 
+function applyFieldSet(target, set) {
+    if (!isRecord(set)) return target;
+    const next = { ...target };
+    for (const [key, value] of Object.entries(set)) {
+        if (key === 'id') continue;
+        if (value === null || value === undefined) delete next[key];
+        else next[key] = value;
+    }
+    return next;
+}
+
+function noteStepKey(note) {
+    return `${Number(note.measure)}:${Number(note.sub)}`;
+}
+
+function applyNoteChanges(list, change) {
+    const current = byId(list);
+    const removed = new Set(Array.isArray(change.remove) ? change.remove.filter(validId) : []);
+    for (const id of removed) current.delete(id);
+    for (const note of Array.isArray(change.upsert) ? change.upsert : []) {
+        if (!isRecord(note) || !validId(note.id) || removed.has(note.id)) continue;
+        // Monophonic lane: the note that lands on a step evicts whatever was there.
+        const key = noteStepKey(note);
+        for (const [id, other] of current) {
+            if (id !== note.id && noteStepKey(other) === key) current.delete(id);
+        }
+        current.set(note.id, note);
+    }
+    // Canonical order so every peer holds the same array, not just the same set.
+    return [...current.values()].sort((a, b) =>
+        (Number(a.measure) - Number(b.measure))
+        || (Number(a.sub) - Number(b.sub))
+        || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+function applyStepChanges(list, steps) {
+    if (!Array.isArray(list)) return list;
+    const next = [...list];
+    for (const [index, on] of Object.entries(steps)) {
+        const i = Number(index);
+        if (!Number.isInteger(i) || i < 0 || i >= next.length) continue;
+        next[i] = Boolean(on);
+    }
+    return next;
+}
+
+function applyTrackEdit(track, edit) {
+    let next = applyFieldSet(track, edit.set);
+    if (isRecord(edit.performer)) {
+        let performer = applyFieldSet(isRecord(next.performer) ? next.performer : {}, edit.performer.set);
+        if (isRecord(edit.performer.notes)) {
+            performer = { ...performer, [PERFORMER_NOTES_KEY]: applyNoteChanges(performer[PERFORMER_NOTES_KEY], edit.performer.notes) };
+        }
+        if (isRecord(edit.performer.steps)) {
+            performer = { ...performer, [PERFORMER_STEPS_KEY]: applyStepChanges(performer[PERFORMER_STEPS_KEY], edit.performer.steps) };
+        }
+        next = { ...next, performer };
+    }
+    return next;
+}
+
 function applyCollection(list, change, ordered) {
     const current = byId(list);
     const removed = new Set(Array.isArray(change.remove) ? change.remove.filter(validId) : []);
@@ -91,6 +244,14 @@ function applyCollection(list, change, ordered) {
     for (const item of Array.isArray(change.upsert) ? change.upsert : []) {
         if (!isRecord(item) || !validId(item.id) || removed.has(item.id)) continue;
         current.set(item.id, item);
+    }
+    // Edits to an entity somebody else removed in the meantime are dropped:
+    // the removal was accepted first, so it wins.
+    for (const edit of Array.isArray(change.edit) ? change.edit : []) {
+        if (!isRecord(edit) || !validId(edit.id)) continue;
+        const target = current.get(edit.id);
+        if (!target) continue;
+        current.set(edit.id, applyTrackEdit(target, edit));
     }
     if (ordered && Array.isArray(change.order)) {
         const placed = new Set();
@@ -145,6 +306,7 @@ function isEmptyPatch(patch) {
         const change = patch[key];
         if (!isRecord(change)) continue;
         if ((Array.isArray(change.upsert) && change.upsert.length)
+            || (Array.isArray(change.edit) && change.edit.length)
             || (Array.isArray(change.remove) && change.remove.length)
             || (Array.isArray(change.order) && change.order.length)) return false;
     }
@@ -184,6 +346,7 @@ module.exports = {
     SETTINGS_KEYS,
     COLLECTIONS,
     diffProject,
+    diffTrack,
     applyPatch,
     isEmptyPatch,
     validateProjectShape
