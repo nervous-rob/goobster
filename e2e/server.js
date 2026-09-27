@@ -34,7 +34,7 @@ if (!fs.existsSync(distIndex)) {
 
 const C = require('./constants');
 const db = require('@goobster/core/db');
-const { createWebAppContext, createWebAppApp } = require('@goobster/core/web/appApi');
+const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const { ObservatoryService } = require('@goobster/core/services/observatoryService');
 const { ExpeditionBriefService } = require('@goobster/core/services/expeditionBriefService');
 const observatoryConfig = require('@goobster/core/config/observatoryConfig');
@@ -733,6 +733,8 @@ async function main() {
             else resolve();
         });
     });
+    // Song Studio shared songs ride the same live WebSocket layer as Parlor.
+    attachWebAppWebSocket(server, ctx);
     console.log(`e2e portal listening on http://127.0.0.1:${PORT}/app/`);
 
     const shutdown = async () => {

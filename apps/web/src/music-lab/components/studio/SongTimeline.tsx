@@ -66,6 +66,8 @@ interface SongTimelineProps {
   onTrackChange: (id: string, partial: Partial<SongTrack>) => void;
   onRemoveTrack: (id: string) => void;
   onAddTrack: () => void;
+  /** Shared songs: who else has each track selected right now. */
+  peerTrackNames?: Record<string, { name: string; hue: number }[]>;
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -100,7 +102,8 @@ export function SongTimeline({
   onClipsChange,
   onTrackChange,
   onRemoveTrack,
-  onAddTrack
+  onAddTrack,
+  peerTrackNames
 }: SongTimelineProps) {
   const dragRef = useRef<ClipDrag | null>(null);
   const [dragView, setDragView] = useState<ClipDrag | null>(null);
@@ -322,6 +325,7 @@ export function SongTimeline({
                 onChange={partial => onTrackChange(track.id, partial)}
                 onRemove={() => onRemoveTrack(track.id)}
                 onContextMenu={at => onContextMenu({ kind: 'track', trackId: track.id }, at)}
+                peers={peerTrackNames?.[track.id]}
               />
               <div
                 className="st-lane"

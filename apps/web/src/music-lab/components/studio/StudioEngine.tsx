@@ -89,6 +89,9 @@ import type { MenuPoint } from './SectionStrip';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { SongWizard } from './SongWizard';
 import { MelodyEditor } from './MelodyEditor';
+import { StudioSharePanel, peerColor } from './StudioSharePanel';
+import { useStudioCollab } from '@music-lab/hooks/useStudioCollab';
+import { useSession } from '../../../hooks/useSession';
 
 function IconStudio() {
   return (
@@ -193,17 +196,11 @@ export function StudioEngine() {
   const recordingRef = useRef(false);
   recordingRef.current = isRecording;
 
-  const project = useMemo(
-    () => projects.find(p => p.id === currentId) ?? projects[0] ?? null,
-    [projects, currentId]
-  );
-
   // --- Edits and undo history ---
   // `latestProjectRef` is the project as of the most recent edit in this
   // tick, so two updateProject calls in one handler chain instead of the
   // second clobbering the first. Histories are per song and per session.
   const latestProjectRef = useRef<SongProject | null>(null);
-  latestProjectRef.current = project;
   const historiesRef = useRef<Map<string, EditHistory<SongProject>>>(new Map());
   const [, setHistoryTick] = useState(0);
 
@@ -216,12 +213,74 @@ export function StudioEngine() {
     return history;
   }, []);
 
+  // --- Shared songs (server documents edited live with other people) ---
+  const me = useSession();
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const onRemotePatch = useCallback((songId: string) => {
+    // Someone else's edit landed: our snapshots would now undo their work too.
+    if (historiesRef.current.delete(songId)) setHistoryTick(t => t + 1);
+  }, []);
+  const onCollabLost = useCallback(
+    (songId: string, reason: 'removed' | 'deleted' | 'error', message?: string) => {
+      historiesRef.current.delete(songId);
+      setCurrentId(prev => (prev === songId ? null : prev));
+      setShareOpen(false);
+      showNotice(
+        reason === 'deleted'
+          ? 'The owner deleted that shared song.'
+          : reason === 'removed'
+            ? 'You no longer have access to that shared song.'
+            : message || 'The shared song could not be opened.',
+        'error'
+      );
+    },
+    [setCurrentId, showNotice]
+  );
+  const onCollabError = useCallback((message: string) => showNotice(message, 'error'), [showNotice]);
+  const collab = useStudioCollab({ onRemotePatch, onLost: onCollabLost, onError: onCollabError });
+  const sharedSession = collab.session;
+  const sharedSessionRef = useRef(sharedSession);
+  sharedSessionRef.current = sharedSession;
+  /** The current song is a server document (open, or still opening). */
+  const isShared = Boolean(sharedSession && currentId === sharedSession.songId);
+
+  const project = useMemo(() => {
+    if (sharedSession && currentId === sharedSession.songId) return sharedSession.project;
+    return projects.find(p => p.id === currentId) ?? projects[0] ?? null;
+  }, [projects, currentId, sharedSession]);
+  latestProjectRef.current = project;
+
+  // Keep the live session in step with the selected song: a shared id
+  // opens (or re-opens) its room, anything else leaves it.
+  const { available: collabAvailable, songs: sharedSongs, open: openShared, close: closeShared, applyLocal: applyShared } = collab;
+  useEffect(() => {
+    if (collabAvailable !== true) return;
+    const sessionId = sharedSession?.songId ?? null;
+    if (currentId && sessionId === currentId) return;
+    if (currentId && sharedSongs.some(s => s.id === currentId)) openShared(currentId);
+    else if (sessionId) closeShared();
+  }, [collabAvailable, closeShared, currentId, openShared, sharedSongs, sharedSession?.songId]);
+
+  // Inbox links land here as ?song=<id>; the effect above opens it once
+  // the shared list confirms we are on it.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('song');
+    if (wanted) setCurrentId(wanted);
+    // Only on mount — the URL is a one-shot pointer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const replaceProject = useCallback(
     (next: SongProject) => {
       latestProjectRef.current = next;
+      if (sharedSessionRef.current?.songId === next.id) {
+        applyShared(next);
+        return;
+      }
       setProjects(prev => prev.map(p => (p.id === next.id ? next : p)));
     },
-    [setProjects]
+    [applyShared, setProjects]
   );
 
   const updateProject = useCallback(
@@ -465,6 +524,38 @@ export function StudioEngine() {
     return () => window.clearTimeout(timer);
   }, [confirmDelete]);
 
+  const clearSelection = useCallback(() => {
+    setSelectedSectionId(null);
+    setSelectedTrackId(null);
+    setSelectedClipId(null);
+    setChordEdit(null);
+  }, []);
+
+  /** Shared songs: the owner deletes for everyone, an editor leaves. */
+  const removeSharedSong = useCallback(
+    async (songId: string, name: string, role: 'owner' | 'editor') => {
+      setShareBusy(true);
+      try {
+        if (role === 'owner') {
+          await collab.remove(songId);
+          showNotice(`Deleted “${name}” for everyone.`);
+        } else if (me) {
+          await collab.leave(songId, me.user.id);
+          showNotice(`Left “${name}”. The others still have it.`);
+        }
+        historiesRef.current.delete(songId);
+        setCurrentId(prev => (prev === songId ? null : prev));
+        setShareOpen(false);
+        clearSelection();
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : 'Could not remove that song.', 'error');
+      } finally {
+        setShareBusy(false);
+      }
+    },
+    [clearSelection, collab, me, setCurrentId, showNotice]
+  );
+
   const handleDelete = useCallback(() => {
     if (!project) return;
     if (!confirmDelete) {
@@ -473,15 +564,78 @@ export function StudioEngine() {
     }
     setConfirmDelete(false);
     stop();
+    if (isShared && sharedSession) {
+      void removeSharedSong(sharedSession.songId, project.name, sharedSession.role);
+      return;
+    }
     historiesRef.current.delete(project.id);
     setProjects(prev => prev.filter(p => p.id !== project.id));
     setCurrentId(null);
-    setSelectedSectionId(null);
-    setSelectedTrackId(null);
-    setSelectedClipId(null);
-    setChordEdit(null);
+    clearSelection();
     showNotice(`Deleted “${project.name}”.`);
-  }, [confirmDelete, project, setCurrentId, setProjects, showNotice, stop]);
+  }, [clearSelection, confirmDelete, isShared, project, removeSharedSong, setCurrentId, setProjects, sharedSession, showNotice, stop]);
+
+  /** Move the current browser song onto the server and open it shared. */
+  const handleShare = useCallback(async () => {
+    if (!project || isShared || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const created = await collab.share(project);
+      stop();
+      historiesRef.current.delete(project.id);
+      setProjects(prev => prev.filter(p => p.id !== project.id));
+      setCurrentId(created.id);
+      clearSelection();
+      showNotice(`“${created.name}” is now saved on the server. Add people from the Share panel to work on it together.`);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : 'Could not save the song on the server.', 'error');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [clearSelection, collab, isShared, project, setCurrentId, setProjects, shareBusy, showNotice, stop]);
+
+  /** A private, unshared copy of the open shared song in this browser. */
+  const handleLocalCopy = useCallback(() => {
+    if (!project) return;
+    adoptProject({ ...project, id: makeSongId('song'), name: copyName(project.name, projects.map(p => p.name)) });
+    setShareOpen(false);
+    showNotice(`Copied “${project.name}” into this browser. Edits to the copy stay private.`);
+  }, [adoptProject, project, projects, showNotice]);
+
+  const handleAddMember = useCallback(
+    async (userId: string, userName: string | null) => {
+      if (!sharedSession) return;
+      await collab.addMember(sharedSession.songId, userId, userName);
+    },
+    [collab, sharedSession]
+  );
+
+  const handleRemoveMember = useCallback(
+    async (userId: string) => {
+      if (!sharedSession) return;
+      await collab.removeMember(sharedSession.songId, userId);
+    },
+    [collab, sharedSession]
+  );
+
+  // Tell the room which track / section / clip we are looking at.
+  const { sendPresence } = collab;
+  useEffect(() => {
+    if (!isShared) return;
+    sendPresence({ trackId: selectedTrackId, sectionId: selectedSectionId, clipId: selectedClipId });
+  }, [isShared, selectedClipId, selectedSectionId, selectedTrackId, sendPresence, sharedSession?.status]);
+
+  /** Who else is on each track right now, for the row badges. */
+  const peerTrackNames = useMemo(() => {
+    const names: Record<string, { name: string; hue: number }[]> = {};
+    if (!sharedSession) return names;
+    for (const peer of sharedSession.peers) {
+      const where = sharedSession.presence[peer.peerId];
+      if (!where?.trackId) continue;
+      (names[where.trackId] ??= []).push({ name: peer.userName || `User ${peer.userId.slice(-4)}`, hue: peerColor(peer.userId) });
+    }
+    return names;
+  }, [sharedSession]);
 
   const handleExport = useCallback(() => {
     if (!project) return;
@@ -1352,6 +1506,44 @@ export function StudioEngine() {
     updateTrack
   ]);
 
+  // --- Opening a shared song: the first snapshot is still on its way ---
+  if (!project && isShared && sharedSession) {
+    return (
+      <section className="rhythm-engine stage-engine studio-engine">
+        <header className="re-header">
+          <div className="re-brand">
+            <span className="re-brand-icon">
+              <IconStudio />
+            </span>
+            <div>
+              <h2 className="re-title">
+                Song Studio <span className="re-accent-text">TIMELINE</span>
+              </h2>
+              <p className="re-subtitle">Arrange sections, tracks and clips into a full song on one timeline</p>
+            </div>
+          </div>
+        </header>
+        {notice ? (
+          <p className={`st-handoff-note${notice.tone === 'error' ? ' error' : ''}`} role="status">
+            {notice.text}
+          </p>
+        ) : null}
+        <div className="st-empty re-panel" data-testid="studio-shared-opening">
+          <h3>{sharedSession.status === 'offline' ? 'Reconnecting to the shared song…' : 'Opening the shared song…'}</h3>
+          <p>
+            {sharedSongs.find(s => s.id === sharedSession.songId)?.name ?? 'This song'} lives on the server; the latest
+            version is being fetched.
+          </p>
+          <div className="st-empty-actions">
+            <button type="button" className="re-secondary-btn" onClick={() => setCurrentId(null)}>
+              Back to my songs
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   // --- Empty state ---
   if (!project) {
     return (
@@ -1384,6 +1576,19 @@ export function StudioEngine() {
               Blank song
             </button>
           </div>
+          {sharedSongs.length ? (
+            <div className="st-empty-shared" data-testid="studio-empty-shared">
+              <span className="re-micro-label">Shared with you</span>
+              <div className="re-pills">
+                {sharedSongs.map(song => (
+                  <button key={song.id} type="button" className="re-pill" onClick={() => handleSwitchProject(song.id)}>
+                    {song.name}
+                    {song.role === 'owner' ? '' : ' · shared'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
         {wizardOpen ? (
           <SongWizard
@@ -1431,6 +1636,42 @@ export function StudioEngine() {
             {isPlaying ? (isRecording ? 'Recording' : 'Playing') : audioReady ? 'Audio ready' : 'Audio off · press Play'}
           </span>
         </div>
+        {isShared && sharedSession ? (
+          <button
+            type="button"
+            className={`re-status st-collab-status${sharedSession.status === 'live' ? ' live' : ''}`}
+            onClick={() => setShareOpen(v => !v)}
+            title={
+              sharedSession.status === 'live'
+                ? 'This song is shared and connected — everyone here sees your edits as you make them'
+                : 'This song is shared but the live connection is down — edits are kept and sent when it returns'
+            }
+            data-testid="studio-collab-status"
+          >
+            <span className={`re-status-dot${sharedSession.status === 'live' ? ' on' : ''}`} />
+            <span className={sharedSession.status === 'live' ? 're-status-text on' : 're-status-text'}>
+              {sharedSession.status === 'live'
+                ? sharedSession.peers.length
+                  ? `Shared · ${sharedSession.peers.length + 1} here`
+                  : 'Shared · just you'
+                : sharedSession.status === 'offline'
+                  ? 'Shared · offline'
+                  : 'Shared · opening'}
+            </span>
+            {sharedSession.peers.length ? (
+              <span className="st-peer-chips" aria-label="People here now">
+                {sharedSession.peers.map(peer => (
+                  <span
+                    key={peer.peerId}
+                    className="st-peer-dot here"
+                    style={{ background: `hsl(${peerColor(peer.userId)} 70% 58%)` }}
+                    title={peer.userName || `User ${peer.userId.slice(-4)}`}
+                  />
+                ))}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </header>
 
       <StudioTransport
@@ -1473,11 +1714,31 @@ export function StudioEngine() {
             Song
           </label>
           <select id="st-project" className="re-select" value={project.id} onChange={e => handleSwitchProject(e.target.value)}>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {sharedSongs.length ? (
+              <>
+                <optgroup label="This browser">
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Shared">
+                  {sharedSongs.map(song => (
+                    <option key={song.id} value={song.id}>
+                      {sharedSession?.songId === song.id && sharedSession.project ? sharedSession.project.name : song.name}
+                      {song.role === 'owner' ? '' : ' · shared with you'}
+                    </option>
+                  ))}
+                </optgroup>
+              </>
+            ) : (
+              projects.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))
+            )}
           </select>
           <button type="button" className="re-secondary-btn st-tool-btn" onClick={handleOpenWizard}>
             ✨ Wizard
@@ -1515,14 +1776,36 @@ export function StudioEngine() {
               e.target.value = '';
             }}
           />
+          {collabAvailable !== false ? (
+            <button
+              type="button"
+              className={`re-secondary-btn st-tool-btn${shareOpen ? ' on' : ''}${isShared ? ' st-shared' : ''}`}
+              onClick={() => setShareOpen(v => !v)}
+              aria-pressed={shareOpen}
+              title={isShared ? 'Who is on this song, add people, leave' : 'Save this song on the server and work on it with other people'}
+              data-testid="studio-share-toggle"
+            >
+              {isShared ? 'Sharing' : 'Share'}
+            </button>
+          ) : null}
           <button
             type="button"
             className={`re-secondary-btn st-tool-btn st-danger${confirmDelete ? ' armed' : ''}`}
             onClick={handleDelete}
             aria-live="polite"
-            title={confirmDelete ? 'Tap again to delete this song for good' : 'Delete this song'}
+            title={
+              confirmDelete
+                ? isShared && sharedSession?.role !== 'owner'
+                  ? 'Tap again to leave this shared song'
+                  : 'Tap again to delete this song for good'
+                : isShared && sharedSession?.role !== 'owner'
+                  ? 'Leave this shared song (the others keep it)'
+                  : isShared
+                    ? 'Delete this shared song for everyone'
+                    : 'Delete this song'
+            }
           >
-            {confirmDelete ? 'Really delete?' : 'Delete'}
+            {confirmDelete ? (isShared && sharedSession?.role !== 'owner' ? 'Really leave?' : 'Really delete?') : isShared && sharedSession?.role !== 'owner' ? 'Leave' : 'Delete'}
           </button>
         </div>
         <div className="st-toolbar-group">
@@ -1655,6 +1938,7 @@ export function StudioEngine() {
         onTrackChange={updateTrack}
         onRemoveTrack={removeTrack}
         onAddTrack={() => setAddTrackOpen(v => !v)}
+        peerTrackNames={peerTrackNames}
       />
 
       {menu && menuItems.length ? (
@@ -1672,6 +1956,26 @@ export function StudioEngine() {
           }
           items={menuItems}
           onClose={closeMenu}
+        />
+      ) : null}
+
+      {shareOpen ? (
+        <StudioSharePanel
+          me={me ? { id: me.user.id, name: me.user.name } : null}
+          songName={project.name}
+          session={isShared ? sharedSession : null}
+          busy={shareBusy}
+          onShare={() => void handleShare()}
+          onLeave={() => {
+            if (sharedSession) void removeSharedSong(sharedSession.songId, project.name, 'editor');
+          }}
+          onDelete={() => {
+            if (sharedSession) void removeSharedSong(sharedSession.songId, project.name, 'owner');
+          }}
+          onLocalCopy={handleLocalCopy}
+          onAddMember={handleAddMember}
+          onRemoveMember={handleRemoveMember}
+          onClose={() => setShareOpen(false)}
         />
       ) : null}
 

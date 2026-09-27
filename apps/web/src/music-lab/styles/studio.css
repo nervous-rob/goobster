@@ -1296,3 +1296,126 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Shared songs --- */
+
+.studio-engine .st-collab-status {
+  cursor: pointer;
+  gap: 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.studio-engine .st-collab-status:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.studio-engine .st-peer-chips {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin-left: 0.25rem;
+}
+
+.studio-engine .st-peer-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  opacity: 0.45;
+  flex: none;
+}
+
+.studio-engine .st-peer-dot.here {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.studio-engine .st-track-peers {
+  display: inline-flex;
+  gap: 0.15rem;
+  margin-left: 0.3rem;
+}
+
+.studio-engine .st-tool-btn.st-shared {
+  border-color: rgba(120, 220, 160, 0.45);
+}
+
+.studio-engine .st-share-panel .re-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.studio-engine .st-share-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.studio-engine .st-share-role {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.studio-engine .st-share-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.studio-engine .st-share-member {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.82rem;
+}
+
+.studio-engine .st-share-member-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-engine .st-share-member-role {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.studio-engine .st-share-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.studio-engine .st-share-search {
+  width: 100%;
+  max-width: 28rem;
+}
+
+.studio-engine .st-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.studio-engine .st-empty-shared {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}

@@ -1,19 +1,20 @@
 ---
 title: Music Lab and Song Studio
 kind: guide
-summary: The Conservatory's browser music rooms and the Song Studio arranger — timeline, clips, sections, tracks, the wizard, handoffs, undo, keyboard shortcuts, export/import and recording.
-tags: [music-lab, conservatory, studio, portal, audio]
+summary: The Conservatory's browser music rooms and the Song Studio arranger — timeline, clips, sections, tracks, the wizard, handoffs, undo, keyboard shortcuts, export/import, recording, and shared songs edited live with other people.
+tags: [music-lab, conservatory, studio, portal, audio, collaboration]
 ---
 
 # Music Lab and Song Studio
 
 The **Music Lab** (the Conservatory, `/app/conservatory`) is a set of
 browser-side music rooms in the portal. Everything in it runs on the
-client with Tone.js: no AI key, no server round trip, and no Discord
-connection are involved. Rooms save their state to the browser's
-`localStorage` under the `goobster.conservatory.*` prefix, so a song is
-tied to the browser it was made in — see [Export and import](#export-and-import)
-for moving one elsewhere.
+client with Tone.js: no AI key and no Discord connection are involved.
+Rooms save their state to the browser's `localStorage` under the
+`goobster.conservatory.*` prefix, so a song is tied to the browser it was
+made in — see [Export and import](#export-and-import) for moving one
+elsewhere, or [Shared songs](#shared-songs) for saving a song on the
+server and working on it with other people at the same time.
 
 This is distinct from Goobster's Discord music playback (`/play`,
 `/spotdl`, voice channels), which is documented in `music_system.md`.
@@ -52,7 +53,8 @@ transposed), **Meter** (time signature and beat grouping), automatic
 **Drum fills**, and the master bus (level and reverb send).
 
 The **Song** selector at the top of the toolbar switches between the
-songs stored in this browser. Alongside it:
+songs stored in this browser and, once you have any, the songs saved on
+the server (grouped as *This browser* and *Shared*). Alongside it:
 
 - **Wizard** — builds a song in four steps: *Structure* (a template or a
   genre-library band, key, section plan), *Feel* (tempo, swing, groove),
@@ -62,8 +64,13 @@ songs stored in this browser. Alongside it:
   *Song (copy 2)* — never *Song (copy) (copy)*; the same rule names
   duplicated tracks.
 - **Export** / **Import** — a portable `.json` file, see below.
+- **Share** — save the song on the server and add people to it; on a
+  shared song the button reads *Sharing* and opens the roster. See
+  [Shared songs](#shared-songs).
 - **Delete** — two-step: the button arms and reads *Really delete?* for
-  four seconds; a second click deletes the song and its undo history.
+  four seconds; a second click deletes the song and its undo history. On
+  a shared song the owner deletes it for everyone; anyone else sees
+  **Leave** instead and only drops their own seat.
 
 ### Sections
 
@@ -252,14 +259,56 @@ track ids are re-issued, and the imported song always gets a fresh id so
 it never overwrites an existing one. Files with a newer `version` or
 without sections and tracks are refused with a notice.
 
+### Shared songs
+
+A song can live on the server instead of in one browser. **Share** on a
+browser song opens the sharing panel; *Save "…" to the server* moves the
+song out of this browser's storage and into your **Shared** list (the
+server mints the song's id; a private copy is one click away at any
+time). From then on:
+
+- **People on this song.** The owner adds collaborators by searching
+  friends and server-mates (the same picker the Inbox uses) or by
+  pasting a user id — adding is direct, there is no invitation to
+  accept, and the person receives an Inbox notice that links to the
+  song. Only the owner can add or remove people or delete the song; an
+  editor can leave. A song holds at most 16 people.
+- **Everyone edits the same arrangement live.** Every edit — sections,
+  tracks, clips, chords, tempo, mix — goes to the server as soon as it
+  is made and reaches everyone else on the song within a moment. The
+  header shows *Shared · 3 here* with a dot per person present, and a
+  dot on a track header shows who has that track selected. When two
+  people change the same thing at once the later change wins, per
+  section, track or clip.
+- **Playback stays local.** Sharing synchronises the arrangement, not
+  the transport: each person presses Play in their own browser and
+  hears the song with their own audio engine. Voices built in the Voice
+  Builder are per browser too — a collaborator without your custom
+  voice hears the default voice on that track (the voice id travels
+  with the song, so it plays correctly on any browser that has it).
+- **Offline edits are kept.** If the live connection drops, the header
+  reads *Shared · offline*, edits are queued, and they are sent when the
+  connection comes back. A reload reopens the shared song from the
+  server with everyone's changes.
+- **Undo is per person and forgets when others edit.** Your undo history
+  covers your own edits; when someone else's edit lands, your history
+  for that song is cleared so an undo never silently reverts their work.
+- **Make a local copy** in the sharing panel pulls a private copy back
+  into this browser, unshared.
+
+Shared songs are part of the privacy surface: *What do you know about
+me* lists the songs you own or were added to (names and rosters, never
+the document), and *Forget me* deletes the songs you own — for everyone
+on them — and removes you from everyone else's.
+
 ### Storage keys
 
 All keys are under the `goobster.conservatory.` prefix in `localStorage`.
 
 | Key | Contents |
 | --- | --- |
-| `studioProjects` | Every song in this browser |
-| `studioCurrentProjectId` | The song the Studio opens to |
+| `studioProjects` | Every song in this browser (shared songs live on the server, not here) |
+| `studioCurrentProjectId` | The song the Studio opens to — a browser song or a shared song id |
 | `studioZoom` | Pixels per bar |
 | `studioLoop` | Loop toggle |
 | `studioFollow` | Follow-playhead toggle |
@@ -296,3 +345,25 @@ every breakpoint. `ContextMenu.tsx` is the shared right-click menu;
 `StudioEngine` builds the item list per target (`StudioMenuTarget` in
 `SongTimeline.tsx`), and `SectionStrip.tsx` owns the pointer-based section
 drag.
+
+**Shared songs** are id-keyed, last-writer-wins documents. The server side
+is `packages/core/services/studioSongService.js` (the `studio_songs` and
+`studio_song_members` tables; create, list, get, whole-document replace
+with optimistic `expectedVersion`, `applyPatch`, roster, erasure),
+`packages/core/web/routes/studio.js` (`/api/app/studio/songs…`) and
+`packages/core/services/studioLiveService.js` behind the
+`/api/app/studio/live` WebSocket (one room per song; a patch is applied to
+the stored document first, then relayed to everyone in the room — sender
+included — in the order the server accepted it). Patches are produced and
+applied by `packages/core/utils/songPatch.js`, whose browser mirror is
+`apps/web/src/music-lab/lib/songPatch.cjs` (`diffProject`, `applyPatch`;
+`tests/studioSongPatch.test.js` runs both against the same fixtures). The
+client is `hooks/useStudioCollab.ts` — it mirrors the document, coalesces
+local edits into one patch every ~60 ms, skips its own echo unless another
+person's patch interleaved (then re-applies it so every browser converges
+on the server's order), queues patches while offline and replays them
+after the next join — and `StudioSharePanel.tsx` is the roster UI.
+Documents arriving from the server go through
+`sanitizeSongProject(raw, makeId, { preserveIds: true })` so ids survive
+while numbers are still clamped. Server tests: `tests/studioSongService.test.js`
+(CI group `portal`); browser journey: `e2e/studioCollab.spec.js`.

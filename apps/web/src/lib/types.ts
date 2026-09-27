@@ -1070,3 +1070,11 @@ export type FollowedSource = {
     entries: FollowedSourceEntry[]; metrics: { acted: number; dismissed: number; snoozed: number; kept: number };
 };
 export type FollowedSources = { sources: FollowedSource[]; attentionEnabled: boolean };
+
+// Song Studio shared songs (documents saved on the server and edited live)
+export type StudioSongMember = { userId: string; userName: string | null; role: 'owner' | 'editor'; joinedAt: string };
+export type StudioSongSummary = {
+    id: string; name: string; ownerId: string; role: 'owner' | 'editor'; version: number;
+    memberCount: number; createdAt: string; updatedAt: string;
+};
+export type StudioSongDetail = StudioSongSummary & { project: unknown; members: StudioSongMember[] };
