@@ -75,7 +75,7 @@ function mountEventsStatic(app, ctx, h) {
         'dist'
     )));
 
-    const reactDir = path.join(workspaceRoot, 'apps/web/dist');
+    const reactDir = ctx.webDistDir || path.join(workspaceRoot, 'apps/web/dist');
     const reactIndex = () => path.join(reactDir, 'index.html');
     const reactBuilt = () => fs.existsSync(reactIndex());
 

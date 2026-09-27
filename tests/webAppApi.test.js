@@ -28,12 +28,12 @@ let port;
 let manageGuildPermission = false;
 let memberIds = new Set([USER]);
 
-// The React build is the only web client; give the static routes an
-// index.html to serve when apps/web/dist is absent (e.g. bare CI).
-const DIST_DIR = path.join(__dirname, '../apps/web/dist');
+// The React build is the only web client; give the static routes a private
+// index.html to serve so the suite needs no build and shares no fixture
+// with the suites running in parallel.
+const DIST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-web-dist-'));
 const DIST_INDEX = path.join(DIST_DIR, 'index.html');
 const DIST_FIXTURE = '<!doctype html><html><head><title>Goobster</title></head><body><div id="root"></div></body></html>';
-let wroteDistFixture = false;
 
 const fakeGuild = {
     id: GUILD,
@@ -196,16 +196,12 @@ async function login(userId = USER, name = 'rob') {
 }
 
 beforeAll((done) => {
-    if (!fs.existsSync(DIST_INDEX)) {
-        fs.mkdirSync(DIST_DIR, { recursive: true });
-        fs.writeFileSync(DIST_INDEX, DIST_FIXTURE);
-        wroteDistFixture = true;
-    }
+    fs.writeFileSync(DIST_INDEX, DIST_FIXTURE);
     const ctx = createWebAppContext({
         client: fakeClient,
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks, exchange: fakeExchange }
+        deps: { chat: fakeChat, voice: fakeVoice, tasks: fakeTasks, exchange: fakeExchange, webDistDir: DIST_DIR }
     });
     const app = express();
     app.use(createWebAppApp(ctx));
@@ -222,10 +218,7 @@ afterAll(async () => {
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* already gone */ }
     }
-    if (wroteDistFixture) {
-        try { fs.unlinkSync(DIST_INDEX); } catch { /* already gone */ }
-        try { fs.rmdirSync(DIST_DIR); } catch { /* dist had other files */ }
-    }
+    fs.rmSync(DIST_DIR, { recursive: true, force: true });
 });
 
 beforeEach(async () => {

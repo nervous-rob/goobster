@@ -1,4 +1,4 @@
-import type { FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -685,6 +685,25 @@ export const api = {
     parlorSetPersonaVoice: (personaId: number, voice: string) =>
         request(`/api/app/parlor/personas/${personaId}/voice`, { method: 'PUT', body: { voice } }),
     friends: () => request('/api/app/friends'),
+
+    // Song Studio shared songs
+    studioSongs: () => request<{ songs: StudioSongSummary[] }>('/api/app/studio/songs'),
+    studioSongCreate: (project: unknown) =>
+        request<StudioSongDetail>('/api/app/studio/songs', { method: 'POST', body: { project } }),
+    studioSong: (id: string) => request<StudioSongDetail>(`/api/app/studio/songs/${encodeURIComponent(id)}`),
+    studioSongSave: (id: string, project: unknown, expectedVersion: number | null = null) =>
+        request<{ id: string; version: number; project: unknown }>(`/api/app/studio/songs/${encodeURIComponent(id)}`, {
+            method: 'PUT', body: { project, expectedVersion }
+        }),
+    studioSongDelete: (id: string) =>
+        request<{ deleted: true; id: string }>(`/api/app/studio/songs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    studioSongAddMember: (id: string, userId: string, userName: string | null = null) =>
+        request<{ members: StudioSongMember[] }>(`/api/app/studio/songs/${encodeURIComponent(id)}/members`, {
+            method: 'POST', body: { userId, userName }
+        }),
+    studioSongRemoveMember: (id: string, userId: string) =>
+        request<{ songId: string; removedUserId: string; members: StudioSongMember[] }>(
+            `/api/app/studio/songs/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
     parlorMembers: (conversationId: number) =>
         request(`/api/app/parlor/conversations/${conversationId}/members`),
     parlorInvitable: (conversationId: number, q = '') =>

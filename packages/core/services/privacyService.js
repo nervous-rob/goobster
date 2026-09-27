@@ -482,6 +482,9 @@ class PrivacyService {
             ),
             operatorAudit: await require('./operatorAuditService').listForUser(userId, { limit: 100 }),
             tutorials: await require('./tutorialService').summarizeForUser(userId),
+            // Songs saved on the server (owned or shared with the person) -
+            // names and rosters only, never the document.
+            studioSongs: await require('./studioSongService').summarizeForUser(userId),
             nickname: nickname?.nickname || null,
             preferences: preferences || null,
             settingsPreferences,
@@ -661,6 +664,13 @@ class PrivacyService {
             counts.tutorialEvents = forgottenTutorials.events;
             counts.tutorialPreferences = forgottenTutorials.preferences;
             counts.tutorialFeedback = forgottenTutorials.feedback;
+
+            // Song Studio shared songs: the songs the person owns go (with
+            // every collaborator's seat on them) and they leave everyone
+            // else's; a song shared *with* them stays with its owner.
+            const forgottenSongs = await require('./studioSongService').forgetUser(userId, db);
+            counts.studioSongs = forgottenSongs.songs;
+            counts.studioSongMemberships = forgottenSongs.memberships;
 
             // The whole attention footprint: the ledger of open loops
             // (provenance cascades), every notice and its feedback, the
@@ -1205,6 +1215,12 @@ class PrivacyService {
             )).c,
             inbox_items: (await db.get(
                 'SELECT COUNT(*) AS c FROM inbox_items WHERE userId = @userId', { userId }
+            )).c,
+            studio_songs: (await db.get(
+                'SELECT COUNT(*) AS c FROM studio_songs WHERE ownerId = @userId', { userId }
+            )).c,
+            studio_song_members: (await db.get(
+                'SELECT COUNT(*) AS c FROM studio_song_members WHERE userId = @userId', { userId }
             )).c,
             tutorial_progress: (await db.get(
                 'SELECT COUNT(*) AS c FROM tutorial_progress WHERE accountId = @userId', { userId }

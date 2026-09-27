@@ -10,10 +10,12 @@ interface TrackHeaderProps {
   onChange: (partial: Partial<SongTrack>) => void;
   onRemove: () => void;
   onContextMenu: (at: MenuPoint) => void;
+  /** Collaborators who have this track selected (shared songs). */
+  peers?: { name: string; hue: number }[];
 }
 
 /** Sticky left cell of a timeline row: identity, mute/solo, level. */
-export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, onContextMenu }: TrackHeaderProps) {
+export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, onContextMenu, peers }: TrackHeaderProps) {
   const hue = isDrumRole(track.role) ? null : findVoice(track.performer.voiceId).hue;
 
   return (
@@ -24,7 +26,12 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
         onContextMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      <button type="button" className="st-track-name" onClick={onSelect} title="Open track inspector">
+      <button
+        type="button"
+        className="st-track-name"
+        onClick={onSelect}
+        title={isSelected ? 'Deselect track' : 'Select track and open it in the Track inspector'}
+      >
         <span
           className="st-track-badge"
           style={hue !== null ? { background: `hsla(${hue}, 80%, 60%, 0.25)`, color: `hsl(${hue}, 85%, 72%)` } : undefined}
@@ -32,6 +39,18 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           {ROLE_META[track.role].short}
         </span>
         <span className="st-track-label">{track.name}</span>
+        {peers?.length ? (
+          <span className="st-track-peers" aria-label={`${peers.map(p => p.name).join(', ')} ${peers.length === 1 ? 'is' : 'are'} on this track`}>
+            {peers.map(peer => (
+              <span
+                key={peer.name}
+                className="st-peer-dot here"
+                style={{ background: `hsl(${peer.hue} 70% 58%)` }}
+                title={`${peer.name} is on this track`}
+              />
+            ))}
+          </span>
+        ) : null}
       </button>
       <div className="st-track-controls">
         <button
@@ -39,7 +58,7 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           className={`st-mini-btn${track.mute ? ' on mute' : ''}`}
           onClick={() => onChange({ mute: !track.mute })}
           aria-pressed={track.mute}
-          title="Mute"
+          title={track.mute ? 'Unmute (M with the track selected)' : 'Mute (M with the track selected)'}
         >
           M
         </button>
@@ -48,7 +67,7 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           className={`st-mini-btn${track.solo ? ' on solo' : ''}`}
           onClick={() => onChange({ solo: !track.solo })}
           aria-pressed={track.solo}
-          title="Solo"
+          title={track.solo ? 'Unsolo (S with the track selected)' : 'Solo (S with the track selected)'}
         >
           S
         </button>
@@ -60,8 +79,8 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           step={1}
           value={track.volume}
           onChange={e => onChange({ volume: parseInt(e.target.value, 10) })}
-          title={`${track.volume} dB`}
-          aria-label={`${track.name} volume`}
+          title={`Level ${track.volume} dB — fine control in the Track inspector`}
+          aria-label={`${track.name} level`}
         />
         <button type="button" className="st-mini-btn remove" onClick={onRemove} title="Remove track">
           ×

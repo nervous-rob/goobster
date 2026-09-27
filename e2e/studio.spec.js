@@ -239,6 +239,91 @@ test.describe('Song Studio', () => {
         await expect(page.locator('.st-add-menu')).toHaveCount(0);
     });
 
+    test('Fit zooms the whole song into view', async ({ page }) => {
+        const scroller = page.locator('.st-timeline-scroll');
+        const overflowsBefore = await scroller.evaluate(el => el.scrollWidth > el.clientWidth);
+        expect(overflowsBefore).toBe(true);
+        await page.getByRole('button', { name: 'Fit' }).click();
+        await expect.poll(() => scroller.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+        const zoom = page.locator('#st-zoom');
+        const fitted = Number(await zoom.inputValue());
+        await page.keyboard.press('+');
+        await expect(zoom).toHaveValue(String(fitted + 4));
+        await page.getByRole('button', { name: 'Zoom out' }).click();
+        await expect(zoom).toHaveValue(String(fitted));
+    });
+
+    test('M and S keys mute and solo the selected track; solo dims the rest', async ({ page }) => {
+        const heads = page.locator('.st-track-head:not(.st-corner):not(.st-add-head)');
+        await page.locator('.st-track-name').nth(3).click();
+        await expect(page.locator('.st-row.selected')).toHaveCount(1);
+
+        await page.keyboard.press('s');
+        await expect(heads.nth(3).locator('.st-mini-btn.solo')).toHaveCount(1);
+        // Every other track is silent while one is soloed, and its clips show it.
+        await expect(page.locator('.st-clip', { hasText: 'Kick Stomper' }).first()).toHaveClass(/muted/);
+        await expect(page.locator('.st-clip', { hasText: 'Harmonic Organism' }).first()).not.toHaveClass(/muted/);
+        await page.keyboard.press('s');
+        await expect(heads.nth(3).locator('.st-mini-btn.solo')).toHaveCount(0);
+        await expect(page.locator('.st-clip', { hasText: 'Kick Stomper' }).first()).not.toHaveClass(/muted/);
+
+        await page.keyboard.press('m');
+        await expect(heads.nth(3).locator('.st-mini-btn.mute')).toHaveCount(1);
+        await expect(page.locator('.st-inspector').nth(2)).toContainText('muted');
+    });
+
+    test('arrow keys nudge the selected clip a bar at a time', async ({ page }) => {
+        const clip = page.locator('.st-clip', { hasText: 'Melody Wisp' }).first();
+        await clip.click();
+        // The wizard's lead clip runs to the last bar, so it cannot move right.
+        const start = Number(/bars (\d+)–/.exec(await clip.getAttribute('title'))[1]);
+        await page.keyboard.press('ArrowRight');
+        await expect(clip).toHaveAttribute('title', new RegExp(`bars ${start}–`));
+        await page.keyboard.press('ArrowLeft');
+        await expect(clip).toHaveAttribute('title', new RegExp(`bars ${start - 1}–`));
+        await page.keyboard.press('ArrowRight');
+        await expect(clip).toHaveAttribute('title', new RegExp(`bars ${start}–`));
+    });
+
+    test('Track inspector mixes every track and edits drum patterns', async ({ page }) => {
+        // Tonal track: level readout follows the slider, pan is live.
+        await page.locator('.st-track-name').nth(5).click();
+        const inspector = page.locator('.st-inspector').nth(2);
+        await expect(inspector).toContainText('lead · -8 dB');
+        await page.locator('#st-track-level').fill('-12');
+        await expect(inspector).toContainText('-12 dB');
+        await expect(page.locator('.st-track-head').nth(6).locator('.st-track-vol')).toHaveValue('-12');
+        await page.locator('#st-track-pan').fill('-0.5');
+        await expect(inspector.locator('.re-slider-val', { hasText: /^L50$/ })).toHaveCount(1);
+        await page.locator('#st-track-pan').dblclick();
+        await expect(inspector.locator('.re-slider-val', { hasText: /^C$/ })).toHaveCount(1);
+
+        // Drum track: name and level are editable; pan is centred and locked.
+        await page.locator('.st-track-name').nth(0).click();
+        await expect(page.locator('#st-track-pan')).toBeDisabled();
+        await page.locator('#st-track-name').fill('Boom');
+        await expect(page.locator('.st-track-label', { hasText: 'Boom' })).toHaveCount(1);
+
+        const onSteps = inspector.locator('.st-step.on');
+        expect(await onSteps.count()).toBeGreaterThan(0);
+        await inspector.getByRole('button', { name: 'Clear' }).click();
+        await expect(onSteps).toHaveCount(0);
+        await inspector.getByRole('button', { name: 'Every beat' }).click();
+        await expect(onSteps).toHaveCount(4);
+        await inspector.getByRole('button', { name: 'Reset pattern' }).click();
+        expect(await onSteps.count()).toBeGreaterThan(0);
+    });
+
+    test('the metronome click is a transport toggle', async ({ page }) => {
+        const click = page.getByRole('button', { name: 'Click' });
+        await expect(click).toHaveAttribute('aria-pressed', 'false');
+        await click.click();
+        await expect(click).toHaveAttribute('aria-pressed', 'true');
+        await page.reload();
+        await expect(page.getByRole('button', { name: 'Click' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
     test('track menu mutes the track', async ({ page }) => {
         const head = page.locator('.st-track-head').nth(1);
         await head.click({ button: 'right' });
@@ -246,6 +331,55 @@ test.describe('Song Studio', () => {
         await expect(menu).toHaveAttribute('aria-label', 'Track actions');
         await menu.getByRole('menuitem', { name: 'Mute' }).click();
         await expect(head.locator('.st-mini-btn.mute')).toHaveCount(1);
+    });
+
+    test('melody editor: tap places, drag sets length, tap anywhere on a note erases it', async ({ page }) => {
+        await page.locator('.st-clip', { hasText: 'Melody Wisp' }).first().click();
+        await page.getByRole('button', { name: /Written lead/ }).click();
+        const editor = page.locator('.st-melody-editor');
+        await expect(editor).toBeVisible();
+        const written = editor.locator('.re-panel-head p');
+        const label = (await editor.locator('.st-me-row-label.root').first().textContent()).trim();
+        const cell = (step) => editor.locator(`button[aria-label^="${label}, bar 1 step ${step}"]`);
+
+        // Tap an empty step: a one-step note.
+        await cell(1).click();
+        await expect(written).toContainText('1 notes written');
+        await expect(cell(1)).toHaveClass(/head/);
+
+        // Drag from the head across three more steps: the note grows to 4.
+        const from = await cell(1).boundingBox();
+        const to = await cell(4).boundingBox();
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 6 });
+        await page.mouse.up();
+        await expect(cell(1)).toHaveAttribute('aria-label', /length 4/);
+        await expect(cell(3)).toHaveClass(/tail/);
+        await expect(written).toContainText('1 notes written');
+
+        // Tapping the body of the note (a held step, not its head) erases it
+        // instead of splitting it into a second note. (Edits within 600 ms
+        // coalesce into one undo step, so pace the gestures like a person.)
+        await page.waitForTimeout(700);
+        await cell(3).click();
+        await expect(written).toContainText('0 notes written');
+        await expect(editor.locator('.st-me-cell.head')).toHaveCount(0);
+
+        // Undo brings the 4-step note back as one edit; right-click erases it.
+        await page.keyboard.press('Control+z');
+        await expect(cell(1)).toHaveAttribute('aria-label', /length 4/);
+        await cell(2).click({ button: 'right' });
+        await expect(written).toContainText('0 notes written');
+
+        // Keyboard: Enter toggles a step, Shift+ArrowRight lengthens it.
+        await cell(5).focus();
+        await page.keyboard.press('Enter');
+        await expect(cell(5)).toHaveClass(/head/);
+        await page.keyboard.press('Shift+ArrowRight');
+        await expect(cell(5)).toHaveAttribute('aria-label', /length 2/);
+        await page.keyboard.press('Enter');
+        await expect(written).toContainText('0 notes written');
     });
 
     test('playhead stays aligned with the header column on a phone', async ({ page }) => {

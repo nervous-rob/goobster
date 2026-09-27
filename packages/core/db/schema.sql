@@ -3126,6 +3126,41 @@ CREATE TABLE IF NOT EXISTS source_fetch_hosts (
     robotsCheckedAt TEXT
 );
 
+-- ---------------------------------------------------------------------------
+-- Song Studio shared songs (documentation/music_lab.md, "Shared songs").
+-- A song saved on the server is one JSON SongProject document owned by a
+-- principal and editable by its members; every accepted edit bumps
+-- `version`. Local (browser-only) songs never touch these tables. The
+-- owner is also a member row (role 'owner') so one join lists everything a
+-- person can open. Forgetting a person deletes the songs they own and
+-- removes them from everyone else's.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS studio_songs (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    projectJson TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_studio_songs_owner ON studio_songs(ownerId, updatedAt);
+
+CREATE TABLE IF NOT EXISTS studio_song_members (
+    songId TEXT NOT NULL REFERENCES studio_songs(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    -- Display name snapshotted when the person was added
+    userName TEXT,
+    role TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('owner', 'editor')),
+    addedBy TEXT,
+    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (songId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_studio_song_members_user ON studio_song_members(userId, joinedAt);
+
 -- Private temporary account archives; files are on the shared data volume.
 CREATE TABLE IF NOT EXISTS account_exports (
     id TEXT PRIMARY KEY,

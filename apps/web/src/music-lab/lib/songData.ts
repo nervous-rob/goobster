@@ -43,6 +43,11 @@ export interface SongTrack {
   solo: boolean;
   /** Channel level in dB. */
   volume: number;
+  /**
+   * Stereo position, -1 (left) … 1 (right); unset = centre. Drum roles share
+   * one bus per role and stay centred, so pan only applies to tonal tracks.
+   */
+  pan?: number;
 }
 
 export interface SongClip {

@@ -106,6 +106,8 @@ const GROUPS = [
             'userSettingsService',
             'settingsRuntimePolicy',
             'studioSongEdit',
+            'studioSongPatch',
+            'studioSongService',
             'independentRuntime',
             'inboxPagination',
             'inboxAsk',
