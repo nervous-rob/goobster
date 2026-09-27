@@ -290,13 +290,28 @@ time). From then on:
   header shows *Shared · 3 here* with a dot per person present, and a
   dot on a track header shows who has that track selected. When two
   people change the same thing at once the later change wins, per
-  section, track or clip.
-- **Playback stays local.** Sharing synchronises the arrangement, not
-  the transport: each person presses Play in their own browser and
-  hears the song with their own audio engine. Voices built in the Voice
-  Builder are per browser too — a collaborator without your custom
-  voice hears the default voice on that track (the voice id travels
-  with the song, so it plays correctly on any browser that has it).
+  section or clip — and *inside a track*, per field, per written note
+  and per drum step. Two people can work on one track at the same
+  moment (one renames it while the other writes a melody, or both write
+  notes on different steps) and both edits survive; only a note on the
+  very same step, or the same knob, is last-writer-wins.
+- **Cursors in the piano roll.** With a shared song's melody editor
+  open, everyone else on that track shows up as a coloured ring on the
+  cell under their pointer and as a chip in the editor header (*Sam ·
+  bar 5*). A chip for someone in a different section jumps you to their
+  bar.
+- **Playback follows the room.** With **Sync playback** on (the default,
+  in the sharing panel), Play, Pause, Stop and seeks travel to everyone
+  on the song, so you all hear the same bar at the same time; the header
+  pill shows who pressed Play (*▶ Rob*). A browser that has not unlocked
+  audio yet cannot start sound on its own — it names who is playing and
+  joins at the live position when you press Play there. Someone joining
+  mid-song lands at the right bar. Turn Sync playback off to keep your
+  transport private while edits still sync. Each browser still renders
+  its own audio, and voices built in the Voice Builder are per browser
+  — a collaborator without your custom voice hears the default voice on
+  that track (the voice id travels with the song, so it plays correctly
+  on any browser that has it).
 - **Offline edits are kept.** If the live connection drops, the header
   reads *Shared · offline*, edits are queued, and they are sent when the
   connection comes back. A reload reopens the shared song from the
@@ -323,6 +338,7 @@ All keys are under the `goobster.conservatory.` prefix in `localStorage`.
 | `studioZoom` | Pixels per bar |
 | `studioLoop` | Loop toggle |
 | `studioFollow` | Follow-playhead toggle |
+| `studioFollowTransport` | Sync playback with everyone on a shared song (default on) |
 | `studioClick` | Metronome click toggle |
 | `studioHandoff` | A pending handoff from another room (consumed on open) |
 | `creatureLibrary` | Saved creatures shared with the Stage |
@@ -368,13 +384,43 @@ the stored document first, then relayed to everyone in the room — sender
 included — in the order the server accepted it). Patches are produced and
 applied by `packages/core/utils/songPatch.js`, whose browser mirror is
 `apps/web/src/music-lab/lib/songPatch.cjs` (`diffProject`, `applyPatch`;
-`tests/studioSongPatch.test.js` runs both against the same fixtures). The
-client is `hooks/useStudioCollab.ts` — it mirrors the document, coalesces
-local edits into one patch every ~60 ms, skips its own echo unless another
-person's patch interleaved (then re-applies it so every browser converges
-on the server's order), queues patches while offline and replays them
-after the next join — and `StudioSharePanel.tsx` is the roster UI.
-Documents arriving from the server go through
-`sanitizeSongProject(raw, makeId, { preserveIds: true })` so ids survive
-while numbers are still clamped. Server tests: `tests/studioSongService.test.js`
-(CI group `portal`); browser journey: `e2e/studioCollab.spec.js`.
+`tests/studioSongPatch.test.js` runs both against the same fixtures).
+Sections and clips travel as whole entities (`upsert` / `remove` /
+`order`); a *changed* track instead becomes a `tracks.edit` entry —
+`{ id, set, performer: { set, notes: { upsert, remove }, steps: { index:
+bool } } }` — so two people's edits to one track merge field by field,
+`writtenNotes` note by note (keyed by note id; a note landing on an
+occupied step evicts the older one, keeping the lane monophonic) and
+`drumSteps` step by step. Whole-track `upsert` is kept for new tracks, for
+notes without ids and for a `drumSteps` length change; an `edit` for a
+track that no longer exists is dropped, and `applyPatch` never fails on a
+malformed one.
+
+The client is `hooks/useStudioCollab.ts` — it mirrors the document,
+coalesces local edits into one patch every ~60 ms, skips its own echo
+unless another person's patch interleaved (then re-applies it so every
+browser converges on the server's order), queues patches while offline
+and replays them after the next join — and `StudioSharePanel.tsx` is the
+roster and Sync-playback UI. Presence (`presence` → `peer_presence`)
+carries `trackId`, `sectionId`, `clipId` and, with the melody editor open,
+the `cell { measure, sub, pitch }` under the pointer; the hook sends at
+most one presence message per 50 ms (trailing edge) and the server drops
+anything that is not three integers. `MelodyEditor.tsx` reports cells
+through `onHoverCell` and paints `peerCursors` (`peerColor(userId)` is the
+hue used everywhere else). The **shared transport** is one record per
+room — `{ playing, step, at, action, by, userId, userName }`, steps being
+grid steps (measure × subdivisions + sub) so a tempo change does not move
+anyone — set by `transport { action: play|pause|stop|seek, step }` and
+relayed to everyone including the sender, stamped with the server clock.
+`joined` hands a late browser the current transport plus `serverTime`, and
+`ping` → `pong { t, serverTime }` gives the hook a clock offset
+(`serverNow()`), so `StudioEngine` can compute the live step
+(`step + elapsed / stepSeconds`, wrapped into the loop region when
+looping, or "ended" once past the song) and `seekStep` into it. Each
+browser still owns its `Tone.Transport`; the room only agrees on where
+and when. Only the browser that pressed Play announces the natural end of
+the song (`onEnded` on the orchestrator). Documents arriving from the
+server go through `sanitizeSongProject(raw, makeId, { preserveIds: true })`
+so ids survive while numbers are still clamped. Server tests:
+`tests/studioSongService.test.js` (CI group `portal`); browser journeys:
+`e2e/studioCollab.spec.js`.
