@@ -844,6 +844,43 @@
   box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.7);
 }
 
+/* Another person's pointer: their colour ring, drawn over notes and playhead. */
+.studio-engine .st-me-cell.peer-cursor {
+  position: relative;
+  z-index: 1;
+  box-shadow:
+    0 0 0 2px hsl(var(--peer-hue) 70% 58%),
+    0 0 6px hsl(var(--peer-hue) 70% 58% / 0.7);
+}
+
+.studio-engine .st-me-peers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.studio-engine .st-me-peer {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid hsl(var(--peer-hue) 70% 58% / 0.6);
+  border-radius: 999px;
+  background: hsl(var(--peer-hue) 70% 58% / 0.12);
+  color: var(--re-text);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.studio-engine .st-me-peer .st-peer-dot {
+  background: hsl(var(--peer-hue) 70% 58%);
+}
+
+.studio-engine .st-me-peer:not(.in-view) {
+  opacity: 0.7;
+}
+
 .studio-engine .st-step-grid {
   display: flex;
   flex-wrap: wrap;
@@ -1298,4 +1335,152 @@
   .studio-engine .st-template-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* --- Shared songs --- */
+
+.studio-engine .st-collab-status {
+  cursor: pointer;
+  gap: 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.studio-engine .st-collab-status:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.studio-engine .st-peer-chips {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin-left: 0.25rem;
+}
+
+.studio-engine .st-peer-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  opacity: 0.45;
+  flex: none;
+}
+
+.studio-engine .st-peer-dot.here {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.studio-engine .st-track-peers {
+  display: inline-flex;
+  gap: 0.15rem;
+  margin-left: 0.3rem;
+}
+
+.studio-engine .st-tool-btn.st-shared {
+  border-color: rgba(120, 220, 160, 0.45);
+}
+
+.studio-engine .st-share-panel .re-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.studio-engine .st-share-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.studio-engine .st-share-role {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.studio-engine .st-share-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.studio-engine .st-share-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.studio-engine .st-share-follow input {
+  accent-color: var(--re-accent);
+}
+
+.studio-engine .st-collab-status .st-collab-playing {
+  color: var(--re-accent);
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+}
+
+.studio-engine .st-share-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.studio-engine .st-share-member {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.82rem;
+}
+
+.studio-engine .st-share-member-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-engine .st-share-member-role {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.studio-engine .st-share-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.studio-engine .st-share-search {
+  width: 100%;
+  max-width: 28rem;
+}
+
+.studio-engine .st-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.studio-engine .st-empty-shared {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }

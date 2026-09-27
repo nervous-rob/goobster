@@ -6,7 +6,7 @@ import { PROGRESSION_PRESETS, VOICINGS, type RegisterId, type VoicingId } from '
 import { buildHarmonyGenome, nameChord, type FoundrySettings } from '@music-lab/lib/harmonyTheory';
 import { RHYTHMS } from '@music-lab/lib/rhythmData';
 import { useRhythmOptions } from '@music-lab/hooks/useRhythmOptions';
-import { GRID_STEP_LABEL, gridGrouping, totalSubdivisions } from '@music-lab/lib/rhythmTheory';
+import { GRID_STEP_LABEL, gridGrouping, totalSubdivisions, type GridResolution } from '@music-lab/lib/rhythmTheory';
 import { hasStudioHandoff, takeStudioHandoff } from '@music-lab/lib/handoff';
 import { findLibraryDrumPattern, stretchDrumSteps, type LibraryGroove } from '@music-lab/lib/genreLibrary';
 import { downloadBlob, recordingToWavBlob } from '@music-lab/lib/audioExport';
@@ -29,6 +29,7 @@ import {
   songDurationSeconds,
   songFileName,
   splitClipAt,
+  stepSeconds,
   undoHistory,
   type EditHistory,
   type SectionPayload
@@ -88,7 +89,10 @@ import { SongTimeline, type StudioMenuTarget } from './SongTimeline';
 import type { MenuPoint } from './SectionStrip';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { SongWizard } from './SongWizard';
-import { MelodyEditor } from './MelodyEditor';
+import { MelodyEditor, type PeerCursor } from './MelodyEditor';
+import { StudioSharePanel, peerColor } from './StudioSharePanel';
+import { useStudioCollab, type PeerPresence, type PresenceCell, type SharedTransport } from '@music-lab/hooks/useStudioCollab';
+import { useSession } from '../../../hooks/useSession';
 
 function IconStudio() {
   return (
@@ -184,26 +188,26 @@ export function StudioEngine() {
     setConfig,
     setCallbacks,
     stop,
-    toggle,
+    pause,
     seek,
+    seekStep,
+    currentStep,
     start,
     startRecording,
     stopRecording
   } = useSongOrchestrator();
   const recordingRef = useRef(false);
   recordingRef.current = isRecording;
-
-  const project = useMemo(
-    () => projects.find(p => p.id === currentId) ?? projects[0] ?? null,
-    [projects, currentId]
-  );
+  const audioReadyRef = useRef(false);
+  audioReadyRef.current = audioReady;
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
 
   // --- Edits and undo history ---
   // `latestProjectRef` is the project as of the most recent edit in this
   // tick, so two updateProject calls in one handler chain instead of the
   // second clobbering the first. Histories are per song and per session.
   const latestProjectRef = useRef<SongProject | null>(null);
-  latestProjectRef.current = project;
   const historiesRef = useRef<Map<string, EditHistory<SongProject>>>(new Map());
   const [, setHistoryTick] = useState(0);
 
@@ -216,12 +220,159 @@ export function StudioEngine() {
     return history;
   }, []);
 
+  // --- Shared songs (server documents edited live with other people) ---
+  const me = useSession();
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const onRemotePatch = useCallback((songId: string) => {
+    // Someone else's edit landed: our snapshots would now undo their work too.
+    if (historiesRef.current.delete(songId)) setHistoryTick(t => t + 1);
+  }, []);
+  const onCollabLost = useCallback(
+    (songId: string, reason: 'removed' | 'deleted' | 'error', message?: string) => {
+      historiesRef.current.delete(songId);
+      setCurrentId(prev => (prev === songId ? null : prev));
+      setShareOpen(false);
+      showNotice(
+        reason === 'deleted'
+          ? 'The owner deleted that shared song.'
+          : reason === 'removed'
+            ? 'You no longer have access to that shared song.'
+            : message || 'The shared song could not be opened.',
+        'error'
+      );
+    },
+    [setCurrentId, showNotice]
+  );
+  const onCollabError = useCallback((message: string) => showNotice(message, 'error'), [showNotice]);
+
+  // --- Shared transport ---
+  // Play / pause / stop / seek travel through the room when "Sync playback"
+  // is on. Each browser still runs its own conductor and audio engine; the
+  // room only agrees on *which step* everyone is at and *when* it started
+  // (server clock), so a late browser can catch up mid-song. A browser that
+  // has not unlocked audio yet cannot start sound on a remote command; it
+  // shows who is playing and joins at the right step once Play is pressed.
+  const [followTransport, setFollowTransport] = useLocalStorage<boolean>('studioFollowTransport', true);
+  const followTransportRef = useRef(followTransport);
+  followTransportRef.current = followTransport;
+  /** Grid maths the transport handler needs; assigned once they are computed below. */
+  const gridRef = useRef({
+    subdivisions: 8,
+    bpm: 100,
+    resolution: 'eighth' as GridResolution,
+    totalSteps: 0,
+    loop: false,
+    region: { startStep: 0, endStep: 0 }
+  });
+  const stepToPlayhead = useCallback((step: number) => {
+    const subs = Math.max(1, gridRef.current.subdivisions);
+    return { measure: Math.floor(step / subs), sub: step % subs };
+  }, []);
+  /**
+   * Where a running shared transport is *now*, in grid steps — wrapped into
+   * our loop region when looping, or null once it has run past the end of
+   * the song (the driver's browser stopped by itself at that point).
+   */
+  const liveStepOf = useCallback((transport: SharedTransport, serverNowMs: number): number | null => {
+    if (!transport.playing) return transport.step;
+    const { bpm, resolution, totalSteps, loop, region } = gridRef.current;
+    const elapsed = Math.max(0, serverNowMs - transport.at) / 1000;
+    const step = transport.step + Math.floor(elapsed / stepSeconds(bpm, resolution));
+    if (loop && step >= region.endStep) {
+      const length = Math.max(1, region.endStep - region.startStep);
+      return region.startStep + ((step - region.startStep) % length);
+    }
+    return step < totalSteps ? step : null;
+  }, []);
+  const serverNowRef = useRef<() => number>(() => Date.now());
+  /** `announce` (defined with the transport handlers) for callbacks registered earlier. */
+  const announceRef = useRef<(action: 'play' | 'pause' | 'stop' | 'seek', step: number) => void>(() => {});
+  const onTransport = useCallback(
+    (transport: SharedTransport, { mine, onJoin }: { songId: string; mine: boolean; onJoin: boolean }) => {
+      // Our own action already happened locally; recording keeps its own clock.
+      if (mine || recordingRef.current || !followTransportRef.current) return;
+      const who = transport.userName || 'Someone';
+      if (transport.playing) {
+        const step = liveStepOf(transport, serverNowRef.current());
+        if (step === null) {
+          // Their run already reached the end of the song; nothing to join.
+          if (isPlayingRef.current) stop();
+          setPlayhead(null);
+          return;
+        }
+        if (audioReadyRef.current) {
+          void start({ stepAt: () => liveStepOf(transport, serverNowRef.current()) ?? step });
+        } else {
+          setPlayhead(stepToPlayhead(step));
+          showNotice(`${who} pressed Play — press Play here to listen in sync.`);
+        }
+        return;
+      }
+      if (transport.action === 'stop') {
+        stop();
+        setPlayhead(null);
+        return;
+      }
+      // pause, or a seek while stopped: park on their step.
+      if (isPlayingRef.current) pause();
+      seekStep(transport.step);
+      setPlayhead(stepToPlayhead(transport.step));
+      if (!onJoin && transport.action === 'pause') showNotice(`${who} paused.`);
+    },
+    [liveStepOf, pause, seekStep, showNotice, start, stepToPlayhead, stop]
+  );
+
+  const collab = useStudioCollab({ onRemotePatch, onLost: onCollabLost, onError: onCollabError, onTransport });
+  serverNowRef.current = collab.serverNow;
+  const sharedSession = collab.session;
+  const sharedSessionRef = useRef(sharedSession);
+  sharedSessionRef.current = sharedSession;
+  /** The current song is a server document (open, or still opening). */
+  const isShared = Boolean(sharedSession && currentId === sharedSession.songId);
+  /** Who (other than us) last pressed Play on the shared transport and is still running. */
+  const remotePlayer = useMemo(() => {
+    const transport = sharedSession?.transport;
+    if (!isShared || !transport?.playing || transport.by === sharedSession?.peerId) return null;
+    return transport.userName || `User ${transport.userId.slice(-4)}`;
+  }, [isShared, sharedSession?.peerId, sharedSession?.transport]);
+
+  const project = useMemo(() => {
+    if (sharedSession && currentId === sharedSession.songId) return sharedSession.project;
+    return projects.find(p => p.id === currentId) ?? projects[0] ?? null;
+  }, [projects, currentId, sharedSession]);
+  latestProjectRef.current = project;
+
+  // Keep the live session in step with the selected song: a shared id
+  // opens (or re-opens) its room, anything else leaves it.
+  const { available: collabAvailable, songs: sharedSongs, open: openShared, close: closeShared, applyLocal: applyShared } = collab;
+  useEffect(() => {
+    if (collabAvailable !== true) return;
+    const sessionId = sharedSession?.songId ?? null;
+    if (currentId && sessionId === currentId) return;
+    if (currentId && sharedSongs.some(s => s.id === currentId)) openShared(currentId);
+    else if (sessionId) closeShared();
+  }, [collabAvailable, closeShared, currentId, openShared, sharedSongs, sharedSession?.songId]);
+
+  // Inbox links land here as ?song=<id>; the effect above opens it once
+  // the shared list confirms we are on it.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('song');
+    if (wanted) setCurrentId(wanted);
+    // Only on mount — the URL is a one-shot pointer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const replaceProject = useCallback(
     (next: SongProject) => {
       latestProjectRef.current = next;
+      if (sharedSessionRef.current?.songId === next.id) {
+        applyShared(next);
+        return;
+      }
       setProjects(prev => prev.map(p => (p.id === next.id ? next : p)));
     },
-    [setProjects]
+    [applyShared, setProjects]
   );
 
   const updateProject = useCallback(
@@ -289,6 +440,17 @@ export function StudioEngine() {
     }
     return { start: 0, end: flat.totalMeasures };
   }, [flat, loopMode, selectedSection]);
+  gridRef.current = {
+    subdivisions,
+    bpm: project?.bpm ?? 100,
+    resolution,
+    totalSteps: flat.totalMeasures * subdivisions,
+    loop,
+    region: {
+      startStep: (loopRegion?.start ?? 0) * subdivisions,
+      endStep: (loopRegion?.end ?? flat.totalMeasures) * subdivisions
+    }
+  };
 
   // --- Runtime tracks for the orchestrator ---
   const runtimeTracks = useMemo<SongRuntimeTrack[]>(() => {
@@ -417,6 +579,12 @@ export function StudioEngine() {
   useEffect(() => {
     setCallbacks({
       onStep: (measure, sub) => setPlayhead({ measure, sub }),
+      onEnded: () => {
+        // Only the browser that pressed Play speaks for the room here, so
+        // followers reaching the end at the same moment do not all shout.
+        const shared = sharedSessionRef.current;
+        if (shared?.transport?.playing && shared.transport.by === shared.peerId) announceRef.current('stop', 0);
+      },
       onPlayState: playing => {
         if (!playing) {
           setPlayhead(null);
@@ -465,6 +633,38 @@ export function StudioEngine() {
     return () => window.clearTimeout(timer);
   }, [confirmDelete]);
 
+  const clearSelection = useCallback(() => {
+    setSelectedSectionId(null);
+    setSelectedTrackId(null);
+    setSelectedClipId(null);
+    setChordEdit(null);
+  }, []);
+
+  /** Shared songs: the owner deletes for everyone, an editor leaves. */
+  const removeSharedSong = useCallback(
+    async (songId: string, name: string, role: 'owner' | 'editor') => {
+      setShareBusy(true);
+      try {
+        if (role === 'owner') {
+          await collab.remove(songId);
+          showNotice(`Deleted “${name}” for everyone.`);
+        } else if (me) {
+          await collab.leave(songId, me.user.id);
+          showNotice(`Left “${name}”. The others still have it.`);
+        }
+        historiesRef.current.delete(songId);
+        setCurrentId(prev => (prev === songId ? null : prev));
+        setShareOpen(false);
+        clearSelection();
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : 'Could not remove that song.', 'error');
+      } finally {
+        setShareBusy(false);
+      }
+    },
+    [clearSelection, collab, me, setCurrentId, showNotice]
+  );
+
   const handleDelete = useCallback(() => {
     if (!project) return;
     if (!confirmDelete) {
@@ -473,15 +673,118 @@ export function StudioEngine() {
     }
     setConfirmDelete(false);
     stop();
+    if (isShared && sharedSession) {
+      void removeSharedSong(sharedSession.songId, project.name, sharedSession.role);
+      return;
+    }
     historiesRef.current.delete(project.id);
     setProjects(prev => prev.filter(p => p.id !== project.id));
     setCurrentId(null);
-    setSelectedSectionId(null);
-    setSelectedTrackId(null);
-    setSelectedClipId(null);
-    setChordEdit(null);
+    clearSelection();
     showNotice(`Deleted “${project.name}”.`);
-  }, [confirmDelete, project, setCurrentId, setProjects, showNotice, stop]);
+  }, [clearSelection, confirmDelete, isShared, project, removeSharedSong, setCurrentId, setProjects, sharedSession, showNotice, stop]);
+
+  /** Move the current browser song onto the server and open it shared. */
+  const handleShare = useCallback(async () => {
+    if (!project || isShared || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const created = await collab.share(project);
+      stop();
+      historiesRef.current.delete(project.id);
+      setProjects(prev => prev.filter(p => p.id !== project.id));
+      setCurrentId(created.id);
+      clearSelection();
+      showNotice(`“${created.name}” is now saved on the server. Add people from the Share panel to work on it together.`);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : 'Could not save the song on the server.', 'error');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [clearSelection, collab, isShared, project, setCurrentId, setProjects, shareBusy, showNotice, stop]);
+
+  /** A private, unshared copy of the open shared song in this browser. */
+  const handleLocalCopy = useCallback(() => {
+    if (!project) return;
+    adoptProject({ ...project, id: makeSongId('song'), name: copyName(project.name, projects.map(p => p.name)) });
+    setShareOpen(false);
+    showNotice(`Copied “${project.name}” into this browser. Edits to the copy stay private.`);
+  }, [adoptProject, project, projects, showNotice]);
+
+  const handleAddMember = useCallback(
+    async (userId: string, userName: string | null) => {
+      if (!sharedSession) return;
+      await collab.addMember(sharedSession.songId, userId, userName);
+    },
+    [collab, sharedSession]
+  );
+
+  const handleRemoveMember = useCallback(
+    async (userId: string) => {
+      if (!sharedSession) return;
+      await collab.removeMember(sharedSession.songId, userId);
+    },
+    [collab, sharedSession]
+  );
+
+  // Tell the room which track / section / clip we are looking at — and,
+  // with the piano roll open, which cell our pointer is on. The cell goes
+  // through refs so a pointer sweep never re-renders the whole studio.
+  const { sendPresence } = collab;
+  const editorTrack = useMemo(() => {
+    const track = melodyEditorTrackId ? project?.tracks.find(t => t.id === melodyEditorTrackId) : null;
+    return track && track.performer.melodyMode === 'written' ? track : null;
+  }, [melodyEditorTrackId, project?.tracks]);
+  const editorTrackId = editorTrack?.id ?? null;
+  const presenceBaseRef = useRef<Omit<PeerPresence, 'cell'>>({ trackId: null, sectionId: null, clipId: null });
+  const hoverCellRef = useRef<PresenceCell | null>(null);
+  const isSharedRef = useRef(isShared);
+  isSharedRef.current = isShared;
+  useEffect(() => {
+    presenceBaseRef.current = { trackId: editorTrackId ?? selectedTrackId, sectionId: selectedSectionId, clipId: selectedClipId };
+    if (!editorTrackId) hoverCellRef.current = null;
+    if (!isShared) return;
+    sendPresence({ ...presenceBaseRef.current, cell: hoverCellRef.current });
+  }, [editorTrackId, isShared, selectedClipId, selectedSectionId, selectedTrackId, sendPresence, sharedSession?.status]);
+  const onHoverCell = useCallback(
+    (cell: PresenceCell | null) => {
+      hoverCellRef.current = cell;
+      if (!isSharedRef.current) return;
+      sendPresence({ ...presenceBaseRef.current, cell });
+    },
+    [sendPresence]
+  );
+
+  /** Other people's pointers on the open piano roll. */
+  const peerCursors = useMemo<PeerCursor[]>(() => {
+    if (!sharedSession || !editorTrackId) return [];
+    const cursors: PeerCursor[] = [];
+    for (const peer of sharedSession.peers) {
+      const where = sharedSession.presence[peer.peerId];
+      if (where?.trackId !== editorTrackId || !where.cell) continue;
+      cursors.push({
+        peerId: peer.peerId,
+        name: peer.userName || `User ${peer.userId.slice(-4)}`,
+        hue: peerColor(peer.userId),
+        measure: where.cell.measure,
+        sub: where.cell.sub,
+        pitch: where.cell.pitch
+      });
+    }
+    return cursors;
+  }, [editorTrackId, sharedSession]);
+
+  /** Who else is on each track right now, for the row badges. */
+  const peerTrackNames = useMemo(() => {
+    const names: Record<string, { name: string; hue: number }[]> = {};
+    if (!sharedSession) return names;
+    for (const peer of sharedSession.peers) {
+      const where = sharedSession.presence[peer.peerId];
+      if (!where?.trackId) continue;
+      (names[where.trackId] ??= []).push({ name: peer.userName || `User ${peer.userId.slice(-4)}`, hue: peerColor(peer.userId) });
+    }
+    return names;
+  }, [sharedSession]);
 
   const handleExport = useCallback(() => {
     if (!project) return;
@@ -945,18 +1248,58 @@ export function StudioEngine() {
   }, [flat.totalMeasures, setZoom]);
 
   // --- Transport / seek ---
+  // Local first, then tell the room (a no-op unless the song is shared, the
+  // room is live and "Sync playback" is on). `sendTransport` returns false
+  // in every other case, so the wrappers behave exactly like the plain
+  // orchestrator calls for a private song.
+  const { sendTransport } = collab;
+  const announce = useCallback(
+    (action: 'play' | 'pause' | 'stop' | 'seek', step: number) => {
+      if (!isShared || !followTransportRef.current || recordingRef.current) return;
+      sendTransport(action, step);
+    },
+    [isShared, sendTransport]
+  );
+  announceRef.current = announce;
+
   const handleSeek = useCallback(
     (measure: number) => {
       seek(measure);
       setPlayhead({ measure, sub: 0 });
+      announce('seek', measure * gridRef.current.subdivisions);
     },
-    [seek]
+    [announce, seek]
   );
 
   const handleStop = useCallback(() => {
     stop();
     setPlayhead(null);
-  }, [stop]);
+    announce('stop', 0);
+  }, [announce, stop]);
+
+  const handlePlayToggle = useCallback(async () => {
+    if (isPlayingRef.current) {
+      const step = currentStep();
+      pause();
+      announce('pause', step);
+      return;
+    }
+    // Somebody else already has the shared song running: fall in at their
+    // live position rather than restarting the room from our step.
+    const shared = sharedSessionRef.current;
+    const remote = shared?.transport;
+    if (isShared && followTransportRef.current && remote?.playing && remote.by !== shared?.peerId) {
+      const liveStep = liveStepOf(remote, serverNowRef.current());
+      if (liveStep !== null) {
+        // Audio may still need unlocking here; take the position once it has.
+        await start({ stepAt: () => liveStepOf(remote, serverNowRef.current()) ?? liveStep });
+        return;
+      }
+    }
+    await start();
+    // Read after start(): it may have snapped the step back into the play region.
+    announce('play', currentStep());
+  }, [announce, currentStep, isShared, liveStepOf, pause, start]);
 
   // Fully stop (not pause) so the song's Transport event is cleared before
   // the wizard's audition orchestrator takes over the shared Transport.
@@ -1081,7 +1424,7 @@ export function StudioEngine() {
         // A focused button already toggles on Space natively.
         if (tag === 'button') return;
         e.preventDefault();
-        if (!e.repeat) void toggle();
+        if (!e.repeat) void handlePlayToggle();
         return;
       }
       if (e.key === 'Home') {
@@ -1124,6 +1467,7 @@ export function StudioEngine() {
     copySelection,
     cutSelection,
     duplicateSelection,
+    handlePlayToggle,
     handleStop,
     hasProject,
     menu,
@@ -1134,7 +1478,6 @@ export function StudioEngine() {
     selectedClipId,
     selectedSectionId,
     setLoop,
-    toggle,
     toggleSelectedTrack,
     undo,
     wizardOpen,
@@ -1145,11 +1488,17 @@ export function StudioEngine() {
   const closeMenu = useCallback(() => setMenu(null), []);
 
   const playFrom = useCallback(
-    (measure: number) => {
-      handleSeek(measure);
-      if (!isPlaying) void toggle();
+    async (measure: number) => {
+      if (isPlayingRef.current) {
+        handleSeek(measure);
+        return;
+      }
+      seek(measure);
+      setPlayhead({ measure, sub: 0 });
+      await start();
+      announce('play', currentStep());
     },
-    [handleSeek, isPlaying, toggle]
+    [announce, currentStep, handleSeek, seek, start]
   );
 
   const openMenu = useCallback((target: StudioMenuTarget, at: MenuPoint) => {
@@ -1195,7 +1544,7 @@ export function StudioEngine() {
             }));
           }
         },
-        { id: 'seek', label: 'Play from clip start', onSelect: () => playFrom(clip.startMeasure) },
+        { id: 'seek', label: 'Play from clip start', onSelect: () => void playFrom(clip.startMeasure) },
         { separator: true },
         { id: 'delete', label: 'Delete clip', shortcut: 'Del', danger: true, onSelect: () => removeClip(clip.id) }
       ];
@@ -1242,7 +1591,7 @@ export function StudioEngine() {
           }
         },
         { separator: true },
-        { id: 'seek', label: `Play from bar ${target.measure + 1}`, onSelect: () => playFrom(target.measure) }
+        { id: 'seek', label: `Play from bar ${target.measure + 1}`, onSelect: () => void playFrom(target.measure) }
       ];
     }
 
@@ -1316,7 +1665,7 @@ export function StudioEngine() {
           setLoop(true);
         }
       },
-      { id: 'seek', label: 'Play from here', onSelect: () => playFrom(flat.sectionSpans[index]?.startMeasure ?? 0) },
+      { id: 'seek', label: 'Play from here', onSelect: () => void playFrom(flat.sectionSpans[index]?.startMeasure ?? 0) },
       { separator: true },
       {
         id: 'delete',
@@ -1352,6 +1701,44 @@ export function StudioEngine() {
     updateTrack
   ]);
 
+  // --- Opening a shared song: the first snapshot is still on its way ---
+  if (!project && isShared && sharedSession) {
+    return (
+      <section className="rhythm-engine stage-engine studio-engine">
+        <header className="re-header">
+          <div className="re-brand">
+            <span className="re-brand-icon">
+              <IconStudio />
+            </span>
+            <div>
+              <h2 className="re-title">
+                Song Studio <span className="re-accent-text">TIMELINE</span>
+              </h2>
+              <p className="re-subtitle">Arrange sections, tracks and clips into a full song on one timeline</p>
+            </div>
+          </div>
+        </header>
+        {notice ? (
+          <p className={`st-handoff-note${notice.tone === 'error' ? ' error' : ''}`} role="status">
+            {notice.text}
+          </p>
+        ) : null}
+        <div className="st-empty re-panel" data-testid="studio-shared-opening">
+          <h3>{sharedSession.status === 'offline' ? 'Reconnecting to the shared song…' : 'Opening the shared song…'}</h3>
+          <p>
+            {sharedSongs.find(s => s.id === sharedSession.songId)?.name ?? 'This song'} lives on the server; the latest
+            version is being fetched.
+          </p>
+          <div className="st-empty-actions">
+            <button type="button" className="re-secondary-btn" onClick={() => setCurrentId(null)}>
+              Back to my songs
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   // --- Empty state ---
   if (!project) {
     return (
@@ -1384,6 +1771,19 @@ export function StudioEngine() {
               Blank song
             </button>
           </div>
+          {sharedSongs.length ? (
+            <div className="st-empty-shared" data-testid="studio-empty-shared">
+              <span className="re-micro-label">Shared with you</span>
+              <div className="re-pills">
+                {sharedSongs.map(song => (
+                  <button key={song.id} type="button" className="re-pill" onClick={() => handleSwitchProject(song.id)}>
+                    {song.name}
+                    {song.role === 'owner' ? '' : ' · shared'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
         {wizardOpen ? (
           <SongWizard
@@ -1431,6 +1831,47 @@ export function StudioEngine() {
             {isPlaying ? (isRecording ? 'Recording' : 'Playing') : audioReady ? 'Audio ready' : 'Audio off · press Play'}
           </span>
         </div>
+        {isShared && sharedSession ? (
+          <button
+            type="button"
+            className={`re-status st-collab-status${sharedSession.status === 'live' ? ' live' : ''}`}
+            onClick={() => setShareOpen(v => !v)}
+            title={
+              sharedSession.status === 'live'
+                ? 'This song is shared and connected — everyone here sees your edits as you make them'
+                : 'This song is shared but the live connection is down — edits are kept and sent when it returns'
+            }
+            data-testid="studio-collab-status"
+          >
+            <span className={`re-status-dot${sharedSession.status === 'live' ? ' on' : ''}`} />
+            <span className={sharedSession.status === 'live' ? 're-status-text on' : 're-status-text'}>
+              {sharedSession.status === 'live'
+                ? sharedSession.peers.length
+                  ? `Shared · ${sharedSession.peers.length + 1} here`
+                  : 'Shared · just you'
+                : sharedSession.status === 'offline'
+                  ? 'Shared · offline'
+                  : 'Shared · opening'}
+            </span>
+            {remotePlayer ? (
+              <span className="st-collab-playing" data-testid="studio-collab-playing" title={`${remotePlayer} is playing the song`}>
+                ▶ {remotePlayer}
+              </span>
+            ) : null}
+            {sharedSession.peers.length ? (
+              <span className="st-peer-chips" aria-label="People here now">
+                {sharedSession.peers.map(peer => (
+                  <span
+                    key={peer.peerId}
+                    className="st-peer-dot here"
+                    style={{ background: `hsl(${peerColor(peer.userId)} 70% 58%)` }}
+                    title={peer.userName || `User ${peer.userId.slice(-4)}`}
+                  />
+                ))}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </header>
 
       <StudioTransport
@@ -1453,7 +1894,7 @@ export function StudioEngine() {
         grooveId={project.grooveId ?? ''}
         onGrooveSelect={applyGroove}
         onGrooveClear={() => updateProject(p => ({ ...p, grooveId: undefined }))}
-        onPlay={() => void toggle()}
+        onPlay={() => void handlePlayToggle()}
         onStop={handleStop}
         onBpmChange={bpm => updateProject(p => ({ ...p, bpm }))}
         onBpmNudge={delta => updateProject(p => ({ ...p, bpm: Math.min(BPM_MAX, Math.max(BPM_MIN, p.bpm + delta)) }))}
@@ -1473,11 +1914,31 @@ export function StudioEngine() {
             Song
           </label>
           <select id="st-project" className="re-select" value={project.id} onChange={e => handleSwitchProject(e.target.value)}>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {sharedSongs.length ? (
+              <>
+                <optgroup label="This browser">
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Shared">
+                  {sharedSongs.map(song => (
+                    <option key={song.id} value={song.id}>
+                      {sharedSession?.songId === song.id && sharedSession.project ? sharedSession.project.name : song.name}
+                      {song.role === 'owner' ? '' : ' · shared with you'}
+                    </option>
+                  ))}
+                </optgroup>
+              </>
+            ) : (
+              projects.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))
+            )}
           </select>
           <button type="button" className="re-secondary-btn st-tool-btn" onClick={handleOpenWizard}>
             ✨ Wizard
@@ -1515,14 +1976,36 @@ export function StudioEngine() {
               e.target.value = '';
             }}
           />
+          {collabAvailable !== false ? (
+            <button
+              type="button"
+              className={`re-secondary-btn st-tool-btn${shareOpen ? ' on' : ''}${isShared ? ' st-shared' : ''}`}
+              onClick={() => setShareOpen(v => !v)}
+              aria-pressed={shareOpen}
+              title={isShared ? 'Who is on this song, add people, leave' : 'Save this song on the server and work on it with other people'}
+              data-testid="studio-share-toggle"
+            >
+              {isShared ? 'Sharing' : 'Share'}
+            </button>
+          ) : null}
           <button
             type="button"
             className={`re-secondary-btn st-tool-btn st-danger${confirmDelete ? ' armed' : ''}`}
             onClick={handleDelete}
             aria-live="polite"
-            title={confirmDelete ? 'Tap again to delete this song for good' : 'Delete this song'}
+            title={
+              confirmDelete
+                ? isShared && sharedSession?.role !== 'owner'
+                  ? 'Tap again to leave this shared song'
+                  : 'Tap again to delete this song for good'
+                : isShared && sharedSession?.role !== 'owner'
+                  ? 'Leave this shared song (the others keep it)'
+                  : isShared
+                    ? 'Delete this shared song for everyone'
+                    : 'Delete this song'
+            }
           >
-            {confirmDelete ? 'Really delete?' : 'Delete'}
+            {confirmDelete ? (isShared && sharedSession?.role !== 'owner' ? 'Really leave?' : 'Really delete?') : isShared && sharedSession?.role !== 'owner' ? 'Leave' : 'Delete'}
           </button>
         </div>
         <div className="st-toolbar-group">
@@ -1655,6 +2138,7 @@ export function StudioEngine() {
         onTrackChange={updateTrack}
         onRemoveTrack={removeTrack}
         onAddTrack={() => setAddTrackOpen(v => !v)}
+        peerTrackNames={peerTrackNames}
       />
 
       {menu && menuItems.length ? (
@@ -1672,6 +2156,28 @@ export function StudioEngine() {
           }
           items={menuItems}
           onClose={closeMenu}
+        />
+      ) : null}
+
+      {shareOpen ? (
+        <StudioSharePanel
+          me={me ? { id: me.user.id, name: me.user.name } : null}
+          songName={project.name}
+          session={isShared ? sharedSession : null}
+          busy={shareBusy}
+          onShare={() => void handleShare()}
+          onLeave={() => {
+            if (sharedSession) void removeSharedSong(sharedSession.songId, project.name, 'editor');
+          }}
+          onDelete={() => {
+            if (sharedSession) void removeSharedSong(sharedSession.songId, project.name, 'owner');
+          }}
+          onLocalCopy={handleLocalCopy}
+          onAddMember={handleAddMember}
+          onRemoveMember={handleRemoveMember}
+          followTransport={followTransport}
+          onFollowTransportChange={setFollowTransport}
+          onClose={() => setShareOpen(false)}
         />
       ) : null}
 
@@ -1762,24 +2268,22 @@ export function StudioEngine() {
         </div>
       ) : null}
 
-      {(() => {
-        const editorTrack = melodyEditorTrackId ? project.tracks.find(t => t.id === melodyEditorTrackId) : null;
-        if (!editorTrack || editorTrack.performer.melodyMode !== 'written') return null;
-        return (
-          <MelodyEditor
-            trackName={editorTrack.name}
-            notes={editorTrack.performer.writtenNotes ?? []}
-            flat={flat}
-            subdivisions={subdivisions}
-            strongSubs={strongSubs}
-            keyRoot={project.keyRoot}
-            octaveShift={editorTrack.performer.octaveShift ?? 0}
-            playhead={playhead}
-            onChange={writtenNotes => updateTrackPerformer(editorTrack.id, { writtenNotes })}
-            onClose={() => setMelodyEditorTrackId(null)}
-          />
-        );
-      })()}
+      {editorTrack ? (
+        <MelodyEditor
+          trackName={editorTrack.name}
+          notes={editorTrack.performer.writtenNotes ?? []}
+          peerCursors={isShared ? peerCursors : undefined}
+          onHoverCell={isShared ? onHoverCell : undefined}
+          flat={flat}
+          subdivisions={subdivisions}
+          strongSubs={strongSubs}
+          keyRoot={project.keyRoot}
+          octaveShift={editorTrack.performer.octaveShift ?? 0}
+          playhead={playhead}
+          onChange={writtenNotes => updateTrackPerformer(editorTrack.id, { writtenNotes })}
+          onClose={() => setMelodyEditorTrackId(null)}
+        />
+      ) : null}
 
       <div className="st-inspectors">
         <div className="re-panel re-stack st-inspector">

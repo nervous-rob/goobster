@@ -20,6 +20,8 @@ const webChatService = require('../services/webChatService');
 const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
 const parlorLiveService = require('../services/parlorLiveService');
+const studioSongService = require('../services/studioSongService');
+const studioLiveService = require('../services/studioLiveService');
 const friendService = require('../services/friendService');
 const presenceService = require('../services/presenceService');
 const userIntegrationService = require('../services/userIntegrationService');
@@ -77,6 +79,8 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         dashboard: deps.dashboard || webDashboardService,
         parlor: deps.parlor || parlorService,
         parlorLive: deps.parlorLive || parlorLiveService,
+        studioSongs: deps.studioSongs || studioSongService,
+        studioLive: deps.studioLive || studioLiveService,
         friends: deps.friends || friendService,
         presence: deps.presence || presenceService,
         integrations: deps.integrations || userIntegrationService,

@@ -10,10 +10,12 @@ interface TrackHeaderProps {
   onChange: (partial: Partial<SongTrack>) => void;
   onRemove: () => void;
   onContextMenu: (at: MenuPoint) => void;
+  /** Collaborators who have this track selected (shared songs). */
+  peers?: { name: string; hue: number }[];
 }
 
 /** Sticky left cell of a timeline row: identity, mute/solo, level. */
-export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, onContextMenu }: TrackHeaderProps) {
+export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, onContextMenu, peers }: TrackHeaderProps) {
   const hue = isDrumRole(track.role) ? null : findVoice(track.performer.voiceId).hue;
 
   return (
@@ -37,6 +39,18 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
           {ROLE_META[track.role].short}
         </span>
         <span className="st-track-label">{track.name}</span>
+        {peers?.length ? (
+          <span className="st-track-peers" aria-label={`${peers.map(p => p.name).join(', ')} ${peers.length === 1 ? 'is' : 'are'} on this track`}>
+            {peers.map(peer => (
+              <span
+                key={peer.name}
+                className="st-peer-dot here"
+                style={{ background: `hsl(${peer.hue} 70% 58%)` }}
+                title={`${peer.name} is on this track`}
+              />
+            ))}
+          </span>
+        ) : null}
       </button>
       <div className="st-track-controls">
         <button
