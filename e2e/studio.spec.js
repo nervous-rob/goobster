@@ -333,6 +333,55 @@ test.describe('Song Studio', () => {
         await expect(head.locator('.st-mini-btn.mute')).toHaveCount(1);
     });
 
+    test('melody editor: tap places, drag sets length, tap anywhere on a note erases it', async ({ page }) => {
+        await page.locator('.st-clip', { hasText: 'Melody Wisp' }).first().click();
+        await page.getByRole('button', { name: /Written lead/ }).click();
+        const editor = page.locator('.st-melody-editor');
+        await expect(editor).toBeVisible();
+        const written = editor.locator('.re-panel-head p');
+        const label = (await editor.locator('.st-me-row-label.root').first().textContent()).trim();
+        const cell = (step) => editor.locator(`button[aria-label^="${label}, bar 1 step ${step}"]`);
+
+        // Tap an empty step: a one-step note.
+        await cell(1).click();
+        await expect(written).toContainText('1 notes written');
+        await expect(cell(1)).toHaveClass(/head/);
+
+        // Drag from the head across three more steps: the note grows to 4.
+        const from = await cell(1).boundingBox();
+        const to = await cell(4).boundingBox();
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 6 });
+        await page.mouse.up();
+        await expect(cell(1)).toHaveAttribute('aria-label', /length 4/);
+        await expect(cell(3)).toHaveClass(/tail/);
+        await expect(written).toContainText('1 notes written');
+
+        // Tapping the body of the note (a held step, not its head) erases it
+        // instead of splitting it into a second note. (Edits within 600 ms
+        // coalesce into one undo step, so pace the gestures like a person.)
+        await page.waitForTimeout(700);
+        await cell(3).click();
+        await expect(written).toContainText('0 notes written');
+        await expect(editor.locator('.st-me-cell.head')).toHaveCount(0);
+
+        // Undo brings the 4-step note back as one edit; right-click erases it.
+        await page.keyboard.press('Control+z');
+        await expect(cell(1)).toHaveAttribute('aria-label', /length 4/);
+        await cell(2).click({ button: 'right' });
+        await expect(written).toContainText('0 notes written');
+
+        // Keyboard: Enter toggles a step, Shift+ArrowRight lengthens it.
+        await cell(5).focus();
+        await page.keyboard.press('Enter');
+        await expect(cell(5)).toHaveClass(/head/);
+        await page.keyboard.press('Shift+ArrowRight');
+        await expect(cell(5)).toHaveAttribute('aria-label', /length 2/);
+        await page.keyboard.press('Enter');
+        await expect(written).toContainText('0 notes written');
+    });
+
     test('playhead stays aligned with the header column on a phone', async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         const tick = page.locator('.st-tick').first();

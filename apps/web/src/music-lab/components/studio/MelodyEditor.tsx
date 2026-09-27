@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { NoteName } from '@music-lab/lib/musicData';
 import { pcOf } from '@music-lab/lib/harmonyTheory';
 import type { FlattenedSong } from '@music-lab/lib/songTheory';
@@ -24,8 +24,23 @@ const NOTE_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#',
 /** Pitch rows, top to bottom, in semitones relative to the key root. */
 const PITCH_TOP = 16;
 const PITCH_BOTTOM = -8;
-/** Click-to-lengthen cycle: 1 → 2 → 3 → 4 → 6 → 8 → removed. */
-const LENGTH_CYCLE = [1, 2, 3, 4, 6, 8];
+/** Longest note the sanitizer accepts (songEdit LIMITS). */
+const MAX_DUR_SUBS = 64;
+
+/**
+ * One pointer gesture on the roll. A press that never crosses into another
+ * column is a tap (place on an empty step, erase an existing note); a press
+ * that does becomes a resize of the note it started on.
+ */
+interface DragState {
+  noteId: string;
+  /** Absolute onset column of the note being drawn or resized. */
+  startAbs: number;
+  lastAbs: number;
+  /** The note was placed by this very gesture (release never erases it). */
+  fresh: boolean;
+  resized: boolean;
+}
 
 let noteCounter = 0;
 
@@ -113,25 +128,148 @@ export function MelodyEditor({
     [rootMidi]
   );
 
-  const handleCell = useCallback(
-    (measure: number, sub: number, pitch: number) => {
-      const atCell = notes.find(n => n.measure === measure && n.sub === sub);
-      if (atCell && atCell.pitch === pitch) {
-        const index = LENGTH_CYCLE.indexOf(atCell.durSubs);
-        const next = LENGTH_CYCLE[index + 1];
-        if (next === undefined) {
-          onChange(notes.filter(n => n.id !== atCell.id));
-        } else {
-          onChange(notes.map(n => (n.id === atCell.id ? { ...n, durSubs: next } : n)));
-        }
+  // Pointer gestures span several renders; read the newest notes through a
+  // ref so a drag never resizes against a stale array.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const dragRef = useRef<DragState | null>(null);
+
+  /** The note sounding at a cell of this pitch — its head or any held step. */
+  const noteAt = useCallback(
+    (measure: number, sub: number, pitch: number): WrittenNote | undefined => {
+      const absCell = measure * subdivisions + sub;
+      return notesRef.current.find(n => {
+        if (n.pitch !== pitch) return false;
+        const absStart = n.measure * subdivisions + n.sub;
+        return absStart === absCell || (absStart < absCell && absStart + effectiveLength(n) > absCell);
+      });
+    },
+    [effectiveLength, subdivisions]
+  );
+
+  // Commit through the ref first so a gesture that fires several events
+  // before React re-renders (place, then resize) builds on its own edits.
+  const commit = useCallback(
+    (next: WrittenNote[]) => {
+      notesRef.current = next;
+      onChange(next);
+    },
+    [onChange]
+  );
+
+  const eraseNote = useCallback(
+    (noteId: string) => {
+      commit(notesRef.current.filter(n => n.id !== noteId));
+    },
+    [commit]
+  );
+
+  const placeNote = useCallback(
+    (measure: number, sub: number, pitch: number): WrittenNote => {
+      // Monophonic lane: one note per grid step — the newest wins.
+      const without = notesRef.current.filter(n => !(n.measure === measure && n.sub === sub));
+      const note = { id: makeNoteId(), measure, sub, pitch, durSubs: 1 };
+      commit([...without, note]);
+      void previewPitch(pitch);
+      return note;
+    },
+    [commit, previewPitch]
+  );
+
+  const resizeNote = useCallback(
+    (noteId: string, durSubs: number) => {
+      const clamped = Math.max(1, Math.min(MAX_DUR_SUBS, durSubs));
+      const current = notesRef.current;
+      if (current.some(n => n.id === noteId && n.durSubs === clamped)) return;
+      commit(current.map(n => (n.id === noteId ? { ...n, durSubs: clamped } : n)));
+    },
+    [commit]
+  );
+
+  const endDrag = useCallback(() => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (!drag) return;
+    // A press that never moved is a tap: a tap on an existing note erases it.
+    if (!drag.fresh && !drag.resized) eraseNote(drag.noteId);
+  }, [eraseNote]);
+
+  useEffect(() => {
+    const finish = () => endDrag();
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, [endDrag]);
+
+  const handleCellPointerDown = useCallback(
+    (event: PointerEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => {
+      if (event.button !== 0) return;
+      const hit = noteAt(measure, sub, pitch);
+      const note = hit ?? placeNote(measure, sub, pitch);
+      const startAbs = note.measure * subdivisions + note.sub;
+      dragRef.current = {
+        noteId: note.id,
+        startAbs,
+        lastAbs: measure * subdivisions + sub,
+        fresh: !hit,
+        resized: false
+      };
+    },
+    [noteAt, placeNote, subdivisions]
+  );
+
+  /**
+   * Resize follows the pointer across columns. Hit-testing from the grid
+   * (instead of per-cell enter events) works for touch too, where the
+   * browser pins pointer events to the cell that was first pressed.
+   */
+  const handleGridPointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const cell = target instanceof Element ? target.closest<HTMLElement>('[data-abs]') : null;
+      if (!cell) return;
+      const abs = Number(cell.dataset.abs);
+      if (!Number.isFinite(abs) || abs === drag.lastAbs) return;
+      drag.lastAbs = abs;
+      drag.resized = true;
+      resizeNote(drag.noteId, abs - drag.startAbs + 1);
+    },
+    [resizeNote]
+  );
+
+  /** Right-click erases, the way every piano roll does. */
+  const handleCellContextMenu = useCallback(
+    (event: { preventDefault(): void }, measure: number, sub: number, pitch: number) => {
+      const hit = noteAt(measure, sub, pitch);
+      if (!hit) return;
+      event.preventDefault();
+      dragRef.current = null;
+      eraseNote(hit.id);
+    },
+    [eraseNote, noteAt]
+  );
+
+  /** Keyboard: Enter/Space toggles the step, Shift+arrows resize a note. */
+  const handleCellKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => {
+      const hit = noteAt(measure, sub, pitch);
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (hit) eraseNote(hit.id);
+        else placeNote(measure, sub, pitch);
         return;
       }
-      // Monophonic lane: one note per grid step — the newest wins.
-      const without = notes.filter(n => !(n.measure === measure && n.sub === sub));
-      onChange([...without, { id: makeNoteId(), measure, sub, pitch, durSubs: 1 }]);
-      void previewPitch(pitch);
+      if (hit && event.shiftKey && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
+        event.preventDefault();
+        resizeNote(hit.id, hit.durSubs + (event.key === 'ArrowRight' ? 1 : -1));
+      }
     },
-    [notes, onChange, previewPitch]
+    [eraseNote, noteAt, placeNote, resizeNote]
   );
 
   const clearSection = useCallback(() => {
@@ -190,6 +328,7 @@ export function MelodyEditor({
           style={{ gridTemplateColumns: `52px repeat(${measures.length * subdivisions}, 20px)` }}
           role="grid"
           aria-label="Melody piano roll"
+          onPointerMove={handleGridPointerMove}
         >
           <span className="st-me-corner" aria-hidden />
           {measures.map(measure => {
@@ -217,7 +356,9 @@ export function MelodyEditor({
                 notes={notes}
                 effectiveLength={effectiveLength}
                 playhead={playhead}
-                onCell={handleCell}
+                onCellPointerDown={handleCellPointerDown}
+                onCellContextMenu={handleCellContextMenu}
+                onCellKeyDown={handleCellKeyDown}
               />
             );
           })}
@@ -225,8 +366,9 @@ export function MelodyEditor({
       </div>
 
       <p className="vb-note">
-        Tap to place a note (it plays as you place it) — tap again to lengthen: 1 → 2 → 3 → 4 → 6 → 8 steps, then off.
-        One note per step. Glowing cells are chord tones of that measure; the lead transposes if you change the song key.
+        Tap an empty step to place a note (it plays as you place it) and drag to the right to set its length. Tap a note
+        anywhere along it to erase it — right-click works too. One note per step. Glowing cells are chord tones of that
+        measure; the lead transposes if you change the song key.
       </p>
     </div>
   );
@@ -244,7 +386,9 @@ interface RowCellsProps {
   notes: WrittenNote[];
   effectiveLength: (note: WrittenNote) => number;
   playhead: { measure: number; sub: number } | null;
-  onCell: (measure: number, sub: number, pitch: number) => void;
+  onCellPointerDown: (event: PointerEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => void;
+  onCellContextMenu: (event: { preventDefault(): void }, measure: number, sub: number, pitch: number) => void;
+  onCellKeyDown: (event: KeyboardEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => void;
 }
 
 function RowCells({
@@ -259,7 +403,9 @@ function RowCells({
   notes,
   effectiveLength,
   playhead,
-  onCell
+  onCellPointerDown,
+  onCellContextMenu,
+  onCellKeyDown
 }: RowCellsProps) {
   const pitchPc = ((keyPc + pitch) % 12 + 12) % 12;
   return (
@@ -285,14 +431,18 @@ function RowCells({
           if (head) classes.push('head');
           else if (tail) classes.push('tail');
           if (playhead && playhead.measure === measure && playhead.sub === sub) classes.push('now');
+          const note = head ?? tail;
           return (
             <button
               key={`${measure}-${sub}`}
               type="button"
               className={classes.join(' ')}
-              onClick={() => onCell(measure, sub, pitch)}
+              data-abs={absCell}
+              onPointerDown={event => onCellPointerDown(event, measure, sub, pitch)}
+              onContextMenu={event => onCellContextMenu(event, measure, sub, pitch)}
+              onKeyDown={event => onCellKeyDown(event, measure, sub, pitch)}
               aria-label={`${label}, bar ${measure + 1} step ${sub + 1}${head ? `, length ${head.durSubs}` : ''}`}
-              title={head ? `Length ${head.durSubs} — tap to lengthen` : undefined}
+              title={note ? `Length ${note.durSubs} — tap to erase, drag to resize` : undefined}
             />
           );
         });

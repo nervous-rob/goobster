@@ -112,6 +112,17 @@ open it in the **Track** inspector:
   the written-lead melody editor, or the chord track's voicing / register
   overrides.
 
+The **melody editor** (a lead track set to *Written lead*) is a piano roll
+for one section at a time: rows are pitches relative to the song key, chord
+tones of each bar glow, and the playhead sweeps the grid while the song
+plays. It works like any DAW roll — **tap an empty step** to place a
+one-step note (it sounds as you place it), **drag to the right** to set its
+length, and **tap a note anywhere along it** to erase it (right-click erases
+too). The lane is monophonic: one note per step, and a note is cut short by
+the next onset. On a keyboard, Enter or Space toggles the focused step and
+Shift+←/→ resizes the note under it. **Clear section** wipes the visible
+section only.
+
 While any track is soloed, every other track's clips dim to show they are
 silent. `M` and `S` toggle mute and solo on the selected track.
 
