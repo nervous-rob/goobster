@@ -71,6 +71,8 @@ export interface SongOrchestratorConfig {
 export interface SongOrchestratorCallbacks {
   onStep?: (measure: number, subIndex: number) => void;
   onPlayState?: (playing: boolean) => void;
+  /** The song ran to its end with loop off (fires before onPlayState(false)). */
+  onEnded?: () => void;
   onTrigger?: (trackId: string, intensity: number, midi?: number) => void;
 }
 
@@ -292,7 +294,9 @@ export function useSongOrchestrator() {
           step = region.startStep;
         } else {
           Tone.Draw.schedule(() => {
-            if (playingRef.current) haltPlayback(true);
+            if (!playingRef.current) return;
+            callbacksRef.current.onEnded?.();
+            haltPlayback(true);
           }, time);
           return;
         }
@@ -502,6 +506,21 @@ export function useSongOrchestrator() {
     releaseAllChords();
   }, [releaseAllChords]);
 
+  /** Seek to an absolute grid step (measure × subdivisions + sub); shared transports count in steps. */
+  const seekStep = useCallback((step: number) => {
+    const cfg = configRef.current;
+    const subs = Math.max(1, totalSubdivisions(cfg.grouping));
+    const lastStep = Math.max(0, cfg.totalMeasures * subs - 1);
+    stepRef.current = Math.max(0, Math.min(Math.round(step), lastStep));
+    releaseAllChords();
+  }, [releaseAllChords]);
+
+  /** The step the conductor will play next (or is parked on while stopped). */
+  const currentStep = useCallback(() => stepRef.current, []);
+
+  /** Grid steps per measure under the current config. */
+  const stepsPerMeasure = useCallback(() => Math.max(1, totalSubdivisions(configRef.current.grouping)), []);
+
   const setConfig = useCallback(
     (config: SongOrchestratorConfig) => {
       configRef.current = config;
@@ -580,6 +599,9 @@ export function useSongOrchestrator() {
     pause,
     toggle,
     seek,
+    seekStep,
+    currentStep,
+    stepsPerMeasure,
     startRecording,
     stopRecording
   };

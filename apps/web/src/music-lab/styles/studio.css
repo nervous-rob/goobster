@@ -1364,6 +1364,31 @@
   opacity: 0.7;
 }
 
+.studio-engine .st-share-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.studio-engine .st-share-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.studio-engine .st-share-follow input {
+  accent-color: var(--re-accent);
+}
+
+.studio-engine .st-collab-status .st-collab-playing {
+  color: var(--re-accent);
+  font-family: var(--re-mono);
+  font-size: 0.68rem;
+}
+
 .studio-engine .st-share-list {
   list-style: none;
   margin: 0.35rem 0 0;

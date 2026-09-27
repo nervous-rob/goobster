@@ -27,10 +27,33 @@ export interface PeerInfo {
   userName: string | null;
 }
 
+export interface PresenceCell {
+  measure: number;
+  sub: number;
+  pitch: number;
+}
+
 export interface PeerPresence {
   trackId: string | null;
   sectionId: string | null;
   clipId: string | null;
+  /** The piano-roll cell under their pointer, when they are in the melody editor. */
+  cell?: PresenceCell | null;
+}
+
+export type TransportAction = 'play' | 'pause' | 'stop' | 'seek';
+
+/** The room's shared transport as the server last stamped it. */
+export interface SharedTransport {
+  playing: boolean;
+  /** Grid step (measure × subdivisions + sub) the transport was set to. */
+  step: number;
+  /** Server clock (ms) when the action was accepted. */
+  at: number;
+  action: TransportAction;
+  by: string;
+  userId: string;
+  userName: string | null;
 }
 
 export interface SharedSession {
@@ -46,11 +69,20 @@ export interface SharedSession {
   status: CollabStatus;
   peerId: string | null;
   pendingCount: number;
+  transport: SharedTransport | null;
+  /** serverTime − localTime in ms; add to Date.now() to get the server clock. */
+  clockOffset: number;
 }
 
 export interface StudioCollabEvents {
   /** Another person's edit landed on the open song (undo history is now stale). */
   onRemotePatch?: (songId: string) => void;
+  /**
+   * The room's transport changed. `mine` is true for the echo of our own
+   * action; `onJoin` when the state arrived with the snapshot (someone was
+   * already playing when we opened the song).
+   */
+  onTransport?: (transport: SharedTransport, context: { songId: string; mine: boolean; onJoin: boolean }) => void;
   /** The open song went away: the owner removed us or deleted it. */
   onLost?: (songId: string, reason: 'removed' | 'deleted' | 'error', message?: string) => void;
   onError?: (message: string) => void;
@@ -66,6 +98,10 @@ export interface StudioCollab {
   close: () => void;
   applyLocal: (next: SongProject) => void;
   sendPresence: (presence: PeerPresence) => void;
+  /** Drive the room's transport; the server echoes it to everyone, us included. */
+  sendTransport: (action: TransportAction, step: number) => boolean;
+  /** Best estimate of the server clock right now (ms). */
+  serverNow: () => number;
   share: (project: SongProject) => Promise<StudioSongDetail>;
   remove: (songId: string) => Promise<void>;
   leave: (songId: string, userId: string) => Promise<void>;
@@ -79,6 +115,8 @@ interface PendingOp {
 }
 
 const FLUSH_MS = 60;
+/** Pointer-driven presence (piano-roll cells) is throttled to this cadence. */
+const PRESENCE_MS = 50;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15000;
 const MAX_PENDING = 500;
@@ -117,9 +155,31 @@ type ServerMessage = {
   trackId?: string | null;
   sectionId?: string | null;
   clipId?: string | null;
+  cell?: PresenceCell | null;
   code?: string;
   message?: string;
+  transport?: SharedTransport | null;
+  serverTime?: number;
+  t?: number | null;
+  playing?: boolean;
+  step?: number;
+  at?: number;
+  action?: TransportAction;
+  by?: string;
 };
+
+function readTransport(message: ServerMessage): SharedTransport | null {
+  if (typeof message.playing !== 'boolean' || typeof message.at !== 'number' || !message.by) return null;
+  return {
+    playing: message.playing,
+    step: Number(message.step ?? 0),
+    at: message.at,
+    action: (message.action ?? (message.playing ? 'play' : 'stop')) as TransportAction,
+    by: message.by,
+    userId: String(message.userId ?? ''),
+    userName: message.userName ?? null
+  };
+}
 
 export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -139,6 +199,10 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const lastPresenceRef = useRef<string>('');
+  const presenceTimerRef = useRef<number | null>(null);
+  const presenceQueuedRef = useRef<PeerPresence | null>(null);
+  const presenceSentAtRef = useRef(0);
+  const clockOffsetRef = useRef(0);
   const unmountedRef = useRef(false);
 
   const setSession = useCallback((updater: (prev: SharedSession | null) => SharedSession | null) => {
@@ -230,6 +294,11 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    if (presenceTimerRef.current !== null) {
+      window.clearTimeout(presenceTimerRef.current);
+      presenceTimerRef.current = null;
+    }
+    presenceQueuedRef.current = null;
   }, []);
 
   const dropSocket = useCallback(() => {
@@ -279,6 +348,11 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
       foreignInterleavedRef.current = false;
       reconnectAttemptRef.current = 0;
       for (const op of pendingRef.current) sendRaw({ type: 'patch', opId: op.opId, patch: op.patch });
+      // First clock estimate from the snapshot stamp; a ping refines it with
+      // half the measured round trip.
+      if (typeof message.serverTime === 'number') clockOffsetRef.current = message.serverTime - Date.now();
+      sendRaw({ type: 'ping', t: Date.now() });
+      const transport = message.transport && typeof message.transport === 'object' ? readTransport(message.transport as ServerMessage) : null;
       setSession(() => ({
         songId,
         project: current,
@@ -290,9 +364,12 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
         presence: {},
         status: 'live',
         peerId: message.peerId ?? null,
-        pendingCount: pendingRef.current.length
+        pendingCount: pendingRef.current.length,
+        transport,
+        clockOffset: clockOffsetRef.current
       }));
       lastPresenceRef.current = '';
+      if (transport) eventsRef.current.onTransport?.(transport, { songId, mine: false, onJoin: true });
     },
     [handleLost, sendRaw, setSession]
   );
@@ -378,12 +455,30 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
                 [message.peerId]: {
                   trackId: message.trackId ?? null,
                   sectionId: message.sectionId ?? null,
-                  clipId: message.clipId ?? null
+                  clipId: message.clipId ?? null,
+                  cell: message.cell ?? null
                 }
               }
             };
           });
           return;
+        case 'transport': {
+          const current = sessionRef.current;
+          if (!current || message.songId !== current.songId) return;
+          const transport = readTransport(message);
+          if (!transport) return;
+          setSession(prev => (prev ? { ...prev, transport } : prev));
+          eventsRef.current.onTransport?.(transport, { songId: current.songId, mine: transport.by === current.peerId, onJoin: false });
+          return;
+        }
+        case 'pong': {
+          if (typeof message.serverTime !== 'number' || typeof message.t !== 'number') return;
+          const now = Date.now();
+          const rtt = Math.max(0, now - message.t);
+          clockOffsetRef.current = message.serverTime - (message.t + rtt / 2);
+          setSession(prev => (prev ? { ...prev, clockOffset: clockOffsetRef.current } : prev));
+          return;
+        }
         case 'members':
           setSession(prev =>
             prev && message.songId === prev.songId && Array.isArray(message.members) ? { ...prev, members: message.members } : prev
@@ -475,7 +570,9 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
         presence: {},
         status: 'connecting',
         peerId: null,
-        pendingCount: 0
+        pendingCount: 0,
+        transport: null,
+        clockOffset: clockOffsetRef.current
       }));
       if (reconnectTimerRef.current !== null) {
         window.clearTimeout(reconnectTimerRef.current);
@@ -510,11 +607,42 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
       if (!sessionRef.current || sessionRef.current.status !== 'live') return;
       const key = JSON.stringify(presence);
       if (key === lastPresenceRef.current) return;
-      lastPresenceRef.current = key;
-      sendRaw({ type: 'presence', ...presence });
+      // Pointer-driven cells arrive far faster than peers need them: send at
+      // most every PRESENCE_MS, always ending on the latest value.
+      const now = Date.now();
+      const due = presenceSentAtRef.current + PRESENCE_MS - now;
+      if (due <= 0 && presenceTimerRef.current === null) {
+        lastPresenceRef.current = key;
+        presenceSentAtRef.current = now;
+        sendRaw({ type: 'presence', ...presence });
+        return;
+      }
+      presenceQueuedRef.current = presence;
+      if (presenceTimerRef.current !== null) return;
+      presenceTimerRef.current = window.setTimeout(() => {
+        presenceTimerRef.current = null;
+        const queued = presenceQueuedRef.current;
+        presenceQueuedRef.current = null;
+        if (!queued || !sessionRef.current || sessionRef.current.status !== 'live') return;
+        const queuedKey = JSON.stringify(queued);
+        if (queuedKey === lastPresenceRef.current) return;
+        lastPresenceRef.current = queuedKey;
+        presenceSentAtRef.current = Date.now();
+        sendRaw({ type: 'presence', ...queued });
+      }, Math.max(0, due));
     },
     [sendRaw]
   );
+
+  const sendTransport = useCallback(
+    (action: TransportAction, step: number) => {
+      if (!sessionRef.current || sessionRef.current.status !== 'live') return false;
+      return sendRaw({ type: 'transport', action, step: Math.max(0, Math.round(step)) });
+    },
+    [sendRaw]
+  );
+
+  const serverNow = useCallback(() => Date.now() + clockOffsetRef.current, []);
 
   const share = useCallback(
     async (project: SongProject) => {
@@ -573,12 +701,14 @@ export function useStudioCollab(events: StudioCollabEvents = {}): StudioCollab {
       close,
       applyLocal,
       sendPresence,
+      sendTransport,
+      serverNow,
       share,
       remove,
       leave,
       addMember,
       removeMember
     }),
-    [available, songs, refresh, session, open, close, applyLocal, sendPresence, share, remove, leave, addMember, removeMember]
+    [available, songs, refresh, session, open, close, applyLocal, sendPresence, sendTransport, serverNow, share, remove, leave, addMember, removeMember]
   );
 }

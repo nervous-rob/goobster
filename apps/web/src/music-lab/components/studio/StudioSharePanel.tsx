@@ -16,6 +16,9 @@ interface StudioSharePanelProps {
   onAddMember: (userId: string, userName: string | null) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
   onClose: () => void;
+  /** Follow the room's transport (play / pause / stop / seek together). */
+  followTransport: boolean;
+  onFollowTransportChange: (follow: boolean) => void;
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -55,7 +58,9 @@ export function StudioSharePanel({
   onLocalCopy,
   onAddMember,
   onRemoveMember,
-  onClose
+  onClose,
+  followTransport,
+  onFollowTransportChange
 }: StudioSharePanelProps) {
   const [query, setQuery] = useState('');
   const [people, setPeople] = useState<Person[]>([]);
@@ -131,7 +136,7 @@ export function StudioSharePanel({
           <h3>{session ? 'Shared song' : 'Share this song'}</h3>
           <p>
             {session
-              ? 'Everyone on this song edits the same arrangement live. Playback stays local: each person presses Play in their own browser.'
+              ? 'Everyone on this song edits the same arrangement live. With Sync playback on, Play, Pause, Stop and seeks travel too, so you all hear the same bar at the same time — each browser still renders its own audio.'
               : 'Save the song on the server to work on it with other people in real time. It moves out of this browser’s storage and into your Shared list.'}
           </p>
         </div>
@@ -153,6 +158,25 @@ export function StudioSharePanel({
             <span className={`re-status-dot${session.status === 'live' ? ' on' : ''}`} />
             <span className={session.status === 'live' ? 're-status-text on' : 're-status-text'}>{statusLabel(session)}</span>
             <span className="st-share-role">{isOwner ? 'You own this song' : 'You can edit this song'}</span>
+          </div>
+
+          <div className="st-share-transport">
+            <label className="st-share-follow">
+              <input
+                type="checkbox"
+                checked={followTransport}
+                onChange={e => onFollowTransportChange(e.target.checked)}
+                data-testid="studio-share-follow"
+              />
+              <span>Sync playback with everyone here</span>
+            </label>
+            <span className="stage-perf-flavor" data-testid="studio-share-transport">
+              {session.transport?.playing
+                ? `▶ ${session.transport.userName || 'Someone'} is playing`
+                : followTransport
+                  ? 'Press Play and everyone follows; theirs moves yours too.'
+                  : 'Your transport is private; edits still sync.'}
+            </span>
           </div>
 
           <div className="st-share-members" data-testid="studio-share-members">

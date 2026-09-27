@@ -6,7 +6,7 @@ import { PROGRESSION_PRESETS, VOICINGS, type RegisterId, type VoicingId } from '
 import { buildHarmonyGenome, nameChord, type FoundrySettings } from '@music-lab/lib/harmonyTheory';
 import { RHYTHMS } from '@music-lab/lib/rhythmData';
 import { useRhythmOptions } from '@music-lab/hooks/useRhythmOptions';
-import { GRID_STEP_LABEL, gridGrouping, totalSubdivisions } from '@music-lab/lib/rhythmTheory';
+import { GRID_STEP_LABEL, gridGrouping, totalSubdivisions, type GridResolution } from '@music-lab/lib/rhythmTheory';
 import { hasStudioHandoff, takeStudioHandoff } from '@music-lab/lib/handoff';
 import { findLibraryDrumPattern, stretchDrumSteps, type LibraryGroove } from '@music-lab/lib/genreLibrary';
 import { downloadBlob, recordingToWavBlob } from '@music-lab/lib/audioExport';
@@ -29,6 +29,7 @@ import {
   songDurationSeconds,
   songFileName,
   splitClipAt,
+  stepSeconds,
   undoHistory,
   type EditHistory,
   type SectionPayload
@@ -90,7 +91,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu';
 import { SongWizard } from './SongWizard';
 import { MelodyEditor } from './MelodyEditor';
 import { StudioSharePanel, peerColor } from './StudioSharePanel';
-import { useStudioCollab } from '@music-lab/hooks/useStudioCollab';
+import { useStudioCollab, type SharedTransport } from '@music-lab/hooks/useStudioCollab';
 import { useSession } from '../../../hooks/useSession';
 
 function IconStudio() {
@@ -187,14 +188,20 @@ export function StudioEngine() {
     setConfig,
     setCallbacks,
     stop,
-    toggle,
+    pause,
     seek,
+    seekStep,
+    currentStep,
     start,
     startRecording,
     stopRecording
   } = useSongOrchestrator();
   const recordingRef = useRef(false);
   recordingRef.current = isRecording;
+  const audioReadyRef = useRef(false);
+  audioReadyRef.current = audioReady;
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
 
   // --- Edits and undo history ---
   // `latestProjectRef` is the project as of the most recent edit in this
@@ -238,12 +245,98 @@ export function StudioEngine() {
     [setCurrentId, showNotice]
   );
   const onCollabError = useCallback((message: string) => showNotice(message, 'error'), [showNotice]);
-  const collab = useStudioCollab({ onRemotePatch, onLost: onCollabLost, onError: onCollabError });
+
+  // --- Shared transport ---
+  // Play / pause / stop / seek travel through the room when "Sync playback"
+  // is on. Each browser still runs its own conductor and audio engine; the
+  // room only agrees on *which step* everyone is at and *when* it started
+  // (server clock), so a late browser can catch up mid-song. A browser that
+  // has not unlocked audio yet cannot start sound on a remote command; it
+  // shows who is playing and joins at the right step once Play is pressed.
+  const [followTransport, setFollowTransport] = useLocalStorage<boolean>('studioFollowTransport', true);
+  const followTransportRef = useRef(followTransport);
+  followTransportRef.current = followTransport;
+  /** Grid maths the transport handler needs; assigned once they are computed below. */
+  const gridRef = useRef({
+    subdivisions: 8,
+    bpm: 100,
+    resolution: 'eighth' as GridResolution,
+    totalSteps: 0,
+    loop: false,
+    region: { startStep: 0, endStep: 0 }
+  });
+  const stepToPlayhead = useCallback((step: number) => {
+    const subs = Math.max(1, gridRef.current.subdivisions);
+    return { measure: Math.floor(step / subs), sub: step % subs };
+  }, []);
+  /**
+   * Where a running shared transport is *now*, in grid steps — wrapped into
+   * our loop region when looping, or null once it has run past the end of
+   * the song (the driver's browser stopped by itself at that point).
+   */
+  const liveStepOf = useCallback((transport: SharedTransport, serverNowMs: number): number | null => {
+    if (!transport.playing) return transport.step;
+    const { bpm, resolution, totalSteps, loop, region } = gridRef.current;
+    const elapsed = Math.max(0, serverNowMs - transport.at) / 1000;
+    const step = transport.step + Math.floor(elapsed / stepSeconds(bpm, resolution));
+    if (loop && step >= region.endStep) {
+      const length = Math.max(1, region.endStep - region.startStep);
+      return region.startStep + ((step - region.startStep) % length);
+    }
+    return step < totalSteps ? step : null;
+  }, []);
+  const serverNowRef = useRef<() => number>(() => Date.now());
+  /** `announce` (defined with the transport handlers) for callbacks registered earlier. */
+  const announceRef = useRef<(action: 'play' | 'pause' | 'stop' | 'seek', step: number) => void>(() => {});
+  const onTransport = useCallback(
+    (transport: SharedTransport, { mine, onJoin }: { songId: string; mine: boolean; onJoin: boolean }) => {
+      // Our own action already happened locally; recording keeps its own clock.
+      if (mine || recordingRef.current || !followTransportRef.current) return;
+      const who = transport.userName || 'Someone';
+      if (transport.playing) {
+        const step = liveStepOf(transport, serverNowRef.current());
+        if (step === null) {
+          // Their run already reached the end of the song; nothing to join.
+          if (isPlayingRef.current) stop();
+          setPlayhead(null);
+          return;
+        }
+        if (audioReadyRef.current) {
+          seekStep(step);
+          void start();
+        } else {
+          setPlayhead(stepToPlayhead(step));
+          showNotice(`${who} pressed Play — press Play here to listen in sync.`);
+        }
+        return;
+      }
+      if (transport.action === 'stop') {
+        stop();
+        setPlayhead(null);
+        return;
+      }
+      // pause, or a seek while stopped: park on their step.
+      if (isPlayingRef.current) pause();
+      seekStep(transport.step);
+      setPlayhead(stepToPlayhead(transport.step));
+      if (!onJoin && transport.action === 'pause') showNotice(`${who} paused.`);
+    },
+    [liveStepOf, pause, seekStep, showNotice, start, stepToPlayhead, stop]
+  );
+
+  const collab = useStudioCollab({ onRemotePatch, onLost: onCollabLost, onError: onCollabError, onTransport });
+  serverNowRef.current = collab.serverNow;
   const sharedSession = collab.session;
   const sharedSessionRef = useRef(sharedSession);
   sharedSessionRef.current = sharedSession;
   /** The current song is a server document (open, or still opening). */
   const isShared = Boolean(sharedSession && currentId === sharedSession.songId);
+  /** Who (other than us) last pressed Play on the shared transport and is still running. */
+  const remotePlayer = useMemo(() => {
+    const transport = sharedSession?.transport;
+    if (!isShared || !transport?.playing || transport.by === sharedSession?.peerId) return null;
+    return transport.userName || `User ${transport.userId.slice(-4)}`;
+  }, [isShared, sharedSession?.peerId, sharedSession?.transport]);
 
   const project = useMemo(() => {
     if (sharedSession && currentId === sharedSession.songId) return sharedSession.project;
@@ -348,6 +441,17 @@ export function StudioEngine() {
     }
     return { start: 0, end: flat.totalMeasures };
   }, [flat, loopMode, selectedSection]);
+  gridRef.current = {
+    subdivisions,
+    bpm: project?.bpm ?? 100,
+    resolution,
+    totalSteps: flat.totalMeasures * subdivisions,
+    loop,
+    region: {
+      startStep: (loopRegion?.start ?? 0) * subdivisions,
+      endStep: (loopRegion?.end ?? flat.totalMeasures) * subdivisions
+    }
+  };
 
   // --- Runtime tracks for the orchestrator ---
   const runtimeTracks = useMemo<SongRuntimeTrack[]>(() => {
@@ -476,6 +580,12 @@ export function StudioEngine() {
   useEffect(() => {
     setCallbacks({
       onStep: (measure, sub) => setPlayhead({ measure, sub }),
+      onEnded: () => {
+        // Only the browser that pressed Play speaks for the room here, so
+        // followers reaching the end at the same moment do not all shout.
+        const shared = sharedSessionRef.current;
+        if (shared?.transport?.playing && shared.transport.by === shared.peerId) announceRef.current('stop', 0);
+      },
       onPlayState: playing => {
         if (!playing) {
           setPlayhead(null);
@@ -1099,18 +1209,58 @@ export function StudioEngine() {
   }, [flat.totalMeasures, setZoom]);
 
   // --- Transport / seek ---
+  // Local first, then tell the room (a no-op unless the song is shared, the
+  // room is live and "Sync playback" is on). `sendTransport` returns false
+  // in every other case, so the wrappers behave exactly like the plain
+  // orchestrator calls for a private song.
+  const { sendTransport } = collab;
+  const announce = useCallback(
+    (action: 'play' | 'pause' | 'stop' | 'seek', step: number) => {
+      if (!isShared || !followTransportRef.current || recordingRef.current) return;
+      sendTransport(action, step);
+    },
+    [isShared, sendTransport]
+  );
+  announceRef.current = announce;
+
   const handleSeek = useCallback(
     (measure: number) => {
       seek(measure);
       setPlayhead({ measure, sub: 0 });
+      announce('seek', measure * gridRef.current.subdivisions);
     },
-    [seek]
+    [announce, seek]
   );
 
   const handleStop = useCallback(() => {
     stop();
     setPlayhead(null);
-  }, [stop]);
+    announce('stop', 0);
+  }, [announce, stop]);
+
+  const handlePlayToggle = useCallback(async () => {
+    if (isPlayingRef.current) {
+      const step = currentStep();
+      pause();
+      announce('pause', step);
+      return;
+    }
+    // Somebody else already has the shared song running: fall in at their
+    // live position rather than restarting the room from our step.
+    const shared = sharedSessionRef.current;
+    const remote = shared?.transport;
+    if (isShared && followTransportRef.current && remote?.playing && remote.by !== shared?.peerId) {
+      const liveStep = liveStepOf(remote, serverNowRef.current());
+      if (liveStep !== null) {
+        seekStep(liveStep);
+        await start();
+        return;
+      }
+    }
+    await start();
+    // Read after start(): it may have snapped the step back into the play region.
+    announce('play', currentStep());
+  }, [announce, currentStep, isShared, liveStepOf, pause, seekStep, start]);
 
   // Fully stop (not pause) so the song's Transport event is cleared before
   // the wizard's audition orchestrator takes over the shared Transport.
@@ -1235,7 +1385,7 @@ export function StudioEngine() {
         // A focused button already toggles on Space natively.
         if (tag === 'button') return;
         e.preventDefault();
-        if (!e.repeat) void toggle();
+        if (!e.repeat) void handlePlayToggle();
         return;
       }
       if (e.key === 'Home') {
@@ -1278,6 +1428,7 @@ export function StudioEngine() {
     copySelection,
     cutSelection,
     duplicateSelection,
+    handlePlayToggle,
     handleStop,
     hasProject,
     menu,
@@ -1288,7 +1439,6 @@ export function StudioEngine() {
     selectedClipId,
     selectedSectionId,
     setLoop,
-    toggle,
     toggleSelectedTrack,
     undo,
     wizardOpen,
@@ -1299,11 +1449,17 @@ export function StudioEngine() {
   const closeMenu = useCallback(() => setMenu(null), []);
 
   const playFrom = useCallback(
-    (measure: number) => {
-      handleSeek(measure);
-      if (!isPlaying) void toggle();
+    async (measure: number) => {
+      if (isPlayingRef.current) {
+        handleSeek(measure);
+        return;
+      }
+      seek(measure);
+      setPlayhead({ measure, sub: 0 });
+      await start();
+      announce('play', currentStep());
     },
-    [handleSeek, isPlaying, toggle]
+    [announce, currentStep, handleSeek, seek, start]
   );
 
   const openMenu = useCallback((target: StudioMenuTarget, at: MenuPoint) => {
@@ -1349,7 +1505,7 @@ export function StudioEngine() {
             }));
           }
         },
-        { id: 'seek', label: 'Play from clip start', onSelect: () => playFrom(clip.startMeasure) },
+        { id: 'seek', label: 'Play from clip start', onSelect: () => void playFrom(clip.startMeasure) },
         { separator: true },
         { id: 'delete', label: 'Delete clip', shortcut: 'Del', danger: true, onSelect: () => removeClip(clip.id) }
       ];
@@ -1396,7 +1552,7 @@ export function StudioEngine() {
           }
         },
         { separator: true },
-        { id: 'seek', label: `Play from bar ${target.measure + 1}`, onSelect: () => playFrom(target.measure) }
+        { id: 'seek', label: `Play from bar ${target.measure + 1}`, onSelect: () => void playFrom(target.measure) }
       ];
     }
 
@@ -1470,7 +1626,7 @@ export function StudioEngine() {
           setLoop(true);
         }
       },
-      { id: 'seek', label: 'Play from here', onSelect: () => playFrom(flat.sectionSpans[index]?.startMeasure ?? 0) },
+      { id: 'seek', label: 'Play from here', onSelect: () => void playFrom(flat.sectionSpans[index]?.startMeasure ?? 0) },
       { separator: true },
       {
         id: 'delete',
@@ -1658,6 +1814,11 @@ export function StudioEngine() {
                   ? 'Shared · offline'
                   : 'Shared · opening'}
             </span>
+            {remotePlayer ? (
+              <span className="st-collab-playing" data-testid="studio-collab-playing" title={`${remotePlayer} is playing the song`}>
+                ▶ {remotePlayer}
+              </span>
+            ) : null}
             {sharedSession.peers.length ? (
               <span className="st-peer-chips" aria-label="People here now">
                 {sharedSession.peers.map(peer => (
@@ -1694,7 +1855,7 @@ export function StudioEngine() {
         grooveId={project.grooveId ?? ''}
         onGrooveSelect={applyGroove}
         onGrooveClear={() => updateProject(p => ({ ...p, grooveId: undefined }))}
-        onPlay={() => void toggle()}
+        onPlay={() => void handlePlayToggle()}
         onStop={handleStop}
         onBpmChange={bpm => updateProject(p => ({ ...p, bpm }))}
         onBpmNudge={delta => updateProject(p => ({ ...p, bpm: Math.min(BPM_MAX, Math.max(BPM_MIN, p.bpm + delta)) }))}
@@ -1975,6 +2136,8 @@ export function StudioEngine() {
           onLocalCopy={handleLocalCopy}
           onAddMember={handleAddMember}
           onRemoveMember={handleRemoveMember}
+          followTransport={followTransport}
+          onFollowTransportChange={setFollowTransport}
           onClose={() => setShareOpen(false)}
         />
       ) : null}
