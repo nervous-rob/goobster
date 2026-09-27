@@ -1,13 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import type { NoteName } from '@music-lab/lib/musicData';
 import { pcOf } from '@music-lab/lib/harmonyTheory';
 import type { FlattenedSong } from '@music-lab/lib/songTheory';
 import { MELODY_BASE_OCTAVE, type WrittenNote } from '@music-lab/lib/stageData';
 import { resolveTone } from '@music-lab/lib/stageInstruments';
 
+/** Where another person's pointer is on this track's roll. */
+export interface PeerCursor {
+  peerId: string;
+  name: string;
+  /** Hue (degrees) of that person's colour everywhere else in the studio. */
+  hue: number;
+  measure: number;
+  sub: number;
+  pitch: number;
+}
+
+export interface RollCell {
+  measure: number;
+  sub: number;
+  pitch: number;
+}
+
 interface MelodyEditorProps {
   trackName: string;
   notes: WrittenNote[];
+  /** Other people's cursors on this track (shared songs). */
+  peerCursors?: PeerCursor[];
+  /** Fired when our pointer moves onto a different cell, or off the roll (null). */
+  onHoverCell?: (cell: RollCell | null) => void;
   flat: FlattenedSong;
   /** Grid subdivisions per measure (already scaled to the resolution). */
   subdivisions: number;
@@ -61,6 +82,8 @@ function midiLabel(midi: number): string {
 export function MelodyEditor({
   trackName,
   notes,
+  peerCursors,
+  onHoverCell,
   flat,
   subdivisions,
   strongSubs,
@@ -204,9 +227,29 @@ export function MelodyEditor({
     };
   }, [endDrag]);
 
+  // The cell under our pointer, shared with the room as our cursor. Only
+  // changes are reported; the hook throttles the wire.
+  const hoverRef = useRef<RollCell | null>(null);
+  const reportHover = useCallback(
+    (cell: RollCell | null) => {
+      const prev = hoverRef.current;
+      if (prev === cell) return;
+      if (prev && cell && prev.measure === cell.measure && prev.sub === cell.sub && prev.pitch === cell.pitch) return;
+      hoverRef.current = cell;
+      onHoverCell?.(cell);
+    },
+    [onHoverCell]
+  );
+  useEffect(() => {
+    return () => {
+      if (hoverRef.current) onHoverCell?.(null);
+    };
+  }, [onHoverCell]);
+
   const handleCellPointerDown = useCallback(
     (event: PointerEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => {
       if (event.button !== 0) return;
+      reportHover({ measure, sub, pitch });
       const hit = noteAt(measure, sub, pitch);
       const note = hit ?? placeNote(measure, sub, pitch);
       const startAbs = note.measure * subdivisions + note.sub;
@@ -218,7 +261,7 @@ export function MelodyEditor({
         resized: false
       };
     },
-    [noteAt, placeNote, subdivisions]
+    [noteAt, placeNote, reportHover, subdivisions]
   );
 
   /**
@@ -228,19 +271,25 @@ export function MelodyEditor({
    */
   const handleGridPointerMove = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (!drag) return;
       const target = document.elementFromPoint(event.clientX, event.clientY);
       const cell = target instanceof Element ? target.closest<HTMLElement>('[data-abs]') : null;
-      if (!cell) return;
+      if (!cell) {
+        reportHover(null);
+        return;
+      }
       const abs = Number(cell.dataset.abs);
-      if (!Number.isFinite(abs) || abs === drag.lastAbs) return;
+      const pitch = Number(cell.dataset.pitch);
+      if (!Number.isFinite(abs) || !Number.isFinite(pitch)) return;
+      reportHover({ measure: Math.floor(abs / subdivisions), sub: abs % subdivisions, pitch });
+      const drag = dragRef.current;
+      if (!drag || abs === drag.lastAbs) return;
       drag.lastAbs = abs;
       drag.resized = true;
       resizeNote(drag.noteId, abs - drag.startAbs + 1);
     },
-    [resizeNote]
+    [reportHover, resizeNote, subdivisions]
   );
+  const handleGridPointerLeave = useCallback(() => reportHover(null), [reportHover]);
 
   /** Right-click erases, the way every piano roll does. */
   const handleCellContextMenu = useCallback(
@@ -277,6 +326,26 @@ export function MelodyEditor({
     onChange(notes.filter(n => n.measure < span.startMeasure || n.measure >= span.endMeasure));
   }, [notes, onChange, span]);
 
+  /** Peer cursors keyed by cell, for the rows to paint. */
+  const cursorsByCell = useMemo(() => {
+    const map = new Map<string, PeerCursor[]>();
+    for (const cursor of peerCursors ?? []) {
+      const key = `${cursor.measure}:${cursor.sub}:${cursor.pitch}`;
+      const list = map.get(key);
+      if (list) list.push(cursor);
+      else map.set(key, [cursor]);
+    }
+    return map;
+  }, [peerCursors]);
+
+  const jumpToCursor = useCallback(
+    (cursor: PeerCursor) => {
+      const index = spans.findIndex(s => cursor.measure >= s.startMeasure && cursor.measure < s.endMeasure);
+      if (index >= 0) setSpanIndex(index);
+    },
+    [spans]
+  );
+
   if (!span) return null;
 
   const measures = Array.from({ length: span.endMeasure - span.startMeasure }, (_, i) => span.startMeasure + i);
@@ -290,6 +359,26 @@ export function MelodyEditor({
           <p>
             Key of {keyRoot} · rows follow the key, chord tones glow · {notes.length} notes written
           </p>
+          {peerCursors?.length ? (
+            <div className="st-me-peers" data-testid="melody-peer-cursors" aria-label="People on this track">
+              {peerCursors.map(cursor => {
+                const inView = cursor.measure >= span.startMeasure && cursor.measure < span.endMeasure;
+                return (
+                  <button
+                    key={cursor.peerId}
+                    type="button"
+                    className={`st-me-peer${inView ? ' in-view' : ''}`}
+                    style={{ '--peer-hue': cursor.hue } as CSSProperties}
+                    onClick={() => jumpToCursor(cursor)}
+                    title={inView ? `${cursor.name} is on bar ${cursor.measure + 1}` : `${cursor.name} is on bar ${cursor.measure + 1} — click to go there`}
+                  >
+                    <span className="st-peer-dot here" aria-hidden />
+                    {cursor.name} · bar {cursor.measure + 1}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
         <div className="st-me-nav">
           <button
@@ -329,6 +418,7 @@ export function MelodyEditor({
           role="grid"
           aria-label="Melody piano roll"
           onPointerMove={handleGridPointerMove}
+          onPointerLeave={handleGridPointerLeave}
         >
           <span className="st-me-corner" aria-hidden />
           {measures.map(measure => {
@@ -356,6 +446,7 @@ export function MelodyEditor({
                 notes={notes}
                 effectiveLength={effectiveLength}
                 playhead={playhead}
+                cursorsByCell={cursorsByCell}
                 onCellPointerDown={handleCellPointerDown}
                 onCellContextMenu={handleCellContextMenu}
                 onCellKeyDown={handleCellKeyDown}
@@ -386,6 +477,7 @@ interface RowCellsProps {
   notes: WrittenNote[];
   effectiveLength: (note: WrittenNote) => number;
   playhead: { measure: number; sub: number } | null;
+  cursorsByCell: Map<string, PeerCursor[]>;
   onCellPointerDown: (event: PointerEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => void;
   onCellContextMenu: (event: { preventDefault(): void }, measure: number, sub: number, pitch: number) => void;
   onCellKeyDown: (event: KeyboardEvent<HTMLButtonElement>, measure: number, sub: number, pitch: number) => void;
@@ -403,6 +495,7 @@ function RowCells({
   notes,
   effectiveLength,
   playhead,
+  cursorsByCell,
   onCellPointerDown,
   onCellContextMenu,
   onCellKeyDown
@@ -431,18 +524,24 @@ function RowCells({
           if (head) classes.push('head');
           else if (tail) classes.push('tail');
           if (playhead && playhead.measure === measure && playhead.sub === sub) classes.push('now');
+          const cursors = cursorsByCell.get(`${measure}:${sub}:${pitch}`);
+          if (cursors) classes.push('peer-cursor');
           const note = head ?? tail;
+          const who = cursors ? cursors.map(c => c.name).join(', ') : null;
           return (
             <button
               key={`${measure}-${sub}`}
               type="button"
               className={classes.join(' ')}
               data-abs={absCell}
+              data-pitch={pitch}
+              data-peer={who ?? undefined}
+              style={cursors ? ({ '--peer-hue': cursors[0].hue } as CSSProperties) : undefined}
               onPointerDown={event => onCellPointerDown(event, measure, sub, pitch)}
               onContextMenu={event => onCellContextMenu(event, measure, sub, pitch)}
               onKeyDown={event => onCellKeyDown(event, measure, sub, pitch)}
-              aria-label={`${label}, bar ${measure + 1} step ${sub + 1}${head ? `, length ${head.durSubs}` : ''}`}
-              title={note ? `Length ${note.durSubs} — tap to erase, drag to resize` : undefined}
+              aria-label={`${label}, bar ${measure + 1} step ${sub + 1}${head ? `, length ${head.durSubs}` : ''}${who ? `, ${who} here` : ''}`}
+              title={[note ? `Length ${note.durSubs} — tap to erase, drag to resize` : null, who ? `${who} here` : null].filter(Boolean).join(' · ') || undefined}
             />
           );
         });

@@ -89,9 +89,9 @@ import { SongTimeline, type StudioMenuTarget } from './SongTimeline';
 import type { MenuPoint } from './SectionStrip';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { SongWizard } from './SongWizard';
-import { MelodyEditor } from './MelodyEditor';
+import { MelodyEditor, type PeerCursor } from './MelodyEditor';
 import { StudioSharePanel, peerColor } from './StudioSharePanel';
-import { useStudioCollab, type SharedTransport } from '@music-lab/hooks/useStudioCollab';
+import { useStudioCollab, type PeerPresence, type PresenceCell, type SharedTransport } from '@music-lab/hooks/useStudioCollab';
 import { useSession } from '../../../hooks/useSession';
 
 function IconStudio() {
@@ -728,12 +728,52 @@ export function StudioEngine() {
     [collab, sharedSession]
   );
 
-  // Tell the room which track / section / clip we are looking at.
+  // Tell the room which track / section / clip we are looking at — and,
+  // with the piano roll open, which cell our pointer is on. The cell goes
+  // through refs so a pointer sweep never re-renders the whole studio.
   const { sendPresence } = collab;
+  const editorTrack = useMemo(() => {
+    const track = melodyEditorTrackId ? project?.tracks.find(t => t.id === melodyEditorTrackId) : null;
+    return track && track.performer.melodyMode === 'written' ? track : null;
+  }, [melodyEditorTrackId, project?.tracks]);
+  const editorTrackId = editorTrack?.id ?? null;
+  const presenceBaseRef = useRef<Omit<PeerPresence, 'cell'>>({ trackId: null, sectionId: null, clipId: null });
+  const hoverCellRef = useRef<PresenceCell | null>(null);
+  const isSharedRef = useRef(isShared);
+  isSharedRef.current = isShared;
   useEffect(() => {
+    presenceBaseRef.current = { trackId: editorTrackId ?? selectedTrackId, sectionId: selectedSectionId, clipId: selectedClipId };
+    if (!editorTrackId) hoverCellRef.current = null;
     if (!isShared) return;
-    sendPresence({ trackId: selectedTrackId, sectionId: selectedSectionId, clipId: selectedClipId });
-  }, [isShared, selectedClipId, selectedSectionId, selectedTrackId, sendPresence, sharedSession?.status]);
+    sendPresence({ ...presenceBaseRef.current, cell: hoverCellRef.current });
+  }, [editorTrackId, isShared, selectedClipId, selectedSectionId, selectedTrackId, sendPresence, sharedSession?.status]);
+  const onHoverCell = useCallback(
+    (cell: PresenceCell | null) => {
+      hoverCellRef.current = cell;
+      if (!isSharedRef.current) return;
+      sendPresence({ ...presenceBaseRef.current, cell });
+    },
+    [sendPresence]
+  );
+
+  /** Other people's pointers on the open piano roll. */
+  const peerCursors = useMemo<PeerCursor[]>(() => {
+    if (!sharedSession || !editorTrackId) return [];
+    const cursors: PeerCursor[] = [];
+    for (const peer of sharedSession.peers) {
+      const where = sharedSession.presence[peer.peerId];
+      if (where?.trackId !== editorTrackId || !where.cell) continue;
+      cursors.push({
+        peerId: peer.peerId,
+        name: peer.userName || `User ${peer.userId.slice(-4)}`,
+        hue: peerColor(peer.userId),
+        measure: where.cell.measure,
+        sub: where.cell.sub,
+        pitch: where.cell.pitch
+      });
+    }
+    return cursors;
+  }, [editorTrackId, sharedSession]);
 
   /** Who else is on each track right now, for the row badges. */
   const peerTrackNames = useMemo(() => {
@@ -2229,24 +2269,22 @@ export function StudioEngine() {
         </div>
       ) : null}
 
-      {(() => {
-        const editorTrack = melodyEditorTrackId ? project.tracks.find(t => t.id === melodyEditorTrackId) : null;
-        if (!editorTrack || editorTrack.performer.melodyMode !== 'written') return null;
-        return (
-          <MelodyEditor
-            trackName={editorTrack.name}
-            notes={editorTrack.performer.writtenNotes ?? []}
-            flat={flat}
-            subdivisions={subdivisions}
-            strongSubs={strongSubs}
-            keyRoot={project.keyRoot}
-            octaveShift={editorTrack.performer.octaveShift ?? 0}
-            playhead={playhead}
-            onChange={writtenNotes => updateTrackPerformer(editorTrack.id, { writtenNotes })}
-            onClose={() => setMelodyEditorTrackId(null)}
-          />
-        );
-      })()}
+      {editorTrack ? (
+        <MelodyEditor
+          trackName={editorTrack.name}
+          notes={editorTrack.performer.writtenNotes ?? []}
+          peerCursors={isShared ? peerCursors : undefined}
+          onHoverCell={isShared ? onHoverCell : undefined}
+          flat={flat}
+          subdivisions={subdivisions}
+          strongSubs={strongSubs}
+          keyRoot={project.keyRoot}
+          octaveShift={editorTrack.performer.octaveShift ?? 0}
+          playhead={playhead}
+          onChange={writtenNotes => updateTrackPerformer(editorTrack.id, { writtenNotes })}
+          onClose={() => setMelodyEditorTrackId(null)}
+        />
+      ) : null}
 
       <div className="st-inspectors">
         <div className="re-panel re-stack st-inspector">
