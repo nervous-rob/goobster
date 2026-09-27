@@ -755,6 +755,7 @@
   display: grid;
   gap: 2px;
   width: max-content;
+  user-select: none;
 }
 
 .studio-engine .st-me-corner {
@@ -805,6 +806,8 @@
   border-radius: 3px;
   background: var(--re-bg);
   cursor: pointer;
+  /* A finger dragged across steps draws a note; the page still scrolls vertically. */
+  touch-action: pan-y;
 }
 
 .studio-engine .st-me-cell.strong {
