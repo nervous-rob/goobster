@@ -90,9 +90,11 @@ body.light {
    page is and the accent decides what it is tinted towards - Blueberry
    reproduces the original navy-grey, Sunset warms the same greys, and
    Graphite (low chroma) stays close to neutral. The hex values above are
-   the fallback where relative colour syntax is unavailable. */
+   the fallback where relative colour syntax is unavailable, and the look
+   the `neutral` surface setting (html[data-surface="neutral"]) keeps: fixed
+   greys with the accent showing only in controls and the room glow. */
 @supports (color: oklch(from red calc(l * 0.5) c h)) {
-  :root {
+  html:not([data-surface="neutral"]) {
     --bg: oklch(from var(--accent) 0.17 calc(c * 0.16) h);
     --bg-raise: oklch(from var(--accent) 0.215 calc(c * 0.17) h);
     --bg-raise-2: oklch(from var(--accent) 0.255 calc(c * 0.19) h);
@@ -100,7 +102,7 @@ body.light {
     --text: oklch(from var(--accent) 0.93 calc(c * 0.05) h);
     --text-dim: oklch(from var(--accent) 0.72 calc(c * 0.14) h);
   }
-  body.light {
+  html:not([data-surface="neutral"]) body.light {
     --bg: oklch(from var(--accent) 0.965 calc(c * 0.12) h);
     --bg-raise: oklch(from var(--accent) 0.995 calc(c * 0.03) h);
     --bg-raise-2: oklch(from var(--accent) 0.94 calc(c * 0.12) h);

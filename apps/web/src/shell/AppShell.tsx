@@ -11,7 +11,10 @@ import { useRoomDrawerClose } from '../hooks/useConversationDrawer';
 import { MenuProvider } from './MenuButton';
 import { ActiveFriends } from './ActiveFriends';
 import type { InboxEvent, ParlorMentionEvent } from '../hooks/usePortalEvents';
-import { getStoredAccent, getStoredTheme, isAccent, paintAccent, paintTheme, resolveTheme, setStoredAccent, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
+import {
+    getStoredAccent, getStoredSurface, getStoredTheme, isAccent, isSurface, paintAccent, paintSurface, paintTheme, resolveTheme,
+    setStoredAccent, setStoredSurface, setStoredTheme, THEME_EVENT, type ThemeChoice
+} from '../lib/theme';
 import {
     getStoredNavLayout, NAV_LAYOUT_EVENT, paintAppearance, paintNavLayout, persistAppearance, persistNavLayout, type NavLayout
 } from '../lib/appearance';
@@ -154,6 +157,7 @@ export function AppShell() {
     // sidebar or the top bar from the layout event.
     useEffect(() => {
         paintAccent(getStoredAccent());
+        paintSurface(getStoredSurface());
         paintNavLayout(getStoredNavLayout());
         const onLayout = (event: Event) => setNavLayout((event as CustomEvent<NavLayout>).detail);
         window.addEventListener(NAV_LAYOUT_EVENT, onLayout);
@@ -164,6 +168,7 @@ export function AppShell() {
         if (!appearance) return;
         if (!localStorage.getItem('goobster-theme')) setStoredTheme(appearance.theme);
         if (isAccent(appearance.accent)) setStoredAccent(appearance.accent);
+        if (isSurface(appearance.surface)) setStoredSurface(appearance.surface);
         if (appearance.navLayout === 'top' || appearance.navLayout === 'sidebar') persistNavLayout(appearance.navLayout);
         persistAppearance({
             textSize: appearance.textSize,

@@ -105,6 +105,7 @@ export function deviceLocalKeys(): string[] {
     return [
         'goobster-theme',
         'goobster-accent',
+        'goobster-surface',
         TEXT_KEY,
         DENSITY_KEY,
         MOTION_KEY,
