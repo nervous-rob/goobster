@@ -411,8 +411,13 @@ describe('live room /api/app/studio/live', () => {
         owner.send({ type: 'patch', opId: 'op-2', patch: { tracks: { upsert: [{ ...song.project.tracks[0], name: 'Boom' }] } } });
         friend.send({ type: 'patch', opId: 'op-f', patch: { settings: { name: 'Renamed live' } } });
 
-        await friend.waitFor(m => m.type === 'patch' && m.opId === 'op-2');
-        await owner.waitFor(m => m.type === 'patch' && m.opId === 'op-f');
+        // Echo and relay ride different sockets, so wait until *both*
+        // clients hold all three patches before comparing what they saw.
+        for (const client of [owner, friend]) {
+            for (const opId of ['op-1', 'op-2', 'op-f']) {
+                await client.waitFor(m => m.type === 'patch' && m.opId === opId);
+            }
+        }
 
         // The friend's patch travels on another socket, so where it lands
         // relative to op-1/op-2 is up to arrival order. What the room does
