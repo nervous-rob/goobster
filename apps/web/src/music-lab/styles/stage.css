@@ -272,8 +272,8 @@
 }
 
 .stage-engine .role-snare .stage-perf-badge { color: var(--danger); }
-.stage-engine .role-hihat .stage-perf-badge { color: #facc15; }
-.stage-engine .role-chords .stage-perf-badge { color: #34d399; }
+.stage-engine .role-hihat .stage-perf-badge { color: color-mix(in srgb, #facc15 50%, var(--re-text)); }
+.stage-engine .role-chords .stage-perf-badge { color: color-mix(in srgb, #34d399 60%, var(--re-text)); }
 .stage-engine .role-bass .stage-perf-badge { color: color-mix(in srgb, #38bdf8 70%, var(--re-text)); }
 .stage-engine .role-melody .stage-perf-badge { color: color-mix(in srgb, #c084fc 70%, var(--re-text)); }
 
