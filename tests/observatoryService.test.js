@@ -767,7 +767,10 @@ describe('background jobs', () => {
     }, 20_000);
 
     test('expired A loses the lease: B takes over and A cannot write or finish', async () => {
-        const a = makeService();
+        // Short wall so the segment ends while the reap is still running.
+        // That is the slow-Postgres failure: the live loop settles the row
+        // (TIMED_OUT) out from under the second stale pass.
+        const a = makeService({ sandbox: { timeoutMs: 500, maxCpuSeconds: 1 } });
         const userId = nextUser();
         const { slug } = await a.createProject({ userId, name: 'lease-steal' });
         const { jobId } = await a.run({
@@ -780,33 +783,53 @@ describe('background jobs', () => {
         clearInterval(handleA.heartbeat);
         clearInterval(handleA.cancelPoll);
         a._jobs.delete(jobId);
+        // A has crashed: the sandbox segment is still in flight, and on a
+        // slow Postgres run it hits the sandbox timeout (or an in-flight
+        // cancel poll) and settles the row TIMED_OUT / CANCELLED before the
+        // second stale pass can park it INTERRUPTED. A dead owner writes
+        // nothing, so drop A's touch, finish, and abort until the reap has
+        // parked the row. clearInterval does not cancel a callback that
+        // already entered its await.
+        const realAbort = handleA.controller.abort.bind(handleA.controller);
+        handleA.controller.abort = () => {};
+        const realTouch = a._touchLease;
+        const realFinish = a._finishJob;
+        a._touchLease = async () => false;
+        a._finishJob = async () => false;
 
         const stale = () => new Date(Date.now() - 5 * 60 * 1000).toISOString()
             .replace('T', ' ').replace(/\.\d+Z$/, '');
         const b = makeService();
         async function reapUntil(predicate) {
+            let row;
             for (let i = 0; i < 8; i++) {
                 await db.run(
                     'UPDATE observatory_jobs SET lastHeartbeatAt = @stale WHERE id = @id',
                     { id: jobId, stale: stale() }
                 );
                 await b._ensureReaped();
-                const row = await db.get(
-                    'SELECT status, cancelRequested FROM observatory_jobs WHERE id = @id',
+                row = await db.get(
+                    'SELECT status, cancelRequested, error FROM observatory_jobs WHERE id = @id',
                     { id: jobId }
                 );
                 if (predicate(row)) return row;
             }
-            throw new Error('two-phase reap did not reach the expected state');
+            throw new Error(`two-phase reap did not reach the expected state (last ${JSON.stringify(row)})`);
         }
-        const stopping = await reapUntil(row => (
-            (row.status === 'RUNNING' && Number(row.cancelRequested) === 1)
-            || row.status === 'INTERRUPTED'
-        ));
-        expect(['RUNNING', 'INTERRUPTED']).toContain(stopping.status);
-        const interrupted = await reapUntil(row => row.status === 'INTERRUPTED');
-        expect(interrupted.status).toBe('INTERRUPTED');
-        handleA.controller.abort();
+        try {
+            const stopping = await reapUntil(row => (
+                (row.status === 'RUNNING' && Number(row.cancelRequested) === 1)
+                || row.status === 'INTERRUPTED'
+            ));
+            expect(['RUNNING', 'INTERRUPTED']).toContain(stopping.status);
+            const interrupted = await reapUntil(row => row.status === 'INTERRUPTED');
+            expect(interrupted.status).toBe('INTERRUPTED');
+        } finally {
+            a._touchLease = realTouch;
+            a._finishJob = realFinish;
+            handleA.controller.abort = realAbort;
+            realAbort();
+        }
 
         const dir = path.join(PROJECTS_ROOT, userId, slug);
         fs.mkdirSync(path.join(dir, 'runs', String(jobId)), { recursive: true });
