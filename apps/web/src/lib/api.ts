@@ -1,4 +1,4 @@
-import type { StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { AccessRequest, AccessRequestStatusView, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -52,6 +52,10 @@ export const api = {
     config: () => request<AppConfig>('/api/app/config'),
     me: () => request<Me>('/api/app/me'),
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),
+    // Asking the host to let a kept-out (403 NO_ACCOUNT) session in
+    accessRequestStatus: () => request<AccessRequestStatusView>('/api/app/auth/access-request'),
+    requestAccess: (note?: string | null) =>
+        request<{ request: AccessRequest; created: boolean; notified: number }>('/api/app/auth/access-request', { method: 'POST', body: { note: note || null } }),
     devSession: (userId: string, name: string) =>
         request('/api/app/auth/dev-session', { method: 'POST', body: { userId, name } }),
 
@@ -88,6 +92,9 @@ export const api = {
         request<{ invite: Invite; url: string }>('/api/app/admin/invites', { method: 'POST', body }),
     adminRevokeInvite: (id: number) => request<{ invite: Invite }>(`/api/app/admin/invites/${id}`, { method: 'DELETE' }),
     adminAccounts: () => request<{ accounts: AdminAccount[]; requireAccount: boolean; failureWindowDays: number }>('/api/app/admin/accounts'),
+    adminAccessRequests: () => request<{ requests: AccessRequest[] }>('/api/app/admin/access-requests'),
+    adminResolveAccessRequest: (id: number, outcome: 'approve' | 'decline', via: 'host' | 'inbox' = 'host') =>
+        request<{ request: AccessRequest }>(`/api/app/admin/access-requests/${id}/${outcome}`, { method: 'POST', body: { via } }),
     adminAccountSupport: (principalId: string, days = 30) =>
         request<AccountSupportView>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/support?days=${days}`),
     adminAudit: (params: { before?: string | null; limit?: number; target?: string | null } = {}) => {

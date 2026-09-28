@@ -75,6 +75,19 @@ function projectOwner(req) {
 
 function createAppHelpers(ctx) {
     async function requireAuth(req, res, next) {
+        return authenticate(req, res, next, {});
+    }
+
+    /**
+     * A live session is enough - the entitlement is not checked. Only for
+     * the handful of routes a person without an account must still reach
+     * (asking the host to let them in). A disabled account is still refused.
+     */
+    async function requireSession(req, res, next) {
+        return authenticate(req, res, next, { requireAccount: false });
+    }
+
+    async function authenticate(req, res, next, { requireAccount }) {
         const token = parseCookies(req)[SESSION_COOKIE];
         const session = token ? await ctx.sessions.get(token) : null;
         if (!session) {
@@ -90,7 +103,8 @@ function createAppHelpers(ctx) {
             actor = await ctx.identity.resolveActor({
                 principalId: session.userId,
                 surface: 'web',
-                sessionId: session.id != null ? String(session.id) : null
+                sessionId: session.id != null ? String(session.id) : null,
+                ...(requireAccount === false ? { requireAccount: false } : {})
             });
         } catch (error) {
             if (error?.status && error?.code) {
@@ -163,6 +177,7 @@ function createAppHelpers(ctx) {
 
     return {
         requireAuth,
+        requireSession,
         requireRecentAuth,
         requireOperator,
         sendError,

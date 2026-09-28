@@ -101,8 +101,38 @@ function mountAdmin(app, ctx, h) {
         const role = req.body?.role === 'operator' ? 'operator' : 'member';
         const { account, created } = await ctx.identity.grantAccount({ principalId, entitlement: 'migration', role });
         await audit(req, 'account.grant', principalId, { role, created: Boolean(created), entitlement: 'migration' });
+        // A direct grant answers any request the person had open.
+        await ctx.accessRequests.settleForPrincipal({ principalId, resolvedBy: req.webUser.userId, gateway: ctx.gateway });
         return { account, created };
     }));
+
+    // --- Access requests ---------------------------------------------------
+
+    // People who signed in but were kept out by the release gate and asked
+    // to be let in. Approve is the migration grant; both outcomes are
+    // audited by the service (access.approve / access.decline) because the
+    // same resolution can arrive from a Discord DM button.
+    app.get('/api/app/admin/access-requests', ...guard, authRoute(async () => ({
+        requests: await ctx.accessRequests.listPending()
+    })));
+
+    app.post('/api/app/admin/access-requests/:id/approve', ...guard, authRoute(async (req) => ({
+        request: await ctx.accessRequests.approve({
+            id: req.params.id,
+            resolvedBy: req.webUser.userId,
+            gateway: ctx.gateway,
+            via: req.body?.via === 'inbox' ? 'inbox' : 'host'
+        })
+    })));
+
+    app.post('/api/app/admin/access-requests/:id/decline', ...guard, authRoute(async (req) => ({
+        request: await ctx.accessRequests.decline({
+            id: req.params.id,
+            resolvedBy: req.webUser.userId,
+            gateway: ctx.gateway,
+            via: req.body?.via === 'inbox' ? 'inbox' : 'host'
+        })
+    })));
 
     app.patch('/api/app/admin/accounts/:principalId', ...guard, authRoute(async (req) => {
         const principalId = String(req.params.principalId);

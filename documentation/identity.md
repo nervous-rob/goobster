@@ -366,12 +366,58 @@ the reason (installation view `registration.pausedReason`).
 A Discord member who signs in while `identity.requireAccount` is on but has
 no account is a valid session with no entitlement: `/api/app/me` answers
 `403 NO_ACCOUNT` and the portal shows the **Almost in** page (or **Account
-disabled** for `403 ACCOUNT_DISABLED`). The page explains that the host
-grants access from Host → Accounts and that the person's history is
-already under their Discord identity - creating a separate email account
-would start from scratch. **Sign out** works without an account: `POST
+disabled** for `403 ACCOUNT_DISABLED`). The page explains that the person's
+history is already under their Discord identity - creating a separate
+email account would start from scratch - and offers to ask the host from
+right there (next section). **Sign out** works without an account: `POST
 /api/app/auth/logout` destroys whatever session the cookie names and clears
 the cookie without resolving an actor.
+
+### Asking to join
+
+`services/accessRequestService.js`, table `access_requests`. From the
+**Almost in** page the kept-out person presses **Ask the host to let me
+in** (optionally with a short note, 280 characters). `POST
+/api/app/auth/access-request { note? }` runs behind `requireSession` - a
+live session, no entitlement - and parks one `pending` request per person
+(asking again while one is open is idempotent and tells nobody twice). The
+request then goes to **every active operator**:
+
+- an Inbox item (kind `system`, source `access_request:<id>`, link
+  `/host`) titled *`<name>` is asking to join*, whose row carries `access:
+  { id, status, principalId, displayName, actionable, resolvedByName,
+  resolvedAt }` so the Inbox pane offers **Approve** / **Decline** on it
+  while it is pending, and
+- when this installation has Discord, the item's DM echo: an embed with the
+  requester's mention and note plus **Approve** / **Decline** buttons
+  (`approve_accessreq_<id>` / `decline_accessreq_<id>`, routed by
+  `apps/bot/events/interactionCreate.js` to `handleButton`). Only an active
+  operator - the Discord user resolved through `auth_identities` or the
+  legacy snowflake - can press them; anyone else is told so and the buttons
+  stay.
+
+**Approve is the migration grant**: `identityService.grantAccount({
+entitlement: 'migration', role: 'member' })`, so the shared-installation
+cap gate still applies. A refused grant (`DAILY_CAP_REQUIRED`) leaves the
+request pending and points the host at Host → Limits; the portal answers
+the 409, the DM button replies ephemerally. Whichever surface resolved it
+- the Inbox, the DM, Host → Accounts' **Waiting to be let in** list
+(`GET /api/app/admin/access-requests`, `POST
+/api/app/admin/access-requests/:id/approve|decline`) - one `operator_audit`
+row is written by the service (`access.approve` / `access.decline`, detail
+`{ requestId, via }`), and the person is told the outcome through their own
+Inbox (kind `system`; *You're in* with a link home, or a neutral *The host
+did not grant access this time*) with the usual Discord echo. The **Almost
+in** page polls `GET /api/app/auth/access-request` while a request is
+pending and asks `/me` again the moment it is approved, so the person lands
+inside without a reload. A direct grant from Host → Accounts settles any
+open request the same way (the grant's own audit row is the record). A
+decline starts a 24-hour cooldown (`429 REQUEST_COOLDOWN`, `details.retryAt`)
+before the person can ask again.
+
+Erasure (`/forget-me`) deletes the person's requests and the operators'
+Inbox copies that name them, and nulls `resolvedBy` on requests they
+resolved as an operator; `auditUser` counts `access_requests`.
 
 ### Outbound mail
 

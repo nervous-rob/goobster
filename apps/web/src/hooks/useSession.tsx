@@ -1,4 +1,4 @@
-import { createContext, useContext, useLayoutEffect, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
@@ -19,6 +19,10 @@ export function SessionProvider({ children, boundKey, onAccount }: {
     });
     const me = query.error ? null : query.data || null;
     const nextKey = sessionKey(me);
+    const refetch = query.refetch;
+    // The host let the person in: ask /me again right away instead of
+    // waiting for the next poll.
+    const onApproved = useCallback(() => { void refetch(); }, [refetch]);
     useLayoutEffect(() => {
         if (!query.isPending && nextKey !== boundKey) onAccount(me);
     }, [boundKey, nextKey, me, onAccount, query.isPending]);
@@ -27,7 +31,7 @@ export function SessionProvider({ children, boundKey, onAccount }: {
         return <div className="login"><div className="empty">Looking around…</div></div>;
     }
     if (query.error && (query.error as ApiError).status === 403) {
-        return <NoAccountPage error={query.error as ApiError} />;
+        return <NoAccountPage error={query.error as ApiError} onApproved={onApproved} />;
     }
     if (query.error && (query.error as ApiError).status !== 401) {
         return <div className="login"><div className="empty">{(query.error as Error).message}</div></div>;

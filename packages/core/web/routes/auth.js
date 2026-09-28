@@ -57,7 +57,7 @@ function clientAddress(req) {
 }
 
 function mountAuth(app, ctx, h) {
-    const { requireAuth, authRoute, sendError, parseCookies, cookieAttributes } = h;
+    const { requireAuth, requireSession, authRoute, sendError, parseCookies, cookieAttributes } = h;
 
     const setSession = (res, token) => {
         res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, SESSION_MAX_AGE)}`);
@@ -268,6 +268,30 @@ function mountAuth(app, ctx, h) {
             sendError(res, 500, 'INTERNAL', 'Something went wrong.');
         }
     });
+
+    // --- Asking to join ---------------------------------------------------------
+
+    // A signed-in person the release gate keeps out (403 NO_ACCOUNT) asks the
+    // host from the "Almost in" page. Session only - there is no account to
+    // require yet. The request lands in every operator's Inbox and Discord
+    // DMs (documentation/identity.md, "Asking to join").
+    app.get('/api/app/auth/access-request', requireSession, authRoute(async (req) => ({
+        ...await ctx.accessRequests.statusFor(req.webUser.userId),
+        requireAccount: ctx.identityConfig.requireAccount,
+        discord: ctx.discordConfig.enabled
+    })));
+
+    app.post('/api/app/auth/access-request', requireSession, authRoute(async (req) => {
+        const note = req.body?.note;
+        if (note != null && typeof note !== 'string') {
+            throw Object.assign(new Error('note must be a string.'), { status: 400, code: 'BAD_NOTE' });
+        }
+        return ctx.accessRequests.request({
+            principalId: req.webUser.userId,
+            note: note ?? null,
+            gateway: ctx.gateway
+        });
+    }));
 
     // --- Native sign-in (release-gated) ---------------------------------------
 

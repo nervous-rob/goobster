@@ -68,6 +68,21 @@ module.exports = {
                     return;
                 }
 
+                // "Let me in" requests from the portal - approved or declined
+                // by the host from the DM buttons (documentation/identity.md).
+                if (type === 'accessreq') {
+                    const accessRequestService = require('@goobster/core/services/accessRequestService');
+                    await interaction.deferUpdate();
+                    interactionState.deferred = true;
+                    const edit = await accessRequestService.handleButton(action, Number(requestId), interaction);
+                    if (edit) {
+                        await interaction.message.edit(edit).catch(error => {
+                            console.error('Failed to update access request message:', error);
+                        });
+                    }
+                    return;
+                }
+
                 // Confirmable integration actions (agent launch / issue create)
                 if (type === 'intaction') {
                     const integrationActionService = require('@goobster/core/services/integrationActionService');

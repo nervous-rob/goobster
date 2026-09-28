@@ -910,6 +910,7 @@ class PrivacyService {
             counts.accountInvites = identity.invitesIssued;
             counts.accountEmails = identity.emails;
             counts.emailTokens = identity.emailTokens;
+            counts.accessRequests = identity.accessRequests;
 
             // Share links go before their conversations: a forgotten user's
             // transcripts must stop being publicly readable.
@@ -1215,6 +1216,9 @@ class PrivacyService {
             )).c,
             inbox_items: (await db.get(
                 'SELECT COUNT(*) AS c FROM inbox_items WHERE userId = @userId', { userId }
+            )).c,
+            access_requests: (await db.get(
+                'SELECT COUNT(*) AS c FROM access_requests WHERE principalId = @userId', { userId }
             )).c,
             studio_songs: (await db.get(
                 'SELECT COUNT(*) AS c FROM studio_songs WHERE ownerId = @userId', { userId }

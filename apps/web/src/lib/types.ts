@@ -168,6 +168,20 @@ export type InboxItem = {
      * fields are null when the row has already been pruned.
      */
     failure: WorkFailureRef | null;
+    /**
+     * Set when this item is about an access request (`source.type ===
+     * 'access_request'`): the host's copy is actionable while pending; the
+     * requester's outcome notice never is. Null once the person is erased.
+     */
+    access: {
+        id: number;
+        status: AccessRequestStatus;
+        principalId: string;
+        displayName: string | null;
+        actionable: boolean;
+        resolvedByName: string | null;
+        resolvedAt: string | null;
+    } | null;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -189,6 +203,33 @@ export type Person = {
 
 export type Entitlement = 'invite' | 'migration' | 'bootstrap' | 'open';
 export type RegistrationMode = 'invite' | 'open';
+
+export type AccessRequestStatus = 'pending' | 'approved' | 'declined';
+
+/** One "let me in" request from a signed-in person without an account. */
+export type AccessRequest = {
+    id: number;
+    principalId: string;
+    displayName: string | null;
+    discordId: string | null;
+    note: string | null;
+    status: AccessRequestStatus;
+    resolvedBy: string | null;
+    resolvedByName: string | null;
+    resolvedAt: string | null;
+    createdAt: string;
+};
+
+/** GET /api/app/auth/access-request - what the kept-out person sees. */
+export type AccessRequestStatusView = {
+    request: AccessRequest | null;
+    pending: boolean;
+    member: boolean;
+    canRequest: boolean;
+    retryAt: string | null;
+    requireAccount: boolean;
+    discord: boolean;
+};
 
 /** GET /api/app/account - the signed-in person's sign-in methods (safe metadata only). */
 export type AccountSummary = {

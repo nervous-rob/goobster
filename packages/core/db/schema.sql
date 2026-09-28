@@ -2843,6 +2843,26 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- A signed-in principal without an account asking the host to let them in
+-- (identity.requireAccount on). One open request per person; the host
+-- resolves it from the Inbox, a Discord DM button, or Host -> Accounts,
+-- and approval is the migration grant. `note` is the requester's own
+-- words to the host (short, erased with them); `resolvedBy` is the
+-- operator, nulled when that operator is erased.
+CREATE TABLE IF NOT EXISTS access_requests (
+    id INTEGER PRIMARY KEY,
+    principalId TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+    note TEXT,
+    resolvedBy TEXT,
+    resolvedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_principal ON access_requests(principalId, status);
+CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status, createdAt);
+
 -- ---------------------------------------------------------------------------
 -- The in-app inbox (shared-instance Increment C, spec §6). Every result
 -- produced by unattended work for one person - a due reminder, a scheduled
