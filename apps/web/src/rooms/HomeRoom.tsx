@@ -118,11 +118,18 @@ export function HomeRoom() {
                             }}>Pick up the last chat</button>
                         </div>
                         {showFirstTask && (
-                            <div className="list-card">
-                                <strong>Your first research task</strong>
-                                <p>Practice checking evidence, keeping a note, and exporting a brief. Fictional sample, no AI key needed.</p>
-                                <button type="button" className="btn" disabled={tutorials.loading} onClick={() => void tutorials.resume('home.first-task').catch(error => toast(error.message, true))}>Start or resume first task</button>
-                            </div>
+                            <section className="home-card home-card-static home-card-task" aria-labelledby="home-first-task-title">
+                                <div className="home-card-kicker" id="home-first-task-title">Your first research task</div>
+                                <div className="home-card-body">
+                                    <p>Practice checking evidence, keeping a note, and exporting a brief. Fictional sample, no AI key needed.</p>
+                                </div>
+                                <div className="home-card-actions">
+                                    <button type="button" className="btn primary" disabled={tutorials.loading}
+                                        onClick={() => void tutorials.resume('home.first-task').catch(error => toast(error.message, true))}>
+                                        Start or resume first task
+                                    </button>
+                                </div>
+                            </section>
                         )}
                         <div className="home-grid">
                             <Card title="Personal memory" action="Inspect in Settings → Memory & privacy →"
@@ -176,7 +183,7 @@ export function HomeRoom() {
                                         : <div className="hint">No reminders or recurring tasks right now.</div>
                                 )}
                             />
-                            <div className="home-card">
+                            <div className="home-card home-card-static">
                                 <div className="home-card-kicker">Pick up where we left off</div>
                                 <div className="home-card-body">
                                     {(pickup.conversations?.length || pickup.parlor?.length) ? (

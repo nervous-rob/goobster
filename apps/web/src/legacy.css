@@ -121,6 +121,9 @@ body {
   font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   transition: background-color 0.55s var(--ease-out);
 }
+/* Form controls do not inherit the page font by default, so every .btn,
+   .input and .segment-btn would otherwise fall back to the UA face. */
+button, input, select, textarea { font-family: inherit; }
 
 .hidden { display: none !important; }
 
@@ -1878,6 +1881,18 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
   transition: transform 0.18s ease, box-shadow 0.22s ease, border-color 0.2s ease;
 }
 .home-card:hover { border-color: var(--accent); box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28); }
+/* Cards that are not themselves a link: no pointer, no tilt, no hover lift. */
+.home-card-static { cursor: default; transform: none; }
+.home-card-static:hover { border-color: var(--border); box-shadow: none; }
+.home-card-task {
+  min-height: 0;
+  animation: rise-in 0.5s var(--ease-out) 0.08s both;
+  background:
+    radial-gradient(360px 160px at 100% 0%, rgba(var(--accent-rgb), 0.16), transparent 70%),
+    var(--bg-raise);
+}
+.home-card-task .home-card-body p { margin: 0; max-width: 62ch; }
+.home-card-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .home-card-obs {
   background:
     radial-gradient(circle at 92% 8%, rgba(140, 170, 255, 0.22), transparent 46%),
