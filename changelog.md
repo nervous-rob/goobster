@@ -4,6 +4,7 @@
 
 ### Fixed
 - **Tool chip text no longer runs into the chip's edge.** The chip's target line (`file · project`) was capped at a fixed 280px independent of the chip, so in a narrower thinking trail the ellipsis (or the last letters) touched or crossed the border. The line is now capped by the chip itself, which is clipped and has extra right padding.
+- **The "Your first research task" card on Home goes away once you finish the task.** It was rendered unconditionally, so it stayed after completion. It now hides when the task is completed (with or without skips); Replay and Reset remain in Settings → Tutorials, and a reset brings the card back. Playwright: `firstTask`.
 
 ## 2026-09-18
 

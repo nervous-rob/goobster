@@ -162,7 +162,8 @@ The [parent plan's validation matrix](shared_instance_product_spec.md#10-validat
 ## First research task (#266)
 
 Home → **Start or resume first task**, or Settings → Tutorials → **Your first research task**,
-launches `home.first-task` v1. This is a six-action practice task, using fictional Weekend
+launches `home.first-task` v1. The Home card disappears once the task is `completed` or
+`finished_with_skips`; Settings → Tutorials keeps Replay and Reset. This is a six-action practice task, using fictional Weekend
 field notebook evidence: choose the sample question in Chat; run one prepared sample
 pass in Research; inspect the source and distinguish an observation from a generalization;
 preview and explicitly keep one private sample note in Notes; accept the sample brief;

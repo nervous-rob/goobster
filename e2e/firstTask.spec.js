@@ -49,9 +49,16 @@ test('provider-free first task: evidence, explicit keep, acceptance, export, res
     await page.goto('/app/settings/tutorials');
     const row = page.locator('.tutorial-row[data-tutorial-id="home.first-task"]');
     await expect(row).toContainText('Completed');
+    await page.goto('/app/');
+    await expect(page.getByRole('button', { name: 'Pick up the last chat' })).toBeVisible();
+    await expect(page.getByText('Your first research task')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Start or resume first task' })).toHaveCount(0);
+    await page.goto('/app/settings/tutorials');
     await row.getByRole('button', { name: 'Reset', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
     await expect(row).toContainText('Not started');
+    await page.goto('/app/');
+    await expect(page.getByRole('button', { name: 'Start or resume first task' })).toBeVisible();
     const notes = await page.request.get(`/api/app/spitball/notes?scope=${encodeURIComponent(`dm:${FIRST_TASK_USER}`)}&view=knowledge`);
     expect((await notes.json()).notes.some(note => note.label === 'Tide-pool anemones')).toBe(true);
 });

@@ -66,6 +66,12 @@ export function HomeRoom() {
     const followups = watching.followups || [];
     const automations = watching.automations || [];
     const inbox = home?.inbox || { unread: 0, recent: [] };
+    // Once the practice task is done the prompt has nothing left to offer;
+    // Settings → Tutorials still has Replay. Hidden until progress loads so a
+    // finished card does not flash on every visit.
+    const firstTaskStatus = tutorials.data?.progress.find((p) => p.tutorialId === 'home.first-task')?.status;
+    const showFirstTask = firstTaskStatus !== undefined
+        && firstTaskStatus !== 'completed' && firstTaskStatus !== 'finished_with_skips';
 
     return (
         <main className="pane next-pane is-in" id="pane-home">
@@ -111,11 +117,13 @@ export function HomeRoom() {
                                 else navigate({ to: '/chat' });
                             }}>Pick up the last chat</button>
                         </div>
-                        <div className="list-card">
-                            <strong>Your first research task</strong>
-                            <p>Practice checking evidence, keeping a note, and exporting a brief. Fictional sample, no AI key needed.</p>
-                            <button type="button" className="btn" disabled={tutorials.loading} onClick={() => void tutorials.resume('home.first-task').catch(error => toast(error.message, true))}>Start or resume first task</button>
-                        </div>
+                        {showFirstTask && (
+                            <div className="list-card">
+                                <strong>Your first research task</strong>
+                                <p>Practice checking evidence, keeping a note, and exporting a brief. Fictional sample, no AI key needed.</p>
+                                <button type="button" className="btn" disabled={tutorials.loading} onClick={() => void tutorials.resume('home.first-task').catch(error => toast(error.message, true))}>Start or resume first task</button>
+                            </div>
+                        )}
                         <div className="home-grid">
                             <Card title="Personal memory" action="Inspect in Settings → Memory & privacy →"
                                 extraClass="home-card-you" onClick={() => navigate({ to: '/settings/$section', params: { section: 'memory' } })}
