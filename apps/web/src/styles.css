@@ -1776,14 +1776,14 @@ body.light .accent-swatch[aria-checked="true"] .accent-swatch-dot {
 #topbar .brand { padding: 0 6px 0 0; font-size: 17px; flex: none; text-decoration: none; color: var(--text); }
 #topbar .brand.active .brand-logo { filter: drop-shadow(0 0 8px rgba(var(--accent-rgb), 0.7)); }
 .topbar-nav {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; flex-direction: row; align-items: center; gap: 4px;
   flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; padding: 4px 2px; scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
 }
 .topbar-nav::-webkit-scrollbar { display: none; }
 #topbar .nav-btn {
-  flex: none; display: inline-flex; align-items: center; gap: 7px;
+  flex: none; display: inline-flex; align-items: center; gap: 7px; width: auto;
   padding: 7px 13px; border-radius: 999px; font-size: 14px; white-space: nowrap;
   text-decoration: none; scroll-snap-align: start;
 }
@@ -1827,4 +1827,11 @@ body.light .accent-swatch[aria-checked="true"] .accent-swatch-dot {
   #topbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
   #topbar .brand-text { display: none; }
   #topbar .nav-btn { padding: 7px 11px; font-size: 13.5px; }
+  /* The row scrolls; fade its trailing edge so the cut-off pill reads as
+     "more this way". The end padding lets the last pill clear the fade. */
+  .topbar-nav {
+    padding-right: 28px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
 }

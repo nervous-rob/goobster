@@ -52,8 +52,8 @@ const THEMES: Array<{ value: ThemeChoice; label: string; hint: string }> = [
 ];
 
 const NAV_LAYOUTS: Array<{ value: NavLayout; label: string; hint: string }> = [
-    { value: 'sidebar', label: '⫿ Sidebar', hint: 'Rooms in a column on the left. The default.' },
-    { value: 'top', label: '⩶ Across the top', hint: 'Rooms in a bar along the top of the page; the account menu moves to the right.' }
+    { value: 'sidebar', label: '◧ Sidebar', hint: 'Rooms in a column on the left. The default.' },
+    { value: 'top', label: '⬒ Across the top', hint: 'Rooms in a bar along the top of the page; the account menu moves to the right.' }
 ];
 
 const LABELS: Record<string, string> = {
