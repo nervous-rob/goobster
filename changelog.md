@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-28
+
+### Fixed
+- **Tool chip text no longer runs into the chip's edge.** The chip's target line (`file · project`) was capped at a fixed 280px independent of the chip, so in a narrower thinking trail the ellipsis (or the last letters) touched or crossed the border. The line is now capped by the chip itself, which is clipped and has extra right padding.
+
 ## 2026-09-18
 
 ### Added
