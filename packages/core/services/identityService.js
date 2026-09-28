@@ -663,6 +663,19 @@ class IdentityService {
         await tx.run(
             'UPDATE account_invites SET consumedBy = NULL WHERE consumedBy = @id', { id }
         );
+        // Their requests to join, and the copies that landed in operators'
+        // inboxes (those carry the person's name); a request this person
+        // resolved as an operator stays, minus who resolved it.
+        await tx.run(
+            `DELETE FROM inbox_items WHERE sourceType = 'access_request'
+             AND sourceId IN (SELECT CAST(id AS TEXT) FROM access_requests WHERE principalId = @id)`, { id }
+        );
+        counts.accessRequests = (await tx.run(
+            'DELETE FROM access_requests WHERE principalId = @id', { id }
+        )).changes;
+        await tx.run(
+            'UPDATE access_requests SET resolvedBy = NULL WHERE resolvedBy = @id', { id }
+        );
         counts.authIdentities = (await tx.run(
             'DELETE FROM auth_identities WHERE principalId = @id', { id }
         )).changes;

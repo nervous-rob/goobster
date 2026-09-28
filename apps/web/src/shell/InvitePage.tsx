@@ -33,10 +33,16 @@ export function InvitePage() {
 
     const minLength = preview.data?.passwordMinLength ?? 15;
     const mismatch = confirm.length > 0 && confirm !== password;
+    const missing = Math.max(0, minLength - password.length);
 
+    // Clickable while invalid on purpose: a disabled submit is silent.
     async function onSubmit(event: FormEvent) {
         event.preventDefault();
         if (mismatch) return;
+        if (missing > 0) {
+            setError(`Passphrases need at least ${minLength} characters - ${missing} more to go. A short sentence works well.`);
+            return;
+        }
         setBusy(true);
         setError(null);
         try {
@@ -82,14 +88,20 @@ export function InvitePage() {
                                 value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
                             <label className="hint" htmlFor="invite-password">Passphrase (at least {minLength} characters)</label>
                             <input id="invite-password" className="input" type="password" autoComplete="new-password"
-                                required minLength={minLength} value={password} onChange={(e) => setPassword(e.target.value)} />
+                                required minLength={minLength} value={password} onChange={(e) => setPassword(e.target.value)}
+                                aria-describedby="invite-password-hint" aria-invalid={(password.length > 0 && missing > 0) || undefined} />
+                            <div id="invite-password-hint" className="hint" role="status">
+                                {password.length > 0 && missing > 0
+                                    ? `${missing} more character${missing === 1 ? '' : 's'} needed.`
+                                    : password.length > 0 ? 'Long enough.' : 'A short sentence you will remember works well.'}
+                            </div>
                             <label className="hint" htmlFor="invite-confirm">Repeat it</label>
                             <input id="invite-confirm" className="input" type="password" autoComplete="new-password"
                                 required value={confirm} onChange={(e) => setConfirm(e.target.value)}
                                 aria-invalid={mismatch || undefined} />
                             {mismatch && <div className="login-error" role="alert">The two passphrases differ.</div>}
                             {error && <div className="login-error" role="alert">{error}</div>}
-                            <button className="btn primary big" type="submit" disabled={busy || mismatch || !loginName.trim() || password.length < minLength}>
+                            <button className="btn primary big" type="submit" disabled={busy}>
                                 {busy ? 'Creating your account…' : 'Create account'}
                             </button>
                             <div className="hint">Expires {preview.data.expiresAt} UTC. One use only.</div>

@@ -23,6 +23,7 @@ const MAX_DETAIL = 2000;
 const ACTIONS = new Set([
     'invite.create', 'invite.revoke',
     'account.grant', 'account.status', 'account.role', 'account.recovery',
+    'access.approve', 'access.decline',
     'signup.mail_test',
     'instance.resume', 'instance.restore', 'instance.pause',
     'limits.change'

@@ -38,6 +38,8 @@ const { hashPassword, verifyPassword, needsRehash } = require('../utils/password
 const { consumeWindow } = require('../utils/slidingWindowLimit');
 
 const LOGIN_NAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const REGISTRATION_PAUSED_MESSAGE = 'Sign-ups are paused while the host finishes setting up this installation. '
+    + 'Try again later, or ask the host to let you in.';
 const PASSWORD_MAX_LENGTH = 256;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -135,6 +137,26 @@ class NativeAuthService {
             console.warn(`[identity] identity.registration is "open" but ${this.emailDisabledReason(baseUrl)} Falling back to invitations.`);
         }
         return 'invite';
+    }
+
+    /**
+     * Why open sign-up cannot finish right now even though the mode is
+     * 'open', or null. Today the one reason is the shared-installation cap
+     * gate (usageBudgetService.assertAccountCreation): with
+     * `identity.requireAccount` on, a second account needs a daily token
+     * cap. The message is for the person signing up - the operator-facing
+     * instruction lives in the Host room.
+     * @param {string|null} baseUrl
+     * @returns {Promise<string|null>}
+     */
+    async registrationPausedReason(baseUrl) {
+        if (this.registrationMode(baseUrl) !== 'open') return null;
+        if (!(await require('./usageBudgetService').accountCreationBlocked())) return null;
+        return REGISTRATION_PAUSED_MESSAGE;
+    }
+
+    _registrationPaused() {
+        return new IdentityError(503, 'REGISTRATION_PAUSED', REGISTRATION_PAUSED_MESSAGE);
     }
 
     // --- Validation ----------------------------------------------------------
@@ -303,7 +325,14 @@ class NativeAuthService {
         const principalId = identityService.newNativeId();
 
         const result = await db.transaction(async (tx) => {
-            await require('./usageBudgetService').assertAccountCreation(tx);
+            try {
+                await require('./usageBudgetService').assertAccountCreation(tx);
+            } catch (error) {
+                // The invitation is untouched; the invitee hears it in their
+                // own terms, the host sees the cap instruction in the Host room.
+                if (error?.code === 'DAILY_CAP_REQUIRED') throw this._registrationPaused();
+                throw error;
+            }
             const claimed = await tx.run(
                 `UPDATE account_invites SET consumedAt = @now, consumedBy = @principalId
                  WHERE tokenHash = @tokenHash AND consumedAt IS NULL AND revokedAt IS NULL AND expiresAt > @now`,
@@ -831,7 +860,17 @@ class NativeAuthService {
             'SELECT * FROM pending_registrations WHERE tokenHash = @tokenHash AND expiresAt > @now',
             { tokenHash, now: nowUtc() }
         );
-        if (pendingSignup) return this._completeSignup(pendingSignup, invalid);
+        if (pendingSignup) {
+            try {
+                return await this._completeSignup(pendingSignup, invalid);
+            } catch (error) {
+                // The cap gate rolled the transaction back, so the parked
+                // sign-up survives: the same link works once the host has
+                // set a cap. The person gets the person-facing reason.
+                if (error?.code === 'DAILY_CAP_REQUIRED') throw this._registrationPaused();
+                throw error;
+            }
+        }
 
         const pending = await db.get(
             `SELECT t.principalId, t.normalized FROM email_tokens t
@@ -878,6 +917,8 @@ class NativeAuthService {
             throw new IdentityError(403, 'REGISTRATION_CLOSED',
                 'This installation is invitation-only. Ask the host for an invitation link.');
         }
+        // Say so now rather than mail a link that the cap gate will refuse.
+        if (await this.registrationPausedReason(baseUrl)) throw this._registrationPaused();
         await this._throttle('native_signup_addr', address, SIGNUP_MAX_PER_ADDRESS, HOUR_MS);
         const name = this.normalizeLoginName(loginName);
         const { address: emailAddress, normalized } = this.normalizeEmail(email);

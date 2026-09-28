@@ -291,13 +291,44 @@ class InboxService {
         };
     }
 
-    async _publicItem(row, noticeById = null, failureById = null) {
+    /**
+     * The access requests behind the items in a page (an operator's "X is
+     * asking to join" and the requester's outcome), keyed by sourceId.
+     */
+    async _accessByIdForRows(rows) {
+        const accessRequests = require('./accessRequestService');
+        if (!rows.some(row => row.sourceType === accessRequests.SOURCE_TYPE)) return new Map();
+        return accessRequests.describeForRows(rows);
+    }
+
+    _presentAccess(row, accessById) {
+        const accessRequests = require('./accessRequestService');
+        if (row.sourceType !== accessRequests.SOURCE_TYPE) return null;
+        const request = accessById.get(String(row.sourceId));
+        // The request row is gone (the person was erased): the words stay,
+        // there is nothing left to act on.
+        if (!request) return null;
+        return {
+            id: request.id,
+            status: request.status,
+            principalId: request.principalId,
+            displayName: request.displayName,
+            // Only the host's own copy is actionable; the requester's
+            // outcome notice never offers Approve / Decline.
+            actionable: request.status === 'pending' && request.principalId !== row.userId,
+            resolvedByName: request.resolvedByName,
+            resolvedAt: request.resolvedAt
+        };
+    }
+
+    async _publicItem(row, noticeById = null, failureById = null, accessById = null) {
         let attention = null;
         if (row.sourceType === activityCorrelation.SOURCE_TYPE) {
             const map = noticeById || await activityCorrelation.noticesByIdForRows([row]);
             attention = activityCorrelation.presentDelivery(row, map);
         }
         const failure = this._presentFailure(row, failureById || await this._failuresByIdForRows([row]));
+        const access = this._presentAccess(row, accessById || await this._accessByIdForRows([row]));
         return {
             id: row.id,
             kind: row.kind,
@@ -312,6 +343,9 @@ class InboxService {
             // The work_failures row this item reports, when it is a failure
             // notice (documentation/work_ledger.md). Null for every other item.
             failure,
+            // The access request this item is about (documentation/identity.md,
+            // "Asking to join"): the host's copy is actionable while pending.
+            access,
             ask: await require('./conversationContextService').describeItem(row),
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
@@ -356,8 +390,9 @@ class InboxService {
         const page = rows.slice(0, bounded);
         const noticeById = await activityCorrelation.noticesByIdForRows(page);
         const failureById = await this._failuresByIdForRows(page);
+        const accessById = await this._accessByIdForRows(page);
         return {
-            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById))),
+            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById, accessById))),
             unread: await this.unreadCount(userId),
             nextCursor: rows.length > bounded ? String(page[page.length - 1].id) : null
         };

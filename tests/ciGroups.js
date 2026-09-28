@@ -15,6 +15,7 @@ const GROUPS = [
         description: 'Database, migrations, gateways, locks, configuration',
         files: files([
             'activityGatewayAccess',
+            'accessRequests',
             'activityService',
             'autoUpdate',
             'backupRestore',

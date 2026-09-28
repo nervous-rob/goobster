@@ -21,6 +21,8 @@ const nativeAuthService = require('@goobster/core/services/nativeAuthService');
 const mailService = require('@goobster/core/services/mailService');
 const { MailService, MailError, normalizeEmail } = mailService;
 const privacyService = require('@goobster/core/services/privacyService');
+const usageBudgetService = require('@goobster/core/services/usageBudgetService');
+const instanceState = require('@goobster/core/services/instanceStateService');
 const eventBusService = require('@goobster/core/services/eventBusService');
 const { createWebAppApp, createWebAppContext } = require('@goobster/core/web/appApi');
 
@@ -340,6 +342,111 @@ describe('open sign-up', () => {
         const closed = await signup({ loginName: 'fine', email: 'x@example.org' });
         expect(closed.status).toBe(403);
         expect(closed.json.error.code).toBe('REGISTRATION_CLOSED');
+    });
+
+    // The shared-installation cap gate (work_ledger.md#budgets): with
+    // requireAccount on and no daily token cap, a second account cannot be
+    // created. The person must hear that before a link is mailed, in their
+    // own terms, and a link already in flight must survive until the host
+    // sets the cap.
+    describe('when the token-cap gate blocks a second account', () => {
+        const paused = { status: 503, code: 'REGISTRATION_PAUSED' };
+
+        beforeEach(async () => {
+            identityConfig.requireAccount = true;
+            await instanceState.remove('limits');
+        });
+
+        afterEach(async () => {
+            identityConfig.requireAccount = false;
+            await instanceState.remove('limits');
+        });
+
+        test('the client is told up front, sign-up is refused before anything is parked or mailed, and the message is not the host instruction', async () => {
+            const host = await operator();
+            const config = await request({ reqPath: '/api/app/config' });
+            expect(config.json.registration).toBe('open');
+            expect(config.json.registrationPaused).toMatch(/paused/i);
+            expect(config.json.registrationPaused).not.toMatch(/Host → Limits/);
+
+            const res = await signup({ loginName: 'newcomer', email: 'new@example.org' });
+            expect(res.status).toBe(paused.status);
+            expect(res.json.error.code).toBe(paused.code);
+            expect(res.json.error.message).toMatch(/paused/i);
+            expect(res.json.error.message).not.toMatch(/token cap/i);
+            expect(outbox).toHaveLength(0);
+            expect(await db.get('SELECT COUNT(*) AS c FROM pending_registrations')).toEqual({ c: 0 });
+
+            // The host sees the instruction, in the installation panel.
+            const view = await request({ reqPath: '/api/app/admin/installation', headers: { cookie: host } });
+            expect(view.json.registration).toMatchObject({ effective: 'open' });
+            expect(view.json.registration.pausedReason).toMatch(/Host → Limits/);
+
+            await usageBudgetService.setPolicy({ dailyTokens: 10000 });
+            expect((await request({ reqPath: '/api/app/config' })).json.registrationPaused).toBeNull();
+            expect((await request({ reqPath: '/api/app/admin/installation', headers: { cookie: host } })).json.registration.pausedReason).toBeNull();
+            expect((await signup({ loginName: 'newcomer', email: 'new@example.org' })).status).toBe(200);
+            expect(outbox).toHaveLength(1);
+        });
+
+        test('a link mailed before the cap was cleared fails softly and works again once the cap is back', async () => {
+            await operator();
+            await usageBudgetService.setPolicy({ dailyTokens: 10000 });
+            expect((await signup({ loginName: 'newcomer', email: 'new@example.org' })).status).toBe(200);
+            const token = tokenMailedTo('new@example.org', '/app/verify-email');
+            // One account exists, so the host may still clear the cap.
+            await usageBudgetService.setPolicy({ dailyTokens: null });
+
+            const refused = await verify(token);
+            expect(refused.res.status).toBe(paused.status);
+            expect(refused.res.json.error.code).toBe(paused.code);
+            expect(refused.cookie).toBeNull();
+            expect(await db.get('SELECT COUNT(*) AS c FROM pending_registrations')).toEqual({ c: 1 });
+            expect(await db.get('SELECT COUNT(*) AS c FROM app_accounts')).toEqual({ c: 1 });
+
+            await usageBudgetService.setPolicy({ dailyTokens: 10000 });
+            const verified = await verify(token);
+            expect(verified.res.status).toBe(200);
+            expect(verified.res.json).toMatchObject({ kind: 'registration', user: { loginName: 'newcomer' } });
+            expect(await db.get('SELECT COUNT(*) AS c FROM app_accounts')).toEqual({ c: 2 });
+        });
+
+        test('an invitee hears the same, and the invitation stays open', async () => {
+            const host = await operator();
+            const { token } = await nativeAuthService.createInvite({ issuedBy: ROB });
+            const res = await request({
+                method: 'POST', reqPath: '/api/app/auth/register',
+                body: { token, loginName: 'invitee', password: GOOD }
+            });
+            expect(res.status).toBe(paused.status);
+            expect(res.json.error.code).toBe(paused.code);
+            expect((await nativeAuthService.inspectInvite(token)).role).toBe('member');
+
+            await usageBudgetService.setPolicy({ dailyTokens: 10000 });
+            const redeemed = await request({
+                method: 'POST', reqPath: '/api/app/auth/register',
+                body: { token, loginName: 'invitee', password: GOOD }
+            });
+            expect(redeemed.status).toBe(200);
+            expect((await request({ reqPath: '/api/app/admin/accounts', headers: { cookie: host } })).json.accounts).toHaveLength(2);
+        });
+
+        test('a Discord member without an account is refused by /me but can still sign out', async () => {
+            await operator();
+            await identityService.ensureLegacyPrincipal({ discordId: SAM, displayName: 'sam' });
+            const { cookie } = await devSession(SAM, 'sam');
+            const me = await request({ reqPath: '/api/app/me', headers: { cookie } });
+            expect(me.status).toBe(403);
+            expect(me.json.error.code).toBe('NO_ACCOUNT');
+
+            const out = await request({ method: 'POST', reqPath: '/api/app/auth/logout', headers: { cookie } });
+            expect(out.status).toBe(200);
+            expect(sessionCookie(out)).toBe('');
+            expect(await db.get('SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @id', { id: SAM })).toEqual({ c: 0 });
+            expect((await request({ reqPath: '/api/app/me', headers: { cookie } })).status).toBe(401);
+            // Signing out with no cookie at all is a harmless no-op.
+            expect((await request({ method: 'POST', reqPath: '/api/app/auth/logout' })).status).toBe(200);
+        });
     });
 
     test('a taken login name is refused openly; a taken address is not revealed but the owner is told', async () => {
@@ -700,7 +807,7 @@ describe('the host panel', () => {
 
         mailService.setTransport(null);
         view = await request({ reqPath: '/api/app/admin/installation', headers: { cookie: host } });
-        expect(view.json.registration).toEqual({ configured: 'open', effective: 'invite' });
+        expect(view.json.registration).toEqual({ configured: 'open', effective: 'invite', pausedReason: null });
         expect(view.json.mail.enabled).toBe(false);
         expect(view.json.mail.reason).toMatch(/mail provider/i);
 

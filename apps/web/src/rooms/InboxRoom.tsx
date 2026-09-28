@@ -106,6 +106,60 @@ function FailureLink({ item }: { item: InboxItem }) {
     );
 }
 
+/**
+ * The host's copy of "X is asking to join": Approve grants the account in
+ * one click (the same click as the Discord DM button); Decline closes it.
+ * Once resolved - here, from the DM, or from Host -> Accounts - the row
+ * shows the outcome instead.
+ */
+function AccessDecision({ item, onResolved }: { item: InboxItem; onResolved: () => Promise<unknown> }) {
+    const toast = useToast();
+    const whenLabel = useDateLabel();
+    const [busy, setBusy] = useState<'approve' | 'decline' | null>(null);
+    const access = item.access;
+    if (!access) return null;
+
+    async function resolve(outcome: 'approve' | 'decline') {
+        setBusy(outcome);
+        try {
+            const { request } = await api.adminResolveAccessRequest(access!.id, outcome, 'inbox');
+            toast(request.status === 'approved'
+                ? `${request.displayName || 'They'} now has an account.`
+                : `Declined - ${request.displayName || 'they'} has been told.`);
+            await onResolved();
+        } catch (error) {
+            const failure = error as { code?: string; message: string };
+            toast(failure.code === 'DAILY_CAP_REQUIRED'
+                ? `${failure.message} Then approve again - the request stays open.`
+                : failure.message, true);
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    if (access.actionable) {
+        return (
+            <div className="inbox-access" data-testid="inbox-access-decision" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <button type="button" className="btn primary small" disabled={busy !== null} onClick={() => void resolve('approve')}>
+                    {busy === 'approve' ? 'Approving…' : 'Approve'}
+                </button>
+                <button type="button" className="btn small" disabled={busy !== null} onClick={() => void resolve('decline')}>
+                    {busy === 'decline' ? 'Declining…' : 'Decline'}
+                </button>
+                <span className="hint">Approve grants a member account; their Discord history stays theirs.</span>
+            </div>
+        );
+    }
+    if (access.status === 'pending') return null;
+    return (
+        <div className="activity-correlation" data-testid="inbox-access-outcome">
+            {access.status === 'approved' ? 'Approved' : 'Declined'}
+            {access.resolvedByName ? ` by ${access.resolvedByName}` : ''}
+            {access.resolvedAt ? ` · ${whenLabel(access.resolvedAt)}` : ''}.
+        </div>
+    );
+}
+
 function echoLabel(item: InboxItem, discordEnabled: boolean): string | null {
     if (item.discord.status === 'sent') return 'also sent to your Discord DMs';
     if (item.discord.status === 'failed') return 'Discord DM could not be delivered';
@@ -271,6 +325,11 @@ export function InboxRoom() {
                                         </div>)}
                                         <AttentionDelivery item={item} />
                                         <FailureLink item={item} />
+                                        <AccessDecision item={item} onResolved={async () => {
+                                            await invalidate();
+                                            await queryClient.invalidateQueries({ queryKey: ['admin-accounts'] });
+                                            await queryClient.invalidateQueries({ queryKey: ['admin-access-requests'] });
+                                        }} />
                                         {isOpen && (
                                             <div className="inbox-body">
                                                 <div className="inbox-ask-details">

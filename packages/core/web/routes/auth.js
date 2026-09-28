@@ -57,7 +57,7 @@ function clientAddress(req) {
 }
 
 function mountAuth(app, ctx, h) {
-    const { requireAuth, authRoute, sendError, parseCookies, cookieAttributes } = h;
+    const { requireAuth, requireSession, authRoute, sendError, parseCookies, cookieAttributes } = h;
 
     const setSession = (res, token) => {
         res.append('Set-Cookie', `${SESSION_COOKIE}=${token}; ${cookieAttributes(ctx, SESSION_MAX_AGE)}`);
@@ -68,7 +68,14 @@ function mountAuth(app, ctx, h) {
     const discordConfigured = () => Boolean(ctx.clientSecret && ctx.publicUrl && ctx.discordConfig.enabled);
 
     // Client bootstrap info (nothing secret)
-    app.get('/api/app/config', (req, res) => {
+    app.get('/api/app/config', async (req, res) => {
+        // Open sign-up that cannot finish right now (the shared-installation
+        // cap gate) is announced here so the client never leads someone into
+        // a form that fails at the end. A database hiccup reads as "not paused".
+        let registrationPaused = null;
+        try {
+            registrationPaused = await ctx.nativeAuth.registrationPausedReason(ctx.publicUrl);
+        } catch { /* best effort */ }
         res.json({
             clientId: ctx.clientId,
             devMode: ctx.devMode,
@@ -77,6 +84,7 @@ function mountAuth(app, ctx, h) {
             // Email-backed features: open sign-up and "forgot password".
             // Both need native login, a mail provider, and publicUrl.
             registration: ctx.nativeAuth.registrationMode(ctx.publicUrl),
+            registrationPaused,
             emailRecovery: ctx.nativeAuth.emailEnabled(ctx.publicUrl),
             installationName: ctx.identityConfig.installationName,
             discord: ctx.discordConfig.enabled,
@@ -245,11 +253,45 @@ function mountAuth(app, ctx, h) {
         res.json({ user: { id: userId, name }, devMode: true });
     });
 
-    app.post('/api/app/auth/logout', requireAuth, async (req, res) => {
-        await ctx.sessions.destroy(req.webSessionToken);
-        res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
-        res.json({ ok: true });
+    // Signing out must always work - including for a session whose
+    // principal has no account yet (403 NO_ACCOUNT from requireAuth) or was
+    // disabled, otherwise that person is stuck on the "not granted" page
+    // with a cookie they cannot get rid of. Only the cookie is consulted.
+    app.post('/api/app/auth/logout', async (req, res) => {
+        try {
+            const token = parseCookies(req)[SESSION_COOKIE];
+            if (token) await ctx.sessions.destroy(token);
+            res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
+            res.json({ ok: true });
+        } catch (error) {
+            ctx.logger.error?.('Web app logout failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
     });
+
+    // --- Asking to join ---------------------------------------------------------
+
+    // A signed-in person the release gate keeps out (403 NO_ACCOUNT) asks the
+    // host from the "Almost in" page. Session only - there is no account to
+    // require yet. The request lands in every operator's Inbox and Discord
+    // DMs (documentation/identity.md, "Asking to join").
+    app.get('/api/app/auth/access-request', requireSession, authRoute(async (req) => ({
+        ...await ctx.accessRequests.statusFor(req.webUser.userId),
+        requireAccount: ctx.identityConfig.requireAccount,
+        discord: ctx.discordConfig.enabled
+    })));
+
+    app.post('/api/app/auth/access-request', requireSession, authRoute(async (req) => {
+        const note = req.body?.note;
+        if (note != null && typeof note !== 'string') {
+            throw Object.assign(new Error('note must be a string.'), { status: 400, code: 'BAD_NOTE' });
+        }
+        return ctx.accessRequests.request({
+            principalId: req.webUser.userId,
+            note: note ?? null,
+            gateway: ctx.gateway
+        });
+    }));
 
     // --- Native sign-in (release-gated) ---------------------------------------
 

@@ -3,7 +3,7 @@ import { FormEvent, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
-import type { AdminAccount, Invite, OperatorAuditEntry, SkippedSchedules } from '../lib/types';
+import type { AccessRequest, AdminAccount, Invite, OperatorAuditEntry, SkippedSchedules } from '../lib/types';
 import { useSession } from '../hooks/useSession';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
@@ -13,6 +13,7 @@ import { FailureList, ResourceTotals, failureKindLabel } from '../components/Wor
 
 const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
+const ACCESS_REQUESTS_KEY = ['admin-access-requests'];
 const REPORT_KEY = ['admin-identity-report'];
 const INSTALLATION_KEY = ['admin-installation'];
 const INSTANCE_KEY = ['admin-instance'];
@@ -239,6 +240,67 @@ function InvitesPanel() {
     );
 }
 
+/**
+ * People who signed in, were kept out by the release gate, and asked to be
+ * let in. The same requests sit in your Inbox and, with Discord, in your
+ * DMs; approving from any of the three is the migration grant.
+ */
+function AccessRequestsPanel({ onResolved }: { onResolved: () => Promise<void> }) {
+    const toast = useToast();
+    const whenLabel = useDateLabel();
+    const queryClient = useQueryClient();
+    const requests = useQuery({ queryKey: ACCESS_REQUESTS_KEY, queryFn: () => api.adminAccessRequests(), refetchInterval: 30_000 });
+    const [busy, setBusy] = useState<number | null>(null);
+
+    async function resolve(request: AccessRequest, outcome: 'approve' | 'decline') {
+        setBusy(request.id);
+        try {
+            const result = await api.adminResolveAccessRequest(request.id, outcome, 'host');
+            toast(result.request.status === 'approved'
+                ? `${request.displayName || request.principalId} now has an account.`
+                : `Declined - ${request.displayName || request.principalId} has been told.`);
+            await queryClient.invalidateQueries({ queryKey: ACCESS_REQUESTS_KEY });
+            await queryClient.invalidateQueries({ queryKey: ['inbox'] });
+            await onResolved();
+        } catch (error) {
+            const failure = error as ApiError;
+            toast(failure.code === 'DAILY_CAP_REQUIRED'
+                ? `${failure.message} Then approve again - the request stays open.`
+                : failure.message, true);
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    const rows = requests.data?.requests || [];
+    if (rows.length === 0) return null;
+    return (
+        <div className="list-card" data-testid="host-access-requests" style={{ marginBottom: 12 }}>
+            <div className="list-row"><strong>Waiting to be let in</strong>
+                <span className="hint">{rows.length === 1 ? 'One person asked' : `${rows.length} people asked`} to join. Each request is also in your Inbox and Discord DMs.</span>
+            </div>
+            {rows.map((request) => (
+                <div key={request.id} className="list-row" style={{ flexWrap: 'wrap', gap: 8 }} data-testid="host-access-request-row">
+                    <span>
+                        <strong>{request.displayName || request.principalId}</strong>
+                        <span className="hint"> · asked {whenLabel(request.createdAt)}</span>
+                        <div className="hint">
+                            <code>{request.principalId}</code>{request.discordId ? ' · Discord' : ''}
+                            {request.note && <> · <q>{request.note}</q></>}
+                        </div>
+                    </span>
+                    <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button type="button" className="btn primary small" disabled={busy !== null} onClick={() => void resolve(request, 'approve')}>
+                            {busy === request.id ? 'Working…' : 'Approve'}
+                        </button>
+                        <button type="button" className="btn subtle small" disabled={busy !== null} onClick={() => void resolve(request, 'decline')}>Decline</button>
+                    </span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function AccountsPanel() {
     const me = useSession();
     const toast = useToast();
@@ -312,6 +374,7 @@ function AccountsPanel() {
                     : 'The release gate (identity.requireAccount) is off: Discord users without an account still get in for now.'}
             </p>
             {reset && <OneTimeLink label={`Reset link for ${reset.who}`} url={reset.url} expiresAt={reset.expiresAt} onDone={() => setReset(null)} />}
+            {accounts.data?.requireAccount && <AccessRequestsPanel onResolved={refresh} />}
             <form className="host-invite-form" onSubmit={grant}>
                 <input className="input" placeholder="Grant an existing Discord user: paste their user id" value={principalId}
                     onChange={(e) => setPrincipalId(e.target.value)} aria-label="Principal id to grant" style={{ flex: 1 }} />
@@ -530,12 +593,22 @@ function SignupPanel() {
                     <div className="list-row">
                         <span>Registration</span>
                         <span>
-                            <strong>{data.registration.effective === 'open' ? 'Open sign-up' : 'Invitation only'}</strong>
+                            <strong>
+                                {data.registration.effective === 'open'
+                                    ? (data.registration.pausedReason ? 'Open sign-up, paused' : 'Open sign-up')
+                                    : 'Invitation only'}
+                            </strong>
                             {data.registration.configured !== data.registration.effective && (
                                 <span className="hint"> · configured <code>{data.registration.configured}</code>, but {data.mail.reason?.replace(/\.$/, '').toLowerCase() || 'mail is off'}</span>
                             )}
                         </span>
                     </div>
+                    {data.registration.pausedReason && (
+                        <div className="list-row" role="alert">
+                            <span>Nobody can finish signing up right now</span>
+                            <span className="hint">{data.registration.pausedReason} Invitations and account grants wait on the same cap.</span>
+                        </div>
+                    )}
                     <div className="list-row">
                         <span>Outbound mail</span>
                         <span>
