@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-28
+
+### Fixed
+- **The "Your first research task" card on Home goes away once you finish the task.** It was rendered unconditionally, so it stayed after completion. It now hides when the task is completed (with or without skips); Replay and Reset remain in Settings → Tutorials, and a reset brings the card back. Playwright: `firstTask`.
+
 ## 2026-09-18
 
 ### Added
@@ -21,7 +26,6 @@
 - `/forget-me` and the transparency report cover queued Study follow-ups (`web_chat_queue` / `queuedChatMessages`).
 
 ### Fixed
-- **The "Your first research task" card on Home goes away once you finish the task.** It was rendered unconditionally, so it stayed after completion. It now hides when the task is completed (with or without skips); Replay and Reset remain in Settings → Tutorials, and a reset brings the card back. Playwright: `firstTask`.
 - **Study composer too narrow on phones.** Attach, settings, and voice sat on the same row as the textarea, so a PWA/browser draft was a sliver you could neither read nor caret-edit. Below 720px the textarea now takes a full-width row (and grows with the text up to 40dvh); the buttons sit underneath. Playwright: `e2e/composer.spec.js`.
 - **Incognito Study turns no longer persist the prompt or live draft.** The per-user lock row is still written (`web_live_turns`) so a second replica 409s, but `progressJson` stays empty; thoughts/tools/tokens live only on the in-memory turn. Jest: `webChatService` incognito progress.
 - **Queued follow-ups are claimed atomically.** `_popQueue` deletes the head row with `RETURNING` and only returns it if this worker won the delete, so two Postgres api processes cannot both start (and later requeue) the same message. Jest: `webChatService` queue claim.
