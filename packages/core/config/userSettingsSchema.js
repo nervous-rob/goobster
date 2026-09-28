@@ -85,7 +85,7 @@ const SECTION_METADATA = {
         scope: SCOPES.ACCOUNT,
         description: 'Visual theme, density, keyboard, and working defaults for the web portal.',
         appliesTo: ['web-portal'],
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'accent color', 'look', 'navigation', 'sidebar', 'top bar', 'layout', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'accent color', 'surface', 'tint', 'neutral', 'look', 'navigation', 'sidebar', 'top bar', 'layout', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
     },
     connections: {
         id: 'connections',
@@ -116,6 +116,10 @@ const ACCENTS = ['blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'ambe
 // Where the portal's primary navigation sits: the left sidebar (default) or
 // a horizontal bar across the top of the page.
 const NAV_LAYOUTS = ['sidebar', 'top'];
+// How the portal's whitespace relates to the accent: `tinted` rebuilds the
+// surface greys from the accent's hue (default); `neutral` keeps the fixed
+// greys and lets the accent show only in the controls and the room glow.
+const SURFACES = ['tinted', 'neutral'];
 const ANSWER_LENGTHS = ['concise', 'balanced', 'detailed'];
 const TONES = ['neutral', 'warm', 'direct', 'playful'];
 const HUMOR_LEVELS = ['off', 'light', 'playful'];
@@ -221,6 +225,7 @@ const PREFERENCE_DEFAULTS = {
     defaultNewChatPrivacy: 'regular',
     theme: 'dark',
     accent: 'blueberry',
+    surface: 'tinted',
     navLayout: 'sidebar',
     linkByTag: true,
     textSize: 'm',
@@ -272,7 +277,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
     ],
     memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
     appearance: [
-        'theme', 'accent', 'navLayout', 'linkByTag', 'textSize', 'reducedMotion', 'density',
+        'theme', 'accent', 'surface', 'navLayout', 'linkByTag', 'textSize', 'reducedMotion', 'density',
         'enterToSend', 'expandChatDetails', 'startPage', 'hiddenToolRooms', 'preferredExchangeGuild',
         'expeditionDefaultDepth', 'expeditionDefaultLens', 'parlorDefaultEmoji', 'parlorDefaultCharter'
     ],
@@ -422,6 +427,11 @@ function coercePreference(key, raw) {
         case 'accent':
             if (!ACCENTS.includes(raw)) {
                 return { ok: false, code: 'BAD_ACCENT', message: `accent must be one of: ${ACCENTS.join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        case 'surface':
+            if (!SURFACES.includes(raw)) {
+                return { ok: false, code: 'BAD_SURFACE', message: `surface must be one of: ${SURFACES.join(', ')}.` };
             }
             return { ok: true, value: raw };
         case 'navLayout':
@@ -647,6 +657,7 @@ module.exports = {
     INITIATIVE_LEVELS,
     THEMES,
     ACCENTS,
+    SURFACES,
     NAV_LAYOUTS,
     ANSWER_LENGTHS,
     TONES,

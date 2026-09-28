@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="/app/style.css">
 </head>
 <body>
-  <!-- Paint the device copies of theme, accent, and navigation layout before
+  <!-- Paint the device copies of theme, accent, surface, and navigation layout before
        the app mounts so a reload never flashes the defaults. Same keys as
        src/lib/theme.ts and src/lib/appearance.ts. -->
   <script>
@@ -25,6 +25,7 @@
         if (light) document.body.classList.add('light');
         var a = s.getItem('goobster-accent');
         if (a && /^[a-z]+$/.test(a)) document.documentElement.setAttribute('data-accent', a);
+        if (s.getItem('goobster-surface') === 'neutral') document.documentElement.setAttribute('data-surface', 'neutral');
         if (s.getItem('goobster-nav-layout') === 'top') document.documentElement.setAttribute('data-nav-layout', 'top');
       } catch (e) { /* private mode */ }
     })();

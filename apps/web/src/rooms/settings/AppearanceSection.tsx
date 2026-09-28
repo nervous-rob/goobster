@@ -3,8 +3,9 @@ import { Link } from '@tanstack/react-router';
 import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import {
-    ACCENTS, getStoredAccent, getStoredTheme, isAccent, paintAccent, paintTheme, setStoredAccent, setStoredTheme,
-    type AccentChoice, type ThemeChoice
+    ACCENTS, SURFACES, getStoredAccent, getStoredSurface, getStoredTheme, isAccent, isSurface,
+    paintAccent, paintSurface, paintTheme, setStoredAccent, setStoredSurface, setStoredTheme,
+    type AccentChoice, type SurfaceChoice, type ThemeChoice
 } from '../../lib/theme';
 import {
     getStoredDensity,
@@ -29,6 +30,7 @@ type Values = UserSettingsResponse['sections']['appearance']['values'];
 type Draft = {
     theme: ThemeChoice;
     accent: AccentChoice;
+    surface: SurfaceChoice;
     navLayout: NavLayout;
     linkByTag: boolean;
     textSize: TextSize;
@@ -59,6 +61,7 @@ const NAV_LAYOUTS: Array<{ value: NavLayout; label: string; hint: string }> = [
 const LABELS: Record<string, string> = {
     theme: 'Theme',
     accent: 'Accent color',
+    surface: 'Surface',
     navLayout: 'Navigation',
     linkByTag: 'Link notes by shared tag',
     textSize: 'Text size',
@@ -96,6 +99,7 @@ export function AppearanceSection({ section, onDirty }: {
     const toDraft = useCallback((v: Values): Draft => ({
         theme: getStoredTheme() || v.theme,
         accent: isAccent(v.accent) ? v.accent : getStoredAccent(),
+        surface: isSurface(v.surface) ? v.surface : getStoredSurface(),
         navLayout: v.navLayout === 'top' || v.navLayout === 'sidebar' ? v.navLayout : getStoredNavLayout(),
         linkByTag: localStorage.getItem(LINK_BY_TAG_KEY) === null ? Boolean(v.linkByTag) : localStorage.getItem(LINK_BY_TAG_KEY) !== '0',
         textSize: getStoredTextSize() || v.textSize || 'm',
@@ -124,8 +128,9 @@ export function AppearanceSection({ section, onDirty }: {
     useEffect(() => {
         paintTheme(d.draft.theme);
         paintAccent(d.draft.accent);
+        paintSurface(d.draft.surface);
         paintAppearance({ textSize: d.draft.textSize, density: d.draft.density, reducedMotion: d.draft.reducedMotion });
-    }, [d.draft.theme, d.draft.accent, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
+    }, [d.draft.theme, d.draft.accent, d.draft.surface, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
     // The layout previews too, but not on mount: painting the stored value
     // again would only re-render the shell for nothing.
     const layoutPainted = useRef(false);
@@ -136,6 +141,7 @@ export function AppearanceSection({ section, onDirty }: {
     useEffect(() => () => {
         paintTheme(getStoredTheme());
         paintAccent(getStoredAccent());
+        paintSurface(getStoredSurface());
         paintNavLayout(getStoredNavLayout());
         paintAppearance({
             textSize: getStoredTextSize(),
@@ -147,6 +153,7 @@ export function AppearanceSection({ section, onDirty }: {
     function persistLocal() {
         setStoredTheme(d.draft.theme);
         setStoredAccent(d.draft.accent);
+        setStoredSurface(d.draft.surface);
         persistNavLayout(d.draft.navLayout);
         localStorage.setItem(LINK_BY_TAG_KEY, d.draft.linkByTag ? '1' : '0');
         persistAppearance({
@@ -185,6 +192,18 @@ export function AppearanceSection({ section, onDirty }: {
                             <span className="accent-swatch-dot" aria-hidden="true">{d.draft.accent === a.value ? '✓' : ''}</span>
                             <span>{a.label}</span>
                         </button>
+                    ))}
+                </div>
+            </Field>
+
+            <Field id="surface" label="Surface" scope="Your account"
+                hint="Tinted rebuilds the backgrounds, borders, and text greys from the accent, so light/dark sets how bright the page is and the accent sets what it leans towards. Neutral keeps the fixed greys and lets the accent show in controls and the room glow only.">
+                <div className="segment settings-segment" role="radiogroup" aria-label="Surface" id="surface-input">
+                    {SURFACES.map((s) => (
+                        <button key={s.value} type="button" role="radio" aria-checked={d.draft.surface === s.value}
+                            title={s.hint}
+                            className={`segment-btn${d.draft.surface === s.value ? ' active' : ''}`}
+                            onClick={() => d.set({ surface: s.value })}>{s.label}</button>
                     ))}
                 </div>
             </Field>
@@ -333,6 +352,7 @@ export function AppearanceSection({ section, onDirty }: {
                     d.discard();
                     paintTheme(getStoredTheme());
                     paintAccent(getStoredAccent());
+                    paintSurface(getStoredSurface());
                     paintNavLayout(getStoredNavLayout());
                 },
                 reset: async (rev) => {
@@ -341,6 +361,7 @@ export function AppearanceSection({ section, onDirty }: {
                         const values = r.data.values as Values;
                         setStoredTheme(values.theme);
                         if (isAccent(values.accent)) setStoredAccent(values.accent);
+                        if (isSurface(values.surface)) setStoredSurface(values.surface);
                         if (values.navLayout === 'top' || values.navLayout === 'sidebar') persistNavLayout(values.navLayout);
                         localStorage.setItem(LINK_BY_TAG_KEY, values.linkByTag ? '1' : '0');
                         persistAppearance({

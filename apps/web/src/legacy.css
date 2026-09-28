@@ -84,6 +84,34 @@ body.light {
   --warn: #b26a00;
 }
 
+/* The whitespace follows the accent too. Every surface and text grey is
+   rebuilt from the accent's hue with a fixed lightness per surface and a
+   fraction of the accent's chroma, so light/dark decides how bright the
+   page is and the accent decides what it is tinted towards - Blueberry
+   reproduces the original navy-grey, Sunset warms the same greys, and
+   Graphite (low chroma) stays close to neutral. The hex values above are
+   the fallback where relative colour syntax is unavailable, and the look
+   the `neutral` surface setting (html[data-surface="neutral"]) keeps: fixed
+   greys with the accent showing only in controls and the room glow. */
+@supports (color: oklch(from red calc(l * 0.5) c h)) {
+  html:not([data-surface="neutral"]) {
+    --bg: oklch(from var(--accent) 0.17 calc(c * 0.16) h);
+    --bg-raise: oklch(from var(--accent) 0.215 calc(c * 0.17) h);
+    --bg-raise-2: oklch(from var(--accent) 0.255 calc(c * 0.19) h);
+    --border: oklch(from var(--accent) 0.32 calc(c * 0.2) h);
+    --text: oklch(from var(--accent) 0.93 calc(c * 0.05) h);
+    --text-dim: oklch(from var(--accent) 0.72 calc(c * 0.14) h);
+  }
+  html:not([data-surface="neutral"]) body.light {
+    --bg: oklch(from var(--accent) 0.965 calc(c * 0.12) h);
+    --bg-raise: oklch(from var(--accent) 0.995 calc(c * 0.03) h);
+    --bg-raise-2: oklch(from var(--accent) 0.94 calc(c * 0.12) h);
+    --border: oklch(from var(--accent) 0.87 calc(c * 0.15) h);
+    --text: oklch(from var(--accent) 0.24 calc(c * 0.15) h);
+    --text-dim: oklch(from var(--accent) 0.5 calc(c * 0.2) h);
+  }
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -95,6 +123,9 @@ body {
   font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   transition: background-color 0.55s var(--ease-out);
 }
+/* Form controls do not inherit the page font by default, so every .btn,
+   .input and .segment-btn would otherwise fall back to the UA face. */
+button, input, select, textarea { font-family: inherit; }
 
 .hidden { display: none !important; }
 
@@ -1852,6 +1883,18 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
   transition: transform 0.18s ease, box-shadow 0.22s ease, border-color 0.2s ease;
 }
 .home-card:hover { border-color: var(--accent); box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28); }
+/* Cards that are not themselves a link: no pointer, no tilt, no hover lift. */
+.home-card-static { cursor: default; transform: none; }
+.home-card-static:hover { border-color: var(--border); box-shadow: none; }
+.home-card-task {
+  min-height: 0;
+  animation: rise-in 0.5s var(--ease-out) 0.08s both;
+  background:
+    radial-gradient(360px 160px at 100% 0%, rgba(var(--accent-rgb), 0.16), transparent 70%),
+    var(--bg-raise);
+}
+.home-card-task .home-card-body p { margin: 0; max-width: 62ch; }
+.home-card-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .home-card-obs {
   background:
     radial-gradient(circle at 92% 8%, rgba(140, 170, 255, 0.22), transparent 46%),

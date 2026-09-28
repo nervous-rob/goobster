@@ -1,7 +1,7 @@
 /**
- * Appearance: the accent palette and the navigation layout. Both preview
- * live, both save to the account and keep a device copy, and both are
- * painted before the app mounts on reload. The top-bar layout keeps the
+ * Appearance: the accent palette, the surface treatment, and the navigation
+ * layout. All preview live, all save to the account and keep a device copy,
+ * and all are painted before the app mounts on reload. The top-bar layout keeps the
  * same "Rooms" landmark and Settings link the sidebar exposes, so the
  * rest of the portal (and its tests) address navigation the same way.
  */
@@ -12,7 +12,7 @@ const { login } = require('./helpers');
 // Later specs address the sidebar; put the account back however a run ended.
 test.afterEach(async ({ page }) => {
     await page.request.patch('/api/app/settings/appearance', {
-        data: { changes: { accent: 'blueberry', navLayout: 'sidebar' } }
+        data: { changes: { accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar' } }
     }).catch(() => {});
 });
 
@@ -22,6 +22,25 @@ async function accentOf(page) {
 
 async function accentRgb(page) {
     return page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--accent').trim());
+}
+
+// The page surface, resolved to sRGB through a canvas (the stylesheet
+// declares it in oklch, and <body> animates its background).
+async function surfaceRgb(page) {
+    return page.evaluate(() => {
+        const probe = document.createElement('span');
+        probe.style.cssText = 'position:fixed;transition:none;background-color:var(--bg)';
+        document.body.appendChild(probe);
+        const value = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = value;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+        return { r, g, b };
+    });
 }
 
 test('accent previews live, saves to the account, and survives a reload', async ({ page }) => {
@@ -68,6 +87,75 @@ test('the accent follows light and dark surfaces', async ({ page }) => {
     const light = await accentRgb(page);
     expect(light).not.toBe(dark);
     expect(await accentOf(page)).toBe('ocean');
+});
+
+test('the whitespace is tinted by theme and accent together', async ({ page }) => {
+    await login(page);
+    await page.goto('/app/settings/appearance');
+    const swatches = page.getByRole('radiogroup', { name: 'Accent color' });
+
+    // Dark: Sunset warms the page (red above blue), Ocean cools it (blue
+    // above red); both stay dark.
+    await swatches.getByRole('radio', { name: 'Sunset' }).click();
+    const darkSunset = await surfaceRgb(page);
+    await swatches.getByRole('radio', { name: 'Ocean' }).click();
+    const darkOcean = await surfaceRgb(page);
+    expect(darkSunset.r).toBeGreaterThan(darkSunset.b);
+    expect(darkOcean.b).toBeGreaterThan(darkOcean.r);
+    for (const c of [darkSunset, darkOcean]) expect(Math.max(c.r, c.g, c.b)).toBeLessThan(40);
+
+    // Light: same hue relationship, both stay near white.
+    await page.getByRole('radio', { name: /Light/ }).click();
+    await expect(page.locator('body')).toHaveClass(/light/);
+    const lightOcean = await surfaceRgb(page);
+    await swatches.getByRole('radio', { name: 'Sunset' }).click();
+    const lightSunset = await surfaceRgb(page);
+    expect(lightSunset.r).toBeGreaterThan(lightSunset.b);
+    expect(lightOcean.b).toBeGreaterThan(lightOcean.r);
+    for (const c of [lightSunset, lightOcean]) expect(Math.min(c.r, c.g, c.b)).toBeGreaterThan(225);
+
+    // The browser chrome follows the page surface.
+    const themeColor = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
+    expect(themeColor).toMatch(/^rgb\(/);
+    const [r, , b] = themeColor.match(/\d+/g).map(Number);
+    expect(r).toBeGreaterThan(b);
+});
+
+test('the neutral surface keeps the fixed greys under any accent', async ({ page }) => {
+    await login(page);
+    await page.goto('/app/settings/appearance');
+    const swatches = page.getByRole('radiogroup', { name: 'Accent color' });
+    const surfaces = page.getByRole('radiogroup', { name: 'Surface' });
+    await expect(surfaces.getByRole('radio', { name: 'Tinted' })).toHaveAttribute('aria-checked', 'true');
+
+    await swatches.getByRole('radio', { name: 'Sunset' }).click();
+    const tinted = await surfaceRgb(page);
+    expect(tinted.r).toBeGreaterThan(tinted.b);
+
+    // Neutral previews live: the same accent, the original navy-grey page.
+    await surfaces.getByRole('radio', { name: 'Neutral' }).click();
+    expect(await page.evaluate(() => document.documentElement.getAttribute('data-surface'))).toBe('neutral');
+    const neutralSunset = await surfaceRgb(page);
+    expect(neutralSunset).toEqual({ r: 15, g: 17, b: 23 });
+    await swatches.getByRole('radio', { name: 'Ocean' }).click();
+    expect(await surfaceRgb(page)).toEqual(neutralSunset);
+    // The accent itself still changes with the swatch.
+    expect(await accentOf(page)).toBe('ocean');
+
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    const settings = await page.request.get('/api/app/settings');
+    expect((await settings.json()).sections.appearance.values.surface).toBe('neutral');
+    expect(await page.evaluate(() => localStorage.getItem('goobster-surface'))).toBe('neutral');
+
+    // Painted before React mounts, so a reload never flashes the tinted page.
+    await page.reload();
+    expect(await page.evaluate(() => document.documentElement.getAttribute('data-surface'))).toBe('neutral');
+    expect(await surfaceRgb(page)).toEqual(neutralSunset);
+    await expect(page.getByRole('radiogroup', { name: 'Surface' }).getByRole('radio', { name: 'Neutral' }))
+        .toHaveAttribute('aria-checked', 'true');
+    const themeColor = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
+    expect(themeColor).toBe('rgb(15, 17, 23)');
 });
 
 test('navigation layout previews live and moves the rooms to a top bar', async ({ page }) => {

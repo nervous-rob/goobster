@@ -955,6 +955,7 @@ export type UserSettingsResponse = {
         appearance: SettingSection<{
             theme: 'light' | 'dark' | 'system';
             accent: 'blueberry' | 'ocean' | 'mint' | 'sunset' | 'rose' | 'violet' | 'amber' | 'graphite';
+            surface: 'tinted' | 'neutral';
             navLayout: 'sidebar' | 'top';
             linkByTag: boolean;
             textSize: 's' | 'm' | 'l';
