@@ -620,18 +620,23 @@ body.applet-open { overflow: hidden; }
   display: inline-flex; align-items: center; gap: 7px;
   background: var(--bg-raise-2); border: 1px solid var(--border);
   border-radius: 999px; padding: 5px 12px; font-size: 12.5px;
-  color: var(--text-dim); max-width: 100%;
+  color: var(--text-dim); max-width: 100%; min-width: 0; box-sizing: border-box;
+  overflow: hidden;
 }
 .tool-chip.has-context {
   flex-direction: column; align-items: flex-start; gap: 2px;
-  border-radius: 12px; padding: 6px 12px;
+  border-radius: 12px; padding: 6px 14px 6px 12px;
+  max-width: min(100%, 320px);
 }
 .tool-chip-head { display: inline-flex; align-items: center; gap: 7px; }
+/* Capped by the chip itself (which is capped by its container), never by a
+ * fixed width, so the ellipsis always lands inside the chip's padding. */
 .tool-chip-context {
   color: var(--text); font-size: 12px; font-weight: 600;
-  max-width: min(72vw, 280px); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
+  max-width: min(72vw, 280px); min-width: 0; box-sizing: border-box;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.tool-chip.has-context .tool-chip-context { max-width: 100%; }
 .tool-chip.running .tool-chip-context,
 .tool-chip.failed .tool-chip-context { color: inherit; font-weight: 500; }
 .tool-chip.done { color: var(--text); }
