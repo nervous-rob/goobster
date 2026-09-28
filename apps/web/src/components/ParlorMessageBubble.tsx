@@ -37,7 +37,7 @@ export function ParlorMessageBubble({
     const color = personaColor(persona || { id: message.personaId, color: undefined });
     return (
         <div className={`msg assistant persona-msg${message.isError ? ' error' : ''}`}>
-            <div className="persona-byline" style={{ color }}>
+            <div className="persona-byline" style={{ color: `color-mix(in srgb, ${color} 62%, var(--text))` }}>
                 <span className="persona-dot small" style={{ background: color }}>
                     {personaGlyph(persona || { name: message.personaName })}
                 </span>
