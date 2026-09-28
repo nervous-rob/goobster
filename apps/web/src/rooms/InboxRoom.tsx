@@ -130,7 +130,7 @@ function AccessDecision({ item, onResolved }: { item: InboxItem; onResolved: () 
         } catch (error) {
             const failure = error as { code?: string; message: string };
             toast(failure.code === 'DAILY_CAP_REQUIRED'
-                ? `${failure.message} Set a cap in Host → Limits, then approve again.`
+                ? `${failure.message} Then approve again - the request stays open.`
                 : failure.message, true);
         } finally {
             setBusy(null);

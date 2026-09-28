@@ -265,7 +265,7 @@ function AccessRequestsPanel({ onResolved }: { onResolved: () => Promise<void> }
         } catch (error) {
             const failure = error as ApiError;
             toast(failure.code === 'DAILY_CAP_REQUIRED'
-                ? `${failure.message} Set a cap in Limits above, then approve again.`
+                ? `${failure.message} Then approve again - the request stays open.`
                 : failure.message, true);
         } finally {
             setBusy(null);
