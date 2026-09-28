@@ -158,6 +158,61 @@ test('the neutral surface keeps the fixed greys under any accent', async ({ page
     expect(themeColor).toBe('rgb(15, 17, 23)');
 });
 
+test('the Music Lab follows the theme, the accent and the portal font', async ({ page }) => {
+    await login(page);
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { theme: 'light', accent: 'blueberry' } } });
+    await page.evaluate(() => localStorage.setItem('goobster-theme', 'light'));
+    await page.goto('/app/conservatory/chords');
+    const play = page.locator('.play-button').first();
+    await expect(play).toBeVisible();
+
+    const read = () => page.evaluate(() => {
+        const resolve = (v) => {
+            const probe = document.createElement('span');
+            probe.style.cssText = `position:fixed;transition:none;color:${v}`;
+            document.body.appendChild(probe);
+            const out = getComputedStyle(probe).color;
+            probe.remove();
+            return out;
+        };
+        const engine = document.querySelector('.rhythm-engine');
+        const button = document.querySelector('.play-button');
+        return {
+            engineBg: getComputedStyle(engine).backgroundColor,
+            raise: resolve('var(--bg-raise)'),
+            buttonBg: getComputedStyle(button).backgroundColor,
+            accent: resolve('var(--accent)'),
+            buttonInk: getComputedStyle(button).color,
+            ink: resolve('var(--accent-ink)'),
+            titleFont: getComputedStyle(document.querySelector('.re-title')).fontFamily,
+            bodyFont: getComputedStyle(document.body).fontFamily
+        };
+    });
+
+    const light = await read();
+    expect(light.engineBg).toBe(light.raise);
+    expect(light.buttonBg).toBe(light.accent);
+    expect(light.buttonInk).toBe(light.ink);
+    expect(light.titleFont).toBe(light.bodyFont);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_music_lab_light.png' });
+
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { accent: 'mint' } } });
+    await page.reload();
+    await expect(play).toBeVisible();
+    const mint = await read();
+    expect(mint.buttonBg).toBe(mint.accent);
+    expect(mint.buttonBg).not.toBe(light.buttonBg);
+
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { theme: 'dark' } } });
+    await page.evaluate(() => localStorage.setItem('goobster-theme', 'dark'));
+    await page.reload();
+    await expect(play).toBeVisible();
+    const dark = await read();
+    expect(dark.engineBg).toBe(dark.raise);
+    expect(dark.engineBg).not.toBe(light.engineBg);
+    expect(dark.buttonInk).toBe(dark.ink);
+});
+
 test('navigation layout previews live and moves the rooms to a top bar', async ({ page }) => {
     await login(page);
     await page.goto('/app/settings/appearance');

@@ -1,12 +1,11 @@
 .conservatory {
-  --font-jetbrains-mono: ui-monospace, 'SFMono-Regular', 'Cascadia Mono', Menlo, Consolas, monospace;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   color: var(--re-text);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
-    Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
 }
 
 .conservatory * {
@@ -14,12 +13,12 @@
 }
 
 .conservatory a {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   text-decoration: none;
 }
 
 .conservatory a:hover {
-  color: #fbbf24;
+  color: var(--re-accent-hi);
 }
 
 .conservatory-toolbar {
@@ -60,7 +59,7 @@
   flex-wrap: wrap;
   padding: 1rem min(3vw, 2rem);
   border-bottom: 1px solid var(--re-border);
-  background: rgba(17, 17, 17, 0.92);
+  background: color-mix(in srgb, var(--re-bg) 92%, transparent);
   backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
@@ -71,12 +70,12 @@
   font-size: 1.15rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: #fff;
+  color: var(--re-text);
   text-decoration: none;
 }
 
 .site-logo:hover {
-  color: #fff;
+  color: var(--re-text);
   text-decoration: none;
 }
 
@@ -102,7 +101,7 @@
 
 h2 {
   margin-top: 0;
-  color: #fff;
+  color: var(--re-text);
 }
 
 /* --- Home / landing --- */
@@ -146,13 +145,13 @@ h2 {
 }
 
 .page-card:hover {
-  border-color: rgba(245, 158, 11, 0.45);
+  border-color: rgba(var(--re-accent-rgb), 0.45);
   transform: translateY(-2px);
 }
 
 .page-card strong {
   font-size: 1.05rem;
-  color: #fff;
+  color: var(--re-text);
 }
 
 .page-card p {
@@ -264,7 +263,7 @@ h2 {
   font-size: 0.9rem;
   font-family: var(--re-mono);
   color: var(--re-text-dim);
-  border-bottom: 1px solid rgba(45, 45, 45, 0.6);
+  border-bottom: 1px solid color-mix(in srgb, var(--re-border) 60%, transparent);
 }
 
 .music-item:hover:not(.selected) {
@@ -273,8 +272,8 @@ h2 {
 }
 
 .music-item.selected {
-  background: var(--re-border);
-  color: #fff;
+  background: rgba(var(--re-accent-rgb), 0.14);
+  color: var(--re-text);
   font-weight: 700;
   box-shadow: inset 3px 0 0 var(--re-accent);
 }
@@ -319,7 +318,7 @@ h2 {
   justify-content: center;
   gap: 0.35rem;
   background: var(--re-accent);
-  color: #111;
+  color: var(--accent-ink);
   border: none;
   border-radius: 0.75rem;
   padding: 0.7rem 1.15rem;
@@ -332,16 +331,16 @@ h2 {
 
 .play-button:hover,
 .secondary-button:hover {
-  background: #fbbf24;
+  background: var(--re-accent-hi);
   transform: translateY(-1px);
-  box-shadow: 0 8px 18px rgba(245, 158, 11, 0.3);
+  box-shadow: 0 8px 18px rgba(var(--re-accent-rgb), 0.3);
   text-decoration: none;
-  color: #111;
+  color: var(--accent-ink);
 }
 
 .secondary-button {
   background: var(--re-bg);
-  color: #fff;
+  color: var(--re-text);
   border: 1px solid var(--re-border);
   font-family: var(--re-mono);
   font-size: 0.82rem;
@@ -349,7 +348,7 @@ h2 {
 
 .secondary-button:hover {
   background: var(--re-border);
-  color: #fff;
+  color: var(--re-text);
   box-shadow: none;
 }
 
@@ -368,7 +367,7 @@ h2 {
 .secondary-chords h3,
 .progression-builder h3 {
   margin-top: 0;
-  color: #fff;
+  color: var(--re-text);
   font-size: 1rem;
 }
 
@@ -495,7 +494,7 @@ h2 {
 
 .timeline-summary {
   font-weight: 700;
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   font-size: 0.85rem;
   font-family: var(--re-mono);
 }
@@ -513,7 +512,7 @@ h2 {
 }
 
 .progression-timeline::-webkit-scrollbar-thumb {
-  background: rgba(245, 158, 11, 0.35);
+  background: rgba(var(--re-accent-rgb), 0.35);
   border-radius: 999px;
 }
 
@@ -532,7 +531,7 @@ h2 {
 }
 
 .timeline-dropzone.active {
-  background: rgba(245, 158, 11, 0.25);
+  background: rgba(var(--re-accent-rgb), 0.25);
 }
 
 .timeline-dropzone.tail {
@@ -565,7 +564,7 @@ h2 {
 
 .timeline-chord__label strong {
   font-size: 1rem;
-  color: #fff;
+  color: var(--re-text);
   font-family: var(--re-mono);
 }
 
@@ -620,7 +619,7 @@ h2 {
 }
 
 .suggested-chords h3 {
-  color: #fff;
+  color: var(--re-text);
 }
 
 .suggested-chords-grid {
@@ -648,13 +647,13 @@ h2 {
 }
 
 .suggested-card__header strong {
-  color: #fff;
+  color: var(--re-text);
   font-family: var(--re-mono);
 }
 
 .suggested-card__header button {
   background: var(--re-accent);
-  color: #111;
+  color: var(--accent-ink);
   border: none;
   border-radius: 0.5rem;
   padding: 0.35rem 0.8rem;
@@ -666,7 +665,7 @@ h2 {
 }
 
 .suggested-card__header button:hover {
-  background: #fbbf24;
+  background: var(--re-accent-hi);
 }
 
 .suggested-card p {

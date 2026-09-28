@@ -54,7 +54,7 @@ export function PerformerCard({
       <div className="stage-perf-head">
         <span
           className="stage-perf-badge"
-          style={isTonal ? { color: `hsl(${voice.hue}, 75%, 62%)` } : undefined}
+          style={isTonal ? { color: `hsl(${voice.hue}, 75%, var(--re-hue-text-l))` } : undefined}
         >
           {meta.short}
         </span>

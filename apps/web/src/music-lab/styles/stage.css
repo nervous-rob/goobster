@@ -35,13 +35,13 @@
 
 .stage-engine .stage-transport-btn:hover {
   border-color: var(--re-text-faint);
-  color: #fff;
+  color: var(--re-text);
 }
 
 .stage-engine .stage-transport-btn.play.on {
   background: var(--re-accent);
   border-color: var(--re-accent);
-  color: #111;
+  color: var(--accent-ink);
 }
 
 .stage-engine .stage-transport-btn.stop:hover {
@@ -53,12 +53,12 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #374151;
+  background: var(--re-border);
   margin-left: 0.25rem;
 }
 
 .stage-engine .stage-transport-led.ready {
-  background: #6b7280;
+  background: var(--re-text-faint);
 }
 
 .stage-engine .stage-transport-led.on {
@@ -93,7 +93,7 @@
   background: var(--re-bg);
   border: 1px solid var(--re-border);
   border-radius: 0.45rem;
-  color: #fff;
+  color: var(--re-text);
   font-family: var(--re-mono);
   font-weight: 700;
   font-size: 1rem;
@@ -117,7 +117,7 @@
 }
 
 .stage-engine .stage-transport-nudge:hover {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   border-color: var(--re-accent);
 }
 
@@ -181,9 +181,9 @@
 }
 
 .stage-engine .stage-transport-loop.on {
-  background: var(--re-border);
+  background: rgba(var(--re-accent-rgb), 0.14);
   border-color: var(--re-accent);
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   font-weight: 700;
 }
 
@@ -197,7 +197,7 @@
   display: block;
   font-family: var(--re-mono);
   font-size: 1.35rem;
-  color: #fff;
+  color: var(--re-text);
   letter-spacing: 0.04em;
 }
 
@@ -242,7 +242,7 @@
 }
 
 .stage-engine .stage-performer.on {
-  border-color: rgba(245, 158, 11, 0.35);
+  border-color: rgba(var(--re-accent-rgb), 0.35);
 }
 
 .stage-engine .stage-performer.off {
@@ -268,14 +268,14 @@
   font-family: var(--re-mono);
   font-size: 0.68rem;
   font-weight: 700;
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
-.stage-engine .role-snare .stage-perf-badge { color: #f87171; }
+.stage-engine .role-snare .stage-perf-badge { color: var(--danger); }
 .stage-engine .role-hihat .stage-perf-badge { color: #facc15; }
 .stage-engine .role-chords .stage-perf-badge { color: #34d399; }
-.stage-engine .role-bass .stage-perf-badge { color: #38bdf8; }
-.stage-engine .role-melody .stage-perf-badge { color: #c084fc; }
+.stage-engine .role-bass .stage-perf-badge { color: color-mix(in srgb, #38bdf8 70%, var(--re-text)); }
+.stage-engine .role-melody .stage-perf-badge { color: color-mix(in srgb, #c084fc 70%, var(--re-text)); }
 
 .stage-engine .stage-perf-id {
   flex: 1;
@@ -284,7 +284,7 @@
 
 .stage-engine .stage-perf-id strong {
   display: block;
-  color: #fff;
+  color: var(--re-text);
   font-size: 0.88rem;
 }
 
@@ -317,7 +317,7 @@
 .stage-engine .stage-perf-btn.on {
   background: var(--re-accent);
   border-color: var(--re-accent);
-  color: #111;
+  color: var(--accent-ink);
 }
 
 .stage-engine .stage-perf-btn.mute.on {
@@ -364,7 +364,7 @@
 
 .stage-engine .stage-hire-row strong {
   display: block;
-  color: #fff;
+  color: var(--re-text);
   font-size: 0.82rem;
 }
 
@@ -404,7 +404,7 @@
 
 .stage-engine .stage-chord-chip:hover {
   border-color: var(--re-accent);
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 /* --- Chord slot editor --- */
@@ -425,7 +425,7 @@
 
 .stage-engine .stage-chord-editor-name {
   display: block;
-  color: #fff;
+  color: var(--re-text);
   font-size: 1.05rem;
   margin-top: 0.15rem;
 }
@@ -495,7 +495,7 @@
 }
 
 .stage-engine .stage-step.strong {
-  border-color: #4b5563;
+  border-color: var(--re-text-faint);
 }
 
 .stage-engine .stage-step:hover {
@@ -504,10 +504,10 @@
 
 .stage-engine .stage-step.on {
   background: var(--re-accent);
-  border-color: #fbbf24;
-  color: #111;
+  border-color: var(--re-accent-hi);
+  color: var(--accent-ink);
   font-weight: 700;
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.35);
+  box-shadow: 0 0 8px rgba(var(--re-accent-rgb), 0.35);
 }
 
 .stage-engine .role-snare .stage-step.on {
@@ -584,7 +584,7 @@
 }
 
 .stage-engine .stage-chrome-sub {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   font-family: var(--re-mono);
   font-size: 0.78rem;
   margin-top: 0.15rem;
@@ -630,11 +630,11 @@
 .stage-engine .stage-measure.active {
   border-color: var(--re-accent);
   transform: translateY(-2px);
-  box-shadow: 0 8px 18px rgba(245, 158, 11, 0.22);
+  box-shadow: 0 8px 18px rgba(var(--re-accent-rgb), 0.22);
 }
 
 .stage-engine .stage-measure.rhythm-hit {
-  outline: 1px solid rgba(255, 255, 255, 0.08);
+  outline: 1px solid color-mix(in srgb, var(--re-text) 8%, transparent);
 }
 
 .stage-engine .stage-measure-num {
@@ -647,7 +647,7 @@
 
 .stage-engine .stage-measure-chord {
   font-weight: 800;
-  color: #fff;
+  color: var(--re-text);
   font-size: 0.95rem;
   line-height: 1.2;
 }
@@ -664,7 +664,7 @@
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .stage-engine .stage-lamps-wrap {
@@ -706,7 +706,7 @@
 }
 
 .stage-engine .stage-links a:hover {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   border-color: var(--re-accent);
   text-decoration: none;
 }

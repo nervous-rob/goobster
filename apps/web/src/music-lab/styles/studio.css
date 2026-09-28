@@ -13,15 +13,15 @@
   padding: 0.55rem 0.9rem;
   border: 1px solid var(--re-accent-deep);
   border-radius: 0.6rem;
-  background: rgba(245, 158, 11, 0.08);
-  color: var(--re-accent);
+  background: rgba(var(--re-accent-rgb), 0.08);
+  color: var(--re-accent-hi);
   font-size: 0.74rem;
 }
 
 .studio-engine .st-handoff-note.error {
-  border-color: #b91c1c;
+  border-color: var(--danger);
   background: rgba(239, 68, 68, 0.1);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .studio-engine .st-toolbar {
@@ -74,7 +74,7 @@
 .studio-engine .st-danger.armed {
   border-color: #ef4444;
   background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .studio-engine .st-history-btn:disabled {
@@ -101,7 +101,7 @@
 }
 
 .studio-engine .st-clock {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .studio-engine .st-zoom input[type='range'] {
@@ -166,7 +166,7 @@
 }
 
 .studio-engine .st-track-head.selected {
-  background: #20211c;
+  background: color-mix(in srgb, var(--re-accent) 10%, var(--re-bg));
   box-shadow: inset 2px 0 0 var(--re-accent);
 }
 
@@ -189,7 +189,7 @@
   letter-spacing: 0.08em;
   padding: 0.15rem 0.3rem;
   border-radius: 0.3rem;
-  background: rgba(148, 163, 184, 0.18);
+  background: color-mix(in srgb, var(--re-text-dim) 18%, transparent);
   color: var(--re-text-dim);
 }
 
@@ -203,7 +203,7 @@
 }
 
 .studio-engine .st-track-name:hover .st-track-label {
-  color: #fff;
+  color: var(--re-text);
 }
 
 .studio-engine .st-track-controls {
@@ -233,15 +233,15 @@
 }
 
 .studio-engine .st-mini-btn.on.mute {
-  background: #7f1d1d;
-  border-color: #b91c1c;
-  color: #fecaca;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .studio-engine .st-mini-btn.on.solo {
-  background: #713f12;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   border-color: var(--re-accent-deep);
-  color: #fde68a;
+  color: var(--warn);
 }
 
 .studio-engine .st-mini-btn.remove:hover {
@@ -260,7 +260,7 @@
   position: relative;
   height: 52px;
   flex: 0 0 auto;
-  background-image: linear-gradient(to right, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-image: linear-gradient(to right, color-mix(in srgb, var(--re-text-dim) 12%, transparent) 1px, transparent 1px);
   cursor: crosshair;
   touch-action: none;
 }
@@ -281,7 +281,7 @@
 /* The selected track's lane picks up a faint wash so the header highlight
    reads across the whole row. */
 .studio-engine .st-row.selected .st-lane {
-  background-color: rgba(245, 158, 11, 0.05);
+  background-color: rgba(var(--re-accent-rgb), 0.05);
 }
 
 .studio-engine .st-section-line {
@@ -289,7 +289,7 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(245, 158, 11, 0.25);
+  background: rgba(var(--re-accent-rgb), 0.25);
   pointer-events: none;
 }
 
@@ -336,7 +336,7 @@
   font-family: var(--re-mono);
   font-size: 0.6rem;
   letter-spacing: 0.06em;
-  color: #fff;
+  color: var(--re-text);
   padding: 0 0.4rem;
   white-space: nowrap;
   overflow: hidden;
@@ -361,7 +361,7 @@
 /* --- Ruler --- */
 
 .studio-engine .st-ruler-row {
-  background: #141414;
+  background: color-mix(in srgb, var(--re-text) 3%, var(--re-bg));
 }
 
 .studio-engine .st-corner {
@@ -391,7 +391,7 @@
   border-radius: 0.4rem;
   border: 1px solid hsla(var(--st-section-hue, 160), 65%, 60%, 0.55);
   background: hsla(var(--st-section-hue, 160), 65%, 45%, 0.22);
-  color: hsl(var(--st-section-hue, 160), 70%, 78%);
+  color: hsl(var(--st-section-hue, 160), 70%, var(--re-hue-text-l));
   cursor: pointer;
   overflow: hidden;
   box-sizing: border-box;
@@ -422,7 +422,7 @@
   margin-left: -1px;
   border-radius: 2px;
   background: var(--re-accent);
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+  box-shadow: 0 0 0 2px rgba(var(--re-accent-rgb), 0.25);
   pointer-events: none;
   z-index: 4;
 }
@@ -463,8 +463,8 @@
 
 .studio-engine .st-context-item:hover:not(:disabled),
 .studio-engine .st-context-item:focus-visible {
-  background: rgba(245, 158, 11, 0.14);
-  color: var(--re-accent);
+  background: rgba(var(--re-accent-rgb), 0.14);
+  color: var(--re-accent-hi);
   outline: none;
 }
 
@@ -474,7 +474,7 @@
 }
 
 .studio-engine .st-context-item.danger:not(:disabled) {
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .studio-engine .st-context-item.danger:hover:not(:disabled),
@@ -518,7 +518,7 @@
 .studio-engine .st-ruler-chords {
   position: relative;
   height: 22px;
-  border-top: 1px solid rgba(148, 163, 184, 0.08);
+  border-top: 1px solid color-mix(in srgb, var(--re-text-dim) 8%, transparent);
 }
 
 .studio-engine .st-chord-span {
@@ -541,16 +541,16 @@
 }
 
 .studio-engine .st-chord-span:hover {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   border-color: var(--re-border);
   border-radius: 0.3rem;
-  background: rgba(245, 158, 11, 0.08);
+  background: rgba(var(--re-accent-rgb), 0.08);
 }
 
 .studio-engine .st-ruler-ticks {
   position: relative;
   height: 18px;
-  border-top: 1px solid rgba(148, 163, 184, 0.08);
+  border-top: 1px solid color-mix(in srgb, var(--re-text-dim) 8%, transparent);
 }
 
 .studio-engine .st-tick {
@@ -558,7 +558,7 @@
   top: 0;
   bottom: 0;
   border: none;
-  border-left: 1px solid rgba(148, 163, 184, 0.14);
+  border-left: 1px solid color-mix(in srgb, var(--re-text-dim) 14%, transparent);
   background: none;
   color: var(--re-text-faint);
   font-family: var(--re-mono);
@@ -570,17 +570,17 @@
 }
 
 .studio-engine .st-tick:hover {
-  color: var(--re-accent);
-  background: rgba(245, 158, 11, 0.08);
+  color: var(--re-accent-hi);
+  background: rgba(var(--re-accent-rgb), 0.08);
 }
 
 .studio-engine .st-loop-region {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(245, 158, 11, 0.12);
-  border-left: 1px solid rgba(245, 158, 11, 0.5);
-  border-right: 1px solid rgba(245, 158, 11, 0.5);
+  background: rgba(var(--re-accent-rgb), 0.12);
+  border-left: 1px solid rgba(var(--re-accent-rgb), 0.5);
+  border-right: 1px solid rgba(var(--re-accent-rgb), 0.5);
   pointer-events: none;
 }
 
@@ -590,7 +590,7 @@
   bottom: 0;
   width: 2px;
   background: var(--re-accent);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 8px rgba(var(--re-accent-rgb), 0.7);
   pointer-events: none;
   /* Below the sticky track headers so it slides under them when scrolling. */
   z-index: 4;
@@ -599,7 +599,7 @@
 /* --- Add-track row --- */
 
 .studio-engine .st-add-row {
-  background: #141414;
+  background: color-mix(in srgb, var(--re-text) 3%, var(--re-bg));
 }
 
 .studio-engine .st-add-head {
@@ -677,8 +677,8 @@
 
 .studio-engine .st-chord-chip.on {
   border-color: var(--re-accent);
-  color: var(--re-accent);
-  background: rgba(245, 158, 11, 0.1);
+  color: var(--re-accent-hi);
+  background: rgba(var(--re-accent-rgb), 0.1);
 }
 
 .studio-engine .st-chord-chip.add {
@@ -777,7 +777,7 @@
 }
 
 .studio-engine .st-me-measure-head strong {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .studio-engine .st-me-row-label {
@@ -795,7 +795,7 @@
 }
 
 .studio-engine .st-me-row-label.root {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .studio-engine .st-me-cell {
@@ -811,19 +811,19 @@
 }
 
 .studio-engine .st-me-cell.strong {
-  background: #161616;
+  background: color-mix(in srgb, var(--re-text) 6%, var(--re-bg));
 }
 
 .studio-engine .st-me-cell.barline {
-  border-left: 2px solid #3a3a3a;
+  border-left: 2px solid var(--re-text-faint);
 }
 
 .studio-engine .st-me-cell.ct {
-  background: rgba(245, 158, 11, 0.1);
+  background: rgba(var(--re-accent-rgb), 0.1);
 }
 
 .studio-engine .st-me-cell.ct.strong {
-  background: rgba(245, 158, 11, 0.16);
+  background: rgba(var(--re-accent-rgb), 0.16);
 }
 
 .studio-engine .st-me-cell:hover {
@@ -832,12 +832,12 @@
 
 .studio-engine .st-me-cell.head {
   background: var(--re-accent);
-  border-color: #fbbf24;
+  border-color: var(--re-accent-hi);
 }
 
 .studio-engine .st-me-cell.tail {
-  background: rgba(245, 158, 11, 0.45);
-  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(var(--re-accent-rgb), 0.45);
+  border-color: rgba(var(--re-accent-rgb), 0.5);
 }
 
 .studio-engine .st-me-cell.now {
@@ -918,7 +918,7 @@
 .studio-engine .st-step.on {
   background: var(--re-accent);
   border-color: var(--re-accent);
-  color: #111;
+  color: var(--accent-ink);
 }
 
 .studio-engine .st-part-row {
@@ -998,7 +998,7 @@
 
 .studio-engine .st-wizard-head h3 {
   font-size: 1.1rem;
-  color: #fff;
+  color: var(--re-text);
 }
 
 .studio-engine .st-wizard-steps {
@@ -1021,7 +1021,7 @@
 
 .studio-engine .st-wizard-step.on {
   border-color: var(--re-accent);
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .studio-engine .st-wizard-step.done {
@@ -1102,7 +1102,7 @@
 
 .studio-engine .st-template-card.on {
   border-color: var(--re-accent);
-  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 0 1px rgba(var(--re-accent-rgb), 0.4);
 }
 
 .studio-engine .st-template-card strong {
@@ -1189,7 +1189,7 @@
 .studio-engine .st-part-current {
   font-family: var(--re-mono);
   font-size: 0.65rem;
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .studio-engine .st-candidate-list {
@@ -1211,7 +1211,7 @@
 
 .studio-engine .st-candidate.chosen {
   border-color: var(--re-accent);
-  background: rgba(245, 158, 11, 0.06);
+  background: rgba(var(--re-accent-rgb), 0.06);
 }
 
 .studio-engine .st-candidate-info {
@@ -1342,12 +1342,12 @@
 .studio-engine .st-collab-status {
   cursor: pointer;
   gap: 0.4rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid color-mix(in srgb, var(--re-text) 8%, transparent);
+  background: color-mix(in srgb, var(--re-text) 3%, transparent);
 }
 
 .studio-engine .st-collab-status:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: color-mix(in srgb, var(--re-text) 20%, transparent);
 }
 
 .studio-engine .st-peer-chips {
@@ -1361,7 +1361,7 @@
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
+  background: color-mix(in srgb, var(--re-text) 20%, transparent);
   opacity: 0.45;
   flex: none;
 }
@@ -1421,7 +1421,7 @@
 }
 
 .studio-engine .st-collab-status .st-collab-playing {
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
   font-family: var(--re-mono);
   font-size: 0.68rem;
 }
@@ -1441,7 +1441,7 @@
   gap: 0.55rem;
   padding: 0.4rem 0.6rem;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--re-text) 4%, transparent);
   font-size: 0.82rem;
 }
 

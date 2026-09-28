@@ -34,7 +34,7 @@ export function TrackHeader({ track, isSelected, onSelect, onChange, onRemove, o
       >
         <span
           className="st-track-badge"
-          style={hue !== null ? { background: `hsla(${hue}, 80%, 60%, 0.25)`, color: `hsl(${hue}, 85%, 72%)` } : undefined}
+          style={hue !== null ? { background: `hsla(${hue}, 80%, 60%, 0.25)`, color: `hsl(${hue}, 85%, var(--re-hue-text-l))` } : undefined}
         >
           {ROLE_META[track.role].short}
         </span>

@@ -1,33 +1,26 @@
-/* Harmonic Space — cyan "deep field" theme layered on the shared engine base (rhythm.css)
-   and the harmony layout helpers (harmony.css). */
-
-.space-engine {
-  --re-accent: #22d3ee;
-  --re-accent-deep: #0891b2;
-}
-
-/* Re-tint hardcoded accents from the shared base */
+/* Harmonic Space — "deep field" layout layered on the shared engine base (rhythm.css)
+   and the harmony layout helpers (harmony.css); its accent is the portal's. */
 
 .space-engine .re-play-btn {
-  color: #04141a;
+  color: var(--accent-ink);
 }
 
 .space-engine .re-play-btn:hover {
-  background: #67e8f9;
-  box-shadow: 0 10px 20px rgba(34, 211, 238, 0.35);
+  background: var(--re-accent-hi);
+  box-shadow: 0 10px 20px rgba(var(--re-accent-rgb), 0.35);
 }
 
 .space-engine input[type='range']::-webkit-slider-thumb {
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+  box-shadow: 0 0 10px rgba(var(--re-accent-rgb), 0.55);
 }
 
 .space-engine input[type='range']::-moz-range-thumb {
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+  box-shadow: 0 0 10px rgba(var(--re-accent-rgb), 0.55);
 }
 
 .space-engine .re-pill.on {
-  color: #04141a;
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+  color: var(--accent-ink);
+  box-shadow: 0 0 10px rgba(var(--re-accent-rgb), 0.45);
 }
 
 .space-engine .re-viz {
@@ -103,14 +96,14 @@
 
 .sp-mode-btn:hover {
   background: var(--re-border);
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-mode-btn.active {
-  background: rgba(34, 211, 238, 0.14);
+  background: rgba(var(--re-accent-rgb), 0.14);
   border-color: var(--re-accent);
-  color: #fff;
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.25);
+  color: var(--re-text);
+  box-shadow: 0 0 10px rgba(var(--re-accent-rgb), 0.25);
 }
 
 .sp-mode-name small {
@@ -122,8 +115,8 @@
   font-size: 0.7rem;
   padding: 0.1rem 0.4rem;
   border-radius: 0.4rem;
-  background: rgba(34, 211, 238, 0.12);
-  color: var(--re-accent);
+  background: rgba(var(--re-accent-rgb), 0.12);
+  color: var(--re-accent-hi);
 }
 
 .sp-relative-list {
@@ -146,13 +139,13 @@
 
 .sp-relative-btn:hover {
   background: var(--re-border);
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-relative-btn.active {
   border-color: var(--re-accent);
-  color: var(--re-accent);
-  background: rgba(34, 211, 238, 0.1);
+  color: var(--re-accent-hi);
+  background: rgba(var(--re-accent-rgb), 0.1);
 }
 
 /* --- Interval lens --- */
@@ -177,14 +170,14 @@
 
 .sp-interval-btn:hover {
   background: var(--re-border);
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-interval-btn.active {
-  background: rgba(34, 211, 238, 0.16);
+  background: rgba(var(--re-accent-rgb), 0.16);
   border-color: var(--re-accent);
-  color: #fff;
-  box-shadow: 0 0 8px rgba(34, 211, 238, 0.3);
+  color: var(--re-text);
+  box-shadow: 0 0 8px rgba(var(--re-accent-rgb), 0.3);
 }
 
 .sp-interval-info {
@@ -199,7 +192,7 @@
 
 .sp-interval-name {
   font-size: 0.78rem;
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-meter {
@@ -212,7 +205,7 @@
 .sp-meter-bar {
   height: 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
+  background: color-mix(in srgb, var(--re-text) 7%, transparent);
   overflow: hidden;
 }
 
@@ -225,7 +218,7 @@
 }
 
 .sp-meter-fill.dist {
-  background: linear-gradient(90deg, #22d3ee, #f472b6);
+  background: linear-gradient(90deg, var(--re-accent), #f472b6);
 }
 
 .sp-meter-fill.smooth {
@@ -263,7 +256,7 @@
 
 .sp-chord-btn:hover {
   background: var(--re-border);
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-chord-numeral {
@@ -278,19 +271,19 @@
 .sp-chord-btn.q-major.active {
   background: rgba(52, 211, 153, 0.14);
   border-color: #34d399;
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-chord-btn.q-minor.active {
   background: rgba(167, 139, 250, 0.14);
   border-color: #a78bfa;
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-chord-btn.q-diminished.active {
   background: rgba(248, 113, 113, 0.14);
   border-color: #f87171;
-  color: #fff;
+  color: var(--re-text);
 }
 
 /* --- Fifths ladder --- */
@@ -321,24 +314,24 @@
 
 .sp-ladder-chip:hover {
   background: var(--re-border);
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-ladder-chip.home {
   border-color: var(--re-accent);
-  background: rgba(34, 211, 238, 0.12);
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.25);
+  background: rgba(var(--re-accent-rgb), 0.12);
+  box-shadow: 0 0 10px rgba(var(--re-accent-rgb), 0.25);
 }
 
 .sp-ladder-note {
   font-size: 0.95rem;
   font-weight: 700;
-  color: #fff;
+  color: var(--re-text);
 }
 
 .sp-ladder-k {
   font-size: 0.66rem;
-  color: var(--re-accent);
+  color: var(--re-accent-hi);
 }
 
 .sp-ladder-deg {

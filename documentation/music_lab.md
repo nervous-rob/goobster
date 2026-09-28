@@ -84,7 +84,7 @@ one shifts everything after it.
 
 **Drag a block left or right to reorder the song** (mouse or pen; on touch
 the timeline keeps scrolling and the inspector's *← Move* / *Move →*
-buttons do the same). An amber marker shows where the section will land.
+buttons do the same). A marker in your accent colour shows where the section will land.
 The clips that play inside a section travel with it, so moving the chorus
 moves what plays during the chorus: clips that cross a section boundary
 are split there and joined back together wherever the pieces land next to
@@ -347,6 +347,20 @@ All keys are under the `goobster.conservatory.` prefix in `localStorage`.
 Clearing site data removes all of them; export songs you care about first.
 
 ## For developers
+
+**Appearance.** The lab follows Settings → Appearance like every other
+room: light or dark, the accent palette, the Tinted/Neutral surface, and
+the portal's UI font. Its `--re-*` tokens (`styles/rhythm.css`) alias the
+portal variables (`--re-bg` is `--bg-raise`, `--re-accent` is `--accent`,
+accent fills take `--accent-ink`, `--re-mono` is `--font-ui`), and no
+engine carries a private accent any more. Hues that mean something stay
+literal (the snare's red, a ghost note's violet, chord-quality colours, a
+track's hue); text tinted by a track or voice hue takes its lightness from
+`--re-hue-text-l` so it darkens in light mode. The canvas scenes (the
+visualizers, the stage floor, and the chips and lamps drawn over them) are
+artwork with a night backdrop in both themes, so they restate dark tokens
+locally and read the dark-surface accent (`components/shared/sceneColors.ts`
+for canvas strokes).
 
 The Studio lives in `apps/web/src/music-lab/components/studio/`
 (`StudioEngine.tsx` is the room, `SongTimeline.tsx` the lanes,
