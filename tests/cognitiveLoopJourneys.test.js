@@ -394,7 +394,9 @@ describe('journey: Project job → artifact → trigger → Attention notice', (
             expect(job.status).toBe('FAILED');
             expect(job.stderrTail).toContain('boom');
 
-            // Status flips before evaluateJobSettled; wait for the settle path.
+            // Status flips before evaluateJobSettled, and the delivery claim
+            // advances lastRun before the action dispatches; wait for the
+            // dispatch itself.
             const deadline = Date.now() + 15_000;
             let after;
             while (Date.now() < deadline) {
@@ -402,7 +404,7 @@ describe('journey: Project job → artifact → trigger → Attention notice', (
                     'SELECT lastRun, lastOutcome FROM project_triggers WHERE id = @id',
                     { id: trigger.id }
                 );
-                if (after?.lastRun) break;
+                if (after?.lastRun && triggerRuns.length > 0) break;
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
             expect(after.lastRun).toBeTruthy();
