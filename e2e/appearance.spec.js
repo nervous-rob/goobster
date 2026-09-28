@@ -24,6 +24,25 @@ async function accentRgb(page) {
     return page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--accent').trim());
 }
 
+// The page surface, resolved to sRGB through a canvas (the stylesheet
+// declares it in oklch, and <body> animates its background).
+async function surfaceRgb(page) {
+    return page.evaluate(() => {
+        const probe = document.createElement('span');
+        probe.style.cssText = 'position:fixed;transition:none;background-color:var(--bg)';
+        document.body.appendChild(probe);
+        const value = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = value;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+        return { r, g, b };
+    });
+}
+
 test('accent previews live, saves to the account, and survives a reload', async ({ page }) => {
     await login(page);
     await page.goto('/app/settings/appearance');
@@ -68,6 +87,38 @@ test('the accent follows light and dark surfaces', async ({ page }) => {
     const light = await accentRgb(page);
     expect(light).not.toBe(dark);
     expect(await accentOf(page)).toBe('ocean');
+});
+
+test('the whitespace is tinted by theme and accent together', async ({ page }) => {
+    await login(page);
+    await page.goto('/app/settings/appearance');
+    const swatches = page.getByRole('radiogroup', { name: 'Accent color' });
+
+    // Dark: Sunset warms the page (red above blue), Ocean cools it (blue
+    // above red); both stay dark.
+    await swatches.getByRole('radio', { name: 'Sunset' }).click();
+    const darkSunset = await surfaceRgb(page);
+    await swatches.getByRole('radio', { name: 'Ocean' }).click();
+    const darkOcean = await surfaceRgb(page);
+    expect(darkSunset.r).toBeGreaterThan(darkSunset.b);
+    expect(darkOcean.b).toBeGreaterThan(darkOcean.r);
+    for (const c of [darkSunset, darkOcean]) expect(Math.max(c.r, c.g, c.b)).toBeLessThan(40);
+
+    // Light: same hue relationship, both stay near white.
+    await page.getByRole('radio', { name: /Light/ }).click();
+    await expect(page.locator('body')).toHaveClass(/light/);
+    const lightOcean = await surfaceRgb(page);
+    await swatches.getByRole('radio', { name: 'Sunset' }).click();
+    const lightSunset = await surfaceRgb(page);
+    expect(lightSunset.r).toBeGreaterThan(lightSunset.b);
+    expect(lightOcean.b).toBeGreaterThan(lightOcean.r);
+    for (const c of [lightSunset, lightOcean]) expect(Math.min(c.r, c.g, c.b)).toBeGreaterThan(225);
+
+    // The browser chrome follows the page surface.
+    const themeColor = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
+    expect(themeColor).toMatch(/^rgb\(/);
+    const [r, , b] = themeColor.match(/\d+/g).map(Number);
+    expect(r).toBeGreaterThan(b);
 });
 
 test('navigation layout previews live and moves the rooms to a top bar', async ({ page }) => {

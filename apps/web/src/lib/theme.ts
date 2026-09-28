@@ -42,9 +42,46 @@ export function resolveTheme(choice: ThemeChoice): 'light' | 'dark' {
     return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+let themeColorFrame = 0;
+/**
+ * Keep the PWA/browser chrome on the page's own surface. `--bg` is rebuilt
+ * from theme + accent by the stylesheet, so it is read back after a paint
+ * rather than duplicated here.
+ */
+function syncThemeColor(): void {
+    if (themeColorFrame) return;
+    themeColorFrame = window.requestAnimationFrame(() => {
+        themeColorFrame = 0;
+        const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+        if (!meta) return;
+        // <body> animates its background, so resolve --bg on a probe that
+        // does not, then drop the probe.
+        const probe = document.createElement('span');
+        probe.style.cssText = 'position:fixed;width:0;height:0;transition:none;background-color:var(--bg)';
+        document.body.appendChild(probe);
+        const bg = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        if (!bg || bg === 'rgba(0, 0, 0, 0)') return;
+        // The surface is declared in oklch; hand the chrome plain sRGB.
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { meta.content = bg; return; }
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, 1, 1);
+            const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+            meta.content = `rgb(${r}, ${g}, ${b})`;
+        } catch {
+            meta.content = bg;
+        }
+    });
+}
+
 /** Paint the theme on <body> without persisting (used for live preview). */
 export function paintTheme(choice: ThemeChoice): void {
     document.body.classList.toggle('light', resolveTheme(choice) === 'light');
+    syncThemeColor();
 }
 
 /** Persist the device theme and tell the shell about it. */
@@ -57,6 +94,7 @@ export function setStoredTheme(choice: ThemeChoice): void {
 /** Paint the accent on <html> without persisting (live preview). */
 export function paintAccent(choice: AccentChoice): void {
     document.documentElement.dataset.accent = choice;
+    syncThemeColor();
 }
 
 /** Persist the device accent copy and paint it. */
