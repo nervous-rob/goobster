@@ -1,5 +1,52 @@
 /* Goobster web app - dark, cozy, no framework. */
 
+/* Accent palettes. `html[data-accent]` picks one (Settings → Appearance;
+   the ids match ACCENTS in packages/core/config/userSettingsSchema.js). Each
+   palette is an RGB triplet per surface so `--accent`, `--accent-soft` and
+   every accent-tinted glow or wash below derive from it, plus the ink colour
+   that stays readable on a solid accent fill. Blueberry is the mark's own
+   indigo and the default when no attribute is set. */
+:root, html[data-accent="blueberry"], .accent-swatch[data-accent="blueberry"] {
+  --accent-rgb-dark: 124, 140, 255;
+  --accent-rgb-light: 84, 104, 255;
+  --accent-ink-dark: #0d1020;
+}
+html[data-accent="ocean"], .accent-swatch[data-accent="ocean"] {
+  --accent-rgb-dark: 77, 182, 255;
+  --accent-rgb-light: 14, 116, 222;
+  --accent-ink-dark: #061421;
+}
+html[data-accent="mint"], .accent-swatch[data-accent="mint"] {
+  --accent-rgb-dark: 89, 209, 140;
+  --accent-rgb-light: 22, 150, 88;
+  --accent-ink-dark: #06170e;
+}
+html[data-accent="sunset"], .accent-swatch[data-accent="sunset"] {
+  --accent-rgb-dark: 255, 140, 102;
+  --accent-rgb-light: 214, 84, 42;
+  --accent-ink-dark: #1f0d06;
+}
+html[data-accent="rose"], .accent-swatch[data-accent="rose"] {
+  --accent-rgb-dark: 255, 122, 200;
+  --accent-rgb-light: 204, 52, 132;
+  --accent-ink-dark: #1f0616;
+}
+html[data-accent="violet"], .accent-swatch[data-accent="violet"] {
+  --accent-rgb-dark: 178, 140, 255;
+  --accent-rgb-light: 124, 72, 220;
+  --accent-ink-dark: #120a24;
+}
+html[data-accent="amber"], .accent-swatch[data-accent="amber"] {
+  --accent-rgb-dark: 255, 186, 92;
+  --accent-rgb-light: 178, 106, 0;
+  --accent-ink-dark: #1f1404;
+}
+html[data-accent="graphite"], .accent-swatch[data-accent="graphite"] {
+  --accent-rgb-dark: 176, 186, 208;
+  --accent-rgb-light: 70, 80, 104;
+  --accent-ink-dark: #0f1117;
+}
+
 :root {
   --bg: #0f1117;
   --bg-raise: #171a23;
@@ -7,8 +54,10 @@
   --border: #2a2f40;
   --text: #e6e9f2;
   --text-dim: #9aa3b8;
-  --accent: #7c8cff;
-  --accent-soft: rgba(124, 140, 255, 0.16);
+  --accent-rgb: var(--accent-rgb-dark);
+  --accent: rgb(var(--accent-rgb));
+  --accent-soft: rgba(var(--accent-rgb), 0.16);
+  --accent-ink: var(--accent-ink-dark);
   --danger: #ff6b7a;
   --ok: #59d18c;
   --warn: #ffba5c;
@@ -16,6 +65,7 @@
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --room-wash: none;
+  --topbar-height: 56px;
 }
 
 body.light {
@@ -25,8 +75,10 @@ body.light {
   --border: #d7dbe8;
   --text: #1c2030;
   --text-dim: #5d667e;
-  --accent: #5468ff;
-  --accent-soft: rgba(84, 104, 255, 0.12);
+  --accent-rgb: var(--accent-rgb-light);
+  --accent: rgb(var(--accent-rgb));
+  --accent-soft: rgba(var(--accent-rgb), 0.12);
+  --accent-ink: #ffffff;
   --danger: #d63a4c;
   --ok: #1e9e5f;
   --warn: #b26a00;
@@ -66,8 +118,8 @@ body {
 .btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
 .btn:active { transform: translateY(1px) scale(0.98); }
 .btn.primary {
-  background: var(--accent); border-color: var(--accent); color: #0d1020; font-weight: 600;
-  box-shadow: 0 4px 16px rgba(124, 140, 255, 0.28);
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.28);
 }
 .btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
 .btn.subtle { background: transparent; }
@@ -157,12 +209,12 @@ body {
   min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px;
   position: relative; overflow: hidden;
   background:
-    radial-gradient(720px 480px at 50% 18%, rgba(124, 140, 255, 0.20), transparent 58%),
+    radial-gradient(720px 480px at 50% 18%, rgba(var(--accent-rgb), 0.20), transparent 58%),
     var(--bg);
 }
 .login-glow {
   position: absolute; width: 540px; height: 540px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(124, 140, 255, 0.32), transparent 68%);
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.32), transparent 68%);
   filter: blur(10px); pointer-events: none;
   animation: glow-drift 14s ease-in-out infinite;
 }
@@ -171,7 +223,7 @@ body {
   background: var(--bg-raise); border: 1px solid var(--border);
   border-radius: 18px; padding: 42px 38px; text-align: center; width: min(420px, 92vw);
   display: flex; flex-direction: column; gap: 14px; align-items: center;
-  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.45), 0 0 80px rgba(124, 140, 255, 0.12);
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.45), 0 0 80px rgba(var(--accent-rgb), 0.12);
   animation: rise-in 0.55s var(--ease-out) both;
 }
 .login-logo { width: 72px; height: 72px; animation: berry-float 4.4s ease-in-out infinite; }
@@ -205,7 +257,7 @@ body {
 }
 .instance-banner strong { color: var(--warn); }
 .badge.state-open { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
-.badge.state-redeemed { background: rgba(124, 140, 255, 0.16); }
+.badge.state-redeemed { background: rgba(var(--accent-rgb), 0.16); }
 .badge.state-revoked, .badge.state-expired { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
 .badge.state-verified { background: rgba(124, 200, 140, 0.16); color: var(--ok, #7cc88c); }
 .badge.state-unverified { background: rgba(255, 190, 92, 0.18); color: #e0a94a; }
@@ -409,10 +461,9 @@ button.brand-home:hover { color: var(--text); }
 .msg-bubble {
   padding: 10px 15px; border-radius: 16px; overflow-wrap: break-word; min-width: 0; max-width: 100%;
 }
-.msg.user .msg-bubble { background: var(--accent); color: #0d1020; border-bottom-right-radius: 5px; white-space: pre-wrap; }
+.msg.user .msg-bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 5px; white-space: pre-wrap; }
 /* Links the user pasted must not vanish into the accent background */
 .msg.user .msg-bubble a { color: inherit; text-decoration: underline; word-break: break-all; }
-body.light .msg.user .msg-bubble { color: #ffffff; }
 .msg.assistant .msg-bubble { background: var(--bg-raise); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
 .msg.error .msg-bubble { border-color: var(--danger); }
 .msg-meta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; padding: 0 4px; }
@@ -933,7 +984,7 @@ button.list-row:last-child { border-bottom: 0; }
   margin-bottom: 14px; padding: 14px 16px;
   border: 1px solid var(--accent); border-radius: var(--radius);
   background:
-    radial-gradient(120px 80px at 8% 50%, rgba(124, 140, 255, 0.16), transparent 70%),
+    radial-gradient(120px 80px at 8% 50%, rgba(var(--accent-rgb), 0.16), transparent 70%),
     var(--bg-raise);
   overflow: hidden;
 }
@@ -992,7 +1043,7 @@ button.list-row:last-child { border-bottom: 0; }
   animation: berry-float 3.2s ease-in-out infinite;
 }
 .research-orbit-ring {
-  position: absolute; border: 1px dashed rgba(124, 140, 255, 0.4);
+  position: absolute; border: 1px dashed rgba(var(--accent-rgb), 0.4);
   border-radius: 50%;
 }
 .research-orbit-ring.outer { inset: 0; animation: research-spin 10s linear infinite; }
@@ -1003,7 +1054,7 @@ button.list-row:last-child { border-bottom: 0; }
 .research-orbit-dot {
   position: absolute; top: -3px; left: 50%; width: 7px; height: 7px;
   margin-left: -3.5px; border-radius: 50%; background: var(--accent);
-  box-shadow: 0 0 8px rgba(124, 140, 255, 0.7);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.7);
 }
 .research-orbit-ring.inner .research-orbit-dot { background: var(--ok); box-shadow: 0 0 8px rgba(89, 209, 140, 0.55); }
 
@@ -1546,10 +1597,10 @@ button.persona-pick.picked { border-color: var(--accent); background: var(--acce
 /* ---------- room atmosphere ---------- */
 
 body.room-home.tod-morning { --room-wash: radial-gradient(900px 520px at 8% -8%, rgba(255, 186, 92, 0.16), transparent 58%); }
-body.room-home.tod-day { --room-wash: radial-gradient(900px 520px at 12% -10%, rgba(124, 140, 255, 0.14), transparent 58%); }
+body.room-home.tod-day { --room-wash: radial-gradient(900px 520px at 12% -10%, rgba(var(--accent-rgb), 0.14), transparent 58%); }
 body.room-home.tod-dusk { --room-wash: radial-gradient(900px 520px at 82% -8%, rgba(255, 107, 122, 0.13), transparent 56%); }
 body.room-home.tod-night { --room-wash: radial-gradient(800px 480px at 50% 0%, rgba(88, 70, 180, 0.20), transparent 60%); }
-body.room-study { --room-wash: radial-gradient(720px 420px at 100% 0%, rgba(124, 140, 255, 0.12), transparent 52%); }
+body.room-study { --room-wash: radial-gradient(720px 420px at 100% 0%, rgba(var(--accent-rgb), 0.12), transparent 52%); }
 body.room-parlor { --room-wash: radial-gradient(720px 420px at 0% 100%, rgba(255, 186, 92, 0.12), transparent 52%); }
 body.room-library { --room-wash: radial-gradient(800px 500px at 50% 0%, rgba(140, 200, 255, 0.12), transparent 55%); }
 body.room-workshop { --room-wash: radial-gradient(720px 420px at 90% 90%, rgba(255, 186, 92, 0.13), transparent 52%); }
@@ -1566,7 +1617,7 @@ body.room-observatory {
 body.room-exchange { --room-wash: radial-gradient(700px 400px at 0% 0%, rgba(89, 209, 140, 0.10), transparent 50%); }
 body.room-tasks { --room-wash: radial-gradient(700px 400px at 100% 100%, rgba(255, 186, 92, 0.10), transparent 50%); }
 body.room-decks { --room-wash: radial-gradient(700px 400px at 100% 0%, rgba(255, 107, 122, 0.10), transparent 50%); }
-body.room-usage { --room-wash: radial-gradient(700px 400px at 50% 100%, rgba(124, 140, 255, 0.10), transparent 50%); }
+body.room-usage { --room-wash: radial-gradient(700px 400px at 50% 100%, rgba(var(--accent-rgb), 0.10), transparent 50%); }
 
 body.light.room-home.tod-morning { --room-wash: radial-gradient(900px 520px at 8% -8%, rgba(255, 186, 92, 0.24), transparent 58%); }
 body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%, rgba(90, 140, 255, 0.14), transparent 56%); }
@@ -1782,7 +1833,7 @@ body.light.room-observatory { --room-wash: radial-gradient(900px 600px at 50% 0%
 .home-berry-wrap { position: relative; flex: none; width: 72px; height: 72px; }
 .home-berry-wrap::before {
   content: ''; position: absolute; inset: -14px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(124, 140, 255, 0.38), transparent 70%);
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.38), transparent 70%);
   animation: berry-glow 4.2s ease-in-out infinite; pointer-events: none;
 }
 .home-berry { width: 72px; height: 72px; position: relative; animation: berry-float 4.2s ease-in-out infinite; }

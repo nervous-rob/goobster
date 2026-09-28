@@ -965,7 +965,7 @@ a.nav-btn {
   position: fixed; inset: 0; z-index: 80;
   display: flex; flex-direction: column;
   background:
-    radial-gradient(ellipse 90% 60% at 50% 30%, rgba(88, 101, 242, 0.14), transparent 70%),
+    radial-gradient(ellipse 90% 60% at 50% 30%, rgba(var(--accent-rgb), 0.14), transparent 70%),
     rgba(10, 11, 16, 0.97);
   color: #e8eaf2;
   padding: max(14px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
@@ -981,7 +981,7 @@ a.nav-btn {
 .voice-engine-chip {
   font-size: 11px; font-weight: 500; letter-spacing: 0.4px;
   padding: 3px 9px; border-radius: 999px;
-  background: rgba(88, 101, 242, 0.18); border: 1px solid rgba(88, 101, 242, 0.45);
+  background: rgba(var(--accent-rgb), 0.18); border: 1px solid rgba(var(--accent-rgb), 0.45);
   color: #aab4ff;
 }
 .voice-overlay-close { color: #e8eaf2; }
@@ -1040,7 +1040,7 @@ a.nav-btn {
   max-height: 30vh; overflow-y: auto;
 }
 .voice-caption.partial { opacity: 0.85; font-style: italic; }
-.voice-caption.bot { background: rgba(88, 101, 242, 0.14); border-color: rgba(88, 101, 242, 0.4); }
+.voice-caption.bot { background: rgba(var(--accent-rgb), 0.14); border-color: rgba(var(--accent-rgb), 0.4); }
 .voice-caption-who {
   display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.7px;
   text-transform: uppercase; color: #9aa0b5; margin-bottom: 3px;
@@ -1069,7 +1069,7 @@ a.nav-btn {
 }
 .voice-ctl:hover { background: rgba(255, 255, 255, 0.13); }
 .voice-ctl:disabled { opacity: 0.4; cursor: default; }
-.voice-ctl.on { border-color: var(--accent); background: rgba(88, 101, 242, 0.2); }
+.voice-ctl.on { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.2); }
 .voice-ctl.send { border-color: rgba(87, 242, 135, 0.5); }
 .voice-ctl.send:not(:disabled) { background: rgba(87, 242, 135, 0.16); }
 .voice-ctl.end { border-color: rgba(237, 66, 69, 0.55); background: rgba(237, 66, 69, 0.14); }
@@ -1715,3 +1715,123 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 
 .followed-sources a { color: var(--accent); }
 .followed-sources summary { cursor: pointer; padding: 8px 0; }
+
+/* ---------- appearance: accent swatches ---------- */
+
+/* Each swatch paints the palette it selects. The palette triplets live on
+   `html[data-accent]` in legacy.css; the swatch re-declares them through
+   the shared selector list there, so this block never repeats a colour. */
+.accent-swatches { display: flex; flex-wrap: wrap; gap: 14px 12px; }
+.accent-swatch {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: transparent; border: 0; padding: 4px; cursor: pointer; color: var(--text-dim);
+  font: inherit; font-size: 12px; border-radius: 12px;
+}
+.accent-swatch-dot {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: rgb(var(--accent-rgb-dark));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 160ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent-ink-dark); font-size: 15px; font-weight: 700;
+}
+body.light .accent-swatch-dot { background: rgb(var(--accent-rgb-light)); color: #fff; }
+.accent-swatch:hover .accent-swatch-dot { transform: scale(1.08); }
+.accent-swatch[aria-checked="true"] { color: var(--text); font-weight: 600; }
+.accent-swatch[aria-checked="true"] .accent-swatch-dot {
+  box-shadow:
+    0 0 0 3px var(--bg-raise),
+    0 0 0 5px rgb(var(--accent-rgb-dark)),
+    0 10px 24px rgba(var(--accent-rgb-dark), 0.4);
+}
+body.light .accent-swatch[aria-checked="true"] .accent-swatch-dot {
+  box-shadow:
+    0 0 0 3px var(--bg-raise),
+    0 0 0 5px rgb(var(--accent-rgb-light)),
+    0 10px 24px rgba(var(--accent-rgb-light), 0.3);
+}
+.accent-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- navigation layout: top bar ---------- */
+
+/* Settings → Appearance → Navigation. `sidebar` keeps the left column
+   (legacy.css #sidebar); `top` renders #topbar instead and the stage takes
+   the full width beneath it. The room headers' ☰ opens the sidebar drawer,
+   which does not exist in this layout, so it hides; the bar itself scrolls
+   sideways on a phone. */
+.app.nav-top { flex-direction: column; }
+.app.nav-top .icon-action.menu-btn { display: none !important; }
+#topbar {
+  flex: none; position: relative; z-index: 20;
+  display: flex; align-items: center; gap: 12px;
+  height: calc(var(--topbar-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 14px 0;
+  background: var(--bg-raise);
+  background: color-mix(in srgb, var(--bg-raise) 84%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(var(--accent-rgb), 0.08), 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+#topbar .brand { padding: 0 6px 0 0; font-size: 17px; flex: none; text-decoration: none; color: var(--text); }
+#topbar .brand.active .brand-logo { filter: drop-shadow(0 0 8px rgba(var(--accent-rgb), 0.7)); }
+.topbar-nav {
+  display: flex; flex-direction: row; align-items: center; gap: 4px;
+  flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; padding: 4px 2px; scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.topbar-nav::-webkit-scrollbar { display: none; }
+#topbar .nav-btn {
+  flex: none; display: inline-flex; align-items: center; gap: 7px; width: auto;
+  padding: 7px 13px; border-radius: 999px; font-size: 14px; white-space: nowrap;
+  text-decoration: none; scroll-snap-align: start;
+}
+#topbar .nav-btn:hover { transform: translateY(-1px); }
+#topbar .nav-btn.active {
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.38), 0 6px 18px rgba(var(--accent-rgb), 0.2);
+}
+#topbar .nav-btn .nav-secondary { display: none; }
+#topbar .nav-count { margin-left: 2px; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+.topbar-icon {
+  width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; color: var(--text-dim); cursor: pointer;
+  font-size: 16px; text-decoration: none; padding: 0;
+  transition: background 140ms, color 140ms, transform 140ms var(--ease-out), box-shadow 180ms;
+}
+.topbar-icon:hover { background: var(--bg-raise-2); color: var(--text); transform: translateY(-1px); }
+.topbar-icon.active { background: var(--accent-soft); color: var(--text); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.38); }
+.topbar-icon .avatar { width: 28px; height: 28px; }
+.topbar-icon[aria-expanded="true"] { background: var(--bg-raise-2); color: var(--text); }
+.topbar-signin { padding: 6px 12px; font-size: 13.5px; }
+.topbar-menu {
+  position: absolute; top: calc(100% + 8px); right: 12px; z-index: 30;
+  min-width: 250px; max-width: min(320px, calc(100vw - 24px));
+  display: flex; flex-direction: column; gap: 2px; padding: 8px;
+  background: var(--bg-raise); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(var(--accent-rgb), 0.08);
+  animation: rise-in 0.18s var(--ease-out) both;
+}
+.topbar-menu .user-chip { padding: 8px 10px; }
+.topbar-menu .user-chip span { color: var(--text); font-weight: 600; }
+.topbar-menu .nav-btn { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+.topbar-menu .nav-btn:hover { transform: none; }
+.topbar-menu .nav-btn.active { box-shadow: none; }
+.topbar-menu .nav-section { padding: 10px 12px 4px; }
+.topbar-menu .active-friends { margin: 0; }
+.topbar-menu-sep { height: 1px; background: var(--border); margin: 6px 4px; }
+.topbar-menu .btn.subtle { justify-content: flex-start; padding: 9px 12px; }
+
+@media (max-width: 720px) {
+  #topbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
+  #topbar .brand-text { display: none; }
+  #topbar .nav-btn { padding: 7px 11px; font-size: 13.5px; }
+  /* The row scrolls; fade its trailing edge so the cut-off pill reads as
+     "more this way". The end padding lets the last pill clear the fade. */
+  .topbar-nav {
+    padding-right: 28px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+}

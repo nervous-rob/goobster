@@ -1,15 +1,22 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
-import { getStoredTheme, paintTheme, setStoredTheme, type ThemeChoice } from '../../lib/theme';
+import {
+    ACCENTS, getStoredAccent, getStoredTheme, isAccent, paintAccent, paintTheme, setStoredAccent, setStoredTheme,
+    type AccentChoice, type ThemeChoice
+} from '../../lib/theme';
 import {
     getStoredDensity,
+    getStoredNavLayout,
     getStoredReducedMotion,
     getStoredTextSize,
     paintAppearance,
+    paintNavLayout,
     persistAppearance,
+    persistNavLayout,
     type Density,
+    type NavLayout,
     type ReducedMotion,
     type TextSize
 } from '../../lib/appearance';
@@ -21,6 +28,8 @@ import { START_PAGE_OPTIONS, TOOL_ROOMS, startPageOptionFor } from '../../lib/ro
 type Values = UserSettingsResponse['sections']['appearance']['values'];
 type Draft = {
     theme: ThemeChoice;
+    accent: AccentChoice;
+    navLayout: NavLayout;
     linkByTag: boolean;
     textSize: TextSize;
     reducedMotion: ReducedMotion;
@@ -42,8 +51,15 @@ const THEMES: Array<{ value: ThemeChoice; label: string; hint: string }> = [
     { value: 'system', label: '🖥️ System', hint: 'Follow this device\'s setting.' }
 ];
 
+const NAV_LAYOUTS: Array<{ value: NavLayout; label: string; hint: string }> = [
+    { value: 'sidebar', label: '◧ Sidebar', hint: 'Rooms in a column on the left. The default.' },
+    { value: 'top', label: '⬒ Across the top', hint: 'Rooms in a bar along the top of the page; the account menu moves to the right.' }
+];
+
 const LABELS: Record<string, string> = {
     theme: 'Theme',
+    accent: 'Accent color',
+    navLayout: 'Navigation',
     linkByTag: 'Link notes by shared tag',
     textSize: 'Text size',
     reducedMotion: 'Reduced motion',
@@ -79,6 +95,8 @@ export function AppearanceSection({ section, onDirty }: {
 
     const toDraft = useCallback((v: Values): Draft => ({
         theme: getStoredTheme() || v.theme,
+        accent: isAccent(v.accent) ? v.accent : getStoredAccent(),
+        navLayout: v.navLayout === 'top' || v.navLayout === 'sidebar' ? v.navLayout : getStoredNavLayout(),
         linkByTag: localStorage.getItem(LINK_BY_TAG_KEY) === null ? Boolean(v.linkByTag) : localStorage.getItem(LINK_BY_TAG_KEY) !== '0',
         textSize: getStoredTextSize() || v.textSize || 'm',
         reducedMotion: getStoredReducedMotion() || v.reducedMotion || 'system',
@@ -105,10 +123,20 @@ export function AppearanceSection({ section, onDirty }: {
 
     useEffect(() => {
         paintTheme(d.draft.theme);
+        paintAccent(d.draft.accent);
         paintAppearance({ textSize: d.draft.textSize, density: d.draft.density, reducedMotion: d.draft.reducedMotion });
-    }, [d.draft.theme, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
+    }, [d.draft.theme, d.draft.accent, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
+    // The layout previews too, but not on mount: painting the stored value
+    // again would only re-render the shell for nothing.
+    const layoutPainted = useRef(false);
+    useEffect(() => {
+        if (!layoutPainted.current) { layoutPainted.current = true; return; }
+        paintNavLayout(d.draft.navLayout);
+    }, [d.draft.navLayout]);
     useEffect(() => () => {
         paintTheme(getStoredTheme());
+        paintAccent(getStoredAccent());
+        paintNavLayout(getStoredNavLayout());
         paintAppearance({
             textSize: getStoredTextSize(),
             density: getStoredDensity(),
@@ -118,6 +146,8 @@ export function AppearanceSection({ section, onDirty }: {
 
     function persistLocal() {
         setStoredTheme(d.draft.theme);
+        setStoredAccent(d.draft.accent);
+        persistNavLayout(d.draft.navLayout);
         localStorage.setItem(LINK_BY_TAG_KEY, d.draft.linkByTag ? '1' : '0');
         persistAppearance({
             textSize: d.draft.textSize,
@@ -141,6 +171,32 @@ export function AppearanceSection({ section, onDirty }: {
                             title={t.hint}
                             className={`segment-btn${d.draft.theme === t.value ? ' active' : ''}`}
                             onClick={() => d.set({ theme: t.value })}>{t.label}</button>
+                    ))}
+                </div>
+            </Field>
+
+            <Field id="accent" label="Accent color" scope="Your account"
+                hint="Tints buttons, links, the active room, and the room glow. Previews as you pick; Save keeps it on your account.">
+                <div className="accent-swatches" role="radiogroup" aria-label="Accent color" id="accent-input">
+                    {ACCENTS.map((a) => (
+                        <button key={a.value} type="button" role="radio" aria-checked={d.draft.accent === a.value}
+                            aria-label={a.label} title={a.hint} data-accent={a.value}
+                            className="accent-swatch" onClick={() => d.set({ accent: a.value })}>
+                            <span className="accent-swatch-dot" aria-hidden="true">{d.draft.accent === a.value ? '✓' : ''}</span>
+                            <span>{a.label}</span>
+                        </button>
+                    ))}
+                </div>
+            </Field>
+
+            <Field id="nav-layout" label="Navigation" scope="Your account"
+                hint="Where the rooms live. Previews as you pick. Across the top puts Usage, Host, Documentation, and Log out behind your avatar.">
+                <div className="segment settings-segment" role="radiogroup" aria-label="Navigation layout" id="nav-layout-input">
+                    {NAV_LAYOUTS.map((n) => (
+                        <button key={n.value} type="button" role="radio" aria-checked={d.draft.navLayout === n.value}
+                            title={n.hint}
+                            className={`segment-btn${d.draft.navLayout === n.value ? ' active' : ''}`}
+                            onClick={() => d.set({ navLayout: n.value })}>{n.label}</button>
                     ))}
                 </div>
             </Field>
@@ -273,12 +329,19 @@ export function AppearanceSection({ section, onDirty }: {
 
             <SaveBar section="appearance" draft={{ ...d,
                 save: async () => { const r = await d.save(); if (r) persistLocal(); return r; },
-                discard: () => { d.discard(); paintTheme(getStoredTheme()); },
+                discard: () => {
+                    d.discard();
+                    paintTheme(getStoredTheme());
+                    paintAccent(getStoredAccent());
+                    paintNavLayout(getStoredNavLayout());
+                },
                 reset: async (rev) => {
                     const r = await d.reset(rev);
                     if (r) {
                         const values = r.data.values as Values;
                         setStoredTheme(values.theme);
+                        if (isAccent(values.accent)) setStoredAccent(values.accent);
+                        if (values.navLayout === 'top' || values.navLayout === 'sidebar') persistNavLayout(values.navLayout);
                         localStorage.setItem(LINK_BY_TAG_KEY, values.linkByTag ? '1' : '0');
                         persistAppearance({
                             textSize: values.textSize,

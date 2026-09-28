@@ -79,8 +79,8 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Appearance',
         icon: '🎨',
         scope: 'Your account',
-        blurb: 'Theme, density, keyboard, and working defaults. Theme also keeps a device copy.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
+        blurb: 'Theme, accent color, navigation layout, density, keyboard, and working defaults. Theme also keeps a device copy.',
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'navigation', 'sidebar', 'top bar', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
     },
     {
         id: 'account',
@@ -164,6 +164,8 @@ export const FIELDS: FieldMeta[] = [
     { section: 'connections', fieldId: 'github-allowlist', label: 'GitHub repos Goobster may use', keywords: ['allowlist', 'repos', 'github repos'] },
     { section: 'connections', fieldId: 'notion-allowlist', label: 'Notion pages Goobster may use', keywords: ['allowlist', 'pages', 'notion pages'] },
     { section: 'appearance', fieldId: 'theme', label: 'Theme', keywords: ['theme', 'dark', 'light', 'system', 'color scheme'] },
+    { section: 'appearance', fieldId: 'accent', label: 'Accent color', keywords: ['accent', 'color', 'colour', 'palette', 'tint', 'blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'amber', 'graphite'] },
+    { section: 'appearance', fieldId: 'nav-layout', label: 'Navigation', keywords: ['navigation', 'nav', 'sidebar', 'top bar', 'layout', 'menu', 'rooms', 'horizontal', 'vertical'] },
     { section: 'appearance', fieldId: 'text-size', label: 'Text size', keywords: ['font', 'text size', 'bigger', 'smaller'] },
     { section: 'appearance', fieldId: 'reduced-motion', label: 'Reduced motion', keywords: ['motion', 'animation', 'accessibility'] },
     { section: 'appearance', fieldId: 'density', label: 'Interface density', keywords: ['compact', 'comfortable', 'spacing'] },

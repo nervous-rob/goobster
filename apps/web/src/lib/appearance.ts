@@ -8,14 +8,19 @@ import { conservatoryStorageKey, clearConservatoryStorage } from '../music-lab/l
 export type TextSize = 's' | 'm' | 'l';
 export type Density = 'comfortable' | 'compact';
 export type ReducedMotion = 'system' | 'on' | 'off';
+/** Where the primary room navigation lives: the left sidebar or a bar across the top. */
+export type NavLayout = 'sidebar' | 'top';
 
 const TEXT_KEY = 'goobster-text-size';
 const DENSITY_KEY = 'goobster-density';
 const MOTION_KEY = 'goobster-reduced-motion';
+const NAV_LAYOUT_KEY = 'goobster-nav-layout';
 const MIC_KEY = 'goobster-preferred-mic';
 const VOLUME_KEY = 'goobster-voice-volume';
 
 export const APPEARANCE_EVENT = 'goobster-appearance-changed';
+/** Fired with the layout as `detail` on every paint (preview or persist) so the shell re-renders. */
+export const NAV_LAYOUT_EVENT = 'goobster-nav-layout-changed';
 
 export function getStoredTextSize(): TextSize {
     const raw = localStorage.getItem(TEXT_KEY);
@@ -29,6 +34,25 @@ export function getStoredDensity(): Density {
 export function getStoredReducedMotion(): ReducedMotion {
     const raw = localStorage.getItem(MOTION_KEY);
     return raw === 'on' || raw === 'off' ? raw : 'system';
+}
+
+export function getStoredNavLayout(): NavLayout {
+    return localStorage.getItem(NAV_LAYOUT_KEY) === 'top' ? 'top' : 'sidebar';
+}
+
+/**
+ * Paint the navigation layout without persisting (live preview). The shell
+ * renders the sidebar or the top bar from this event, and the `<html>`
+ * attribute lets the stylesheet adjust before React mounts.
+ */
+export function paintNavLayout(layout: NavLayout): void {
+    document.documentElement.dataset.navLayout = layout;
+    window.dispatchEvent(new CustomEvent<NavLayout>(NAV_LAYOUT_EVENT, { detail: layout }));
+}
+
+export function persistNavLayout(layout: NavLayout): void {
+    localStorage.setItem(NAV_LAYOUT_KEY, layout);
+    paintNavLayout(layout);
 }
 
 export function getStoredMicId(): string | null {
@@ -80,9 +104,11 @@ export function persistVoiceVolume(value: number): void {
 export function deviceLocalKeys(): string[] {
     return [
         'goobster-theme',
+        'goobster-accent',
         TEXT_KEY,
         DENSITY_KEY,
         MOTION_KEY,
+        NAV_LAYOUT_KEY,
         MIC_KEY,
         VOLUME_KEY,
         'goobster.map.linkByTag',

@@ -92,7 +92,7 @@ erasure already include it. New per-user stores must stay on that path.
 | PR06 | Default new-chat privacy | prefs → Study `newChat` |
 | PR10–PR12 | Export, revoke shares, revoke applet grants | dedicated settings routes |
 | AC02–AC03 | Sessions / sign out other devices; clear device-local prefs | `web_sessions` + browser keys |
-| UI01 V2–UI09, UI12 | System theme + account sync, text size, motion, density, Enter-to-send, detail expansion, start page (room ids from `portal_navigation.md`; older saved values such as `study` or `noticed` stay valid and map onto the current destination), hidden tools (`appearance.hiddenToolRooms`: the tool-room ids `music`, `trading`, `decks` from `TOOL_ROOM_IDS`, the same list as the web registry; an unknown id is rejected; hiding removes the tool from Tools and from navigation, leaves host availability alone, and does not block the tool's own URL), Exchange server, Music Lab link | prefs + device paint |
+| UI01 V2–UI09, UI12 | System theme + account sync (accent color and navigation layout are UI13–UI14 below), text size, motion, density, Enter-to-send, detail expansion, start page (room ids from `portal_navigation.md`; older saved values such as `study` or `noticed` stay valid and map onto the current destination), hidden tools (`appearance.hiddenToolRooms`: the tool-room ids `music`, `trading`, `decks` from `TOOL_ROOM_IDS`, the same list as the web registry; an unknown id is rejected; hiding removes the tool from Tools and from navigation, leaves host availability alone, and does not block the tool's own URL), Exchange server, Music Lab link | prefs + device paint |
 
 ### Phase 3 (Later runtime policies)
 
@@ -111,6 +111,8 @@ erasure already include it. New per-user stores must stay on that path.
 | CN03 | Connected-resource allowlists | `githubAllowlist` / canonical Notion page IDs enforced on tools; policy lookup fails closed; empty = no extra restriction |
 | UI10 | New-expedition defaults | `expeditionDefaultDepth` / `expeditionDefaultLens` snapshotted at create |
 | UI11 | New-persona defaults | `parlorDefaultEmoji` / `parlorDefaultCharter` used only when create omits them |
+| UI13 | Accent color | `appearance.accent` (one of `ACCENTS`: `blueberry` (default), `ocean`, `mint`, `sunset`, `rose`, `violet`, `amber`, `graphite`; an unknown id is `BAD_ACCENT`) → `html[data-accent]`; the stylesheet derives `--accent`, `--accent-soft`, `--accent-ink` and every accent-tinted glow or room wash from the palette's `--accent-rgb`, with a separate triplet per light/dark surface. Device copy `goobster-accent` paints before the app mounts |
+| UI14 | Navigation layout | `appearance.navLayout` (`sidebar` (default) or `top`; else `BAD_NAV_LAYOUT`). `sidebar` is the left column; `top` renders the rooms as a bar across the page (`#topbar`) with the account rooms, Documentation, friends online and Log out behind the avatar menu, and hides the room headers' ☰ (there is no drawer to open). Device copy `goobster-nav-layout`. See [portal_navigation.md](portal_navigation.md#navigation-layout) |
 
 Reset still cannot reconnect integrations, enroll attention, re-enable disabled tools, turn learning/recall back on, or erase content. Guild settings stay in spec §4.
 

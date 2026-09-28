@@ -85,7 +85,7 @@ const SECTION_METADATA = {
         scope: SCOPES.ACCOUNT,
         description: 'Visual theme, density, keyboard, and working defaults for the web portal.',
         appliesTo: ['web-portal'],
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'look', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'accent color', 'look', 'navigation', 'sidebar', 'top bar', 'layout', 'link by tag', 'tags', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
     },
     connections: {
         id: 'connections',
@@ -109,6 +109,13 @@ const SECTION_METADATA = {
 const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const INITIATIVE_LEVELS = ['observe', 'nudge', 'assist', 'delegate'];
 const THEMES = ['light', 'dark', 'system'];
+// Accent palettes the portal stylesheet defines under `html[data-accent]`
+// (apps/web/src/legacy.css). `blueberry` is the mark's own indigo and the
+// default; every id here must have a palette block there.
+const ACCENTS = ['blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'amber', 'graphite'];
+// Where the portal's primary navigation sits: the left sidebar (default) or
+// a horizontal bar across the top of the page.
+const NAV_LAYOUTS = ['sidebar', 'top'];
 const ANSWER_LENGTHS = ['concise', 'balanced', 'detailed'];
 const TONES = ['neutral', 'warm', 'direct', 'playful'];
 const HUMOR_LEVELS = ['off', 'light', 'playful'];
@@ -213,6 +220,8 @@ const PREFERENCE_DEFAULTS = {
     quietHoursTzMode: 'utc',
     defaultNewChatPrivacy: 'regular',
     theme: 'dark',
+    accent: 'blueberry',
+    navLayout: 'sidebar',
     linkByTag: true,
     textSize: 'm',
     reducedMotion: 'system',
@@ -263,7 +272,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
     ],
     memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
     appearance: [
-        'theme', 'linkByTag', 'textSize', 'reducedMotion', 'density',
+        'theme', 'accent', 'navLayout', 'linkByTag', 'textSize', 'reducedMotion', 'density',
         'enterToSend', 'expandChatDetails', 'startPage', 'hiddenToolRooms', 'preferredExchangeGuild',
         'expeditionDefaultDepth', 'expeditionDefaultLens', 'parlorDefaultEmoji', 'parlorDefaultCharter'
     ],
@@ -408,6 +417,16 @@ function coercePreference(key, raw) {
         case 'theme':
             if (!THEMES.includes(raw)) {
                 return { ok: false, code: 'BAD_THEME', message: `theme must be one of: ${THEMES.join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        case 'accent':
+            if (!ACCENTS.includes(raw)) {
+                return { ok: false, code: 'BAD_ACCENT', message: `accent must be one of: ${ACCENTS.join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        case 'navLayout':
+            if (!NAV_LAYOUTS.includes(raw)) {
+                return { ok: false, code: 'BAD_NAV_LAYOUT', message: `navLayout must be one of: ${NAV_LAYOUTS.join(', ')}.` };
             }
             return { ok: true, value: raw };
         case 'textSize':
@@ -627,6 +646,8 @@ module.exports = {
     REASONING_EFFORTS,
     INITIATIVE_LEVELS,
     THEMES,
+    ACCENTS,
+    NAV_LAYOUTS,
     ANSWER_LENGTHS,
     TONES,
     HUMOR_LEVELS,
