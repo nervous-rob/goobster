@@ -530,12 +530,22 @@ function SignupPanel() {
                     <div className="list-row">
                         <span>Registration</span>
                         <span>
-                            <strong>{data.registration.effective === 'open' ? 'Open sign-up' : 'Invitation only'}</strong>
+                            <strong>
+                                {data.registration.effective === 'open'
+                                    ? (data.registration.pausedReason ? 'Open sign-up, paused' : 'Open sign-up')
+                                    : 'Invitation only'}
+                            </strong>
                             {data.registration.configured !== data.registration.effective && (
                                 <span className="hint"> · configured <code>{data.registration.configured}</code>, but {data.mail.reason?.replace(/\.$/, '').toLowerCase() || 'mail is off'}</span>
                             )}
                         </span>
                     </div>
+                    {data.registration.pausedReason && (
+                        <div className="list-row" role="alert">
+                            <span>Nobody can finish signing up right now</span>
+                            <span className="hint">{data.registration.pausedReason} Invitations and account grants wait on the same cap.</span>
+                        </div>
+                    )}
                     <div className="list-row">
                         <span>Outbound mail</span>
                         <span>

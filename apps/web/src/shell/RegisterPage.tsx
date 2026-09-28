@@ -23,11 +23,20 @@ export function RegisterPage() {
     const cfg = config.data;
     const minLength = cfg?.passwordMinLength ?? 15;
     const mismatch = confirm.length > 0 && confirm !== password;
+    const missing = Math.max(0, minLength - password.length);
     const closed = cfg && cfg.registration !== 'open';
+    const paused = cfg && !closed ? cfg.registrationPaused : null;
 
+    // The button stays clickable so a short passphrase gets told, not
+    // ignored: a disabled submit gives no feedback at all, and the browser's
+    // own validation bubbles never fire for it.
     async function onSubmit(event: FormEvent) {
         event.preventDefault();
         if (mismatch) return;
+        if (missing > 0) {
+            setError(`Passphrases need at least ${minLength} characters - ${missing} more to go. A short sentence works well.`);
+            return;
+        }
         setBusy(true);
         setError(null);
         try {
@@ -68,7 +77,15 @@ export function RegisterPage() {
                         <a className="btn subtle" href="/app/">Back to sign in</a>
                     </>
                 )}
-                {cfg && !closed && !sentTo && (
+                {cfg && paused && !sentTo && (
+                    <>
+                        <h1>Sign-ups are paused</h1>
+                        <p className="login-sub" role="status">{paused}</p>
+                        <p className="hint">Already use {cfg.installationName} through Discord? You do not need a new account - sign in with Discord and ask the host to let you in.</p>
+                        <a className="btn" href="/app/">Back to sign in</a>
+                    </>
+                )}
+                {cfg && !closed && !paused && !sentTo && (
                     <>
                         <h1>Join {cfg.installationName}</h1>
                         <p className="login-sub">
@@ -88,14 +105,19 @@ export function RegisterPage() {
                                 value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
                             <label className="hint" htmlFor="register-password">Passphrase (at least {minLength} characters)</label>
                             <input id="register-password" className="input" type="password" autoComplete="new-password"
-                                required minLength={minLength} value={password} onChange={(e) => setPassword(e.target.value)} />
+                                required minLength={minLength} value={password} onChange={(e) => setPassword(e.target.value)}
+                                aria-describedby="register-password-hint" aria-invalid={(password.length > 0 && missing > 0) || undefined} />
+                            <div id="register-password-hint" className="hint" role="status">
+                                {password.length > 0 && missing > 0
+                                    ? `${missing} more character${missing === 1 ? '' : 's'} needed.`
+                                    : password.length > 0 ? 'Long enough.' : 'A short sentence you will remember works well.'}
+                            </div>
                             <label className="hint" htmlFor="register-confirm">Repeat it</label>
                             <input id="register-confirm" className="input" type="password" autoComplete="new-password"
                                 required value={confirm} onChange={(e) => setConfirm(e.target.value)} aria-invalid={mismatch || undefined} />
                             {mismatch && <div className="login-error" role="alert">The two passphrases differ.</div>}
                             {error && <div className="login-error" role="alert">{error}</div>}
-                            <button className="btn primary big" type="submit"
-                                disabled={busy || mismatch || !email.trim() || !loginName.trim() || password.length < minLength}>
+                            <button className="btn primary big" type="submit" disabled={busy}>
                                 {busy ? 'Sending your link…' : 'Create account'}
                             </button>
                         </form>

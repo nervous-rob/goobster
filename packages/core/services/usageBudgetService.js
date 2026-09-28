@@ -52,6 +52,17 @@ class UsageBudgetService {
         });
     }
 
+    /**
+     * Read-only twin of assertAccountCreation for the pages that should say
+     * so *before* anything is parked or mailed: true when the cap gate would
+     * refuse a new account right now. Not a lock; the transaction still asserts.
+     */
+    async accountCreationBlocked() {
+        if (!require('../config/identityConfig').requireAccount) return false;
+        if ((await this.policy()).dailyTokens !== null) return false;
+        return Number((await db.get('SELECT COUNT(*) AS n FROM app_accounts')).n) >= 1;
+    }
+
     /** Called inside the transaction that inserts the account. */
     async assertAccountCreation(tx, principalId = null) {
         await lock(tx, ACCOUNT_LOCK);

@@ -166,7 +166,12 @@ function mountAdmin(app, ctx, h) {
         requireAccount: ctx.identityConfig.requireAccount,
         registration: {
             configured: ctx.identityConfig.registration,
-            effective: ctx.nativeAuth.registrationMode(ctx.publicUrl)
+            effective: ctx.nativeAuth.registrationMode(ctx.publicUrl),
+            // Open but unable to finish: the cap gate. The operator-facing
+            // instruction; the person-facing one goes out on /api/app/config.
+            pausedReason: (await ctx.nativeAuth.registrationPausedReason(ctx.publicUrl))
+                ? 'Set a daily token cap in Host → Limits before another account can be created (identity.requireAccount is on).'
+                : null
         },
         mail: {
             ...ctx.mail.describe(),

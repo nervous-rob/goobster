@@ -224,9 +224,11 @@ test('account grants, invitations and verified signup refuse a missing cap atomi
     await expect(identity.grantAccount({ principalId: person.id, entitlement: 'migration' })).rejects.toMatchObject({ code: 'DAILY_CAP_REQUIRED' });
     const invite = await native.createInvite({ issuedBy: A });
     const password = 'a sufficiently long test passphrase';
-    await expect(native.register({ token: invite.token, loginName: 'budget-invite', password })).rejects.toMatchObject({ code: 'DAILY_CAP_REQUIRED' });
+    // The invitee and the verifier hear the person-facing pause; the gate's own code stays on the inner path.
+    await expect(native.register({ token: invite.token, loginName: 'budget-invite', password })).rejects.toMatchObject({ code: 'REGISTRATION_PAUSED', status: 503 });
     expect((await native.inspectInvite(invite.token)).role).toBe('member');
     await expect(native._completeSignup({ id: 999 }, () => new Error('invalid'))).rejects.toMatchObject({ code: 'DAILY_CAP_REQUIRED' });
+    expect(await budgets.accountCreationBlocked()).toBe(true);
     expect((await api('/api/app/admin/accounts', { method: 'POST', body: { principalId: person.id } })).status).toBe(409);
     await budgets.setPolicy({ dailyTokens: 10000 });
     await expect(identity.grantAccount({ principalId: person.id, entitlement: 'migration' })).resolves.toMatchObject({ created: true });

@@ -260,7 +260,7 @@ export type InstallationView = {
     publicUrl: string | null;
     nativeLogin: boolean;
     requireAccount: boolean;
-    registration: { configured: RegistrationMode; effective: RegistrationMode };
+    registration: { configured: RegistrationMode; effective: RegistrationMode; pausedReason: string | null };
     mail: { enabled: boolean; provider: string | null; from: string | null; linksEnabled: boolean; reason: string | null };
     emailVerifyTtlMinutes: number;
     recoveryTtlMinutes: number;
@@ -694,6 +694,11 @@ export type AppConfig = {
     nativeLogin: boolean;
     /** Effective sign-up policy ('open' only when mail is configured). */
     registration: RegistrationMode;
+    /**
+     * Open sign-up that cannot finish right now (the shared-installation
+     * token-cap gate): the person-facing reason, or null when sign-ups work.
+     */
+    registrationPaused: string | null;
     /** "Forgot password" by email is available. */
     emailRecovery: boolean;
     installationName: string;

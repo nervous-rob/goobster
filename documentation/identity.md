@@ -346,6 +346,33 @@ otherwise the effective mode stays `invite`, the log carries one warning,
 and the Host room's **Sign-up & mail** panel shows the configured value,
 the effective value, and the reason they differ.
 
+**Paused sign-up.** On a shared installation (`identity.requireAccount` on,
+at least one account) no account can be created until the host has set a
+daily token cap - `usageBudgetService.assertAccountCreation` refuses with
+`DAILY_CAP_REQUIRED`, see [work_ledger.md](work_ledger.md#usage-budgets).
+That refusal is the host's to act on, so a stranger never hears it: `GET
+/api/app/config` carries `registrationPaused` (a person-facing sentence, or
+`null`), the login screen hides **Create an account**, `/app/register`
+shows a *Sign-ups are paused* card, `POST /api/app/auth/signup` answers
+`503 REGISTRATION_PAUSED` up front, and a mailed link followed while the
+gate is closed answers the same `503` while leaving the pending row in
+place so the link works once the cap is set. An invitation accepted while
+the gate is closed answers `503 REGISTRATION_PAUSED` too and stays open.
+The Host room's **Sign-up & mail** panel shows *Open sign-up, paused* with
+the reason (installation view `registration.pausedReason`).
+
+### Signed in without an account
+
+A Discord member who signs in while `identity.requireAccount` is on but has
+no account is a valid session with no entitlement: `/api/app/me` answers
+`403 NO_ACCOUNT` and the portal shows the **Almost in** page (or **Account
+disabled** for `403 ACCOUNT_DISABLED`). The page explains that the host
+grants access from Host → Accounts and that the person's history is
+already under their Discord identity - creating a separate email account
+would start from scratch. **Sign out** works without an account: `POST
+/api/app/auth/logout` destroys whatever session the cookie names and clears
+the cookie without resolving an actor.
+
 ### Outbound mail
 
 `services/mailService.js` sends plain-text messages through one configured

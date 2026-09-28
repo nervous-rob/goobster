@@ -4,6 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import type { Me } from '../lib/types';
 import { sessionKey } from '../lib/browserAccount';
+import { NoAccountPage } from '../shell/NoAccountPage';
 
 const SessionContext = createContext<Me | null>(null);
 
@@ -24,6 +25,9 @@ export function SessionProvider({ children, boundKey, onAccount }: {
     if (nextKey !== boundKey) return null;
     if (query.isPending) {
         return <div className="login"><div className="empty">Looking around…</div></div>;
+    }
+    if (query.error && (query.error as ApiError).status === 403) {
+        return <NoAccountPage error={query.error as ApiError} />;
     }
     if (query.error && (query.error as ApiError).status !== 401) {
         return <div className="login"><div className="empty">{(query.error as Error).message}</div></div>;

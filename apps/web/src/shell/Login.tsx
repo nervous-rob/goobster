@@ -73,7 +73,7 @@ export function Login() {
                             {cfg.emailRecovery
                                 ? <Link to="/forgot">Forgot your password?</Link>
                                 : <span>Forgot your password? Ask the host of this installation for a reset link.</span>}
-                            {cfg.registration === 'open' && <Link to="/register">Create an account</Link>}
+                            {cfg.registration === 'open' && !cfg.registrationPaused && <Link to="/register">Create an account</Link>}
                         </div>
                     </form>
                 )}

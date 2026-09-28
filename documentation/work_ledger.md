@@ -166,6 +166,8 @@ Defaults are `limits.dailyTokens: null`, `limits.windowHours: 24`, and `limits.r
 
 With `identity.requireAccount` enabled, a second account requires a cap. Operator grants, invitation redemption and verified open signup take the same policy lock inside their creation transaction. Failed redemption leaves the invitation usable. Concurrent first signups cannot both enter without a cap. The host also cannot clear a cap while multiple accounts exist. This budget gate does not satisfy the separate host-isolation or operator-second-factor requirements.
 
+`DAILY_CAP_REQUIRED` is the host's error: only operator grants (Host → Accounts) surface it. Non-operators hear `503 REGISTRATION_PAUSED` instead - open sign-up is refused before anything is parked, a mailed verification link fails softly and stays valid, an accepted invitation stays open - and `usageBudgetService.accountCreationBlocked()` is the read-only check the login screen (`/api/app/config` `registrationPaused`) and the Host room's Sign-up & mail panel use to explain the pause. See [identity.md](identity.md#open-sign-up).
+
 ### Retention decision
 
 Settled and released reservations are kept for **90 days by default**, resolving the #246/#248 retention proposal. The host can choose 1–3,650 days, at least as long as the supported limit window. `ledgerRetentionService` runs the reservation prune under its existing singleton lock. Expired held rows become released; terminal rows past retention are deleted. Holds have a finite expiry longer than the admission wait and provider deadline, so a crashed process cannot retain them forever. Paused installations resume these scheduled sweeps when the operator resumes the instance.

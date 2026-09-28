@@ -68,7 +68,14 @@ function mountAuth(app, ctx, h) {
     const discordConfigured = () => Boolean(ctx.clientSecret && ctx.publicUrl && ctx.discordConfig.enabled);
 
     // Client bootstrap info (nothing secret)
-    app.get('/api/app/config', (req, res) => {
+    app.get('/api/app/config', async (req, res) => {
+        // Open sign-up that cannot finish right now (the shared-installation
+        // cap gate) is announced here so the client never leads someone into
+        // a form that fails at the end. A database hiccup reads as "not paused".
+        let registrationPaused = null;
+        try {
+            registrationPaused = await ctx.nativeAuth.registrationPausedReason(ctx.publicUrl);
+        } catch { /* best effort */ }
         res.json({
             clientId: ctx.clientId,
             devMode: ctx.devMode,
@@ -77,6 +84,7 @@ function mountAuth(app, ctx, h) {
             // Email-backed features: open sign-up and "forgot password".
             // Both need native login, a mail provider, and publicUrl.
             registration: ctx.nativeAuth.registrationMode(ctx.publicUrl),
+            registrationPaused,
             emailRecovery: ctx.nativeAuth.emailEnabled(ctx.publicUrl),
             installationName: ctx.identityConfig.installationName,
             discord: ctx.discordConfig.enabled,
@@ -245,10 +253,20 @@ function mountAuth(app, ctx, h) {
         res.json({ user: { id: userId, name }, devMode: true });
     });
 
-    app.post('/api/app/auth/logout', requireAuth, async (req, res) => {
-        await ctx.sessions.destroy(req.webSessionToken);
-        res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
-        res.json({ ok: true });
+    // Signing out must always work - including for a session whose
+    // principal has no account yet (403 NO_ACCOUNT from requireAuth) or was
+    // disabled, otherwise that person is stuck on the "not granted" page
+    // with a cookie they cannot get rid of. Only the cookie is consulted.
+    app.post('/api/app/auth/logout', async (req, res) => {
+        try {
+            const token = parseCookies(req)[SESSION_COOKIE];
+            if (token) await ctx.sessions.destroy(token);
+            res.append('Set-Cookie', `${SESSION_COOKIE}=; ${cookieAttributes(ctx, 0)}`);
+            res.json({ ok: true });
+        } catch (error) {
+            ctx.logger.error?.('Web app logout failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
     });
 
     // --- Native sign-in (release-gated) ---------------------------------------
