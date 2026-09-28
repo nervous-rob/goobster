@@ -219,6 +219,23 @@ drawn:
   720px the pill row scrolls sideways; the room headers' ☰ hides because
   there is no drawer to open.
 
+With the bar on top and a window at least 1100px wide, every room centres
+on one **page column** instead of hugging the left edge. Backgrounds,
+borders and scroll areas stay full-bleed; room headers, view tabs and room
+bodies pad in so their content lines up down the page. Reading rooms
+(Home, Knowledge's Notes and Research, Projects, Activity, Tools, Usage,
+Host, the Exchange, Decks) use a 1200px column, and the sidebar-era caps
+of about 900px are lifted so lists and card grids fill it; the Notes list
+stays a reading width (880px) inside it. Workspaces with their own side
+column (Chat, Discussions, Settings, Documentation, and the Knowledge map)
+centre as a wider 1480px frame, with a hairline on each outer edge once
+the window is wider than the frame, and the bar's brand and account icons
+line up with that frame. The Music Lab keeps its own 1320px panel and its
+toolbar follows it. Below 1100px, and in the sidebar layout, rooms keep
+their usual padding. The column is CSS only (`styles.css`, "navigation
+layout: the page column"), driven by `--page-max`, `--page-wide` and
+`--page-gutter` on `.app.nav-top`.
+
 Both layouts render the same `nav[aria-label="Rooms"]` landmark, the same
 `a.nav-btn[data-room]` entries with the same active-room rule
 (`parentRoom(resolveRoom(path))`), the same feature gating
@@ -228,7 +245,8 @@ in Appearance, saves to the account, and keeps a device copy
 (`goobster-nav-layout`) that `index.html` paints before the app mounts.
 
 `e2e/appearance.spec.js` covers the live preview, Discard, Save,
-reload, the account menu, the hidden ☰, and the scrolling bar on a phone.
+reload, the account menu, the hidden ☰, the scrolling bar on a phone, and
+the centred page column and workspace frame on a wide window.
 
 ## Links written by the server
 

@@ -225,6 +225,43 @@ test('navigation layout previews live and moves the rooms to a top bar', async (
     await expect(page.locator('#sidebar')).toBeVisible();
 });
 
+test('with the bar on top, rooms centre on one column across a wide window', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await login(page);
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { navLayout: 'top' } } });
+
+    const centred = async (selector) => {
+        const box = await page.locator(selector).first().boundingBox();
+        expect(box).not.toBeNull();
+        expect(Math.abs(box.x - (1920 - box.x - box.width))).toBeLessThanOrEqual(2);
+        return box;
+    };
+
+    // Reading rooms fill a 1200px column instead of the sidebar-era 900px cap,
+    // and the header's title starts where the column does.
+    for (const [path, content] of [['/app/', '.home-shell'], ['/app/tools', '.tools-grid'], ['/app/activity/inbox', '.list-card'], ['/app/projects', '.obs-view']]) {
+        await page.goto(path);
+        const box = await centred(content);
+        expect(box.width).toBeGreaterThan(1100);
+        const header = await page.locator(path === '/app/' ? '.home-toolbar' : '.pane-header').first().evaluate((el) =>
+            [...el.children].map((c) => c.getBoundingClientRect()).find((r) => r.width > 0).left);
+        expect(Math.abs(header - box.x)).toBeLessThanOrEqual(2);
+    }
+
+    // Workspaces centre as one wider frame, and the bar lines up with it.
+    await page.goto('/app/chat');
+    const panel = await page.locator('#pane-chat .conversations-panel').boundingBox();
+    const study = await page.locator('#pane-chat .study-main').boundingBox();
+    expect(Math.round(panel.x)).toBe(220);
+    expect(Math.round(study.x + study.width)).toBe(1700);
+    const brand = await page.locator('#topbar .brand').boundingBox();
+    expect(Math.abs(brand.x - panel.x)).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_top_nav_wide_chat.png' });
+
+    await page.goto('/app/tools');
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_top_nav_wide_tools.png' });
+});
+
 test('the top bar scrolls sideways on a phone instead of opening a drawer', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page);
