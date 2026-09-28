@@ -767,10 +767,17 @@ describe('background jobs', () => {
     }, 20_000);
 
     test('expired A loses the lease: B takes over and A cannot write or finish', async () => {
-        // Short wall so the segment ends while the reap is still running.
-        // That is the slow-Postgres failure: the live loop settles the row
-        // (TIMED_OUT) out from under the second stale pass.
-        const a = makeService({ sandbox: { timeoutMs: 500, maxCpuSeconds: 1 } });
+        const a = makeService();
+        // A stalls mid-segment: its sandbox call does not return until the
+        // test releases it, after B holds the lease. A real segment would
+        // hit its wall (or a cancel poll already in flight) and settle the
+        // row under the reap on a slow runner, and A's post-loop tail would
+        // outlive the suite.
+        let releaseSegment;
+        a.sandbox.run = () => new Promise(resolve => { releaseSegment = resolve; });
+        let loopA;
+        const jobLoop = a._jobLoop.bind(a);
+        a._jobLoop = (...args) => (loopA = jobLoop(...args));
         const userId = nextUser();
         const { slug } = await a.createProject({ userId, name: 'lease-steal' });
         const { jobId } = await a.run({
@@ -783,19 +790,6 @@ describe('background jobs', () => {
         clearInterval(handleA.heartbeat);
         clearInterval(handleA.cancelPoll);
         a._jobs.delete(jobId);
-        // A has crashed: the sandbox segment is still in flight, and on a
-        // slow Postgres run it hits the sandbox timeout (or an in-flight
-        // cancel poll) and settles the row TIMED_OUT / CANCELLED before the
-        // second stale pass can park it INTERRUPTED. A dead owner writes
-        // nothing, so drop A's touch, finish, and abort until the reap has
-        // parked the row. clearInterval does not cancel a callback that
-        // already entered its await.
-        const realAbort = handleA.controller.abort.bind(handleA.controller);
-        handleA.controller.abort = () => {};
-        const realTouch = a._touchLease;
-        const realFinish = a._finishJob;
-        a._touchLease = async () => false;
-        a._finishJob = async () => false;
 
         const stale = () => new Date(Date.now() - 5 * 60 * 1000).toISOString()
             .replace('T', ' ').replace(/\.\d+Z$/, '');
@@ -816,20 +810,13 @@ describe('background jobs', () => {
             }
             throw new Error(`two-phase reap did not reach the expected state (last ${JSON.stringify(row)})`);
         }
-        try {
-            const stopping = await reapUntil(row => (
-                (row.status === 'RUNNING' && Number(row.cancelRequested) === 1)
-                || row.status === 'INTERRUPTED'
-            ));
-            expect(['RUNNING', 'INTERRUPTED']).toContain(stopping.status);
-            const interrupted = await reapUntil(row => row.status === 'INTERRUPTED');
-            expect(interrupted.status).toBe('INTERRUPTED');
-        } finally {
-            a._touchLease = realTouch;
-            a._finishJob = realFinish;
-            handleA.controller.abort = realAbort;
-            realAbort();
-        }
+        const stopping = await reapUntil(row => (
+            (row.status === 'RUNNING' && Number(row.cancelRequested) === 1)
+            || row.status === 'INTERRUPTED'
+        ));
+        expect(['RUNNING', 'INTERRUPTED']).toContain(stopping.status);
+        const interrupted = await reapUntil(row => row.status === 'INTERRUPTED');
+        expect(interrupted.status).toBe('INTERRUPTED');
 
         const dir = path.join(PROJECTS_ROOT, userId, slug);
         fs.mkdirSync(path.join(dir, 'runs', String(jobId)), { recursive: true });
@@ -845,10 +832,15 @@ describe('background jobs', () => {
         expect(tokenB).toBeTruthy();
         expect(tokenB).not.toBe(tokenA);
 
+        // A's stalled segment returns now: its write misses the lease and
+        // the loop exits without settling or running the terminal tail.
+        releaseSegment({ ok: true, aborted: false, timedOut: false, stdout: 'from-A', stderr: '', exitCode: 0, files: [] });
+        await loopA;
         expect(await a._touchLease(jobId, tokenA)).toBe(false);
         expect(await a._finishJob(jobId, 'COMPLETED', {}, tokenA)).toBe(false);
         const afterA = await db.get('SELECT * FROM observatory_jobs WHERE id = @id', { id: jobId });
         expect(afterA.leaseToken).toBe(tokenB);
+        expect(afterA.stdoutTail).not.toBe('from-A');
         expect(afterA.status).not.toBe('COMPLETED');
         expect(['RUNNING', 'INTERRUPTED'].includes(afterA.status)
             || ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(afterA.status)).toBe(true);
