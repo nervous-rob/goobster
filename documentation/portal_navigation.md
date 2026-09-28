@@ -1,7 +1,7 @@
 ---
 title: "Portal navigation: rooms, canonical routes, and legacy aliases"
 kind: reference
-summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research, Projects' per-project views under /projects/:owner/:slug/:view), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, how a delivered attention notice is named from both Activity views, the per-account hidden-tool preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1 through E5).
+summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar (or the top bar, a per-account layout choice) and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research, Projects' per-project views under /projects/:owner/:slug/:view), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, how a delivered attention notice is named from both Activity views, the per-account hidden-tool preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1 through E5).
 tags: [portal, navigation, routes, rooms, web, shared-instance, aliases, tutorials]
 ---
 
@@ -198,6 +198,37 @@ and the registry hold the same list; `tests/portalRooms.test.js` fails if
 they drift. The client maps an older value onto its current destination
 (`noticed` → `/activity/attention`) and the Appearance select shows the
 matching new option (`exchange` → Tools).
+
+## Navigation layout
+
+Settings → Appearance → **Navigation** (`appearance.navLayout`, see
+[user_settings.md](user_settings.md)) chooses where the same registry is
+drawn:
+
+- **Sidebar** (`sidebar`, the default): the left column - brand, the
+  primary rooms, "Your account" (Usage & limits, Host), friends online,
+  and a footer with Documentation, the theme toggle, Settings, the account
+  chip and Log out. Below 720px it is the slide-in drawer behind the room
+  headers' ☰.
+- **Across the top** (`top`): a bar along the top of the page
+  (`shell/TopBar.tsx`, `#topbar`) - brand on the left, the primary rooms as
+  pills, then the theme toggle, Settings (the `nav-settings` tutorial anchor
+  travels with it) and an **account menu** behind the avatar that holds what
+  the footer held (the account chip, Usage & limits, Host, Documentation,
+  friends online, Log out). The stage takes the full width beneath. Below
+  720px the pill row scrolls sideways; the room headers' ☰ hides because
+  there is no drawer to open.
+
+Both layouts render the same `nav[aria-label="Rooms"]` landmark, the same
+`a.nav-btn[data-room]` entries with the same active-room rule
+(`parentRoom(resolveRoom(path))`), the same feature gating
+(`isRoomAvailable`) and the same Inbox unread badge, so tutorials, tests
+and deep links address navigation identically. The layout previews live
+in Appearance, saves to the account, and keeps a device copy
+(`goobster-nav-layout`) that `index.html` paints before the app mounts.
+
+`e2e/appearance.spec.js` covers the live preview, Discard, Save,
+reload, the account menu, the hidden ☰, and the scrolling bar on a phone.
 
 ## Links written by the server
 

@@ -11,8 +11,11 @@ import { useRoomDrawerClose } from '../hooks/useConversationDrawer';
 import { MenuProvider } from './MenuButton';
 import { ActiveFriends } from './ActiveFriends';
 import type { InboxEvent, ParlorMentionEvent } from '../hooks/usePortalEvents';
-import { getStoredTheme, paintTheme, resolveTheme, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
-import { paintAppearance, persistAppearance } from '../lib/appearance';
+import { getStoredAccent, getStoredTheme, isAccent, paintAccent, paintTheme, resolveTheme, setStoredAccent, setStoredTheme, THEME_EVENT, type ThemeChoice } from '../lib/theme';
+import {
+    getStoredNavLayout, NAV_LAYOUT_EVENT, paintAppearance, paintNavLayout, persistAppearance, persistNavLayout, type NavLayout
+} from '../lib/appearance';
+import { TopBar } from './TopBar';
 import { useQuery } from '@tanstack/react-query';
 import {
     ACCOUNT_ROOMS, PRIMARY_ROOMS, atmosphereFor, isRoomAvailable, legacyHashTarget,
@@ -39,6 +42,7 @@ export function AppShell() {
     const navigate = useNavigate();
     const pathname = useRouterState({ select: (s) => s.location.pathname });
     const [theme, setTheme] = useState<ThemeChoice>(() => getStoredTheme());
+    const [navLayout, setNavLayout] = useState<NavLayout>(() => getStoredNavLayout());
     const [drawer, setDrawer] = useState(false);
     const [forgetOpen, setForgetOpen] = useState(false);
     const [mention, setMention] = useState<ParlorMentionEvent | null>(null);
@@ -144,9 +148,23 @@ export function AppShell() {
         };
     }, [theme]);
 
+    // Accent and navigation layout are account preferences with a device
+    // copy (so a refresh paints the right colours before settings load).
+    // The stylesheet reads `html[data-accent]`; the shell renders the
+    // sidebar or the top bar from the layout event.
+    useEffect(() => {
+        paintAccent(getStoredAccent());
+        paintNavLayout(getStoredNavLayout());
+        const onLayout = (event: Event) => setNavLayout((event as CustomEvent<NavLayout>).detail);
+        window.addEventListener(NAV_LAYOUT_EVENT, onLayout);
+        return () => window.removeEventListener(NAV_LAYOUT_EVENT, onLayout);
+    }, []);
+
     useEffect(() => {
         if (!appearance) return;
         if (!localStorage.getItem('goobster-theme')) setStoredTheme(appearance.theme);
+        if (isAccent(appearance.accent)) setStoredAccent(appearance.accent);
+        if (appearance.navLayout === 'top' || appearance.navLayout === 'sidebar') persistNavLayout(appearance.navLayout);
         persistAppearance({
             textSize: appearance.textSize,
             density: appearance.density,
@@ -194,9 +212,16 @@ export function AppShell() {
         try { await api.logout(); } catch { /* already out */ }
     }
 
+    const toggleTheme = () => setStoredTheme(resolveTheme(theme) === 'light' ? 'dark' : 'light');
+    const themeLabel = resolveTheme(theme) === 'light' ? '☀️' : '🌙';
+
     return (
         <MenuProvider open={() => setDrawer(true)}>
-        <div className="app">
+        <div className={`app${navLayout === 'top' ? ' nav-top' : ''}`}>
+            {navLayout === 'top' ? (
+                <TopBar me={me} room={room} activeNav={activeNav} themeLabel={themeLabel}
+                    onToggleTheme={toggleTheme} onLogout={logout} />
+            ) : (<>
             <div id="sidebar-backdrop" className={`sidebar-backdrop${drawer ? '' : ' hidden'}`} onClick={() => setDrawer(false)} />
             <aside id="sidebar" className={drawer ? 'open' : ''}>
                 <div className="sidebar-top">
@@ -231,8 +256,8 @@ export function AppShell() {
                         className={`nav-btn${room === 'docs' ? ' active' : ''}`} aria-current={room === 'docs' ? 'page' : undefined}
                         onClick={() => setDrawer(false)}><span aria-hidden="true">📖</span> Documentation</Link>
                     <button type="button" className="btn subtle" title="Toggle light/dark (more in Settings → Appearance)"
-                        onClick={() => setStoredTheme(resolveTheme(theme) === 'light' ? 'dark' : 'light')}>
-                        {resolveTheme(theme) === 'light' ? '☀️ Theme' : '🌙 Theme'}
+                        onClick={toggleTheme}>
+                        {themeLabel} Theme
                     </button>
                     {me ? (
                         <>
@@ -253,6 +278,7 @@ export function AppShell() {
                     )}
                 </div>
             </aside>
+            </>)}
             <div id="stage" className={me?.instance?.paused ? 'has-instance-banner' : undefined}>
                 {me?.instance?.paused && (
                     <div className="instance-banner" role="status">
