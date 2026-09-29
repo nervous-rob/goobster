@@ -193,7 +193,7 @@ test.describe('deep links that carry state', () => {
             await fresh.goto('/app/settings/appearance');
             await expect(fresh.locator('#start-page-input')).toHaveValue('chat');
             await expect(fresh.locator('#start-page-input').locator('option')).toHaveText([
-                'Home', 'Chat', 'Knowledge', 'Projects', 'Discussions', 'Activity', 'Tools'
+                'Home', 'Chat', 'Knowledge', 'Projects', 'Discussions', 'People', 'Activity', 'Tools'
             ]);
         } finally {
             await fresh.close();
