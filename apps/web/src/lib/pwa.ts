@@ -67,12 +67,38 @@ export async function promptInstall(): Promise<'accepted' | 'dismissed' | 'unava
     }
 }
 
+/** Settings → Appearance field that holds the install card and instructions. */
+export const INSTALL_FIELD_ID = 'install-app';
+
+const INSTALL_NUDGE_KEY = 'goobster-install-nudge-dismissed-at';
+const INSTALL_NUDGE_SNOOZE_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function installNudgeDismissed(): boolean {
+    try {
+        const at = Number(localStorage.getItem(INSTALL_NUDGE_KEY) || 0);
+        return at > 0 && Date.now() - at < INSTALL_NUDGE_SNOOZE_MS;
+    } catch {
+        return false;
+    }
+}
+
+export function dismissInstallNudge(): void {
+    try { localStorage.setItem(INSTALL_NUDGE_KEY, String(Date.now())); } catch { /* private mode */ }
+    window.dispatchEvent(new Event(INSTALL_EVENT));
+}
+
 export function useInstallPrompt(): {
+    /** Chromium handed us a prompt we can replay on click. */
     available: boolean;
     installed: boolean;
     standalone: boolean;
     ios: boolean;
+    /** Nothing to offer: already installed, or running as the app. */
+    done: boolean;
+    /** The shell banner may be shown (installable, not snoozed). */
+    nudge: boolean;
     install: () => Promise<'accepted' | 'dismissed' | 'unavailable'>;
+    dismissNudge: () => void;
 } {
     const [, bump] = useState(0);
     useEffect(() => {
@@ -80,12 +106,21 @@ export function useInstallPrompt(): {
         window.addEventListener(INSTALL_EVENT, onChange);
         return () => window.removeEventListener(INSTALL_EVENT, onChange);
     }, []);
+    const available = Boolean(deferredPrompt);
+    const standalone = isStandalone();
+    const ios = isIos();
+    const done = standalone || installed;
     return {
-        available: Boolean(deferredPrompt),
+        available,
         installed,
-        standalone: isStandalone(),
-        ios: isIos(),
-        install: promptInstall
+        standalone,
+        ios,
+        done,
+        // Only nudge where a one-tap (or one-sheet) install actually exists;
+        // browsers that need a menu dig get the nav entry, not a banner.
+        nudge: !done && (available || ios) && !installNudgeDismissed(),
+        install: promptInstall,
+        dismissNudge: dismissInstallNudge
     };
 }
 

@@ -25,8 +25,9 @@ import {
     parentRoom, resolveRoom, roomBadgeCount, startPageTarget, type Room
 } from '../lib/rooms';
 import { BerryMark } from '../components/BerryMark';
-import { setAppBadge, useOnline, useServiceWorkerUpdate, useWorkerNavigation } from '../lib/pwa';
+import { setAppBadge, useInstallPrompt, useOnline, useServiceWorkerUpdate, useWorkerNavigation } from '../lib/pwa';
 import { showLocalNotification } from '../lib/notifications';
+import { InstallBanner, InstallEntry } from '../components/InstallEntry';
 
 function inboxNoticeTitle(kind?: string): string {
     if (kind === 'reminder') return 'A reminder came due';
@@ -231,6 +232,7 @@ export function AppShell() {
 
     const online = useOnline();
     const swUpdate = useServiceWorkerUpdate();
+    const installNudge = useInstallPrompt().nudge;
 
     useEffect(() => {
         if (!me || !appearance?.startPage || appearance.startPage === 'home') return;
@@ -308,6 +310,7 @@ export function AppShell() {
                     </button>
                     {me ? (
                         <>
+                            <InstallEntry onNavigate={() => setDrawer(false)} />
                             <Link to="/settings" className={`nav-btn settings-link${room === 'settings' ? ' active' : ''}`}
                                 data-tour="nav-settings"
                                 onClick={() => setDrawer(false)}>
@@ -326,7 +329,7 @@ export function AppShell() {
                 </div>
             </aside>
             </>)}
-            <div id="stage" className={me?.instance?.paused || !online || swUpdate.available ? 'has-instance-banner' : undefined}>
+            <div id="stage" className={me?.instance?.paused || !online || swUpdate.available || installNudge ? 'has-instance-banner' : undefined}>
                 {!online && (
                     <div className="instance-banner offline-banner" role="status" data-testid="offline-banner">
                         <span>
@@ -340,6 +343,7 @@ export function AppShell() {
                         <button type="button" className="btn small primary" onClick={swUpdate.apply}>Reload</button>
                     </div>
                 )}
+                {me && online && !swUpdate.available && installNudge && <InstallBanner onNavigate={() => setDrawer(false)} />}
                 {me?.instance?.paused && (
                     <div className="instance-banner" role="status">
                         <span>

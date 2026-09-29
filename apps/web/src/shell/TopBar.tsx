@@ -4,6 +4,7 @@ import type { Me } from '../lib/types';
 import { ACCOUNT_ROOMS, PRIMARY_ROOMS, isRoomAvailable, roomBadgeCount, type Room } from '../lib/rooms';
 import { ActiveFriends } from './ActiveFriends';
 import { BerryMark } from '../components/BerryMark';
+import { InstallEntry } from '../components/InstallEntry';
 
 /**
  * The horizontal navigation layout (Settings → Appearance → Navigation →
@@ -102,6 +103,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
                                         className={`nav-btn${room === 'docs' ? ' active' : ''}`}>
                                         <span aria-hidden="true">📖</span> Documentation
                                     </Link>
+                                    <InstallEntry role="menuitem" onNavigate={() => setMenuOpen(false)} />
                                     <ActiveFriends />
                                     <div className="topbar-menu-sep" />
                                     <button type="button" role="menuitem" className="btn subtle" onClick={onLogout}>Log out</button>

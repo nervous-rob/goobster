@@ -184,3 +184,55 @@ test('Settings offers the install card and per-device browser notifications that
     const after = await (await page.request.get('/api/app/push')).json();
     expect(after.devices).toBe(0);
 });
+
+// Replays what Chromium does when the page becomes installable: the
+// captured event is what every install entry replays on click.
+async function offerInstall(page, outcome = 'accepted') {
+    await page.evaluate((choice) => {
+        const event = new Event('beforeinstallprompt', { cancelable: true });
+        event.prompt = async () => { window.__prompted = (window.__prompted || 0) + 1; };
+        event.userChoice = Promise.resolve({ outcome: choice });
+        window.dispatchEvent(event);
+    }, outcome);
+}
+
+test('the install shortcut is one click from any room: nav entry, shell banner, and a snoozable nudge', async ({ page }) => {
+    await login(page);
+    await page.goto('/app/');
+
+    // Without a prompt the nav entry is still there and leads to the
+    // Settings card with the how-to; no banner nags about a menu dig.
+    const entry = page.getByTestId('install-nav');
+    await expect(entry).toBeVisible();
+    await expect(entry).toHaveText(/Install app/);
+    await expect(page.getByTestId('install-banner')).toHaveCount(0);
+    await entry.click();
+    await expect(page).toHaveURL(/\/app\/settings\/appearance#install-app$/);
+    await expect(page.locator('#install-app')).toBeVisible();
+
+    // Once the browser offers a prompt, the banner shows and a click on it
+    // replays the prompt; an accepted install retires the whole nudge.
+    await offerInstall(page, 'accepted');
+    const banner = page.getByTestId('install-banner');
+    await expect(banner).toBeVisible();
+    await expect(page.locator('#install-app').getByTestId('install-button')).toBeVisible();
+    await banner.getByTestId('install-banner-install').click();
+    await expect(page.getByText('Goobster is installing.')).toBeVisible();
+    expect(await page.evaluate(() => window.__prompted)).toBe(1);
+    await expect(banner).toHaveCount(0);
+
+    // A fresh page with a prompt nudges again; "Not now" snoozes it on this
+    // device across reloads while the nav entry stays put.
+    await page.goto('/app/');
+    await offerInstall(page, 'dismissed');
+    await expect(banner).toBeVisible();
+    await banner.getByTestId('install-banner-dismiss').click();
+    await expect(banner).toHaveCount(0);
+    await page.reload();
+    await offerInstall(page, 'dismissed');
+    await expect(page.getByTestId('install-nav')).toBeVisible();
+    await expect(page.getByTestId('install-banner')).toHaveCount(0);
+    // The nav entry still installs on the spot when a prompt is in hand.
+    await page.getByTestId('install-nav').click();
+    expect(await page.evaluate(() => window.__prompted)).toBe(1);
+});

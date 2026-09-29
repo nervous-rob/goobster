@@ -15,7 +15,7 @@ Nothing in this document is a new place for personal data except the
 
 | Capability | Where | How it works |
 |---|---|---|
-| Install | Settings → Appearance → *Install Goobster as an app* | Chromium hands the page an install prompt that the button replays. Safari never does, so iOS gets *Share → Add to Home Screen* instructions. An already-installed window says so. |
+| Install | *Install app* in the sidebar footer (or the top bar's account menu), a one-time shell banner, and Settings → Appearance → *Install Goobster as an app* | Every entry does the same thing: with a captured Chromium prompt the click installs on the spot; otherwise it leads to the Settings card, where iOS gets *Share → Add to Home Screen* and other browsers the menu instructions. The banner appears only where a one-tap install exists (prompt captured, or iOS Safari), *Not now* snoozes it for 30 days on that device, and every entry disappears once the app is installed or running as the app. |
 | Shortcuts | Long-press / right-click the app icon | `manifest.webmanifest` `shortcuts`: New chat, Inbox, Projects, Discussions - canonical room paths from `apps/web/src/lib/rooms.cjs`. |
 | Own window | Installed app | `display: standalone` with `display_override: [window-controls-overlay, standalone]`; `launch_handler.client_mode: navigate-existing` so a second launch (or a shortcut) reuses the open window instead of stacking a new one. |
 | Unread badge | App icon | `navigator.setAppBadge` with the same number the sidebar shows (Inbox unread + direct-message unread + pending friend requests); cleared on sign-out. |
@@ -84,7 +84,10 @@ of the portal, sizes verified by the `webClientServing` spec) and
 ### Client plumbing (`apps/web/src/lib/pwa.ts`, `notifications.ts`)
 
 `main.tsx` calls `captureInstallPrompt()` (keeps `beforeinstallprompt`
-for Settings), `installChunkRecovery()` (Vite's `vite:preloadError`) and
+for the install entries - `components/InstallEntry.tsx` renders the nav
+button and the shell banner, `components/InstallPrompt.tsx` the Settings
+card; `useInstallPrompt()` is the one source of truth for *available /
+installed / standalone / nudge*), `installChunkRecovery()` (Vite's `vite:preloadError`) and
 `registerServiceWorker()` (tracks `updatefound` → waiting worker →
 `SW_UPDATE_EVENT`, and forwards worker `goobster:navigate` messages), and
 wraps the router in `ChunkErrorBoundary`. The shell (`AppShell.tsx`) owns
