@@ -202,7 +202,7 @@ const indexRoute = createRoute({
 });
 
 // --- Canonical destinations (documentation/portal_navigation.md) ----------
-// Seven primary rooms plus the account area. Route ids stay explicit so
+// Eight primary rooms plus the account area. Route ids stay explicit so
 // params keep their validation; names and aliases come from lib/rooms.
 
 const chatRoute = createRoute({

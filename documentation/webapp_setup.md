@@ -2,8 +2,8 @@
 
 The web app is a browser interface for Goobster, served by the bot itself.
 It is one house with rooms, not eight products in a nav. The sidebar has
-**seven primary destinations** - Home, Chat, Knowledge, Projects,
-Discussions, Activity, Tools - plus an account area (Usage & limits,
+**eight primary destinations** - Home, Chat, Knowledge, Projects,
+Discussions, People, Activity, Tools - plus an account area (Usage & limits,
 Settings, and the operator-only Host). The house names stay as secondary
 labels ("Knowledge · Spitball", "Discussions · the Parlor") and every older
 URL still resolves; the contract, the room registry and the alias table are
@@ -284,13 +284,20 @@ actions (removal stays in the web UI).
 
 **Inviting people**: a discussion can be shared with up to three other
 humans. Open **People** in the discussion header and pick someone - the
-picker lists your Discord friends first, then the people you share a server
-with Goobster. Friends come from the Activity (the only place Discord lets
-an app read a friend list; enable `activity.relationships` and see
-`documentation/activity_setup.md`), so without it the picker falls back to
-your shared servers. Pasting a Discord user id always works. Invitees get a
-DM with accept/decline buttons and see the invitation in their own web app,
-so closed DMs never block joining.
+picker lists your Goobster friends first, then the people you share a
+Discord server with, then (for a typed name) other members of this
+installation. Pasting a user id always works. Invitees get a DM with
+accept/decline buttons and see the invitation in their own web app, so
+closed DMs never block joining.
+
+**Friends and direct messages**: the **People** room (`/app/people`) is
+where you find someone by name, verified email address or id, send a
+friend request (it lands in their Inbox and, when possible, their Discord
+DMs with Accept / Decline buttons), see which friends are online and
+message them one to one. Direct messages are between two people only - no
+model turn, no persona - and are separate from Chat and Discussions. The
+drawer's Friends section in a discussion shows the same list. Details:
+`documentation/friends_and_messages.md`.
 
 ## 7. How the exchange terminal works
 

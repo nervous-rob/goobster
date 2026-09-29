@@ -1,7 +1,7 @@
 ---
 title: "Portal navigation: rooms, canonical routes, and legacy aliases"
 kind: reference
-summary: The web portal's navigation contract - seven primary destinations (Home, Chat, Knowledge, Projects, Discussions, Activity, Tools) plus the account area, the room registry that drives the sidebar (or the top bar, a per-account layout choice) and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research, Projects' per-project views under /projects/:owner/:slug/:view), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, how a delivered attention notice is named from both Activity views, the per-account hidden-tool preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1 through E5).
+summary: The web portal's navigation contract - eight primary destinations (Home, Chat, Knowledge, Projects, Discussions, People, Activity, Tools) plus the account area, the room registry that drives the sidebar (or the top bar, a per-account layout choice) and active-room matching, registered room views (Activity's Inbox/Attention/Scheduled, Knowledge's Notes/Map/Research, People's Friends/Messages, Projects' per-project views under /projects/:owner/:slug/:view), canonical URLs, the older paths that still resolve, what a redirect preserves, the start-page preference, how a delivered attention notice is named from both Activity views, the per-account hidden-tool preference, and how server-written links should address the portal. Shipped behaviour (shared-instance Increment E, packages E1 through E5).
 tags: [portal, navigation, routes, rooms, web, shared-instance, aliases, tutorials]
 ---
 
@@ -10,8 +10,9 @@ tags: [portal, navigation, routes, rooms, web, shared-instance, aliases, tutoria
 The portal is organised around what a person is doing, with the house room
 names kept as secondary labels: **Chat** (the Study), **Knowledge**
 (Spitball), **Projects** (the Observatory), **Discussions** (the Parlor),
-**Activity** (Inbox, Attention, Scheduled) and **Tools** (Music Lab, Trading
-game, Card decks), with **Home** as the front door. Usage & limits, Settings
+**People** (Friends, Messages), **Activity** (Inbox, Attention, Scheduled)
+and **Tools** (Music Lab, Trading game, Card decks), with **Home** as the
+front door. Usage & limits, Settings
 and the operator-only Host room form the account area in the sidebar footer.
 
 Only the visible organisation changed. Internal ids (`observatory`,
@@ -35,9 +36,9 @@ entry declares:
 | `atmosphere` | The `room-*` body class the stylesheet paints. |
 | `requires` | `{ feature: 'projects' }` (Projects: organization, on by default), `{ feature: 'observatory' }` (code execution), `{ discord: true }` or `{ operator: true }`. A hidden room is not a forbidden one - a direct URL still resolves and explains itself. |
 | `legacyIds` | Older room names (`study`, `noticed`, `mtga`, …) accepted by the `#room/id` hash scheme and the start-page preference. |
-| `count` | Which badge the entry shows (`inbox` = Inbox unread count). |
+| `count` | Which badge the entry shows (`inbox` = Inbox unread count; `people` = pending friend requests plus unread direct messages, `me.people`). `roomBadgeCount(room, me)` in the typed façade is the one place that reads it. |
 | `tutorials` | The stable tutorial ids from [the guided-tutorial spec](guided_tutorials_spec.md) that belong to this room - all 28, each listed exactly once. |
-| `views` | Rooms with several views: Activity (Inbox, Attention, Scheduled) and Knowledge (Notes, Map, Research), each with its own path, optional secondary name and legacy ids; Projects' nine views (below), each with a path `segment` under a per-project detail path. `resolveRoomView(roomId, path)` names the view a path points at; `resolveActivityView` / `resolveKnowledgeView` / `resolveProjectView` are the typed shorthands. |
+| `views` | Rooms with several views: Activity (Inbox, Attention, Scheduled), Knowledge (Notes, Map, Research) and People (Friends, Messages), each with its own path, optional secondary name and legacy ids; Projects' nine views (below), each with a path `segment` under a per-project detail path. `resolveRoomView(roomId, path)` names the view a path points at; `resolveActivityView` / `resolveKnowledgeView` / `resolvePeopleView` / `resolveProjectView` are the typed shorthands. |
 | `detail` | Rooms whose views live under a per-item path: Projects declares `{ params: ['owner', 'slug'], defaultView: 'overview' }`. `resolveRoomDetail(roomId, path)` returns the item's params and view (the default when the segment is absent, `null` for an unknown segment); `detailPath(roomId, params, view)` - `projectPath()` in the typed façade - is the only way the client builds a project link. |
 
 The sidebar (`shell/AppShell.tsx`), the active-room highlight, the body
@@ -58,6 +59,7 @@ exists so `tests/portalRooms.test.js` can `require()` it.
 | Knowledge | `/knowledge/notes`, `/knowledge/map`, `/knowledge/research` (`/knowledge` → Notes, keeping query and hash) | `/spitball`, `/library`, and `/spitball/<view>`, `/library/<view>` |
 | Projects | `/projects` (list); `/projects/:ownerId/:slug/:view` (one project on one view; `/projects/:ownerId/:slug` → Overview, keeping query and hash); `/projects/:slug` (resolver, see below) | `/observatory`, `/workshop`, and the old `/observatory/{graph,search,people,events}` sub-pages (they rendered the same landing page); the view segments `mission`, `explorer` and `jobs` open Plan, Files and Runs; an unknown segment opens Overview |
 | Discussions | `/discussions`, `/discussions/:conversationId` | `/parlor`, `/parlor/:conversationId` |
+| People | `/people/friends`, `/people/messages`, `/people/messages/:threadId` (`/people` → Friends) | - (new room; the ids `friends` and `messages` are accepted by the hash scheme and the start-page preference) |
 | Activity | `/activity/inbox`, `/activity/attention`, `/activity/scheduled` (`/activity` → Inbox) | `/inbox`, `/noticed`, `/attention`, `/tasks` |
 | Tools | `/tools` | - |
 | Music Lab | `/conservatory`, `/conservatory/<mode>` | unchanged |
@@ -133,6 +135,20 @@ and Unfiled apps; identifiers keep their names. The contract is
 [ADR 0009](adr/0009-project-organization-contract.md) and the behaviour is
 in [projects.md](projects.md#the-portal-pane) (package E3).
 
+## People
+
+People is where a person manages who they know on this installation:
+**Friends** (`/people/friends` - find someone, answer or withdraw
+requests, the friend list with presence) and **Messages**
+(`/people/messages`, `/people/messages/:threadId` - direct-message
+threads with friends). A friend request also arrives as an Inbox row with
+its own Accept / Decline, and the Discussions drawer's Friends section and
+the sidebar's Friends online menu are views onto the same list that link
+here. The People entry's badge is `me.people.pending + me.people.unread`
+(incoming requests plus unread direct messages); it is never added to the
+Activity badge. The model, the routes and the privacy path are in
+[friends_and_messages.md](friends_and_messages.md).
+
 ## Activity
 
 Activity is one destination with three views, not one merged list. The
@@ -191,7 +207,7 @@ catalog use. `isRoomAvailable` is unchanged.
 ## Start page
 
 `appearance.startPage` accepts the room ids `home`, `chat`, `knowledge`,
-`projects`, `discussions`, `activity`, `tools` **and** every value people
+`projects`, `discussions`, `people`, `activity`, `tools` **and** every value people
 saved before the consolidation (`study`, `noticed`, `inbox`, `spitball`,
 `parlor`, `exchange`, `conservatory`). `packages/core/config/userSettingsSchema.js`
 and the registry hold the same list; `tests/portalRooms.test.js` fails if
@@ -234,7 +250,8 @@ reload, the account menu, the hidden ☰, and the scrolling bar on a phone.
 
 Inbox items, notices and invitations carry a portal path in `link`. New
 rows should use canonical paths (`/activity/scheduled`, `/activity/attention`,
-`/projects/<ownerId>/<slug>/<view>` or the list `/projects`, `/discussions`);
+`/projects/<ownerId>/<slug>/<view>` or the list `/projects`, `/discussions`,
+`/people/friends` for a friend request);
 a project link that has only the slug (`/projects/<slug>`) resolves through
 the chooser described above. Rows written earlier keep their older path and
 still open correctly through the aliases. Core cannot import the registry
@@ -261,9 +278,9 @@ only registers the routes they land on.
 
 ## Tests
 
-- `tests/portalRooms.test.js` - the registry: seven primary rooms, unique
-  ids/paths, all 28 tutorial ids once, the Knowledge views and their
-  resolution, the Projects detail pattern (`resolveRoomDetail`,
+- `tests/portalRooms.test.js` - the registry: eight primary rooms, unique
+  ids/paths, all 28 tutorial ids once, the Knowledge and People views and
+  their resolution, the Projects detail pattern (`resolveRoomDetail`,
   `detailPath`, legacy segments, list and resolver paths returning no view),
   alias rewriting (ids kept, server share excluded, lookalike
   prefixes ignored), room resolution for every canonical and legacy path,
@@ -281,8 +298,8 @@ only registers the routes they land on.
   touching `chat.disabledTools`. SQLite and Postgres.
 - `e2e/navigation.spec.js` - the real router: the legacy → canonical
   matrix with query and hash preserved and the right sidebar entry active,
-  the `#room/id` hash, the seven-entry sidebar with Host hidden from a
-  member, the Activity views and Back/Forward, the Tools cards with a
+  the `#room/id` hash, the eight-entry sidebar with Host hidden from a
+  member, the Activity views and Back/Forward, the People views, the Tools cards with a
   locally explained unavailable tool, Home's creation choices and the
   Personal memory shortcut, a settings return link from a legacy path, a
   start page saved as `study`, an Inbox row stored with a `/tasks` link, and

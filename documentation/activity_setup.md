@@ -21,7 +21,6 @@ In `config.json`:
     "activity": {
         "enabled": true,
         "devMode": false,
-        "relationships": false,
         "clientSecret": "YOUR_OAUTH2_CLIENT_SECRET"
     }
 }
@@ -36,8 +35,9 @@ In `config.json`:
   `/api/activity/dev-session` so the game can be played in a plain browser at
   `http://localhost:3000/activity/`. **Never enable on an internet-exposed
   server** - it bypasses Discord authentication entirely.
-- `relationships` - syncs the player's Discord friend list so the web app can
-  offer a friend picker (see [Friend list sync](#8-friend-list-sync-optional)).
+
+An older `relationships` flag (Discord friend-list sync) is no longer read;
+see [section 8](#8-friends-and-the-activity).
 
 ## 2. Public HTTPS exposure
 
@@ -207,25 +207,20 @@ don't want test balances mixed into a live server's leaderboard. Add
 `&autojoin=1` to skip the identity form and `&game=roulette` (or
 `blackjack`/`baccarat`) to skip the lobby.
 
-## 8. Friend list sync (optional)
+## 8. Friends and the Activity
 
-The Activity is the **only** Goobster surface that can read a Discord friend
-list - a bot token cannot see relationships at all. With `relationships: true`,
-the client asks for the `relationships.read` scope, calls the Embedded App SDK's
-`getRelationships()`, and POSTs the roster to `/api/activity/relationships`,
-where it is cached (`user_friends`). The web app then uses it as the source for
-its people pickers - most visibly, inviting a friend into a parlor discussion
-instead of pasting a Discord user id.
+The Activity does **not** sync anyone's Discord friend list any more. Earlier
+versions could ask for the `relationships.read` scope and post the roster to
+`/api/activity/relationships`, but that only worked on an app that had
+accepted Discord's Social SDK terms, so on an ordinary installation the web
+app's friend list stayed empty forever. Friends are now Goobster's own
+record: people find each other in the portal's **People** room (by name,
+verified email, a shared server or a pasted id), send a friend request that
+lands in the other person's Inbox and Discord DMs, and once accepted can see
+each other's presence and message each other. The `relationships` config
+flag, the route and the `user_friends` table are gone; see
+[friends_and_messages.md](friends_and_messages.md).
 
-To enable it, accept the **Social SDK terms** for your application (Developer
-Portal → your app → **Social SDK → Getting Started**); no manual approval from
-Discord is needed. Requesting the scope *without* accepting the terms breaks the
-authorize call, so the client falls back to the base scopes automatically and the
-game still works - you just get no friends in the picker. The sync is
-fire-and-forget and re-runs on every Activity load, so the cache stays fresh and
-is always re-derivable. `/forget-me` erases a user's roster and their appearance
-in everyone else's.
-
-Without this (or without the Activity at all), the picker still works: it falls
-back to the people you share a Discord server with, and a raw user id is always
-accepted.
+The invite pickers for projects and discussions never depended on it: they
+list your Goobster friends, the people you share a Discord server with, and
+members of this installation, and a raw user id is always accepted.
