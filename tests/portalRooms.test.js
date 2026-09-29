@@ -1,6 +1,6 @@
 /**
  * The portal room registry (apps/web/src/lib/rooms.cjs): the navigation
- * contract behind the seven primary destinations. Legacy URLs must keep
+ * contract behind the eight primary destinations. Legacy URLs must keep
  * their meaning, specific paths must beat broad prefixes, and the
  * start-page preference must accept the same values on both sides of the
  * API. Browser wiring is covered by e2e/navigation.spec.js.
@@ -9,10 +9,21 @@ const rooms = require('../apps/web/src/lib/rooms.cjs');
 const { START_PAGES, TOOL_ROOM_IDS } = require('../packages/core/config/userSettingsSchema');
 
 describe('room registry shape', () => {
-    test('exposes exactly the seven primary destinations, in order', () => {
+    test('exposes exactly the eight primary destinations, in order', () => {
         expect(rooms.PRIMARY_ROOMS.map((room) => room.id)).toEqual([
-            'home', 'chat', 'knowledge', 'projects', 'discussions', 'activity', 'tools'
+            'home', 'chat', 'knowledge', 'projects', 'discussions', 'people', 'activity', 'tools'
         ]);
+    });
+
+    test('People registers Friends and Messages as views under /people', () => {
+        const views = rooms.ROOM_BY_ID.people.views;
+        expect(views.map((view) => view.id)).toEqual(['friends', 'messages']);
+        expect(views.map((view) => view.path)).toEqual(['/people/friends', '/people/messages']);
+        expect(rooms.ROOM_BY_ID.people.count).toBe('people');
+        expect(rooms.resolvePeopleView('/people/friends')).toBe('friends');
+        expect(rooms.resolvePeopleView('/people/messages/12')).toBe('messages');
+        expect(rooms.resolvePeopleView('/people')).toBeNull();
+        expect(rooms.resolvePeopleView('/chat')).toBeNull();
     });
 
     test('keeps Usage, Settings and Host in the account area and specialist rooms under Tools', () => {
@@ -154,7 +165,7 @@ describe('canonicalPath', () => {
 
     test('leaves canonical, public and account paths alone', () => {
         for (const path of ['/', '/chat', '/chat/9', '/knowledge', '/knowledge/notes', '/knowledge/map', '/knowledge/research', '/projects', '/discussions/4',
-            '/activity/inbox', '/activity/attention', '/activity/scheduled', '/tools',
+            '/people/friends', '/people/messages/2', '/activity/inbox', '/activity/attention', '/activity/scheduled', '/tools',
             '/conservatory', '/conservatory/rhythm', '/exchange', '/decks', '/usage', '/host',
             '/settings', '/settings/memory', '/share/tok']) {
             expect(rooms.canonicalPath(path)).toBe(path);
@@ -183,6 +194,7 @@ describe('resolveRoom', () => {
         ['/projects', 'projects'], ['/observatory', 'projects'], ['/observatory/graph', 'projects'], ['/workshop', 'projects'],
         ['/projects/emergence-study', 'projects'], ['/projects/800/emergence-study/runs', 'projects'],
         ['/discussions/3', 'discussions'], ['/parlor', 'discussions'],
+        ['/people', 'people'], ['/people/friends', 'people'], ['/people/messages', 'people'], ['/people/messages/4', 'people'],
         ['/activity', 'activity'], ['/activity/inbox', 'activity'], ['/activity/attention', 'activity'],
         ['/activity/scheduled', 'activity'], ['/inbox', 'activity'], ['/noticed', 'activity'], ['/tasks', 'activity'], ['/attention', 'activity'],
         ['/tools', 'tools'],
@@ -226,6 +238,7 @@ describe('roomDisplayName (settings return links)', () => {
         ['/observatory', 'Projects'], ['/projects/emergence-study', 'Projects'],
         ['/projects/800/emergence-study/runs', 'Projects · Runs'], ['/projects/800/emergence-study', 'Projects · Overview'],
         ['/parlor/2', 'Discussions'],
+        ['/people/friends', 'People · Friends'], ['/people/messages/3', 'People · Messages'],
         ['/noticed', 'Activity · Attention'], ['/activity/inbox', 'Activity · Inbox'], ['/tasks', 'Activity · Scheduled'],
         ['/conservatory/rhythm', 'Music Lab'], ['/exchange', 'Trading game'],
         ['/', 'Home']
@@ -287,6 +300,7 @@ describe('start page', () => {
         expect(rooms.startPageTarget('knowledge')).toBe('/knowledge');
         expect(rooms.startPageTarget('projects')).toBe('/projects');
         expect(rooms.startPageTarget('discussions')).toBe('/discussions');
+        expect(rooms.startPageTarget('people')).toBe('/people/friends');
         expect(rooms.startPageTarget('activity')).toBe('/activity/inbox');
         expect(rooms.startPageTarget('tools')).toBe('/tools');
     });
@@ -319,6 +333,7 @@ describe('legacy #room/id hashes', () => {
         ['#parlor/7', '/discussions/7'], ['#spitball', '/knowledge'], ['#library', '/knowledge'], ['#memory', '/knowledge'],
         ['#workshop', '/projects'], ['#observatory', '/projects'],
         ['#inbox', '/activity/inbox'], ['#noticed', '/activity/attention'], ['#tasks', '/activity/scheduled'],
+        ['#friends', '/people/friends'], ['#messages', '/people/messages'], ['#messages/8', '/people/messages/8'],
         ['#expeditions', '/knowledge/research'],
         ['#conservatory/rhythm', '/conservatory/rhythm'], ['#exchange', '/exchange'], ['#mtga', '/decks'], ['#decks', '/decks'],
         ['#usage', '/usage'], ['#settings', '/settings'], ['#home', '/'],

@@ -10,7 +10,7 @@ const { test, expect } = require('@playwright/test');
 const { login, openRoom } = require('./helpers');
 const C = require('./constants');
 
-const PRIMARY = ['Chat', 'Knowledge', 'Projects', 'Discussions', 'Activity', 'Tools'];
+const PRIMARY = ['Chat', 'Knowledge', 'Projects', 'Discussions', 'People', 'Activity', 'Tools'];
 
 async function activeRoom(page) {
     return page.getByRole('navigation', { name: 'Rooms' }).locator('a[aria-current="page"]').getAttribute('data-room');
@@ -72,7 +72,7 @@ test.describe('legacy URLs keep their meaning', () => {
 });
 
 test.describe('sidebar', () => {
-    test('shows the seven primary destinations, the account area, and hides Host from a member', async ({ page }) => {
+    test('shows the eight primary destinations, the account area, and hides Host from a member', async ({ page }) => {
         await login(page);
         const nav = page.getByRole('navigation', { name: 'Rooms' });
         for (const name of PRIMARY) {
@@ -87,6 +87,20 @@ test.describe('sidebar', () => {
         await expect(nav.getByText('the Parlor')).toBeVisible();
         await expect(nav.getByRole('link', { name: /^(Study|Noticed|Tasks|Inbox|Exchange|Decks|Conservatory)\b/ })).toHaveCount(0);
         expect(await nav.locator('a.nav-btn').count()).toBe(PRIMARY.length + 1);
+    });
+
+    test('People keeps Friends and Messages as separate views under one entry', async ({ page }) => {
+        await login(page);
+        await openRoom(page, /People/);
+        await expect(page).toHaveURL(/\/app\/people\/friends$/);
+        const tabs = page.getByRole('navigation', { name: 'People views' });
+        await expect(tabs.getByRole('link', { name: /Friends/ })).toHaveAttribute('aria-current', 'page');
+        await expect(page.getByRole('heading', { name: /^Friends/ })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Find someone' })).toBeVisible();
+
+        await tabs.getByRole('link', { name: /Messages/ }).click();
+        await expect(page).toHaveURL(/\/app\/people\/messages$/);
+        await expect(page.getByRole('heading', { name: /^Messages/ })).toBeVisible();
     });
 
     test('Activity keeps Inbox, Attention and Scheduled as separate views under one entry', async ({ page }) => {
@@ -179,7 +193,7 @@ test.describe('deep links that carry state', () => {
             await fresh.goto('/app/settings/appearance');
             await expect(fresh.locator('#start-page-input')).toHaveValue('chat');
             await expect(fresh.locator('#start-page-input').locator('option')).toHaveText([
-                'Home', 'Chat', 'Knowledge', 'Projects', 'Discussions', 'Activity', 'Tools'
+                'Home', 'Chat', 'Knowledge', 'Projects', 'Discussions', 'People', 'Activity', 'Tools'
             ]);
         } finally {
             await fresh.close();

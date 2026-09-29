@@ -18,12 +18,12 @@ type Roster = {
     invites: PendingInvite[];
 };
 type Person = { id: string; name: string; avatar?: string | null; source: 'friend' | 'server' | 'member'; via?: string | null };
-type Invitable = { people: Person[]; friendsSynced: boolean; syncedAt: string | null };
+type Invitable = { people: Person[]; hasFriends: boolean };
 
 /**
  * People of one project: the owner, accepted collaborators (remove/leave),
  * pending invitations (owner can withdraw), and — for the owner — the
- * invite picker sourced from Discord friends and shared servers. The
+ * invite picker sourced from friends (People) and shared servers. The
  * People view renders this inline; the modal wrapper below is the
  * secondary presentation from the project header.
  */
@@ -256,9 +256,9 @@ function InvitePicker({
                     <div className="hint">
                         {debounced
                             ? 'Nobody matches that — try the start of their name, or paste their user id.'
-                            : (invitableQ.data?.friendsSynced
+                            : (invitableQ.data?.hasFriends
                                 ? 'Everyone you know is already here — type a name to find other members.'
-                                : 'Type the start of a name to find members here. Discord friends appear once Goobster\'s Activity has synced them.')}
+                                : 'Type the start of a name to find members here. Your friends (People) appear here without searching.')}
                     </div>
                 )}
             </div>

@@ -1,24 +1,23 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useSession } from '../hooks/useSession';
 
-type Friend = { id: string; name: string; avatar?: string | null; online?: boolean };
-
 /**
- * The sidebar's active-friends menu: which of the user's Discord friends
- * are in the Goobster portal right now (the `online` flag on
- * GET /api/app/friends, derived from live web sessions). The poll doubles
- * as this user's own presence heartbeat - every authenticated request
- * touches their session - and pauses in background tabs, which is exactly
- * the "active" semantic we want. Renders nothing until a friend roster has
- * been synced (the Activity is the collector).
+ * The sidebar's active-friends menu: which of the user's friends are in the
+ * Goobster portal right now (the `online` flag on GET /api/app/friends,
+ * derived from live web sessions and each friend's own visibility setting).
+ * The poll doubles as this user's own presence heartbeat - every
+ * authenticated request touches their session - and pauses in background
+ * tabs, which is exactly the "active" semantic we want. Renders nothing
+ * until the person has a friend (documentation/friends_and_messages.md).
  */
 export function ActiveFriends() {
     const me = useSession();
     const friendsQ = useQuery({
         queryKey: keys.friends,
-        queryFn: () => api.friends() as Promise<{ friends: Friend[]; syncedAt: string | null }>,
+        queryFn: () => api.friends(),
         // Public share pages render this shell with no session; a signed-out
         // 401 would reset the whole browser session on every poll.
         enabled: Boolean(me),
@@ -34,13 +33,13 @@ export function ActiveFriends() {
                 <div className="hint active-friends-empty">Nobody right now</div>
             )}
             {online.map((friend) => (
-                <div key={friend.id} className="active-friend" title={`${friend.name} is in the portal`}>
+                <Link key={friend.id} to="/people/friends" className="active-friend" title={`${friend.name} is in the portal`}>
                     {friend.avatar
                         ? <img className="person-avatar" src={friend.avatar} alt="" />
                         : <span className="person-avatar">🙂</span>}
                     <span className="person-name">{friend.name}</span>
                     <span className="presence-dot online" aria-label="online" />
-                </div>
+                </Link>
             ))}
         </div>
     );

@@ -1,4 +1,4 @@
-import type { AccessRequest, AccessRequestStatusView, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -314,7 +314,7 @@ export const api = {
     inboxReadAll: () => request<{ updated: number }>('/api/app/inbox/read-all', { method: 'POST' }),
     inboxArchive: (id: number) => request<{ archived: boolean }>(`/api/app/inbox/${id}/archive`, { method: 'POST' }),
     people: (q: string) =>
-        request<{ people: Person[]; friendsSynced: boolean; discord: boolean }>(`/api/app/people?q=${encodeURIComponent(q)}`),
+        request<{ people: Person[]; hasFriends: boolean; discord: boolean }>(`/api/app/people?q=${encodeURIComponent(q)}`),
 
     attention: () => request('/api/app/attention'),
     attentionEnroll: (initiative?: string) =>
@@ -691,7 +691,29 @@ export const api = {
     parlorVoices: () => request('/api/app/parlor/voices'),
     parlorSetPersonaVoice: (personaId: number, voice: string) =>
         request(`/api/app/parlor/personas/${personaId}/voice`, { method: 'PUT', body: { voice } }),
-    friends: () => request('/api/app/friends'),
+    // --- People: friends and direct messages
+    friends: () => request<FriendsOverview>('/api/app/friends'),
+    friendSearch: (q: string) => request<FriendSearch>(`/api/app/friends/search?q=${encodeURIComponent(q)}`),
+    friendRequest: (userId: string) =>
+        request<{ request: FriendRequest; status: 'pending' | 'accepted'; dmSent: boolean }>('/api/app/friends/requests', {
+            method: 'POST', body: { userId }
+        }),
+    friendAccept: (requestId: number) =>
+        request<{ request: FriendRequest; status: 'accepted'; friend: Friend | null }>(`/api/app/friends/requests/${requestId}/accept`, { method: 'POST' }),
+    friendDecline: (requestId: number) =>
+        request<{ request: FriendRequest; status: 'declined' }>(`/api/app/friends/requests/${requestId}/decline`, { method: 'POST' }),
+    friendCancel: (requestId: number) =>
+        request<{ cancelled: true }>(`/api/app/friends/requests/${requestId}`, { method: 'DELETE' }),
+    friendRemove: (friendId: string) =>
+        request<{ removed: true }>(`/api/app/friends/${encodeURIComponent(friendId)}`, { method: 'DELETE' }),
+    dmThreads: () => request<DmThreadList>('/api/app/dm/threads'),
+    dmOpen: (userId: string) => request<DmThread>('/api/app/dm/threads', { method: 'POST', body: { userId } }),
+    dmThread: (threadId: number, beforeId?: number | null) =>
+        request<DmThreadPage>(`/api/app/dm/threads/${threadId}${beforeId ? `?beforeId=${beforeId}` : ''}`),
+    dmSend: (threadId: number, content: string) =>
+        request<{ message: DmMessage }>(`/api/app/dm/threads/${threadId}/messages`, { method: 'POST', body: { content } }),
+    dmMarkRead: (threadId: number) =>
+        request<{ read: true; lastReadMessageId: number }>(`/api/app/dm/threads/${threadId}/read`, { method: 'POST', body: {} }),
 
     // Song Studio shared songs
     studioSongs: () => request<{ songs: StudioSongSummary[] }>('/api/app/studio/songs'),

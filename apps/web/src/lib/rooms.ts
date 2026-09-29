@@ -12,10 +12,11 @@ export type RoomRequirement = {
 };
 
 export type ActivityViewId = 'inbox' | 'attention' | 'scheduled';
+export type PeopleViewId = 'friends' | 'messages';
 export type KnowledgeViewId = 'notes' | 'map' | 'research';
 export type ProjectViewId =
     | 'overview' | 'plan' | 'conversation' | 'knowledge' | 'files' | 'apps' | 'runs' | 'people' | 'automations';
-export type RoomViewId = ActivityViewId | KnowledgeViewId | ProjectViewId;
+export type RoomViewId = ActivityViewId | PeopleViewId | KnowledgeViewId | ProjectViewId;
 
 /**
  * A registered view inside a room. Fixed views (Activity, Knowledge) carry
@@ -33,6 +34,7 @@ export type RoomView<Id extends RoomViewId = RoomViewId> = {
 };
 
 export type ActivityView = RoomView<ActivityViewId>;
+export type PeopleView = RoomView<PeopleViewId>;
 export type KnowledgeView = RoomView<KnowledgeViewId>;
 export type ProjectView = RoomView<ProjectViewId>;
 
@@ -41,7 +43,7 @@ export type RoomDetailPattern = { params: string[]; defaultView: RoomViewId };
 export type ProjectParams = { owner: string; slug: string };
 
 export type RoomId =
-    | 'home' | 'chat' | 'knowledge' | 'projects' | 'discussions' | 'activity' | 'tools'
+    | 'home' | 'chat' | 'knowledge' | 'projects' | 'discussions' | 'people' | 'activity' | 'tools'
     | 'music' | 'trading' | 'decks'
     | 'usage' | 'settings' | 'host'
     | 'share' | 'docs';
@@ -57,7 +59,7 @@ export type Room = {
     atmosphere: string;
     requires?: RoomRequirement;
     legacyIds?: string[];
-    count?: 'inbox';
+    count?: 'inbox' | 'people';
     blurb?: string;
     unavailable?: string;
     tutorials: string[];
@@ -68,7 +70,7 @@ export type Room = {
 export type Alias = { from: string; to: string; landing?: boolean };
 
 export type StartPage =
-    | 'home' | 'chat' | 'knowledge' | 'projects' | 'discussions' | 'activity' | 'tools'
+    | 'home' | 'chat' | 'knowledge' | 'projects' | 'discussions' | 'people' | 'activity' | 'tools'
     | 'study' | 'spitball' | 'parlor' | 'noticed' | 'inbox' | 'exchange' | 'conservatory';
 
 export type StartPageOption = { value: StartPage; label: string };
@@ -100,6 +102,7 @@ type Registry = {
     resolveRoomDetail: (roomId: RoomId, pathname: string) => { params: Record<string, string>; view: RoomViewId | null } | null;
     detailPath: (roomId: RoomId, params: Record<string, string>, viewId?: RoomViewId | null) => string;
     resolveActivityView: (pathname: string) => ActivityViewId | null;
+    resolvePeopleView: (pathname: string) => PeopleViewId | null;
     resolveKnowledgeView: (pathname: string) => KnowledgeViewId | null;
     atmosphereFor: (roomId: string) => string;
     roomDisplayName: (pathname: string) => string;
@@ -130,6 +133,7 @@ export const resolveRoomView = rooms.resolveRoomView;
 export const resolveRoomDetail = rooms.resolveRoomDetail;
 export const detailPath = rooms.detailPath;
 export const resolveActivityView = rooms.resolveActivityView;
+export const resolvePeopleView = rooms.resolvePeopleView;
 export const resolveKnowledgeView = rooms.resolveKnowledgeView;
 export const atmosphereFor = rooms.atmosphereFor;
 export const roomDisplayName = rooms.roomDisplayName;
@@ -163,4 +167,16 @@ export function projectViewFromParam(segment: string | undefined): ProjectViewId
     if (segment === undefined) return ROOM_BY_ID.projects.detail?.defaultView as ProjectViewId;
     const view = PROJECT_VIEWS.find((entry) => entry.segment === segment || (entry.legacyIds || []).includes(segment));
     return (view?.id as ProjectViewId | undefined) || null;
+}
+
+/**
+ * The sidebar badge for a room. Activity shows the Inbox's unread count
+ * alone (a delivered attention notice is that same inbox row, so notice
+ * counts are never added). People shows friend requests waiting for an
+ * answer plus unread direct messages.
+ */
+export function roomBadgeCount(room: Room, me: { inbox?: { unread?: number }; people?: { pending?: number; unread?: number } } | null | undefined): number {
+    if (room.count === 'inbox') return me?.inbox?.unread || 0;
+    if (room.count === 'people') return (me?.people?.pending || 0) + (me?.people?.unread || 0);
+    return 0;
 }

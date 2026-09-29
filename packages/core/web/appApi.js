@@ -35,6 +35,7 @@ const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
 const { mountSettings } = require('./routes/settings');
 const { mountInbox } = require('./routes/inbox');
+const { mountPeople } = require('./routes/people');
 const { mountFollowedSources } = require('./routes/followedSources');
 const { mountTutorials } = require('./routes/tutorials');
 const { mountStudio } = require('./routes/studio');
@@ -67,6 +68,7 @@ function createWebAppApp(ctx) {
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
     mountInbox(app, ctx, helpers);
+    mountPeople(app, ctx, helpers);
     mountFollowedSources(app, ctx, helpers);
     mountTutorials(app, ctx, helpers);
     mountStudio(app, ctx, helpers);

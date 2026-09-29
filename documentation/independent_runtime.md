@@ -4,7 +4,7 @@ Goobster runs without Discord. This document describes what that means
 mechanically: the Discord adapter switch, the assistant identity that
 exists with it off, the in-app **Inbox** that unattended work lands in, how
 the schedulers start in every process shape, how people find each other on
-an installation with no Discord friends list, and what a Discord-specific
+an installation with no Discord servers to browse, and what a Discord-specific
 feature says when Discord is not there. It is Increment C of the
 [shared-instance plan](shared_instance_product_spec.md#9-implementation-sequence)
 (spec §6, *Operation without Discord*).
@@ -303,9 +303,10 @@ and still needs a bot token, because that process *is* the Discord adapter.
 
 ## Native people discovery
 
-An installation with no Discord has no friends list and no shared servers,
-so `friendService.listInvitable` gained a third source that exists
-everywhere: **members of this installation**.
+An installation with no Discord has no shared servers to list people from,
+so `friendService.listInvitable` has a source that exists everywhere:
+**members of this installation** (alongside the caller's Goobster friends,
+which are native too - see [friends_and_messages.md](friends_and_messages.md)).
 
 - `identityService.searchPeople({ actorId, q, exclude, limit })` matches the
   start of a display name or login name among *active* accounts, excluding
@@ -318,9 +319,9 @@ everywhere: **members of this installation**.
 - `identityService.describeMember(principalId)` resolves an exact principal
   id to `{ id, name }` for the invite confirmation.
 - The People picker (Observatory and Parlor) shows members with a
-  `member` badge and "member of `<installationName>`"; Discord friends and
-  server mates still appear when Discord is connected. Pasting an id works
-  for any principal shape.
+  `member` badge and "member of `<installationName>`"; your Goobster
+  friends come first, and Discord server mates appear when Discord is
+  connected. Pasting an id works for any principal shape.
 - `GET /api/app/people?q=` is the same picker for the web client.
 
 Invitations (`projectService.invite`, `parlorService.invite`) accept any

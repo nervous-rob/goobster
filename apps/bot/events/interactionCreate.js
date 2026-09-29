@@ -83,6 +83,21 @@ module.exports = {
                     return;
                 }
 
+                // Friend requests - accepted or declined from the DM echo's
+                // buttons (documentation/friends_and_messages.md).
+                if (type === 'friendreq') {
+                    const friendService = require('@goobster/core/services/friendService');
+                    await interaction.deferUpdate();
+                    interactionState.deferred = true;
+                    const edit = await friendService.handleButton(action, Number(requestId), interaction);
+                    if (edit) {
+                        await interaction.message.edit(edit).catch(error => {
+                            console.error('Failed to update friend request message:', error);
+                        });
+                    }
+                    return;
+                }
+
                 // Confirmable integration actions (agent launch / issue create)
                 if (type === 'intaction') {
                     const integrationActionService = require('@goobster/core/services/integrationActionService');

@@ -352,13 +352,9 @@ class PrivacyService {
             { userId }
         );
 
-        // Cached Discord friend roster (synced by the Activity)
-        const friends = await db.get(
-            `SELECT
-                 (SELECT COUNT(*) FROM user_friends WHERE ownerId = @userId) AS mine,
-                 (SELECT COUNT(*) FROM user_friends WHERE friendId = @userId) AS listedBy`,
-            { userId }
-        );
+        // Friends and direct messages (documentation/friends_and_messages.md)
+        const friends = await require('./friendService').countForUser(userId);
+        const dms = await require('./directMessageService').countForUser(userId);
 
         const tavernCharacter = await db.get(
             `SELECT name, calling, adventuresCompleted FROM tavern_characters
@@ -574,8 +570,13 @@ class PrivacyService {
                 { userId }
             ))?.c || 0,
             friends: {
-                cached: friends?.mine || 0,
-                listedByOthers: friends?.listedBy || 0
+                friends: friends.friends,
+                incomingRequests: friends.incoming,
+                outgoingRequests: friends.outgoing
+            },
+            directMessages: {
+                threads: dms.threads,
+                sent: dms.messages
             },
             integrations: integrations.map(row => ({
                 provider: row.provider,
@@ -979,16 +980,11 @@ class PrivacyService {
             counts.parlor += (await db.run(
                 'DELETE FROM parlor_conversations WHERE ownerId = @userId', { userId }
             )).changes;
-            // The cached Discord friend roster (synced by the Activity):
-            // both the user's own list and their appearance in anyone
-            // else's. It re-syncs for those users next time they open the
-            // Activity - this is a cache, never a source of truth.
-            counts.friends = (await db.run(
-                'DELETE FROM user_friends WHERE ownerId = @userId', { userId }
-            )).changes;
-            counts.friends += (await db.run(
-                'DELETE FROM user_friends WHERE friendId = @userId', { userId }
-            )).changes;
+            // Friendships (either seat) and every direct-message thread
+            // the person is on - a private conversation does not survive
+            // one of its two people (documentation/friends_and_messages.md).
+            counts.friends = await require('./friendService').forgetUser(userId, db);
+            counts.directMessages = await require('./directMessageService').forgetUser(userId, db);
 
             // Stored platform API tokens (Notion/GitHub): credentials are
             // the most urgent thing to erase.
@@ -1318,9 +1314,16 @@ class PrivacyService {
             parlor_conversations: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_conversations WHERE ownerId = @userId', { userId }
             )).c,
-            user_friends: (await db.get(
-                `SELECT COUNT(*) AS c FROM user_friends
-                 WHERE ownerId = @userId OR friendId = @userId`, { userId }
+            friendships: (await db.get(
+                `SELECT COUNT(*) AS c FROM friendships
+                 WHERE lowId = @userId OR highId = @userId`, { userId }
+            )).c,
+            dm_threads: (await db.get(
+                `SELECT COUNT(*) AS c FROM dm_threads
+                 WHERE lowId = @userId OR highId = @userId`, { userId }
+            )).c,
+            dm_messages_authored: (await db.get(
+                'SELECT COUNT(*) AS c FROM dm_messages WHERE senderId = @userId', { userId }
             )).c,
             parlor_members: (await db.get(
                 'SELECT COUNT(*) AS c FROM parlor_members WHERE userId = @userId', { userId }

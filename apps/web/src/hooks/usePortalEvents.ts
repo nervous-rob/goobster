@@ -7,7 +7,8 @@ const KINDS = [
     'hello', 'followup-delivered', 'automation-ran', 'agent-run-updated',
     'attention-noticed', 'inbox', 'web-turn',
     'parlor-turn', 'parlor-invite', 'parlor-members', 'parlor-mention',
-    'project-changed', 'project-invite', 'project-members', 'settings-changed'
+    'project-changed', 'project-invite', 'project-members', 'settings-changed',
+    'friends', 'dm-message'
 ];
 
 export type InboxEvent = {

@@ -24,6 +24,7 @@ const parlorLiveService = require('../services/parlorLiveService');
 const studioSongService = require('../services/studioSongService');
 const studioLiveService = require('../services/studioLiveService');
 const friendService = require('../services/friendService');
+const directMessageService = require('../services/directMessageService');
 const presenceService = require('../services/presenceService');
 const userIntegrationService = require('../services/userIntegrationService');
 const webVoiceService = require('../services/webVoiceService');
@@ -84,6 +85,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         studioSongs: deps.studioSongs || studioSongService,
         studioLive: deps.studioLive || studioLiveService,
         friends: deps.friends || friendService,
+        dm: deps.dm || directMessageService,
         presence: deps.presence || presenceService,
         integrations: deps.integrations || userIntegrationService,
         voice: deps.voice || webVoiceService,

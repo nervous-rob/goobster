@@ -1219,13 +1219,13 @@ class ParlorService {
     }
 
     /**
-     * People the owner could invite into this discussion: their Discord
-     * friends (the roster the Activity synced) first, then the people they
-     * share a server with - minus whoever is already seated at the table or
-     * holding a pending invitation. The source for the invite picker, so
-     * nobody has to paste a snowflake.
+     * People the owner could invite into this discussion: their Goobster
+     * friends first, then the people they share a Discord server with, then
+     * (for a query) members of this installation - minus whoever is already
+     * seated at the table or holding a pending invitation. The source for
+     * the invite picker, so nobody has to paste a snowflake.
      * @param {Object} params - { gateway, ownerId, conversationId, q? }
-     * @returns {Promise<{people: Array, friendsSynced: boolean, syncedAt: string|null}>}
+     * @returns {Promise<{people: Array, hasFriends: boolean}>}
      */
     async listInvitable({ gateway = null, client = null, ownerId, conversationId, q = null }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
@@ -2295,9 +2295,9 @@ class ParlorService {
     /**
      * Every display name we know for these users: parlor member snapshots,
      * names on their messages in this discussion (when one is given), their
-     * web-session login name, and their appearances in friend rosters. All
-     * are snapshots the user already shows under - no new lookups, no
-     * gateway needed.
+     * web-session login name, and their principal's display name. All are
+     * names the user already shows under - no new lookups, no gateway
+     * needed.
      * @returns {Promise<Map<string, Set<string>>>}
      */
     async _displayNames(userIds, conversationId = null) {
@@ -2326,10 +2326,10 @@ class ParlorService {
             params
         )) add(row.userId, row.userName);
         for (const row of await db.all(
-            `SELECT friendId, friendName FROM user_friends
-             WHERE friendId IN (${placeholders}) AND friendName IS NOT NULL`,
+            `SELECT id, displayName FROM principals
+             WHERE id IN (${placeholders}) AND displayName IS NOT NULL`,
             params
-        )) add(row.friendId, row.friendName);
+        )) add(row.id, row.displayName);
         return map;
     }
 

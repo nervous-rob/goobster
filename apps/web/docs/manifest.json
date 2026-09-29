@@ -8,6 +8,7 @@
     ["research", "Research expeditions", "documentation/spitball_expeditions.md"],
     ["briefs", "Research briefs", "documentation/research_brief.md"],
     ["projects", "Projects", "documentation/projects.md"],
+    ["people", "Friends and direct messages", "documentation/friends_and_messages.md"],
     ["attention", "Attention and scheduled work", "documentation/attention.md"],
     ["settings", "User settings", "documentation/user_settings.md"],
     ["voice", "Voice chat", "documentation/voice_commands.md"],

@@ -88,6 +88,7 @@ const GROUPS = [
             'appletCapabilities',
             'appletCapabilityApi',
             'appStream',
+            'directMessageService',
             'friendService',
             'markdownRenderer',
             'documentationWiki',
