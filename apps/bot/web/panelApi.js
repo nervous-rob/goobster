@@ -23,6 +23,14 @@ function createPanelApi({ panelService, logger = console }) {
         res.json(panelService.getStatus());
     }));
 
+    router.get('/system', wrap(async (req, res) => {
+        res.json(await panelService.getSystemHealth());
+    }));
+
+    router.get('/ai/models', wrap(async (req, res) => {
+        res.json(await panelService.listModelCatalog(req.query.provider));
+    }));
+
     router.get('/guilds', wrap(async (req, res) => {
         res.json({ guilds: panelService.listGuilds() });
     }));
@@ -82,7 +90,7 @@ function createPanelApi({ panelService, logger = console }) {
     }));
 
     router.post('/guilds/:guildId/memory/exclusions', wrap(async (req, res) => {
-        res.json(panelService.setChannelExclusion(
+        res.json(await panelService.setChannelExclusion(
             req.params.guildId,
             req.body?.channelId,
             req.body?.exclude === true
@@ -90,7 +98,7 @@ function createPanelApi({ panelService, logger = console }) {
     }));
 
     router.post('/guilds/:guildId/memory/forget', wrap(async (req, res) => {
-        res.json(panelService.forgetGuildMemories(req.params.guildId));
+        res.json(await panelService.forgetGuildMemories(req.params.guildId));
     }));
 
     router.get('/settings/tts-voices', wrap(async (req, res) => {
@@ -152,6 +160,12 @@ function createPanelApi({ panelService, logger = console }) {
         }
         if (error?.type === 'entity.parse.failed' || error?.type === 'entity.too.large') {
             res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'Invalid request body.' } });
+            return;
+        }
+        // Model-registry policy errors carry their own 400 + code; a
+        // selection the registry refuses should read as such on the screen.
+        if (error?.name === 'ModelPolicyError') {
+            res.status(400).json({ error: { code: error.code || 'BAD_REQUEST', message: error.message } });
             return;
         }
         logger.error?.('Panel API error:', error);

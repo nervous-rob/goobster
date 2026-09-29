@@ -83,7 +83,7 @@ function makeMusicService(overrides = {}) {
     };
 }
 
-function build({ musicService, sessions = new Set(), aiReply = 'generated draft' } = {}) {
+function build({ musicService, sessions = new Set(), aiReply = 'generated draft', sttConfigured = true, tts = {} } = {}) {
     const textChannel = makeTextChannel({ id: TEXT_CH, name: 'general' });
     const lockedChannel = makeTextChannel({ id: NOPERM_CH, name: 'secret', canSend: false });
     const voiceChannel = makeVoiceChannel({ id: VOICE_CH, name: 'Lounge' });
@@ -107,6 +107,32 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
             const models = { openai: 'gpt-5.5', anthropic: 'claude-thoughtful', gemini: 'gemini-thoughtful' };
             return models[key] ? { provider: key, model: models[key], reasoningEffort: 'high' } : null;
         },
+        listProviders: jest.fn(() => [
+            { key: 'openai', name: 'OpenAI', configured: true, isDefault: true, chatModel: 'gpt-5.4-mini', thoughtfulModel: 'gpt-5.5', reasoningEffort: true },
+            { key: 'anthropic', name: 'Anthropic Claude', configured: true, isDefault: false, chatModel: 'claude-fast', thoughtfulModel: 'claude-thoughtful', reasoningEffort: true },
+            { key: 'gemini', name: 'Google Gemini', configured: false, isDefault: false, chatModel: 'gemini-fast', thoughtfulModel: 'gemini-thoughtful', reasoningEffort: true },
+            { key: 'ollama', name: 'Ollama (local)', configured: true, isDefault: false, chatModel: 'llama', thoughtfulModel: null, reasoningEffort: false }
+        ]),
+        describeModel: jest.fn((provider, model, effort) => ({ supported: true, effectiveEffort: effort || 'medium' })),
+        listModelCatalog: jest.fn(async (provider) => ({
+            version: 1,
+            provider,
+            workflow: 'chat',
+            discovery: { status: 'live', checkedAt: '2026-09-29 00:00:00' },
+            unregisteredCount: 0,
+            models: [
+                {
+                    id: 'gpt-5.4-mini', displayName: 'GPT-5.4 mini', description: 'Fast default', status: 'current',
+                    availability: 'listed', selectable: true, reasoning: { levels: ['minimal', 'low', 'medium', 'high'], default: 'medium' },
+                    capabilities: { tools: 'native' }, sampling: {}, aliases: []
+                },
+                {
+                    id: 'gpt-5.5', displayName: 'GPT-5.5', description: 'Thoughtful tier', status: 'current',
+                    availability: 'not-listed', selectable: false, reasoning: { levels: ['low', 'medium', 'high', 'xhigh'], default: 'medium' },
+                    capabilities: { tools: 'native' }, sampling: {}, aliases: []
+                }
+            ]
+        })),
         chatText: jest.fn().mockResolvedValue(aiReply)
     };
     const guildSettingsState = {
@@ -119,20 +145,24 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
         threadPreference: 'ALWAYS_CHANNEL',
         searchApproval: 'REQUIRED',
         botNickname: null,
-        memoryRetentionDays: null
+        memoryRetentionDays: null,
+        ttsVoice: { voiceId: null, voiceName: null, speed: null, accent: null }
     };
+    // Memory, facts, follow-ups and activity are async through the DB
+    // facade - the mocks must resolve, never return, so a service that
+    // forgets to await fails here the way it would on Postgres.
     const deps = {
         voiceSessionService,
         aiService,
         memoryService: {
             recall: jest.fn().mockResolvedValue([]),
             formatForPrompt: jest.fn(() => null),
-            getExcludedChannels: jest.fn(() => []),
-            getStats: jest.fn(() => ({ enabled: true, count: 12, backend: 'test', model: 'test' })),
-            excludeChannel: jest.fn(() => 3),
-            includeChannel: jest.fn(() => 1),
-            forgetGuild: jest.fn(() => 12),
-            applyRetention: jest.fn(() => 2)
+            getExcludedChannels: jest.fn(async () => []),
+            getStats: jest.fn(async () => ({ enabled: true, count: 12, backend: 'test', model: 'test' })),
+            excludeChannel: jest.fn(async () => 3),
+            includeChannel: jest.fn(async () => 1),
+            forgetGuild: jest.fn(async () => 12),
+            applyRetention: jest.fn(async () => 2)
         },
         memeMode: { getPromptWithGuildPersonality: jest.fn().mockResolvedValue('You are Goobster.') },
         guildSettings: {
@@ -161,12 +191,19 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
             setMemoryRetentionDays: jest.fn(async (guildId, days) => {
                 guildSettingsState.memoryRetentionDays = days && days > 0 ? days : null;
                 return guildSettingsState.memoryRetentionDays;
+            }),
+            getTtsVoice: jest.fn(async () => ({ ...guildSettingsState.ttsVoice })),
+            setTtsVoice: jest.fn(async (guildId, voice) => {
+                Object.assign(guildSettingsState.ttsVoice, voice);
+                return { ...guildSettingsState.ttsVoice };
             })
         },
-        factsService: { getStats: jest.fn(() => ({ userFacts: 4, guildFacts: 2 })) },
-        followupService: { getPending: jest.fn(() => [{ id: 1 }]) },
-        activityService: { purgeChannel: jest.fn(() => 5) },
-        transcriptionService: { isConfigured: () => true },
+        factsService: { getStats: jest.fn(async () => ({ userFacts: 4, guildFacts: 2 })) },
+        followupService: { getPending: jest.fn(async () => [{ id: 1 }]) },
+        activityService: { purgeChannel: jest.fn(async () => 5) },
+        transcriptionService: { isConfigured: () => sttConfigured },
+        db: { engine: 'sqlite', get: jest.fn(async () => ({ count: 7 })), getDb: () => ({ pragma: () => 4096 }) },
+        dataDir: require('node:os').tmpdir(),
         spotdlService: {
             listTracks: jest.fn().mockResolvedValue([
                 { name: 'Daft Punk - Around the World.mp3', url: '/music/a.mp3', lastModified: new Date() },
@@ -178,7 +215,7 @@ function build({ musicService, sessions = new Set(), aiReply = 'generated draft'
 
     const service = createPanelService({
         client,
-        voiceService: { musicService: ms, tts: {} },
+        voiceService: { musicService: ms, tts },
         logger: { warn: () => {}, error: () => {} },
         deps
     });
@@ -482,24 +519,162 @@ describe('panelService guild settings', () => {
         expect(cleared.memoriesPurged).toBe(0);
     });
 
-    test('channel exclusion purges memories and activity; inclusion restores', () => {
+    test('channel exclusion purges memories and activity; inclusion restores', async () => {
         const { service, deps } = build();
-        const excluded = service.setChannelExclusion(GUILD_A, TEXT_CH, true);
+        const excluded = await service.setChannelExclusion(GUILD_A, TEXT_CH, true);
         expect(excluded).toEqual({ excluded: true, removedMemories: 3, purgedActivity: 5 });
         expect(deps.activityService.purgeChannel).toHaveBeenCalledWith(GUILD_A, TEXT_CH);
 
-        const included = service.setChannelExclusion(GUILD_A, TEXT_CH, false);
+        const included = await service.setChannelExclusion(GUILD_A, TEXT_CH, false);
         expect(included).toEqual({ excluded: false, changed: 1 });
 
-        expect(() => service.setChannelExclusion(GUILD_A, VOICE_CH, true)).toThrow(
-            expect.objectContaining({ code: 'CHANNEL_NOT_FOUND' })
+        await expectPanelError(service.setChannelExclusion(GUILD_A, VOICE_CH, true), 404, 'CHANNEL_NOT_FOUND');
+    });
+
+    test('forget-all deletes guild memories', async () => {
+        const { service, deps } = build();
+        await expect(service.forgetGuildMemories(GUILD_A)).resolves.toEqual({ removed: 12 });
+        expect(deps.memoryService.forgetGuild).toHaveBeenCalledWith(GUILD_A);
+    });
+
+    test('exposes the provider catalog and the effective model for the pickers', async () => {
+        const { service, guildSettingsState } = build();
+        guildSettingsState.ai = { provider: 'anthropic', model: null, reasoningEffort: 'low' };
+        const settings = await service.getGuildSettings(GUILD_A);
+        expect(settings.ai.providers.map(p => p.key)).toEqual(['openai', 'anthropic', 'gemini', 'ollama']);
+        expect(settings.ai.providers.find(p => p.key === 'gemini').configured).toBe(false);
+        expect(settings.ai.effective).toEqual({
+            provider: 'anthropic',
+            providerName: 'Anthropic Claude',
+            model: 'claude-fast',
+            modelSupported: true,
+            reasoningEffort: 'low'
+        });
+        expect(settings.ai.thoughtfulAvailable).toBe(true);
+    });
+
+    test('a selection the model registry refuses is a 400 with its code, not a 500', async () => {
+        const { service, deps } = build();
+        deps.aiService.validateModelSelection.mockImplementation(() => {
+            const error = new Error('Google Gemini is not configured on this host.');
+            error.name = 'ModelPolicyError';
+            error.code = 'PROVIDER_NOT_CONFIGURED';
+            throw error;
+        });
+        const error = await expectPanelError(
+            service.updateGuildSettings(GUILD_A, { aiProvider: 'gemini' }),
+            400, 'PROVIDER_NOT_CONFIGURED'
+        );
+        expect(error.message).toContain('not configured');
+        expect(deps.guildSettings.setGuildAI).not.toHaveBeenCalled();
+    });
+
+    test('per-server TTS voice resolves against the library, stores the id, and clears', async () => {
+        const tts = {
+            voiceId: 'globalVoiceId0000000',
+            voiceName: 'Sarah',
+            resolveVoice: jest.fn(async (query) => {
+                if (query.toLowerCase() !== 'serena') throw new Error(`ElevenLabs voice "${query}" not found in your voice library`);
+                return { id: 'pMsXgVXv3BLzUgSXRplE', name: 'Serena' };
+            })
+        };
+        const { service, deps, guildSettingsState } = build({ tts });
+
+        const applied = await service.updateGuildSettings(GUILD_A, { ttsVoice: 'serena' });
+        expect(applied.ttsVoice).toEqual({ voiceId: 'pMsXgVXv3BLzUgSXRplE', voiceName: 'Serena' });
+        expect(deps.guildSettings.setTtsVoice).toHaveBeenCalledWith(GUILD_A, { voiceId: 'pMsXgVXv3BLzUgSXRplE', voiceName: 'Serena' });
+
+        const settings = await service.getGuildSettings(GUILD_A);
+        expect(settings.voice).toEqual({ voiceId: 'pMsXgVXv3BLzUgSXRplE', voiceName: 'Serena' });
+        expect(settings.global.ttsVoiceName).toBe('Sarah');
+
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { ttsVoice: 'nobody' }), 400, 'VOICE_NOT_FOUND');
+        expect(guildSettingsState.ttsVoice.voiceId).toBe('pMsXgVXv3BLzUgSXRplE');
+
+        const cleared = await service.updateGuildSettings(GUILD_A, { ttsVoice: null });
+        expect(cleared.ttsVoice).toEqual({ voiceId: null, voiceName: null });
+        expect(guildSettingsState.ttsVoice.voiceId).toBeNull();
+    });
+
+    test('per-server TTS voice needs ElevenLabs', async () => {
+        const { service } = build({ tts: null });
+        await expectPanelError(service.updateGuildSettings(GUILD_A, { ttsVoice: 'serena' }), 503, 'TTS_UNAVAILABLE');
+    });
+});
+
+describe('panelService model catalog', () => {
+    test('trims registry models to what the picker renders and marks the default', async () => {
+        const { service, deps } = build();
+        const catalog = await service.listModelCatalog('openai');
+        expect(deps.aiService.listModelCatalog).toHaveBeenCalledWith('openai');
+        expect(catalog.provider).toBe('openai');
+        expect(catalog.providerName).toBe('OpenAI');
+        expect(catalog.defaultModel).toBe('gpt-5.4-mini');
+        expect(catalog.discovery.status).toBe('live');
+        expect(catalog.models).toEqual([
+            expect.objectContaining({
+                id: 'gpt-5.4-mini', displayName: 'GPT-5.4 mini', isDefault: true, selectable: true,
+                availability: 'listed', reasoning: { levels: ['minimal', 'low', 'medium', 'high'], default: 'medium' }
+            }),
+            expect.objectContaining({ id: 'gpt-5.5', isDefault: false, selectable: false, availability: 'not-listed' })
+        ]);
+        // Registry internals do not leak to the client
+        expect(catalog.models[0].capabilities).toBeUndefined();
+    });
+
+    test('defaults to the effective provider and rejects unknown ones', async () => {
+        const { service, deps } = build();
+        await service.listModelCatalog(undefined);
+        expect(deps.aiService.listModelCatalog).toHaveBeenCalledWith('openai');
+        await expectPanelError(service.listModelCatalog('skynet'), 400, 'BAD_REQUEST');
+    });
+
+    test('a discovery failure is a 502, not a crash', async () => {
+        const { service, deps } = build();
+        deps.aiService.listModelCatalog.mockRejectedValue(new Error('boom'));
+        await expectPanelError(service.listModelCatalog('openai'), 502, 'CATALOG_FAILED');
+    });
+});
+
+describe('panelService status and host health', () => {
+    test('reports per-engine voice capability', () => {
+        const withStt = build({ sttConfigured: true }).service.getStatus();
+        expect(withStt.capabilities.voiceEngines).toEqual({ realtime: true, classic: true });
+        expect(withStt.model).toBe('gpt-5.4-mini');
+
+        const noStt = build({ sttConfigured: false }).service.getStatus();
+        expect(noStt.capabilities.voiceEngines).toEqual({ realtime: true, classic: false });
+
+        const noTts = build({ tts: null }).service.getStatus();
+        expect(noTts.capabilities.tts).toBe(false);
+        expect(noTts.capabilities.voiceEngines).toEqual({ realtime: false, classic: false });
+    });
+
+    test('the realtime engine starts without OpenAI STT; classic needs it', async () => {
+        const { service, deps } = build({ sttConfigured: false });
+        const started = await service.startVoiceChat({ guildId: GUILD_A, voiceChannelId: VOICE_CH, engine: 'realtime' });
+        expect(started.active).toBe(true);
+        expect(deps.voiceSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({ engine: 'realtime' }));
+        await expectPanelError(
+            service.startVoiceChat({ guildId: GUILD_B, voiceChannelId: VOICE_CH, engine: 'classic' }),
+            503, 'STT_UNAVAILABLE'
+        );
+        await expectPanelError(
+            service.startVoiceChat({ guildId: GUILD_B, voiceChannelId: VOICE_CH, engine: 'turbo' }),
+            400, 'BAD_REQUEST'
         );
     });
 
-    test('forget-all deletes guild memories', () => {
-        const { service, deps } = build();
-        expect(service.forgetGuildMemories(GUILD_A)).toEqual({ removed: 12 });
-        expect(deps.memoryService.forgetGuild).toHaveBeenCalledWith(GUILD_A);
+    test('host health snapshot carries the sections the Overview renders', async () => {
+        const { service } = build();
+        const health = await service.getSystemHealth();
+        expect(health.os).toEqual(expect.objectContaining({ type: expect.any(String), uptimeSeconds: expect.any(Number) }));
+        expect(health.cpu.load).toHaveLength(3);
+        expect(health.cpu.cores).toBeGreaterThan(0);
+        expect(health.memory.totalBytes).toBeGreaterThan(health.memory.usedBytes);
+        expect(health.database).toEqual({ engine: 'sqlite', bytes: 4096 * 4096, messageCount: 7 });
+        expect(health.disk).toEqual(expect.objectContaining({ totalBytes: expect.any(Number), freeBytes: expect.any(Number) }));
+        expect(health.process.nodeVersion).toBe(process.version);
     });
 });
 

@@ -9,12 +9,15 @@
  */
 
 const fs = require('node:fs');
-const path = require('node:path');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('./spotdl/spotdlService');
 const { parseTrackName, filterTracks } = require('../utils/musicUtils');
+const { collectHostHealth } = require('../utils/hostHealth');
 
 const SNOWFLAKE_RE = /^\d{5,25}$/;
+const PROVIDER_KEYS = ['openai', 'anthropic', 'gemini', 'ollama'];
+const VOICE_ENGINES = ['realtime', 'classic'];
+const VOICE_MODES = ['polite', 'open'];
 const MESSAGE_MAX_LENGTH = 2000;
 const INSTRUCTION_MAX_LENGTH = 1500;
 const SEARCH_MAX_LENGTH = 200;
@@ -70,6 +73,39 @@ function trackSummary(track) {
 }
 
 /**
+ * Run a model-registry validation, translating its ModelPolicyError (an
+ * unconfigured provider, an unknown model, an unsupported effort) into
+ * the panel's 400 so the message reaches the screen instead of a 500.
+ */
+function withModelPolicy(fn) {
+    try {
+        return fn();
+    } catch (error) {
+        if (error?.name === 'ModelPolicyError') {
+            throw new PanelError(400, error.code || 'BAD_REQUEST', error.message, {}, { cause: error });
+        }
+        throw error;
+    }
+}
+
+/** Trim a registry model definition to what the panel's pickers render. */
+function modelSummary(model, defaultModelId) {
+    return {
+        id: model.id,
+        displayName: model.displayName || model.id,
+        description: model.description || null,
+        status: model.status || null,
+        availability: model.availability || 'unknown',
+        selectable: Boolean(model.selectable),
+        isDefault: model.id === defaultModelId,
+        reasoning: {
+            levels: Array.isArray(model.reasoning?.levels) ? [...model.reasoning.levels] : [],
+            default: model.reasoning?.default ?? null
+        }
+    };
+}
+
+/**
  * Create the panel control service bound to a live Discord client and the
  * shared voice service. Heavy collaborators can be overridden through
  * `deps` for testing.
@@ -91,10 +127,38 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
     const factsService = deps.factsService || require('./factsService');
     const followupService = deps.followupService || require('./followupService');
     const activityService = deps.activityService || require('./activityService');
-    const configPath = deps.configPath || require('../runtimePaths').configJsonPath;
+    const runtimePaths = require('../runtimePaths');
+    const configPath = deps.configPath || runtimePaths.configJsonPath;
+    const dataDir = deps.dataDir || runtimePaths.dataDir;
+    const db = deps.db || require('../db');
 
     function music() {
         return voiceService?.musicService || null;
+    }
+
+    /** ElevenLabs is constructed only with a key, but stay defensive about `disabled`. */
+    function tts() {
+        const service = voiceService?.tts;
+        return service && !service.disabled ? service : null;
+    }
+
+    function requireTts() {
+        const service = tts();
+        if (!service) {
+            throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
+        }
+        return service;
+    }
+
+    async function resolveVoiceOrThrow(service, voiceId) {
+        if (typeof voiceId !== 'string' || !VOICE_ID_RE.test(voiceId.trim())) {
+            throw new PanelError(400, 'BAD_REQUEST', 'voiceId must be a voice name or ID (letters, digits, spaces, and basic punctuation).');
+        }
+        try {
+            return await service.resolveVoice(voiceId.trim());
+        } catch (error) {
+            throw new PanelError(400, 'VOICE_NOT_FOUND', error.message, {}, { cause: error });
+        }
     }
 
     function requireReady() {
@@ -195,11 +259,58 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 uptimeMs: ready && client.readyTimestamp ? Date.now() - client.readyTimestamp : null,
                 guildCount: ready ? client.guilds.cache.size : 0,
                 provider: aiService.getProvider(),
+                model: aiService.getDefaultModel(),
                 capabilities: {
                     music: Boolean(ms),
-                    tts: Boolean(voiceService?.tts),
-                    stt: transcriptionService.isConfigured()
+                    tts: Boolean(tts()),
+                    stt: transcriptionService.isConfigured(),
+                    // The realtime voice engine is ElevenLabs end to end
+                    // (Scribe STT + streaming TTS); classic adds OpenAI STT.
+                    voiceEngines: {
+                        realtime: Boolean(tts()),
+                        classic: Boolean(tts()) && transcriptionService.isConfigured()
+                    }
                 }
+            };
+        },
+
+        /**
+         * Host health for the Overview: CPU load and temperature, Pi
+         * throttle flags, memory, disk under the data directory, and
+         * database size. Same readers as /systemstatus.
+         */
+        async getSystemHealth() {
+            return collectHostHealth({ db, dataDir });
+        },
+
+        /**
+         * The model catalog for one provider, for the Settings model picker:
+         * registry metadata with live availability from provider discovery.
+         * Falls back to the effective provider when none is given.
+         */
+        async listModelCatalog(providerKey) {
+            const key = providerKey ? String(providerKey) : aiService.getProvider();
+            if (!PROVIDER_KEYS.includes(key)) {
+                throw new PanelError(400, 'BAD_REQUEST', `provider must be one of: ${PROVIDER_KEYS.join(', ')}.`);
+            }
+            let catalog;
+            try {
+                catalog = await aiService.listModelCatalog(key);
+            } catch (error) {
+                if (error?.name === 'ModelPolicyError') {
+                    throw new PanelError(400, error.code || 'BAD_REQUEST', error.message, {}, { cause: error });
+                }
+                throw new PanelError(502, 'CATALOG_FAILED', `Could not load the ${key} model catalog: ${error.message}`, {}, { cause: error });
+            }
+            const provider = aiService.listProviders().find(p => p.key === key) || null;
+            const defaultModelId = provider?.chatModel ?? null;
+            return {
+                provider: key,
+                providerName: provider?.name || key,
+                configured: Boolean(provider?.configured),
+                defaultModel: defaultModelId,
+                discovery: catalog.discovery || { status: 'unknown', checkedAt: null },
+                models: (catalog.models || []).map(model => modelSummary(model, defaultModelId))
             };
         },
 
@@ -349,16 +460,16 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
          */
         async startVoiceChat({ guildId, voiceChannelId, mode = 'polite', engine = 'realtime', transcriptChannelId = null, confirm = false }) {
             const guild = requireGuild(guildId);
-            if (!['polite', 'open'].includes(mode)) {
+            if (!VOICE_MODES.includes(mode)) {
                 throw new PanelError(400, 'BAD_REQUEST', "mode must be 'polite' or 'open'.");
             }
-            if (!['realtime', 'classic'].includes(engine)) {
+            if (!VOICE_ENGINES.includes(engine)) {
                 throw new PanelError(400, 'BAD_REQUEST', "engine must be 'realtime' or 'classic'.");
             }
             if (voiceSessionService.hasSession(guildId)) {
                 throw new PanelError(409, 'SESSION_EXISTS', 'A voice conversation is already active in this server.');
             }
-            if (!voiceService?.tts) {
+            if (!tts()) {
                 throw new PanelError(503, 'TTS_UNAVAILABLE', 'Voice conversations require ElevenLabs TTS (set ELEVENLABS_API_KEY).');
             }
             if (engine === 'classic' && !transcriptionService.isConfigured()) {
@@ -571,7 +682,8 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
 
             const [ai, personalityDirective, proactiveMode, monologueMode, dynamicResponse,
                 replyDetection, threadPreference, searchApproval, botNickname,
-                memoryRetentionDays] = await Promise.all([
+                memoryRetentionDays, guildVoice,
+                excludedIds, memoryStats, factStats, pendingFollowups] = await Promise.all([
                 guildSettings.getGuildAI(guildId),
                 guildSettings.getPersonalityDirective(guildId),
                 guildSettings.getProactiveMode(guildId),
@@ -581,10 +693,15 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 guildSettings.getThreadPreference(guildId),
                 guildSettings.getSearchApproval(guildId),
                 guildSettings.getBotNickname(guildId),
-                guildSettings.getMemoryRetentionDays(guildId)
+                guildSettings.getMemoryRetentionDays(guildId),
+                guildSettings.getTtsVoice(guildId),
+                memoryService.getExcludedChannels(guildId),
+                memoryService.getStats(guildId),
+                factsService.getStats(guildId),
+                followupService.getPending(guildId)
             ]);
 
-            const excludedChannels = memoryService.getExcludedChannels(guildId).map(id => ({
+            const excludedChannels = (excludedIds || []).map(id => ({
                 id,
                 name: guild.channels.cache.get(id)?.name ?? null
             }));
@@ -596,17 +713,33 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 && ai.model === thoughtfulPreset.model
                 && ai.reasoningEffort === 'high';
 
+            const providers = aiService.listProviders();
+            const effectiveProviderKey = ai.provider || aiService.getProvider();
+            const effectiveProvider = providers.find(p => p.key === effectiveProviderKey) || null;
+            const effectiveModel = ai.model || effectiveProvider?.chatModel || aiService.getDefaultModel();
+            const described = aiService.describeModel(effectiveProviderKey, effectiveModel, ai.reasoningEffort || undefined);
+
+            const ttsService = tts();
             return {
                 ai: {
                     provider: ai.provider,
                     model: ai.model,
                     reasoningEffort: ai.reasoningEffort,
                     thoughtful,
+                    thoughtfulAvailable: Boolean(thoughtfulPreset),
                     defaults: {
                         provider: aiService.getProvider(),
                         model: aiService.getDefaultModel(),
                         thoughtfulModel: thoughtfulPreset?.model ?? null
-                    }
+                    },
+                    effective: {
+                        provider: effectiveProviderKey,
+                        providerName: effectiveProvider?.name || effectiveProviderKey,
+                        model: effectiveModel,
+                        modelSupported: described.supported,
+                        reasoningEffort: described.effectiveEffort
+                    },
+                    providers
                 },
                 personalityDirective,
                 botNickname,
@@ -619,14 +752,18 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 memory: {
                     retentionDays: memoryRetentionDays,
                     excludedChannels,
-                    stats: memoryService.getStats(guildId),
-                    facts: factsService.getStats(guildId),
-                    pendingFollowups: followupService.getPending(guildId).length
+                    stats: memoryStats,
+                    facts: factStats,
+                    pendingFollowups: Array.isArray(pendingFollowups) ? pendingFollowups.length : 0
+                },
+                voice: {
+                    voiceId: guildVoice?.voiceId ?? null,
+                    voiceName: guildVoice?.voiceName ?? null
                 },
                 global: {
-                    ttsVoiceId: voiceService?.tts?.voiceId ?? null,
-                    ttsVoiceName: voiceService?.tts?.voiceName ?? null,
-                    ttsAvailable: Boolean(voiceService?.tts)
+                    ttsVoiceId: ttsService?.voiceId ?? null,
+                    ttsVoiceName: ttsService?.voiceName ?? null,
+                    ttsAvailable: Boolean(ttsService)
                 }
             };
         },
@@ -653,7 +790,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                     if (!preset) {
                         throw new PanelError(409, 'NO_THOUGHTFUL_TIER', 'Thoughtful Mode needs a cloud AI provider (OpenAI, Anthropic, or Gemini).');
                     }
-                    await guildSettings.setGuildAI(guildId, aiService.validateModelSelection(currentAI, preset));
+                    await guildSettings.setGuildAI(guildId, withModelPolicy(() => aiService.validateModelSelection(currentAI, preset)));
                 } else {
                     await guildSettings.setGuildAI(guildId, { provider: null, model: null, reasoningEffort: null });
                 }
@@ -663,7 +800,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             const aiUpdates = {};
             if ('aiProvider' in patch) {
                 const value = patch.aiProvider || null;
-                if (value !== null && !['openai', 'anthropic', 'gemini', 'ollama'].includes(value)) {
+                if (value !== null && !PROVIDER_KEYS.includes(value)) {
                     throw new PanelError(400, 'BAD_REQUEST', "aiProvider must be 'openai', 'anthropic', 'gemini', 'ollama', or empty for the default.");
                 }
                 aiUpdates.provider = value;
@@ -684,7 +821,8 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             }
             if (Object.keys(aiUpdates).length > 0) {
                 const currentAI = await guildSettings.getGuildAI(guildId);
-                applied.ai = await guildSettings.setGuildAI(guildId, aiService.validateModelSelection(currentAI, aiUpdates));
+                const checked = withModelPolicy(() => aiService.validateModelSelection(currentAI, aiUpdates));
+                applied.ai = await guildSettings.setGuildAI(guildId, checked);
             }
 
             if ('personalityDirective' in patch) {
@@ -766,9 +904,24 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 }
                 const stored = await guildSettings.setMemoryRetentionDays(guildId, value);
                 // Purge immediately, matching /privacy retention.
-                const purged = stored ? memoryService.applyRetention(guildId) : 0;
+                const purged = stored ? await memoryService.applyRetention(guildId) : 0;
                 applied.memoryRetentionDays = stored;
                 applied.memoriesPurged = purged;
+            }
+
+            if ('ttsVoice' in patch) {
+                // Mirrors /setvoice set|clear for this server: the name is
+                // resolved against the account's voice library first and the
+                // resolved id is what gets stored.
+                const service = requireTts();
+                if (patch.ttsVoice === null || patch.ttsVoice === '') {
+                    await guildSettings.setTtsVoice(guildId, { voiceId: null, voiceName: null });
+                    applied.ttsVoice = { voiceId: null, voiceName: null };
+                } else {
+                    const resolved = await resolveVoiceOrThrow(service, patch.ttsVoice);
+                    await guildSettings.setTtsVoice(guildId, { voiceId: resolved.id, voiceName: resolved.name });
+                    applied.ttsVoice = { voiceId: resolved.id, voiceName: resolved.name };
+                }
             }
 
             if (Object.keys(applied).length === 0) {
@@ -782,7 +935,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
          * also purges stored memories and activity counters for the channel,
          * matching /privacy exclude.
          */
-        setChannelExclusion(guildId, channelId, exclude) {
+        async setChannelExclusion(guildId, channelId, exclude) {
             const guild = requireGuild(guildId);
             assertSnowflake(channelId, 'channelId');
             const channel = guild.channels.cache.get(channelId);
@@ -791,18 +944,18 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 throw new PanelError(404, 'CHANNEL_NOT_FOUND', 'Text channel not found in that server.');
             }
             if (exclude) {
-                const removedMemories = memoryService.excludeChannel(guildId, channelId);
-                const purgedActivity = activityService.purgeChannel(guildId, channelId);
+                const removedMemories = await memoryService.excludeChannel(guildId, channelId);
+                const purgedActivity = await activityService.purgeChannel(guildId, channelId);
                 return { excluded: true, removedMemories, purgedActivity };
             }
-            const changed = memoryService.includeChannel(guildId, channelId);
+            const changed = await memoryService.includeChannel(guildId, channelId);
             return { excluded: false, changed };
         },
 
         /** Delete all long-term memories for a guild (confirmed client-side). */
-        forgetGuildMemories(guildId) {
+        async forgetGuildMemories(guildId) {
             requireGuild(guildId);
-            const removed = memoryService.forgetGuild(guildId);
+            const removed = await memoryService.forgetGuild(guildId);
             return { removed };
         },
 
@@ -811,11 +964,9 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
          * @returns {Promise<Array<{id: string, name: string, category: string|null}>>}
          */
         async listTtsVoices() {
-            if (!voiceService?.tts) {
-                throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
-            }
+            const service = requireTts();
             try {
-                return await voiceService.tts.listVoices();
+                return await service.listVoices();
             } catch (error) {
                 throw new PanelError(502, 'TTS_VOICES_FAILED', `Could not fetch the voice library: ${error.message}`, {}, { cause: error });
             }
@@ -830,19 +981,8 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
          * config.json and applied to the live TTS service.
          */
         async setTtsVoice(voiceId) {
-            if (!voiceService?.tts) {
-                throw new PanelError(503, 'TTS_UNAVAILABLE', 'ElevenLabs TTS is not configured.');
-            }
-            if (typeof voiceId !== 'string' || !VOICE_ID_RE.test(voiceId.trim())) {
-                throw new PanelError(400, 'BAD_REQUEST', 'voiceId must be a voice name or ID (letters, digits, spaces, and basic punctuation).');
-            }
-
-            let resolved;
-            try {
-                resolved = await voiceService.tts.resolveVoice(voiceId.trim());
-            } catch (error) {
-                throw new PanelError(400, 'VOICE_NOT_FOUND', error.message, {}, { cause: error });
-            }
+            const service = requireTts();
+            const resolved = await resolveVoiceOrThrow(service, voiceId);
 
             try {
                 const raw = fs.readFileSync(configPath, 'utf-8');
@@ -854,8 +994,8 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             } catch (error) {
                 throw new PanelError(500, 'CONFIG_WRITE_FAILED', `Could not persist the voice ID: ${error.message}`, {}, { cause: error });
             }
-            voiceService.tts.voiceId = resolved.id;
-            voiceService.tts.voiceName = resolved.name;
+            service.voiceId = resolved.id;
+            service.voiceName = resolved.name;
             if (voiceService.config?.elevenlabs) {
                 voiceService.config.elevenlabs.voiceId = resolved.id;
                 voiceService.config.elevenlabs.voiceName = resolved.name;
