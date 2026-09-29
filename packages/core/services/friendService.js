@@ -792,7 +792,7 @@ class FriendService {
             throw new FriendError(404, 'NO_SUCH_USER', 'No member of this installation with that id.');
         }
         if (!gateway) throw new FriendError(404, 'NO_SUCH_USER', 'Nobody here has that id.');
-        let user = null;
+        let user;
         try {
             user = await gateway.getUser(target);
         } catch {

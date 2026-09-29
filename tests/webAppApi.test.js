@@ -1490,29 +1490,32 @@ describe('friends route', () => {
         expect(res.status).toBe(401);
     });
 
-    test('mirrors the synced Discord friends of this user only', async () => {
-        await db.run('DELETE FROM user_friends');
+    test('lists this user\'s friends with presence, and the requests either way', async () => {
+        await db.run('DELETE FROM friendships');
+        const identityService = require('@goobster/core/services/identityService');
+        await identityService.ensureLegacyPrincipal({ discordId: '100000000000000009', displayName: 'Frieda' });
+        await identityService.ensureLegacyPrincipal({ discordId: '100000000000000010', displayName: 'NotMine' });
         await db.run(
-            `INSERT INTO user_friends (ownerId, friendId, friendName, avatar, syncedAt)
-             VALUES (@me, '100000000000000009', 'Frieda', NULL, '2026-01-05 12:00:00'),
-                    (@other, '100000000000000010', 'NotMine', NULL, '2026-01-05 12:00:00')`,
+            `INSERT INTO friendships (lowId, highId, requesterId, addresseeId, status, respondedAt)
+             VALUES (@me, '100000000000000009', @me, '100000000000000009', 'accepted', '2026-01-05 12:00:00'),
+                    (@other, '100000000000000010', @other, '100000000000000010', 'accepted', '2026-01-05 12:00:00')`,
             { me: USER, other: OTHER }
         );
         const cookie = await login();
         const res = await request({ reqPath: '/api/app/friends', headers: { Cookie: cookie } });
         expect(res.status).toBe(200);
         expect(res.json.friends).toEqual([
-            expect.objectContaining({ id: '100000000000000009', name: 'Frieda' })
+            expect.objectContaining({ id: '100000000000000009', name: 'Frieda', online: false, since: '2026-01-05 12:00:00' })
         ]);
-        expect(res.json.syncedAt).toBe('2026-01-05 12:00:00');
+        expect(res.json).toMatchObject({ incoming: [], outgoing: [] });
     });
 
-    test('an unsynced user gets an empty mirror, not an error', async () => {
-        await db.run('DELETE FROM user_friends');
+    test('a user with no friends gets an empty list, not an error', async () => {
+        await db.run('DELETE FROM friendships');
         const cookie = await login();
         const res = await request({ reqPath: '/api/app/friends', headers: { Cookie: cookie } });
         expect(res.status).toBe(200);
-        expect(res.json).toEqual({ friends: [], syncedAt: null });
+        expect(res.json).toEqual({ friends: [], incoming: [], outgoing: [] });
     });
 });
 
