@@ -109,6 +109,17 @@ body {
 }
 .stat-label { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
 .stat-value { font-size: 16px; font-weight: 600; margin-top: 4px; word-break: break-word; }
+.stat-row.compact { gap: 8px; }
+.stat-row.compact .stat { min-height: 54px; padding: 7px 10px; }
+.stat-row.compact .stat-label { font-size: 10px; white-space: nowrap; }
+.stat-row.compact .stat-value { font-size: 13px; margin-top: 3px; }
+.stat.warn .stat-value { color: var(--warn); }
+.stat.danger .stat-value { color: #ff9a9b; }
+.stat.ok .stat-value { color: #7fd39e; }
+.section-title {
+  color: var(--text-dim); font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px;
+}
 
 /* ---------- Shared controls ---------- */
 .field-row { display: flex; gap: 10px; align-items: center; }
@@ -203,6 +214,8 @@ body {
 .setting-sub { color: var(--text-dim); font-size: 12px; font-weight: 400; margin-top: 2px; }
 .setting-input { width: 200px; }
 .setting-input-sm { width: 100px; text-align: center; }
+.setting-select { width: 260px; max-width: 55%; }
+.select option:disabled { color: var(--text-dim); }
 
 .toggle {
   position: relative; width: 64px; height: 36px; min-width: 64px;

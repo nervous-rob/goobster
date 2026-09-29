@@ -13,8 +13,13 @@ let port;
 
 const panelService = {
     getStatus: jest.fn(() => ({ ready: true, botTag: 'Goobster#0001' })),
+    getSystemHealth: jest.fn(async () => ({ cpu: { load: [0.1, 0.2, 0.3], cores: 4, temperatureC: 51.2 } })),
+    listModelCatalog: jest.fn(async (provider) => ({ provider, models: [] })),
     listGuilds: jest.fn(() => [{ id: '1', name: 'Alpha' }]),
     sendMessage: jest.fn().mockResolvedValue({ messageId: 'm1', channelId: 'c1' }),
+    updateGuildSettings: jest.fn(),
+    setChannelExclusion: jest.fn(async () => ({ excluded: true, removedMemories: 2, purgedActivity: 1 })),
+    forgetGuildMemories: jest.fn(async () => ({ removed: 9 })),
     playTrack: jest.fn()
 };
 
@@ -128,6 +133,20 @@ describe('error translation', () => {
         }));
     });
 
+    test('a ModelPolicyError that escapes the service is a 400 with its code', async () => {
+        const error = new Error('OpenAI is not configured on this host.');
+        error.name = 'ModelPolicyError';
+        error.code = 'PROVIDER_NOT_CONFIGURED';
+        panelService.updateGuildSettings.mockRejectedValue(error);
+        const res = await request({
+            method: 'PATCH',
+            path: '/api/guilds/200000000000000001/settings',
+            body: { aiProvider: 'openai' }
+        });
+        expect(res.status).toBe(400);
+        expect(res.json.error).toEqual({ code: 'PROVIDER_NOT_CONFIGURED', message: 'OpenAI is not configured on this host.' });
+    });
+
     test('unexpected errors return a sanitized 500', async () => {
         panelService.listGuilds.mockImplementation(() => { throw new Error('secret internals'); });
         const res = await request({ path: '/api/guilds' });
@@ -160,6 +179,33 @@ describe('error translation', () => {
         const res = await request({ path: '/api/definitely-not-a-route' });
         expect(res.status).toBe(404);
         expect(res.json.error.code).toBe('NOT_FOUND');
+    });
+});
+
+describe('async service routes', () => {
+    test('host health and the model catalog are awaited and forwarded', async () => {
+        const health = await request({ path: '/api/system' });
+        expect(health.status).toBe(200);
+        expect(health.json.cpu.temperatureC).toBe(51.2);
+
+        const catalog = await request({ path: '/api/ai/models?provider=anthropic' });
+        expect(catalog.status).toBe(200);
+        expect(panelService.listModelCatalog).toHaveBeenCalledWith('anthropic');
+        expect(catalog.json.provider).toBe('anthropic');
+    });
+
+    test('memory exclusion and forget-all resolve before responding', async () => {
+        const excluded = await request({
+            method: 'POST',
+            path: '/api/guilds/200000000000000001/memory/exclusions',
+            body: { channelId: '300000000000000001', exclude: true }
+        });
+        expect(excluded.status).toBe(200);
+        expect(excluded.json).toEqual({ excluded: true, removedMemories: 2, purgedActivity: 1 });
+
+        const forgot = await request({ method: 'POST', path: '/api/guilds/200000000000000001/memory/forget', body: {} });
+        expect(forgot.status).toBe(200);
+        expect(forgot.json).toEqual({ removed: 9 });
     });
 });
 

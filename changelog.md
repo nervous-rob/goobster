@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-29
+
+### Added
+- **The Raspberry Pi touchscreen panel catches up with the bot.** Overview gains a *This device* row - CPU temperature, Pi throttle flags, load, memory, disk under `data/`, and database size - from the same readers as `/systemstatus` (`utils/hostHealth.js`, `GET /api/system`), tinted at the firmware's thermal and throttle thresholds. The Settings AI group now builds its provider, model and reasoning pickers from the model registry (`GET /api/ai/models?provider=`): only configured providers can be picked, models carry their live availability, and the reasoning select lists exactly the levels the chosen model supports, with an "Using OpenAI · gpt-… · medium effort" line for the effective selection. The Voice tab picks the **Realtime** or **Classic** engine and gates Start on that engine's real requirements (realtime is ElevenLabs end to end; classic adds OpenAI STT). The ElevenLabs group sets *this server's* voice (`PATCH … { ttsVoice }`, mirrors `/setvoice set|clear`) beside the global default. Jest: `panelService`, `panelServer`.
+
+### Fixed
+- **The panel's Settings tab was broken since the async DB facade.** `memoryService`, `factsService`, `followupService` and `activityService` became async, but `panelService` still called them synchronously - `GET /api/guilds/:id/settings` threw `getExcludedChannels(...).map is not a function`, and channel exclusion / forget-all answered with `{}` (a serialized Promise). Every call is awaited now, and the test mocks resolve instead of return so the drift cannot recur silently.
+- **A model selection the registry refuses is a readable 400 on the panel, not "Internal panel error".** `ModelPolicyError` (unconfigured provider, unknown model, unsupported effort) is translated to a `PanelError` with its code.
+- **The panel no longer requires OpenAI speech-to-text to start a realtime voice conversation.** The gate used to demand STT for every engine; `capabilities.voiceEngines` now reports realtime and classic separately.
+
 ## 2026-09-28
 
 ### Added
