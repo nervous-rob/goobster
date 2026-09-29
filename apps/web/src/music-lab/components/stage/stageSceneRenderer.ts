@@ -1,4 +1,5 @@
 import type { PerformerRole } from '@music-lab/lib/stageData';
+import { sceneAccentRgb } from '@music-lab/components/shared/sceneColors';
 
 /**
  * Shared stage canvas: the whole troupe performs together. Visual state is
@@ -311,7 +312,7 @@ export function renderStageScene(
 
   ctx.fillStyle = '#0d1117';
   ctx.fillRect(0, FLOOR_Y, SW, SH - FLOOR_Y);
-  ctx.strokeStyle = 'rgba(245, 158, 11, 0.18)';
+  ctx.strokeStyle = `rgba(${sceneAccentRgb(ctx.canvas)}, 0.18)`;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, FLOOR_Y);

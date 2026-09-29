@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import type { Me } from '../lib/types';
 import { ACCOUNT_ROOMS, PRIMARY_ROOMS, isRoomAvailable, roomBadgeCount, type Room } from '../lib/rooms';
 import { ActiveFriends } from './ActiveFriends';
+import { BerryMark } from '../components/BerryMark';
 
 /**
  * The horizontal navigation layout (Settings → Appearance → Navigation →
@@ -45,7 +46,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
     return (
         <header id="topbar">
             <Link to="/" className={`brand brand-home${room === 'home' ? ' active' : ''}`} aria-label="Home">
-                <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} />
+                <BerryMark className="brand-logo" size={24} />
                 <span className="brand-text">Goobster</span>
             </Link>
             <nav className="nav topbar-nav" aria-label="Rooms">

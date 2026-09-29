@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
+import { BerryMark } from '../components/BerryMark';
 
 export function Login() {
     const toast = useToast();
@@ -50,7 +51,7 @@ export function Login() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 <h1>{cfg?.installationName || 'Goobster'}</h1>
                 <p className="login-sub">
                     {cfg && cfg.discord === false

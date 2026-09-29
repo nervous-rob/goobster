@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Markdown } from '../components/Markdown';
 import { MenuButton } from '../shell/MenuButton';
+import { BerryMark } from '../components/BerryMark';
 
 type ShareMessage = { role: string; content: string; createdAt?: string };
 type ShareData = { title: string; sharedAt?: string; messages: ShareMessage[] };
@@ -85,7 +86,7 @@ export function SharePage() {
                     <header className="share-header">
                         <MenuButton />
                         <div className="brand">
-                            <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
+                            <BerryMark className="brand-logo" size={24} /> Goobster
                         </div>
                         <div className="hint">{data?.sharedAt ? `Shared ${timeLabel(data.sharedAt)}` : ''}</div>
                     </header>

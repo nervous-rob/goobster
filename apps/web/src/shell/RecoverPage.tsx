@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { tokenFromLocation } from './InvitePage';
+import { BerryMark } from '../components/BerryMark';
 
 /**
  * /app/recover?token=… - finish an operator-issued password reset. Every
@@ -46,7 +47,7 @@ export function RecoverPage() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 <h1>Reset your password</h1>
                 {!token && <p className="login-error" role="alert">This reset link is missing its token.</p>}
                 {token && (

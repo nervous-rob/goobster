@@ -2,6 +2,13 @@
 
 ## 2026-09-28
 
+### Added
+- **The Goobster mark in every accent.** `apps/web/public/icons/berry/<accent>.svg` holds a berry recoloured for each palette (Blueberry is the original), generated from the accent palettes by `npm run icons:berry`. The brand, login, empty-state and Home logos and the favicon load the berry for the selected accent and swap live with the Appearance preview. Jest: `webClientServing`; Playwright: `appearance`.
+
+### Changed
+- **Rooms use the width when the bar is on top.** With `navigation: top`, every room sits in one centred column (1200px; 1480px for Chat, Parlor, Settings, Docs and the graph) with matching gutters on the header, tabs and body, and the bar's contents align with it. Playwright: `appearance`.
+- **The theme reaches every room, the Music Lab included.** The engines' private amber/violet/cyan palettes and hard-coded whites are gone: the Music Lab reads the portal's accent, surface and font tokens, keeps dark scene canvases dark under a light theme, and its text stays readable on both. Bare links and Parlor bylines are tinted towards the text colour so white themes no longer wash them out.
+
 ### Fixed
 - **Tool chip text no longer runs into the chip's edge.** The chip's target line (`file · project`) was capped at a fixed 280px independent of the chip, so in a narrower thinking trail the ellipsis (or the last letters) touched or crossed the border. The line is now capped by the chip itself, which is clipped and has extra right padding.
 - **The "Your first research task" card on Home goes away once you finish the task.** It was rendered unconditionally, so it stayed after completion. It now hides when the task is completed (with or without skips); Replay and Reset remain in Settings → Tutorials, and a reset brings the card back. Playwright: `firstTask`.

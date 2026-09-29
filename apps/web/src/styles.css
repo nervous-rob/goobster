@@ -1883,3 +1883,63 @@ body.light .accent-swatch[aria-checked="true"] .accent-swatch-dot {
   .people-threads { border-right: 0; }
   .people-back { display: inline-flex; }
 }
+
+/* ---------- navigation layout: the page column ---------- */
+
+/* With the rooms across the top, nothing holds the left edge any more, so a
+   room laid out for "window minus a 260px sidebar" hugs the left of a wide
+   window. Every room instead centres on one column: backgrounds, borders and
+   scroll areas stay full-bleed, and the header, tabs and body pad in by
+   --page-gutter so their content lines up down the page. Reading rooms use
+   --page-max; workspaces with their own side column (Chat, Discussions,
+   Settings, Documentation, the knowledge map) centre as a --page-wide frame,
+   and the bar lines up with that frame. The gutter is computed on the pane
+   (a var() inside a custom property resolves where it is declared) while the
+   100% resolves against whatever element pads by it, which is always
+   full-width here. Below 1100px every room keeps its sidebar-era padding. */
+@media (min-width: 1100px) {
+  .app.nav-top {
+    --page-max: 1200px;
+    --page-wide: 1480px;
+  }
+  .app.nav-top :is(.pane, .activity-shell) {
+    --page-gutter: max(var(--page-inset, 24px), calc((100% - var(--page-max)) / 2));
+    --frame-gutter: max(0px, calc((100% - var(--page-wide)) / 2));
+  }
+  .app.nav-top :is(#pane-chat, #pane-parlor, #pane-settings, #pane-docs),
+  .app.nav-top #pane-library:has(.pane-body-graph) { --page-max: var(--page-wide); }
+  .app.nav-top #pane-home { --page-inset: 28px; }
+
+  .app.nav-top #topbar {
+    padding-left: max(14px, calc((100% - var(--page-wide)) / 2));
+    padding-right: max(14px, calc((100% - var(--page-wide)) / 2));
+  }
+  .app.nav-top .topbar-menu { right: max(12px, calc((100% - var(--page-wide)) / 2)); }
+
+  .app.nav-top :is(.pane-header, .pane-body, .view-tabs, .activity-tabs, .home-toolbar, .home-content) {
+    padding-left: var(--page-gutter);
+    padding-right: var(--page-gutter);
+  }
+
+  /* Rooms that were capped for the sidebar's narrower stage fill the column. */
+  .app.nav-top :is(.mtab:not(.mtab-notes), #pane-exchange .mtab, #pane-observatory .obs-view,
+    .home-shell, .tools-grid, .tools-hidden, .host-body) { max-width: none; }
+  .app.nav-top #pane-library .mtab-notes { max-width: 880px; }
+  .app.nav-top .host-body { margin-inline: auto; }
+
+  /* Workspaces centre as one frame; the side column keeps its own edge. */
+  .app.nav-top :is(#pane-chat, #pane-parlor) { padding-left: var(--frame-gutter); padding-right: var(--frame-gutter); }
+  .app.nav-top :is(.settings-layout, .docs-layout) { padding-left: var(--frame-gutter); padding-right: var(--frame-gutter); }
+  @media (min-width: 1481px) {
+    .app.nav-top :is(#pane-chat, #pane-parlor) .conversations-panel,
+    .app.nav-top .settings-nav,
+    .app.nav-top .docs-sidebar { border-left: 1px solid var(--border); }
+    .app.nav-top :is(.study-main, #pane-parlor .parlor-subview, .settings-content, .docs-article) { border-right: 1px solid var(--border); }
+  }
+
+  /* The Music Lab's engine panel centres at up to 1320px; its toolbar follows. */
+  .app.nav-top .conservatory-toolbar {
+    padding-left: max(16px, calc((100% - 1320px) / 2));
+    padding-right: max(16px, calc((100% - 1320px) / 2));
+  }
+}

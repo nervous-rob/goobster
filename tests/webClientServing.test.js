@@ -207,6 +207,25 @@ describe('client styles and PWA shell', () => {
         }
     });
 
+    test('the mark exists in every accent and matches the generator', () => {
+        const { ACCENTS } = require('@goobster/core/config/userSettingsSchema');
+        const berries = require('../scripts/generate-berry-icons');
+        const accents = berries.readAccents();
+        expect(Object.keys(accents).sort()).toEqual([...ACCENTS].sort());
+        const master = fs.readFileSync(berries.MASTER, 'utf8');
+        for (const id of ACCENTS) {
+            const file = path.join(berries.OUT_DIR, `${id}.svg`);
+            expect(fs.existsSync(file)).toBe(true);
+            expect(fs.readFileSync(file, 'utf8')).toBe(berries.renderBerry(id, accents[id], master));
+        }
+        // Blueberry is the master's own palette, so its render keeps the master's colours.
+        const strip = (svg) => svg.replace(/^<!--[\s\S]*?-->\n/, '');
+        expect(strip(berries.renderBerry('blueberry', accents.blueberry, master))).toBe(strip(master));
+        // Every other accent recolours the berry (the leaf and sheen are untouched).
+        expect(berries.renderBerry('mint', accents.mint, master)).not.toContain('#6f7cf2');
+        expect(berries.renderBerry('mint', accents.mint, master)).toContain('#6bcf9c');
+    });
+
     test('manifest and service worker target /app, not /app/next', () => {
         const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../apps/web/public/manifest.webmanifest'), 'utf8'));
         expect(manifest.start_url).toBe('/app/');

@@ -24,6 +24,8 @@
     "restore": "node scripts/restore.js",
     "docs:seed": "node scripts/seed-self-docs.js",
     "docs:check": "node scripts/seed-self-docs.js --check",
+    "icons:berry": "node scripts/generate-berry-icons.js",
+    "icons:berry:check": "node scripts/generate-berry-icons.js --check",
     "identity:report": "node scripts/identity-report.js",
     "migrate-to-postgres": "node scripts/migrate-to-postgres.js",
     "sandbox-python": "node scripts/setup-sandbox-python.js",

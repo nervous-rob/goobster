@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
+import { BerryMark } from '../components/BerryMark';
 
 /**
  * /app/register - open sign-up. Nothing is an account until the person
@@ -58,7 +59,7 @@ export function RegisterPage() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 {closed && (
                     <>
                         <h1>Invitation only</h1>
