@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
+import { useSession } from '../hooks/useSession';
 
 /**
  * The sidebar's active-friends menu: which of the user's friends are in the
@@ -13,9 +14,13 @@ import { keys } from '../lib/query';
  * until the person has a friend (documentation/friends_and_messages.md).
  */
 export function ActiveFriends() {
+    const me = useSession();
     const friendsQ = useQuery({
         queryKey: keys.friends,
         queryFn: () => api.friends(),
+        // Public share pages render this shell with no session; a signed-out
+        // 401 would reset the whole browser session on every poll.
+        enabled: Boolean(me),
         refetchInterval: 60_000
     });
     const friends = friendsQ.data?.friends || [];
