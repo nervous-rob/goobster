@@ -1866,7 +1866,11 @@ body.light .accent-swatch[aria-checked="true"] .accent-swatch-dot {
 
 /* --- People: friends and direct messages ---------------------------------- */
 
-.people-body { display: flex; flex-direction: column; gap: 22px; max-width: 780px; margin: 0 auto; width: 100%; }
+/* The reading column is capped inside the pane body rather than on it: with
+   the rooms across the top, .pane-body pads in by --page-gutter, and a
+   max-width on that same border-box would be eaten by the gutters (at 2560px
+   they are 680px a side, leaving nothing for the content). */
+.people-column { display: flex; flex-direction: column; gap: 22px; max-width: 780px; margin: 0 auto; width: 100%; }
 .people-section { display: flex; flex-direction: column; gap: 8px; }
 .people-heading {
   margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
@@ -1944,7 +1948,7 @@ body.light .accent-swatch[aria-checked="true"] .accent-swatch-dot {
   }
   .app.nav-top .topbar-menu { right: max(12px, calc((100% - var(--page-wide)) / 2)); }
 
-  .app.nav-top :is(.pane-header, .pane-body, .view-tabs, .activity-tabs, .home-toolbar, .home-content) {
+  .app.nav-top :is(.pane-header, .pane-body, .view-tabs, .activity-tabs, .home-toolbar, .home-content, .people-messages) {
     padding-left: var(--page-gutter);
     padding-right: var(--page-gutter);
   }
