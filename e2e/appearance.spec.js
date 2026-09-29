@@ -50,17 +50,27 @@ test('accent previews live, saves to the account, and survives a reload', async 
     const swatches = page.getByRole('radiogroup', { name: 'Accent color' });
     await expect(swatches.getByRole('radio', { name: 'Blueberry' })).toHaveAttribute('aria-checked', 'true');
     const before = await accentRgb(page);
+    // The mark and the favicon are the berry in the painted accent.
+    const brand = page.locator('#sidebar .brand-logo');
+    const favicon = page.locator('link[rel="icon"]');
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/blueberry.svg');
+    await expect(favicon).toHaveAttribute('href', '/app/icons/berry/blueberry.svg');
 
     await swatches.getByRole('radio', { name: 'Mint' }).click();
     expect(await accentOf(page)).toBe('mint');
     const previewed = await accentRgb(page);
     expect(previewed).not.toBe(before);
     await expect(page.getByText('Unsaved changes')).toBeVisible();
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/mint.svg');
+    await expect(favicon).toHaveAttribute('href', '/app/icons/berry/mint.svg');
+    await expect(page.locator('.accent-swatches')).toBeVisible();
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_accent_mint_berry.png' });
 
     // Discard paints the stored accent back.
     await page.getByRole('button', { name: 'Discard' }).click();
     expect(await accentOf(page)).toBe('blueberry');
     expect(await accentRgb(page)).toBe(before);
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/blueberry.svg');
 
     await swatches.getByRole('radio', { name: 'Sunset' }).click();
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -74,6 +84,9 @@ test('accent previews live, saves to the account, and survives a reload', async 
     expect(await accentOf(page)).toBe('sunset');
     await expect(page.getByRole('radiogroup', { name: 'Accent color' }).getByRole('radio', { name: 'Sunset' }))
         .toHaveAttribute('aria-checked', 'true');
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/sunset.svg');
+    await expect(favicon).toHaveAttribute('href', '/app/icons/berry/sunset.svg');
+    expect((await page.request.get('/app/icons/berry/sunset.svg')).status()).toBe(200);
     await page.screenshot({ path: '/opt/cursor/artifacts/appearance_accent_sunset.png' });
 });
 

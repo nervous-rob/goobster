@@ -9,6 +9,7 @@ import { MenuButton } from '../shell/MenuButton';
 import { useTutorials } from '../tutorials/TutorialProvider';
 import { useToast } from '../hooks/useToast';
 import { PRIMARY_ROOMS, isRoomAvailable } from '../lib/rooms';
+import { BerryMark } from '../components/BerryMark';
 
 type HomePayload = {
     you?: { factCount?: number; memoryCount?: number; nickname?: string; facts?: string[] };
@@ -87,7 +88,7 @@ export function HomeRoom() {
                     <div className="home-shell">
                         <header className="home-hero">
                             <div className="home-berry-wrap">
-                                <img className="home-berry" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                                <BerryMark className="home-berry" size={72} />
                             </div>
                             <div>
                                 <h1 className="home-hello">{greeting(me.user.name || '')}</h1>

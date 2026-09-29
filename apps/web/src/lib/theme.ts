@@ -119,6 +119,9 @@ export function setStoredTheme(choice: ThemeChoice): void {
 export function paintAccent(choice: AccentChoice): void {
     document.documentElement.dataset.accent = choice;
     syncThemeColor();
+    // The favicon is the berry in the same accent (index.html paints the stored one before mount).
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (icon) icon.href = `/app/icons/berry/${choice}.svg`;
 }
 
 /** Persist the device accent copy and paint it. */

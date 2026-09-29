@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { tokenFromLocation } from './InvitePage';
+import { BerryMark } from '../components/BerryMark';
 
 type Outcome =
     | { state: 'working' }
@@ -66,7 +67,7 @@ export function VerifyEmailPage() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 {outcome.state === 'working' && (
                     <>
                         <h1>Confirming…</h1>
