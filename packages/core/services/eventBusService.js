@@ -60,6 +60,12 @@ const INVALIDATION_HINTS = {
     // An inbox item was delivered, read, or archived (Increment C): the
     // Inbox pane and the sidebar unread badge refetch.
     'inbox': ['inbox', 'home'],
+    // A friend request was sent, answered, or withdrawn, or a friendship
+    // ended: the People pane and the badge counts on /me refetch.
+    'friends': ['friends', 'me'],
+    // A direct message arrived or was read. The thread list and the open
+    // transcript (dm-thread:<id>) ride the payload's own `invalidate` list.
+    'dm-message': ['me'],
     // User settings changed: invalidates settings and related room caches
     'settings-changed': ['settings', 'chat-settings', 'voice-settings', 'attention', 'home']
 };

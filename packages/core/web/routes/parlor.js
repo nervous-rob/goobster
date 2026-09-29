@@ -189,22 +189,6 @@ function mountParlor(app, ctx, h) {
 
     // --- Shared discussions (multi-user parlors) -----------------------------
 
-    // The user's synced Discord friends (the roster the Activity collected;
-    // the web app can never read relationships itself). Read-only: the
-    // Activity is the collector, this is the mirror the portal shows. Each
-    // friend carries an `online` flag - whether THEY are in the portal
-    // right now (presenceService; Discord friendships are mutual, so this
-    // mirrors what Discord itself shows friends). Polling this route also
-    // keeps the caller's own session warm (requireAuth touches lastSeenAt).
-    app.get('/api/app/friends', requireAuth, parlorRoute(async (req) => {
-        const friends = await ctx.friends.listFriends(req.webUser.userId);
-        const online = await ctx.presence.onlineIds(friends.map(friend => friend.id), { respectVisibility: true });
-        return {
-            friends: friends.map(friend => ({ ...friend, online: online.has(friend.id) })),
-            syncedAt: await ctx.friends.lastSyncedAt(req.webUser.userId)
-        };
-    }));
-
     // The human roster of one discussion (owner also sees pending invites)
     app.get('/api/app/parlor/conversations/:conversationId/members', requireAuth, parlorRoute(async (req) =>
         ctx.parlor.listMembers({

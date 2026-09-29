@@ -1364,25 +1364,87 @@ CREATE TABLE IF NOT EXISTS web_share_links (
 
 CREATE INDEX IF NOT EXISTS idx_web_share_links_user ON web_share_links(userId);
 
--- The user's Discord friends, as reported by the Embedded App SDK's
--- getRelationships() inside the Activity (the ONLY surface where Discord
--- exposes a friend list - a bot token cannot read relationships). The
--- Activity syncs the roster here so the web app can offer a real people
--- picker (e.g. inviting a friend into a parlor discussion) instead of
--- asking for a raw snowflake. Cached, not authoritative: it is refreshed
--- on every Activity load and always re-derivable by opening the Activity
--- again. Names/avatars are snapshots for display. /forget-me deletes a
--- user's roster AND their appearance in anyone else's.
-CREATE TABLE IF NOT EXISTS user_friends (
-    ownerId TEXT NOT NULL,
-    friendId TEXT NOT NULL,
-    friendName TEXT,
-    avatar TEXT,
-    syncedAt TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (ownerId, friendId)
+-- The cached Discord friend roster the Activity used to sync
+-- (user_friends) is gone: friendships are Goobster's own now (below).
+-- Dropping it on open removes the stale per-user cache from every
+-- installation, so nothing personal outlives its erasure path.
+DROP TABLE IF EXISTS user_friends;
+
+-- ---------------------------------------------------------------------------
+-- Friends (documentation/friends_and_messages.md). One row per pair of
+-- people whatever its state: lowId/highId is the canonical ordering of
+-- the pair, so the UNIQUE index makes "one relationship per pair" a
+-- database fact; requesterId/addresseeId keep who asked whom. A
+-- friendship is mutual - both sides see each other's presence and can
+-- message each other - and either side may end it. Names are never
+-- snapshotted here: they resolve live from principals / sessions.
+--   pending   the addressee has not answered (the request is in their Inbox)
+--   accepted  friends
+--   declined  the addressee said no (the requester is not told; a new
+--             request is allowed after a cooldown)
+--   cancelled the requester withdrew the request
+--   removed   one side unfriended
+-- /forget-me deletes every row the person is on, in either seat.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS friendships (
+    id INTEGER PRIMARY KEY,
+    lowId TEXT NOT NULL,
+    highId TEXT NOT NULL,
+    requesterId TEXT NOT NULL,
+    addresseeId TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled', 'removed')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    respondedAt TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (lowId, highId)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_friends_friend ON user_friends(friendId);
+CREATE INDEX IF NOT EXISTS idx_friendships_low ON friendships(lowId, status);
+CREATE INDEX IF NOT EXISTS idx_friendships_high ON friendships(highId, status);
+
+-- ---------------------------------------------------------------------------
+-- Direct messages between two friends (documentation/friends_and_messages.md).
+-- A thread is the one conversation a pair of people share (same canonical
+-- pair ordering as friendships); dm_participants carries each side's read
+-- marker; dm_messages is the transcript - human text only, no AI turn, no
+-- attachments. Sending requires an accepted friendship at send time; the
+-- thread and its history survive an unfriending (read-only until they are
+-- friends again). /forget-me deletes every thread the person is in, both
+-- sides' messages included - a private conversation is shared data and is
+-- erased whole rather than left one-sided.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dm_threads (
+    id INTEGER PRIMARY KEY,
+    lowId TEXT NOT NULL,
+    highId TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastMessageAt TEXT,
+    lastMessageId INTEGER,
+    UNIQUE (lowId, highId)
+);
+
+CREATE TABLE IF NOT EXISTS dm_participants (
+    threadId INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    -- The id of the last message this person has seen (0 = none)
+    lastReadMessageId INTEGER NOT NULL DEFAULT 0,
+    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (threadId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_participants_user ON dm_participants(userId);
+
+CREATE TABLE IF NOT EXISTS dm_messages (
+    id INTEGER PRIMARY KEY,
+    threadId INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+    senderId TEXT NOT NULL,
+    content TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_messages_thread ON dm_messages(threadId, id);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_sender ON dm_messages(senderId);
 
 -- ---------------------------------------------------------------------------
 -- The Parlor (web app): a multi-persona AI workspace where conversations

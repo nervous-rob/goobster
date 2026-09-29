@@ -321,7 +321,38 @@ class InboxService {
         };
     }
 
-    async _publicItem(row, noticeById = null, failureById = null, accessById = null) {
+    /**
+     * The friend requests behind the items in a page (the addressee's "X
+     * wants to be friends" and the requester's acceptance), keyed by sourceId.
+     */
+    async _friendByIdForRows(rows) {
+        const friendService = require('./friendService');
+        if (!rows.some(row => row.sourceType === friendService.SOURCE_TYPE)) return new Map();
+        return friendService.describeForRows(rows);
+    }
+
+    _presentFriend(row, friendById) {
+        const friendService = require('./friendService');
+        if (row.sourceType !== friendService.SOURCE_TYPE) return null;
+        const request = friendById.get(String(row.sourceId));
+        // The request row is gone (someone was erased): the words stay.
+        if (!request) return null;
+        return {
+            id: request.id,
+            status: request.status,
+            requesterId: request.requesterId,
+            requesterName: request.requesterName,
+            requesterAvatar: request.requesterAvatar,
+            addresseeId: request.addresseeId,
+            addresseeName: request.addresseeName,
+            // Only the addressee's copy offers Accept / Decline, and only
+            // while the request is still open.
+            actionable: request.status === 'pending' && request.addresseeId === row.userId,
+            respondedAt: request.respondedAt
+        };
+    }
+
+    async _publicItem(row, noticeById = null, failureById = null, accessById = null, friendById = null) {
         let attention = null;
         if (row.sourceType === activityCorrelation.SOURCE_TYPE) {
             const map = noticeById || await activityCorrelation.noticesByIdForRows([row]);
@@ -329,6 +360,7 @@ class InboxService {
         }
         const failure = this._presentFailure(row, failureById || await this._failuresByIdForRows([row]));
         const access = this._presentAccess(row, accessById || await this._accessByIdForRows([row]));
+        const friend = this._presentFriend(row, friendById || await this._friendByIdForRows([row]));
         return {
             id: row.id,
             kind: row.kind,
@@ -346,6 +378,10 @@ class InboxService {
             // The access request this item is about (documentation/identity.md,
             // "Asking to join"): the host's copy is actionable while pending.
             access,
+            // The friend request this item is about (documentation/
+            // friends_and_messages.md): the addressee's copy is actionable
+            // while pending.
+            friend,
             ask: await require('./conversationContextService').describeItem(row),
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
@@ -391,8 +427,9 @@ class InboxService {
         const noticeById = await activityCorrelation.noticesByIdForRows(page);
         const failureById = await this._failuresByIdForRows(page);
         const accessById = await this._accessByIdForRows(page);
+        const friendById = await this._friendByIdForRows(page);
         return {
-            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById, accessById))),
+            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById, accessById, friendById))),
             unread: await this.unreadCount(userId),
             nextCursor: rows.length > bounded ? String(page[page.length - 1].id) : null
         };
