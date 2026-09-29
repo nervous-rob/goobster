@@ -699,7 +699,7 @@ h2 {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 8px 10px;
-    padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
+    padding: 8px;
   }
 
   .conservatory-title-row {
