@@ -5,6 +5,7 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const express = require('express');
 const eventBusService = require('../../services/eventBusService');
 const { workspaceRoot } = require('../../runtimePaths');
@@ -79,6 +80,42 @@ function mountEventsStatic(app, ctx, h) {
     const reactIndex = () => path.join(reactDir, 'index.html');
     const reactBuilt = () => fs.existsSync(reactIndex());
 
+    // The service worker's cache is named after the build it shipped with
+    // (documentation/pwa.md): index.html points at hashed chunks, so its
+    // content hash changes with every `build:web` and a new worker
+    // activates whose `activate` step drops the previous build's cache.
+    let buildStamp = null;
+    const currentBuildStamp = () => {
+        if (buildStamp) return buildStamp;
+        try {
+            buildStamp = crypto.createHash('sha256').update(fs.readFileSync(reactIndex())).digest('hex').slice(0, 12);
+        } catch {
+            buildStamp = 'dev';
+        }
+        return buildStamp;
+    };
+    app.get('/app/sw.js', (req, res, next) => {
+        const file = path.join(reactDir, 'sw.js');
+        fs.readFile(file, 'utf8', (error, source) => {
+            if (error) return next();
+            // Browsers cap a worker script's freshness at 24h anyway; asking
+            // for revalidation makes a deploy visible on the next load.
+            res.set({
+                'Content-Type': 'application/javascript; charset=utf-8',
+                'Cache-Control': 'no-cache',
+                'Service-Worker-Allowed': '/app/'
+            });
+            res.send(source.replace(/__GOOBSTER_BUILD__/g, currentBuildStamp()));
+        });
+    });
+
+    // The Web Share Target lands here when the worker is not (yet) in
+    // control: nothing to hand over, so open a fresh chat. With the
+    // worker installed, the POST never reaches the server.
+    app.post('/app/share-target', (req, res) => {
+        res.redirect(303, '/app/chat');
+    });
+
     // Shared Observatory dashboards - deliberately NO auth: the unguessable
     // token is the capability, and the self-contained page it unlocks
     // exposes no other file or route (control buttons stay inert because
@@ -107,9 +144,14 @@ function mountEventsStatic(app, ctx, h) {
     // (/app/share/<token>) are SPA routes like everything else. When the
     // build is missing, say so plainly instead of a bare 404.
     if (reactBuilt()) {
-        app.use('/app', express.static(reactDir));
+        // Vite names every chunk after its content, so a hashed asset can
+        // be cached forever; everything else (manifest, icons, the stable
+        // style.css, offline.html) revalidates on each load.
+        app.use('/app/assets', express.static(path.join(reactDir, 'assets'), { immutable: true, maxAge: '1y', fallthrough: true }));
+        app.use('/app', express.static(reactDir, { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
         app.get(['/app', '/app/*'], (req, res, next) => {
             if (path.extname(req.path)) return next();
+            res.set('Cache-Control', 'no-cache');
             res.sendFile(reactIndex());
         });
     } else {

@@ -192,7 +192,8 @@ function createAppHelpers(ctx) {
         dashboardRoute: jsonRoute(ctx, 'Web dashboard route failed'),
         exchangeRoute: jsonRoute(ctx, 'Web exchange route failed'),
         appletRoute: jsonRoute(ctx, 'Web applet route failed'),
-        integrationRoute: jsonRoute(ctx, 'Integration route failed')
+        integrationRoute: jsonRoute(ctx, 'Integration route failed'),
+        pushRoute: jsonRoute(ctx, 'Push route failed')
     };
 }
 

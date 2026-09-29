@@ -126,7 +126,16 @@ class InboxService {
             echo = await this._echoToDiscord(row, discord);
             row = (await db.get('SELECT * FROM inbox_items WHERE id = @id', { id: row.id })) || row;
         }
-        return { item: await this._publicItem(row), created, discord: echo };
+        // The browser echo (documentation/pwa.md): a push that points at
+        // the row, to every device the person enrolled. Like the Discord
+        // echo it is bookkeeping around the item, never the record.
+        let push = { sent: 0, failed: 0, pruned: 0, skipped: true };
+        if (created) {
+            try {
+                push = await require('./pushService').notifyInboxItem(row);
+            } catch { /* never throws, belt and braces */ }
+        }
+        return { item: await this._publicItem(row), created, discord: echo, push };
     }
 
     /**

@@ -166,6 +166,8 @@ data/tavern/
 data/web-uploads/
 # Code sandbox scratch/output (per-run, pruned after a retention window)
 data/sandbox/
+# Self-generated Web Push (VAPID) key pair — a private key, never committed
+data/web-push-keys.json
 
 # Vite-generated stable CSS (apps/web/vite.config.ts writes this on build/dev)
 apps/web/public/style.css

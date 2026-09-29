@@ -583,6 +583,8 @@ class PrivacyService {
                 account: row.accountLabel || null,
                 connectedAt: row.createdAt
             })),
+            // Browsers enrolled for push (a count; endpoints are never shown).
+            pushDevices: await require('./pushService').countForUser(userId),
             tavernCharacter: tavernCharacter || null,
             tavernRoom: Boolean(tavernRoom),
             tavernRelationships: tavernRelationships?.c || 0
@@ -896,6 +898,11 @@ class PrivacyService {
             counts.webSessions = (await db.run(
                 'DELETE FROM web_sessions WHERE userId = @userId', { userId }
             )).changes;
+
+            // Browser push subscriptions: each row is a way to reach one
+            // of the person's devices, so forgetting them means no device
+            // hears from Goobster again (documentation/pwa.md).
+            counts.pushSubscriptions = await require('./pushService').forgetUser(userId, db);
 
             // The application identity itself: principal, linked external
             // identities, and the account entitlement. A forgotten user has
@@ -1254,6 +1261,9 @@ class PrivacyService {
             )).c,
             web_sessions: (await db.get(
                 'SELECT COUNT(*) AS c FROM web_sessions WHERE userId = @userId', { userId }
+            )).c,
+            push_subscriptions: (await db.get(
+                'SELECT COUNT(*) AS c FROM push_subscriptions WHERE userId = @userId', { userId }
             )).c,
             principals: (await db.get(
                 'SELECT COUNT(*) AS c FROM principals WHERE id = @userId', { userId }

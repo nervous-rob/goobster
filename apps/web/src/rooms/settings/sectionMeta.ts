@@ -56,7 +56,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🧭',
         scope: 'Your account',
         blurb: 'How proactive Goobster is allowed to be, how often he may reach out, and when to stay quiet.',
-        keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm', 'presence', 'snooze']
+        keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm', 'presence', 'snooze', 'push', 'browser notifications']
     },
     {
         id: 'memory',
@@ -80,7 +80,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🎨',
         scope: 'Your account',
         blurb: 'Theme, accent color, surface, navigation layout, density, keyboard, and working defaults. Theme also keeps a device copy.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
     },
     {
         id: 'account',
@@ -144,6 +144,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'initiative', fieldId: 'quiet-hours', label: 'Quiet hours', keywords: ['quiet', 'do not disturb', 'dnd', 'night', 'sleep', 'hours'] },
     { section: 'initiative', fieldId: 'quiet-hours-tz', label: 'Quiet hours timezone', keywords: ['local quiet hours', 'dst', 'timezone quiet'] },
     { section: 'initiative', fieldId: 'notifications', label: 'Notification channels', keywords: ['notifications', 'sounds', 'banners', 'in-app', 'outbound'] },
+    { section: 'initiative', fieldId: 'browser-notifications', label: 'Browser notifications', keywords: ['push', 'browser notifications', 'device', 'alerts', 'web push', 'phone', 'pwa'] },
     { section: 'initiative', fieldId: 'presence', label: 'Show me as online', keywords: ['presence', 'online', 'visibility', 'friends'] },
     { section: 'initiative', fieldId: 'snooze', label: 'Default snooze', keywords: ['snooze', 'later', 'remind'] },
     { section: 'initiative', fieldId: 'boundaries', label: 'Boundaries by category', keywords: ['boundaries', 'permissions', 'read', 'compute', 'write', 'confirm', 'github', 'research'] },
@@ -178,6 +179,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'link-by-tag', label: 'Link notes by shared tag', keywords: ['tags', 'link by tag', 'map', 'graph', 'spitball'] },
     { section: 'appearance', fieldId: 'expedition-defaults', label: 'Defaults for new expeditions', keywords: ['expedition', 'depth', 'lens', 'spitball defaults'] },
     { section: 'appearance', fieldId: 'parlor-defaults', label: 'Defaults for new personas', keywords: ['parlor', 'persona defaults', 'charter', 'emoji'] },
+    { section: 'appearance', fieldId: 'install-app', label: 'Install Goobster as an app', keywords: ['install', 'pwa', 'app', 'home screen', 'desktop', 'standalone', 'shortcut', 'badge'] },
     { section: 'appearance', fieldId: 'conservatory', label: 'Music Lab library', keywords: ['conservatory', 'music lab', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
     { section: 'account', fieldId: 'sign-in-password', label: 'Login name & password', keywords: ['password', 'passphrase', 'login name', 'username', 'change password', 'sign in without discord'] },

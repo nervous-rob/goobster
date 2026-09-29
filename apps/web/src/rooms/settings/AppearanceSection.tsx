@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
+import { InstallPrompt } from '../../components/InstallPrompt';
 import {
     ACCENTS, SURFACES, getStoredAccent, getStoredSurface, getStoredTheme, isAccent, isSurface,
     paintAccent, paintSurface, paintTheme, setStoredAccent, setStoredSurface, setStoredTheme,
@@ -339,6 +340,13 @@ export function AppearanceSection({ section, onDirty }: {
                 <button id="link-by-tag-input" type="button" className={`toggle${d.draft.linkByTag ? ' on' : ''}`}
                     role="switch" aria-checked={d.draft.linkByTag} aria-label="Link notes by shared tag"
                     onClick={() => d.set({ linkByTag: !d.draft.linkByTag })} />
+            </Field>
+
+            <Field id="install-app" label="Install Goobster as an app" scope="This device"
+                hint="The portal works as an installed app: its own window, an icon, shortcuts to Chat and the Inbox, an unread badge, and notifications when no tab is open.">
+                <div id="install-app-input">
+                    <InstallPrompt />
+                </div>
             </Field>
 
             <Field id="conservatory" label="Music Lab library" scope="This device"

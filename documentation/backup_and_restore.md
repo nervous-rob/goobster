@@ -34,6 +34,7 @@ An archive is a directory, `goobster-backup-<UTC stamp>/`, written under `<data 
 | `files/artifacts/` | Saved knowledge files (`GOOBSTER_KG_ARTIFACTS_DIR` or `data/kg-artifacts`). |
 | `files/images/` | Generated images (`data/images`). |
 | `files/tavern-campaigns/`, `files/tavern-assets/` | Tavern campaign overrides (`GOOBSTER_TAVERN_CAMPAIGNS_DIR` or `data/tavern/campaigns`) and assets. |
+| `files/web-push-keys` | The self-generated Web Push (VAPID) key pair (`data/web-push-keys.json`, `pwa.md`); without it every browser push subscription is stranded. |
 | `config.json.enc` | `config.json`, encrypted. Present only when a passphrase was given. |
 
 File sets are resolved against the data directory of the installation doing the backup or the restore, never against a path recorded by the other side, so an archive moves between machines and layouts.

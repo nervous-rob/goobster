@@ -1364,6 +1364,29 @@ CREATE TABLE IF NOT EXISTS web_share_links (
 
 CREATE INDEX IF NOT EXISTS idx_web_share_links_user ON web_share_links(userId);
 
+-- ---------------------------------------------------------------------------
+-- Web Push subscriptions (documentation/pwa.md). One row per browser that
+-- opted into notifications from the installed portal: the push service
+-- endpoint plus the two client keys the payload is encrypted to. The
+-- endpoint is a capability to reach that one device, never shown back to
+-- any client. Pruned when the push service answers 404/410 or after
+-- repeated failures; deleted outright by /forget-me.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    userAgent TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastSeenAt TEXT,
+    lastSentAt TEXT,
+    failCount INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(userId);
+
 -- The cached Discord friend roster the Activity used to sync
 -- (user_friends) is gone: friendships are Goobster's own now (below).
 -- Dropping it on open removes the stale per-user cache from every

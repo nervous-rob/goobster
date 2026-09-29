@@ -86,7 +86,10 @@ const FILE_SETS = [
     { id: 'artifacts', label: 'saved knowledge files', resolve: dataDir => process.env.GOOBSTER_KG_ARTIFACTS_DIR || path.join(dataDir, 'kg-artifacts') },
     { id: 'images', label: 'generated images', resolve: dataDir => path.join(dataDir, 'images') },
     { id: 'tavern-campaigns', label: 'Tavern campaign overrides', resolve: dataDir => process.env.GOOBSTER_TAVERN_CAMPAIGNS_DIR || path.join(dataDir, 'tavern', 'campaigns') },
-    { id: 'tavern-assets', label: 'Tavern assets', resolve: dataDir => path.join(dataDir, 'tavern', 'assets') }
+    { id: 'tavern-assets', label: 'Tavern assets', resolve: dataDir => path.join(dataDir, 'tavern', 'assets') },
+    // The self-generated VAPID pair (documentation/pwa.md): a single file,
+    // but losing it strands every browser push subscription.
+    { id: 'web-push-keys', label: 'Web Push keys', resolve: dataDir => path.join(dataDir, 'web-push-keys.json') }
 ];
 
 class BackupError extends Error {
@@ -154,6 +157,9 @@ async function tableCounts() {
 function countFiles(dir) {
     let files = 0;
     let bytes = 0;
+    if (fs.existsSync(dir) && fs.statSync(dir).isFile()) {
+        return { files: 1, bytes: fs.statSync(dir).size };
+    }
     const walk = (current) => {
         for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
             const full = path.join(current, entry.name);

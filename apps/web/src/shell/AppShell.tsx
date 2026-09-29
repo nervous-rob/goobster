@@ -25,6 +25,17 @@ import {
     parentRoom, resolveRoom, roomBadgeCount, startPageTarget, type Room
 } from '../lib/rooms';
 import { BerryMark } from '../components/BerryMark';
+import { setAppBadge, useInstallPrompt, useOnline, useServiceWorkerUpdate, useWorkerNavigation } from '../lib/pwa';
+import { showLocalNotification } from '../lib/notifications';
+import { InstallBanner, InstallEntry } from '../components/InstallEntry';
+
+function inboxNoticeTitle(kind?: string): string {
+    if (kind === 'reminder') return 'A reminder came due';
+    if (kind === 'invite') return 'You have an invitation';
+    if (kind === 'task') return 'A task finished';
+    if (kind === 'expedition') return 'Research finished';
+    return 'Something new in your Inbox';
+}
 
 function NavLink({ room, active, count, onClick }: { room: Room; active: boolean; count: number; onClick: () => void }) {
     return (
@@ -96,7 +107,17 @@ export function AppShell() {
         }
         const onMention = (event: Event) => {
             if (!mentionBanners) return;
-            setMention((event as CustomEvent<ParlorMentionEvent>).detail || {});
+            const detail = (event as CustomEvent<ParlorMentionEvent>).detail || {};
+            // A hidden tab raises the same notice through the worker
+            // (documentation/pwa.md); showLocalNotification is a no-op
+            // while visible or when this browser receives push.
+            void showLocalNotification({
+                title: `${detail.fromName || 'Someone'} mentioned you`,
+                body: detail.title ? `in “${detail.title}”` : 'in a discussion',
+                link: detail.conversationId ? `/discussions/${detail.conversationId}` : '/discussions',
+                tag: detail.conversationId ? `mention-${detail.conversationId}-${detail.messageId ?? ''}` : null
+            });
+            setMention(detail);
             playPing();
         };
         const onNoticed = () => {
@@ -108,8 +129,15 @@ export function AppShell() {
         // invitation) while this tab was open. Not shown while already there.
         const onInbox = (event: Event) => {
             if (!notifyInApp) return;
+            const detail = (event as CustomEvent<InboxEvent>).detail || {};
+            void showLocalNotification({
+                title: inboxNoticeTitle(detail.kind),
+                body: 'Open your Inbox in Goobster',
+                link: '/activity/inbox',
+                tag: detail.itemId ? `inbox-${detail.itemId}` : null
+            });
             if (resolveRoom(window.location.pathname) === 'activity') return;
-            setInboxPing((event as CustomEvent<InboxEvent>).detail || {});
+            setInboxPing(detail);
             playPing();
         };
         window.addEventListener('goobster-parlor-mention', onMention);
@@ -189,6 +217,23 @@ export function AppShell() {
         }
     }, [appearance]);
 
+    // The installed app's badge is the same count as the sidebar's
+    // (documentation/pwa.md); cleared on sign-out and where unsupported.
+    useEffect(() => {
+        setAppBadge(me ? (me.inbox?.unread || 0) + (me.people?.unread || 0) + (me.people?.pending || 0) : 0);
+    }, [me]);
+
+    // A notification click lands in an already-open window: the worker
+    // posts the portal path and the router takes it without a reload.
+    useWorkerNavigation(useCallback((path: string) => {
+        const inApp = path.startsWith('/app/') ? path.slice(4) : path === '/app' ? '/' : path;
+        navigate({ to: inApp as never });
+    }, [navigate]));
+
+    const online = useOnline();
+    const swUpdate = useServiceWorkerUpdate();
+    const installNudge = useInstallPrompt().nudge;
+
     useEffect(() => {
         if (!me || !appearance?.startPage || appearance.startPage === 'home') return;
         if (pathname !== '/') return;
@@ -265,6 +310,7 @@ export function AppShell() {
                     </button>
                     {me ? (
                         <>
+                            <InstallEntry onNavigate={() => setDrawer(false)} />
                             <Link to="/settings" className={`nav-btn settings-link${room === 'settings' ? ' active' : ''}`}
                                 data-tour="nav-settings"
                                 onClick={() => setDrawer(false)}>
@@ -283,7 +329,21 @@ export function AppShell() {
                 </div>
             </aside>
             </>)}
-            <div id="stage" className={me?.instance?.paused ? 'has-instance-banner' : undefined}>
+            <div id="stage" className={me?.instance?.paused || !online || swUpdate.available || installNudge ? 'has-instance-banner' : undefined}>
+                {!online && (
+                    <div className="instance-banner offline-banner" role="status" data-testid="offline-banner">
+                        <span>
+                            📡 <strong>You are offline.</strong> Rooms you already opened stay readable; sending, saving and new rooms wait for the connection.
+                        </span>
+                    </div>
+                )}
+                {online && swUpdate.available && (
+                    <div className="instance-banner update-banner" role="status" data-testid="update-banner">
+                        <span>✨ <strong>Goobster was updated.</strong> Reload to pick up the new version.</span>
+                        <button type="button" className="btn small primary" onClick={swUpdate.apply}>Reload</button>
+                    </div>
+                )}
+                {me && online && !swUpdate.available && installNudge && <InstallBanner onNavigate={() => setDrawer(false)} />}
                 {me?.instance?.paused && (
                     <div className="instance-banner" role="status">
                         <span>

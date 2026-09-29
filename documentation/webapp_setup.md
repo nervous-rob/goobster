@@ -138,6 +138,18 @@ In `config.json`:
 - The OAuth client secret is shared with the Activity: set
   `DISCORD_CLIENT_SECRET` (env) or `activity.clientSecret` /
   `webapp.clientSecret` in `config.json`.
+- `push` (optional) - Web Push for the installed app (`pwa.md`). Nothing
+  is required: a VAPID key pair is generated on first use into
+  `data/web-push-keys.json`. To pin one instead (required for the split
+  deployment so the bot and api share it):
+  ```json
+  { "webapp": { "push": { "enabled": true, "subject": "mailto:you@example.com",
+    "vapidPublicKey": "…", "vapidPrivateKey": "…" } } }
+  ```
+  or `GOOBSTER_VAPID_PUBLIC_KEY` / `GOOBSTER_VAPID_PRIVATE_KEY` /
+  `GOOBSTER_VAPID_SUBJECT` in the environment. Generate a pair with
+  `npx web-push generate-vapid-keys`. `GOOBSTER_WEB_PUSH_ENABLED=0` (or
+  `push.enabled: false`) turns the feature off.
 
 ## 2. Public HTTPS exposure
 

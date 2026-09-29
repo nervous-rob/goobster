@@ -1107,6 +1107,21 @@ a.nav-btn {
 
 /* --- Parlor @-mention notice + composer autocomplete ---------------------- */
 
+/* Installed-app banners (documentation/pwa.md): the offline notice keeps
+   the warning border; the update notice takes the accent, it is good news. */
+.instance-banner.update-banner { border-color: var(--accent); }
+.instance-banner.update-banner strong { color: var(--accent); }
+.instance-banner.offline-banner strong { color: var(--text); }
+.instance-banner.install-banner { border-color: var(--accent); }
+.instance-banner.install-banner strong { color: var(--accent); }
+.instance-banner .banner-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+/* The install entry sits with the room links (sidebar footer, top-bar
+   account menu) and disappears once the app is installed. */
+.install-entry { display: flex; align-items: center; gap: 6px; width: 100%; font: inherit; }
+.install-entry:disabled { opacity: 0.6; cursor: progress; }
+.push-settings .settings-inline-row { align-items: center; }
+.push-settings .link-btn { font: inherit; padding: 0; }
+
 .mention-toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 4px;

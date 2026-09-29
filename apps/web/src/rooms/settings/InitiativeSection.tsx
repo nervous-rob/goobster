@@ -8,6 +8,7 @@ import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
+import { PushSettings } from '../../components/PushSettings';
 
 type Values = UserSettingsResponse['sections']['initiative']['values'];
 type Boundary = { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean };
@@ -215,7 +216,7 @@ export function InitiativeSection({ section, onDirty }: {
             </Field>
 
             <Field id="notifications" label="Notification channels" scope="Your account"
-                hint="In-app notices, mention banners, and outbound DMs. This does not enable browser push.">
+                hint="In-app notices, mention banners, and outbound DMs. Browser notifications are a per-device choice below.">
                 <div className="settings-stack" id="notifications-input">
                     <label className="settings-check"><input type="checkbox" checked={d.draft.notifyInApp}
                         onChange={(e) => d.set({ notifyInApp: e.target.checked })} /> In-app notices</label>
@@ -225,6 +226,13 @@ export function InitiativeSection({ section, onDirty }: {
                         onChange={(e) => d.set({ notifyOutbound: e.target.checked })} /> Outbound Discord DMs</label>
                     <label className="settings-check"><input type="checkbox" checked={d.draft.notifySounds}
                         onChange={(e) => d.set({ notifySounds: e.target.checked })} /> In-app sounds</label>
+                </div>
+            </Field>
+
+            <Field id="browser-notifications" label="Browser notifications" scope="This device"
+                hint="Reach this device even when no Goobster tab is open: new Inbox items, mentions in shared discussions and direct messages. Only a title and where to look are sent - never the text.">
+                <div id="browser-notifications-input">
+                    <PushSettings />
                 </div>
             </Field>
 

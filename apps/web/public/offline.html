@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1117">
+  <meta name="color-scheme" content="dark light">
+  <title>Goobster · offline</title>
+  <link rel="icon" href="/app/icons/goobster.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app/style.css">
+  <style>
+    .offline-page {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 24px calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+      text-align: center;
+    }
+    .offline-card {
+      max-width: 420px;
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+    .offline-card img { width: 72px; height: 72px; }
+    .offline-card h1 { margin: 0; font-size: 1.4rem; }
+    .offline-card p { margin: 0; color: var(--text-dim); line-height: 1.5; }
+    .offline-card .btn { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <script>
+    (function () {
+      try {
+        var s = window.localStorage;
+        var t = s.getItem('goobster-theme');
+        var light = t === 'light' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+        if (light) document.body.classList.add('light');
+        var a = s.getItem('goobster-accent');
+        if (a && /^[a-z]+$/.test(a)) document.documentElement.setAttribute('data-accent', a);
+        if (s.getItem('goobster-surface') === 'neutral') document.documentElement.setAttribute('data-surface', 'neutral');
+      } catch (e) { /* private mode */ }
+    })();
+  </script>
+  <main class="offline-page">
+    <div class="offline-card" role="status" aria-live="polite">
+      <img src="/app/icons/goobster.svg" alt="" width="72" height="72">
+      <h1>You are offline</h1>
+      <p>Goobster's house needs a connection: chat, memory and the rooms live on your server, not in this browser. Reconnect and this page opens where you left off.</p>
+      <button type="button" class="btn primary" onclick="location.reload()">Try again</button>
+    </div>
+  </main>
+  <script>
+    window.addEventListener('online', function () { location.reload(); });
+  </script>
+</body>
+</html>

@@ -27,6 +27,18 @@
         "releasesUrl": ""
     },
 
+    "webapp": {
+        "enabled": false,
+        "devMode": false,
+        "publicUrl": "",
+        "push": {
+            "enabled": true,
+            "subject": "",
+            "vapidPublicKey": "",
+            "vapidPrivateKey": ""
+        }
+    },
+
     "sandbox": {
         "enabled": false,
         "scope": "web",

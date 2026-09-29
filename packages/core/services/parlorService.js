@@ -2235,6 +2235,7 @@ class ParlorService {
         const online = await presence.onlineIds(targets, { respectVisibility: true });
         const resolvedGateway = toGateway(gateway);
 
+        const pushService = require('./pushService');
         for (const target of targets) {
             if (online.has(target)) {
                 // Identity hints only (who, where) - never the message text.
@@ -2253,6 +2254,12 @@ class ParlorService {
                     fromName, title, conversationId: conversation.id
                 }));
             }
+            // The installed portal's echo (documentation/pwa.md): the same
+            // hints to every enrolled device; the worker skips it when a
+            // window is already visible. Never throws.
+            await pushService.notifyMention({
+                userId: target, fromName, title, conversationId: conversation.id, messageId
+            });
         }
     }
 
