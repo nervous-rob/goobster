@@ -497,6 +497,12 @@ function mountAuth(app, ctx, h) {
                     reason: discordEnabled ? null : ctx.discordConfig.disabledReason
                 },
                 inbox: { unread: await ctx.inbox.unreadCount(req.webUser.userId).catch(() => 0) },
+                // People: friend requests waiting for an answer and unread
+                // direct messages (documentation/friends_and_messages.md).
+                people: {
+                    pending: await ctx.friends.pendingCount(req.webUser.userId).catch(() => 0),
+                    unread: await ctx.dm.unreadCount(req.webUser.userId).catch(() => 0)
+                },
                 // Paused after a restore: scheduled work is on hold until
                 // the operator resumes (documentation/backup_and_restore.md).
                 instance: await describeInstancePause(ctx),

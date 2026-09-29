@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { Link, useParams } from '@tanstack/react-router';
 import { InboxContextChips } from '../components/InboxContextChips';
 import { useInboxDraft } from '../hooks/useInboxDraft';
 import { api, streamParlorChat, streamParlorNudge } from '../lib/api';
@@ -19,6 +19,7 @@ import { useParlorLive } from '../hooks/useParlorLive';
 import { PersonaModal } from './parlor/PersonaModal';
 import { PeopleModal } from './parlor/PeopleModal';
 import type { Grounding, ParlorMessage, Persona } from '../parlor/types';
+import type { Friend } from '../lib/types';
 import { PERSONA_PALETTE, personaColor, personaGlyph, timeLabel } from '../parlor/persona';
 
 type Member = { userId: string; userName?: string | null };
@@ -797,19 +798,17 @@ function ConvItem({
     );
 }
 
-type Friend = { id: string; name: string; avatar?: string | null; online?: boolean };
-
 /**
- * The user's synced Discord friends in the parlor drawer. The Activity is
- * the collector (a web app can never read Discord relationships itself);
- * this is the mirror, with one-click invites into the active discussion.
+ * The user's friends in the parlor drawer (documentation/friends_and_messages.md):
+ * who is in the portal right now, with one-click invites into the active
+ * discussion. Friendships are Goobster's own - managed under People.
  */
 function FriendsSection({ conversation }: { conversation: Conversation | null }) {
     const toast = useToast();
     const queryClient = useQueryClient();
     const friendsQ = useQuery({
         queryKey: keys.friends,
-        queryFn: () => api.friends() as Promise<{ friends: Friend[]; syncedAt: string | null }>,
+        queryFn: () => api.friends(),
         staleTime: 60_000
     });
     const friends = friendsQ.data?.friends || [];
@@ -821,7 +820,7 @@ function FriendsSection({ conversation }: { conversation: Conversation | null })
             const result = await api.parlorInvite(conversation.id, friend.id) as { dmSent?: boolean };
             toast(result.dmSent
                 ? `Invitation sent to ${friend.name} by DM.`
-                : `Invitation created for ${friend.name} - their DMs are closed, but it shows in their web app.`);
+                : `Invitation created for ${friend.name} - it is waiting in their Inbox.`);
             await queryClient.invalidateQueries({ queryKey: keys.parlorMembers(conversation.id) });
             await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
         } catch (error) {
@@ -832,12 +831,15 @@ function FriendsSection({ conversation }: { conversation: Conversation | null })
     if (friendsQ.isError) return null;
     return (
         <>
-            <div className="panel-section-head"><span>Discord friends</span></div>
-            <div className="friends-list">
+            <div className="panel-section-head">
+                <span>Friends</span>
+                <Link to="/people/friends" className="panel-add" title="Find and manage friends">People →</Link>
+            </div>
+            <div className="friends-list" data-testid="parlor-friends">
                 {friendsQ.isPending && <div className="hint" style={{ padding: '4px 10px' }}>Loading…</div>}
                 {!friendsQ.isPending && friends.length === 0 && (
                     <div className="hint" style={{ padding: '4px 10px' }}>
-                        None synced yet — open Goobster&apos;s Activity in Discord to bring your friend list over.
+                        No friends yet - find someone under <Link to="/people/friends">People</Link> and they can be invited here with one click.
                     </div>
                 )}
                 {friends.map((friend) => (

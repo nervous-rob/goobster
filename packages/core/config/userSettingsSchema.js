@@ -134,7 +134,7 @@ const TEXT_SIZES = ['s', 'm', 'l'];
 // people saved before the navigation was consolidated; the client maps the
 // older values onto the destination that means the same thing.
 const START_PAGES = [
-    'home', 'chat', 'knowledge', 'projects', 'discussions', 'activity', 'tools',
+    'home', 'chat', 'knowledge', 'projects', 'discussions', 'people', 'activity', 'tools',
     'study', 'noticed', 'inbox', 'spitball', 'parlor', 'exchange', 'conservatory'
 ];
 // Tool rooms a person may hide (`appearance.hiddenToolRooms`). Core cannot

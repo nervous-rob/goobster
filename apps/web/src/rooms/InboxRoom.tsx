@@ -160,6 +160,60 @@ function AccessDecision({ item, onResolved }: { item: InboxItem; onResolved: () 
     );
 }
 
+/**
+ * A friend request in the Inbox (documentation/friends_and_messages.md):
+ * the addressee's copy offers Accept / Decline while pending; every copy
+ * shows the outcome once settled. Declining is silent towards the requester.
+ */
+function FriendDecision({ item, onResolved }: { item: InboxItem; onResolved: () => Promise<unknown> }) {
+    const toast = useToast();
+    const whenLabel = useDateLabel();
+    const [busy, setBusy] = useState<'accept' | 'decline' | null>(null);
+    const friend = item.friend;
+    if (!friend) return null;
+
+    async function resolve(outcome: 'accept' | 'decline') {
+        setBusy(outcome);
+        try {
+            if (outcome === 'accept') {
+                await api.friendAccept(friend!.id);
+                toast(`You and ${friend!.requesterName} are friends now.`);
+            } else {
+                await api.friendDecline(friend!.id);
+                toast('Declined - they are not told.');
+            }
+            await onResolved();
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    if (friend.actionable) {
+        return (
+            <div className="inbox-access" data-testid="inbox-friend-decision" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <button type="button" className="btn primary small" disabled={busy !== null} onClick={() => void resolve('accept')}>
+                    {busy === 'accept' ? 'Accepting…' : 'Accept'}
+                </button>
+                <button type="button" className="btn small" disabled={busy !== null} onClick={() => void resolve('decline')}>
+                    {busy === 'decline' ? 'Declining…' : 'Decline'}
+                </button>
+                <span className="hint">Friends see when each other is in the portal and can message each other.</span>
+            </div>
+        );
+    }
+    if (friend.status === 'pending') return null;
+    const outcome = friend.status === 'accepted' ? 'Accepted'
+        : friend.status === 'declined' ? 'Declined'
+            : friend.status === 'cancelled' ? 'Withdrawn' : 'No longer friends';
+    return (
+        <div className="activity-correlation" data-testid="inbox-friend-outcome">
+            {outcome}{friend.respondedAt ? ` · ${whenLabel(friend.respondedAt)}` : ''}.
+        </div>
+    );
+}
+
 function echoLabel(item: InboxItem, discordEnabled: boolean): string | null {
     if (item.discord.status === 'sent') return 'also sent to your Discord DMs';
     if (item.discord.status === 'failed') return 'Discord DM could not be delivered';
@@ -329,6 +383,11 @@ export function InboxRoom() {
                                             await invalidate();
                                             await queryClient.invalidateQueries({ queryKey: ['admin-accounts'] });
                                             await queryClient.invalidateQueries({ queryKey: ['admin-access-requests'] });
+                                        }} />
+                                        <FriendDecision item={item} onResolved={async () => {
+                                            await invalidate();
+                                            await queryClient.invalidateQueries({ queryKey: keys.friends });
+                                            await queryClient.invalidateQueries({ queryKey: keys.me });
                                         }} />
                                         {isOpen && (
                                             <div className="inbox-body">

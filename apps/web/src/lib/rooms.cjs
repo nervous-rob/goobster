@@ -9,8 +9,8 @@
  * own copies. TanStack route definitions stay explicitly typed in main.tsx;
  * this file only decides names and path equivalences, never route params.
  *
- * Seven primary destinations (Home, Chat, Knowledge, Projects, Discussions,
- * Activity, Tools) plus an account area (Usage, Settings, Host). Specialist
+ * Eight primary destinations (Home, Chat, Knowledge, Projects, Discussions,
+ * People, Activity, Tools) plus an account area (Usage, Settings, Host). Specialist
  * rooms (Music Lab, Trading game, Card decks) keep their own URLs and light
  * up the Tools entry. Internal ids such as `observatory`, `spitball`,
  * `parlor`, API paths, and database names are deliberately unchanged.
@@ -100,6 +100,23 @@ const ROOMS = [
         atmosphere: 'room-parlor',
         legacyIds: ['parlor'],
         tutorials: ['discussions.basics']
+    },
+    {
+        id: 'people',
+        name: 'People',
+        icon: '👥',
+        path: '/people/friends',
+        group: 'primary',
+        atmosphere: 'room-parlor',
+        // Friend requests waiting for an answer plus unread direct messages
+        // (both ride /me; documentation/friends_and_messages.md).
+        count: 'people',
+        legacyIds: ['friends', 'messages'],
+        tutorials: [],
+        views: [
+            { id: 'friends', name: 'Friends', icon: '🤝', path: '/people/friends' },
+            { id: 'messages', name: 'Messages', icon: '✉️', path: '/people/messages' }
+        ]
     },
     {
         id: 'activity',
@@ -298,6 +315,7 @@ function resolveRoom(pathname) {
         }
     }
     if (path.startsWith('/activity')) return 'activity';
+    if (path.startsWith('/people')) return 'people';
     candidates.sort((a, b) => b.len - a.len);
     return candidates[0]?.id || 'home';
 }
@@ -359,6 +377,11 @@ function resolveRoomView(roomId, pathname) {
 /** The Activity view a pathname points at, or null outside Activity. */
 function resolveActivityView(pathname) {
     return resolveRoomView('activity', pathname);
+}
+
+/** The People view a pathname points at, or null outside People. */
+function resolvePeopleView(pathname) {
+    return resolveRoomView('people', pathname);
 }
 
 /** The Knowledge view a pathname points at (`/knowledge` itself is null: it opens on Notes). */
@@ -436,6 +459,7 @@ const START_PAGE_OPTIONS = [
     { value: 'knowledge', label: 'Knowledge' },
     { value: 'projects', label: 'Projects' },
     { value: 'discussions', label: 'Discussions' },
+    { value: 'people', label: 'People' },
     { value: 'activity', label: 'Activity' },
     { value: 'tools', label: 'Tools' }
 ];
@@ -516,6 +540,7 @@ module.exports = {
     resolveRoomDetail,
     detailPath,
     resolveActivityView,
+    resolvePeopleView,
     resolveKnowledgeView,
     atmosphereFor,
     roomDisplayName,

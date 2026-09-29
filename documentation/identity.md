@@ -483,7 +483,8 @@ The report walks every identity-bearing table (`identityService.OWNER_COLUMNS`:
 `web_generated_files`, `memory_embeddings` author and `dm:` scope,
 `guild_settings` `dm:` scope, `kg_nodes` `USER:` scope, `kg_artifacts`,
 `followups`, `automations`, `observatory_projects`, `project_members`,
-`parlor_personas`, `parlor_members`, `user_friends`, `user_integrations`,
+`parlor_personas`, `parlor_members`, `friendships` requester and
+addressee, `dm_messages` sender, `user_integrations`,
 `attention_policies`, `spitball_expeditions`, `knowledge_transfers`) and
 reports distinct owners,
 how many already have a principal or an account, and which ids are neither
@@ -557,9 +558,13 @@ display name or login name among active accounts, never lists the roster
 (a query is required), and returns `{ id, name }` only;
 `identityService.describeMember(id)` resolves one principal id for an
 invite confirmation. `friendService.listInvitable` merges these members
-(source `member`) with Discord friends and shared-server mates when Discord
-is connected, and the Observatory / Parlor People pickers show them with a
-`member` badge. Invitations accept any principal id. The rest of
+(source `member`) with the caller's Goobster friends and, when Discord is
+connected, shared-server mates, and the Observatory / Parlor People pickers
+show them with a `member` badge. Invitations accept any principal id.
+Friendship itself - requests, presence, direct messages - is Goobster's own
+record and is described in [friends_and_messages.md](friends_and_messages.md);
+its friend search adds an exact match on a **verified** email address,
+which is used as a key and never shown. The rest of
 operation without Discord - the adapter switch, the assistant identity, the
 Inbox, runtime modes - is in [independent_runtime.md](independent_runtime.md).
 

@@ -44,6 +44,7 @@ import { ProjectListView } from './rooms/projects/ProjectListView';
 import { ProjectResolver } from './rooms/projects/ProjectResolver';
 import { ProjectShell } from './rooms/projects/ProjectShell';
 import { ActivityRoom } from './rooms/ActivityRoom';
+import { FriendsView, MessagesView, PeopleRoom } from './rooms/PeopleRoom';
 import { ToolsRoom } from './rooms/ToolsRoom';
 import { SettingsRoom } from './rooms/settings/SettingsRoom';
 import { canonicalPath } from './lib/rooms';
@@ -201,7 +202,7 @@ const indexRoute = createRoute({
 });
 
 // --- Canonical destinations (documentation/portal_navigation.md) ----------
-// Seven primary rooms plus the account area. Route ids stay explicit so
+// Eight primary rooms plus the account area. Route ids stay explicit so
 // params keep their validation; names and aliases come from lib/rooms.
 
 const chatRoute = createRoute({
@@ -292,6 +293,38 @@ const discussionsIdRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/discussions/$conversationId',
     component: ParlorRoom,
+});
+
+// People: friends and direct messages, two views under one destination
+// (documentation/friends_and_messages.md).
+const peopleRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/people',
+    component: PeopleRoom,
+});
+
+const peopleIndexRoute = createRoute({
+    getParentRoute: () => peopleRoute,
+    path: '/',
+    component: () => <Navigate to="/people/friends" replace />,
+});
+
+const peopleFriendsRoute = createRoute({
+    getParentRoute: () => peopleRoute,
+    path: '/friends',
+    component: FriendsView,
+});
+
+const peopleMessagesRoute = createRoute({
+    getParentRoute: () => peopleRoute,
+    path: '/messages',
+    component: MessagesView,
+});
+
+const peopleThreadRoute = createRoute({
+    getParentRoute: () => peopleRoute,
+    path: '/messages/$threadId',
+    component: MessagesView,
 });
 
 // Activity keeps delivery (Inbox), proactive attention, and scheduling as
@@ -478,6 +511,12 @@ const routeTree = rootRoute.addChildren([
         projectViewRoute,
         discussionsRoute,
         discussionsIdRoute,
+        peopleRoute.addChildren([
+            peopleIndexRoute,
+            peopleFriendsRoute,
+            peopleMessagesRoute,
+            peopleThreadRoute,
+        ]),
         activityRoute.addChildren([
             activityIndexRoute,
             activityInboxRoute,

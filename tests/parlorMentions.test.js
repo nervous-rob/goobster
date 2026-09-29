@@ -92,7 +92,7 @@ beforeEach(async () => {
         await db.run(`DELETE FROM ${table}`);
     }
     await db.run('DELETE FROM web_sessions');
-    await db.run('DELETE FROM user_friends');
+    await db.run('DELETE FROM friendships');
     await db.run('DELETE FROM web_rate_events');
     parlorService._activeTurns.clear();
     mockAi.chat.mockReset();
