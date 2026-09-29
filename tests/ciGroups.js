@@ -25,6 +25,7 @@ const GROUPS = [
             'dbSchemaUpgrade',
             'dialectForeignKeys',
             'dmCommands',
+            'postgresConnectRetry',
             'executionLease',
             'gatewaySeam',
             'githubService',

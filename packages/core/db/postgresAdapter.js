@@ -276,12 +276,50 @@ async function addForeignKeyIfMissing(client, fk) {
     await client.query(translateDdl(foreignKeyAlterSql(fk)));
 }
 
+/**
+ * A refused TCP connect happens before any statement runs, so retrying it
+ * is always safe. It shows up when the server is still coming up or is
+ * briefly saturated (CI's service container between suites); on Node 20
+ * `pg` reports a dual-stack `localhost` refusal as an AggregateError with
+ * an *empty* message, which the fallback text below makes legible.
+ */
+const CONNECT_RETRY_DELAYS_MS = [200, 500, 1000];
+const RETRYABLE_CONNECT_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'EAI_AGAIN']);
+
+function connectErrorCode(error) {
+    if (!error) return null;
+    if (RETRYABLE_CONNECT_CODES.has(error.code)) return error.code;
+    const nested = Array.isArray(error.errors) ? error.errors.find(e => RETRYABLE_CONNECT_CODES.has(e?.code)) : null;
+    return nested ? nested.code : null;
+}
+
+function describeConnectError(error) {
+    if (error.message) return error;
+    const parts = (Array.isArray(error.errors) ? error.errors : [])
+        .map(e => e?.message || e?.code).filter(Boolean);
+    error.message = `${error.code || 'connect failed'}: ${parts.join('; ') || 'could not reach Postgres'}`;
+    return error;
+}
+
+async function withConnectRetry(fn, { delays = CONNECT_RETRY_DELAYS_MS, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            const code = connectErrorCode(error);
+            if (!code || attempt >= delays.length) throw describeConnectError(error);
+            console.warn(`[DB] Postgres connect ${code}, retrying in ${delays[attempt]}ms (${attempt + 1}/${delays.length})`);
+            await sleep(delays[attempt]);
+        }
+    }
+}
+
 /** Apply schema + column migrations once per process (lazy, awaited by every call). */
 function ensureReady() {
     if (ready) return ready;
     ready = (async () => {
         const p = getPool();
-        const client = await p.connect();
+        const client = await withConnectRetry(() => p.connect());
         try {
             if (schemaName) {
                 await client.query(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
@@ -339,6 +377,10 @@ function ensureReady() {
             client.release();
         }
     })();
+    // A failed bootstrap must not poison every later call in the process:
+    // forget it so the next query tries again (a schema apply is idempotent).
+    const attempt = ready;
+    attempt.catch(() => { if (ready === attempt) ready = null; });
     return ready;
 }
 
@@ -356,8 +398,14 @@ function bindParams(paramNames, params, normalizeParams) {
 async function query(sql, params, normalizeParams) {
     await ensureReady();
     const { text, paramNames } = translate(sql);
+    const values = bindParams(paramNames, params, normalizeParams);
     try {
-        return await executor().query(text, bindParams(paramNames, params, normalizeParams));
+        const store = txContext.getStore();
+        // Inside a transaction the client is already connected; a refused
+        // connect can only happen when the pool has to open a new one.
+        return store
+            ? await store.client.query(text, values)
+            : await withConnectRetry(() => getPool().query(text, values));
     } catch (error) {
         // Keep better-sqlite3's error vocabulary: services detect duplicate
         // rows via `error.message.includes('UNIQUE')` on both engines.
@@ -410,7 +458,7 @@ async function transaction(fn, txApi) {
         }
     }
 
-    const client = await getPool().connect();
+    const client = await withConnectRetry(() => getPool().connect());
     try {
         await client.query('BEGIN');
         try {
@@ -637,4 +685,5 @@ module.exports = {
     notificationChannel,
     withAdvisoryLock,
     _testSchemaName: () => schemaName,
+    _withConnectRetry: withConnectRetry
 };

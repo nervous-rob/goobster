@@ -122,7 +122,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      GOOBSTER_DB_URL: postgres://goobster:goobster@localhost:5432/goobster
+      # 127.0.0.1, not localhost: the service container publishes IPv4 only,
+      # and a dual-stack connect that fails reports a blank AggregateError.
+      GOOBSTER_DB_URL: postgres://goobster:goobster@127.0.0.1:5432/goobster
       GOOBSTER_PG_TEST_ISOLATE: '1'
     services:
       postgres:
