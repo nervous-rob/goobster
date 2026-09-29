@@ -1,0 +1,6 @@
+{
+  "publicKey": "BM4gOIzTm17cn56OU05qdxtiJ2-chdyFUGIzKuqYT44tnbXp-XRMPDq5482Iaj7g6dmzN_R7p-T3cXC8aGx9Nsw",
+  "privateKey": "nv10rgOyAT-2gH1RCc9pY3lUcXNfKTLylAzuC-HHa8U",
+  "createdAt": "2026-09-29T19:17:37.777Z",
+  "note": "VAPID key pair for Web Push. Deleting this file invalidates every push subscription."
+}

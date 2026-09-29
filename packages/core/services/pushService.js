@@ -102,7 +102,7 @@ class PushService {
         if (existing) {
             await db.run(
                 `UPDATE push_subscriptions
-                 SET userId = @userId, p256dh = @p256dh, auth = @auth, userAgent = @userAgent, lastSeenAt = @now, failCount = 0
+                 SET userId = @userId, p256dh = @p256dh, auth = @auth, userAgent = COALESCE(@userAgent, userAgent), lastSeenAt = @now, failCount = 0
                  WHERE id = @id`,
                 { id: existing.id, userId: owner, ...clean, userAgent: agent, now }
             );

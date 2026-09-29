@@ -103,6 +103,7 @@ const GROUPS = [
             'tutorialFramework',
             'portalRooms',
             'projectParlor',
+            'pushService',
             'toolChipLabel',
             'userSettingsApi',
             'userSettingsService',

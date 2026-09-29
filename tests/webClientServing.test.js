@@ -173,6 +173,44 @@ describe('React client serving', () => {
         }
     });
 
+    test('the service worker is served no-cache with the build stamp; hashed assets are immutable', async () => {
+        fs.writeFileSync(path.join(DIST_DIR, 'sw.js'), "const BUILD = '__GOOBSTER_BUILD__';\nconst CACHE = `goobster-app-${BUILD}`;\n");
+        fs.mkdirSync(path.join(DIST_DIR, 'assets'), { recursive: true });
+        fs.writeFileSync(path.join(DIST_DIR, 'assets', 'index-abc123.js'), 'export const ok = 1;');
+        fs.writeFileSync(path.join(DIST_DIR, 'manifest.webmanifest'), '{"name":"fixture"}');
+        const { server, port } = await mount();
+        try {
+            const sw = await request(port, { reqPath: '/app/sw.js' });
+            expect(sw.status).toBe(200);
+            expect(sw.headers['cache-control']).toBe('no-cache');
+            expect(sw.headers['content-type']).toContain('javascript');
+            expect(sw.raw).not.toContain('__GOOBSTER_BUILD__');
+            const stamp = sw.raw.match(/const BUILD = '([0-9a-f]{12})'/);
+            expect(stamp).not.toBeNull();
+            // The stamp is the index.html content hash: same build, same cache name.
+            const again = await request(port, { reqPath: '/app/sw.js' });
+            expect(again.raw).toBe(sw.raw);
+
+            const asset = await request(port, { reqPath: '/app/assets/index-abc123.js' });
+            expect(asset.status).toBe(200);
+            expect(asset.headers['cache-control']).toContain('immutable');
+            expect(asset.headers['cache-control']).toContain('max-age=31536000');
+
+            const manifest = await request(port, { reqPath: '/app/manifest.webmanifest' });
+            expect(manifest.status).toBe(200);
+            expect(manifest.headers['cache-control']).toBe('no-cache');
+            const page = await request(port, { reqPath: '/app/chat' });
+            expect(page.headers['cache-control']).toBe('no-cache');
+
+            // The share target falls back to a fresh chat when no worker intercepted it.
+            const share = await request(port, { method: 'POST', reqPath: '/app/share-target' });
+            expect(share.status).toBe(303);
+            expect(share.headers.location).toBe('/app/chat');
+        } finally {
+            await new Promise((resolve) => server.close(resolve));
+        }
+    });
+
     test('share links are SPA routes and the legacy client is gone', async () => {
         const { server, port } = await mount();
         try {
@@ -236,6 +274,91 @@ describe('client styles and PWA shell', () => {
         expect(sw).toContain("url.pathname.startsWith('/api/')");
         expect(sw).toContain('/app/share/');
         expect(sw).not.toContain('/app/next');
+    });
+
+    test('the manifest is complete for an installed app (documentation/pwa.md)', () => {
+        const pub = path.join(__dirname, '../apps/web/public');
+        const manifest = JSON.parse(fs.readFileSync(path.join(pub, 'manifest.webmanifest'), 'utf8'));
+        expect(manifest.id).toBe('/app/');
+        expect(manifest.lang).toBe('en');
+        expect(manifest.display_override).toEqual(['window-controls-overlay', 'standalone']);
+        expect(manifest.launch_handler.client_mode).toContain('navigate-existing');
+        expect(Array.isArray(manifest.categories) && manifest.categories.length > 0).toBe(true);
+        // Shortcuts point at canonical rooms inside the scope, with icons.
+        const { canonicalPath } = require('../apps/web/src/lib/rooms.cjs');
+        expect(manifest.shortcuts.length).toBeGreaterThanOrEqual(3);
+        for (const shortcut of manifest.shortcuts) {
+            expect(shortcut.url.startsWith('/app/')).toBe(true);
+            const inApp = shortcut.url.slice(4);
+            expect(canonicalPath(inApp)).toBe(inApp);
+            expect(shortcut.icons[0].src.startsWith('/app/icons/')).toBe(true);
+            expect(fs.existsSync(path.join(pub, shortcut.icons[0].src.replace(/^\/app\//, '')))).toBe(true);
+        }
+        // Screenshots: one per form factor, files present, sizes as declared.
+        expect(manifest.screenshots.map(s => s.form_factor).sort()).toEqual(['narrow', 'wide']);
+        for (const shot of manifest.screenshots) {
+            const file = path.join(pub, shot.src.replace(/^\/app\//, ''));
+            expect(fs.existsSync(file)).toBe(true);
+            const [w, h] = shot.sizes.split('x').map(Number);
+            const png = fs.readFileSync(file);
+            expect(png.readUInt32BE(16)).toBe(w);
+            expect(png.readUInt32BE(20)).toBe(h);
+        }
+        // Share target: POST multipart into the scope, handled by the worker.
+        expect(manifest.share_target).toMatchObject({ action: '/app/share-target', method: 'POST', enctype: 'multipart/form-data' });
+        expect(manifest.share_target.params.files[0].accept).toContain('image/*');
+        expect(fs.existsSync(path.join(pub, 'offline.html'))).toBe(true);
+    });
+
+    test('the service worker recovers stale chunks, serves offline, and handles push + share (documentation/pwa.md)', () => {
+        const sw = fs.readFileSync(path.join(__dirname, '../apps/web/public/sw.js'), 'utf8');
+        // Build-stamped cache, replaced by the server on the way out.
+        expect(sw).toContain("const BUILD = '__GOOBSTER_BUILD__'");
+        expect(sw).toContain('goobster-app-${BUILD}');
+        expect(sw).toContain("'/app/offline.html'");
+        // Documents are never cached; an offline navigation gets the offline page.
+        expect(sw).toMatch(/request\.mode === 'navigate'/);
+        expect(sw).toContain('caches.match(OFFLINE_PAGE)');
+        // A 404 for a chunk that vanished with a deploy falls back to the cached copy.
+        expect(sw).toMatch(/if \(fresh\.ok\)[\s\S]*const cached = await caches\.match\(request\);\s*return cached \|\| fresh;/);
+        expect(sw).toContain("url.pathname.startsWith('/app/assets/')");
+        // Push and its click land on a portal path; a visible window suppresses the toast.
+        expect(sw).toContain("addEventListener('push'");
+        expect(sw).toContain("addEventListener('notificationclick'");
+        expect(sw).toContain("addEventListener('pushsubscriptionchange'");
+        expect(sw).toContain("visibilityState === 'visible'");
+        expect(sw).toContain('goobster:navigate');
+        // Share target parks the payload and redirects into the chat.
+        expect(sw).toContain("url.pathname === '/app/share-target'");
+        expect(sw).toContain('/app/chat?shared=1');
+        // The update handshake.
+        expect(sw).toContain('SKIP_WAITING');
+        expect(sw).toContain('self.skipWaiting()');
+        // Live-only paths stay live.
+        expect(sw).toContain("url.pathname === '/app/sw.js'");
+    });
+
+    test('index.html carries the installed-app metas and the client wires the PWA plumbing', () => {
+        const html = fs.readFileSync(path.join(__dirname, '../apps/web/index.html'), 'utf8');
+        expect(html).toContain('name="color-scheme"');
+        expect(html).toContain('name="mobile-web-app-capable"');
+        expect(html).toContain('name="apple-mobile-web-app-title"');
+        const main = fs.readFileSync(path.join(__dirname, '../apps/web/src/main.tsx'), 'utf8');
+        expect(main).toContain('registerServiceWorker()');
+        expect(main).toContain('captureInstallPrompt()');
+        expect(main).toContain('installChunkRecovery()');
+        expect(main).toContain('<ChunkErrorBoundary>');
+        const shell = fs.readFileSync(path.join(__dirname, '../apps/web/src/shell/AppShell.tsx'), 'utf8');
+        expect(shell).toContain('setAppBadge(');
+        expect(shell).toContain('useOnline()');
+        expect(shell).toContain('useServiceWorkerUpdate()');
+        expect(shell).toContain('showLocalNotification(');
+        expect(shell).toContain('offline-banner');
+        expect(shell).toContain('update-banner');
+        const query = fs.readFileSync(path.join(__dirname, '../apps/web/src/lib/query.ts'), 'utf8');
+        expect(query).toContain("networkMode: 'offlineFirst'");
+        const study = fs.readFileSync(path.join(__dirname, '../apps/web/src/rooms/StudyRoom.tsx'), 'utf8');
+        expect(study).toContain('consumeSharedPayload');
     });
 
     test('React extras style pane chrome the design system omitted', () => {

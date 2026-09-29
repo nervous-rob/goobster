@@ -22,6 +22,7 @@
     ["standalone", "Running without Discord", "documentation/independent_runtime.md"],
     ["accounts", "Accounts and sign-in", "documentation/identity.md"],
     ["web-app", "Web app setup", "documentation/webapp_setup.md"],
+    ["pwa", "Installed app and notifications", "documentation/pwa.md"],
     ["configuration", "Configuration reference", "documentation/configuration.md"],
     ["configuration-guide", "Configuration guide", "documentation/configuration_guide.md"],
     ["discord", "Discord setup", "documentation/discord_setup.md"],
