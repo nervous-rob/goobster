@@ -37,6 +37,21 @@ of the portal, sizes verified by the `webClientServing` spec) and
 `share_target`. `apps/web/index.html` adds `color-scheme`,
 `mobile-web-app-capable` and the `apple-mobile-web-app-*` metas.
 
+`apple-mobile-web-app-status-bar-style: black-translucent` together with
+`viewport-fit=cover` makes the installed app on iOS draw **under** the
+status bar, so the page starts behind the clock and
+`env(safe-area-inset-top)` becomes the height of that strip (0 in a
+browser tab and on every other platform). The stylesheet pays that inset
+**once, in the shell** (`apps/web/src/styles.css`, *the top safe area*):
+in the sidebar layout `#stage` steps down by it - the offline / update /
+paused banners, every room header and every pane follow - and `#sidebar`
+pads by it; in the top-bar layout `#topbar` carries it. Fixed drawers that
+sit at the top of the viewport (`#sidebar` on a phone,
+`.conversations-panel`) and full-screen overlays pad by it themselves. A
+room header must **not** add `env(safe-area-inset-top)`: it would double
+the gap in every room and, where forgotten, put the ☰ and the title under
+the clock (the Home toolbar did exactly that when the metas landed).
+
 ### Hosting rules (`packages/core/web/routes/eventsStatic.js`)
 
 - `/app/sw.js` is served with `Cache-Control: no-cache` and the token

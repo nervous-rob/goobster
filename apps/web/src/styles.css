@@ -102,6 +102,7 @@ a.nav-btn {
     width: min(85vw, 320px); height: 100dvh;
     transform: translateX(-105%);
     transition: transform 200ms ease;
+    padding-top: calc(12px + env(safe-area-inset-top));
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
   #pane-chat .conversations-panel.open,
@@ -845,15 +846,26 @@ a.nav-btn {
   }
 }
 
-@media (max-width: 720px) {
-  #sidebar {
-    padding-top: calc(18px + env(safe-area-inset-top));
-  }
+/* ---------- the top safe area (documentation/pwa.md) ----------
+   The installed app on iOS runs under a translucent status bar
+   (apple-mobile-web-app-status-bar-style + viewport-fit=cover), so the page
+   starts behind the clock and env(safe-area-inset-top) is the height of
+   that strip; in a browser tab and on every other platform it is 0. The
+   inset is paid ONCE by the shell, never by a room: in the sidebar layout
+   the stage steps down by it (banners, headers and panes all follow) and
+   the sidebar pads by it; in the top-bar layout #topbar carries it. Fixed
+   drawers (#sidebar on a phone, .conversations-panel) sit at top: 0 of the
+   viewport and therefore pad by it themselves. A room header must not add
+   env(safe-area-inset-top) - Home's toolbar would then be flush and every
+   other room would show a double gap. */
+.app:not(.nav-top) #stage { margin-top: env(safe-area-inset-top); }
+#sidebar { padding-top: calc(18px + env(safe-area-inset-top)); }
 
+@media (max-width: 720px) {
   .pane-header,
   .chat-header,
   .memory-toolbar {
-    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-top: 10px;
   }
 
   .pane-header { padding-inline: 12px; }
@@ -949,6 +961,7 @@ a.nav-btn {
     width: min(85vw, 320px); height: 100dvh;
     transform: translateX(-105%);
     transition: transform 200ms ease;
+    padding-top: calc(12px + env(safe-area-inset-top));
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
   #pane-chat .conversations-panel.open,
