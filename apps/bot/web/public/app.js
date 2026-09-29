@@ -1,12 +1,15 @@
 /**
  * Goobster control panel client (800x400 touch layout).
- * Views: guild browser -> per-guild dashboard (Overview / Messages / Voice / Music).
+ * Views: guild browser -> per-guild dashboard
+ * (Overview / Messages / Voice / Music / Settings).
  */
 
 import { api, ApiError } from './api.js';
 import { initKeyboard } from './keyboard.js';
 
 const $ = (id) => document.getElementById(id);
+
+const SYSTEM_POLL_MS = 10000;
 
 const state = {
     guilds: [],
@@ -15,10 +18,14 @@ const state = {
     tab: 'overview',
     messageMode: 'exact', // 'exact' | 'ai'
     voiceMode: 'polite',
+    voiceEngine: 'realtime', // 'realtime' | 'classic'
     status: null,
+    system: null,         // host health snapshot (GET /api/system)
     music: null,
     voiceChat: null,
     settings: null,       // per-guild settings snapshot
+    catalogs: new Map(),  // provider key -> model catalog (GET /api/ai/models)
+    catalogLoading: null, // provider key currently being fetched
     trackSearchTimer: null
 };
 
@@ -115,6 +122,7 @@ function selectTab(tab) {
         $(`tab-${pane}`).classList.toggle('hidden', pane !== tab);
     }
     if (tab === 'settings') loadSettings();
+    if (tab === 'overview') refreshSystem();
 }
 
 /* ---------- Status & guild browser ---------- */
@@ -140,6 +148,16 @@ async function refreshStatus() {
     $('status-dot').className = `dot ${ready ? 'online' : 'offline'}`;
     $('status-text').textContent = ready ? state.status.botTag : 'Offline';
     renderOverview();
+    if (state.guild) renderVoiceChat(); // capabilities gate the Voice tab
+}
+
+async function refreshSystem() {
+    try {
+        state.system = await api.get('/api/system');
+    } catch {
+        state.system = null;
+    }
+    renderHostHealth();
 }
 
 async function refreshGuilds() {
@@ -192,7 +210,9 @@ function renderOverview() {
     $('ov-bot').textContent = s?.ready ? s.botTag : 'Offline';
     $('ov-ping').textContent = s?.ping != null ? `${s.ping} ms` : '–';
     $('ov-uptime').textContent = formatUptime(s?.uptimeMs);
-    $('ov-provider').textContent = s?.provider || '–';
+    $('ov-provider').textContent = s?.provider
+        ? `${s.provider}${s.model ? ` · ${s.model}` : ''}`
+        : '–';
 
     const music = state.music;
     if (music?.connected && music.guildId === state.guild.id) {
@@ -203,8 +223,95 @@ function renderOverview() {
         $('ov-music').textContent = 'Idle';
     }
     $('ov-voice').textContent = state.voiceChat?.active
-        ? `Live in ${state.voiceChat.channelName} (${state.voiceChat.mode})`
+        ? `Live in ${state.voiceChat.channelName} (${state.voiceChat.mode}, ${state.voiceChat.engine || 'realtime'})`
         : 'Idle';
+}
+
+/* ---------- Host health (Overview → This device) ---------- */
+
+function formatBytes(bytes) {
+    if (bytes == null || !Number.isFinite(bytes)) return '–';
+    const mb = bytes / (1024 * 1024);
+    if (mb < 1024) return `${Math.round(mb)} MB`;
+    const gb = mb / 1024;
+    return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
+}
+
+function formatSeconds(seconds) {
+    if (seconds == null) return '–';
+    return formatUptime(seconds * 1000);
+}
+
+/** Set a stat's value and its ok/warn/danger tint in one go. */
+function setStat(id, text, tone = '') {
+    const value = $(id);
+    value.textContent = text;
+    const card = value.closest('.stat');
+    card.classList.remove('ok', 'warn', 'danger');
+    if (tone) card.classList.add(tone);
+}
+
+function renderHostHealth() {
+    const h = state.system;
+    if (!h) {
+        for (const id of ['ov-temp', 'ov-throttle', 'ov-load', 'ov-memory', 'ov-disk', 'ov-db']) setStat(id, '–');
+        $('ov-host-line').textContent = '';
+        return;
+    }
+
+    const temp = h.cpu?.temperatureC;
+    if (temp == null) {
+        setStat('ov-temp', 'n/a');
+    } else {
+        // Pi firmware soft-limits at 80 °C and throttles hard at 85 °C.
+        setStat('ov-temp', `${temp.toFixed(1)} °C`, temp >= 80 ? 'danger' : temp >= 70 ? 'warn' : 'ok');
+    }
+
+    const throttle = h.cpu?.throttle;
+    if (!throttle) {
+        setStat('ov-throttle', 'n/a');
+    } else if (throttle.flags.length === 0) {
+        setStat('ov-throttle', 'None', 'ok');
+    } else {
+        setStat('ov-throttle', throttle.flags.join(', '), 'danger');
+    }
+
+    const load = h.cpu?.load || [];
+    const cores = h.cpu?.cores || 1;
+    const load1 = load[0] ?? null;
+    setStat('ov-load', load.length ? load.slice(0, 2).map(v => v.toFixed(2)).join(' / ') : '–',
+        load1 == null ? '' : load1 >= cores ? 'danger' : load1 >= cores * 0.7 ? 'warn' : '');
+
+    const mem = h.memory;
+    if (mem) {
+        const pct = Math.round((mem.usedBytes / mem.totalBytes) * 100);
+        setStat('ov-memory', `${pct}% · ${formatBytes(mem.processRssBytes)}`,
+            pct >= 90 ? 'danger' : pct >= 75 ? 'warn' : '');
+    } else {
+        setStat('ov-memory', '–');
+    }
+
+    const disk = h.disk;
+    if (disk) {
+        const pct = Math.round((disk.usedBytes / disk.totalBytes) * 100);
+        setStat('ov-disk', `${formatBytes(disk.freeBytes)} · ${pct}%`,
+            pct >= 95 ? 'danger' : pct >= 85 ? 'warn' : '');
+    } else {
+        setStat('ov-disk', 'n/a');
+    }
+
+    const database = h.database;
+    setStat('ov-db', database
+        ? `${database.engine === 'postgres' ? 'Postgres' : 'SQLite'} · ${formatBytes(database.bytes)}`
+        : 'Unavailable');
+
+    $('ov-host-line').textContent = [
+        h.os ? `${h.os.type} ${h.os.release} (${h.os.arch})` : null,
+        h.os ? `up ${formatSeconds(h.os.uptimeSeconds)}` : null,
+        h.cpu ? `${h.cpu.cores} cores` : null,
+        h.process ? `Node ${h.process.nodeVersion}` : null,
+        database ? `${database.messageCount} messages stored` : null
+    ].filter(Boolean).join(' · ');
 }
 
 /* ---------- Channel selects ---------- */
@@ -306,6 +413,18 @@ async function onMessagePrimary() {
 
 /* ---------- Voice tab ---------- */
 
+const ENGINE_HINTS = {
+    realtime: 'Low latency, interruptible — ElevenLabs speech-to-text and voice.',
+    classic: 'Waits for a clear pause — OpenAI speech-to-text, ElevenLabs voice.'
+};
+
+function setVoiceEngine(engine) {
+    state.voiceEngine = engine;
+    $('voice-engine-realtime').classList.toggle('active', engine === 'realtime');
+    $('voice-engine-classic').classList.toggle('active', engine === 'classic');
+    renderVoiceChat();
+}
+
 function renderVoiceChat() {
     const vc = state.voiceChat;
     const capabilities = state.status?.capabilities;
@@ -314,11 +433,21 @@ function renderVoiceChat() {
     $('voice-setup').classList.toggle('hidden', active);
     if (active) {
         $('voice-active-text').textContent =
-            `Live voice conversation in ${vc.channelName} (${vc.mode} mode, ${vc.turns} turns).`;
+            `Live voice conversation in ${vc.channelName} (${vc.mode} mode, ${vc.engine || 'realtime'} engine, ${vc.turns} turns).`;
     }
+    $('voice-engine-hint').textContent = ENGINE_HINTS[state.voiceEngine];
+
+    // The realtime engine is ElevenLabs end to end; classic adds OpenAI STT.
+    const engines = capabilities?.voiceEngines
+        || (capabilities ? { realtime: capabilities.tts, classic: capabilities.tts && capabilities.stt } : null);
     let hint = '';
-    if (capabilities && !capabilities.tts) hint = 'Unavailable: ElevenLabs TTS is not configured.';
-    else if (capabilities && !capabilities.stt) hint = 'Unavailable: OpenAI speech-to-text is not configured.';
+    if (capabilities && !capabilities.tts) {
+        hint = 'Unavailable: ElevenLabs is not configured (ELEVENLABS_API_KEY).';
+    } else if (engines && !engines[state.voiceEngine]) {
+        hint = state.voiceEngine === 'classic'
+            ? 'The classic engine needs an OpenAI API key for speech-to-text. Realtime still works.'
+            : 'The realtime engine is unavailable on this host.';
+    }
     $('voice-hint').textContent = hint;
     $('voice-start').disabled = Boolean(hint) || state.channels.voice.length === 0;
 }
@@ -333,6 +462,7 @@ async function onVoiceStart() {
     const body = {
         voiceChannelId,
         mode: state.voiceMode,
+        engine: state.voiceEngine,
         transcriptChannelId: $('voice-transcript').value || null
     };
     try {
@@ -512,6 +642,7 @@ function renderSettings() {
     setToggle('set-reply-detection', s.replyDetection);
     setToggle('set-search', s.searchApproval);
     setToggle('set-thoughtful', s.ai.thoughtful);
+    $('set-thoughtful').disabled = !s.ai.thoughtfulAvailable && !s.ai.thoughtful;
     $('thoughtful-sub').textContent = s.ai.defaults.thoughtfulModel
         ? `${s.ai.defaults.thoughtfulModel} · high effort`
         : 'needs a cloud AI provider';
@@ -519,12 +650,7 @@ function renderSettings() {
     $('set-thread-channel').classList.toggle('active', s.threadPreference === 'ALWAYS_CHANNEL');
     $('set-thread-thread').classList.toggle('active', s.threadPreference === 'ALWAYS_THREAD');
 
-    $('set-provider').value = s.ai.provider || '';
-    if (document.activeElement !== $('set-model')) {
-        $('set-model').value = s.ai.model || '';
-        $('set-model').placeholder = `Default (${s.ai.defaults.model || 'provider default'})`;
-    }
-    $('set-reasoning').value = s.ai.reasoningEffort || '';
+    renderAiPickers();
 
     if (document.activeElement !== $('set-directive')) {
         $('set-directive').value = s.personalityDirective || '';
@@ -562,14 +688,156 @@ function renderSettings() {
         list.appendChild(row);
     }
 
-    $('global-settings-group').classList.toggle('hidden', !s.global.ttsAvailable);
+    $('voice-settings-group').classList.toggle('hidden', !s.global.ttsAvailable);
+    const globalVoiceLabel = s.global.ttsVoiceName || s.global.ttsVoiceId || 'the built-in default';
     $('tts-voice-sub').textContent = s.global.ttsVoiceName
-        ? `Current: ${s.global.ttsVoiceName}`
-        : 'ElevenLabs voice name or ID';
+        ? `Current: ${s.global.ttsVoiceName} · all servers without their own`
+        : 'ElevenLabs voice name or ID · all servers without their own';
     if (document.activeElement !== $('set-voice-id')) {
         $('set-voice-id').value = s.global.ttsVoiceName || s.global.ttsVoiceId || '';
     }
+    const guildVoice = s.voice || {};
+    $('guild-voice-sub').textContent = guildVoice.voiceId
+        ? `Current: ${guildVoice.voiceName || guildVoice.voiceId}`
+        : `Using the default voice (${globalVoiceLabel})`;
+    if (document.activeElement !== $('set-guild-voice')) {
+        $('set-guild-voice').value = guildVoice.voiceName || guildVoice.voiceId || '';
+    }
+    $('clear-guild-voice').disabled = !guildVoice.voiceId;
     if (s.global.ttsAvailable) loadVoiceOptions();
+}
+
+/* ---------- AI pickers (provider → model → reasoning) ---------- */
+
+function addOption(select, value, label, { disabled = false, selected = false } = {}) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    option.disabled = disabled;
+    option.selected = selected;
+    select.appendChild(option);
+    return option;
+}
+
+/**
+ * Rebuild the provider, model and reasoning selects from the settings
+ * snapshot plus the effective provider's catalog. The catalog is fetched
+ * lazily per provider and cached; while it loads the model select says so.
+ */
+function renderAiPickers() {
+    const s = state.settings;
+    if (!s) return;
+    const ai = s.ai;
+    const providers = ai.providers || [];
+    const effectiveKey = ai.effective?.provider || ai.defaults.provider;
+
+    const providerSelect = $('set-provider');
+    providerSelect.innerHTML = '';
+    const defaultProvider = providers.find(p => p.key === ai.defaults.provider);
+    addOption(providerSelect, '', `Default (${defaultProvider?.name || ai.defaults.provider || 'auto'})`);
+    for (const provider of providers) {
+        addOption(providerSelect, provider.key,
+            provider.configured ? provider.name : `${provider.name} — not configured`,
+            { disabled: !provider.configured && ai.provider !== provider.key });
+    }
+    providerSelect.value = ai.provider || '';
+
+    const modelSelect = $('set-model');
+    const reasoningSelect = $('set-reasoning');
+    const catalog = state.catalogs.get(effectiveKey);
+    if (!catalog) {
+        modelSelect.innerHTML = '';
+        addOption(modelSelect, ai.model || '', ai.model || `Default (${ai.effective?.model || 'provider default'})`);
+        modelSelect.disabled = true;
+        reasoningSelect.innerHTML = '';
+        addOption(reasoningSelect, ai.reasoningEffort || '', ai.reasoningEffort || 'Default');
+        reasoningSelect.disabled = true;
+        $('model-sub').textContent = 'Loading the model catalog…';
+        $('reasoning-sub').textContent = '';
+        loadCatalog(effectiveKey);
+    } else {
+        renderModelPicker(catalog);
+        renderReasoningPicker(catalog);
+    }
+
+    const effective = ai.effective;
+    const parts = [];
+    if (effective) {
+        parts.push(`Using ${effective.providerName}`);
+        parts.push(effective.model || 'provider default');
+        if (effective.reasoningEffort) parts.push(`${effective.reasoningEffort} effort`);
+        if (effective.modelSupported === false) parts.push('⚠ not in the model registry');
+    }
+    $('ai-effective').textContent = parts.join(' · ');
+}
+
+function renderModelPicker(catalog) {
+    const ai = state.settings.ai;
+    const modelSelect = $('set-model');
+    modelSelect.innerHTML = '';
+    modelSelect.disabled = false;
+    addOption(modelSelect, '', `Default (${catalog.defaultModel || 'provider default'})`);
+    let currentListed = false;
+    for (const model of catalog.models) {
+        if (model.id === ai.model) currentListed = true;
+        const suffix = model.selectable ? '' : model.availability === 'not-listed' ? ' — not on this key' : ' — unavailable';
+        addOption(modelSelect, model.id, `${model.displayName}${suffix}`,
+            { disabled: !model.selectable && model.id !== ai.model });
+    }
+    if (ai.model && !currentListed) {
+        addOption(modelSelect, ai.model, `${ai.model} (custom)`);
+    }
+    modelSelect.value = ai.model || '';
+
+    const discovery = catalog.discovery || {};
+    const countLabel = `${catalog.models.filter(m => m.selectable).length} usable of ${catalog.models.length}`;
+    let discoveryLabel = '';
+    if (discovery.status === 'live' || discovery.status === 'cached') discoveryLabel = 'checked against the provider';
+    else if (discovery.status === 'not-configured') discoveryLabel = 'provider not configured';
+    else if (discovery.status === 'stale') discoveryLabel = 'availability may be stale';
+    else if (discovery.status === 'unavailable') discoveryLabel = 'provider listing unavailable';
+    $('model-sub').textContent = [countLabel, discoveryLabel].filter(Boolean).join(' · ');
+}
+
+function renderReasoningPicker(catalog) {
+    const ai = state.settings.ai;
+    const reasoningSelect = $('set-reasoning');
+    reasoningSelect.innerHTML = '';
+    const selectedId = ai.model || catalog.defaultModel;
+    const model = catalog.models.find(m => m.id === selectedId) || null;
+    const levels = model?.reasoning?.levels || [];
+    if (levels.length === 0) {
+        addOption(reasoningSelect, '', model ? 'Not adjustable for this model' : 'Default');
+        reasoningSelect.disabled = true;
+        $('reasoning-sub').textContent = model ? `${model.displayName} has one reasoning setting` : '';
+        return;
+    }
+    reasoningSelect.disabled = false;
+    addOption(reasoningSelect, '', `Default (${model.reasoning.default || levels[0]})`);
+    for (const level of levels) {
+        addOption(reasoningSelect, level, level.charAt(0).toUpperCase() + level.slice(1));
+    }
+    if (ai.reasoningEffort && !levels.includes(ai.reasoningEffort)) {
+        addOption(reasoningSelect, ai.reasoningEffort, `${ai.reasoningEffort} (unsupported)`);
+    }
+    reasoningSelect.value = ai.reasoningEffort || '';
+    $('reasoning-sub').textContent = `${model.displayName}: ${levels.join(' · ')}`;
+}
+
+async function loadCatalog(providerKey) {
+    if (!providerKey || state.catalogLoading === providerKey || state.catalogs.has(providerKey)) return;
+    state.catalogLoading = providerKey;
+    try {
+        const catalog = await api.get(`/api/ai/models?provider=${encodeURIComponent(providerKey)}`);
+        state.catalogs.set(providerKey, catalog);
+    } catch (error) {
+        // Leave the picker in its fallback state; the message still shows.
+        $('model-sub').textContent = error instanceof ApiError ? error.message : 'Catalog unavailable.';
+        return;
+    } finally {
+        state.catalogLoading = null;
+    }
+    if (state.settings) renderAiPickers();
 }
 
 let voiceOptionsLoaded = false;
@@ -684,6 +952,16 @@ function wireSettings() {
     });
     $('forget-all').addEventListener('click', onForgetAll);
 
+    $('save-guild-voice').addEventListener('click', () => {
+        const voice = $('set-guild-voice').value.trim();
+        if (!voice) { toast('Enter a voice name or ID first.', true); return; }
+        patchSettings({ ttsVoice: voice }, `Voice set for ${state.guild.name}.`);
+    });
+    $('clear-guild-voice').addEventListener('click', () => {
+        $('set-guild-voice').value = '';
+        patchSettings({ ttsVoice: null }, 'Back to the default voice for this server.');
+    });
+
     $('save-voice-id').addEventListener('click', async () => {
         const voiceId = $('set-voice-id').value.trim();
         if (!voiceId) { toast('Enter a voice name or ID first.', true); return; }
@@ -739,6 +1017,8 @@ function init() {
         $('voice-mode-open').classList.add('active');
         $('voice-mode-polite').classList.remove('active');
     });
+    $('voice-engine-realtime').addEventListener('click', () => setVoiceEngine('realtime'));
+    $('voice-engine-classic').addEventListener('click', () => setVoiceEngine('classic'));
     $('voice-start').addEventListener('click', onVoiceStart);
     $('voice-stop').addEventListener('click', onVoiceStop);
 
@@ -767,11 +1047,15 @@ function init() {
 
     refreshStatus();
     refreshGuilds();
+    refreshSystem();
     setInterval(refreshStatus, 5000);
     setInterval(() => {
         if (state.guild) refreshGuildState();
         else refreshGuilds();
     }, 5000);
+    setInterval(() => {
+        if (state.guild && state.tab === 'overview') refreshSystem();
+    }, SYSTEM_POLL_MS);
 }
 
 init();

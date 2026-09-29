@@ -38,6 +38,16 @@
           <div class="stat"><div class="stat-label">Voice chat</div><div class="stat-value" id="ov-voice">&ndash;</div></div>
           <div class="stat"><div class="stat-label">AI</div><div class="stat-value" id="ov-provider">&ndash;</div></div>
         </div>
+        <div class="section-title">This device</div>
+        <div class="stat-row compact">
+          <div class="stat"><div class="stat-label">CPU temp</div><div class="stat-value" id="ov-temp">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Throttle</div><div class="stat-value" id="ov-throttle">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Load 1m / 5m</div><div class="stat-value" id="ov-load">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Memory · bot</div><div class="stat-value" id="ov-memory">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Disk free · used</div><div class="stat-value" id="ov-disk">&ndash;</div></div>
+          <div class="stat"><div class="stat-label">Database</div><div class="stat-value" id="ov-db">&ndash;</div></div>
+        </div>
+        <div class="hint" id="ov-host-line"></div>
       </section>
 
       <section id="tab-messages" class="tab-pane hidden">
@@ -74,6 +84,13 @@
               <button id="voice-mode-open" class="segment-btn">Open</button>
             </div>
             <select id="voice-transcript" class="select grow"></select>
+          </div>
+          <div class="field-row">
+            <div class="segment">
+              <button id="voice-engine-realtime" class="segment-btn active">Realtime</button>
+              <button id="voice-engine-classic" class="segment-btn">Classic</button>
+            </div>
+            <div id="voice-engine-hint" class="hint grow"></div>
           </div>
           <button id="voice-start" class="btn primary big">Start voice chat</button>
         </div>
@@ -120,29 +137,18 @@
             <button id="set-thoughtful" class="toggle" role="switch"></button>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Provider</div>
-            <select id="set-provider" class="select">
-              <option value="">Default</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Claude</option>
-              <option value="gemini">Gemini</option>
-              <option value="ollama">Ollama</option>
-            </select>
+            <div class="setting-label">Provider<span class="setting-sub">Only configured providers can be picked</span></div>
+            <select id="set-provider" class="select setting-select"></select>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Model override</div>
-            <input id="set-model" class="input setting-input" type="text" placeholder="Provider default">
+            <div class="setting-label">Model<span class="setting-sub" id="model-sub">From the model registry</span></div>
+            <select id="set-model" class="select setting-select"></select>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Reasoning effort</div>
-            <select id="set-reasoning" class="select">
-              <option value="">Default</option>
-              <option value="minimal">Minimal</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <div class="setting-label">Reasoning effort<span class="setting-sub" id="reasoning-sub">Levels the chosen model supports</span></div>
+            <select id="set-reasoning" class="select setting-select"></select>
           </div>
+          <div class="hint" id="ai-effective"></div>
         </div>
 
         <div class="settings-group">
@@ -181,10 +187,16 @@
           </div>
         </div>
 
-        <div class="settings-group" id="global-settings-group">
-          <div class="settings-title">Global (all servers)</div>
+        <div class="settings-group" id="voice-settings-group">
+          <div class="settings-title">Voice (ElevenLabs)</div>
           <div class="setting-row">
-            <div class="setting-label">TTS voice<span class="setting-sub" id="tts-voice-sub">ElevenLabs voice name or ID</span></div>
+            <div class="setting-label">This server's voice<span class="setting-sub" id="guild-voice-sub">Using the default voice</span></div>
+            <input id="set-guild-voice" class="input setting-input" type="text" placeholder="Default" list="voice-options">
+            <button id="save-guild-voice" class="btn">Save</button>
+            <button id="clear-guild-voice" class="btn">Clear</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Default voice<span class="setting-sub" id="tts-voice-sub">All servers without their own</span></div>
             <input id="set-voice-id" class="input setting-input" type="text" placeholder="Sarah" list="voice-options">
             <datalist id="voice-options"></datalist>
             <button id="save-voice-id" class="btn">Save</button>
