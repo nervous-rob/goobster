@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Me } from '../lib/types';
-import { ACCOUNT_ROOMS, PRIMARY_ROOMS, isRoomAvailable, type Room } from '../lib/rooms';
+import { ACCOUNT_ROOMS, PRIMARY_ROOMS, isRoomAvailable, roomBadgeCount, type Room } from '../lib/rooms';
 import { ActiveFriends } from './ActiveFriends';
 
 /**
@@ -51,7 +51,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
             <nav className="nav topbar-nav" aria-label="Rooms">
                 {PRIMARY_ROOMS.filter((item) => item.path !== '/' && visible(item)).map((item) => {
                     const active = activeNav === item.id;
-                    const count = item.count === 'inbox' ? (me?.inbox?.unread || 0) : 0;
+                    const count = roomBadgeCount(item, me);
                     return (
                         <Link key={item.id} to={item.path as never} className={`nav-btn${active ? ' active' : ''}`}
                             aria-current={active ? 'page' : undefined} data-room={item.id} title={item.secondaryName ? `${item.name} · ${item.secondaryName}` : item.name}>

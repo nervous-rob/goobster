@@ -39,6 +39,8 @@ export type Me = {
     discord: { enabled: boolean; connected: boolean; reason: string | null };
     /** The in-app inbox: unread count for the sidebar badge. */
     inbox: { unread: number };
+    /** Friend requests waiting for an answer and unread direct messages. */
+    people?: { pending: number; unread: number };
     scopes: Scope[];
     maxInputLength: number;
     /** `projects` = organizing projects (ADR 0009); `observatory` = running code in them. */
@@ -182,6 +184,22 @@ export type InboxItem = {
         resolvedByName: string | null;
         resolvedAt: string | null;
     } | null;
+    /**
+     * Set when this item is about a friend request (`source.type ===
+     * 'friend_request'`): the addressee's copy is actionable while pending;
+     * the requester's acceptance notice never is. Null once someone is erased.
+     */
+    friend: {
+        id: number;
+        status: FriendRequestStatus;
+        requesterId: string;
+        requesterName: string;
+        requesterAvatar: string | null;
+        addresseeId: string;
+        addresseeName: string;
+        actionable: boolean;
+        respondedAt: string | null;
+    } | null;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -200,6 +218,71 @@ export type Person = {
     source: 'friend' | 'server' | 'member';
     via?: string | null;
 };
+
+// --- People: friends and direct messages (documentation/friends_and_messages.md)
+
+export type FriendRequestStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'removed';
+
+/** One friend, with portal presence (their "show me as online" setting respected). */
+export type Friend = {
+    id: string;
+    name: string;
+    avatar: string | null;
+    since: string | null;
+    online?: boolean;
+};
+
+/** One friend request, from either seat. */
+export type FriendRequest = {
+    id: number;
+    status: FriendRequestStatus;
+    requesterId: string;
+    requesterName: string;
+    requesterAvatar: string | null;
+    addresseeId: string;
+    addresseeName: string;
+    addresseeAvatar: string | null;
+    createdAt: string;
+    respondedAt: string | null;
+};
+
+/** GET /api/app/friends */
+export type FriendsOverview = { friends: Friend[]; incoming: FriendRequest[]; outgoing: FriendRequest[] };
+
+/** The caller's relationship with a person in a search result. */
+export type Relationship = {
+    status: 'none' | 'friends' | 'outgoing' | 'incoming';
+    requestId: number | null;
+    direction: 'outgoing' | 'incoming' | null;
+};
+
+export type FriendCandidate = Person & { relationship: Relationship };
+
+/** GET /api/app/friends/search - `kind` says how the query was read. */
+export type FriendSearch = { people: FriendCandidate[]; kind: 'email' | 'id' | 'name' | 'none' };
+
+export type DmMessage = {
+    id: number;
+    threadId: number;
+    senderId: string;
+    content: string;
+    createdAt: string;
+};
+
+/** One direct-message thread as seen by the signed-in person. */
+export type DmThread = {
+    id: number;
+    with: { id: string; name: string; avatar: string | null; online: boolean };
+    /** False once the friendship ended: the thread is read-only. */
+    friends: boolean;
+    unread: number;
+    lastMessage: DmMessage | null;
+    createdAt: string;
+    lastMessageAt: string | null;
+};
+
+export type DmThreadList = { threads: DmThread[]; unread: number };
+export type DmThreadPage = { thread: DmThread; messages: DmMessage[]; hasMore: boolean };
 
 export type Entitlement = 'invite' | 'migration' | 'bootstrap' | 'open';
 export type RegistrationMode = 'invite' | 'open';

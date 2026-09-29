@@ -17,12 +17,12 @@ type Roster = {
     invites: PendingInvite[];
 };
 type Person = { id: string; name: string; avatar?: string | null; source: 'friend' | 'server' | 'member'; via?: string | null };
-type Invitable = { people: Person[]; friendsSynced: boolean; syncedAt: string | null };
+type Invitable = { people: Person[]; hasFriends: boolean };
 
 /**
  * The people of one discussion: the host, the accepted members (with
  * remove/leave), the pending invitations (owner can withdraw), and - for
- * the owner - the invite picker sourced from their Discord friends and
+ * the owner - the invite picker sourced from their friends (People) and
  * the people they share a server with.
  */
 export function PeopleModal({
@@ -123,9 +123,9 @@ export function PeopleModal({
 }
 
 /**
- * Pick a person instead of pasting a snowflake: Discord friends first
- * (synced by the Activity), then the people this user shares a server
- * with. Typing a raw user id still works, so an invite is always
+ * Pick a person instead of pasting a snowflake: friends first (People),
+ * then the people this user shares a Discord server with, then members
+ * of this installation for a query. Typing a raw user id still works, so an invite is always
  * possible even when neither source has anyone.
  */
 function InvitePicker({ conversationId, onInvited }: { conversationId: number; onInvited: () => Promise<void> }) {
@@ -227,9 +227,9 @@ function InvitePicker({ conversationId, onInvited }: { conversationId: number; o
                     <div className="hint">
                         {debounced
                             ? 'Nobody matches that - try the start of their name, or paste their user id.'
-                            : (invitableQ.data?.friendsSynced
+                            : (invitableQ.data?.hasFriends
                                 ? 'Everyone you know is already here - type a name to find other members.'
-                                : 'Type the start of a name to find members here. Discord friends appear once Goobster\'s Activity has synced them.')}
+                                : 'Type the start of a name to find members here. Your friends (People) appear here without searching.')}
                     </div>
                 )}
             </div>

@@ -22,7 +22,7 @@ import { TopBar } from './TopBar';
 import { useQuery } from '@tanstack/react-query';
 import {
     ACCOUNT_ROOMS, PRIMARY_ROOMS, atmosphereFor, isRoomAvailable, legacyHashTarget,
-    parentRoom, resolveRoom, startPageTarget, type Room
+    parentRoom, resolveRoom, roomBadgeCount, startPageTarget, type Room
 } from '../lib/rooms';
 
 function NavLink({ room, active, count, onClick }: { room: Room; active: boolean; count: number; onClick: () => void }) {
@@ -239,9 +239,7 @@ export function AppShell() {
                             // when this installation or account cannot use them;
                             // a direct URL still resolves and explains itself.
                             if (item.requires && !isRoomAvailable(item, me)) return null;
-                            // Inbox unread alone. A delivered attention notice is that
-                            // same inbox row, so notice counts are never added here.
-                            const count = item.count === 'inbox' ? (me?.inbox?.unread || 0) : 0;
+                            const count = roomBadgeCount(item, me);
                             return <NavLink key={item.id} room={item} active={activeNav === item.id} count={count} onClick={() => setDrawer(false)} />;
                         })}
                         {me && (
