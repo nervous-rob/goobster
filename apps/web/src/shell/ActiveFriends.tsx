@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
+import { useSession } from '../hooks/useSession';
 
 type Friend = { id: string; name: string; avatar?: string | null; online?: boolean };
 
@@ -14,9 +15,13 @@ type Friend = { id: string; name: string; avatar?: string | null; online?: boole
  * been synced (the Activity is the collector).
  */
 export function ActiveFriends() {
+    const me = useSession();
     const friendsQ = useQuery({
         queryKey: keys.friends,
         queryFn: () => api.friends() as Promise<{ friends: Friend[]; syncedAt: string | null }>,
+        // Public share pages render this shell with no session; a signed-out
+        // 401 would reset the whole browser session on every poll.
+        enabled: Boolean(me),
         refetchInterval: 60_000
     });
     const friends = friendsQ.data?.friends || [];
