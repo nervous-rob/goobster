@@ -13,8 +13,8 @@
   <link rel="stylesheet" href="/app/style.css">
 </head>
 <body>
-  <!-- Paint the device copies of theme, accent, surface, and navigation layout before
-       the app mounts so a reload never flashes the defaults. Same keys as
+  <!-- Paint the device copies of theme, accent (and its berry favicon), surface, and
+       navigation layout before the app mounts so a reload never flashes the defaults. Same keys as
        src/lib/theme.ts and src/lib/appearance.ts. -->
   <script>
     (function () {
@@ -24,7 +24,11 @@
         var light = t === 'light' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
         if (light) document.body.classList.add('light');
         var a = s.getItem('goobster-accent');
-        if (a && /^[a-z]+$/.test(a)) document.documentElement.setAttribute('data-accent', a);
+        if (a && /^[a-z]+$/.test(a)) {
+          document.documentElement.setAttribute('data-accent', a);
+          var icon = document.querySelector('link[rel="icon"]');
+          if (icon) icon.setAttribute('href', '/app/icons/berry/' + a + '.svg');
+        }
         if (s.getItem('goobster-surface') === 'neutral') document.documentElement.setAttribute('data-surface', 'neutral');
         if (s.getItem('goobster-nav-layout') === 'top') document.documentElement.setAttribute('data-nav-layout', 'top');
       } catch (e) { /* private mode */ }

@@ -62,6 +62,7 @@ html[data-accent="graphite"], .accent-swatch[data-accent="graphite"] {
   --ok: #59d18c;
   --warn: #ffba5c;
   --radius: 12px;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --room-wash: none;
@@ -120,12 +121,15 @@ body {
   background-image: var(--room-wash);
   background-attachment: fixed;
   color: var(--text);
-  font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font: 15px/1.55 var(--font-ui);
   transition: background-color 0.55s var(--ease-out);
 }
 /* Form controls do not inherit the page font by default, so every .btn,
    .input and .segment-btn would otherwise fall back to the UA face. */
 button, input, select, textarea { font-family: inherit; }
+/* Same for a bare link in prose: the UA blue/purple is unreadable on the dark
+   surfaces. Zero specificity, so any link with a class keeps its own ink. */
+:where(a:not([class])), :where(a:not([class])):visited { color: var(--accent); }
 
 .hidden { display: none !important; }
 

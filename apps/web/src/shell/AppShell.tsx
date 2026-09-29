@@ -24,6 +24,7 @@ import {
     ACCOUNT_ROOMS, PRIMARY_ROOMS, atmosphereFor, isRoomAvailable, legacyHashTarget,
     parentRoom, resolveRoom, startPageTarget, type Room
 } from '../lib/rooms';
+import { BerryMark } from '../components/BerryMark';
 
 function NavLink({ room, active, count, onClick }: { room: Room; active: boolean; count: number; onClick: () => void }) {
     return (
@@ -231,7 +232,7 @@ export function AppShell() {
             <aside id="sidebar" className={drawer ? 'open' : ''}>
                 <div className="sidebar-top">
                     <Link to="/" className={`brand brand-home${room === 'home' ? ' active' : ''}`} onClick={() => setDrawer(false)}>
-                        <img className="brand-logo" src="/app/icons/goobster.svg" alt="" width={24} height={24} /> Goobster
+                        <BerryMark className="brand-logo" size={24} /> Goobster
                     </Link>
                     <nav className="nav" aria-label="Rooms">
                         {PRIMARY_ROOMS.filter((item) => item.path !== '/').map((item) => {

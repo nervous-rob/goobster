@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { forgetConservatory } from '../music-lab/lib/forget';
 import { api } from '../lib/api';
 import { Modal } from './Modal';
+import { berryIconSrc, paintedAccent } from '../lib/berry';
 
 export function ForgetModal({
     onClose,
@@ -50,7 +51,7 @@ function playTheater({ counts, audit }: { counts: Record<string, number>; audit?
     const overlay = document.createElement('div');
     overlay.className = 'forget-theater';
     overlay.innerHTML = `
-      <img src="/app/icons/goobster.svg" alt="" width="64" height="64">
+      <img src="${berryIconSrc(paintedAccent())}" alt="" width="64" height="64">
       <h2>Forgetting you.</h2>
       <p class="hint">Watching the rows go.</p>
       <ul class="forget-count-list"></ul>

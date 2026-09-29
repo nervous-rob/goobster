@@ -50,17 +50,27 @@ test('accent previews live, saves to the account, and survives a reload', async 
     const swatches = page.getByRole('radiogroup', { name: 'Accent color' });
     await expect(swatches.getByRole('radio', { name: 'Blueberry' })).toHaveAttribute('aria-checked', 'true');
     const before = await accentRgb(page);
+    // The mark and the favicon are the berry in the painted accent.
+    const brand = page.locator('#sidebar .brand-logo');
+    const favicon = page.locator('link[rel="icon"]');
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/blueberry.svg');
+    await expect(favicon).toHaveAttribute('href', '/app/icons/berry/blueberry.svg');
 
     await swatches.getByRole('radio', { name: 'Mint' }).click();
     expect(await accentOf(page)).toBe('mint');
     const previewed = await accentRgb(page);
     expect(previewed).not.toBe(before);
     await expect(page.getByText('Unsaved changes')).toBeVisible();
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/mint.svg');
+    await expect(favicon).toHaveAttribute('href', '/app/icons/berry/mint.svg');
+    await expect(page.locator('.accent-swatches')).toBeVisible();
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_accent_mint_berry.png' });
 
     // Discard paints the stored accent back.
     await page.getByRole('button', { name: 'Discard' }).click();
     expect(await accentOf(page)).toBe('blueberry');
     expect(await accentRgb(page)).toBe(before);
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/blueberry.svg');
 
     await swatches.getByRole('radio', { name: 'Sunset' }).click();
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -74,6 +84,9 @@ test('accent previews live, saves to the account, and survives a reload', async 
     expect(await accentOf(page)).toBe('sunset');
     await expect(page.getByRole('radiogroup', { name: 'Accent color' }).getByRole('radio', { name: 'Sunset' }))
         .toHaveAttribute('aria-checked', 'true');
+    await expect(brand).toHaveAttribute('src', '/app/icons/berry/sunset.svg');
+    await expect(favicon).toHaveAttribute('href', '/app/icons/berry/sunset.svg');
+    expect((await page.request.get('/app/icons/berry/sunset.svg')).status()).toBe(200);
     await page.screenshot({ path: '/opt/cursor/artifacts/appearance_accent_sunset.png' });
 });
 
@@ -158,6 +171,61 @@ test('the neutral surface keeps the fixed greys under any accent', async ({ page
     expect(themeColor).toBe('rgb(15, 17, 23)');
 });
 
+test('the Music Lab follows the theme, the accent and the portal font', async ({ page }) => {
+    await login(page);
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { theme: 'light', accent: 'blueberry' } } });
+    await page.evaluate(() => localStorage.setItem('goobster-theme', 'light'));
+    await page.goto('/app/conservatory/chords');
+    const play = page.locator('.play-button').first();
+    await expect(play).toBeVisible();
+
+    const read = () => page.evaluate(() => {
+        const resolve = (v) => {
+            const probe = document.createElement('span');
+            probe.style.cssText = `position:fixed;transition:none;color:${v}`;
+            document.body.appendChild(probe);
+            const out = getComputedStyle(probe).color;
+            probe.remove();
+            return out;
+        };
+        const engine = document.querySelector('.rhythm-engine');
+        const button = document.querySelector('.play-button');
+        return {
+            engineBg: getComputedStyle(engine).backgroundColor,
+            raise: resolve('var(--bg-raise)'),
+            buttonBg: getComputedStyle(button).backgroundColor,
+            accent: resolve('var(--accent)'),
+            buttonInk: getComputedStyle(button).color,
+            ink: resolve('var(--accent-ink)'),
+            titleFont: getComputedStyle(document.querySelector('.re-title')).fontFamily,
+            bodyFont: getComputedStyle(document.body).fontFamily
+        };
+    });
+
+    const light = await read();
+    expect(light.engineBg).toBe(light.raise);
+    expect(light.buttonBg).toBe(light.accent);
+    expect(light.buttonInk).toBe(light.ink);
+    expect(light.titleFont).toBe(light.bodyFont);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_music_lab_light.png' });
+
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { accent: 'mint' } } });
+    await page.reload();
+    await expect(play).toBeVisible();
+    const mint = await read();
+    expect(mint.buttonBg).toBe(mint.accent);
+    expect(mint.buttonBg).not.toBe(light.buttonBg);
+
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { theme: 'dark' } } });
+    await page.evaluate(() => localStorage.setItem('goobster-theme', 'dark'));
+    await page.reload();
+    await expect(play).toBeVisible();
+    const dark = await read();
+    expect(dark.engineBg).toBe(dark.raise);
+    expect(dark.engineBg).not.toBe(light.engineBg);
+    expect(dark.buttonInk).toBe(dark.ink);
+});
+
 test('navigation layout previews live and moves the rooms to a top bar', async ({ page }) => {
     await login(page);
     await page.goto('/app/settings/appearance');
@@ -223,6 +291,43 @@ test('navigation layout previews live and moves the rooms to a top bar', async (
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
     await expect(page.getByText('All changes saved')).toBeVisible();
     await expect(page.locator('#sidebar')).toBeVisible();
+});
+
+test('with the bar on top, rooms centre on one column across a wide window', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await login(page);
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { navLayout: 'top' } } });
+
+    const centred = async (selector) => {
+        const box = await page.locator(selector).first().boundingBox();
+        expect(box).not.toBeNull();
+        expect(Math.abs(box.x - (1920 - box.x - box.width))).toBeLessThanOrEqual(2);
+        return box;
+    };
+
+    // Reading rooms fill a 1200px column instead of the sidebar-era 900px cap,
+    // and the header's title starts where the column does.
+    for (const [path, content] of [['/app/', '.home-shell'], ['/app/tools', '.tools-grid'], ['/app/activity/inbox', '.list-card'], ['/app/projects', '.obs-view']]) {
+        await page.goto(path);
+        const box = await centred(content);
+        expect(box.width).toBeGreaterThan(1100);
+        const header = await page.locator(path === '/app/' ? '.home-toolbar' : '.pane-header').first().evaluate((el) =>
+            [...el.children].map((c) => c.getBoundingClientRect()).find((r) => r.width > 0).left);
+        expect(Math.abs(header - box.x)).toBeLessThanOrEqual(2);
+    }
+
+    // Workspaces centre as one wider frame, and the bar lines up with it.
+    await page.goto('/app/chat');
+    const panel = await page.locator('#pane-chat .conversations-panel').boundingBox();
+    const study = await page.locator('#pane-chat .study-main').boundingBox();
+    expect(Math.round(panel.x)).toBe(220);
+    expect(Math.round(study.x + study.width)).toBe(1700);
+    const brand = await page.locator('#topbar .brand').boundingBox();
+    expect(Math.abs(brand.x - panel.x)).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_top_nav_wide_chat.png' });
+
+    await page.goto('/app/tools');
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_top_nav_wide_tools.png' });
 });
 
 test('the top bar scrolls sideways on a phone instead of opening a drawer', async ({ page }) => {

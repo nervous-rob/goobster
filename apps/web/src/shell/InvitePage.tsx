@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
+import { BerryMark } from '../components/BerryMark';
 
 /** `?token=` from the address bar; the router's search is left untyped on purpose. */
 export function tokenFromLocation(): string {
@@ -60,7 +61,7 @@ export function InvitePage() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 {!token && <p className="login-error" role="alert">This invitation link is missing its token.</p>}
                 {token && preview.isPending && <p className="hint">Checking the invitation…</p>}
                 {token && preview.isError && (

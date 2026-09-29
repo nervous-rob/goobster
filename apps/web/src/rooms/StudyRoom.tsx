@@ -23,6 +23,7 @@ import { useOpenSettings } from '../hooks/useOpenSettings';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { getStoredMicId, getStoredVoiceVolume } from '../lib/appearance';
 import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
+import { BerryMark } from '../components/BerryMark';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -845,7 +846,7 @@ export function StudyRoom() {
                     />
                     {display.length === 0 && (
                         <div className="empty-state">
-                            <img className="empty-logo" src="/app/icons/goobster.svg" alt="" width={60} height={60} />
+                            <BerryMark className="empty-logo" size={60} />
                             <div className="empty-title">{hasInboxContext ? 'Ask about this Inbox item' : 'What can Goobster do for you?'}</div>
                             {hasInboxContext ? <div className="hint">Review the question below, then send when you are ready.</div> : <div className="suggestions">
                                 {suggestions.map((text) => (

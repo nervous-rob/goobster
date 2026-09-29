@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
+import { BerryMark } from '../components/BerryMark';
 
 const STATUS_KEY = ['access-request-status'];
 
@@ -75,7 +76,7 @@ export function NoAccountPage({ error, onApproved }: { error: ApiError; onApprov
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 <h1>{disabled ? 'Account disabled' : pending ? 'Asked the host' : 'Almost in'}</h1>
                 <p className="login-sub" role="status">
                     {pending

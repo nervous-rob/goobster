@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
+import { BerryMark } from '../components/BerryMark';
 
 /**
  * /app/forgot - ask for a password reset by email. The answer is the same
@@ -39,7 +40,7 @@ export function ForgotPage() {
         <div className="login">
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
-                <img className="login-logo" src="/app/icons/goobster.svg" alt="" width={72} height={72} />
+                <BerryMark className="login-logo" size={72} />
                 <h1>Reset your password</h1>
                 {unavailable && (
                     <p className="login-sub">This installation cannot send email. Ask the host for a reset link instead.</p>

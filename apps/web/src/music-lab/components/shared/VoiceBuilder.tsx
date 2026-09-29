@@ -4,6 +4,7 @@ import { makeVoiceId, type VoiceOsc, type VoicePreset } from '@music-lab/lib/voi
 import { buildMonoSynth, buildPolySynth, resolveTone, type TonalSynth } from '@music-lab/lib/stageInstruments';
 import { audioBufferToWavBlob, blobToAudioBuffer, sliceAudioBuffer } from '@music-lab/lib/audioExport';
 import { cacheSampleBuffer, makeSampleId, saveSampleBlob } from '@music-lab/lib/sampleStore';
+import { sceneAccentRgb } from '@music-lab/components/shared/sceneColors';
 
 interface VoiceBuilderProps {
   /** Unique prefix for element ids (the builder mounts on several pages). */
@@ -254,7 +255,7 @@ export function VoiceBuilder({ idPrefix }: VoiceBuilderProps) {
     ctx.fillStyle = 'rgba(10, 10, 10, 0.72)';
     ctx.fillRect(0, 0, trimStart * cssW, cssH);
     ctx.fillRect(trimEnd * cssW, 0, cssW - trimEnd * cssW, cssH);
-    ctx.strokeStyle = '#f59e0b';
+    ctx.strokeStyle = `rgb(${sceneAccentRgb(canvas)})`;
     ctx.beginPath();
     ctx.moveTo(trimStart * cssW + 0.5, 0);
     ctx.lineTo(trimStart * cssW + 0.5, cssH);
