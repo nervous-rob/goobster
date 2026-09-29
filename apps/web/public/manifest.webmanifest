@@ -5,10 +5,17 @@
   "id": "/app/",
   "start_url": "/app/",
   "scope": "/app/",
+  "lang": "en",
+  "dir": "ltr",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "orientation": "any",
   "background_color": "#0f1117",
   "theme_color": "#0f1117",
+  "categories": ["productivity", "utilities", "social"],
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
   "icons": [
     {
       "src": "/app/icons/goobster.svg",
@@ -34,5 +41,67 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "screenshots": [
+    {
+      "src": "/app/screenshots/home-wide.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Home: what Goobster knows, what he is watching, and where you left off"
+    },
+    {
+      "src": "/app/screenshots/chat-narrow.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Chat with Goobster on a phone"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New chat",
+      "short_name": "Chat",
+      "description": "Talk to Goobster",
+      "url": "/app/chat",
+      "icons": [{ "src": "/app/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Inbox",
+      "short_name": "Inbox",
+      "description": "Results of unattended work, reminders and invitations",
+      "url": "/app/activity/inbox",
+      "icons": [{ "src": "/app/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Projects",
+      "short_name": "Projects",
+      "description": "Your projects and what they produced",
+      "url": "/app/projects",
+      "icons": [{ "src": "/app/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Discussions",
+      "short_name": "Discussions",
+      "description": "Shared discussions with personas and people",
+      "url": "/app/discussions",
+      "icons": [{ "src": "/app/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "share_target": {
+    "action": "/app/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": ["image/*", "text/*", "application/json", "application/pdf", ".md", ".csv", ".tsv", ".json", ".txt", ".py", ".js", ".ts", ".yaml", ".yml", ".toml", ".xml", ".html", ".css"]
+        }
+      ]
+    }
+  }
 }

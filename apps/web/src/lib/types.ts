@@ -49,6 +49,22 @@ export type Me = {
     instance?: { paused: boolean; reason: string | null; since: string | null };
 };
 
+/** Web Push for the installed app (documentation/pwa.md). */
+export type PushStatus = {
+    enabled: boolean;
+    reason: string | null;
+    publicKey: string | null;
+    devices: number;
+    thisDevice: boolean;
+};
+
+export type PushSendSummary = {
+    sent: number;
+    failed: number;
+    pruned: number;
+    skipped: boolean;
+};
+
 /** Skipped-schedule counts a resume reports (documentation/backup_and_restore.md). */
 export type SkippedSchedules = {
     automations: number;

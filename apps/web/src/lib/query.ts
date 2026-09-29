@@ -59,6 +59,10 @@ export function createQueryClient(): QueryClient {
         defaultOptions: {
             queries: {
                 staleTime: 15_000,
+                // Offline, a room already fetched renders from the cache
+                // instead of spinning; the first fetch of a room still
+                // fails fast rather than hanging in "paused".
+                networkMode: 'offlineFirst',
                 retry: (count, error) => {
                     const status = (error as { status?: number })?.status;
                     if (status === 401 || status === 403) return false;

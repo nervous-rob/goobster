@@ -18,6 +18,7 @@ export type InboxEvent = {
 
 export type ParlorMentionEvent = {
     conversationId?: number;
+    messageId?: number | null;
     fromName?: string | null;
     title?: string | null;
 };

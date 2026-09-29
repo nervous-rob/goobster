@@ -48,6 +48,8 @@ import { FriendsView, MessagesView, PeopleRoom } from './rooms/PeopleRoom';
 import { ToolsRoom } from './rooms/ToolsRoom';
 import { SettingsRoom } from './rooms/settings/SettingsRoom';
 import { canonicalPath } from './lib/rooms';
+import { captureInstallPrompt, installChunkRecovery, registerServiceWorker } from './lib/pwa';
+import { ChunkErrorBoundary } from './components/ChunkErrorBoundary';
 import './styles.css';
 
 const Documentation = lazy(() => import('./docs/Documentation').then((m) => ({ default: m.Documentation })));
@@ -557,14 +559,19 @@ declare module '@tanstack/react-router' {
     }
 }
 
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => { /* optional */ });
-}
+// The installed-app plumbing (documentation/pwa.md): keep the install
+// prompt for Settings, recover from a chunk that vanished with a deploy,
+// and register the worker that makes the portal installable.
+captureInstallPrompt();
+installChunkRecovery();
+registerServiceWorker();
 
 const el = document.getElementById('root');
 if (!el) throw new Error('#root missing');
 createRoot(el).render(
     <StrictMode>
-        <RouterProvider router={router} />
+        <ChunkErrorBoundary>
+            <RouterProvider router={router} />
+        </ChunkErrorBoundary>
     </StrictMode>
 );

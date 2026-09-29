@@ -185,6 +185,15 @@ class DirectMessageService {
             return await tx.get('SELECT * FROM dm_messages WHERE id = @id', { id });
         });
         this._publish(thread, [me, other]);
+        // The installed portal's echo (documentation/pwa.md): who wrote and
+        // where, never the text. Never throws.
+        try {
+            await require('./pushService').notifyDirectMessage({
+                userId: other,
+                fromName: await friendService.nameFor(me),
+                threadId: thread.id
+            });
+        } catch { /* cosmetic */ }
         return this._publicMessage(message);
     }
 

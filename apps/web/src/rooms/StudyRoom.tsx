@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { InboxContextChips, useInboxContext } from '../components/InboxContextChips';
 import { useInboxDraft } from '../hooks/useInboxDraft';
 import { api, fetchSpeech, streamChat, streamLiveTurn, ApiError } from '../lib/api';
@@ -24,6 +24,8 @@ import { useUserSettings } from '../hooks/useUserSettings';
 import { getStoredMicId, getStoredVoiceVolume } from '../lib/appearance';
 import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
 import { BerryMark } from '../components/BerryMark';
+import { consumeSharedPayload } from '../lib/shareTarget';
+import { useOnline } from '../lib/pwa';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -35,6 +37,7 @@ const SUGGESTIONS = [
 ];
 
 const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
+const OFFLINE_HINT = 'You are offline. The draft stays here; sending waits for the connection.';
 const LOCAL_HINT = 'Goobster remembers across your chats here. He can make mistakes.';
 const QUEUE_HINT = 'Enter queues a follow-up — it sends when this reply finishes. Stop is the square beside Send.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
@@ -106,6 +109,8 @@ export function StudyRoom() {
     const queryClient = useQueryClient();
     const params = useParams({ strict: false }) as { conversationId?: string };
     const routeId = params.conversationId ? Number(params.conversationId) : null;
+    const routeSearch = useSearch({ strict: false }) as { shared?: unknown };
+    const online = useOnline();
 
     const [activeId, setActiveId] = useState<number | null>(Number.isFinite(routeId) ? routeId : null);
     const [composer, setComposer] = useState('');
@@ -155,6 +160,25 @@ export function StudyRoom() {
             volume: getStoredVoiceVolume()
         });
     }, [settingsQ.data?.sections.voice.values, voiceChat]);
+
+    // The Web Share Target (documentation/pwa.md): the worker parked what
+    // the OS shared and sent the browser to /chat?shared=1; pick it up once,
+    // put text in the composer and files on the attachment strip, then drop
+    // the flag so a refresh does not look for it again.
+    const sharedHandled = useRef(false);
+    useEffect(() => {
+        if (!routeSearch.shared || sharedHandled.current) return;
+        sharedHandled.current = true;
+        void (async () => {
+            const payload = await consumeSharedPayload();
+            if (payload) {
+                if (payload.text) setComposer((prev) => (prev ? `${prev}\n${payload.text}` : payload.text));
+                if (payload.files.length > 0) await addFiles(payload.files);
+                toast('Shared into a new chat.');
+            }
+            navigate({ to: '/chat', search: {} as never, replace: true });
+        })();
+    }, [routeSearch.shared]);
 
     const convs = useQuery({
         queryKey: keys.conversations,
@@ -547,6 +571,10 @@ export function StudyRoom() {
     async function sendMessage(forcedText: string | null = null) {
         const text = (forcedText ?? composer).trim();
         if (!text) return;
+        if (!navigator.onLine) {
+            toast('You are offline - the draft stays here until the connection is back.', true);
+            return;
+        }
         if (liveTurn) {
             try {
                 await api.enqueueChat({
@@ -958,11 +986,11 @@ export function StudyRoom() {
                                 ◼
                             </button>
                         )}
-                        <button type="submit" className="btn primary send-btn" aria-label={liveTurn ? 'Queue message' : 'Send'}>
+                        <button type="submit" className="btn primary send-btn" aria-label={liveTurn ? 'Queue message' : 'Send'} disabled={!online}>
                             ➤
                         </button>
                     </form>
-                    <div className="composer-hint hint">{incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : (me.discord?.enabled === false ? LOCAL_HINT : DEFAULT_HINT))}</div>
+                    <div className="composer-hint hint">{!online ? OFFLINE_HINT : incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : (me.discord?.enabled === false ? LOCAL_HINT : DEFAULT_HINT))}</div>
                 </div>
             </div>
             {shareOpen && activeId !== null && (

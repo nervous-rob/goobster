@@ -1,3 +1,4 @@
+import type { PushSendSummary, PushStatus } from './types';
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
@@ -155,6 +156,15 @@ export const api = {
         request(`/api/app/chat/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     chatSettings: () => request('/api/app/chat/settings'),
     settings: () => request<UserSettingsResponse>('/api/app/settings'),
+
+    // Web Push for the installed app (documentation/pwa.md)
+    push: (endpoint?: string | null) =>
+        request<PushStatus>(`/api/app/push${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ''}`),
+    subscribePush: (subscription: PushSubscriptionJSON) =>
+        request<{ ok: true; devices: number }>('/api/app/push/subscriptions', { method: 'POST', body: { subscription } }),
+    unsubscribePush: (body: { endpoint?: string; all?: boolean }) =>
+        request<{ removed: number; devices: number }>('/api/app/push/subscriptions', { method: 'DELETE', body }),
+    testPush: () => request<PushSendSummary>('/api/app/push/test', { method: 'POST' }),
     authorizeLegacyLab: () => request('/api/app/settings/legacy-lab', { method: 'POST' }),
 
     tutorials: () => request<TutorialsResponse>('/api/app/tutorials'),
