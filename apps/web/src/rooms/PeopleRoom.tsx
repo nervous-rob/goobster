@@ -158,130 +158,132 @@ export function FriendsView() {
                 </div>
             </header>
             <div className="pane-body people-body">
-                <section className="people-section" aria-labelledby="people-find">
-                    <h2 id="people-find" className="people-heading">Find someone</h2>
-                    <input
-                        className="input people-search"
-                        type="search"
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        placeholder="A name, an email address, or a user id"
-                        aria-label="Find someone to add as a friend"
-                        autoComplete="off"
-                    />
-                    <p className="hint">
-                        Names match people who use this portal and members of Discord servers you share with {me.assistant?.name || 'Goobster'}.
-                        An email address only finds someone who has verified it here, and is never shown to anyone.
-                    </p>
-                    {searching && (
-                        <div className="people-list people-results" data-testid="friend-search-results">
-                            {searchQ.isPending && <div className="hint" style={{ padding: '4px 10px' }}>Looking…</div>}
-                            {searchQ.isError && <div className="hint" style={{ padding: '4px 10px' }}>{(searchQ.error as Error).message}</div>}
-                            {searchQ.data && results.length === 0 && (
-                                <div className="hint" style={{ padding: '4px 10px' }}>
-                                    {searchQ.data.kind === 'email'
-                                        ? 'Nobody here has verified that address.'
-                                        : searchQ.data.kind === 'id'
-                                            ? 'Nobody with that id.'
-                                            : 'Nobody by that name yet.'}
-                                </div>
-                            )}
-                            {results.map((person) => (
-                                <div key={person.id} className="person-item people-result">
-                                    <Avatar avatar={person.avatar} name={person.name} />
-                                    <div className="person-body">
-                                        <span className="person-name">{person.name}</span>
-                                        {person.via && <span className="hint-inline">{person.source === 'server' ? `Server · ${person.via}` : person.via}</span>}
+                <div className="people-column">
+                    <section className="people-section" aria-labelledby="people-find">
+                        <h2 id="people-find" className="people-heading">Find someone</h2>
+                        <input
+                            className="input people-search"
+                            type="search"
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                            placeholder="A name, an email address, or a user id"
+                            aria-label="Find someone to add as a friend"
+                            autoComplete="off"
+                        />
+                        <p className="hint">
+                            Names match people who use this portal and members of Discord servers you share with {me.assistant?.name || 'Goobster'}.
+                            An email address only finds someone who has verified it here, and is never shown to anyone.
+                        </p>
+                        {searching && (
+                            <div className="people-list people-results" data-testid="friend-search-results">
+                                {searchQ.isPending && <div className="hint" style={{ padding: '4px 10px' }}>Looking…</div>}
+                                {searchQ.isError && <div className="hint" style={{ padding: '4px 10px' }}>{(searchQ.error as Error).message}</div>}
+                                {searchQ.data && results.length === 0 && (
+                                    <div className="hint" style={{ padding: '4px 10px' }}>
+                                        {searchQ.data.kind === 'email'
+                                            ? 'Nobody here has verified that address.'
+                                            : searchQ.data.kind === 'id'
+                                                ? 'Nobody with that id.'
+                                                : 'Nobody by that name yet.'}
                                     </div>
-                                    <RelationshipAction
-                                        person={person}
-                                        busy={busy}
-                                        onRequest={() => request.mutate(person)}
-                                        onAccept={() => {
-                                            const item = overview?.incoming.find((entry) => entry.id === person.relationship.requestId);
-                                            if (item) respond.mutate({ item, accept: true });
-                                        }}
-                                        onMessage={() => void message({ id: person.id, name: person.name, avatar: person.avatar || null, since: null })}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </section>
-
-                {overview && overview.incoming.length > 0 && (
-                    <section className="people-section" aria-labelledby="people-incoming" data-testid="friend-incoming">
-                        <h2 id="people-incoming" className="people-heading">Waiting for your answer</h2>
-                        <div className="people-list">
-                            {overview.incoming.map((item) => (
-                                <div key={item.id} className="person-item">
-                                    <Avatar avatar={item.requesterAvatar} name={item.requesterName} />
-                                    <div className="person-body">
-                                        <span className="person-name">{item.requesterName}</span>
-                                        <span className="hint-inline">asked {whenLabel(item.createdAt)}</span>
+                                )}
+                                {results.map((person) => (
+                                    <div key={person.id} className="person-item people-result">
+                                        <Avatar avatar={person.avatar} name={person.name} />
+                                        <div className="person-body">
+                                            <span className="person-name">{person.name}</span>
+                                            {person.via && <span className="hint-inline">{person.source === 'server' ? `Server · ${person.via}` : person.via}</span>}
+                                        </div>
+                                        <RelationshipAction
+                                            person={person}
+                                            busy={busy}
+                                            onRequest={() => request.mutate(person)}
+                                            onAccept={() => {
+                                                const item = overview?.incoming.find((entry) => entry.id === person.relationship.requestId);
+                                                if (item) respond.mutate({ item, accept: true });
+                                            }}
+                                            onMessage={() => void message({ id: person.id, name: person.name, avatar: person.avatar || null, since: null })}
+                                        />
                                     </div>
-                                    <button type="button" className="btn primary small" disabled={busy}
-                                        onClick={() => respond.mutate({ item, accept: true })}>Accept</button>
-                                    <button type="button" className="btn small" disabled={busy}
-                                        onClick={() => respond.mutate({ item, accept: false })}>Decline</button>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        )}
                     </section>
-                )}
-
-                {overview && overview.outgoing.length > 0 && (
-                    <section className="people-section" aria-labelledby="people-outgoing" data-testid="friend-outgoing">
-                        <h2 id="people-outgoing" className="people-heading">Sent</h2>
-                        <div className="people-list">
-                            {overview.outgoing.map((item) => (
-                                <div key={item.id} className="person-item">
-                                    <Avatar avatar={item.addresseeAvatar} name={item.addresseeName} />
-                                    <div className="person-body">
-                                        <span className="person-name">{item.addresseeName}</span>
-                                        <span className="hint-inline">waiting since {whenLabel(item.createdAt)}</span>
+    
+                    {overview && overview.incoming.length > 0 && (
+                        <section className="people-section" aria-labelledby="people-incoming" data-testid="friend-incoming">
+                            <h2 id="people-incoming" className="people-heading">Waiting for your answer</h2>
+                            <div className="people-list">
+                                {overview.incoming.map((item) => (
+                                    <div key={item.id} className="person-item">
+                                        <Avatar avatar={item.requesterAvatar} name={item.requesterName} />
+                                        <div className="person-body">
+                                            <span className="person-name">{item.requesterName}</span>
+                                            <span className="hint-inline">asked {whenLabel(item.createdAt)}</span>
+                                        </div>
+                                        <button type="button" className="btn primary small" disabled={busy}
+                                            onClick={() => respond.mutate({ item, accept: true })}>Accept</button>
+                                        <button type="button" className="btn small" disabled={busy}
+                                            onClick={() => respond.mutate({ item, accept: false })}>Decline</button>
                                     </div>
-                                    <button type="button" className="btn subtle small" disabled={busy}
-                                        onClick={() => cancel.mutate(item)}>Withdraw</button>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+    
+                    {overview && overview.outgoing.length > 0 && (
+                        <section className="people-section" aria-labelledby="people-outgoing" data-testid="friend-outgoing">
+                            <h2 id="people-outgoing" className="people-heading">Sent</h2>
+                            <div className="people-list">
+                                {overview.outgoing.map((item) => (
+                                    <div key={item.id} className="person-item">
+                                        <Avatar avatar={item.addresseeAvatar} name={item.addresseeName} />
+                                        <div className="person-body">
+                                            <span className="person-name">{item.addresseeName}</span>
+                                            <span className="hint-inline">waiting since {whenLabel(item.createdAt)}</span>
+                                        </div>
+                                        <button type="button" className="btn subtle small" disabled={busy}
+                                            onClick={() => cancel.mutate(item)}>Withdraw</button>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+    
+                    <section className="people-section" aria-labelledby="people-friends" data-testid="friend-list">
+                        <h2 id="people-friends" className="people-heading">Your friends</h2>
+                        {overviewQ.isPending && <div className="hint">Loading…</div>}
+                        {overviewQ.isError && <div className="hint">{(overviewQ.error as Error).message}</div>}
+                        {overview && friends.length === 0 && (
+                            <div className="empty-state people-empty">
+                                <div className="empty-logo" aria-hidden="true">🤝</div>
+                                <div className="empty-title">No friends yet</div>
+                                <p className="hint">
+                                    Find someone above and send a request. It lands in their Inbox (and their Discord DMs when they have one);
+                                    once they accept, you see when each other is in the portal and can message each other here.
+                                </p>
+                            </div>
+                        )}
+                        {friends.length > 0 && (
+                            <div className="people-list">
+                                {[...online, ...friends.filter((friend) => !friend.online)].map((friend) => (
+                                    <div key={friend.id} className="person-item">
+                                        <Avatar avatar={friend.avatar} name={friend.name} />
+                                        <div className="person-body">
+                                            <span className="person-name">{friend.name}</span>
+                                            <span className="hint-inline">{friend.online ? 'In the portal now' : `Friends since ${whenLabel(friend.since)}`}</span>
+                                        </div>
+                                        <span className={`presence-dot${friend.online ? ' online' : ''}`}
+                                            title={friend.online ? `${friend.name} is in the portal` : `${friend.name} is not in the portal`} />
+                                        <button type="button" className="btn small" onClick={() => void message(friend)}>Message</button>
+                                        <button type="button" className="btn subtle small" disabled={busy} aria-label={`Remove ${friend.name} from your friends`}
+                                            onClick={() => { if (window.confirm(`Remove ${friend.name} from your friends? They are not told.`)) remove.mutate(friend); }}>Unfriend</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </section>
-                )}
-
-                <section className="people-section" aria-labelledby="people-friends" data-testid="friend-list">
-                    <h2 id="people-friends" className="people-heading">Your friends</h2>
-                    {overviewQ.isPending && <div className="hint">Loading…</div>}
-                    {overviewQ.isError && <div className="hint">{(overviewQ.error as Error).message}</div>}
-                    {overview && friends.length === 0 && (
-                        <div className="empty-state people-empty">
-                            <div className="empty-logo" aria-hidden="true">🤝</div>
-                            <div className="empty-title">No friends yet</div>
-                            <p className="hint">
-                                Find someone above and send a request. It lands in their Inbox (and their Discord DMs when they have one);
-                                once they accept, you see when each other is in the portal and can message each other here.
-                            </p>
-                        </div>
-                    )}
-                    {friends.length > 0 && (
-                        <div className="people-list">
-                            {[...online, ...friends.filter((friend) => !friend.online)].map((friend) => (
-                                <div key={friend.id} className="person-item">
-                                    <Avatar avatar={friend.avatar} name={friend.name} />
-                                    <div className="person-body">
-                                        <span className="person-name">{friend.name}</span>
-                                        <span className="hint-inline">{friend.online ? 'In the portal now' : `Friends since ${whenLabel(friend.since)}`}</span>
-                                    </div>
-                                    <span className={`presence-dot${friend.online ? ' online' : ''}`}
-                                        title={friend.online ? `${friend.name} is in the portal` : `${friend.name} is not in the portal`} />
-                                    <button type="button" className="btn small" onClick={() => void message(friend)}>Message</button>
-                                    <button type="button" className="btn subtle small" disabled={busy} aria-label={`Remove ${friend.name} from your friends`}
-                                        onClick={() => { if (window.confirm(`Remove ${friend.name} from your friends? They are not told.`)) remove.mutate(friend); }}>Unfriend</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </section>
+                </div>
             </div>
         </main>
     );

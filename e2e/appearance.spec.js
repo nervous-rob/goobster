@@ -316,6 +316,17 @@ test('with the bar on top, rooms centre on one column across a wide window', asy
         expect(Math.abs(header - box.x)).toBeLessThanOrEqual(2);
     }
 
+    // People keeps its narrower reading column, centred inside the page
+    // column rather than squeezed by the gutters (they pad the pane body,
+    // which used to carry the cap itself and collapsed to nothing).
+    await page.goto('/app/people/friends');
+    const people = await centred('.people-column');
+    expect(Math.round(people.width)).toBe(780);
+    await expect(page.getByRole('heading', { name: 'Find someone' })).toBeVisible();
+    const search = await page.getByRole('searchbox', { name: 'Find someone to add as a friend' }).boundingBox();
+    expect(Math.round(search.width)).toBe(780);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_top_nav_wide_people.png' });
+
     // Workspaces centre as one wider frame, and the bar lines up with it.
     await page.goto('/app/chat');
     const panel = await page.locator('#pane-chat .conversations-panel').boundingBox();
