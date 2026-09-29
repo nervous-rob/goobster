@@ -16,7 +16,7 @@ describe('public documentation compiler', () => {
         expect(corpus.pages.some((p) => /operator\/|data\/|product_naming|redesign_plan/.test(p.source))).toBe(false);
         expect(corpus.pages.find((p) => p.id === 'getting-started').html).toContain('/app/docs/knowledge');
         expect(rooms.resolveRoom('/app/docs/getting-started')).toBe('docs');
-        expect(rooms.PRIMARY_ROOMS).toHaveLength(7);
+        expect(rooms.PRIMARY_ROOMS).toHaveLength(8);
     });
 
     test.each(['config.json', 'data/self-docs/private.md', '../README.md', 'documentation/../../config.json', '/etc/passwd'])('rejects unpublished sources: %s', (source) => {
