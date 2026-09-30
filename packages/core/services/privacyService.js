@@ -904,6 +904,10 @@ class PrivacyService {
             // hears from Goobster again (documentation/pwa.md).
             counts.pushSubscriptions = await require('./pushService').forgetUser(userId, db);
 
+            // MCP tokens are a way into this person's workspace. Forgetting
+            // them means every external client loses access (documentation/mcp.md).
+            counts.mcpTokens = await require('./mcpTokenService').forgetUser(userId, db);
+
             // The application identity itself: principal, linked external
             // identities, and the account entitlement. A forgotten user has
             // to be re-invited; nothing here is kept for convenience.
@@ -1264,6 +1268,9 @@ class PrivacyService {
             )).c,
             push_subscriptions: (await db.get(
                 'SELECT COUNT(*) AS c FROM push_subscriptions WHERE userId = @userId', { userId }
+            )).c,
+            mcp_tokens: (await db.get(
+                'SELECT COUNT(*) AS c FROM mcp_tokens WHERE userId = @userId', { userId }
             )).c,
             principals: (await db.get(
                 'SELECT COUNT(*) AS c FROM principals WHERE id = @userId', { userId }

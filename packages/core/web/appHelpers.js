@@ -193,7 +193,8 @@ function createAppHelpers(ctx) {
         exchangeRoute: jsonRoute(ctx, 'Web exchange route failed'),
         appletRoute: jsonRoute(ctx, 'Web applet route failed'),
         integrationRoute: jsonRoute(ctx, 'Integration route failed'),
-        pushRoute: jsonRoute(ctx, 'Push route failed')
+        pushRoute: jsonRoute(ctx, 'Push route failed'),
+        mcpRoute: jsonRoute(ctx, 'MCP route failed')
     };
 }
 

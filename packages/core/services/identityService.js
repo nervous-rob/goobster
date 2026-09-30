@@ -34,6 +34,7 @@ const OWNER_COLUMNS = [
     { table: 'UserPreferences', column: 'userId' },
     { table: 'user_settings', column: 'userId' },
     { table: 'web_sessions', column: 'userId' },
+    { table: 'mcp_tokens', column: 'userId' },
     { table: 'web_conversations', column: 'userId' },
     { table: 'conversation_contexts', column: 'userId' },
     { table: 'followed_sources', column: 'userId' },

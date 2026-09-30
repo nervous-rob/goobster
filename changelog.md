@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-30
+
+### Added
+- **A read-only MCP server.** Cursor and other MCP clients can search one person's workspace: Goobster's docs, private memories and facts, knowledge notes, project metadata and file names, the inbox, expeditions, and research briefs. `POST /mcp` (stateless, bearer token) mounts on the bot and the api process when `mcp.enabled` or `GOOBSTER_MCP_ENABLED=1` is set; `npm run mcp` speaks the same protocol on stdio. Tokens (`gst_…`, stored as a SHA-256) are created in Settings → Connections or with `npm run mcp:token`. There is no write tool. Tokens carry a **scope** (`read` for everything, or `docs` for the documentation tools only, so a client whose output you would rather keep away from your private workspace reads nothing private) and a **lifetime** (90 days by default via `mcp.defaultTokenDays`, 1 to 365 days, or never); a lapsed token answers 401 "expired" and does not count toward the per-person cap. The server also speaks MCP **resources**: `goobster://docs/<slug>` (any scope) and `goobster://briefs/<id>` (`read` only), cursor-paged, with one indistinguishable "not found" for anything the token may not read. `/forget-me` deletes the tokens, and account export keeps the label, scope, and expiry without the hash. Spec: `documentation/mcp.md`. Jest: `mcpServer`.
+
 ## 2026-09-29
 
 ### Added

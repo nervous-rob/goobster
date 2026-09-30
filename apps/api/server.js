@@ -21,6 +21,7 @@
 
 const express = require('express');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
+const { mountMcpIfEnabled } = require('@goobster/core/mcp/http');
 const { RemoteGateway, DisabledGateway } = require('@goobster/core/gateway');
 const discordConfig = require('@goobster/core/config/discordConfig');
 
@@ -86,6 +87,8 @@ function createApiApp({ config = {}, gateway = null, mode = undefined, logger = 
             timestamp: new Date().toISOString()
         });
     });
+
+    mountMcpIfEnabled(app, { logger });
 
     const webAppContext = createWebAppContext({
         client: null,

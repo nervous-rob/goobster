@@ -15,6 +15,7 @@ const { createPanelService } = require('@goobster/core/services/panelService');
 const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
+const { mountMcpIfEnabled } = require('@goobster/core/mcp/http');
 const { createInternalGatewayApi, internalGatewayEnabled } = require('./internalGatewayApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
@@ -129,6 +130,10 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
         healthApp.locals.activityContext = activityContext;
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
     }
+
+    // Read-only MCP (documentation/mcp.md). Opt-in: the public server
+    // gains a bearer-token endpoint over one person's workspace.
+    mountMcpIfEnabled(healthApp, { logger });
 
     // Web app (browser chat + memory dashboard): opt-in for the same reason
     // as the Activity - it must be reachable through the public tunnel.

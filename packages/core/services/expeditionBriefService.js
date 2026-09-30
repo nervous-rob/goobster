@@ -205,6 +205,20 @@ class ExpeditionBriefService {
 
     // --- Reads -----------------------------------------------------------------------
 
+    /**
+     * Every brief this person owns, newest first. A disabled research
+     * feature still returns briefs that were already written.
+     */
+    async listForUser({ userId, limit = 20 } = {}) {
+        if (!userId) throw new SpitballError(400, 'BAD_REQUEST', 'A user is required.');
+        const bounded = Math.min(Math.max(Number(limit) || 20, 1), 50);
+        const rows = await db.all(
+            `SELECT * FROM expedition_briefs WHERE userId = @userId ORDER BY id DESC LIMIT @limit`,
+            { userId: String(userId), limit: bounded }
+        );
+        return rows.map(row => this._shapeSummary(row));
+    }
+
     /** Every brief written for one of the caller's expeditions, newest first. */
     async list({ expeditionId, userId } = {}) {
         const expedition = await this._ownedExpedition(expeditionId, userId);

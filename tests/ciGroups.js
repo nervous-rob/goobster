@@ -115,6 +115,7 @@ const GROUPS = [
             'independentRuntime',
             'inboxPagination',
             'inboxAsk',
+            'mcpServer',
             'webAppApi',
             'webAppletService',
             'webChatBranchShare',
