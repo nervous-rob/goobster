@@ -1,0 +1,14 @@
+{
+  "name": "@goobster/mcp",
+  "version": "1.0.0",
+  "description": "Goobster read-only MCP server (stdio). Speaks Model Context Protocol on stdin/stdout against the local database.",
+  "private": true,
+  "license": "MIT",
+  "main": "index.js",
+  "dependencies": {
+    "@goobster/core": "*"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -178,6 +178,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Attention | `documentation/attention.md` |
 | Spitball Expeditions | `documentation/spitball_expeditions.md` |
 | Web portal | `documentation/webapp_setup.md` |
+| MCP server (read-only) | `documentation/mcp.md` |
 | Raspberry Pi | `documentation/raspberry_pi_guide.md` |
 | Continuous deploy | `documentation/continuous_deployment.md` |
 | Docker | `documentation/docker_deployment.md` |

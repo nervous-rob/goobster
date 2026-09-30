@@ -39,6 +39,12 @@
         }
     },
 
+    "mcp": {
+        "enabled": false,
+        "maxTokensPerUser": 10,
+        "requestsPerMinute": 120
+    },
+
     "sandbox": {
         "enabled": false,
         "scope": "web",

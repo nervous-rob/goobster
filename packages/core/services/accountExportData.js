@@ -55,9 +55,12 @@ const INVENTORY = [
     ...['followups', 'automations', 'attention_items', 'attention_notices', 'attention_feedback', 'attention_watches',
         'attention_policies', 'inbox_items', 'web_applets'].map(t => [t, 'userId = @userId']),
     ...['tutorial_progress', 'tutorial_preferences', 'tutorial_feedback'].map(t => [t, 'accountId = @userId']),
-    ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)']
+    ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
+    // The secret hash stays out of the archive. The label and prefix are
+    // enough to see which clients were connected (documentation/mcp.md).
+    ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt']
 ];
-const TRANSIENT = new Set(['claimToken', 'leaseToken', 'runnerId', 'executionAttemptId', 'claimUntil']);
+const TRANSIENT = new Set(['claimToken', 'leaseToken', 'runnerId', 'executionAttemptId', 'claimUntil', 'tokenHash']);
 function cleanRow(table, row, userId) {
     const result = Object.fromEntries(Object.entries(row).filter(([key]) => !TRANSIENT.has(key)));
     if (table === 'knowledge_transfers' && row.userId !== userId) {

@@ -65,6 +65,27 @@ export type PushSendSummary = {
     skipped: boolean;
 };
 
+/** A stored MCP token. The secret itself is never in this shape. */
+export type McpToken = {
+    id: number;
+    label: string;
+    tokenPrefix: string;
+    scope: 'read';
+    createdAt: string;
+    lastUsedAt: string | null;
+    revokedAt?: string | null;
+};
+
+export type McpOverview = {
+    enabled: boolean;
+    endpoint: string;
+    readOnly: true;
+    tools: string[];
+    tokens: McpToken[];
+};
+
+export type McpTokenCreated = McpToken & { token: string };
+
 /** Skipped-schedule counts a resume reports (documentation/backup_and_restore.md). */
 export type SkippedSchedules = {
     automations: number;

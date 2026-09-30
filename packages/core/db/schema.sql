@@ -3284,3 +3284,20 @@ CREATE TABLE IF NOT EXISTS account_exports (
 CREATE INDEX IF NOT EXISTS idx_account_exports_owner ON account_exports(userId, createdAt);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_account_exports_active ON account_exports(userId)
     WHERE status IN ('QUEUED', 'RUNNING');
+
+-- MCP personal access tokens (documentation/mcp.md).
+-- Only the SHA-256 of the secret is stored. scope stays 'read' until a
+-- write surface exists; the server refuses every other value.
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+    id INTEGER PRIMARY KEY,
+    tokenHash TEXT NOT NULL UNIQUE,
+    userId TEXT NOT NULL,
+    label TEXT NOT NULL,
+    tokenPrefix TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'read' CHECK (scope IN ('read')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastUsedAt TEXT,
+    revokedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_tokens_user ON mcp_tokens(userId, createdAt);

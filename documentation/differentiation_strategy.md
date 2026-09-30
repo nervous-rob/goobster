@@ -40,8 +40,9 @@ independent customer demand are claimed yet.
    evaluation set (#267), and a first-use task that crosses the whole
    product (#266).
 4. Remove the obstacles pilot users actually hit: a feed/web-page Attention
-   source, a complete export, a read-only MCP server, push notifications,
-   user-provided keys (#253, #250, #251, #257, #269).
+   source, a complete export, a read-only MCP server (shipped:
+   [mcp.md](mcp.md)), push notifications, user-provided keys
+   (#253, #250, #251, #257, #269).
 5. Expand distribution and optional capabilities after repeat use and
    operating costs are understood (#259, #258, #252, #270). The plugin SDK
    (#260) is closed; MCP is the chosen extension mechanism when a task

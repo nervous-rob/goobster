@@ -1215,6 +1215,28 @@ a.nav-btn {
 
 .settings-content { overflow: auto; padding: 20px 28px 24px; }
 .settings-section { max-width: 760px; }
+.mcp-secret-block { margin: 8px 0 12px; }
+.mcp-secret {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.mcp-token-list { list-style: none; padding: 0; margin: 8px 0 12px; }
+.mcp-token-list li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.mcp-create { align-items: center; }
+.mcp-create .input { flex: 1; min-width: 0; }
 .settings-welcome { max-width: 520px; margin: 40px auto; }
 .settings-section-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
 .settings-section-head h2 { margin: 0 0 4px; font-size: 20px; }

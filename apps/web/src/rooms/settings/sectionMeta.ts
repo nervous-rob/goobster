@@ -71,8 +71,8 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Connections',
         icon: '🔗',
         scope: 'Your account',
-        blurb: 'Developer accounts Goobster may act through on your behalf.',
-        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat', 'allowlist', 'repos', 'pages']
+        blurb: 'Developer accounts Goobster may act through on your behalf, and read-only MCP tokens for external clients.',
+        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat', 'allowlist', 'repos', 'pages', 'mcp', 'cursor', 'claude']
     },
     {
         id: 'appearance',
@@ -160,6 +160,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'memory-scopes', label: 'Inspect a server scope', keywords: ['server', 'guild', 'scope', 'advanced', 'facts in a server', 'server memories'] },
     { section: 'memory', fieldId: 'deletion-rules', label: 'What deleting removes', keywords: ['delete', 'deletion', 'linked copies', 'provenance', 'what is removed', 'transcripts'] },
     { section: 'memory', fieldId: 'forget-me', label: 'Forget me', keywords: ['forget', 'erase', 'delete everything', 'wipe', 'gdpr'] },
+    { section: 'connections', fieldId: 'mcp-access', label: 'MCP access', keywords: ['mcp', 'cursor', 'claude', 'model context protocol', 'token', 'read only'] },
     { section: 'connections', fieldId: 'github', label: 'GitHub', keywords: ['github', 'git', 'repos', 'pull requests', 'token'] },
     { section: 'connections', fieldId: 'notion', label: 'Notion', keywords: ['notion', 'pages', 'notes', 'token'] },
     { section: 'connections', fieldId: 'github-allowlist', label: 'GitHub repos Goobster may use', keywords: ['allowlist', 'repos', 'github repos'] },

@@ -484,6 +484,15 @@ Meme mode allows users to receive responses with added meme flair and internet c
 - Memory dashboard: per-scope transparency report, facts and memories with individual delete controls, and an interactive knowledge-graph visualization with the internal monologue's recent thoughts (Manage Server)
 - The Parlor: a multi-persona AI workspace - create personas with distinct charters, seed their private knowledge workspaces on the shared `kg_*` graph (typed notes, tags, typed edges, semantic search, interactive graph), and hold discussions with up to 4 personas at once where every reply is grounded in that persona's own notes (traceable grounding chips) and new knowledge is extracted back into the workspace as you talk
 
+### MCP server (read-only)
+
+- External clients (Cursor, Claude, and anything else that speaks MCP) read one person's workspace through a **read-only** tool surface. Spec: `documentation/mcp.md`. There is no write tool. Descriptors set `readOnlyHint` and `destructiveHint: false`.
+- **Opt-in** via `mcp.enabled` or `GOOBSTER_MCP_ENABLED=1` (default off). When on, `mountMcpIfEnabled` attaches `POST /mcp` on the bot's public server and on `apps/api`. The full Docker profile proxies `/mcp` to the api process (`deploy/nginx.conf`). A stdio entry (`npm run mcp`, `apps/mcp/index.js`) speaks the same protocol for a local client. Both transports require a personal access token (`gst_…`, SHA-256 in `mcp_tokens`). The plaintext is returned once from `POST /api/app/mcp/tokens`, Settings → Connections, or `npm run mcp:token`.
+- Tools are scoped to the token owner: documentation (operator notes only for an active operator), DM-scope memories and facts (`dm:<userId>`), the personal knowledge graph (`USER:<userId>`) or a project they can open, project metadata and file **names** (never file contents), their inbox, expeditions, and research briefs. Guild-channel memories stay out. Semantic memory recall runs only when OpenAI embeddings are configured, so a down local embedder cannot stall the call. Keyword search always runs.
+- Stateless HTTP: one JSON-RPC message per POST, no session id, `GET`/`DELETE` answer 405. Bearer auth, an Origin check when an Origin is present, and an in-process per-token rate limit. Arguments and secrets are not logged.
+- `/forget-me` deletes `mcp_tokens` (`counts.mcpTokens`, audit `mcp_tokens`). Account export includes the label and prefix and omits `tokenHash`. Identity migration rewrites `mcp_tokens.userId` with the other owner columns.
+- Protocol code lives in `packages/core/mcp/` (`protocol.js`, `tools.js`, `http.js`, `stdio.js`). The GBA harness keeps its own zero-dependency framing under `clients/gba-mcp/`.
+
 ### Retired Features
 The original adventure mode (party/story system) and mystery heroes mode were retired to keep the bot lean on low-power hardware; their commands, services, and database tables were removed. The Goobster Tavern + Adventure Mode is its designed-from-scratch successor: YAML-driven campaigns, a deterministic engine, and AI used only for flavor (see the Tavern section above).
 

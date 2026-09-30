@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { UserSettingsResponse } from '../../lib/types';
 import { ConnectionsList } from '../../components/ConnectionsList';
+import { McpAccess } from '../../components/McpAccess';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
@@ -41,6 +42,7 @@ export function ConnectionsSection({ section, onDirty }: {
                 Resetting other settings or forgetting preferences never disconnects anything.
             </p>
             <ConnectionsList />
+            <McpAccess />
 
             <Field id="github-allowlist" label="GitHub repos Goobster may use" scope="Your account"
                 hint="Optional. Empty means no extra restriction beyond the connected account. Enforced on GitHub tools in DMs and the Study, not just hidden in this menu.">
