@@ -10,6 +10,8 @@ try {
 
 const mcp = fileConfig.mcp || {};
 
+const MAX_TOKEN_DAYS = 365;
+
 function flag(envName, fileValue, def) {
     const raw = process.env[envName];
     if (raw !== undefined && raw !== '') {
@@ -46,6 +48,13 @@ function defaults() {
             process.env.GOOBSTER_MCP_REQUESTS_PER_MINUTE ?? mcp.requestsPerMinute,
             120, 10, 600
         ),
+        /** Lifetime for a new token when the caller does not choose one. 0 = never expires. */
+        defaultTokenDays: bounded(
+            process.env.GOOBSTER_MCP_TOKEN_DAYS ?? mcp.defaultTokenDays,
+            90, 0, MAX_TOKEN_DAYS
+        ),
+        maxTokenDays: MAX_TOKEN_DAYS,
+        resourcePageSize: 100,
         maxResultChars: 16_000
     };
 }
@@ -75,6 +84,15 @@ module.exports = {
     },
     get requestsPerMinute() {
         return resolve().requestsPerMinute;
+    },
+    get defaultTokenDays() {
+        return resolve().defaultTokenDays;
+    },
+    get maxTokenDays() {
+        return resolve().maxTokenDays;
+    },
+    get resourcePageSize() {
+        return resolve().resourcePageSize;
     },
     get maxResultChars() {
         return resolve().maxResultChars;

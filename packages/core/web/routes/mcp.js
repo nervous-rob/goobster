@@ -18,11 +18,19 @@ function mountMcp(app, ctx, h) {
     app.get('/api/app/mcp', requireAuth, mcpRoute(async (req) => ({
         ...describeServer(),
         enabled: mcpConfig.enabled,
+        scopes: Object.values(mcpTokenService.SCOPES),
+        defaultExpiryDays: mcpConfig.defaultTokenDays,
+        maxExpiryDays: mcpConfig.maxTokenDays,
         tokens: await mcpTokenService.list({ userId: req.webUser.userId })
     })));
 
     app.post('/api/app/mcp/tokens', requireAuth, mcpRoute(async (req) => (
-        mcpTokenService.create({ userId: req.webUser.userId, label: req.body?.label })
+        mcpTokenService.create({
+            userId: req.webUser.userId,
+            label: req.body?.label,
+            scope: req.body?.scope,
+            expiresInDays: req.body?.expiresInDays
+        })
     )));
 
     app.delete('/api/app/mcp/tokens/:id', requireAuth, mcpRoute(async (req) => (

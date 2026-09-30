@@ -2,15 +2,18 @@
 /**
  * Create, list, or revoke a read-only MCP token without the portal.
  *
- *   npm run mcp:token -- create --user <principal id> --label "Cursor"
+ *   npm run mcp:token -- create --user <principal id> --label "Cursor" [--scope read|docs] [--expires-days n]
  *   npm run mcp:token -- list --user <principal id>
  *   npm run mcp:token -- revoke --user <principal id> --id <token id>
  *
  * `create` prints the secret on stdout once. Everything else goes to stderr.
+ * `--expires-days 0` makes a token that never expires; omitted uses
+ * mcp.defaultTokenDays (90).
  */
 
 const mcpTokenService = require('@goobster/core/services/mcpTokenService');
 const db = require('@goobster/core/db');
+const { reserveStdout } = require('@goobster/core/mcp/stdout');
 
 function args(argv) {
     const out = { _: [] };
@@ -37,21 +40,31 @@ function fail(message) {
 }
 
 async function main() {
+    // The secret is the only thing `create` may print on stdout; database
+    // migration notices on a first run go to stderr.
+    const stdout = reserveStdout();
     const parsed = args(process.argv.slice(2));
     const command = parsed._[0];
     const userId = parsed.user ? String(parsed.user) : '';
     if (!command || !userId) {
-        fail('Usage: npm run mcp:token -- <create|list|revoke> --user <principal id> [--label text] [--id n]');
+        fail('Usage: npm run mcp:token -- <create|list|revoke> --user <principal id> '
+            + '[--label text] [--scope read|docs] [--expires-days n] [--id n]');
         return;
     }
     try {
         if (command === 'create') {
-            const created = await mcpTokenService.create({ userId, label: parsed.label });
+            const created = await mcpTokenService.create({
+                userId,
+                label: parsed.label,
+                scope: parsed.scope === true ? '' : parsed.scope,
+                expiresInDays: parsed['expires-days'] === true ? '' : parsed['expires-days']
+            });
             process.stderr.write(
-                `Saved token ${created.id} (${created.tokenPrefix}…) for ${userId}. `
+                `Saved token ${created.id} (${created.tokenPrefix}…, ${created.scope}, `
+                + `${created.expiresAt ? `expires ${created.expiresAt} UTC` : 'never expires'}) for ${userId}. `
                 + 'This is the only time the secret is shown.\n'
             );
-            process.stdout.write(`${created.token}\n`);
+            stdout.write(`${created.token}\n`);
             return;
         }
         if (command === 'list') {
@@ -61,9 +74,12 @@ async function main() {
                 return;
             }
             for (const token of tokens) {
-                process.stdout.write(
-                    `${token.id}\t${token.tokenPrefix}…\t${token.label}\tcreated ${token.createdAt}`
-                    + `${token.lastUsedAt ? `\tlast used ${token.lastUsedAt}` : ''}\n`
+                const expiry = token.expiresAt
+                    ? `${token.expired ? 'expired' : 'expires'} ${token.expiresAt}`
+                    : 'never expires';
+                stdout.write(
+                    `${token.id}\t${token.tokenPrefix}…\t${token.scope}\t${token.label}\tcreated ${token.createdAt}`
+                    + `\t${expiry}${token.lastUsedAt ? `\tlast used ${token.lastUsedAt}` : ''}\n`
                 );
             }
             return;

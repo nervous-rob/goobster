@@ -1,4 +1,4 @@
-import type { McpOverview, McpTokenCreated, PushSendSummary, PushStatus } from './types';
+import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, PushStatus } from './types';
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
@@ -166,8 +166,8 @@ export const api = {
         request<{ removed: number; devices: number }>('/api/app/push/subscriptions', { method: 'DELETE', body }),
     testPush: () => request<PushSendSummary>('/api/app/push/test', { method: 'POST' }),
     mcp: () => request<McpOverview>('/api/app/mcp'),
-    createMcpToken: (label: string) =>
-        request<McpTokenCreated>('/api/app/mcp/tokens', { method: 'POST', body: { label } }),
+    createMcpToken: (input: McpTokenInput) =>
+        request<McpTokenCreated>('/api/app/mcp/tokens', { method: 'POST', body: input }),
     revokeMcpToken: (id: number) =>
         request<{ revoked: true; id: number }>(`/api/app/mcp/tokens/${id}`, { method: 'DELETE' }),
     authorizeLegacyLab: () => request('/api/app/settings/legacy-lab', { method: 'POST' }),

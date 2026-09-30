@@ -3,9 +3,11 @@
  *
  * The raw secret is returned once from `create` and stored only as a
  * SHA-256 (the web session pattern). A token is bound to one principal
- * and the `read` scope. Revocation and /forget-me both make it stop
- * resolving. Nothing here writes a ledger row: a label is not a prompt,
- * and the secret never lands in a log.
+ * and one scope: `read` (every read-only tool) or `docs` (documentation
+ * only, for clients whose output you would rather keep away from your
+ * private workspace). A token may carry an expiry. Revocation, expiry,
+ * and /forget-me all make it stop resolving. Nothing here writes a
+ * ledger row: a label is not a prompt, and the secret never lands in a log.
  */
 
 const crypto = require('node:crypto');
@@ -15,6 +17,20 @@ const mcpConfig = require('../config/mcpConfig');
 const TOKEN_BYTES = 32;
 const TOKEN_RE = /^gst_[A-Za-z0-9_-]{43}$/;
 const LABEL_MAX = 80;
+const DAY_MS = 86_400_000;
+
+const SCOPES = Object.freeze({
+    read: {
+        id: 'read',
+        label: 'Everything (read-only)',
+        description: 'Documentation, memories, facts, knowledge notes, projects, inbox, and research.'
+    },
+    docs: {
+        id: 'docs',
+        label: 'Documentation only',
+        description: 'Goobster\'s own manual. Nothing from your private workspace.'
+    }
+});
 
 class McpTokenError extends Error {
     constructor(status, code, message) {
@@ -27,6 +43,11 @@ class McpTokenError extends Error {
 
 function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+/** UTC `YYYY-MM-DD HH:MM:SS`, the format every timestamp column uses. */
+function sqlTime(date) {
+    return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 function cleanLabel(label) {
@@ -44,6 +65,38 @@ function cleanLabel(label) {
     return text;
 }
 
+function cleanScope(scope) {
+    if (scope === undefined || scope === null || scope === '') return 'read';
+    const value = String(scope).trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(SCOPES, value)) {
+        throw new McpTokenError(400, 'BAD_SCOPE', `Scope must be one of: ${Object.keys(SCOPES).join(', ')}.`);
+    }
+    return value;
+}
+
+/**
+ * Omitted means the configured default. `0` means the token never expires.
+ * @returns {string|null} UTC text, or null for no expiry
+ */
+function resolveExpiry(expiresInDays) {
+    let days;
+    if (expiresInDays === undefined || expiresInDays === null || expiresInDays === '') {
+        days = mcpConfig.defaultTokenDays;
+    } else {
+        days = Number(expiresInDays);
+        if (!Number.isInteger(days) || days < 0 || days > mcpConfig.maxTokenDays) {
+            throw new McpTokenError(400, 'BAD_EXPIRY',
+                `Choose 0 (never) or 1 to ${mcpConfig.maxTokenDays} days.`);
+        }
+    }
+    if (days === 0) return null;
+    return sqlTime(new Date(Date.now() + days * DAY_MS));
+}
+
+function isExpired(row, now = sqlTime(new Date())) {
+    return Boolean(row.expiresAt) && String(row.expiresAt) <= now;
+}
+
 function publicRow(row) {
     return {
         id: row.id,
@@ -52,9 +105,13 @@ function publicRow(row) {
         scope: row.scope,
         createdAt: row.createdAt,
         lastUsedAt: row.lastUsedAt || null,
-        revokedAt: row.revokedAt || null
+        revokedAt: row.revokedAt || null,
+        expiresAt: row.expiresAt || null,
+        expired: isExpired(row)
     };
 }
+
+const PUBLIC_COLUMNS = 'id, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt';
 
 class McpTokenService {
     constructor() {
@@ -64,17 +121,20 @@ class McpTokenService {
 
     /**
      * Mint a read-only token. The plaintext is only in the return value.
-     * @param {{ userId: string, label: string }} params
+     * @param {{ userId: string, label: string, scope?: 'read'|'docs', expiresInDays?: number }} params
      */
-    async create({ userId, label }) {
+    async create({ userId, label, scope, expiresInDays }) {
         const owner = String(userId || '').trim();
         if (!owner) throw new McpTokenError(400, 'BAD_USER', 'A token needs an owner.');
         const clean = cleanLabel(label);
+        const cleanedScope = cleanScope(scope);
+        const expiresAt = resolveExpiry(expiresInDays);
         const cap = mcpConfig.maxTokensPerUser;
         const existing = await db.get(
             `SELECT COUNT(*) AS c FROM mcp_tokens
-             WHERE userId = @userId AND revokedAt IS NULL`,
-            { userId: owner }
+             WHERE userId = @userId AND revokedAt IS NULL
+               AND (expiresAt IS NULL OR expiresAt > @now)`,
+            { userId: owner, now: sqlTime(new Date()) }
         );
         if (Number(existing?.c || 0) >= cap) {
             throw new McpTokenError(409, 'TOO_MANY_TOKENS',
@@ -82,27 +142,32 @@ class McpTokenService {
         }
         const token = `gst_${crypto.randomBytes(TOKEN_BYTES).toString('base64url')}`;
         const id = await db.insert(
-            `INSERT INTO mcp_tokens (tokenHash, userId, label, tokenPrefix, scope)
-             VALUES (@tokenHash, @userId, @label, @tokenPrefix, 'read')`,
+            `INSERT INTO mcp_tokens (tokenHash, userId, label, tokenPrefix, scope, expiresAt)
+             VALUES (@tokenHash, @userId, @label, @tokenPrefix, @scope, @expiresAt)`,
             {
                 tokenHash: hashToken(token),
                 userId: owner,
                 label: clean,
-                tokenPrefix: token.slice(0, 12)
+                tokenPrefix: token.slice(0, 12),
+                scope: cleanedScope,
+                expiresAt
             }
         );
         const row = await db.get(
-            `SELECT id, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt
-             FROM mcp_tokens WHERE id = @id`,
+            `SELECT ${PUBLIC_COLUMNS} FROM mcp_tokens WHERE id = @id`,
             { id }
         );
         return { token, ...publicRow(row) };
     }
 
-    /** Active tokens for one person, newest first. Never includes the secret. */
+    /**
+     * One person's tokens that have not been revoked, newest first. Expired
+     * tokens stay listed (flagged) so they can be cleaned up. Never includes
+     * the secret.
+     */
     async list({ userId }) {
         const rows = await db.all(
-            `SELECT id, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt
+            `SELECT ${PUBLIC_COLUMNS}
              FROM mcp_tokens
              WHERE userId = @userId AND revokedAt IS NULL
              ORDER BY id DESC`,
@@ -131,19 +196,22 @@ class McpTokenService {
     }
 
     /**
-     * Resolve a raw bearer secret to its owner. Unknown, malformed, and
-     * revoked secrets all return null. A successful resolve records
-     * lastUsedAt at most once a minute.
-     * @returns {Promise<{ id: number, userId: string, label: string, scope: string }|null>}
+     * Resolve a raw bearer secret. `expired` is distinct from `invalid` so a
+     * client holding a real, lapsed secret is told to mint a new one; the
+     * hash matched, so this reveals nothing to someone without the secret.
+     * A successful resolve records lastUsedAt at most once a minute.
+     * @returns {Promise<{ status: 'ok', session: { id: number, userId: string, label: string, scope: string } }
+     *   | { status: 'expired' } | { status: 'invalid' }>}
      */
-    async authenticate(rawToken) {
-        if (typeof rawToken !== 'string' || !TOKEN_RE.test(rawToken)) return null;
+    async resolve(rawToken) {
+        if (typeof rawToken !== 'string' || !TOKEN_RE.test(rawToken)) return { status: 'invalid' };
         const row = await db.get(
-            `SELECT id, userId, label, scope FROM mcp_tokens
-             WHERE tokenHash = @tokenHash AND revokedAt IS NULL AND scope = 'read'`,
+            `SELECT id, userId, label, scope, expiresAt FROM mcp_tokens
+             WHERE tokenHash = @tokenHash AND revokedAt IS NULL`,
             { tokenHash: hashToken(rawToken) }
         );
-        if (!row) return null;
+        if (!row || !Object.prototype.hasOwnProperty.call(SCOPES, row.scope)) return { status: 'invalid' };
+        if (isExpired(row)) return { status: 'expired' };
         const now = Date.now();
         const previous = this._touched.get(row.id) || 0;
         if (now - previous > 60_000) {
@@ -159,11 +227,23 @@ class McpTokenService {
             }
         }
         return {
-            id: row.id,
-            userId: row.userId,
-            label: row.label,
-            scope: row.scope
+            status: 'ok',
+            session: {
+                id: row.id,
+                userId: row.userId,
+                label: row.label,
+                scope: row.scope
+            }
         };
+    }
+
+    /**
+     * Resolve to a session, or null for anything that should not read
+     * (unknown, malformed, revoked, expired).
+     */
+    async authenticate(rawToken) {
+        const outcome = await this.resolve(rawToken);
+        return outcome.status === 'ok' ? outcome.session : null;
     }
 
     /** /forget-me: every token for this person, active or revoked. */
@@ -182,3 +262,4 @@ class McpTokenService {
 
 module.exports = new McpTokenService();
 module.exports.McpTokenError = McpTokenError;
+module.exports.SCOPES = SCOPES;

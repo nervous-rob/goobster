@@ -7,19 +7,20 @@
  */
 
 const { handleMessage, attachStdio } = require('./protocol');
-const { toolDescriptors, callTool } = require('./tools');
+const { surfaceFor } = require('./surface');
 const { consume } = require('./rateLimit');
 const mcpConfig = require('../config/mcpConfig');
 const { SERVER_INFO } = require('./http');
 
 /**
  * @param {object} params
- * @param {{ id: number, userId: string }} params.session
+ * @param {{ id: number, userId: string, scope?: string }} params.session
  * @param {NodeJS.ReadableStream} [params.input]
  * @param {NodeJS.WritableStream} [params.output]
  * @param {(line: string) => void} [params.log] stderr
  */
 function serveStdio({ session, input = process.stdin, output = process.stdout, log = () => {} }) {
+    const surface = surfaceFor(session);
     return attachStdio({
         input,
         output,
@@ -38,11 +39,7 @@ function serveStdio({ session, input = process.stdin, output = process.stdout, l
             const method = message?.method;
             const toolName = method === 'tools/call' ? message?.params?.name : '';
             log(`MCP ${method || 'request'}${toolName ? ` ${toolName}` : ''}`);
-            return handleMessage(message, {
-                serverInfo: SERVER_INFO,
-                listTools: toolDescriptors,
-                callTool: (name, args) => callTool(session.userId, name, args)
-            });
+            return handleMessage(message, { serverInfo: SERVER_INFO, ...surface });
         }
     });
 }

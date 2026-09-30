@@ -13,6 +13,15 @@ const express = require('express');
 const TEST_DB = path.join(os.tmpdir(), `goobster-mcp-test-${process.pid}.sqlite`);
 process.env.GOOBSTER_DB_PATH = TEST_DB;
 
+// Operator notes join the corpus only for an active operator; seed one so
+// the boundary is exercised rather than assumed.
+const OPERATOR_NOTES = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-mcp-operator-'));
+fs.writeFileSync(
+    path.join(OPERATOR_NOTES, 'private.md'),
+    '# Private Host Notes\n\nprivatehostcanary lives in the kitchen closet.\n'
+);
+process.env.GOOBSTER_SELF_DOCS_OPERATOR_DIR = OPERATOR_NOTES;
+
 const db = require('@goobster/core/db');
 const mcpConfig = require('@goobster/core/config/mcpConfig');
 const mcpTokenService = require('@goobster/core/services/mcpTokenService');
@@ -31,6 +40,7 @@ jest.setTimeout(60_000);
 const USER = '100000000000000041';
 const OTHER = '100000000000000042';
 const FORGOTTEN = '100000000000000043';
+const OPERATOR = '100000000000000044';
 
 let server;
 let port;
@@ -129,6 +139,7 @@ afterAll(async () => {
     mcpConfig._setForTests(null);
     if (server) await new Promise(resolve => server.close(resolve));
     fs.rmSync(DIST_DIR, { recursive: true, force: true });
+    fs.rmSync(OPERATOR_NOTES, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
@@ -157,6 +168,8 @@ describe('framing', () => {
         expect(init.json.result.serverInfo.name).toBe('goobster');
         expect(init.json.result.instructions).toMatch(/read-only/i);
         expect(init.json.result.capabilities.tools.listChanged).toBe(false);
+        expect(init.json.result.capabilities.resources).toEqual({ subscribe: false, listChanged: false });
+        expect(init.json.result.capabilities.prompts).toBeUndefined();
 
         const listed = await rpc(created.token, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
         expect(listed.status).toBe(200);
@@ -190,7 +203,7 @@ describe('framing', () => {
         expect(batch.status).toBe(400);
         expect(batch.json.error.message).toMatch(/batch/i);
 
-        const unknown = await rpc(created.token, { jsonrpc: '2.0', id: 4, method: 'resources/list' });
+        const unknown = await rpc(created.token, { jsonrpc: '2.0', id: 4, method: 'prompts/list' });
         expect(unknown.json.error.code).toBe(-32601);
 
         const write = await rpc(created.token, {
@@ -406,7 +419,337 @@ describe('scoping', () => {
     });
 });
 
+describe('token scopes', () => {
+    const DOC_TOOL_NAMES = ['list_docs', 'search_docs', 'read_doc'];
+
+    test('a docs token sees and may call only the documentation tools', async () => {
+        const created = await mcpTokenService.create({ userId: USER, label: 'Docs', scope: 'docs' });
+        expect(created.scope).toBe('docs');
+
+        const listed = await rpc(created.token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+        expect(listed.json.result.tools.map(tool => tool.name).sort()).toEqual([...DOC_TOOL_NAMES].sort());
+
+        const allowed = await rpc(created.token, {
+            jsonrpc: '2.0', id: 2, method: 'tools/call',
+            params: { name: 'search_docs', arguments: { query: 'mcp token' } }
+        });
+        expect(allowed.json.result.isError).toBeUndefined();
+
+        for (const name of ['search_memories', 'list_inbox', 'list_projects', 'get_brief']) {
+            const refused = await rpc(created.token, {
+                jsonrpc: '2.0', id: 3, method: 'tools/call',
+                params: { name, arguments: { query: 'x', id: 1 } }
+            });
+            expect(refused.json.error.code).toBe(-32602);
+            expect(refused.json.error.message).toMatch(/"docs" scope/);
+        }
+
+        const init = await rpc(created.token, { jsonrpc: '2.0', id: 4, method: 'initialize', params: {} });
+        expect(init.json.result.instructions).toMatch(/documentation only/i);
+    });
+
+    test('a read token keeps every tool and an unrecognized scope gets none', async () => {
+        const created = await mcpTokenService.create({ userId: USER, label: 'All' });
+        expect(created.scope).toBe('read');
+        const listed = await rpc(created.token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+        expect(listed.json.result.tools.length).toBe(toolDescriptors().length);
+        expect(toolDescriptors({ scope: 'bogus' })).toEqual([]);
+        await expect(callTool(USER, 'list_docs', {}, { scope: 'bogus' })).rejects.toMatchObject({ rpcCode: -32602 });
+    });
+
+    test('an unknown scope is refused at creation', async () => {
+        await expect(mcpTokenService.create({ userId: USER, label: 'Bad', scope: 'write' }))
+            .rejects.toMatchObject({ status: 400, code: 'BAD_SCOPE' });
+        await expect(mcpTokenService.create({ userId: USER, label: 'Bad', scope: 'admin' }))
+            .rejects.toMatchObject({ code: 'BAD_SCOPE' });
+    });
+
+    test('stdio applies the token scope', async () => {
+        const created = await mcpTokenService.create({ userId: USER, label: 'stdio docs', scope: 'docs' });
+        const session = await mcpTokenService.authenticate(created.token);
+        expect(session.scope).toBe('docs');
+        const replies = await stdioRoundtrip(session, [
+            { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+            { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_inbox', arguments: {} } }
+        ]);
+        expect(replies[0].result.tools).toHaveLength(DOC_TOOL_NAMES.length);
+        expect(replies[1].error.code).toBe(-32602);
+    });
+});
+
+describe('token expiry', () => {
+    function daysFromNow(text) {
+        return (new Date(`${text.replace(' ', 'T')}Z`).getTime() - Date.now()) / 86_400_000;
+    }
+
+    test('a token expires after the chosen lifetime, and 0 means never', async () => {
+        const dflt = await mcpTokenService.create({ userId: USER, label: 'Default' });
+        expect(daysFromNow(dflt.expiresAt)).toBeGreaterThan(89.9);
+        expect(daysFromNow(dflt.expiresAt)).toBeLessThan(90.1);
+
+        const week = await mcpTokenService.create({ userId: USER, label: 'Week', expiresInDays: 7 });
+        expect(daysFromNow(week.expiresAt)).toBeGreaterThan(6.9);
+        expect(daysFromNow(week.expiresAt)).toBeLessThan(7.1);
+
+        const never = await mcpTokenService.create({ userId: USER, label: 'Forever', expiresInDays: 0 });
+        expect(never.expiresAt).toBeNull();
+        expect(never.expired).toBe(false);
+
+        mcpConfig._setForTests({ enabled: true, defaultTokenDays: 0 });
+        const configured = await mcpTokenService.create({ userId: USER, label: 'Config never' });
+        expect(configured.expiresAt).toBeNull();
+    });
+
+    test('a lifetime outside 0 to 365 days is refused', async () => {
+        for (const bad of [-1, 366, 1.5, 'soon', NaN]) {
+            await expect(mcpTokenService.create({ userId: USER, label: 'Bad', expiresInDays: bad }))
+                .rejects.toMatchObject({ status: 400, code: 'BAD_EXPIRY' });
+        }
+    });
+
+    test('a lapsed token stops working and says why', async () => {
+        const created = await mcpTokenService.create({ userId: USER, label: 'Old' });
+        expect(await mcpTokenService.authenticate(created.token)).not.toBeNull();
+
+        await db.run(
+            'UPDATE mcp_tokens SET expiresAt = @past WHERE id = @id',
+            { past: '2020-01-01 00:00:00', id: created.id }
+        );
+        expect(await mcpTokenService.authenticate(created.token)).toBeNull();
+        expect(await mcpTokenService.resolve(created.token)).toEqual({ status: 'expired' });
+        expect(await mcpTokenService.resolve('gst_' + 'a'.repeat(43))).toEqual({ status: 'invalid' });
+
+        const lapsed = await rpc(created.token, { jsonrpc: '2.0', id: 1, method: 'ping' });
+        expect(lapsed.status).toBe(401);
+        expect(lapsed.json.error.message).toMatch(/expired/i);
+        expect(lapsed.headers['www-authenticate']).toMatch(/invalid_token/);
+
+        const unknown = await rpc('gst_' + 'a'.repeat(43), { jsonrpc: '2.0', id: 2, method: 'ping' });
+        expect(unknown.status).toBe(401);
+        expect(unknown.json.error.message).toBe('Unauthorized');
+        expect(unknown.headers['www-authenticate']).not.toMatch(/invalid_token/);
+    });
+
+    test('an expired token is listed as expired and does not count toward the cap', async () => {
+        mcpConfig._setForTests({ enabled: true, maxTokensPerUser: 1 });
+        const first = await mcpTokenService.create({ userId: USER, label: 'One' });
+        await expect(mcpTokenService.create({ userId: USER, label: 'Two' }))
+            .rejects.toMatchObject({ code: 'TOO_MANY_TOKENS' });
+
+        await db.run(
+            'UPDATE mcp_tokens SET expiresAt = @past WHERE id = @id',
+            { past: '2020-01-01 00:00:00', id: first.id }
+        );
+        const listed = await mcpTokenService.list({ userId: USER });
+        expect(listed).toHaveLength(1);
+        expect(listed[0].expired).toBe(true);
+
+        const second = await mcpTokenService.create({ userId: USER, label: 'Two' });
+        expect(second.expired).toBe(false);
+        await mcpTokenService.revoke({ userId: USER, id: first.id });
+        expect((await mcpTokenService.list({ userId: USER })).map(row => row.id)).toEqual([second.id]);
+    });
+});
+
+describe('resources', () => {
+    async function seedBrief(userId, seed) {
+        const expeditionId = await db.insert(
+            `INSERT INTO spitball_expeditions (userId, guildId, scopeKey, seed, status)
+             VALUES (@userId, @guildId, @scopeKey, @seed, 'COMPLETED')`,
+            { userId, guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, seed }
+        );
+        return db.insert(
+            `INSERT INTO expedition_briefs (expeditionId, userId, status, errorCode)
+             VALUES (@expeditionId, @userId, 'FAILED', 'BUDGET')`,
+            { expeditionId, userId }
+        );
+    }
+
+    async function call(token, method, params = {}) {
+        const res = await rpc(token, { jsonrpc: '2.0', id: 1, method, params });
+        expect(res.status).toBe(200);
+        return res.json;
+    }
+
+    async function allResources(token) {
+        const seen = [];
+        let cursor;
+        for (let page = 0; page < 200; page++) {
+            const reply = await call(token, 'resources/list', cursor ? { cursor } : {});
+            seen.push(...reply.result.resources);
+            cursor = reply.result.nextCursor;
+            if (!cursor) return seen;
+        }
+        throw new Error('resources/list never ended');
+    }
+
+    test('lists documentation and the owner\'s briefs, paged by cursor', async () => {
+        const mine = await seedBrief(USER, 'mine');
+        const theirs = await seedBrief(OTHER, 'theirs');
+        const created = await mcpTokenService.create({ userId: USER, label: 'Cursor' });
+
+        const everything = await allResources(created.token);
+        const uris = everything.map(entry => entry.uri);
+        expect(uris.some(uri => uri.startsWith('goobster://docs/'))).toBe(true);
+        expect(uris).toContain(`goobster://briefs/${mine}`);
+        expect(uris).not.toContain(`goobster://briefs/${theirs}`);
+        expect(new Set(uris).size).toBe(uris.length);
+        expect(uris.some(uri => uri.startsWith('goobster://docs/operator/'))).toBe(false);
+        for (const entry of everything) {
+            expect(entry.name).toBeTruthy();
+            expect(entry.mimeType).toMatch(/^text\//);
+        }
+
+        mcpConfig._setForTests({ enabled: true, requestsPerMinute: 1000, resourcePageSize: 5 });
+        const first = await call(created.token, 'resources/list');
+        expect(first.result.resources).toHaveLength(5);
+        expect(typeof first.result.nextCursor).toBe('string');
+        expect((await allResources(created.token)).map(entry => entry.uri)).toEqual(uris);
+
+        const bad = await call(created.token, 'resources/list', { cursor: '!!not-a-cursor!!' });
+        expect(bad.error.code).toBe(-32602);
+    });
+
+    test('templates follow the scope', async () => {
+        const all = await mcpTokenService.create({ userId: USER, label: 'All' });
+        const docs = await mcpTokenService.create({ userId: USER, label: 'Docs', scope: 'docs' });
+        const full = await call(all.token, 'resources/templates/list');
+        expect(full.result.resourceTemplates.map(entry => entry.uriTemplate))
+            .toEqual(['goobster://docs/{slug}', 'goobster://briefs/{id}']);
+        const narrow = await call(docs.token, 'resources/templates/list');
+        expect(narrow.result.resourceTemplates.map(entry => entry.uriTemplate))
+            .toEqual(['goobster://docs/{slug}']);
+    });
+
+    test('reads a documentation page by exact URI and refuses near misses', async () => {
+        const created = await mcpTokenService.create({ userId: USER, label: 'Cursor' });
+        const listed = await allResources(created.token);
+        const doc = listed.find(entry => entry.uri.startsWith('goobster://docs/'));
+        const read = await call(created.token, 'resources/read', { uri: doc.uri });
+        expect(read.result.contents).toHaveLength(1);
+        expect(read.result.contents[0].uri).toBe(doc.uri);
+        expect(read.result.contents[0].mimeType).toBe('text/markdown');
+        expect(read.result.contents[0].text.length).toBeGreaterThan(50);
+
+        const mcpDoc = listed.find(entry => entry.name.endsWith('mcp'));
+        expect(mcpDoc).toBeTruthy();
+        const mcpRead = await call(created.token, 'resources/read', { uri: mcpDoc.uri });
+        expect(mcpRead.result.contents[0].text).toMatch(/read-only/i);
+
+        const missing = await call(created.token, 'resources/read', { uri: 'goobster://docs/no-such-page-anywhere' });
+        expect(missing.error.code).toBe(-32002);
+        const badScheme = await call(created.token, 'resources/read', { uri: 'file:///etc/passwd' });
+        expect(badScheme.error.code).toBe(-32002);
+        const noUri = await call(created.token, 'resources/read', {});
+        expect(noUri.error.code).toBe(-32602);
+        const empty = await call(created.token, 'resources/read', { uri: 'goobster://docs/' });
+        expect(empty.error.code).toBe(-32002);
+    });
+
+    test('operator notes are listed and readable only for an active operator', async () => {
+        const operatorUri = 'goobster://docs/operator/private';
+        const ordinary = await mcpTokenService.create({ userId: USER, label: 'Cursor' });
+        const ordinaryDocs = await mcpTokenService.create({ userId: USER, label: 'Docs', scope: 'docs' });
+        for (const token of [ordinary.token, ordinaryDocs.token]) {
+            const uris = (await allResources(token)).map(entry => entry.uri);
+            expect(uris.some(uri => uri.startsWith('goobster://docs/'))).toBe(true);
+            expect(uris).not.toContain(operatorUri);
+            const denied = await call(token, 'resources/read', { uri: operatorUri });
+            expect(denied.error.code).toBe(-32002);
+            expect(JSON.stringify(denied)).not.toContain('privatehostcanary');
+        }
+
+        const identity = require('@goobster/core/services/identityService');
+        await identity.ensureLegacyPrincipal({ discordId: OPERATOR, displayName: 'ops' });
+        await identity.grantAccount({ principalId: OPERATOR, entitlement: 'bootstrap', role: 'operator' });
+        const operator = await mcpTokenService.create({ userId: OPERATOR, label: 'Ops', scope: 'docs' });
+        const uris = (await allResources(operator.token)).map(entry => entry.uri);
+        expect(uris).toContain(operatorUri);
+        const read = await call(operator.token, 'resources/read', { uri: operatorUri });
+        expect(read.result.contents[0].text).toContain('privatehostcanary');
+    });
+
+    test('a brief is readable by its owner only, and never by a docs token', async () => {
+        const mine = await seedBrief(USER, 'mine');
+        const theirs = await seedBrief(OTHER, 'theirs');
+        const all = await mcpTokenService.create({ userId: USER, label: 'All' });
+        const docs = await mcpTokenService.create({ userId: USER, label: 'Docs', scope: 'docs' });
+
+        const own = await call(all.token, 'resources/read', { uri: `goobster://briefs/${mine}` });
+        expect(own.result.contents[0].text).toContain('BUDGET');
+        expect(own.result.contents[0].mimeType).toBe('text/plain');
+
+        const foreign = await call(all.token, 'resources/read', { uri: `goobster://briefs/${theirs}` });
+        expect(foreign.error.code).toBe(-32002);
+        const narrow = await call(docs.token, 'resources/read', { uri: `goobster://briefs/${mine}` });
+        expect(narrow.error.code).toBe(-32002);
+        expect(narrow.error.message).toBe('Resource not found.');
+        const junk = await call(all.token, 'resources/read', { uri: 'goobster://briefs/1; DROP TABLE x' });
+        expect(junk.error.code).toBe(-32002);
+
+        const docsList = await allResources(docs.token);
+        expect(docsList.some(entry => entry.uri.startsWith('goobster://briefs/'))).toBe(false);
+    });
+
+    test('stdio serves resources with the same rules', async () => {
+        const mine = await seedBrief(USER, 'mine');
+        const created = await mcpTokenService.create({ userId: USER, label: 'stdio' });
+        const session = await mcpTokenService.authenticate(created.token);
+        const replies = await stdioRoundtrip(session, [
+            { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } },
+            { jsonrpc: '2.0', id: 2, method: 'resources/read', params: { uri: `goobster://briefs/${mine}` } }
+        ]);
+        expect(replies[0].result.capabilities.resources).toBeTruthy();
+        expect(replies[1].result.contents[0].text).toContain('BUDGET');
+    });
+});
+
 describe('portal tokens, privacy, and export', () => {
+    test('the settings API takes a scope and a lifetime and lists the choices', async () => {
+        const cookie = await login(USER, 'rob');
+        const created = await request({
+            method: 'POST',
+            reqPath: '/api/app/mcp/tokens',
+            headers: { cookie },
+            body: { label: 'Docs only', scope: 'docs', expiresInDays: 30 }
+        });
+        expect(created.status).toBe(200);
+        expect(created.json.scope).toBe('docs');
+        expect(created.json.expiresAt).toBeTruthy();
+
+        const forever = await request({
+            method: 'POST',
+            reqPath: '/api/app/mcp/tokens',
+            headers: { cookie },
+            body: { label: 'Forever', expiresInDays: 0 }
+        });
+        expect(forever.json.expiresAt).toBeNull();
+
+        const listed = await request({ reqPath: '/api/app/mcp', headers: { cookie } });
+        expect(listed.json.scopes.map(scope => scope.id)).toEqual(['read', 'docs']);
+        expect(listed.json.defaultExpiryDays).toBe(90);
+        expect(listed.json.maxExpiryDays).toBe(365);
+        expect(listed.json.resources).toBe(true);
+        expect(listed.json.tokens.map(token => token.expired)).toEqual([false, false]);
+
+        const badScope = await request({
+            method: 'POST',
+            reqPath: '/api/app/mcp/tokens',
+            headers: { cookie },
+            body: { label: 'Nope', scope: 'write' }
+        });
+        expect(badScope.status).toBe(400);
+        expect(badScope.json.error.code).toBe('BAD_SCOPE');
+        const badExpiry = await request({
+            method: 'POST',
+            reqPath: '/api/app/mcp/tokens',
+            headers: { cookie },
+            body: { label: 'Nope', expiresInDays: 9999 }
+        });
+        expect(badExpiry.status).toBe(400);
+        expect(badExpiry.json.error.code).toBe('BAD_EXPIRY');
+    });
+
     test('the settings API shows a token once and only to its owner', async () => {
         const cookie = await login(USER, 'rob');
         const created = await request({
@@ -477,10 +820,12 @@ describe('portal tokens, privacy, and export', () => {
     });
 
     test('forget-me deletes tokens and export keeps the label without the hash', async () => {
-        const created = await mcpTokenService.create({ userId: FORGOTTEN, label: 'Phone' });
+        const created = await mcpTokenService.create({ userId: FORGOTTEN, label: 'Phone', scope: 'docs' });
         const data = await snapshot(FORGOTTEN);
         expect(data.mcp_tokens).toHaveLength(1);
         expect(data.mcp_tokens[0].label).toBe('Phone');
+        expect(data.mcp_tokens[0].scope).toBe('docs');
+        expect(data.mcp_tokens[0].expiresAt).toBe(created.expiresAt);
         expect(data.mcp_tokens[0].tokenHash).toBeUndefined();
         expect(JSON.stringify(data)).not.toContain(created.token);
 
@@ -489,6 +834,140 @@ describe('portal tokens, privacy, and export', () => {
         const audit = await privacyService.auditUser({ userId: FORGOTTEN });
         expect(audit.byTable.mcp_tokens).toBe(0);
         expect(await mcpTokenService.authenticate(created.token)).toBeNull();
+    });
+});
+
+describe('stdio framing', () => {
+    test('answers every request that is still running when stdin closes', async () => {
+        const { attachStdio } = require('@goobster/core/mcp/protocol');
+        const input = new PassThrough();
+        const output = new PassThrough();
+        const chunks = [];
+        output.on('data', chunk => chunks.push(chunk));
+        const done = attachStdio({
+            input,
+            output,
+            onMessage: async (message) => {
+                await new Promise(resolve => setTimeout(resolve, message.id === 1 ? 60 : 10));
+                if (message.id === 3) throw new Error('boom');
+                return { kind: 'response', body: { jsonrpc: '2.0', id: message.id, result: {} } };
+            }
+        });
+        input.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+        input.write('{"jsonrpc":"2.0","id":2,"method":"ping"}\n');
+        input.write('{"jsonrpc":"2.0","id":3,"method":"ping"}\n');
+        input.write('not json\n');
+        input.end('{"jsonrpc":"2.0","id":4,"method":"ping"}');
+        await done;
+        const replies = Buffer.concat(chunks).toString('utf8').trim().split('\n').map(line => JSON.parse(line));
+        const byId = new Map(replies.filter(reply => reply.id !== null).map(reply => [reply.id, reply]));
+        expect(byId.get(1).result).toEqual({});
+        expect(byId.get(2).result).toEqual({});
+        expect(byId.get(3).error.code).toBe(-32603);
+        expect(byId.get(4).result).toEqual({});
+        expect(replies.some(reply => reply.error?.code === -32700)).toBe(true);
+        expect(replies).toHaveLength(5);
+    });
+});
+
+describe('a clean stdout', () => {
+    const { spawnSync } = require('node:child_process');
+    const { reserveStdout } = require('@goobster/core/mcp/stdout');
+    const ROOT = path.join(__dirname, '..');
+
+    function childEnv(dbPath, extra = {}) {
+        const env = { ...process.env, GOOBSTER_DB_PATH: dbPath, GOOBSTER_MCP_ENABLED: '1', ...extra };
+        delete env.GOOBSTER_DB_URL;
+        delete env.GOOBSTER_PG_TEST_ISOLATE;
+        return env;
+    }
+
+    test('reserveStdout sends stray writes to stderr and keeps the real stdout for the caller', () => {
+        const stdout = new PassThrough();
+        const stderr = new PassThrough();
+        const out = [];
+        const err = [];
+        stdout.on('data', chunk => out.push(chunk.toString()));
+        stderr.on('data', chunk => err.push(chunk.toString()));
+        const protocol = reserveStdout(stdout, stderr);
+        stdout.write('[DB] Migrated: added something\n');
+        protocol.write('{"jsonrpc":"2.0"}\n');
+        expect(out.join('')).toBe('{"jsonrpc":"2.0"}\n');
+        expect(err.join('')).toBe('[DB] Migrated: added something\n');
+    });
+
+    test('a first run prints only the secret on stdout, and a migration never reaches the MCP client', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-mcp-clean-'));
+        const dbPath = path.join(dir, 'fresh.sqlite');
+        try {
+            const created = spawnSync(process.execPath, [
+                'scripts/mcp-token.js', 'create', '--user', '100000000000000061', '--label', 'Clean', '--scope', 'docs'
+            ], { cwd: ROOT, env: childEnv(dbPath), encoding: 'utf8' });
+            expect(created.status).toBe(0);
+            expect(created.stderr).toMatch(/Migrated/);
+            const lines = created.stdout.trim().split('\n');
+            expect(lines).toHaveLength(1);
+            expect(lines[0]).toMatch(/^gst_[A-Za-z0-9_-]{43}$/);
+
+            // Drop a migrated column so the server's own first open has to migrate again.
+            const Database = require('better-sqlite3');
+            const raw = new Database(dbPath);
+            raw.exec('ALTER TABLE stock_symbols DROP COLUMN ivUpdatedAt');
+            raw.close();
+
+            const requests = [
+                { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } },
+                { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+                { jsonrpc: '2.0', id: 3, method: 'resources/templates/list' }
+            ].map(message => JSON.stringify(message)).join('\n');
+            const served = spawnSync(process.execPath, ['apps/mcp/index.js'], {
+                cwd: ROOT,
+                env: childEnv(dbPath, { GOOBSTER_MCP_TOKEN: lines[0] }),
+                input: `${requests}\n`,
+                encoding: 'utf8'
+            });
+            expect(served.status).toBe(0);
+            expect(served.stderr).toMatch(/Migrated: added stock_symbols\.ivUpdatedAt/);
+            const replies = served.stdout.trim().split('\n').map(line => JSON.parse(line));
+            expect(replies).toHaveLength(3);
+            const byId = new Map(replies.map(reply => [reply.id, reply]));
+            expect(byId.get(1).result.protocolVersion).toBe('2025-06-18');
+            expect(byId.get(2).result.tools.map(tool => tool.name).sort()).toEqual(['list_docs', 'read_doc', 'search_docs']);
+            expect(byId.get(3).result.resourceTemplates).toHaveLength(1);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('the stdio entry tells an expired token from a wrong one and exits non-zero', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-mcp-expired-'));
+        const dbPath = path.join(dir, 'expired.sqlite');
+        try {
+            const created = spawnSync(process.execPath, [
+                'scripts/mcp-token.js', 'create', '--user', '100000000000000062', '--label', 'Soon'
+            ], { cwd: ROOT, env: childEnv(dbPath), encoding: 'utf8' });
+            const token = created.stdout.trim();
+            const Database = require('better-sqlite3');
+            const raw = new Database(dbPath);
+            raw.prepare('UPDATE mcp_tokens SET expiresAt = ?').run('2020-01-01 00:00:00');
+            raw.close();
+
+            const expired = spawnSync(process.execPath, ['apps/mcp/index.js'], {
+                cwd: ROOT, env: childEnv(dbPath, { GOOBSTER_MCP_TOKEN: token }), input: '', encoding: 'utf8'
+            });
+            expect(expired.status).toBe(1);
+            expect(expired.stderr).toMatch(/expired/i);
+            expect(expired.stdout).toBe('');
+
+            const wrong = spawnSync(process.execPath, ['apps/mcp/index.js'], {
+                cwd: ROOT, env: childEnv(dbPath, { GOOBSTER_MCP_TOKEN: `gst_${'a'.repeat(43)}` }), input: '', encoding: 'utf8'
+            });
+            expect(wrong.status).toBe(1);
+            expect(wrong.stderr).toMatch(/not valid/i);
+            expect(wrong.stderr).not.toMatch(/expired/i);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

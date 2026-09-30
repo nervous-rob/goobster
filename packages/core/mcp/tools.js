@@ -155,8 +155,24 @@ const TOOLS = [
         ['id'])
 ];
 
-function toolDescriptors() {
-    return TOOLS.map(entry => ({ ...entry, annotations: { ...entry.annotations } }));
+/**
+ * Which tools a token scope may see and call. `read` is everything; `docs`
+ * is the manual only. An unrecognized scope gets nothing, so a bad row
+ * fails closed.
+ */
+const DOC_TOOLS = Object.freeze(['list_docs', 'search_docs', 'read_doc']);
+
+function allowedToolNames(scope = 'read') {
+    if (scope === 'read') return TOOLS.map(entry => entry.name);
+    if (scope === 'docs') return [...DOC_TOOLS];
+    return [];
+}
+
+function toolDescriptors({ scope = 'read' } = {}) {
+    const allowed = new Set(allowedToolNames(scope));
+    return TOOLS
+        .filter(entry => allowed.has(entry.name))
+        .map(entry => ({ ...entry, annotations: { ...entry.annotations } }));
 }
 
 function toolNames() {
@@ -514,12 +530,18 @@ const HANDLERS = {
  * Run one tool for the authenticated user.
  * Unknown names are a protocol error. A service refusal is `isError`.
  */
-async function callTool(userId, name, args) {
-    const handler = HANDLERS[name];
+async function callTool(userId, name, args, { scope = 'read' } = {}) {
+    const handler = Object.prototype.hasOwnProperty.call(HANDLERS, name) ? HANDLERS[name] : null;
     if (!handler) {
         const error = new Error('unknown tool');
         error.rpcCode = -32602;
         error.publicMessage = `Unknown tool: ${name}`;
+        throw error;
+    }
+    if (!allowedToolNames(scope).includes(name)) {
+        const error = new Error('tool out of scope');
+        error.rpcCode = -32602;
+        error.publicMessage = `This token's "${scope}" scope does not include ${name}.`;
         throw error;
     }
     try {
@@ -538,14 +560,19 @@ function describeServer() {
         enabled: mcpConfig.enabled,
         endpoint: mcpConfig.path,
         readOnly: true,
-        tools: toolNames()
+        tools: toolNames(),
+        resources: true
     };
 }
 
 module.exports = {
     TOOLS,
+    DOC_TOOLS,
     toolDescriptors,
     toolNames,
+    allowedToolNames,
     callTool,
+    clip,
+    includeOperatorDocs,
     describeServer
 };

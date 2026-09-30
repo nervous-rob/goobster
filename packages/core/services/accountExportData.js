@@ -58,7 +58,7 @@ const INVENTORY = [
     ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
     // The secret hash stays out of the archive. The label and prefix are
     // enough to see which clients were connected (documentation/mcp.md).
-    ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt']
+    ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt']
 ];
 const TRANSIENT = new Set(['claimToken', 'leaseToken', 'runnerId', 'executionAttemptId', 'claimUntil', 'tokenHash']);
 function cleanRow(table, row, userId) {

@@ -1235,8 +1235,10 @@ a.nav-btn {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
 }
-.mcp-create { align-items: center; }
-.mcp-create .input { flex: 1; min-width: 0; }
+.mcp-create { align-items: center; flex-wrap: wrap; }
+.mcp-create .input { flex: 1; min-width: 160px; }
+.hint.mcp-expired { color: var(--danger); }
+.mcp-token-list li[data-expired="true"] strong { opacity: 0.7; text-decoration: line-through; }
 .settings-welcome { max-width: 520px; margin: 40px auto; }
 .settings-section-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
 .settings-section-head h2 { margin: 0 0 4px; font-size: 20px; }

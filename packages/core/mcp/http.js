@@ -16,7 +16,7 @@ const mcpConfig = require('../config/mcpConfig');
 const mcpTokenService = require('../services/mcpTokenService');
 const { consume } = require('./rateLimit');
 const { handleMessage, rpcError } = require('./protocol');
-const { toolDescriptors, callTool } = require('./tools');
+const { surfaceFor } = require('./surface');
 const { version } = require('../package.json');
 
 const SERVER_INFO = { name: 'goobster', version };
@@ -106,16 +106,22 @@ function createMcpApp({ logger = console } = {}) {
             });
             return;
         }
-        const session = await mcpTokenService.authenticate(bearerToken(req));
-        if (!session) {
-            res.set('WWW-Authenticate', 'Bearer realm="goobster"');
+        const auth = await mcpTokenService.resolve(bearerToken(req));
+        if (auth.status !== 'ok') {
+            const expired = auth.status === 'expired';
+            res.set('WWW-Authenticate', expired
+                ? 'Bearer realm="goobster", error="invalid_token", error_description="The token expired"'
+                : 'Bearer realm="goobster"');
             sendOutcome(req, res, {
                 kind: 'response',
                 status: 401,
-                body: rpcError(req.body?.id ?? null, -32001, 'Unauthorized')
+                body: rpcError(req.body?.id ?? null, -32001, expired
+                    ? 'This MCP token has expired. Create a new one in Settings \u2192 Connections.'
+                    : 'Unauthorized')
             });
             return;
         }
+        const { session } = auth;
         if (!consume(`mcp:${session.id}`, mcpConfig.requestsPerMinute)) {
             sendOutcome(req, res, {
                 kind: 'response',
@@ -127,8 +133,7 @@ function createMcpApp({ logger = console } = {}) {
         try {
             const outcome = await handleMessage(req.body, {
                 serverInfo: SERVER_INFO,
-                listTools: toolDescriptors,
-                callTool: (name, args) => callTool(session.userId, name, args)
+                ...surfaceFor(session)
             });
             const method = req.body?.method;
             const toolName = method === 'tools/call' ? req.body?.params?.name : '';

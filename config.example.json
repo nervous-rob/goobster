@@ -42,7 +42,8 @@
     "mcp": {
         "enabled": false,
         "maxTokensPerUser": 10,
-        "requestsPerMinute": 120
+        "requestsPerMinute": 120,
+        "defaultTokenDays": 90
     },
 
     "sandbox": {
