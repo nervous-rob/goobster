@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { McpScope, McpToken } from '../lib/types';
+import type { McpScope, McpScopeInfo, McpToken } from '../lib/types';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
 
 const MCP_KEY = ['mcp-access'] as const;
 const EXPIRY_CHOICES = [30, 90, 365];
+const FALLBACK_SCOPES: McpScopeInfo[] = [{ id: 'read', label: 'Everything (read-only)', description: '' }];
 
 function expiryLabel(days: number): string {
     if (days === 0) return 'Never expires';
@@ -38,7 +39,7 @@ export function McpAccess() {
 
     const data = overview.data;
     const tokens = data?.tokens || [];
-    const scopes = data?.scopes || [];
+    const scopes = data?.scopes?.length ? data.scopes : FALLBACK_SCOPES;
     const defaultDays = data?.defaultExpiryDays ?? 90;
     const chosenDays = expiry ?? defaultDays;
     const expiryOptions = [...new Set([...EXPIRY_CHOICES, defaultDays].filter(days => days > 0))]
@@ -103,81 +104,83 @@ export function McpAccess() {
                     {data?.enabled && <> The server is on at <code>{data.endpoint}</code>.</>}
                 </div>
             </div>
-            {fresh && (
-                <div className="mcp-secret-block">
-                    <p className="hint">Copy this token now. Goobster stores only a hash of it.</p>
-                    <pre className="mcp-secret">{fresh}</pre>
-                    <button type="button" className="btn subtle" onClick={() => copy(fresh)}>Copy token</button>
+            <div className="settings-field-control">
+                {fresh && (
+                    <div className="mcp-secret-block">
+                        <p className="hint">Copy this token now. Goobster stores only a hash of it.</p>
+                        <pre className="mcp-secret">{fresh}</pre>
+                        <button type="button" className="btn subtle" onClick={() => copy(fresh)}>Copy token</button>
+                    </div>
+                )}
+                {tokens.length > 0 && (
+                    <ul className="mcp-token-list">
+                        {tokens.map(token => (
+                            <li key={token.id} data-expired={token.expired ? 'true' : undefined}>
+                                <span>
+                                    <strong>{token.label}</strong>
+                                    {' '}
+                                    <code>{token.tokenPrefix}…</code>
+                                    {' '}
+                                    <span className="badge">{token.scope === 'docs' ? 'docs only' : 'everything'}</span>
+                                    <span className={token.expired ? 'hint mcp-expired' : 'hint'}> {expiryNote(token)}</span>
+                                    {token.lastUsedAt ? <span className="hint"> · last used {token.lastUsedAt}</span> : null}
+                                </span>
+                                <button
+                                    type="button"
+                                    className="btn subtle danger"
+                                    disabled={busy === token.id}
+                                    onClick={() => revoke(token.id, token.label)}
+                                >
+                                    Revoke
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                <div className="btn-row mcp-create">
+                    <input
+                        id="mcp-access-input"
+                        className="input"
+                        value={label}
+                        maxLength={80}
+                        placeholder="Label, such as Cursor"
+                        aria-label="MCP token label"
+                        onChange={(event) => setLabel(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter' && label.trim() && busy !== 'create') {
+                                event.preventDefault();
+                                void create();
+                            }
+                        }}
+                    />
+                    <select
+                        className="select"
+                        aria-label="MCP token scope"
+                        value={scope}
+                        onChange={(event) => setScope(event.target.value as McpScope)}
+                    >
+                        {scopes.map(entry => (
+                            <option key={entry.id} value={entry.id}>{entry.label}</option>
+                        ))}
+                    </select>
+                    <select
+                        className="select"
+                        aria-label="MCP token lifetime"
+                        value={chosenDays}
+                        onChange={(event) => setExpiry(Number(event.target.value))}
+                    >
+                        {expiryOptions.map(days => (
+                            <option key={days} value={days}>{expiryLabel(days)}</option>
+                        ))}
+                        <option value={0}>{expiryLabel(0)}</option>
+                    </select>
+                    <button type="button" className="btn" disabled={!label.trim() || busy === 'create'} onClick={() => void create()}>
+                        {busy === 'create' ? 'Creating…' : 'Create token'}
+                    </button>
                 </div>
-            )}
-            {tokens.length > 0 && (
-                <ul className="mcp-token-list">
-                    {tokens.map(token => (
-                        <li key={token.id} data-expired={token.expired ? 'true' : undefined}>
-                            <span>
-                                <strong>{token.label}</strong>
-                                {' '}
-                                <code>{token.tokenPrefix}…</code>
-                                {' '}
-                                <span className="badge">{token.scope === 'docs' ? 'docs only' : 'everything'}</span>
-                                <span className={token.expired ? 'hint mcp-expired' : 'hint'}> {expiryNote(token)}</span>
-                                {token.lastUsedAt ? <span className="hint"> · last used {token.lastUsedAt}</span> : null}
-                            </span>
-                            <button
-                                type="button"
-                                className="btn subtle danger"
-                                disabled={busy === token.id}
-                                onClick={() => revoke(token.id, token.label)}
-                            >
-                                Revoke
-                            </button>
-                        </li>
-                    ))}
-                </ul>
-            )}
-            <div className="btn-row mcp-create">
-                <input
-                    id="mcp-access-input"
-                    className="input"
-                    value={label}
-                    maxLength={80}
-                    placeholder="Label, such as Cursor"
-                    aria-label="MCP token label"
-                    onChange={(event) => setLabel(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.key === 'Enter' && label.trim() && busy !== 'create') {
-                            event.preventDefault();
-                            void create();
-                        }
-                    }}
-                />
-                <select
-                    className="select"
-                    aria-label="MCP token scope"
-                    value={scope}
-                    onChange={(event) => setScope(event.target.value as McpScope)}
-                >
-                    {(scopes.length ? scopes : [{ id: 'read' as const, label: 'Everything (read-only)', description: '' }]).map(entry => (
-                        <option key={entry.id} value={entry.id}>{entry.label}</option>
-                    ))}
-                </select>
-                <select
-                    className="select"
-                    aria-label="MCP token lifetime"
-                    value={chosenDays}
-                    onChange={(event) => setExpiry(Number(event.target.value))}
-                >
-                    {expiryOptions.map(days => (
-                        <option key={days} value={days}>{expiryLabel(days)}</option>
-                    ))}
-                    <option value={0}>{expiryLabel(0)}</option>
-                </select>
-                <button type="button" className="btn" disabled={!label.trim() || busy === 'create'} onClick={() => void create()}>
-                    {busy === 'create' ? 'Creating…' : 'Create token'}
-                </button>
+                {scopeInfo?.description && <p className="hint">{scopeInfo.description}</p>}
+                {overview.isError && <p className="hint">{(overview.error as Error).message}</p>}
             </div>
-            {scopeInfo?.description && <p className="hint">{scopeInfo.description}</p>}
-            {overview.isError && <p className="hint">{(overview.error as Error).message}</p>}
         </div>
     );
 }
