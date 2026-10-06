@@ -32,6 +32,7 @@ const GROUPS = [
             'globalCommandPayload',
             'identityService',
             'nativeAuth',
+            'packagePayloadRules',
             'emailAuth',
             'integrationActions',
             'integrationsWebhooks',
