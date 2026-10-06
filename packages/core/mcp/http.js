@@ -7,8 +7,11 @@
  * its bearer token. GET and DELETE are refused because the server does
  * not push messages.
  *
- * Mount with `app.use('/mcp', createMcpApp())` only when mcp.enabled
- * is true, so a disabled server is an ordinary 404.
+ * Mount with `app.use('/mcp', createMcpApp())` only when the `mcp` feature
+ * is active, so a disabled server is an ordinary 404. The router also asks
+ * on every request, so a mounted route whose feature is off still answers
+ * 404 `{ error: 'FEATURE_UNAVAILABLE', feature: 'mcp' }` before reading the
+ * body or the token.
  */
 
 const express = require('express');
@@ -16,7 +19,8 @@ const mcpConfig = require('../config/mcpConfig');
 const mcpTokenService = require('../services/mcpTokenService');
 const { consume } = require('./rateLimit');
 const { handleMessage, rpcError } = require('./protocol');
-const { surfaceFor } = require('./surface');
+const { surfaceFor, mcpServing } = require('./surface');
+const { features } = require('../features/featureState');
 const { version } = require('../package.json');
 
 const SERVER_INFO = { name: 'goobster', version };
@@ -73,6 +77,14 @@ function sendOutcome(req, res, outcome) {
 
 function createMcpApp({ logger = console } = {}) {
     const router = express.Router();
+    router.use((req, res, next) => {
+        if (mcpServing()) {
+            next();
+            return;
+        }
+        res.set('Cache-Control', 'no-store');
+        res.status(404).json({ error: 'FEATURE_UNAVAILABLE', feature: 'mcp' });
+    });
     router.use(express.json({ limit: '256kb', strict: true }));
     router.use((error, req, res, next) => {
         if (error?.type === 'entity.parse.failed' || error instanceof SyntaxError) {
@@ -153,11 +165,11 @@ function createMcpApp({ logger = console } = {}) {
 }
 
 /**
- * Mount `/mcp` when the feature is enabled. Returns whether it mounted.
+ * Mount `/mcp` when the `mcp` feature is active. Returns whether it mounted.
  * Both the bot and the api process call this so the two profiles agree.
  */
 function mountMcpIfEnabled(app, { logger = console } = {}) {
-    if (!mcpConfig.enabled) return false;
+    if (!features.isActive('mcp')) return false;
     app.use(mcpConfig.path, createMcpApp({ logger }));
     logger.info?.(`MCP server enabled at ${mcpConfig.path} (read-only)`);
     return true;
