@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed. Implementation plan: `documentation/installer_plan.md`.
+Accepted (merged design PR #314; audits E1/T1/R1/S1/M1 completed in #316,
+see `documentation/feature_inventory.md`), with the amendments listed at
+the end of this document. Implementation plan:
+`documentation/installer_plan.md`.
 
 ## Context
 
@@ -132,3 +135,44 @@ Gatekeeper.
 Every feature ships with its catalog entry and its doc, and the catalog
 becomes the source for the configuration and commands references, which
 keeps what Goobster knows about himself (`consultDocs`) accurate.
+
+## Amendments from the Phase 1 audits (#316)
+
+The ownership inventory (`documentation/feature_inventory.md`,
+`packages/core/features/inventory.js`) confirmed decisions 1 to 6 with
+these changes to the boundaries in decision 6:
+
+1. **Music does not depend on Voice.** Music Lab, Song Studio, generation
+   and the library run without ffmpeg, `@discordjs/voice` or the python
+   venv. Only Music's Discord playback surfaces also require Voice and
+   Discord; that is a per-surface requirement (`alsoRequires`), not a
+   feature dependency.
+2. **Mission-control threads belong to Cursor, not Projects.** The gate in
+   `messageCreate.js` is the Cursor agent tracker. Projects keeps project
+   rooms, missions and triggers.
+3. **Economy is points and accounting only; Trading is Exchange.** Audit
+   E1 found no points caller outside Economy, Exchange, Gambling and the
+   Activity, so accounting is the Economy feature rather than
+   infrastructure. The stock game is Exchange. Exchange and Gambling both
+   depend on Economy. Privacy keeps reading `economy_*` as a core
+   exception.
+4. **Gambling is a separate feature** (carried from #261) owning
+   `/gamble`, the wheel, predictions and the casino table games; the wheel
+   and prediction surfaces also require Exchange.
+5. **Discord Activity is the `discordActivity` feature** and owns only the
+   embedded transport; the id avoids colliding with the portal room
+   `activity`. It depends on the Discord adapter.
+6. **Observatory depends on Projects and Sandbox.** Project organisation
+   works without execution; runs, jobs and render need the runner.
+7. **Knowledge is the Spitball editing surface with no legacy switch;
+   Expeditions depend on it** and are seeded from `spitball.enabled`. MCP
+   requires neither: it exposes what is available and filters the rest.
+8. **Fresh-install defaults** come from #261: Economy, Exchange and
+   Gambling off, everything else active, with an operator attestation
+   recorded when Gambling is enabled. #261's row-presence migration rule
+   is replaced by decision 5: an installation with no `features.json`
+   keeps today's behaviour and its effective legacy switches.
+9. **Mail refusal rule.** Disabling Mail is refused while native login is
+   on and registration is `open`; when registration is by invitation and
+   verified addresses exist, the operator is warned instead, because the
+   operator-issued recovery link does not need mail.
