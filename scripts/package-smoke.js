@@ -346,7 +346,7 @@ async function runApi(mode, roots) {
         const env = childEnvironment(roots, port, { GOOBSTER_HOME: roots.home });
         if (IS_WINDOWS) {
             const launcher = path.join(PAYLOAD_ROOT, 'bin', 'goobster-api.cmd');
-            child = childProcess.spawn('cmd.exe', ['/d', '/s', '/c', `"${launcher}"`], { env, cwd: PAYLOAD_ROOT, windowsVerbatimArguments: true, stdio: ['ignore', 'pipe', 'pipe'] });
+            child = childProcess.spawn('cmd.exe', ['/d', '/s', '/c', `""${launcher}""`], { env, cwd: PAYLOAD_ROOT, windowsVerbatimArguments: true, stdio: ['ignore', 'pipe', 'pipe'] });
             stopMethod = 'taskkill /T /F (forced: cmd.exe wrapper has no graceful stop)';
         } else {
             child = childProcess.spawn(path.join(PAYLOAD_ROOT, 'bin', 'goobster-api'), [], { env, cwd: PAYLOAD_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });

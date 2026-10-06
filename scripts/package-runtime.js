@@ -263,6 +263,25 @@ async function fetchNodeRuntime(target, cacheDir) {
     return { ...info, archive, verified: true };
 }
 
+/**
+ * .tar.gz on unix; the Windows runtime is a .zip, which Git for Windows' GNU
+ * tar cannot read, so use the system bsdtar (System32\tar.exe) or PowerShell.
+ */
+function extractArchive(archive, destination) {
+    if (process.platform !== 'win32') {
+        run('tar', ['-xzf', archive, '-C', destination], { label: `tar -xzf ${path.basename(archive)}` });
+        return;
+    }
+    const systemTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(systemTar)) {
+        run(systemTar, ['-xf', archive, '-C', destination], { label: `tar.exe -xf ${path.basename(archive)}` });
+        return;
+    }
+    run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force', archive, destination], {
+        label: `Expand-Archive ${path.basename(archive)}`
+    });
+}
+
 function installRuntime({ target, runtimeDir, download: archiveInfo, nodeBinary }) {
     fs.mkdirSync(runtimeDir, { recursive: true });
     const destination = path.join(runtimeDir, target.platform === 'win32' ? 'node.exe' : path.join('bin', 'node'));
@@ -274,8 +293,7 @@ function installRuntime({ target, runtimeDir, download: archiveInfo, nodeBinary 
     const extractTo = path.join(path.dirname(runtimeDir), `.node-extract-${target.id}`);
     removeTree(extractTo);
     fs.mkdirSync(extractTo, { recursive: true });
-    // bsdtar (Windows 10+ tar.exe, macOS) and GNU tar both read these formats.
-    run('tar', ['-xf', archiveInfo.archive, '-C', extractTo], { label: `tar -xf ${archiveInfo.file}` });
+    extractArchive(archiveInfo.archive, extractTo);
     const top = path.join(extractTo, archiveInfo.topDir);
     const source = path.join(top, ...target.nodeBin.split('/'));
     if (!fs.existsSync(source)) throw new Error(`${target.nodeBin} not found in ${archiveInfo.file}`);
@@ -345,6 +363,17 @@ function installDependencies({ stagingDir, workspaceFlags }) {
     // These would turn "fetch the prebuilt binary" into "compile it".
     delete env.npm_config_build_from_source;
     delete env.npm_config_ignore_scripts;
+    // Compile guard: if a prebuilt binary cannot be fetched, the install
+    // scripts fall back to `node-gyp rebuild`. Pointing Python and the C/C++
+    // compilers at a path that does not exist turns that fallback into a hard
+    // failure, so a payload can never be "proven" by a quiet local compile.
+    const noCompiler = path.join(stagingDir, 'no-compiler-allowed');
+    env.npm_config_python = noCompiler;
+    env.PYTHON = noCompiler;
+    if (process.platform !== 'win32') {
+        env.CC = noCompiler;
+        env.CXX = noCompiler;
+    }
     const args = [
         npmCli, 'ci', '--omit=dev', '--no-audit', '--no-fund', '--foreground-scripts',
         `--cache=${path.join(stagingDir, '.npm-cache')}`,
