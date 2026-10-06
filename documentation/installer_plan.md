@@ -144,6 +144,20 @@ Work, in order:
    `sharp`) starts on Windows x64, macOS (arm64 and x64), Linux x64 and
    Linux arm64 in CI. Tests run against the reduced payload, not only the
    checkout.
+
+   **Status (P3.1, #327): proof in progress.** The recipe
+   (`scripts/package-runtime.js`), the in-payload smoke check
+   (`scripts/package-smoke.js`) and the CI matrix
+   (`.github/workflows/packaging-proof.yml`) exist. Proven locally on
+   Linux x64 only: the payload builds with no compiler, every prebuilt
+   binary loads (including `sqlite-vec`, with no fallback), and the
+   standalone API starts and stops cleanly from a relocated path with
+   spaces and non-ASCII characters. Linux arm64, Windows x64, macOS x64 and
+   macOS arm64 are **unverified** until the matrix has run on a runner of
+   each. Open findings that gate the release phase (B1 config roots,
+   B2 glibc floors, B3 sqlite-vec macOS floor, B4 VC++ redistributable,
+   B5 GPL declarations, B6 discord.js in the no-Discord path) are in
+   `documentation/packaging_proof.md`.
 2. Payload builder: resolves the selected features to files and exclusive
    dependencies (ffmpeg for Voice, the python venv for Music, the sandbox
    runner), builds the frontend with only the selected rooms.
@@ -209,7 +223,7 @@ Postgres instances the manager owns, as a separate labelled workflow.
 | S1 | Every `coreRuntime` step and every `index.js` startup side effect mapped to a feature. | Phase 1 |
 | M1 | Mail's registration and account-recovery dependencies. | Phase 1 |
 | L1 | Long-running work (expeditions, sandbox, voice sessions) and its current interruption behaviour. | Phase 2 |
-| N1 | Prebuild availability for each native module on each target, pinned to the bundled Node ABI. | Phase 3 |
+| N1 | Prebuild availability for each native module on each target, pinned to the bundled Node ABI. | Phase 3. Result in `documentation/packaging_proof.md`: Node 22.23.3 (ABI 127); every module has an upstream prebuild for all five targets (static analysis); linux-x64 executed, the other four unverified until CI runs; no module lacks a prebuild, but arm64 glibc 2.33 (B2) and macOS `sqlite-vec` minimum (B3) narrow the supported OS range. |
 
 ## Compatibility rules
 

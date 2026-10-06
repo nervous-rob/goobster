@@ -653,7 +653,7 @@ async function main() {
                 id: 'B1',
                 summary: 'core config modules read config.json through a hard-coded relative require instead of runtimePaths.configJsonPath, so a config.json in a separate config root is ignored by them (a token there leaves discordConfig.enabled false)',
                 coreConfigModulesRead: rel(reads),
-                affected: '38 require(...config.json) sites in packages/core (config/*.js and several services); serviceManager.js throws MODULE_NOT_FOUND when loaded',
+                affected: '37 require(...config.json) sites (24 in packages/core incl. 13 in config/*.js, 13 in apps/bot); serviceManager.js throws MODULE_NOT_FOUND when loaded',
                 reference: 'documentation/packaging_proof.md#b1'
             });
             return { knownGap: 'B1', honoured, coreConfigModulesRead: rel(reads) };
