@@ -28,6 +28,7 @@ const { WebSocketServer } = require('ws');
 const economyService = require('@goobster/core/services/economyService');
 const { generateMusic, resolveApiKey } = require('@goobster/core/services/voice/elevenLabsAudioService');
 const { toGateway, isGatewayUnavailable } = require('@goobster/core/gateway');
+const featureGate = require('@goobster/core/web/featureGate');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -274,12 +275,17 @@ function attachActivityWebSocket(server, ctx) {
             return;
         }
         if (pathname !== '/api/activity/ws') return; // another handler's upgrade
+        if (featureGate.wsBlock(pathname)) {
+            featureGate.rejectUpgrade(socket);
+            return;
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
             wss.emit('connection', ws, request);
         });
     });
 
     wss.on('connection', (socket) => {
+        featureGate.guardOpenSocket(socket, '/api/activity/ws');
         let joined = null; // { session, table, unsubscribe }
 
         const send = (message) => {

@@ -44,6 +44,7 @@ const spitballExpeditionRunner = require('../services/spitballExpeditionRunner')
 const expeditionBriefService = require('../services/expeditionBriefService');
 const knowledgeTransferService = require('../services/knowledgeTransferService');
 const instanceStateService = require('../services/instanceStateService');
+const { features: featureState } = require('../features/featureState');
 const { workspaceRoot } = require('../runtimePaths');
 
 function createWebAppContext({ client = null, gateway = null, config, logger = console, deps = {} }) {
@@ -107,6 +108,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         followedSources: deps.followedSources || require('../services/followedSourceService'),
         accountExports: deps.accountExports || require('../services/accountExportService'),
         instanceState: deps.instanceState || instanceStateService,
+        features: deps.features || featureState,
         push: deps.push || require('../services/pushService'),
         events: deps.events || eventBusService
     };

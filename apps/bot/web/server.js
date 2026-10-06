@@ -16,6 +16,8 @@ const { createPanelApi } = require('./panelApi');
 const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const { mountMcpIfEnabled } = require('@goobster/core/mcp/http');
+const mcpConfig = require('@goobster/core/config/mcpConfig');
+const featureGate = require('@goobster/core/web/featureGate');
 const { createInternalGatewayApi, internalGatewayEnabled } = require('./internalGatewayApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
@@ -26,6 +28,12 @@ const { TableManager } = require('@goobster/core/services/tableGames/tableManage
 const { BotPlayer } = require('@goobster/core/services/tableGames/botPlayer');
 
 const DEFAULT_PANEL_PORT = 3400;
+
+/**
+ * Paths this server serves on behalf of a feature (the portal gates its own
+ * `/api/app` and `/app`). Anything else keeps the server's own 404.
+ */
+const FEATURE_PATHS = /^\/(?:api\/(?:activity|webhooks|screen|gba-run)|activity|companion|internal\/gateway)(?:\/|\.js$|$)/i;
 
 /**
  * Local-only guard: the Host header must be a loopback name, and any Origin
@@ -95,12 +103,21 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     const healthPort = Number(process.env.PORT) || 3000;
     const healthApp = createHealthApp({ logger });
 
+    // One feature gate for everything this server hosts for a feature, driven
+    // by the inventory's routeRules and installed before every mount so a
+    // refused request is never parsed. A feature the installation turned off
+    // gets a stable 404 FEATURE_UNAVAILABLE (also for stale clients), and
+    // below, no worker, listener or router is built for it at all.
+    const gate = (id) => featureGate.mountable(id);
+    healthApp.use(featureGate.routeGate({ only: FEATURE_PATHS }));
+    healthApp.use(mcpConfig.path, featureGate.ownerGate('mcp'));
+
     // Webhook receivers (GitHub + Cursor agent status): enabled per-receiver
     // by configuring its shared secret. Like the Activity API, these must be
     // publicly reachable (e.g. via a cloudflared tunnel). Mounted before the
     // Activity app so its body parsers can never touch the raw webhook
     // bodies needed for HMAC signature verification.
-    if (integrationsWebhooksEnabled()) {
+    if (integrationsWebhooksEnabled() && (gate('github') || gate('cursor'))) {
         healthApp.use(createIntegrationsApp({ client, logger }));
         logger.info?.('Integration webhook receivers enabled at /api/webhooks/*');
     }
@@ -111,7 +128,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // `full` profile the bot sits on the internal network and nginx never
     // proxies /internal/*, so the token is defense in depth on top of
     // network isolation.
-    if (internalGatewayEnabled()) {
+    if (internalGatewayEnabled() && gate('discord')) {
         healthApp.use(createInternalGatewayApi({ client, logger }));
         logger.info?.('Internal gateway API enabled at /internal/gateway/*');
     }
@@ -121,7 +138,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // proxy (e.g. via a cloudflared tunnel). See documentation/activity_setup.md.
     let tableManager = null;
     let botPlayer = null;
-    if (config.activity?.enabled === true) {
+    if (config.activity?.enabled === true && gate('discordActivity')) {
         tableManager = new TableManager();
         await tableManager.recoverFromJournal();
         botPlayer = new BotPlayer({ tableManager, client, config, logger });
@@ -133,7 +150,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
 
     // Read-only MCP (documentation/mcp.md). Opt-in: the public server
     // gains a bearer-token endpoint over one person's workspace.
-    mountMcpIfEnabled(healthApp, { logger });
+    if (gate('mcp')) mountMcpIfEnabled(healthApp, { logger });
 
     // Web app (browser chat + memory dashboard): opt-in for the same reason
     // as the Activity - it must be reachable through the public tunnel.
@@ -149,7 +166,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // the same reason as the Activity - the public server gains a pairing
     // endpoint and a WebSocket that must be reachable from players' PCs.
     // See documentation/screen_vision_setup.md.
-    const screenVisionEnabled = config.screenVision?.enabled === true;
+    const screenVisionEnabled = config.screenVision?.enabled === true && gate('screenVision');
     screenVisionService.configure({
         enabled: screenVisionEnabled,
         publicUrl: config.screenVision?.publicUrl,
@@ -163,7 +180,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // GBA run harness (Goobster Plays Pokémon): opt-in for the same reason
     // as screen vision - the public server gains a pairing endpoint and a
     // WebSocket that must be reachable from the machine running mGBA.
-    const gbaRunEnabled = config.gbaRun?.enabled === true;
+    const gbaRunEnabled = config.gbaRun?.enabled === true && gate('gba');
     gbaRunService.configure({ enabled: gbaRunEnabled, client, logger });
     if (gbaRunEnabled) {
         healthApp.use(createGbaRunApp({ logger }));

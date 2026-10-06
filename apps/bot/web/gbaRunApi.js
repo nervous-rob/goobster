@@ -17,6 +17,7 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const gbaRunService = require('@goobster/core/services/gbaRunService');
+const featureGate = require('@goobster/core/web/featureGate');
 
 // Posts carry one small upscaled GBA screenshot; far below this cap.
 const MAX_WS_PAYLOAD_BYTES = 8 * 1024 * 1024;
@@ -55,12 +56,17 @@ function attachGbaRunWebSocket(server, { logger = console } = {}) {
             return;
         }
         if (pathname !== '/api/gba-run/ws') return; // another handler's upgrade
+        if (featureGate.wsBlock(pathname)) {
+            featureGate.rejectUpgrade(socket);
+            return;
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
             wss.emit('connection', ws, request);
         });
     });
 
     wss.on('connection', (socket) => {
+        featureGate.guardOpenSocket(socket, '/api/gba-run/ws');
         socket.isAlive = true;
         socket.on('pong', () => { socket.isAlive = true; });
         gbaRunService.handleConnection(socket);
