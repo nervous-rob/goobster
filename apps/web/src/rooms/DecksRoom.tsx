@@ -1,3 +1,4 @@
+import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -194,6 +195,11 @@ function ImportModal({
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [filter, setFilter] = useState('');
     const [logStatus, setLogStatus] = useState('');
+    const drop = useAttachmentDrop({ label: 'Drop a Player.log file', disabled: busy, onDrop: async payload => {
+        if (payload.files.length !== 1 || payload.links.length || !/\.(log|txt)$/i.test(payload.files[0].name)) throw new Error('Drop one Player.log or text log file.');
+        setMode('log');
+        await scanLogFile(payload.files[0]);
+    } });
 
     function resetLogPreview() {
         setExcerpt('');
@@ -298,118 +304,121 @@ function ImportModal({
 
     return (
         <Modal onClose={onClose} wide className="mtga-import-modal">
-            <h2>Import Arena decks</h2>
-            <div className="field">
-                <label>Source</label>
-                <div className="segment" role="group" aria-label="Import source">
-                    <button type="button" className={`segment-btn${mode === 'paste' ? ' active' : ''}`}
-                        onClick={() => setMode('paste')}>Paste export</button>
-                    <button type="button" className={`segment-btn${mode === 'log' ? ' active' : ''}`}
-                        onClick={() => setMode('log')}>From Player.log</button>
-                </div>
-            </div>
-            {mode === 'paste' ? (
-                <>
-                    <p className="hint">Paste an Arena “Export to clipboard” deck list.</p>
-                    <textarea
-                        className="input"
-                        rows={10}
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
-                        placeholder="Deck&#10;4 Lightning Bolt&#10;…"
-                        autoFocus
-                    />
-                    <input className="input" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
-                </>
-            ) : (
-                <>
-                    <p className="hint">
-                        Reads your Arena library from the game&apos;s log so you can <strong>pick which decks to import</strong>.
-                        In Arena, enable <strong>Options → Account → Detailed Logs (Plugin Support)</strong>, restart the game, then pick
-                        {' '}<code>Player.log</code>. Only the deck lists leave your browser. Any size log is fine.
-                        Card names are looked up on Scryfall in small batches (cached after the first time).
-                    </p>
-                    <div className="field">
-                        <label htmlFor="mtga-import-file">Player.log</label>
-                        <input
-                            id="mtga-import-file"
-                            className="input"
-                            type="file"
-                            accept=".log,.txt,text/plain"
-                            onChange={(event) => { void scanLogFile(event.target.files?.[0]); }}
-                        />
+            <div className="attachment-drop-zone" {...drop.dropProps}>
+                {drop.indicator}
+                <h2>Import Arena decks</h2>
+                <div className="field">
+                    <label>Source</label>
+                    <div className="segment" role="group" aria-label="Import source">
+                        <button type="button" className={`segment-btn${mode === 'paste' ? ' active' : ''}`}
+                            onClick={() => setMode('paste')}>Paste export</button>
+                        <button type="button" className={`segment-btn${mode === 'log' ? ' active' : ''}`}
+                            onClick={() => setMode('log')}>From Player.log</button>
                     </div>
-                    {logStatus && <div className="hint">{logStatus}</div>}
-                    {previewDecks.length > 0 && (
-                        <div>
-                            <div className="mtga-picker-head">
-                                <label className="mtga-picker-all">
-                                    <input
-                                        type="checkbox"
-                                        checked={allVisibleSelected}
-                                        ref={(el) => {
-                                            if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
-                                        }}
-                                        onChange={(event) => {
-                                            const on = event.target.checked;
-                                            setSelected((prev) => {
-                                                const next = new Set(prev);
-                                                for (const deck of visible) {
-                                                    if (on) next.add(deck.key);
-                                                    else next.delete(deck.key);
-                                                }
-                                                return next;
-                                            });
-                                        }}
-                                    />
-                                    <span>Select all</span>
-                                </label>
-                                <span className="hint-inline">{selected.size} of {previewDecks.length} selected</span>
-                            </div>
+                </div>
+                {mode === 'paste' ? (
+                    <>
+                        <p className="hint">Paste an Arena “Export to clipboard” deck list.</p>
+                        <textarea
+                            className="input"
+                            rows={10}
+                            value={text}
+                            onChange={(e) => setText(e.target.value)}
+                            placeholder="Deck&#10;4 Lightning Bolt&#10;…"
+                            autoFocus
+                        />
+                        <input className="input" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+                    </>
+                ) : (
+                    <>
+                        <p className="hint">
+                            Reads your Arena library from the game&apos;s log so you can <strong>pick which decks to import</strong>.
+                            In Arena, enable <strong>Options → Account → Detailed Logs (Plugin Support)</strong>, restart the game, then pick
+                            {' '}<code>Player.log</code>. Only the deck lists leave your browser. Any size log is fine.
+                            Card names are looked up on Scryfall in small batches (cached after the first time).
+                        </p>
+                        <div className="field">
+                            <label htmlFor="mtga-import-file">Player.log</label>
                             <input
+                                id="mtga-import-file"
                                 className="input"
-                                type="search"
-                                placeholder="Filter decks…"
-                                value={filter}
-                                onChange={(e) => setFilter(e.target.value)}
-                                autoComplete="off"
+                                type="file"
+                                accept=".log,.txt,text/plain"
+                                onChange={(event) => { void scanLogFile(event.target.files?.[0]); }}
                             />
-                            <div className="mtga-picker-list" role="group" aria-label="Decks in this log">
-                                {visible.map((deck) => (
-                                    <label key={deck.key} className="mtga-picker-row">
+                        </div>
+                        {logStatus && <div className="hint">{logStatus}</div>}
+                        {previewDecks.length > 0 && (
+                            <div>
+                                <div className="mtga-picker-head">
+                                    <label className="mtga-picker-all">
                                         <input
                                             type="checkbox"
-                                            checked={selected.has(deck.key)}
+                                            checked={allVisibleSelected}
+                                            ref={(el) => {
+                                                if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                                            }}
                                             onChange={(event) => {
+                                                const on = event.target.checked;
                                                 setSelected((prev) => {
                                                     const next = new Set(prev);
-                                                    if (event.target.checked) next.add(deck.key);
-                                                    else next.delete(deck.key);
+                                                    for (const deck of visible) {
+                                                        if (on) next.add(deck.key);
+                                                        else next.delete(deck.key);
+                                                    }
                                                     return next;
                                                 });
                                             }}
                                         />
-                                        <span className="row-body">
-                                            <strong>{deck.name || 'Untitled deck'}</strong>
-                                            {deck.format ? <span className="badge">{deck.format}</span> : null}
-                                            <div className="row-meta">{countsLabel(deck)} · {deck.uniqueCards} unique cards</div>
-                                        </span>
+                                        <span>Select all</span>
                                     </label>
-                                ))}
+                                    <span className="hint-inline">{selected.size} of {previewDecks.length} selected</span>
+                                </div>
+                                <input
+                                    className="input"
+                                    type="search"
+                                    placeholder="Filter decks…"
+                                    value={filter}
+                                    onChange={(e) => setFilter(e.target.value)}
+                                    autoComplete="off"
+                                />
+                                <div className="mtga-picker-list" role="group" aria-label="Decks in this log">
+                                    {visible.map((deck) => (
+                                        <label key={deck.key} className="mtga-picker-row">
+                                            <input
+                                                type="checkbox"
+                                                checked={selected.has(deck.key)}
+                                                onChange={(event) => {
+                                                    setSelected((prev) => {
+                                                        const next = new Set(prev);
+                                                        if (event.target.checked) next.add(deck.key);
+                                                        else next.delete(deck.key);
+                                                        return next;
+                                                    });
+                                                }}
+                                            />
+                                            <span className="row-body">
+                                                <strong>{deck.name || 'Untitled deck'}</strong>
+                                                {deck.format ? <span className="badge">{deck.format}</span> : null}
+                                                <div className="row-meta">{countsLabel(deck)} · {deck.uniqueCards} unique cards</div>
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    )}
-                </>
-            )}
-            <select className="select" value={folderId} onChange={(e) => setFolderId(e.target.value)} aria-label="Folder">
-                <option value="">Unfiled</option>
-                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-            </select>
-            <div className="modal-actions">
-                <button type="button" className="btn" onClick={onClose}>Cancel</button>
-                <button type="button" className="btn primary" disabled={busy} onClick={() => void submit()}>
-                    {busy ? busyLabel : 'Import'}
-                </button>
+                        )}
+                    </>
+                )}
+                <select className="select" value={folderId} onChange={(e) => setFolderId(e.target.value)} aria-label="Folder">
+                    <option value="">Unfiled</option>
+                    {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                </select>
+                <div className="modal-actions">
+                    <button type="button" className="btn" onClick={onClose}>Cancel</button>
+                    <button type="button" className="btn primary" disabled={busy} onClick={() => void submit()}>
+                        {busy ? busyLabel : 'Import'}
+                    </button>
+                </div>
             </div>
         </Modal>
     );

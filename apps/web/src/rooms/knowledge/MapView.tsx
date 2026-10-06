@@ -1,3 +1,5 @@
+import { useAttachmentDrop } from '../../hooks/useAttachmentDrop';
+import type { AttachmentDrop } from '../../lib/attachmentDrop';
 import { useCallback, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -84,7 +86,7 @@ export function MapView() {
             )}
             {mode === 'server' && graphAvailable
                 ? <ServerGraph scopeId={scopeId} scopeName={scope?.name || 'this server'} linkByTag={linkByTag} onLinkByTag={changeLinkByTag} />
-                : <PersonalMap scopeId={scopeId} view={view} onView={setView} linkByTag={linkByTag} onLinkByTag={changeLinkByTag} />}
+                : <PersonalMap key={scopeId} scopeId={scopeId} view={view} onView={setView} linkByTag={linkByTag} onLinkByTag={changeLinkByTag} />}
         </div>
     );
 }
@@ -104,6 +106,8 @@ function PersonalMap({
     const [deleting, setDeleting] = useState<UserNote | null>(null);
     const [selectId, setSelectId] = useState<string | number | null>(null);
     const [editorNote, setEditorNote] = useState<UserNote | null>(null);
+    const [initialDrop, setInitialDrop] = useState<AttachmentDrop | null>(null);
+    const drop = useAttachmentDrop({ label: 'Drop to create a note on the map', disabled: Boolean(editorNote || initialDrop), onDrop: payload => { setEditorNote(null); setInitialDrop(payload); } });
     const [q, setQ] = useState('');
     const [slicers, setSlicers] = useState<SlicerSelection>(EMPTY_SLICERS);
 
@@ -142,7 +146,8 @@ function PersonalMap({
     const everything = curation ? curation.saved + curation.memory + curation.unclassified : null;
 
     return (
-        <div className="mtab mtab-graph">
+        <div className="mtab mtab-graph attachment-drop-zone" {...drop.dropProps}>
+            {drop.indicator}
             <div className="notes-chips map-projection" role="group" aria-label="Which notes to map" data-tour="knowledge-map-projection">
                 <button
                     type="button"
@@ -228,13 +233,15 @@ function PersonalMap({
                     </div>
                 </>
             )}
-            {editorNote && (
+            {(editorNote || initialDrop) && (
                 <NoteEditor
                     scope={scopeId}
                     note={editorNote}
-                    onClose={() => setEditorNote(null)}
+                    initialDrop={initialDrop || undefined}
+                    onClose={() => { setEditorNote(null); setInitialDrop(null); }}
                     onSaved={() => {
                         setEditorNote(null);
+                        setInitialDrop(null);
                         setSelectedNode(null);
                         invalidate();
                     }}

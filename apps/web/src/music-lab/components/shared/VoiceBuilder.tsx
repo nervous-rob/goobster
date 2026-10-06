@@ -1,3 +1,4 @@
+import { useAttachmentDrop } from '../../../hooks/useAttachmentDrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceLibrary } from '@music-lab/hooks/useVoiceLibrary';
 import { makeVoiceId, type VoiceOsc, type VoicePreset } from '@music-lab/lib/voiceData';
@@ -157,6 +158,12 @@ export function VoiceBuilder({ idPrefix }: VoiceBuilderProps) {
       setSampleError('Could not decode that file. Use a .wav or .mp3 clip.');
     }
   }, []);
+
+  const drop = useAttachmentDrop({ label: 'Drop a WAV or MP3 sample', disabled: saving || micRecording, onDrop: async payload => {
+    if (payload.files.length !== 1 || payload.links.length || !/\.(wav|mp3)$/i.test(payload.files[0].name)) throw new Error('Drop one WAV or MP3 audio file.');
+    setTab('sample');
+    await handleFile(payload.files[0]);
+  } });
 
   // --- Mic recording (capped at 10s, feeds the same trim/save pipeline) ---
 
@@ -372,7 +379,8 @@ export function VoiceBuilder({ idPrefix }: VoiceBuilderProps) {
   );
 
   return (
-    <div className="re-panel re-stack vb-panel">
+    <div className="re-panel re-stack vb-panel attachment-drop-zone" {...drop.dropProps}>
+      {drop.indicator}
       <div className="re-panel-head">
         <div>
           <h3>Voice Builder</h3>

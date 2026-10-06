@@ -1,3 +1,4 @@
+import { Markdown } from '../../components/Markdown';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -170,7 +171,7 @@ export function NodeDetail({
                 {editable ? <> · <CurationBadge curation={node.curation} /></> : null}
             </div>
             <div className="gd-label">{node.label}</div>
-            {node.content ? <div className="gd-content">{node.content}</div> : null}
+            {node.content ? <div className="gd-content"><Markdown source={node.content} /></div> : null}
             {node.type === 'tag' && node.parentTag ? (
                 <div className="gd-content">Under {node.parentTag}</div>
             ) : null}

@@ -44,10 +44,15 @@ function renderInline(text) {
         return `\uE000${codeSpans.length - 1}\uE000`;
     });
 
+    const links = [];
     text = text
-        // [text](http url) - http(s) only, new tab
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-            '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        // HTTP(S), plus the exact owner-authenticated note attachment route.
+        // CommonMark <destinations> support encoded spaces in uploaded names.
+        .replace(/\[([^\]]+)\]\((?:&lt;)?((?:https?:\/\/[^\s)]+?)|(?:\/api\/app\/note-attachments\/[0-9a-f]{32}-[a-zA-Z0-9%._-]+))(?:&gt;)?\)/g,
+            (_, label, url) => {
+                links.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+                return `\uE003${links.length - 1}\uE003`;
+            })
         // bare URLs
         .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,
             '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>')
@@ -56,7 +61,8 @@ function renderInline(text) {
         .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
         .replace(/~~([^~]+)~~/g, '<del>$1</del>');
 
-    return text.replace(/\uE000(\d+)\uE000/g, (_, i) => codeSpans[Number(i)]);
+    return text.replace(/\uE003(\d+)\uE003/g, (_, i) => links[Number(i)])
+        .replace(/\uE000(\d+)\uE000/g, (_, i) => codeSpans[Number(i)]);
 }
 
 const BULLET_RE = /^(\s*)[-*+]\s+(.*)$/;

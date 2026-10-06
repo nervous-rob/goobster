@@ -1,3 +1,4 @@
+import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
 import { accountFetch } from '../lib/browserAccount';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
@@ -80,6 +81,23 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
     const [editConflict, setEditConflict] = useState(false);
     const [diffAgainst, setDiffAgainst] = useState<number | ''>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const uploadingRef = useRef(false);
+    const [uploading, setUploading] = useState(false);
+    const uploadDir = selected?.root === 'workspace'
+        ? selected.kind === 'directory' ? selected.path : selected.path.split('/').slice(0, -1).join('/')
+        : '';
+    const drop = useAttachmentDrop({
+        label: `Drop files into workspace/${uploadDir}`,
+        disabled: uploading,
+        resetKey: `${ownerId}:${slug}:${uploadDir}`,
+        onDrop: async payload => {
+            const shortcuts = payload.links.map((link, index) => new File(
+                [`[InternetShortcut]\r\nURL=${link.url}\r\n`],
+                `${link.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80)}-${index + 1}.url`, { type: 'text/plain' }
+            ));
+            await uploadFiles([...payload.files, ...shortcuts]);
+        }
+    });
 
     const assets = useQuery({
         queryKey: keys.projectAssets(slug, ownerId),
@@ -235,22 +253,35 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
         }
     }
 
-    async function uploadFiles(files: FileList | null) {
-        if (!files?.length) return;
-        const dir = selected?.root === 'workspace' && selected.kind === 'directory'
-            ? selected.path
-            : '';
+    async function uploadFiles(files: FileList | File[] | null) {
+        if (!files?.length || uploadingRef.current) return;
+        const batch = Array.from(files); // FileList becomes empty when the input is reset.
+        uploadingRef.current = true;
+        setUploading(true);
+        const dir = uploadDir;
+        let count = 0;
+        const errors: string[] = [];
         try {
-            for (const file of [...files]) {
-                const dest = dir ? `${dir}/${file.name}` : file.name;
-                await api.putProjectContent(slug, dest, file, ownerId);
+            const listing = await api.projectFiles(slug, dir, ownerId) as { entries?: WsEntry[] };
+            const existing = new Set((listing.entries || []).map(entry => entry.name));
+            for (const file of batch) {
+                try {
+                    const dest = dir ? `${dir}/${file.name}` : file.name;
+                    // Both picker and drop ask before replacing a workspace file.
+                    if (existing.has(file.name)
+                        && !await confirm(`Replace workspace/${dest}?`)) continue;
+                    await api.putProjectContent(slug, dest, file, ownerId);
+                    count++;
+                    existing.add(file.name);
+                } catch (error) { errors.push(`${file.name}: ${(error as Error).message}`); }
             }
-            toast(`Uploaded ${files.length} file(s).`);
-            await loadWorkspace(dir);
-            onChanged();
-        } catch (error) {
-            toast((error as Error).message, true);
-        }
+            if (count) {
+                await loadWorkspace(dir);
+                onChanged();
+            }
+            toast([`Uploaded ${count} file(s) to workspace/${dir}.`, ...errors].join(' '), errors.length > 0);
+        } catch (error) { toast((error as Error).message, true); }
+        finally { uploadingRef.current = false; setUploading(false); }
     }
 
     const headSource = draft ?? assetDetail.data?.source ?? '';
@@ -286,7 +317,8 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
     }
 
     return (
-        <div className="obs-explorer">
+        <div className="obs-explorer attachment-drop-zone" {...drop.dropProps}>
+            {drop.indicator}
             <aside className="obs-tree">
                 <div className="obs-tree-root">assets/</div>
                 {assets.isPending && <div className="hint">Loading assets…</div>}
@@ -318,7 +350,8 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                 <div className="obs-tree-root">workspace/</div>
                 {renderWorkspaceNodes('', 1)}
                 <div className="obs-tree-actions">
-                    <button type="button" className="btn" onClick={() => fileInputRef.current?.click()}>⬆ Upload</button>
+                    <p className="hint">Drop files here to upload into workspace/{uploadDir}. Web links become .url shortcut files.</p>
+                    <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload</button>
                     <input
                         ref={fileInputRef}
                         type="file"
@@ -410,7 +443,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                     <div className="obs-explorer-crumb">
                         <strong>workspace/{selected.path || ''}</strong>
                         <span className="hint">Directory</span>
-                        <button type="button" className="btn" onClick={() => fileInputRef.current?.click()}>⬆ Upload here</button>
+                        <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload here</button>
                     </div>
                 )}
                 {selected?.root === 'workspace' && selected.kind === 'file' && (

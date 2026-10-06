@@ -50,6 +50,15 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
 }
 
 export const api = {
+    uploadNoteAttachment: async (file: File): Promise<{ url: string; name: string }> => {
+        const response = await accountFetch(`/api/app/note-attachments?name=${encodeURIComponent(file.name)}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file
+        });
+        const body = await response.json();
+        if (!response.ok) throw new ApiError(response.status, body.error?.code || 'UPLOAD_FAILED', body.error?.message || 'Upload failed.');
+        return body;
+    },
+    deleteNoteAttachment: (url: string) => request(url, { method: 'DELETE' }),
     config: () => request<AppConfig>('/api/app/config'),
     me: () => request<Me>('/api/app/me'),
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),

@@ -41,6 +41,7 @@ const { mountTutorials } = require('./routes/tutorials');
 const { mountStudio } = require('./routes/studio');
 const { mountPush } = require('./routes/push');
 const { mountMcp } = require('./routes/mcp');
+const { mountNoteAttachments } = require('./routes/noteAttachments');
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -66,6 +67,7 @@ function createWebAppApp(ctx) {
     mountVoiceTasks(app, ctx, helpers);
     mountProjects(app, ctx, helpers);
     mountSpitball(app, ctx, helpers);
+    mountNoteAttachments(app, ctx, helpers);
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
