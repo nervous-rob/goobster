@@ -19,7 +19,7 @@ no commands, tools, routes, scheduled jobs, event handlers or navigation.
 | Term | Meaning |
 |---|---|
 | Catalog | `packages/core/features/catalog.js`: the static description of every feature and API key. |
-| Feature state | `data/features.json`: per-feature `installed`, `configured`, `active`, `pending`. |
+| Feature state | `data/features.json` (`documentation/feature_state.md`): per feature the stored `installed`, `active` and `pendingActive`; `configured` and `pending` are derived on read. Without the file, the effective legacy switches decide. |
 | Manager | `apps/manager`: the management process (setup engine, API, supervisor, maintenance operations). |
 | Wizard | The React setup and maintenance UI served by the manager, sharing components with the portal's operator pages. |
 | Bootstrapper | The per-platform native installer that unpacks the payload and the Node runtime, registers the manager service and opens the wizard. |
@@ -74,7 +74,7 @@ Status (issues #316 - #322 under epic #315):
 | Issue | Scope | State |
 |---|---|---|
 | #316 | Audits E1/T1/R1/S1/M1, ownership inventory, ADR 0013 accepted | Inventory module `packages/core/features/inventory.js`, spec `tests/featureInventory.test.js`, `documentation/feature_inventory.md` (PR pending review) |
-| #317 | `catalog.js` + `featureState.js` contract | Not started |
+| #317 | `catalog.js` + `featureState.js` contract | Catalog `packages/core/features/catalog.js` (+ `descriptors/`), resolver `featureState.js`, `legacyResolver.js` and `gate.js`; specs `tests/featureCatalog.test.js`, `tests/featureState.test.js`; contract in `documentation/feature_state.md`. Nothing consumes the predicate yet (PR pending review) |
 | #318 | Command loader / deploy, `coreRuntime.step()`, `messageCreate` and interaction gating | Not started |
 | #319 | AI tool registry, `runAgentLoop`, MCP gating | Not started |
 | #320 | HTTP / WS / Activity / internal route gating | Not started |
