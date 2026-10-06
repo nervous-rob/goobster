@@ -117,6 +117,7 @@ const GROUPS = [
             'inboxAsk',
             'mcpServer',
             'webAppApi',
+            'noteAttachments',
             'webAppletService',
             'webChatBranchShare',
             'webChatService',

@@ -686,6 +686,17 @@ body.applet-open { overflow: hidden; }
 .composer-model-chip .model-chip-gear { font-size: 15px; }
 .composer-hint { text-align: center; font-size: 11.5px; margin-top: 7px; }
 
+.attachment-drop-zone { position: relative; }
+.attachment-drop-indicator {
+  position: absolute; inset: 8px; z-index: 50; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--accent); border-radius: 12px;
+  background: color-mix(in srgb, var(--bg, #141823) 90%, transparent);
+  color: var(--text); font-weight: 600; text-align: center; padding: 20px;
+}
+.note-attachments { margin: 12px 0; }
+.note-attachments .pending-file-chip { display: inline-flex; margin: 4px; }
+.attachment-hint { margin: 4px 0; text-align: center; }
 /* pending attachments (images + text files) */
 .image-tray { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 2px 8px; align-items: center; }
 .pending-file-chip {

@@ -13,7 +13,7 @@ export function NotesView() {
     const [view, setView] = useState<CurationView>('knowledge');
     return (
         <div className="pane-body" data-tour="knowledge-notes">
-            <NotesTab scope={scopeId} view={view} onView={setView} />
+            <NotesTab key={scopeId} scope={scopeId} view={view} onView={setView} />
         </div>
     );
 }

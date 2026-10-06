@@ -1,3 +1,4 @@
+import { useAttachmentDrop } from '../../../hooks/useAttachmentDrop';
 import { Link } from '@tanstack/react-router';
 import { conservatoryPath } from '@music-lab/lib/paths';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -812,6 +813,11 @@ export function StudioEngine() {
     },
     [adoptProject, showNotice]
   );
+
+  const drop = useAttachmentDrop({ label: 'Drop a Studio song JSON file', onDrop: async payload => {
+    if (payload.files.length !== 1 || payload.links.length || !/\.json$/i.test(payload.files[0].name)) throw new Error('Drop one exported Studio song JSON file.');
+    await handleImportFile(payload.files[0]);
+  } });
 
   const handleSwitchProject = useCallback(
     (id: string) => {
@@ -1704,7 +1710,8 @@ export function StudioEngine() {
   // --- Opening a shared song: the first snapshot is still on its way ---
   if (!project && isShared && sharedSession) {
     return (
-      <section className="rhythm-engine stage-engine studio-engine">
+      <section className="rhythm-engine stage-engine studio-engine attachment-drop-zone" {...drop.dropProps}>
+        {drop.indicator}
         <header className="re-header">
           <div className="re-brand">
             <span className="re-brand-icon">
@@ -1742,7 +1749,8 @@ export function StudioEngine() {
   // --- Empty state ---
   if (!project) {
     return (
-      <section className="rhythm-engine stage-engine studio-engine">
+      <section className="rhythm-engine stage-engine studio-engine attachment-drop-zone" {...drop.dropProps}>
+        {drop.indicator}
         <header className="re-header">
           <div className="re-brand">
             <span className="re-brand-icon">
@@ -1798,7 +1806,8 @@ export function StudioEngine() {
   }
 
   return (
-    <section className="rhythm-engine stage-engine studio-engine">
+    <section className="rhythm-engine stage-engine studio-engine attachment-drop-zone" {...drop.dropProps}>
+      {drop.indicator}
       <header className="re-header">
         <div className="re-brand">
           <span className="re-brand-icon">

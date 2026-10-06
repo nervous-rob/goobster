@@ -101,3 +101,13 @@ describe('the rest of the renderer is unchanged', () => {
         expect(render(null)).toBe('');
     });
 });
+
+test('note attachment links render without enabling arbitrary relative or executable URLs', () => {
+    const url = `/api/app/note-attachments/${'a'.repeat(32)}-my__file__%20report.pdf`;
+    const html = render(`[Report](<${url}>)`);
+    expect(html).toContain(`href="${url}"`);
+    expect(html).toContain('>Report</a>');
+    expect(html).not.toContain('<strong>');
+    expect(render('[x](javascript:alert(1)) [x](/api/app/auth/logout) [x](//evil.test)')).not.toContain('<a ');
+    expect(render('[quoted](<https://example.org/a?x=%22&y=2>)')).toContain('href="https://example.org/a?x=%22&amp;y=2"');
+});

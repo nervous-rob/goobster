@@ -1,3 +1,4 @@
+import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
@@ -53,7 +54,7 @@ const MAX_TEXT_FILE_BYTES = 200 * 1024;
 
 type SearchHit = { conversationId: number; messageId: number; title?: string; snippet: string; role?: string };
 type PendingImage = { dataUrl: string; name: string };
-type PendingFile = { name: string; content: string };
+type PendingFile = { name: string; content?: string; contentBase64?: string };
 type ShareState = { shared?: boolean; url?: string; createdAt?: string };
 type TurnStatus = {
     inFlight: boolean;
@@ -123,6 +124,19 @@ export function StudyRoom() {
     const [hits, setHits] = useState<SearchHit[]>([]);
     const [images, setImages] = useState<PendingImage[]>([]);
     const [files, setFiles] = useState<PendingFile[]>([]);
+    const readingFiles = useRef(false);
+    const [preparingFiles, setPreparingFiles] = useState(false);
+    const attachmentScope = useRef('');
+    attachmentScope.current = `${activeId}:${incognito}`;
+    const drop = useAttachmentDrop({
+        label: 'Drop files, photos or links into Chat',
+        disabled: preparingFiles,
+        resetKey: `${activeId}:${incognito}`,
+        onDrop: async payload => {
+            if (payload.links.length) setComposer(prev => [prev, ...payload.links.map(link => link.url)].filter(Boolean).join('\n'));
+            await addFiles(payload.files);
+        }
+    });
     const turn = useChatTurn();
     const [saveTarget, setSaveTarget] = useState<SaveToProjectTarget | null>(null);
     const [noteTarget, setNoteTarget] = useState<{ conversationId: number; messageId: number; content: string } | null>(null);
@@ -507,26 +521,47 @@ export function StudyRoom() {
     }
 
     async function addFiles(list: FileList | File[]) {
-        for (const file of Array.from(list)) {
-            if (file.type.startsWith('image/')) {
-                if (images.length >= MAX_ATTACH) {
-                    toast(`At most ${MAX_ATTACH} images per message.`, true);
-                    continue;
-                }
+        if (readingFiles.current) { toast('Wait for attachments to finish loading.', true); return; }
+        readingFiles.current = true;
+        setPreparingFiles(true);
+        const scope = attachmentScope.current;
+        let imageCount = images.length;
+        let fileCount = files.length;
+        let textLength = files.reduce((total, file) => total + (file.content?.length || 0), 0);
+        try {
+            for (const file of Array.from(list)) {
                 try {
-                    const dataUrl = await fileToDataUrl(file);
-                    setImages((prev) => [...prev, { dataUrl, name: file.name }]);
-                } catch (error) {
-                    toast((error as Error).message, true);
-                }
-            } else {
-                try {
-                    const content = await fileToText(file);
-                    setFiles((prev) => [...prev, { name: file.name, content }]);
-                } catch (error) {
-                    toast((error as Error).message, true);
-                }
+                    if (/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+                        if (imageCount >= MAX_ATTACH) throw new Error(`At most ${MAX_ATTACH} images per message.`);
+                        if (file.size > 6 * 1024 * 1024 - 100) throw new Error(`“${file.name}” is too large (max 6 MB per image).`);
+                        const dataUrl = await fileToDataUrl(file);
+                        if (scope !== attachmentScope.current) return;
+                        imageCount++;
+                        setImages(prev => [...prev, { dataUrl, name: file.name }]);
+                    } else {
+                        if (fileCount >= MAX_ATTACH) throw new Error(`At most ${MAX_ATTACH} documents per message.`);
+                        let pending: PendingFile;
+                        if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+                            if (file.size > 8 * 1024 * 1024) throw new Error(`“${file.name}” is too large (max 8 MB per PDF).`);
+                            pending = { name: file.name, contentBase64: (await fileToDataUrl(file)).split(',')[1] };
+                        } else {
+                            const isText = file.type.startsWith('text/') || /\.(txt|md|markdown|csv|tsv|json|jsonl|xml|yaml|yml|toml|ini|log|js|jsx|ts|tsx|py|sql|sh|css|html|rs|go|java|c|cpp|h)$/i.test(file.name);
+                            if (!isText) throw new Error(`“${file.name}” is not a supported chat document. Attach images, PDFs, text or code; store other files in Notes or a project.`);
+                            const content = await fileToText(file);
+                            if (content.includes('\0')) throw new Error(`“${file.name}” appears to be binary, not text.`);
+                            if (content.length > 50000 || textLength + content.length > 120000) throw new Error('Text attachments allow 50,000 characters per file and 120,000 total.');
+                            textLength += content.length;
+                            pending = { name: file.name, content };
+                        }
+                        if (scope !== attachmentScope.current) return;
+                        fileCount++;
+                        setFiles(prev => [...prev, pending]);
+                    }
+                } catch (error) { toast((error as Error).message, true); }
             }
+        } finally {
+            readingFiles.current = false;
+            setPreparingFiles(false);
         }
     }
 
@@ -569,6 +604,7 @@ export function StudyRoom() {
     }
 
     async function sendMessage(forcedText: string | null = null) {
+        if (readingFiles.current || drop.busy) return;
         const text = (forcedText ?? composer).trim();
         if (!text) return;
         if (!navigator.onLine) {
@@ -780,7 +816,8 @@ export function StudyRoom() {
                     )}
                 </div>
             </aside>
-            <div className="study-main">
+            <div className="study-main attachment-drop-zone" {...drop.dropProps}>
+                {drop.indicator}
                 <header className="chat-header">
                     <div className="title-row">
                         <MenuButton />
@@ -891,13 +928,13 @@ export function StudyRoom() {
                             {images.map((image, index) => (
                                 <div key={`${image.name}-${index}`} className="image-thumb">
                                     <img src={image.dataUrl} alt={image.name} />
-                                    <button type="button" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}>✕</button>
+                                    <button type="button" disabled={preparingFiles || drop.busy} onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}>✕</button>
                                 </div>
                             ))}
                             {files.map((file, index) => (
                                 <div key={`${file.name}-${index}`} className="pending-file-chip">
                                     <span>📄 {file.name}</span>
-                                    <button type="button" onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}>✕</button>
+                                    <button type="button" disabled={preparingFiles || drop.busy} onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}>✕</button>
                                 </div>
                             ))}
                         </div>
@@ -923,7 +960,7 @@ export function StudyRoom() {
                     )}
                     <form className="composer composer--tools" onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}>
                         <div className="composer-actions">
-                            <button type="button" className="icon-action attach attach-plus" title="Attach files" aria-label="Attach files" onClick={() => fileRef.current?.click()}>
+                            <button type="button" className="icon-action attach attach-plus" title="Attach files" aria-label="Attach files" disabled={preparingFiles || drop.busy} onClick={() => fileRef.current?.click()}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                     <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                                 </svg>
@@ -937,7 +974,7 @@ export function StudyRoom() {
                                 type="file"
                                 multiple
                                 className="hidden"
-                                accept="image/png,image/jpeg,image/webp,image/gif,text/*,.txt,.md,.json,.csv"
+                                accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.txt,.md,.json,.csv,.pdf,.yaml,.yml,.js,.ts,.py,.sql"
                                 onChange={(event: ChangeEvent<HTMLInputElement>) => {
                                     if (event.target.files) void addFiles(event.target.files);
                                     event.target.value = '';
@@ -986,10 +1023,11 @@ export function StudyRoom() {
                                 ◼
                             </button>
                         )}
-                        <button type="submit" className="btn primary send-btn" aria-label={liveTurn ? 'Queue message' : 'Send'} disabled={!online}>
+                        <button type="submit" className="btn primary send-btn" aria-label={liveTurn ? 'Queue message' : 'Send'} disabled={!online || preparingFiles || drop.busy}>
                             ➤
                         </button>
                     </form>
+                    <div className="hint attachment-hint">Drop images, PDFs, text files or web links anywhere in this chat.</div>
                     <div className="composer-hint hint">{!online ? OFFLINE_HINT : incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : (me.discord?.enabled === false ? LOCAL_HINT : DEFAULT_HINT))}</div>
                 </div>
             </div>

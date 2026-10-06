@@ -391,3 +391,61 @@ Incognito does not offer `rememberFact`, `saveArtifact`, `findImages`, or
 `fetchWebFile`. The tool registry rejects stale calls to those tools before
 network requests or storage writes. Read-only lookup remains available.
 Use a regular chat to save memories or fetch files into Spitball.
+
+## Drag-and-drop attachments
+
+Drop files directly from a desktop file manager or another browser window.
+A highlighted target says where the files will go. The file-picker buttons
+remain available for keyboard and touch use.
+
+| Target | Result |
+| --- | --- |
+| Chat transcript or composer | Stages images, PDFs and text/code files beside the draft. You still press Send. |
+| New/edit note | Stages files and links in the editor. Files upload when you save; attachment links count toward the note's 1,000-character limit. |
+| Knowledge → Notes or personal Map | Opens a new note draft with the dropped files. Review the title and tags, then save. Dropping on the graph never changes an existing node or its connections. |
+| Project → Files | Uploads into the selected workspace folder, or the selected file's parent. With no workspace selection, uses the workspace root. Asks before replacing a listed file. |
+| Arena deck import | Reads one Player.log/text log through the existing deck preview. |
+| Voice Builder | Opens one WAV/MP3 in the sample editor. |
+| Song Studio | Imports one exported song JSON file through the existing parser. |
+
+Browser images and direct file links are copied when the remote site permits
+browser access. Copying uses no cookies, has an 8 MB cap and a 10-second timeout,
+and never proxies arbitrary URLs through the Goobster server. When copying is
+blocked or the file is too large, a visible notice explains that the source
+link was kept. Ordinary page links stay links. Project link-only drops become
+`.url` shortcut files in the target folder. Sign-in-only files should be saved
+locally and then dropped into Goobster.
+
+Chat accepts up to four PNG/JPEG/WebP/GIF images (~6 MB each) and four documents.
+PDFs may be up to 8 MB and use the existing server PDF text extractor; scanned
+PDFs without text receive its normal extraction error. Text files are bounded
+at 200 KB before reading, 50,000 characters each and 120,000 characters total.
+Other binary formats can be stored in Notes or project files; Chat explains
+unsupported formats instead of decoding binary bytes as text. Picker, Share
+Target and drop paths share this validation. Incognito attachments use the
+existing transient chat path and do not use the note upload store.
+
+Notes allow four new files (8 MB each) and four new links per save. Note files
+stay private to the uploading account, including when the note text is copied
+into a shared project or discussion. A copied link does not grant file access.
+The authenticated `/api/app/note-attachments` endpoints store files beneath
+`data/web-uploads/<userId>/note-attachments`, with generated opaque filenames,
+a 256 MB/1,000-file account cap, and no chat-file-registry expiry. Passive media
+may open inline; active content such as HTML and SVG downloads with `nosniff`
+and a sandbox CSP. Account export includes owned files referenced by notes;
+backup and full account erasure include the upload directory. Removing a link
+or deleting a note does not erase the original uploaded file, since another
+note or exported link may still refer to it. Cancelled drafts before Save write
+nothing; failed partial uploads are reused on retry and cleaned up when the
+editor closes before a note-save request. Files are retained if that request's
+outcome is uncertain, so a lost response cannot erase an attachment just saved.
+
+Folders are rejected with an explanation; drop their files instead. Ordinary
+text selection and in-app graph/timeline gestures stay native. Nested editors
+consume their own drops once. Dropping a local file outside a supported target
+cannot navigate away from the app. Remote drop work is cancelled when its
+screen or destination changes.
+
+Regression coverage: `e2e/attachmentDrop.spec.js`,
+`tests/noteAttachments.test.js`, `tests/markdownRenderer.test.js` and
+`tests/accountExport.test.js`.

@@ -193,6 +193,16 @@ async function buildArchive({ userId, data, settings, destination, signal, limit
             const publication = matching('knowledge_transfers', 'copyNodeId', note.id)[0];
             const edges = [...new Set([...matching('kg_edges', 'sourceId', note.id), ...matching('kg_edges', 'targetId', note.id)])];
             let md = `---\n${yaml.stringify({ id: note.id, title: note.label, tags: tags.map(t => t.name), curation: note.curation, source: note.source, scope: note.scopeKey, provenance, publishedBy: publication?.userId || null })}---\n\n# ${note.label}\n\n${note.content || ''}\n`;
+            const noteFiles = require('./noteAttachments');
+            for (const reference of noteFiles.references(note.content)) {
+                const filePath = noteFiles.locate(userId, reference.filename);
+                if (!filePath) {
+                    archive.warnings.push({ reference: `kg_nodes:${note.id}`, reason: 'Note attachment is unavailable to this account.' });
+                    continue;
+                }
+                const copied = await copyAttachment({ path: filePath, name: reference.filename.slice(33) }, `kg_nodes:${note.id}`);
+                if (copied.archivePath) md = md.replaceAll(reference.url, `../${copied.archivePath}`);
+            }
             for (const edge of edges) {
                 const other = matching('kg_nodes', 'id', edge.sourceId === note.id ? edge.targetId : edge.sourceId)[0];
                 md += `\n- ${edge.relation}: [${other.label.replace(/[[\]\\]/g, '')}](./${other.id}.md)\n`;

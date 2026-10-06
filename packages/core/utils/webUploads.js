@@ -64,7 +64,7 @@ function deleteUserUploads(userId) {
     const dir = userUploadDir(userId);
     let count = 0;
     try {
-        count = fs.readdirSync(dir).length;
+        count = countUserUploads(userId);
         fs.rmSync(dir, { recursive: true, force: true });
     } catch {
         // No directory = nothing ever uploaded
@@ -74,8 +74,12 @@ function deleteUserUploads(userId) {
 
 /** Files still on disk for a user (the post-erasure audit). */
 function countUserUploads(userId) {
+    function count(dir) {
+        return fs.readdirSync(dir, { withFileTypes: true }).reduce((total, entry) =>
+            total + (entry.isDirectory() ? count(path.join(dir, entry.name)) : 1), 0);
+    }
     try {
-        return fs.readdirSync(userUploadDir(userId)).length;
+        return count(userUploadDir(userId));
     } catch {
         return 0;
     }

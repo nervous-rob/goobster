@@ -1,3 +1,5 @@
+import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
+import type { AttachmentDrop } from '../lib/attachmentDrop';
 import { FollowedSources } from './FollowedSources';
 import { Modal } from './Modal';
 import { useMemo, useState } from 'react';
@@ -66,7 +68,9 @@ export function NotesTab({
     const [source, setSource] = useState('');
     const [curation, setCuration] = useState<Curation | ''>('');
     const [sort, setSort] = useState<SortKey>('updated');
+    const [initialDrop, setInitialDrop] = useState<AttachmentDrop | undefined>();
     const [editor, setEditor] = useState<UserNote | 'new' | null>(null);
+    const drop = useAttachmentDrop({ label: 'Drop to create a note', disabled: Boolean(editor), onDrop: payload => { setInitialDrop(payload); setEditor('new'); } });
     const [following, setFollowing] = useState<UserNote | null>(null);
     const [deleting, setDeleting] = useState<UserNote | null>(null);
     const [transfer, setTransfer] = useState<{ note: UserNote; target: TransferTarget } | null>(null);
@@ -125,7 +129,8 @@ export function NotesTab({
     }
 
     return (
-        <div className="mtab mtab-notes">
+        <div className="mtab mtab-notes attachment-drop-zone" {...drop.dropProps}>
+            {drop.indicator}
             <div className="notes-bar">
                 <input
                     className="input"
@@ -134,7 +139,7 @@ export function NotesTab({
                     value={q}
                     onChange={(event) => setQ(event.target.value)}
                 />
-                <button type="button" className="btn primary" data-tour="knowledge-new-note" onClick={() => setEditor('new')}>
+                <button type="button" className="btn primary" data-tour="knowledge-new-note" onClick={() => { setInitialDrop(undefined); setEditor('new'); }}>
                     New note
                 </button>
             </div>
@@ -371,11 +376,13 @@ export function NotesTab({
             {following && <Modal wide onClose={() => setFollowing(null)}><div className="modal-body"><button className="btn small" onClick={() => setFollowing(null)}>Close sources</button><h2>{following.label}</h2><FollowedSources topicNodeId={following.id} /></div></Modal>}
             {editor && (
                 <NoteEditor
+                    initialDrop={initialDrop}
                     scope={scope}
                     note={editor === 'new' ? null : editor}
-                    onClose={() => setEditor(null)}
+                    onClose={() => { setEditor(null); setInitialDrop(undefined); }}
                     onSaved={() => {
                         setEditor(null);
+                        setInitialDrop(undefined);
                         invalidateNotes();
                     }}
                 />

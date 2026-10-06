@@ -240,3 +240,24 @@ test('API derives the owner from authentication, rejects foreign downloads and p
         expect((await fetch(`${base}/api/app/settings/exports/${job.id}`, { method: 'DELETE', headers: { Cookie: own, Origin: 'https://evil.example' } })).status).toBe(403);
     } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+
+test('note upload links export the owned bytes and never another account’s file', async () => {
+    const f = await fixture();
+    const attachments = require('@goobster/core/utils/noteAttachments');
+    const own = attachments.save(U, 'note-evidence.txt', Buffer.from('OWNED_NOTE_FILE'));
+    const foreign = attachments.save(V, 'private.txt', Buffer.from('FOREIGN_NOTE_FILE'));
+    await db.run('UPDATE kg_nodes SET content = @content WHERE id = @id', {
+        id: f.note, content: `[Evidence](<${own.url}>)\n[Foreign](<${foreign.url}>)`
+    });
+    const job = await service.request(U);
+    await service.sweep();
+    const ready = (await service.list(U)).exports[0];
+    expect(ready.status).toBe('READY');
+    const files = await unpack(path.join(service.directory({ ...job, userId: U }), 'account.tar.gz'));
+    const evidence = [...files].find(([name, bytes]) => name.startsWith('attachments/') && bytes.toString() === 'OWNED_NOTE_FILE');
+    expect(evidence).toBeTruthy();
+    expect(files.get(`notes/${f.note}.md`).toString()).toContain(`../${evidence[0]}`);
+    expect([...files.values()].some(bytes => bytes.toString() === 'FOREIGN_NOTE_FILE')).toBe(false);
+    expect(JSON.parse(files.get('manifest.json')).warnings).toContainEqual(expect.objectContaining({ reason: 'Note attachment is unavailable to this account.' }));
+});

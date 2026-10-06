@@ -54,6 +54,21 @@ function NavLink({ room, active, count, onClick }: { room: Room; active: boolean
 export function AppShell() {
     const me = useSession();
     const toast = useToast();
+    useEffect(() => {
+        // Unhandled OS files must not navigate away and discard the user's draft.
+        // Target handlers stop propagation, so unrelated in-app/text drags stay native.
+        const over = (event: DragEvent) => {
+            if (Array.from(event.dataTransfer?.types || []).includes('Files')) event.preventDefault();
+        };
+        const drop = (event: DragEvent) => {
+            if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+            event.preventDefault();
+            toast('Drop attachments into Chat, a note, the knowledge map or project files.', true);
+        };
+        window.addEventListener('dragover', over);
+        window.addEventListener('drop', drop);
+        return () => { window.removeEventListener('dragover', over); window.removeEventListener('drop', drop); };
+    }, [toast]);
     const navigate = useNavigate();
     const pathname = useRouterState({ select: (s) => s.location.pathname });
     const [theme, setTheme] = useState<ThemeChoice>(() => getStoredTheme());
