@@ -32,7 +32,7 @@ module.exports = {
         legacy: {
             kind: 'presence',
             semantics: 'presence',
-            note: 'No enabled flag: the API key is the gate (cursorAgentService.isConfigured); the webhook secret only mounts the receiver (config/integrationsConfig.js).'
+            note: 'No enabled flag: the feature is always requested and cursorAgentService.isConfigured reports a missing API key (reported as a warning, never a gate); the webhook secret only mounts the receiver (config/integrationsConfig.js).'
         },
         apiKeys: [
             {

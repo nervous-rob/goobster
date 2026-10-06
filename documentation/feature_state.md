@@ -1,7 +1,7 @@
 ---
 title: Feature state and the feature catalog (installer P1.2)
 kind: reference
-summary: The `data/features.json` file contract, the installed/configured/active/pending states, the exact precedence that decides whether a feature is available, legacy behaviour when the file is absent, environment overrides (`GOOBSTER_FEATURE_<ID>`), structured unavailable reasons, atomic writes with revisions, state-transition examples and the rule that no secret value ever appears in status.
+summary: The `data/features.json` file contract, the installed/configured/active/pending states, the exact precedence that decides whether a feature is available (with `configured` reported as warnings, never as a refusal), legacy behaviour when the file is absent, environment overrides (`GOOBSTER_FEATURE_<ID>`), structured unavailable reasons, atomic writes with revisions, state-transition examples and the rule that no secret value ever appears in status.
 tags: [installer, features, catalog, feature-state, configuration, operations]
 ---
 
@@ -42,7 +42,7 @@ requireSurface('command', 'economy/wheel.js');   // null, or { ok: false, code: 
 | State | Meaning | Where it comes from |
 |---|---|---|
 | installed | The feature's payload is present. Always `true` in Phase 1 (there are no selective payloads yet), but a file may say `false` and it is honoured: an uninstalled feature is never active, whatever the operator or the environment says. | `features.<id>.installed` in the file; `true` without a file. |
-| configured | The keys and dependencies the feature needs exist right now. Derived on every snapshot from env and `config.json`, never persisted, so it cannot go stale. | `apiKeys` marked `required` in the descriptor; the mail provider rule; the half-set VAPID pair; system dependencies when a probe is supplied. |
+| configured | The keys and dependencies the feature needs exist right now. Informational: it is reported (`configured` and `warnings`) but never decides whether the feature is active. Derived on every snapshot from env and `config.json`, never persisted, so it cannot go stale. | `apiKeys` marked `required` in the descriptor; the mail provider rule; the half-set VAPID pair; system dependencies when a probe is supplied. |
 | active | The operator's requested enablement as of the last applied restart (the startup snapshot). | `features.<id>.active` in the file; without a file, the effective legacy switch. |
 | pending | A requested change that has not been applied yet. Never affects the running process. | `features.<id>.pendingActive` in the file, when it differs from `active`. |
 
@@ -55,12 +55,22 @@ A feature is available when every step below passes. `availability(id)` lists
 one reason per failed step, in this order:
 
 1. **installed**: otherwise `NOT_INSTALLED`.
-2. **configured**: otherwise `NOT_CONFIGURED`, with the NAME of each missing key (never a value).
-3. **requested**: `active` in the file (or the legacy value without one); otherwise `DISABLED`.
-4. **environment**: `GOOBSTER_FEATURE_<ID>=0|false|no|off` forces it off; otherwise `ENV_OFF`.
-5. **dependencies**: every feature in `dependsOn` must itself be available; otherwise one `DEPENDENCY_INACTIVE` per dependency, with `dependency` set.
+2. **requested**: `active` in the file (or the legacy value without one); otherwise `DISABLED`. Without a file, a mail or push feature whose legacy switch is derived from its credentials has `detail` naming the derivation (`mail.provider`, `webapp.push.enabled`).
+3. **environment**: `GOOBSTER_FEATURE_<ID>=0|false|no|off` forces it off; otherwise `ENV_OFF`.
+4. **dependencies**: every feature in `dependsOn` must itself be available; otherwise one `DEPENDENCY_INACTIVE` per dependency, with `dependency` set.
 
-Two more codes: `UNKNOWN_FEATURE` (an id the catalog does not know; never
+**configured is reported alongside, never as a refusal.** Missing keys and
+settings come back in a separate `warnings` array, one
+`{ "code": "NOT_CONFIGURED", "detail": "<NAME>" }` per missing key (never a
+value), and `status().features[id].configured` is `false`. They do not affect
+`active`, `reasons` or `unavailable()`. In Phase 1 a missing key therefore
+never hides a surface: an unconfigured integration keeps its commands, tools
+and routes and answers with its own guidance, exactly as before (`/agent`
+says Cursor is not configured, the push routes report `no-keys`, the mail
+routes report the mode). In Phase 2 the manager uses `configured` and
+`warnings` to tell the operator what is missing before it activates a feature.
+
+Two more reason codes: `UNKNOWN_FEATURE` (an id the catalog does not know; never
 thrown) and `STATE_ERROR` (added to an inactive feature while the state file
 is unusable, see below). An available feature has no reasons and an
 unavailable one always has at least one. `core` is always available and
@@ -124,7 +134,7 @@ catalog existed. `requested` is the effective legacy switch of the feature:
 | `gba` | `gbaRun.enabled === true` | `config.json` only |
 | `screenVision` | `screenVision.enabled === true` | `config.json` only |
 | `discordActivity` | `activity.enabled === true` | `config.json` only |
-| `github`, `cursor` | no flag: always requested, because `/github`, `/agent` and their tools exist whether or not a credential is set. `cursor` additionally needs `CURSOR_API_KEY` (a required key); `github` works keyless | `config/integrationsConfig.js` |
+| `github`, `cursor` | no flag: always requested, because `/github`, `/agent` and their tools exist whether or not a credential is set. `cursor` reports a missing `CURSOR_API_KEY` (a required key) as a warning without becoming inactive; `github` works keyless | `config/integrationsConfig.js` |
 | everything else | no switch: always on (`music`, `voice`, `tavern`, `economy`, `exchange`, `gambling`, `knowledge`) | none |
 
 The resolver reuses the config modules' own computed values for `discord`,
@@ -151,7 +161,7 @@ Hard dependencies apply in legacy mode too: `observatory` enabled without
   `freshDefault`: `economy`, `exchange` and `gambling` off, every other feature
   on. "On" is not "configured": `mcp`, `sandbox`, `observatory`,
   `screenVision`, `discordActivity`, `gba` and `cursor` still report
-  `NOT_CONFIGURED` or `DEPENDENCY_INACTIVE` until their keys exist. (Whether GBA
+  `configured: false` with `NOT_CONFIGURED` warnings (or `DEPENDENCY_INACTIVE` reasons) until their keys exist. (Whether GBA
   should be on in the preset is the open question recorded in
   `documentation/feature_inventory.md`.)
 - Both are pure: they return a document and write nothing.
@@ -180,7 +190,14 @@ override can never install a missing payload or satisfy a missing key.
     "gambling": {
       "installed": true, "configured": true, "active": false,
       "pending": true, "requested": false, "pendingActive": true,
-      "reasons": [{ "code": "DISABLED", "detail": "features.json" }]
+      "reasons": [{ "code": "DISABLED", "detail": "features.json" }],
+      "warnings": []
+    },
+    "cursor": {
+      "installed": true, "configured": false, "active": true,
+      "pending": false, "requested": true, "pendingActive": true,
+      "reasons": [],
+      "warnings": [{ "code": "NOT_CONFIGURED", "detail": "CURSOR_API_KEY" }]
     }
   }
 }
@@ -189,12 +206,13 @@ override can never install a missing payload or satisfy a missing key.
 `source` is `none` when there is no usable file (including an invalid one,
 which also sets `error`). `active` is the effective answer, `requested` the
 operator's stored `active`, `pending` whether `pendingActive` differs from it.
-`unavailable()` lists the `availability` of every inactive feature in catalog
+`availability(id)` is `{ id, active, reasons, warnings }`. `unavailable()` lists
+the `availability` of every inactive feature (decided by `reasons` alone) in catalog
 order; #319 uses it for the one-line prompt summary.
 
 ### The secrets rule
 
-Status, `availability`, `unavailable`, errors and logs carry the **names** of
+Status, `availability`, `warnings`, `unavailable`, errors and logs carry the **names** of
 env variables and config keys, never their values. `detail` is a variable name
 (`CURSOR_API_KEY`), a switch name (`mcp.enabled`) or a state code, nothing
 else. A missing key is reported by name; a present key is reported only as
@@ -271,8 +289,9 @@ nothing but log the warning.
 
 **Fresh install.** The installer writes `freshPreset()`; `economy`,
 `exchange` and `gambling` are `DISABLED`, `gambling` would also report
-`DEPENDENCY_INACTIVE` for `economy` while that is off, and `cursor` reports
-`NOT_CONFIGURED` for `CURSOR_API_KEY` until a key is set.
+`DEPENDENCY_INACTIVE` for `economy` while that is off, and `cursor` stays
+active but reports `configured: false` and a `NOT_CONFIGURED` warning for
+`CURSOR_API_KEY` until a key is set.
 
 **A damaged file.** `features.json` contains `{ "version": 2, ... }`: status
 shows `source: "none"` and `error: { "code": "UNSUPPORTED_VERSION", ... }`,
@@ -286,7 +305,7 @@ does not look for binaries on its own, so a host without `ffmpeg` is not
 turned into a different installation by an upgrade. A manager can opt in:
 `createFeatureState({ probes: { systemDependency: createPathProbe() } })`
 makes a missing `requiredSystemDependencies` entry (currently `ffmpeg` for
-voice) a `NOT_CONFIGURED` reason. `createPathProbe` only reads `PATH`
+voice) a `NOT_CONFIGURED` warning (the feature stays active). `createPathProbe` only reads `PATH`
 (and `FFMPEG_PATH` for ffmpeg), never spawns, and memoises.
 
 ## Testing

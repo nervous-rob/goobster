@@ -6,12 +6,16 @@
  * routing, portal). Spec and examples: documentation/feature_state.md.
  *
  * Precedence of the effective answer, strongest refusal first:
- *   installed -> configured -> requested -> environment -> dependencies
+ *   installed -> requested -> environment -> dependencies
+ * with `configured` reported alongside, never as a refusal.
  *
  * - `installed`   the payload is present (always true in Phase 1; a file may
  *                 say false and is honoured).
  * - `configured`  required keys and dependencies exist right now. Derived
- *                 from env/config on every snapshot, never persisted.
+ *                 from env/config on every snapshot, never persisted. It does
+ *                 not gate: an unconfigured feature keeps its surfaces and
+ *                 answers with its own guidance (legacy parity). The missing
+ *                 setting NAMES are returned as `warnings`.
  * - `requested`   the operator's enablement: `active` in `data/features.json`,
  *                 or, when there is no usable file, the effective legacy
  *                 switch (today's behaviour, see ./legacyResolver.js).
@@ -234,7 +238,7 @@ function createFeatureState(options = {}) {
         return legacy.value(id);
     }
 
-    /** Keys that must exist for `id` to work, as NOT_CONFIGURED reasons naming settings only. */
+    /** Settings `id` needs to be fully configured, as NOT_CONFIGURED warnings naming settings only. */
     function configuredReasons(id) {
         const descriptor = catalog.get(id);
         const reasons = [];
@@ -267,7 +271,7 @@ function createFeatureState(options = {}) {
             if (id === CORE_ID) {
                 entries[id] = {
                     installed: true, configured: true, requested: true, pendingActive: null, pending: false,
-                    active: true, reasons: []
+                    active: true, reasons: [], warnings: []
                 };
                 return entries[id];
             }
@@ -281,10 +285,7 @@ function createFeatureState(options = {}) {
 
             const reasons = [];
             if (!installed) reasons.push({ code: 'NOT_INSTALLED' });
-            reasons.push(...configuredIssues);
-            const explainedByConfig = !fileEntry && configuredIssues.length > 0
-                && descriptor.legacySwitch && descriptor.legacySwitch.kind === 'derived';
-            if (!requested && !explainedByConfig) {
+            if (!requested) {
                 reasons.push({
                     code: 'DISABLED',
                     detail: fileEntry
@@ -307,7 +308,8 @@ function createFeatureState(options = {}) {
                 pendingActive,
                 pending: pendingActive !== null && pendingActive !== requested,
                 active: reasons.length === 0,
-                reasons
+                reasons,
+                warnings: configuredIssues
             };
             return entries[id];
         };
@@ -335,8 +337,13 @@ function createFeatureState(options = {}) {
 
     function availability(id) {
         const entry = Object.prototype.hasOwnProperty.call(snapshot().entries, id) ? snapshot().entries[id] : null;
-        if (!entry) return { id, active: false, reasons: [{ code: 'UNKNOWN_FEATURE', detail: String(id) }] };
-        return { id, active: entry.active, reasons: entry.reasons.map(reason => ({ ...reason })) };
+        if (!entry) return { id, active: false, reasons: [{ code: 'UNKNOWN_FEATURE', detail: String(id) }], warnings: [] };
+        return {
+            id,
+            active: entry.active,
+            reasons: entry.reasons.map(reason => ({ ...reason })),
+            warnings: entry.warnings.map(warning => ({ ...warning }))
+        };
     }
 
     function isActive(id) {
@@ -360,7 +367,8 @@ function createFeatureState(options = {}) {
                 pending: entry.pending,
                 requested: entry.requested,
                 pendingActive: entry.pendingActive,
-                reasons: entry.reasons.map(reason => ({ ...reason }))
+                reasons: entry.reasons.map(reason => ({ ...reason })),
+                warnings: entry.warnings.map(warning => ({ ...warning }))
             };
         }
         const usable = loaded.parsed;

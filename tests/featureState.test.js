@@ -4,7 +4,7 @@
  * Covers packages/core/features/featureState.js and gate.js: the absent-file
  * (legacy) behaviour for every flag kind, the baseline equality between the
  * resolver and the real config modules, fresh and legacy-seed documents,
- * file precedence (installed, configured, requested, env, dependencies),
+ * file precedence (installed, requested, env, dependencies; configured is reported as warnings),
  * pending versus active, unknown/corrupt/unsupported files, atomic writes,
  * stale revisions, dependency conflicts, the read-only guarantee (asserted on
  * an injected fs call log), and the rule that no status ever carries a secret.
@@ -92,9 +92,9 @@ describe('absent state file keeps legacy behaviour', () => {
         const { state: s } = make();
         const inactive = FEATURE_IDS.filter(id => !s.isActive(id)).sort();
         expect(inactive).toEqual([
-            'cursor', 'discord', 'discordActivity', 'gba', 'mail', 'mcp', 'observatory', 'sandbox', 'screenVision'
+            'discord', 'discordActivity', 'gba', 'mail', 'mcp', 'observatory', 'sandbox', 'screenVision'
         ].sort());
-        for (const id of ['core', 'push', 'music', 'voice', 'tavern', 'economy', 'exchange', 'gambling', 'projects', 'knowledge', 'expeditions', 'github']) {
+        for (const id of ['core', 'push', 'music', 'voice', 'tavern', 'economy', 'exchange', 'gambling', 'projects', 'knowledge', 'expeditions', 'github', 'cursor']) {
             expect(s.isActive(id)).toBe(true);
         }
     });
@@ -105,7 +105,7 @@ describe('absent state file keeps legacy behaviour', () => {
         expect(status).toMatchObject({ source: 'none', version: null, revision: null, origin: null, error: null });
         expect(Object.keys(status.features)).toEqual([...FEATURE_IDS]);
         expect(status.features.music).toEqual({
-            installed: true, configured: true, active: true, pending: false, requested: true, pendingActive: null, reasons: []
+            installed: true, configured: true, active: true, pending: false, requested: true, pendingActive: null, reasons: [], warnings: []
         });
     });
 
@@ -115,7 +115,7 @@ describe('absent state file keeps legacy behaviour', () => {
         expect(s.isActive('nope')).toBe(false);
         expect(s.isActive('toString')).toBe(false);
         expect(s.isActive(undefined)).toBe(false);
-        expect(s.availability('nope')).toEqual({ id: 'nope', active: false, reasons: [{ code: 'UNKNOWN_FEATURE', detail: 'nope' }] });
+        expect(s.availability('nope')).toEqual({ id: 'nope', active: false, reasons: [{ code: 'UNKNOWN_FEATURE', detail: 'nope' }], warnings: [] });
     });
 
     test('loading and every read leave the file system untouched, even when no file exists', () => {
@@ -241,7 +241,13 @@ describe('legacy switches, by kind', () => {
         expect(on({ webapp: { push: { vapidPublicKey: 'pub' } } })('push')).toBe(false);
         expect(on({}, { GOOBSTER_VAPID_PRIVATE_KEY: 'priv' })('push')).toBe(false);
         const { state: s } = make({ config: { webapp: { push: { vapidPublicKey: 'pub' } } } });
-        expect(s.availability('push').reasons).toEqual([{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_VAPID_PRIVATE_KEY' }]);
+        expect(s.availability('push')).toEqual({
+            id: 'push',
+            active: false,
+            reasons: [{ code: 'DISABLED', detail: 'webapp.push.enabled' }],
+            warnings: [{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_VAPID_PRIVATE_KEY' }]
+        });
+        expect(s.status().features.push).toMatchObject({ configured: false, active: false });
     });
 
     test('derived (mail): on only when a provider has credentials and a from address', () => {
@@ -254,7 +260,13 @@ describe('legacy switches, by kind', () => {
         expect(on({ mail: { provider: 'smtp', from: 'g@example.org', resend: { apiKey: 're_x' } } })('mail')).toBe(false);
         expect(on({ mail: { provider: 'carrier-pigeon', from: 'g@example.org', smtp: { host: 'h' } } })('mail')).toBe(false);
         expect(on({}, { GOOBSTER_MAIL_FROM: 'g@example.org', RESEND_API_KEY: 're_x' })('mail')).toBe(true);
-        expect(reasonCodes(make({ config: { mail: { smtp: { host: 'h' } } } }).state, 'mail')).toEqual(['NOT_CONFIGURED']);
+        const hostOnly = make({ config: { mail: { smtp: { host: 'h' } } } }).state;
+        expect(hostOnly.availability('mail')).toEqual({
+            id: 'mail',
+            active: false,
+            reasons: [{ code: 'DISABLED', detail: 'mail.provider' }],
+            warnings: [{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_MAIL_FROM' }]
+        });
     });
 
     test('presence (github): available without credentials, because the surfaces exist keyless today', () => {
@@ -262,13 +274,25 @@ describe('legacy switches, by kind', () => {
         expect(on({ github: { token: 't' } })('github')).toBe(true);
     });
 
-    test('presence (cursor): the API key is the gate, from env or config; the webhook secret alone is not enough', () => {
+    test('presence (cursor): stays active without CURSOR_API_KEY; configured and the warning follow env or config', () => {
         const { state: bare } = make();
-        expect(bare.availability('cursor')).toEqual({ id: 'cursor', active: false, reasons: [{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }] });
-        expect(on({ cursor: { webhookSecret: 'w' } })('cursor')).toBe(false);
-        expect(on({ cursor: { apiKey: 'k' } })('cursor')).toBe(true);
-        expect(on({}, { CURSOR_API_KEY: 'k' })('cursor')).toBe(true);
-        expect(on({ cursor: { apiKey: '  ' } })('cursor')).toBe(false);
+        expect(bare.isActive('cursor')).toBe(true);
+        expect(bare.status().source).toBe('none');
+        expect(bare.status().features.cursor).toMatchObject({ configured: false, active: true, requested: true, reasons: [] });
+        expect(bare.availability('cursor')).toEqual({
+            id: 'cursor', active: true, reasons: [], warnings: [{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }]
+        });
+        for (const [config, env, configured] of [
+            [{ cursor: { webhookSecret: 'w' } }, {}, false],
+            [{ cursor: { apiKey: '  ' } }, {}, false],
+            [{ cursor: { apiKey: 'k' } }, {}, true],
+            [{}, { CURSOR_API_KEY: 'k' }, true]
+        ]) {
+            const { state: s } = make({ config, env });
+            expect(s.isActive('cursor')).toBe(true);
+            expect(s.status().features.cursor.configured).toBe(configured);
+            expect(s.availability('cursor').warnings.length).toBe(configured ? 0 : 1);
+        }
     });
 
     test('hard dependencies apply in legacy mode', () => {
@@ -276,7 +300,8 @@ describe('legacy switches, by kind', () => {
         expect(observatoryOnly.availability('observatory')).toEqual({
             id: 'observatory',
             active: false,
-            reasons: [{ code: 'DEPENDENCY_INACTIVE', dependency: 'sandbox' }]
+            reasons: [{ code: 'DEPENDENCY_INACTIVE', dependency: 'sandbox' }],
+            warnings: []
         });
         const noProjects = make({ config: { observatory: { enabled: true }, sandbox: { enabled: true }, projects: { enabled: false } } }).state;
         expect(noProjects.isActive('observatory')).toBe(false);
@@ -427,14 +452,13 @@ describe('baseline: no state file equals the effective legacy value read from th
                     screenVision: config.screenVision?.enabled === true,
                     discordActivity: config.activity?.enabled === true
                 };
-                const configured = (id) => (id === 'cursor' ? Boolean(modules.integrations.cursor.apiKey) : true);
                 const expected = {};
                 const resolve = (id) => {
                     if (expected[id] === undefined) {
                         if (id === 'core') expected[id] = true;
                         else {
                             const requested = Object.prototype.hasOwnProperty.call(legacy, id) ? legacy[id] : true;
-                            expected[id] = Boolean(requested) && configured(id)
+                            expected[id] = Boolean(requested)
                                 && FEATURES[id].dependsOn.every(dep => resolve(dep));
                         }
                     }
@@ -450,6 +474,7 @@ describe('baseline: no state file equals the effective legacy value read from th
                     viaModules: Object.fromEntries(FEATURE_IDS.map(id => [id, viaModules.isActive(id)])),
                     viaConfig: Object.fromEntries(FEATURE_IDS.map(id => [id, viaConfig.isActive(id)])),
                     seedModules: viaModules.seedFromLegacy().features,
+                    cursorConfigured: viaModules.status().features.cursor.configured === Boolean(modules.integrations.cursor.apiKey),
                     pushKeyFiles: fs.readdirSync(dataDir)
                 };
             });
@@ -468,6 +493,7 @@ describe('baseline: no state file equals the effective legacy value read from th
         const result = evaluate(config, env);
         expect(result.viaModules).toEqual(result.expected);
         expect(result.viaConfig).toEqual(result.expected);
+        expect(result.cursorConfigured).toBe(true);
         for (const id of MANAGEABLE) {
             const deps = FEATURES[id].dependsOn;
             if (result.seedModules[id].active) {
@@ -481,7 +507,7 @@ describe('baseline: no state file equals the effective legacy value read from th
         for (const id of FEATURE_IDS) {
             const values = new Set(outcomes.map(o => o[id]));
             if (id === 'core') expect([...values]).toEqual([true]);
-            else if (id === 'github') expect([...values]).toEqual([true]);
+            else if (id === 'github' || id === 'cursor') expect([...values]).toEqual([true]);
             else if (FEATURES[id].legacySwitch) expect({ id, values: [...values].sort() }).toEqual({ id, values: [false, true] });
             else expect([...values]).toEqual([true]);
         }
@@ -538,7 +564,8 @@ describe('seed and fresh preset documents', () => {
         expect(reasonCodes(s, 'economy')).toEqual(['DISABLED']);
         expect(reasonCodes(s, 'gambling')).toEqual(['DISABLED', 'DEPENDENCY_INACTIVE']);
         expect(s.isActive('music')).toBe(true);
-        expect(s.availability('cursor').reasons).toContainEqual({ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' });
+        expect(s.isActive('cursor')).toBe(true);
+        expect(s.availability('cursor').warnings).toEqual([{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }]);
     });
 
     test('seedFromLegacy mirrors the effective legacy switches with installed true and origin legacy-seed', () => {
@@ -625,34 +652,57 @@ describe('state file precedence', () => {
 
     test('a missing dependency payload deactivates its dependents', () => {
         const { state: s } = make({ files: { [FILE]: docText({ economy: { installed: false, active: false } }) } });
-        expect(s.availability('exchange')).toEqual({ id: 'exchange', active: false, reasons: [{ code: 'DEPENDENCY_INACTIVE', dependency: 'economy' }] });
+        expect(s.availability('exchange')).toEqual({ id: 'exchange', active: false, reasons: [{ code: 'DEPENDENCY_INACTIVE', dependency: 'economy' }], warnings: [] });
         expect(s.isActive('gambling')).toBe(false);
     });
 
-    test('missing credentials make a requested feature NOT_CONFIGURED by name, from env or config', () => {
+    test('missing credentials are warnings by name: the feature stays active and configured is false', () => {
         const files = { [FILE]: docText() };
         const bare = make({ files }).state;
-        expect(bare.availability('cursor')).toEqual({ id: 'cursor', active: false, reasons: [{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }] });
-        expect(bare.status().features.cursor).toMatchObject({ installed: true, configured: false, requested: true, active: false });
-        expect(make({ files, env: { CURSOR_API_KEY: 'k' } }).state.isActive('cursor')).toBe(true);
-        expect(make({ files, config: { cursor: { apiKey: 'k' } } }).state.isActive('cursor')).toBe(true);
+        expect(bare.availability('cursor')).toEqual({
+            id: 'cursor', active: true, reasons: [], warnings: [{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }]
+        });
+        expect(bare.status().features.cursor).toMatchObject({
+            installed: true, configured: false, requested: true, active: true, reasons: [],
+            warnings: [{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }]
+        });
+        for (const state of [make({ files, env: { CURSOR_API_KEY: 'k' } }).state, make({ files, config: { cursor: { apiKey: 'k' } } }).state]) {
+            expect(state.status().features.cursor).toMatchObject({ configured: true, active: true, warnings: [] });
+        }
 
         const mailBare = make({ files }).state;
-        expect(mailBare.availability('mail').reasons).toEqual([{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_SMTP_URL|GOOBSTER_SMTP_HOST|RESEND_API_KEY' }]);
+        expect(mailBare.isActive('mail')).toBe(true);
+        expect(mailBare.availability('mail').warnings).toEqual([{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_SMTP_URL|GOOBSTER_SMTP_HOST|RESEND_API_KEY' }]);
         const fromMissing = make({ files, config: { mail: { smtp: { host: 'h' } } } }).state;
-        expect(fromMissing.availability('mail').reasons).toEqual([{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_MAIL_FROM' }]);
-        expect(make({ files, config: { mail: { from: 'a@b.c', smtp: { host: 'h' } } } }).state.isActive('mail')).toBe(true);
+        expect(fromMissing.availability('mail')).toEqual({
+            id: 'mail', active: true, reasons: [], warnings: [{ code: 'NOT_CONFIGURED', detail: 'GOOBSTER_MAIL_FROM' }]
+        });
+        const full = make({ files, config: { mail: { from: 'a@b.c', smtp: { host: 'h' } } } }).state;
+        expect(full.isActive('mail')).toBe(true);
+        expect(full.status().features.mail).toMatchObject({ configured: true, warnings: [] });
     });
 
-    test('configured reflects the current credentials on refresh, not a stale persisted boolean', () => {
+    test('configured reflects the current credentials on refresh, not a stale persisted boolean, and never gates', () => {
         const env = {};
         const { state: s } = make({ files: { [FILE]: docText() }, env });
-        expect(s.isActive('cursor')).toBe(false);
+        expect(s.isActive('cursor')).toBe(true);
+        expect(s.status().features.cursor.configured).toBe(false);
         env.CURSOR_API_KEY = 'k';
-        expect(s.isActive('cursor')).toBe(false);
+        expect(s.status().features.cursor.configured).toBe(false);
         s.refresh();
         expect(s.isActive('cursor')).toBe(true);
+        expect(s.status().features.cursor.configured).toBe(true);
         expect(JSON.parse(docText()).features.cursor).toEqual({ installed: true, active: true });
+    });
+
+    test('a feature that is unconfigured and also off reports both, separately', () => {
+        const { state: s } = make({ files: { [FILE]: docText({ cursor: { active: false } }) } });
+        expect(s.availability('cursor')).toEqual({
+            id: 'cursor',
+            active: false,
+            reasons: [{ code: 'DISABLED', detail: 'features.json' }],
+            warnings: [{ code: 'NOT_CONFIGURED', detail: 'CURSOR_API_KEY' }]
+        });
     });
 
     test('the effective answer needs every dependency active, and reasons name each missing one', () => {
@@ -669,7 +719,8 @@ describe('state file precedence', () => {
         expect(list.map(a => a.id)).toEqual(['discord'].filter(() => false).concat(
             FEATURE_IDS.filter(id => !s.isActive(id))
         ));
-        expect(list.map(a => a.id)).toEqual(expect.arrayContaining(['economy', 'exchange', 'gambling', 'cursor']));
+        expect(list.map(a => a.id)).toEqual(expect.arrayContaining(['economy', 'exchange', 'gambling']));
+        expect(list.map(a => a.id)).not.toContain('cursor');
         for (const a of list) {
             expect(a.active).toBe(false);
             expect(a.reasons.length).toBeGreaterThan(0);
@@ -835,7 +886,7 @@ describe('unknown, corrupt and unsupported files', () => {
             { code: 'DISABLED', detail: 'mcp.enabled' },
             { code: 'STATE_ERROR', detail: 'CORRUPT_STATE' }
         ]);
-        expect(s.availability('music')).toEqual({ id: 'music', active: true, reasons: [] });
+        expect(s.availability('music')).toEqual({ id: 'music', active: true, reasons: [], warnings: [] });
         expect(s.status().features.mcp.reasons.map(r => r.code)).toContain('STATE_ERROR');
     });
 
@@ -1106,9 +1157,9 @@ describe('secrets never appear in status', () => {
         const serialised = everything(s);
         expectClean(serialised);
         expect(serialised).not.toContain('someone-user-name');
-        expect(s.availability('mail').reasons.map(r => r.detail)).toEqual(['GOOBSTER_SMTP_URL|GOOBSTER_SMTP_HOST|RESEND_API_KEY']);
-        expect(s.availability('push').reasons.map(r => r.detail)).toEqual(['GOOBSTER_VAPID_PUBLIC_KEY']);
-        expect(s.availability('cursor').reasons.map(r => r.detail)).toEqual(['CURSOR_API_KEY']);
+        expect(s.availability('mail').warnings.map(r => r.detail)).toEqual(['GOOBSTER_SMTP_URL|GOOBSTER_SMTP_HOST|RESEND_API_KEY']);
+        expect(s.availability('push').warnings.map(r => r.detail)).toEqual(['GOOBSTER_VAPID_PUBLIC_KEY']);
+        expect(s.availability('cursor').warnings.map(r => r.detail)).toEqual(['CURSOR_API_KEY']);
     });
 
     test('a corrupt file whose text holds a secret is never echoed into status().error', () => {
@@ -1137,14 +1188,16 @@ describe('system dependency probes are opt-in', () => {
         expect(s.isActive('voice')).toBe(true);
     });
 
-    test('with a probe, a missing required binary is NOT_CONFIGURED by name', () => {
+    test('with a probe, a missing required binary is a NOT_CONFIGURED warning by name', () => {
         const probe = jest.fn(name => name !== 'ffmpeg');
         const { state: s } = make({ files: { [FILE]: docText() }, probes: { systemDependency: probe } });
-        expect(s.availability('voice')).toEqual({ id: 'voice', active: false, reasons: [{ code: 'NOT_CONFIGURED', detail: 'ffmpeg' }] });
+        expect(s.availability('voice')).toEqual({ id: 'voice', active: true, reasons: [], warnings: [{ code: 'NOT_CONFIGURED', detail: 'ffmpeg' }] });
+        expect(s.status().features.voice.configured).toBe(false);
         expect(s.isActive('music')).toBe(true);
         expect(probe).toHaveBeenCalledWith('ffmpeg');
         const viaConfig = make({ files: { [FILE]: docText() }, config: { probes: { systemDependency: () => false } } }).state;
-        expect(viaConfig.isActive('voice')).toBe(false);
+        expect(viaConfig.isActive('voice')).toBe(true);
+        expect(viaConfig.status().features.voice.configured).toBe(false);
     });
 
     test('createPathProbe looks at PATH without spawning, memoises, and honours FFMPEG_PATH', () => {
