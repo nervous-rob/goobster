@@ -131,7 +131,7 @@ and writes a JSON report that contains no secrets. Checks, in order:
   the code root was never written to.
 
 `--read-only-data` runs the same with a read-only data directory and expects
-a clear, actionable failure rather than a stack trace.
+an actionable failure (the script adds the advice) rather than a stack trace.
 
 ## Node pin
 
@@ -273,8 +273,8 @@ dist/payload/linux-x64/runtime/bin/node \
 Results:
 
 - Build: about 6 seconds with a warm Node download cache; payload
-  334 MB (Node runtime 125 MB, `node_modules` 193 MB, web client 14 MB,
-  documentation 1.6 MB), 11,174 files, **0 symlinks**, 8 native binaries.
+  334 MB, 319 MiB (Node runtime 125 MB, `node_modules` 193 MB, web client 14 MB,
+  documentation 1.6 MB), 11,175 files, **0 symlinks**, 8 native binaries.
   The log shows the two prebuilt downloads
   (`better-sqlite3-v11.10.0-node-v127-linux-x64.tar.gz`,
   `sharp-v0.32.6-napi-v7-linux-x64.tar.gz`) and **0 lines of compiler
@@ -292,9 +292,14 @@ Results:
 - Relocation: the same payload copied to `/tmp/Goobster däta é/` (spaces and
   non-ASCII), with the instance directory also in such a path, gives the same
   result.
-- Read-only data directory: the run stops at `paths.dataDirWritable` with a
-  message naming the directory and the fix, and the dependent checks are
-  skipped rather than reported as separate failures.
+- Read-only data directory (negative control, exit code 1 as intended):
+  three checks fail (`paths.dataDirWritable`, `db.sqliteOpenWriteRead`,
+  `api.standalone.direct`), each carrying an `advice` that names the
+  directory (mode 555) and the fix (give the account write access or set
+  `GOOBSTER_DATA_DIR` or `GOOBSTER_HOME`); the four checks that depend on
+  an open database are skipped, and the payload manifest still verifies
+  afterwards. The application's own error is only `unable to open database
+  file` with no path, see "Other observations".
 
 The reports are attached to the issue as
 `327-linux-x64-package-smoke.json`, `327-linux-x64-package-build.log`,
