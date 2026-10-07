@@ -541,9 +541,13 @@ async function schemaTarget(label = 'p338') {
         try { await admin.query(`DROP SCHEMA IF EXISTS ${name} CASCADE`); } finally { await admin.end().catch(() => { }); }
     });
     const rows = async (sql, params) => (await admin.query(sql, params)).rows;
+    // Other Jest workers share this database and apply schema.sql into isolated schemas while this
+    // suite runs, which installs these extensions (IF NOT EXISTS) at any moment; the probe itself
+    // creates no extension, so the digest leaves them out instead of racing them.
+    const sharedExtensions = new Set(['plpgsql', 'citext', 'vector']);
     const catalog = async () => JSON.stringify({
         relations: await rows('SELECT n.nspname, c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 ORDER BY 1, 2', [name]),
-        extensions: await rows('SELECT extname, extversion FROM pg_extension ORDER BY 1'),
+        extensions: (await rows('SELECT extname, extversion FROM pg_extension ORDER BY 1')).filter(row => !sharedExtensions.has(row.extname)),
         roles: (await rows('SELECT rolname FROM pg_roles ORDER BY 1')).map(row => row.rolname).filter(item => !item.includes(name)),
         databases: (await rows('SELECT datname FROM pg_database ORDER BY 1')).map(row => row.datname)
     });
