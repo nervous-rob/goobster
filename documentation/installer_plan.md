@@ -348,7 +348,7 @@ Work:
    PR [#362](https://github.com/nervous-rob/goobster/pull/362) (stacked on
    #361): SQLite full suite 269 suites / 5353 passed; Postgres `core`
    2018 passed and `privacy` 325 passed in isolated schemas; lint, smoke,
-   docs and group inventory green.
+   docs and group inventory green; CI green on both engines at `65ba14d`.
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container
