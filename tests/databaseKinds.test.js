@@ -38,7 +38,6 @@ const operatorAudit = require('@goobster/core/services/operatorAuditService');
 const coreLifecycle = require('@goobster/core/runtime/lifecycle');
 const coreMaintenance = require('@goobster/core/runtime/maintenance');
 const { expectedSchema } = require('@goobster/core/db/migration/schemaModel');
-const lib = require('@goobster/core/db/connection');
 
 const BASE_URL = process.env.GOOBSTER_DB_URL ? process.env.GOOBSTER_DB_URL.split('?')[0] : null;
 const BRIDGE = { principal: 'owner-1', via: 'bridge' };
@@ -218,7 +217,7 @@ const journalText = harness => JSON.stringify(harness.manager.journal.list()) + 
 function everythingUnder(dir, { skip = () => false } = {}) {
     let text = '';
     const walk = (current) => {
-        let entries = [];
+        let entries;
         try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { return; }
         for (const entry of entries) {
             const full = path.join(current, entry.name);
