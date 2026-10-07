@@ -763,17 +763,19 @@ describe('refusals', () => {
         await untouched(h);
     });
 
-    test('the removal guard refuses a root, the home directory, a parent of the code root and a symbolic link (it only checks: nothing is removed)', () => {
+    test('the removal guard refuses a root, the home directory, the code root itself, a parent of it and a symbolic link (it only checks: nothing is removed)', () => {
         const codeRoot = path.join(ROOT, 'guard', 'code');
         const target = path.join(ROOT, 'guard', 'link-target');
         write(path.join(target, 'keep.txt'));
         fs.mkdirSync(codeRoot, { recursive: true });
         const link = path.join(ROOT, 'guard', 'link');
         fs.symlinkSync(target, link);
-        for (const refused of [path.parse(ROOT).root, path.dirname(ROOT).split(path.sep).slice(0, 2).join(path.sep) || '/x', os.homedir(), path.dirname(codeRoot), link]) {
+        for (const refused of [path.parse(ROOT).root, path.dirname(ROOT).split(path.sep).slice(0, 2).join(path.sep) || '/x', os.homedir(), codeRoot, path.dirname(codeRoot), link]) {
             expect(() => paths.assertRemovable(refused, { codeRoot })).toThrow(expect.objectContaining({ code: 'PATH_ESCAPE' }));
         }
         expect(() => paths.removeOwned(link, { codeRoot })).toThrow(expect.objectContaining({ code: 'PATH_ESCAPE' }));
+        expect(() => paths.removeOwned(codeRoot, { codeRoot })).toThrow(expect.objectContaining({ code: 'PATH_ESCAPE' }));
+        expect(fs.existsSync(codeRoot)).toBe(true);
         expect(fs.existsSync(path.join(target, 'keep.txt'))).toBe(true);
     });
 
