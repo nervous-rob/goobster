@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, normalizePath, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -72,8 +72,9 @@ function stableCssPlugin(): Plugin {
 function featureChunksPlugin(): Plugin {
     const rooms = requireCjs('./src/lib/rooms.cjs');
     const catalog = requireCjs('../../packages/core/features/catalog.js');
+    // Rollup module ids are posix paths on every platform; so must be the keys we look them up by.
     const entries = new Map<string, string>(frontendChunks.featureRouteModules(rooms)
-        .map(({ module, feature }: { module: string; feature: string }) => [path.join(root, 'src', module), feature]));
+        .map(({ module, feature }: { module: string; feature: string }) => [normalizePath(path.join(root, 'src', module)), feature]));
     const requires = frontendChunks.requiresOf(catalog);
     let labels = new Map<string, string>();
     const featureOf = (moduleIds: readonly string[]) => frontendChunks.chunkFeature(moduleIds, labels) as string | null;
@@ -91,7 +92,9 @@ function featureChunksPlugin(): Plugin {
                 requires
             });
         },
-        closeBundle() {
+        closeBundle(error?: Error) {
+            // Rollup also runs this hook after a failed build; the dist is not there then, and the build error is the one to report.
+            if (error) return;
             const dist = path.join(root, 'dist');
             const frontend = Object.fromEntries(catalog.FEATURE_IDS.map((id: string) => [id, catalog.FEATURES[id].payload?.frontend || []]));
             const analysis = frontendChunks.analyseDist(dist, { requires, frontend });
@@ -109,7 +112,7 @@ function featureChunksPlugin(): Plugin {
                 },
                 assetFileNames: (asset) => {
                     const origin = (asset.originalFileNames || [])[0];
-                    const feature = origin && /\.css$/.test(asset.names?.[0] || '') ? featureOf([path.resolve(root, origin)]) : null;
+                    const feature = origin && /\.css$/.test(asset.names?.[0] || '') ? featureOf([normalizePath(path.resolve(root, origin))]) : null;
                     return feature ? `assets/feature-${feature}-[name]-[hash][extname]` : 'assets/[name]-[hash][extname]';
                 }
             };
