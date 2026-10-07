@@ -139,8 +139,8 @@ const NOT_SEEDED = {
     stock_symbols: 'exchange: market data, no person',
     table_games: 'gambling: shared table state, no per-user column',
     tavern_lore: 'tavern: guild lore, no person',
-    gba_run_clients: 'gba: one pairing per guild channel, no per-user table (documentation/privacy.md)',
-    gba_run_milestones: 'gba: guild-level text, reached only by the name-mention review pass (documentation/privacy.md)'
+    gba_run_clients: 'gba: one pairing per guild channel, no per-user table (documentation/goobster_plays_pokemon.md)',
+    gba_run_milestones: 'gba: guild-level text, reached only by the name-mention review pass (documentation/goobster_plays_pokemon.md)'
 };
 
 /** Seeded tables the account export deliberately leaves out, with the reason. */

@@ -903,8 +903,8 @@ describe('module loading versus execution (report, not a failure)', () => {
         }
         const width = Math.max(...rows.map(row => row.module.length));
         const lines = ['', 'Loaded but not executed when off (entry point that first required the module; "-" = not loaded)',
-            `${'feature'.padEnd(12)}${'module'.padEnd(width + 2)}${'all off'.padEnd(16)}legacy (nothing off)`];
-        for (const row of rows) lines.push(`${row.feature.padEnd(12)}${row.module.padEnd(width + 2)}${(row.off || '-').padEnd(16)}${row.on || '-'}`);
+            `${'feature'.padEnd(14)}${'module'.padEnd(width + 2)}${'all off'.padEnd(16)}legacy (nothing off)`];
+        for (const row of rows) lines.push(`${row.feature.padEnd(14)}${row.module.padEnd(width + 2)}${(row.off || '-').padEnd(16)}${row.on || '-'}`);
         process.stdout.write(`${lines.join('\n')}\n`);
 
         expect(off.steps.map(step => step.label)).toEqual(['baseline', 'toolsRegistry', 'commands', 'portal', 'runtime']);

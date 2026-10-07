@@ -79,7 +79,7 @@ Status (issues #316 - #322 under epic #315):
 | #319 | AI tool registry, `runAgentLoop`, MCP gating | Discovery and dispatch are gated independently in `toolsRegistry` (`getDefinitions` filters by `surfaceActive('aiTool', name)`; `execute` refuses a stale or direct call with `FEATURE_UNAVAILABLE` before approvals, admission or side effects). `runAgentLoop` treats `FEATURE_UNAVAILABLE` as a terminal observation (repeat calls short-circuited, no implicit activation). `promptContext` adds one `UNAVAILABLE HERE:` line from `features.unavailable()`, omitted when nothing is off. MCP tool and resource listings, `tools/call` and `resources/read` are filtered per request, and the `mcp` feature off makes HTTP and stdio refuse to serve (`apps/mcp` refuses to start). Specs `tests/featureGatingTools.test.js` and `tests/featureGatingMcp.test.js`, plus adjusted `tests/mcpServer.test.js`, `tests/toolsRegistryRunCode.test.js` and `tests/toolsRegistryObservatory.test.js` (PR pending review) |
 | #320 | HTTP / WS / Activity / internal route gating | One network-edge gate in `packages/core/web/featureGate.js`: `routeGate` middleware resolves each request against the inventory's ordered `routeRules` and answers `404 { error: 'FEATURE_UNAVAILABLE', feature }` for an enforced-off owner (`ownerGate`/`mountable` for whole mounts, `guardOpenSocket`/`rejectUpgrade` for WebSocket paths). Mounted in `appApi.js` (first), `appWebsocket.js`, `apps/bot/web/server.js`, `activityApi.js`, `screenVisionApi.js`, `gbaRunApi.js` and `apps/api/server.js`. `GET /api/app/features` returns the sanitized status for clients. Enforcement rule unified here for all surfaces: `featureState.enforcedOff(id)` is true only with a usable `features.json`, a `GOOBSTER_FEATURE_<ID>` override off, or an enforced-off hard dependency, so with no file nothing new is refused; `gate.js` and the #319 tool/MCP gates consume the same predicate. MCP token-management routes (`/api/app/mcp*`) reassigned to `core` so revocation stays reachable. Specs `tests/featureGatingRoutes.test.js` (router-stack walk of every mounted route) and `tests/featureGatingWebsocket.test.js` (PR pending review) |
 | #321 | Portal rooms, tutorials, `consultDocs` availability | Not started |
-| #322 | Cross-surface conformance and dormant-data tests | Not started |
+| #322 | Cross-surface conformance and dormant-data tests | `tests/featureConformance.test.js` (35 profiles x every gated surface kind, bot boot, inventory negative checks, loaded-versus-executed report) and `tests/featureDormantData.test.js` (two accounts, every feature off: report, export, erasure, retention, vectors, off/on round trip, no feature work); shared fixtures in `tests/helpers/featureFixtures.js`. Closes the privacy and export reach gaps (`agent_runs`, `pending_integration_actions`, `integration_audit`, `repo_watches`, `screen_vision_clients`, `kg_reflection_runs`; the export now carries economy, exchange, Tavern, Song Studio, push, friends and DMs, integrations and sandbox) and gates Web Push delivery on `push`. Rooms, tutorials and self-docs assertions are a `PENDING_321` hook until #321 lands (PR pending review) |
 
 Work:
 
@@ -114,6 +114,31 @@ Work:
 Acceptance: `npm test`, `npm run lint`, `npm run smoke` green on both
 engines; the inventory test fails when a new command or step is unclaimed;
 the dormant-data rule holds (privacy tests pass with every feature off).
+
+#### Phase 1 acceptance -> evidence
+
+Each bullet is mapped to the spec and test that proves it. "Pending #321"
+means the surface exists in the inventory but its assertions wait for #321.
+
+| Acceptance (source) | Evidence |
+|---|---|
+| `npm test`, `npm run lint`, `npm run smoke` green on both engines (plan, Phase 1) | `ci.yml` runs both engines; `featureConformance` is in the `core` group and `featureDormantData` in `privacy` (`tests/ciGroups.js`) |
+| The inventory test fails when a new command or step is unclaimed (plan, Phase 1) | `featureInventory.test.js` (every file, step, tool and route is claimed); `featureConformance.test.js` > "inventory negative checks: an unclaimed surface fails closed" (command file, step, tool, MCP tool, interaction, event gate, socket, route) |
+| An invalid dependency declaration is rejected | `featureConformance.test.js` > "invalid dependency declarations are rejected"; `featureCatalog.test.js`, `featureState.test.js` |
+| Core ownership is explicit, not by absence | `featureConformance.test.js` > "core ownership is explicit" |
+| The dormant-data rule holds: privacy tests pass with every feature off (plan, Phase 1) | `featureDormantData.test.js` > "with every optional feature off the data is still reported, exported and prunable", "forgetUser while the features are off" |
+| Off: command not registered, tool not offered, route refuses, worker does not run (#261) | `featureConformance.test.js`, every profile: "commands and context menus", "AI tools", "HTTP routes", "runtime steps", "WebSocket upgrades", "bot process boot" |
+| All-optional-off: no optional worker starts, polls or provider calls while core chat, privacy and export stay usable (#322) | `featureConformance.test.js` profile `core-only` (steps, `fetch` and model-call spies; core routes 200); `featureDormantData.test.js` "no feature worker starts, no feature tool runs, no provider is called" |
+| Data stays in place while off and returns unchanged when on (#261, #322) | `featureDormantData.test.js` "off -> on round trip" and "account B is byte-identical, and still is after the features come back on" |
+| Cross-account isolation and vector cleanup (#322) | `featureDormantData.test.js` "forgetUser while the features are off" (B byte-identical, `memory_vec_*` has no orphan) |
+| With no `features.json` behaviour equals today's, legacy flags honoured (plan, Phase 1) | `featureConformance.test.js` profile `legacy-no-file` (nothing refused, loader set equals the unfiltered walk) |
+| A fresh install has economy and exchange off (#261) | `featureConformance.test.js` profile `fresh-install` (preset turns off `economy`, `exchange`, `gambling`); `featureState.test.js` |
+| Dependency combinations (#322) | `featureConformance.test.js` combination profiles and `env-override-only` |
+| Remaining module loading recorded separately from execution gating (#322) | `featureConformance.test.js` "module loading versus execution"; `feature_inventory.md` "Loaded but not executed when off" |
+| Portal rooms, tutorials and `consultDocs` availability follow the state (plan, Phase 1; #261 tutorials) | Pending #321: `PENDING_321` and three `test.todo` in `featureConformance.test.js` |
+| The migration turns switches on only where rows exist (#261) | Not covered by #322 (row-presence seeding for existing installs is a state-seeding concern outside this gate) |
+| Gambling cannot be enabled on a shared instance without the attestation, recorded in `operator_audit` (#261) | Not covered by #322: it is a Phase 2 operator action (no toggle surface exists yet) |
+| `documentation/features.md` generated or checked against the catalog (plan, Phase 1) | Not part of #322 |
 
 ### Phase 2: manager process, lifecycle and operator pages
 

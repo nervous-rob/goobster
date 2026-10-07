@@ -163,7 +163,7 @@ The download is a `.tar.gz` archive. Extract it with your archive utility (or
 | `chats/` | Retained private chats and owned discussions, with author attribution and attachment links |
 | `projects/` | Owned project plans, workspace files, saved asset versions and run outputs retained in the workspace |
 | `research/` | Ready research briefs as Markdown, preserving citations, edits and review status |
-| `data/` | JSON records for the above plus personal memory text, facts, settings, tasks, automations, research evidence, followed sources, Inbox, applets and tutorial progress |
+| `data/` | JSON records for the above plus personal memory text, facts, settings, tasks, automations, research evidence, followed sources, Inbox, applets and tutorial progress, plus your own rows of every optional feature (see below) |
 | `attachments/` | Available local files referenced by included chats, Inbox items and knowledge artifacts |
 | `manifest.json` | Original IDs, JSON pointers, relationships, file sizes and SHA-256 hashes, plus unavailable-file warnings |
 | `settings-and-report.json` | The existing settings and transparency report |
@@ -171,10 +171,29 @@ The download is a `.tar.gz` archive. Extract it with your archive utility (or
 The account archive includes private data and owned projects/discussions. Published
 copies retain their publisher attribution; another person's private original and
 its audience are excluded. Joined projects, server transcripts, credentials,
-integration secrets, login/share tokens, caches, vector indexes and optional
-game/trading/deck stores are outside this archive. External URLs remain references;
+integration secrets, login/share tokens, caches, vector indexes, shared guild game
+state and the MTGA deck library are outside this archive. External URLs remain references;
 exporting never downloads them. This is not an instance backup. Import is a separate
 future feature; the manifest preserves IDs and relationships for that work.
+
+Your own rows of the optional features are exported whether or not the feature
+is currently on (turning a feature off never hides data from the person who owns it;
+`documentation/feature_inventory.md`, "Conformance and dormant data (#322)"):
+
+| Feature | `data/` tables |
+| --- | --- |
+| Economy and Exchange | `economy_wallets`, `economy_transactions`, `stock_holdings`, `stock_trades`, `exchange_accounts`, `short_positions`, `option_positions`, `option_trades`, `exchange_orders`, `exchange_events`, `perp_positions`, `exchange_optins`; Gambling: `prediction_positions` |
+| Tavern | `tavern_characters`, `tavern_party_members`, `tavern_npc_relationships`, `tavern_rooms`, and the adventure log lines attributed to you |
+| Music (Song Studio) | `studio_songs` you own, and `studio_song_members` for them or for you |
+| Friends and DMs | `friendships`, `dm_threads`, `dm_participants`, `dm_messages` of your threads |
+| Push | your devices without their keys (`push_subscriptions`: user agent, dates, failure count) |
+| Integrations | `user_integrations` (provider, label and dates; never the token), `agent_runs`, `pending_integration_actions` you requested, `integration_audit` rows attributed to you, `repo_watches` you created, `screen_vision_clients` (label and dates; never the token hash) |
+| Sandbox | your `sandbox_requests` and the `sandbox_packages` rows you requested |
+
+Deliberately not exported: `prediction_markets` and `tavern_adventures` (guild-wide
+game state; only your attribution is erased on forget-me), `observatory_share_links`
+(a share-link credential), the MTGA deck library (an existing exclusion) and GBA
+run state (`gba_run_*`, guild-level, no per-person table).
 
 Database records come from one consistent snapshot. Files are copied afterwards;
 a file changing during its copy fails the export so you can retry when work is
