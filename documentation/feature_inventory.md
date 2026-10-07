@@ -693,12 +693,20 @@ what reduced-payload packaging (Phase 3) must make lazy before an excluded
 feature's files can be absent; `scripts/smoke-require.js` stays a full-source
 smoke.
 
-### Pending #321
+### Rooms, tutorials and self-docs (#321)
 
-Rooms, tutorials and self-docs availability are not asserted yet. The hook is
-`PENDING_321` and three `test.todo` entries in `tests/featureConformance.test.js`;
-when #321 lands, replace each with an assertion in the `describe.each(PROFILES)`
-block using `profile.served` and `claimServed(inventory.ownerOf('room' | 'tutorial', id), profile.served)`.
+The same 35 profiles check the portal surfaces, which act on the *reported*
+state (`features.isActive`) and so show with no state file exactly what the
+legacy flags showed: a room or nested view is available in `rooms.cjs` (and a
+deep link is explained by `routeUnavailability`) exactly when every feature
+it requires is reported active, and its `requires` names the same features
+as the inventory claim; a tour is listed available by
+`tutorialService.tutorialAvailability` on the same rule, while
+`gate.requireSurface('tutorial', id)` refuses exactly the tours whose claim
+is not served (the enforcement rule, like every other surface); and the
+self-docs corpus is never hidden - every seeded doc is listed in every
+profile, and a doc tagged `feature:<id>` carries an availability note
+exactly when that feature is reported inactive.
 
 ## Known gaps carried to later issues
 

@@ -684,37 +684,140 @@ describe('bot process boot: listeners, adapters and the loader follow the profil
 /* ------------------------------------------------------------------ */
 
 /**
- * Portal rooms, tutorials and self-docs are #321's. The inventory already
- * claims rooms and tutorials (`inventory.rooms`, `inventory.tutorials`), so
- * the profile machinery above is ready for them: when #321 lands, replace
- * each `todo` below with an assertion inside `describe.each(PROFILES)`
- * using the same `profile.served` set:
- *   rooms      claimServed(inventory.ownerOf('room', id), profile.served) <=> the room is listed
- *   tutorials  claimServed(inventory.ownerOf('tutorial', id), profile.served) <=> the tour is listed or reported unavailable
- *   self-docs  the seeded corpus carries only sections whose feature is served
- * `PENDING_321` is the entry the coordinator wires.
+ * Portal rooms, tutorials and self-docs (#321). These surfaces act on the
+ * *reported* state (`features.isActive`): navigation hides and explains, it
+ * never refuses, so with no state file the portal shows exactly what the
+ * legacy flags showed. Refusal (tutorial launch) follows the enforcement
+ * rule like every other surface. Three invariants per profile:
+ *   rooms      a room or nested view is available <=> every feature it
+ *              requires is reported active; its `requires` names the same
+ *              features as the inventory claim
+ *   tutorials  a tour is listed available <=> its required features are
+ *              reported active; `gate.requireSurface('tutorial', id)`
+ *              refuses exactly the tours whose claim is not served
+ *   self-docs  the corpus is never hidden: every seeded doc is listed in
+ *              every profile, and a doc tagged `feature:<id>` carries an
+ *              availability note <=> that feature is reported inactive
  */
-const PENDING_321 = {
-    reason: '#321 pending',
-    surfaces: [
-        { kind: 'room', table: inventory.rooms },
-        { kind: 'tutorial', table: inventory.tutorials },
-        { kind: 'selfDocs', table: null }
-    ]
-};
+const tutorialCatalog = require('@goobster/core/config/tutorialCatalog');
+const tutorialService = require('@goobster/core/services/tutorialService');
+const selfDocsService = require('@goobster/core/services/selfDocsService');
+const rooms = require('../apps/web/src/lib/rooms.cjs');
 
-describe('#321 pending: rooms, tutorials and self-docs', () => {
-    test('the inventory already claims the surfaces #321 will gate, so the hook has something to read', () => {
-        expect(PENDING_321.reason).toBe('#321 pending');
-        expect(Object.keys(inventory.rooms).length).toBeGreaterThan(10);
-        expect(Object.keys(inventory.tutorials).length).toBeGreaterThan(5);
-        for (const id of Object.keys(inventory.rooms)) expect(inventory.ownerOf('room', id)).not.toBeNull();
-        for (const id of Object.keys(inventory.tutorials)) expect(inventory.ownerOf('tutorial', id)).not.toBeNull();
+/** The feature ids a claim names beyond core, sorted. */
+const claimFeatures = (claim) => [claim.owner, ...claim.alsoRequires].filter(id => id !== 'core').sort();
+
+/** The reported-active set for the applied state. */
+const reportedActive = () => new Set(FEATURE_IDS.filter(id => features.isActive(id)));
+
+/**
+ * A signed-in viewer as the portal client sees one in this state: the
+ * sanitized status route plus the legacy `me.features` / `me.discord`
+ * flags, which the server derives from the same switches.
+ */
+function viewerFor(active) {
+    return {
+        identity: { operator: true },
+        features: { projects: active.has('projects'), observatory: active.has('observatory'), spitball: active.has('expeditions') },
+        discord: { enabled: active.has('discord') },
+        featureStatus: featureGate.sanitizeStatus(features.status())
+    };
+}
+
+describe('#321: rooms, tutorials and self-docs follow the reported state; tutorial launch follows the enforcement rule', () => {
+    let seededDocs = null;
+
+    beforeAll(async () => {
+        useState();
+        await selfDocsService.seed();
+        seededDocs = await selfDocsService.listDocs({ includeOperator: true });
+        expect(seededDocs.length).toBeGreaterThan(20);
+        expect(seededDocs.filter(doc => doc.feature).length).toBeGreaterThan(5);
     });
 
-    test.todo('#321 pending: every profile lists exactly the rooms whose claim is served');
-    test.todo('#321 pending: every profile lists or reports unavailable exactly the tutorials whose claim is served');
-    test.todo('#321 pending: every profile seeds self-docs sections only for served features');
+    test('the inventory claims every room and tutorial, and each declares the same features its claim names', () => {
+        for (const room of rooms.ROOMS) {
+            const claim = inventory.ownerOf('room', room.id);
+            expect([room.id, claim]).not.toEqual([room.id, null]);
+            expect([room.id, rooms.requiredFeatures(room.requires).sort()]).toEqual([room.id, claimFeatures(claim)]);
+        }
+        for (const tutorial of tutorialCatalog.TUTORIALS) {
+            const claim = inventory.ownerOf('tutorial', tutorial.id);
+            expect([tutorial.id, claim]).not.toEqual([tutorial.id, null]);
+            expect([tutorial.id, tutorialCatalog.requiredFeatureIds(tutorial.requires).sort()]).toEqual([tutorial.id, claimFeatures(claim)]);
+        }
+        expect(Object.keys(inventory.rooms).sort()).toEqual(rooms.ROOMS.map(room => room.id).sort());
+        expect(Object.keys(inventory.tutorials).sort()).toEqual(tutorialCatalog.TUTORIALS.map(tutorial => tutorial.id).sort());
+    });
+
+    describe.each(PROFILES.map(profile => [profile.name, profile]))('%s', (_name, profile) => {
+        beforeEach(() => profile.apply());
+
+        test('reported-active is never wider than served: an enforced-off feature is reported inactive', () => {
+            for (const id of reportedActive()) expect([id, profile.served.has(id)]).toEqual([id, true]);
+            if (profile.kind !== 'legacy') {
+                // With a file or override in force the two coincide (EVERYTHING_ON legacy switches).
+                if (profile.kind === 'file') expect([...reportedActive()].sort()).toEqual([...profile.served].sort());
+            }
+        });
+
+        test('rooms and nested views: available exactly when every required feature is reported active, and a deep link explains the rest', () => {
+            const active = reportedActive();
+            const me = viewerFor(active);
+            for (const room of rooms.ROOMS) {
+                if (room.requires?.operator) continue;
+                const expected = rooms.requiredFeatures(room.requires).every(id => active.has(id));
+                expect([room.id, rooms.isRoomAvailable(room, me)]).toEqual([room.id, expected]);
+                const unavailable = rooms.routeUnavailability(`/app${room.path}`, me);
+                expect([room.id, unavailable === null]).toEqual([room.id, expected]);
+                if (!expected) {
+                    expect(unavailable.level).toBe('room');
+                    expect(active.has(unavailable.feature)).toBe(false);
+                    expect(typeof unavailable.sentence).toBe('string');
+                }
+                for (const view of room.views || []) {
+                    const viewExpected = rooms.requiredFeatures(view.requires).every(id => active.has(id));
+                    expect([room.id, view.id, rooms.isViewAvailable(room, view, me)]).toEqual([room.id, view.id, viewExpected]);
+                    if (expected && !viewExpected) {
+                        expect(rooms.routeUnavailability(`/app${view.path}`, me)?.level).toBe('view');
+                    }
+                }
+            }
+        });
+
+        test('tutorials: listed available exactly when reported active; launch refused exactly when the claim is not served', () => {
+            const active = reportedActive();
+            for (const tutorial of tutorialCatalog.TUTORIALS) {
+                const required = tutorialCatalog.requiredFeatureIds(tutorial.requires);
+                const availability = tutorialService.tutorialAvailability(tutorial, {});
+                const expected = required.every(id => active.has(id));
+                expect([tutorial.id, availability.available]).toEqual([tutorial.id, expected]);
+                if (!expected) {
+                    expect(required).toContain(availability.feature);
+                    expect(availability.reasons.length).toBeGreaterThan(0);
+                }
+                const claim = inventory.ownerOf('tutorial', tutorial.id);
+                const refusal = gate.requireSurface('tutorial', tutorial.id);
+                const blocker = claimServed(claim, profile.served) ? null : blockerOf(claim, profile.served);
+                expect([tutorial.id, refusal && refusal.feature]).toEqual([tutorial.id, blocker]);
+            }
+        });
+
+        test('self-docs: nothing is hidden; a doc is annotated exactly when the feature it describes is reported inactive', async () => {
+            const active = reportedActive();
+            const docs = await selfDocsService.listDocs({ includeOperator: true });
+            expect(docs.map(doc => doc.slug).sort()).toEqual(seededDocs.map(doc => doc.slug).sort());
+            for (const doc of docs) {
+                const known = doc.feature && catalog.get(doc.feature);
+                const expected = Boolean(known) && !active.has(doc.feature);
+                expect([doc.slug, doc.unavailable !== null]).toEqual([doc.slug, expected]);
+                if (expected) {
+                    expect(doc.unavailable.feature).toBe(doc.feature);
+                    expect(doc.unavailable.note).toMatch(/Not available on this installation/);
+                }
+            }
+        });
+    });
 });
 
 /* ------------------------------------------------------------------ */
