@@ -33,6 +33,8 @@ const paths = require('../../install/paths');
 const release = require('../../install/release');
 const tombstone = require('../../install/tombstone');
 const environment = require('../../environment');
+const databaseInstall = require('../../database/installAnswer');
+const databaseInput = require('../../database/input');
 const registry = require('../../lifecycle/registry');
 const { runPreflight, portsFor } = require('../../install/preflight');
 const parse = require('../../install/engine');
@@ -152,13 +154,15 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
     function parseNew(input) {
         exactKeys(input, new Set(['ownerLabel', 'source', 'features', 'layout', 'roots', 'database', 'release', 'runtimeUser', 'config', 'registerService']));
         const config = parseConfigChanges(input.config);
+        const databaseAnswer = databaseInstall.parseNewDatabase(input.database, settings, parseDatabase);
         return {
             label: input.ownerLabel === undefined ? 'Goobster' : parseLabel(input.ownerLabel),
             source: absolutePath(input.source, 'source'),
             features: input.features === undefined ? null : parseFeatures(input.features),
             layout: parseLayout(input.layout, 'lite'),
             roots: parseRootsInput(input.roots),
-            database: parseDatabase(input.database, settings),
+            database: databaseAnswer.database,
+            connection: databaseAnswer.connection,
             release: parseRelease(input.release),
             runtimeUser: parseRuntimeUser(input.runtimeUser),
             changes: config.changes,
@@ -201,11 +205,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
 
         const extraFindings = [];
         if (parsed.database.engine === 'sqlite' && settings.dbUrl) extraFindings.push({ code: 'DATABASE_MISMATCH', severity: 'block', detail: 'sqlite was chosen while GOOBSTER_DB_URL names a Postgres database' });
+        const connection = parsed.connection ? await databaseInstall.probeForInstall({ settings, connection: parsed.connection }) : null;
         const pre = await runPreflight({
             kind: resumedRecord ? 'install.repair' : 'install.new',
             roots,
             layout: parsed.layout,
-            settings,
+            settings: connection ? { ...settings, dbUrl: 'postgres://configured-in-the-answers' } : settings,
             manifest: info.manifest,
             features: asked,
             database: parsed.database,
@@ -217,7 +222,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             includeManagerPort: false,
             via: ctx.auth ? ctx.auth.via : 'local'
         });
-        pre.findings.push(...extraFindings);
+        pre.findings.push(...extraFindings, ...(connection ? connection.findings : []));
         pre.ok = !pre.findings.some(item => item.severity === 'block');
 
         const dependencies = dependenciesFor(info.manifest, selected);
@@ -231,7 +236,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             dependencies,
             runtimeUser: parsed.runtimeUser
         };
-        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, configIds: parsed.changes.map(item => item.id), register: parsed.registerService });
+        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService });
         const plan = {
             action: 'install-new',
             signature,
@@ -242,6 +247,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             downloads: [],
             downloadHook: release.DOWNLOAD_HOOK,
             config: { settings: parsed.changes.map(item => item.id), secretCount: Object.keys(parsed.secrets).length },
+            ...(parsed.connection ? { databaseTarget: databaseInput.publicView(parsed.connection) } : {}),
             services: parsed.registerService ? [{ kind: core.serviceKindForHost(), name: 'goobster', action: 'register', privileged: 'service.register' }] : [],
             registerService: parsed.registerService,
             updater: { kind: 'manager' },
@@ -302,10 +308,19 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     if (!created && !cleared) return { status: 'skipped', code: 'ALREADY_DONE' };
                     return { detail: { created, tombstoneCleared: cleared } };
                 }),
-                core.step('init-db', async (record) => {
+                core.step('init-db', async (record, ctx) => {
                     const t = record.plan.target;
-                    const out = await deps.initDatabase({ roots: t.roots, settings, database: t.database });
-                    return { detail: { engine: out.engine, tables: out.tables } };
+                    const answered = needInput(ctx).parsed.connection;
+                    if (!answered) {
+                        const out = await deps.initDatabase({ roots: t.roots, settings, database: t.database });
+                        return { detail: { engine: out.engine, tables: out.tables } };
+                    }
+                    const probed = await databaseInstall.probeForInstall({ settings, connection: answered });
+                    const blocked = probed.findings.filter(item => item.severity === 'block');
+                    if (blocked.length > 0) throw new ManagerError(409, 'PREFLIGHT_FAILED', `The database cannot be used: ${blocked.map(item => item.code).join(', ')}.`, { findings: blocked.map(item => ({ code: item.code, detail: item.detail })) });
+                    const out = await deps.initDatabase({ roots: t.roots, settings, database: t.database, url: probed.url });
+                    databaseInstall.persistOverlay({ settings, fs, now, url: probed.url });
+                    return { detail: { engine: out.engine, tables: out.tables, overlay: true } };
                 }),
                 core.step('write-config', (record, ctx) => {
                     const t = record.plan.target;

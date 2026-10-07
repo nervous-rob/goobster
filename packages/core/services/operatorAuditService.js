@@ -37,13 +37,15 @@ const ACTIONS = new Set([
     'manager.config.set', 'manager.defaults.set',
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
+    'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
     'manager.data.reset',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.
     'host.features.apply', 'host.config.apply', 'host.defaults.apply',
     'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart',
-    'host.install.apply'
+    'host.install.apply',
+    'host.database.apply'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */

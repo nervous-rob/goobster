@@ -149,6 +149,34 @@ async function openClient(createClient, params) {
 const closeQuietly = async (client) => { try { await client.end(); } catch { /* best effort */ } };
 
 /**
+ * `prefer` is not something the driver does (it has no plain-text fallback):
+ * try TLS once and, only when the server says it has none, plain. Any other
+ * mode is returned as it is.
+ */
+async function resolveTlsMode({ application, elevated, tlsMode, createClient = defaultCreateClient }) {
+    const requested = tlsMode || application.tls.mode;
+    if (requested !== 'prefer') return requested;
+    const database = elevated.database || 'postgres';
+    for (const mode of ['require', 'disable']) {
+        const client = createClient({ application, credential: elevated, database, tlsMode: mode });
+        client.on?.('error', () => { });
+        try {
+            await client.connect();
+            return mode;
+        } catch (error) {
+            const code = String((error && error.code) || '');
+            const message = String((error && error.message) || '');
+            const noTls = /does not support SSL/i.test(message) || code === '28000' || code === 'ECONNRESET';
+            if (mode === 'require' && noTls) continue;
+            throw new ConnectionError('ELEVATED_CONNECT_FAILED', 'The elevated credential could not connect.', { cause: code.slice(0, 40) || 'CONNECT_FAILED' });
+        } finally {
+            await closeQuietly(client);
+        }
+    }
+    return 'disable';
+}
+
+/**
  * Read-only look at what the actions need and whether the elevated role may do
  * it. Opens and closes its own connections; changes nothing.
  *
@@ -157,6 +185,7 @@ const closeQuietly = async (client) => { try { await client.end(); } catch { /* 
 async function checkProvisioning({ application, elevated, actions, tlsMode, createClient = defaultCreateClient }) {
     checkNames(application, elevated);
     const wanted = parseActions(actions);
+    tlsMode = await resolveTlsMode({ application, elevated, tlsMode, createClient });
     const maintenance = await openClient(createClient, { application, credential: elevated, database: elevated.database || 'postgres', tlsMode });
     const state = { roleExists: false, databaseExists: false, schemaExists: false, schemaState: null, extensions: {} };
     let capabilities;
@@ -268,6 +297,7 @@ async function checkProvisioning({ application, elevated, actions, tlsMode, crea
  */
 async function runProvisioning({ application, elevated, actions, tlsMode, createClient = defaultCreateClient }) {
     const wanted = parseActions(actions);
+    tlsMode = await resolveTlsMode({ application, elevated, tlsMode, createClient });
     const check = await checkProvisioning({ application, elevated, actions: wanted, tlsMode, createClient });
     if (check.blocked.length > 0) {
         throw new ConnectionError('PROVISIONING_NOT_PERMITTED', 'The elevated credential does not have the privileges these actions need. Nothing was changed. Ask the database administrator to run the statements in "dba".', {
@@ -353,6 +383,7 @@ module.exports = {
     dbaScript,
     parseActions,
     scramVerifier,
+    resolveTlsMode,
     checkProvisioning,
     runProvisioning,
     quote
