@@ -23,13 +23,21 @@ const files = require('./store/files');
 const FILE_NAME = 'environment.json';
 const VERSION = 1;
 const ALLOWED_KEYS = Object.freeze(['GOOBSTER_DB_URL']);
+/**
+ * Kept in the overlay like the keys above but never merged into a process
+ * environment: the application URL of a Docker Postgres instance this manager
+ * provisioned and has not connected an installation to yet
+ * (documentation/docker_postgres.md). `database.connect` and the migration read
+ * it through `{ owned: 'docker' }`, so the generated password is never shown.
+ */
+const STAGED_KEYS = Object.freeze(['GOOBSTER_DOCKER_DB_URL']);
 
 const fileFor = (storeDir) => path.join(storeDir, FILE_NAME);
 
 function sanitize(values) {
     const out = {};
     if (!files.isPlainObject(values)) return out;
-    for (const key of ALLOWED_KEYS) {
+    for (const key of [...ALLOWED_KEYS, ...STAGED_KEYS]) {
         if (typeof values[key] === 'string' && values[key].length > 0 && values[key].length <= 4096 && !values[key].includes('\0')) out[key] = values[key];
     }
     return out;
@@ -85,4 +93,4 @@ function apply(settings, values) {
     return settings;
 }
 
-module.exports = { ALLOWED_KEYS, FILE_NAME, fileFor, read, write, remove, merge, overridden, apply };
+module.exports = { ALLOWED_KEYS, STAGED_KEYS, FILE_NAME, fileFor, read, write, remove, merge, overridden, apply };
