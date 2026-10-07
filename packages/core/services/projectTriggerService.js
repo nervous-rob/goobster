@@ -1239,7 +1239,9 @@ class ProjectTriggerService {
         for (const trigger of due) {
             if (!await this.claimDueCronRun(trigger, { client })) continue;
             try {
-                await this._executeAction(trigger, { client });
+                const dispatch = await this._executeAction(trigger, { client });
+                // A refused fire never ran: the outcome says why, lastRun stays as it was.
+                if (dispatch?.code === FEATURE_UNAVAILABLE) continue;
                 await this._markCronRan(trigger.id);
                 fired++;
             } catch (error) {
