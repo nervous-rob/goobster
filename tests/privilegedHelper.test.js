@@ -41,7 +41,7 @@ function makeSandbox() {
     const script = (name, body) => {
         fs.writeFileSync(path.join(bin, name), `#!/bin/sh\nPATH=/usr/bin:/bin\n${body}\n`, { mode: 0o755 });
     };
-    script('getent', `grep "^$2:" "${fake}/passwd"`);
+    script('getent', `grep -E "^$2:|^[^:]*:[^:]*:$2:" "${fake}/passwd"`);
     script('useradd', `for last; do :; done\necho "useradd $*" >> "${fake}/commands.log"\necho "$last:x:990:990::/nonexistent:/usr/sbin/nologin" >> "${fake}/passwd"`);
     script('chown', `echo "chown $*" >> "${fake}/commands.log"`);
     script('systemctl', [
@@ -377,6 +377,21 @@ describe('user.create', () => {
         const viaLink = { ...roots, cache: path.join(sandbox.base, 'link', 'cache') };
         fs.writeFileSync(path.join(roots.managerStore, 'installation.json'), JSON.stringify({ installationId: INSTALLATION_ID, roots: viaLink }));
         expect(call(sandbox, 'user.create', userInput(viaLink)).reply).toMatchObject({ ok: false, code: 'ROOT_IS_SYMLINK' });
+    });
+
+    test('a root that is or holds the invoker\'s home directory is refused before any chown', () => {
+        const sandbox = makeSandbox();
+        const roots = makeInstallation(sandbox);
+        const passwd = path.join(sandbox.fake, 'passwd');
+        for (const home of [roots.data, path.join(roots.cache, 'alice')]) {
+            fs.writeFileSync(passwd, `alice:x:1000:1000::${home}:/bin/bash\n`);
+            const { reply } = call(sandbox, 'user.create', userInput(roots), { invokerUid: 1000 });
+            expect(reply).toMatchObject({ ok: false, code: 'ROOT_IS_HOME' });
+            expect(sandbox.commands().filter(line => line.startsWith('chown'))).toEqual([]);
+        }
+        // The state directory above the roots is the usual home of the service account's parent: allowed.
+        fs.writeFileSync(passwd, `alice:x:1000:1000::${path.dirname(roots.data)}:/bin/bash\n`);
+        expect(call(sandbox, 'user.create', userInput(roots), { invokerUid: 1000 }).reply).toMatchObject({ ok: true });
     });
 
     test('a missing mutable root is created, the code root is left alone', () => {

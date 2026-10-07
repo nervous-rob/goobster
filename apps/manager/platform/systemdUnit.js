@@ -63,7 +63,7 @@ function isInsideOrSame(parent, child) {
  */
 function serviceEnvironment({ roots, layout, mode = 'payload' }) {
     const workspace = mode === 'payload' ? `${roots.code}/current/app` : roots.code;
-    return [
+    const out = [
         ['NODE_ENV', 'production'],
         ['GOOBSTER_SUPERVISOR', 'systemd'],
         ['GOOBSTER_RUNTIME_MODE', layout],
@@ -74,6 +74,11 @@ function serviceEnvironment({ roots, layout, mode = 'payload' }) {
         ['GOOBSTER_LOG_DIR', roots.logs],
         ['GOOBSTER_MANAGER_STATE_DIR', roots.managerStore]
     ];
+    // Under ProtectSystem=strict the account's home is read-only; tools the
+    // workers start (yt-dlp, spotdl, pip) honour XDG_CACHE_HOME, so their
+    // caches land in the cache root instead of failing against $HOME/.cache.
+    if (mode === 'payload') out.push(['XDG_CACHE_HOME', roots.cache]);
+    return out;
 }
 
 /**
@@ -174,7 +179,10 @@ function renderUnit({ name, installationId = null, runtimeUser, codeRoot, roots,
     lines.push('# Hardening: the service writes its own mutable roots and nothing else.');
     lines.push('NoNewPrivileges=true');
     lines.push('PrivateTmp=true');
-    lines.push('ProtectSystem=strict');
+    // A checkout keeps the pre-installer unit's `full` (its home stays writable
+    // for the music CLIs' venv and caches); a payload's account has no writable
+    // home, so `strict` with the roots below is the whole writable set.
+    lines.push(mode === 'checkout' ? 'ProtectSystem=full' : 'ProtectSystem=strict');
     for (const writable of mutablePaths({ roots, mode })) lines.push(`ReadWritePaths=${quote(writable)}`);
     lines.push('');
     for (const [key, value] of (environment || serviceEnvironment({ roots, layout, mode }))) lines.push(`Environment=${quote(`${key}=${value}`)}`);

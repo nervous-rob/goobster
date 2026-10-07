@@ -317,8 +317,16 @@ function createHandler(deps = {}) {
         }
         if (!user) user = { name: input.name, uid: -1, gid: -1 };
         if (user.uid === 0) throw refuse('USER_REFUSED', 'The account is the superuser; nothing was changed.');
+        // A root that is (or holds) the asking person's home directory would
+        // hand their whole home to the service account; the path rules only
+        // keep `/home` itself out, so the invoker's own entry is checked here.
+        const invoker = invokerUid !== null && invokerUid !== undefined && invokerUid !== user.uid ? lookupUser(String(invokerUid)) : null;
+        const owned = unitText.ownedPaths({ roots: input.roots, mode: input.mode });
+        if (invoker && invoker.home && invoker.home !== '/' && owned.some(target => target === invoker.home || invoker.home.startsWith(`${target}/`))) {
+            throw refuse('ROOT_IS_HOME', 'A root to hand over is, or holds, the home directory of the account that asked; nothing was changed.');
+        }
         let handedOver = 0;
-        for (const target of unitText.ownedPaths({ roots: input.roots, mode: input.mode })) {
+        for (const target of owned) {
             if (!fs.existsSync(target) && target !== input.roots.config) {
                 fs.mkdirSync(target, { recursive: true, mode: 0o750 });
             }

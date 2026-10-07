@@ -181,7 +181,7 @@ that is a command, runs no shell, and puts no secret in its input or its log.
 
 | Operation | What the helper does as root |
 |---|---|
-| `user.create` | `useradd --system --no-create-home --shell <nologin> --user-group goobster` when the account does not exist; creates missing mutable roots and hands each of them (`chown -R -h`) to that account. Refuses the superuser and system accounts, symbolic links in a root, and a root owned by someone else. |
+| `user.create` | `useradd --system --no-create-home --shell <nologin> --user-group goobster` when the account does not exist; creates missing mutable roots and hands each of them (`chown -R -h`) to that account. Refuses the superuser and system accounts, symbolic links in a root, a root owned by someone else, and a root that is (or holds) the home directory of the person who asked (`ROOT_IS_HOME`). |
 | `service.register` | Writes `/etc/systemd/system/goobster.service`, runs `systemctl daemon-reload` and `systemctl enable --now goobster.service`. Refuses to overwrite a unit that is not this installation's (`SERVICE_FOREIGN`), to register a second unit for this installation (`SERVICE_DUPLICATE`), and to register one whose roots the service account cannot enter (`ROOT_NOT_REACHABLE`). |
 | `service.unregister` | `systemctl disable --now`, deletes the unit file, `daemon-reload`, `reset-failed`. Acts only on a unit that carries this installation's marker. |
 | `updater.disable` | Adoption only: disables the systemd timer, or comments out the line of a system cron file (`#goobster-manager-disabled: <line>`), that runs `auto-update.sh` for this code root. Acts on nothing else. |
@@ -230,9 +230,13 @@ root (data, cache, logs, uploads, the manager store, the config directory),
 `NoNewPrivileges=true`, `PrivateTmp=true`, `KillMode=mixed`,
 `TimeoutStopSec=120` and `Restart=on-failure`. The code root is **not** writable
 by the service: a payload is replaced by an operation run with rights, not by
-the running service. `deploy/goobster.service` is the same unit for the
-documented Raspberry Pi paths; `tests/linuxService.test.js` keeps it identical to
-the renderer's output.
+the running service. The service account's home is read-only too, so the unit
+sets `XDG_CACHE_HOME` to the cache root: yt-dlp, spotdl and pip put their caches
+there. `deploy/goobster.service` is the same renderer's output for a source
+checkout at the documented Raspberry Pi paths; a checkout unit keeps
+`ProtectSystem=full` (the account's home stays writable, as before the
+installer) and `tests/linuxService.test.js` keeps the file identical to the
+renderer's output.
 
 ```bash
 systemctl status goobster
@@ -338,6 +342,7 @@ itself leaves an installation alone when the manager already owns it.
 | `RUNTIME_USER_REQUIRED` | The installer would run the service as root. Name another account (`runtimeUser`) or run it as root with the default `goobster`. |
 | `CREATE_USER_NEEDS_ROOT` | `createRuntimeUser` needs the installer to run as root. |
 | `ROOT_NOT_REACHABLE` | The service account cannot enter a directory above a root (for example a root under a private home directory). `chmod o+x` the named directory, or choose roots elsewhere, then run again. |
+| `ROOT_IS_HOME` | A root is your home directory, or lies above it: handing it to the service account would hand over your home. Choose roots under a directory of their own (`--base <dir>`). |
 | `ANSWERS_PERMISSIONS`, `ANSWERS_UNREADABLE`, `ANSWERS_INVALID`, `ANSWERS_SOURCE` | The answers file must be a regular file, mode 0600, owned by you, valid against the schema, with no foreign `source`. |
 | `ALREADY_INSTALLED` | This host already has an installation. Use `repair`, `reconfigure` or `uninstall`. |
 | `UPDATER_CONFLICT`, `UPDATER_NOT_OURS` | Adoption found a second updater it may not or cannot disable. |

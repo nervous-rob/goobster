@@ -59,7 +59,7 @@ CPUWeight=80
 # Hardening: the service writes its own mutable roots and nothing else.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
+ProtectSystem=full
 ReadWritePaths="/home/pi/goobster"
 
 Environment="NODE_ENV=production"

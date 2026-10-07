@@ -42,7 +42,7 @@ describe('the rendered unit', () => {
         expect(checkedIn).toContain('User=pi');
         expect(checkedIn).toContain('WorkingDirectory=/home/pi/goobster\n');
         expect(checkedIn).toContain('ExecStart="/usr/bin/node" "/home/pi/goobster/apps/manager/index.js" --supervise');
-        expect(checkedIn).toContain('ProtectSystem=strict');
+        expect(checkedIn).toContain('ProtectSystem=full');
         expect(checkedIn).toContain('KillMode=mixed');
         expect(checkedIn).toContain('TimeoutStopSec=120');
         expect(checkedIn).toContain('# Legacy: run the bot directly');
