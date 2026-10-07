@@ -393,6 +393,7 @@ function overlayRoots(env, roots) {
  * @returns {Promise<number>} the exit code
  */
 async function run(argv, io = {}) {
+    if (typeof process.umask === 'function') process.umask(process.umask() | 0o022);
     const fs = io.fs || nodeFs;
     const stdin = io.stdin || process.stdin;
     const stdout = io.stdout || process.stdout;

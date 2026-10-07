@@ -655,6 +655,9 @@ function stageSelection(sources, stagingRoot, selection, options = {}) {
     const name = `${releaseIdOf(manifest)}-${crypto.randomBytes(4).toString('hex')}`;
     const partial = path.join(stagingRoot, `${name}${PARTIAL_SUFFIX}`);
     fs.mkdirSync(partial);
+    // The payload is read by a service account that must not be able to write it; the mode is set
+    // explicitly because mkdir's is subject to whatever umask the caller inherited.
+    fs.chmodSync(partial, 0o755);
     let bytes = 0;
     try {
         resolved.files.forEach((relPath, index) => {

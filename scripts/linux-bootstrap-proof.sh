@@ -60,7 +60,15 @@ ANSWERS="$WORK/answers.json"
 SUPERVISOR_PID=""
 
 PASSED=0
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() {
+    echo "FAIL: $*" >&2
+    # What a reader needs to see why, without re-running the journey.
+    { echo "--- diagnostics"; echo "umask $(umask)"; id goobster 2>&1 || true
+      ls -ldn "$CODE" "$CODE/current" "$CODE/current/app" "$DATA" "$STORE" 2>&1 || true
+      command -v getfacl >/dev/null && getfacl -p "$CODE/current" 2>&1 || true
+      findmnt -no SOURCE,FSTYPE,OPTIONS -T "$CODE" 2>&1 || true; } >&2
+    exit 1
+}
 pass() { PASSED=$((PASSED + 1)); echo "PASS: $*"; }
 check() { local what=$1; shift; if "$@"; then pass "$what"; else fail "$what"; fi; }
 group() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::$*"; else echo "== $*"; fi; }
