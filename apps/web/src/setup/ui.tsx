@@ -113,6 +113,8 @@ const STEP_LABEL: Record<string, string> = {
     'init-db': 'Create the database', 'write-config': 'Write the settings', 'write-features': 'Save the feature choice',
     activate: 'Switch to the new version', 'register-service': 'Register as a service', finalize: 'Finish',
     record: 'Update the record', 'retire-old': 'Retire the old version', 'unregister-service': 'Unregister the service',
+    archive: 'Write the archive', maintenance: 'Hold maintenance (the application stops writing)', backup: 'Safety backup of what is there now',
+    mutate: 'Replace the data', cutover: 'Restart onto the restored data', release: 'Release maintenance',
     tombstone: 'Leave a marker', 'remove-code': 'Remove the program files', 'remove-data': 'Remove the data', 'remove-ownership': 'Remove the record'
 };
 

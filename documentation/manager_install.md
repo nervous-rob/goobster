@@ -254,6 +254,9 @@ node apps/manager/cli.js <command> [options]     # npm script: manager:cli
 | `status` | What the manager store says (read only). |
 | `discover` | List installations on this host (read only). |
 | `schema` | Print the answers-file JSON schema. |
+| `backup --out <dir>` | `backup.create`: write a verified archive into a dated folder inside `<dir>`. `--include-config` adds `config.json` under a passphrase. |
+| `backup inspect <dir>` | Read an archive and say what a restore would do or block (read only). |
+| `restore <dir> --confirm <installationId>` | `backup.restore`: enter the barrier, replace the database, file sets and (with the passphrase) `config.json`. Leaves the instance paused; `--release` also lifts the barrier. |
 | `migrate preflight\|run\|rollback\|status` | SQLite to Postgres ([db_migration.md](db_migration.md)). `--confirm <installationId>` and `--release` apply to `run` and `rollback`; the target URL and backup passphrase come only from the answers file or a hidden prompt. |
 
 | Option | Meaning |
@@ -312,6 +315,38 @@ run it, which is the same guarantee the recovery credential gives the
 portal. It is audited as `manager.install.new`, `manager.install.reconfigure`,
 `manager.install.repair` and `manager.install.uninstall` (and `manager.adopt`),
 reconciled into `operator_audit` like every other manager operation.
+
+## Backup and restore
+
+`goobster-manager backup`, `backup inspect` and `restore` are the same local
+CLI over the `backup.create` and `backup.restore` kinds
+([backup_and_restore.md](backup_and_restore.md)):
+
+```bash
+node apps/manager/cli.js backup --out /srv/backups --include-config --passphrase-file /root/pp
+node apps/manager/cli.js backup inspect /srv/backups/goobster-backup-<stamp>
+node apps/manager/cli.js restore /srv/backups/goobster-backup-<stamp> --confirm <installationId> --passphrase-file /root/pp
+node apps/manager/cli.js restore <dir> --confirm <installationId> --without-config --accept-schema-change --release
+```
+
+- `backup` works while the instance runs. Without `--include-config` the
+  archive has no `config.json`. Only `config.json` is encrypted; the archive
+  itself is not.
+- The passphrase comes from `--passphrase-file <file>` (a regular file, not a
+  link, readable by its owner only; the first line), the file named by
+  `GOOBSTER_BACKUP_PASSPHRASE_FILE`, the answers file, or a hidden prompt.
+  A secret on the command line is refused with `SECRET_ON_ARGV` before
+  anything is read. A missing passphrase for an encrypted config is
+  `PASSPHRASE_REQUIRED`, and nothing has changed.
+- A wrong passphrase is refused while planning; the database and files are
+  untouched. `--without-config` leaves `config.json` as it is (and conflicts
+  with `--passphrase-file`).
+- `restore` enters the maintenance barrier itself and leaves the instance
+  paused. `--release` lifts the barrier only; resuming the instance is a
+  separate, explicit step. A restore that stops partway names where in
+  `restore.json` and what was set aside (`*.pre-restore-<stamp>`).
+- Exit codes are the table below. The audit actions are
+  `manager.backup.create` and `manager.backup.restore`.
 
 ## Reset
 

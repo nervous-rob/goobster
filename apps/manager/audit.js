@@ -30,7 +30,8 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.maintenance.enter', 'manager.maintenance.release',
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
     'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
-    'manager.data.reset'
+    'manager.data.reset',
+    'manager.backup.create', 'manager.backup.restore'
 ]);
 
 /**

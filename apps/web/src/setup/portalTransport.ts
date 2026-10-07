@@ -2,7 +2,7 @@ import { api } from '../lib/api';
 import type { HostLifecycle, InstallOperation, InstallOperationKind } from '../lib/types';
 import type { FirstRun, WizardTransport } from './transport';
 
-const INSTALL_KINDS: string[] = ['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall', 'database.provision', 'database.schema.apply', 'database.connect'];
+const INSTALL_KINDS: string[] = ['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall', 'backup.create', 'backup.restore', 'data.reset', 'database.provision', 'database.schema.apply', 'database.connect'];
 
 /**
  * The maintenance journeys inside the portal: the same transport interface
@@ -43,5 +43,10 @@ export const portalTransport: WizardTransport = {
             }]
         };
     },
-    docHref: (slug, hash) => `/app/docs/${slug}${hash ? `#${hash}` : ''}`
+    docHref: (slug, hash) => `/app/docs/${slug}${hash ? `#${hash}` : ''}`,
+    backupStatus: () => api.hostBackupStatus(),
+    backupInspect: (dir) => api.hostBackupInspect(dir),
+    maintenance: () => api.hostMaintenance(),
+    resetPlan: (scope, feature) => api.hostResetPlan(scope, feature),
+    migrateStatus: () => api.hostMigrateStatus()
 };

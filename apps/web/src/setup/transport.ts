@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type {
-    HostApplied, HostConfigReport, HostLifecycle, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest
+    BackupInspection, BackupStatus, HostApplied, HostConfigReport, HostLifecycle, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest,
+    MaintenanceView, MigrationPreflight, MigrationStatus, ResetPreview
 } from '../lib/types';
 
 export type FirstRunCheck = { id: string; label: string; ok: boolean; detail: string; hint: string | null };
@@ -43,6 +44,14 @@ export type WizardTransport = {
     lifecycleAction(action: 'restart' | 'restart-now' | 'cancel'): Promise<void>;
     firstRun(): Promise<FirstRun>;
     docHref(slug: string, hash?: string): string | null;
+    /** Maintenance reads (#337): what an archive holds, the last restore, the barrier, a reset's scope, the migration. */
+    backupStatus(): Promise<BackupStatus>;
+    backupInspect(dir: string): Promise<BackupInspection>;
+    maintenance(): Promise<MaintenanceView>;
+    resetPlan(scope: 'instance' | 'feature', feature?: string): Promise<ResetPreview>;
+    migrateStatus(): Promise<MigrationStatus>;
+    /** The manager page only: the portal has no route for it, so the journey prints the command instead. */
+    migratePreflight?(url: string): Promise<MigrationPreflight>;
 };
 
 export type { HostApplied };

@@ -31,8 +31,9 @@ const { createHostManagerClient, HostManagerError, PROBE_TIMEOUT_MS, INSTALL_TIM
 /** Under /api/app/admin so the inventory's existing core claim covers it (features/inventory.js). */
 const BASE = '/api/app/admin/host';
 const INSTALL_KINDS = Object.freeze(['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall']);
+const MAINTENANCE_KINDS = Object.freeze(['backup.create', 'backup.restore', 'data.reset']);
 const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect']);
-const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...DATABASE_KINDS]);
+const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...MAINTENANCE_KINDS, ...DATABASE_KINDS]);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
     'config.set': 'host.config.apply',
@@ -42,6 +43,9 @@ const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'install.reconfigure': 'host.install.apply',
     'install.repair': 'host.install.apply',
     'install.uninstall': 'host.install.apply',
+    'backup.create': 'host.backup.apply',
+    'backup.restore': 'host.backup.apply',
+    'data.reset': 'host.reset.apply',
     'database.provision': 'host.database.apply',
     'database.schema.apply': 'host.database.apply',
     'database.connect': 'host.database.apply'
@@ -514,6 +518,36 @@ function mountHost(app, ctx, h) {
                 restartRequired: Boolean(result && result.restartRequired)
             };
         }
+        case 'backup.create':
+            return {
+                operation: 'create',
+                tables: result && result.tables,
+                rows: result && result.rows,
+                files: result && result.files,
+                configIncluded: Boolean(result && result.config && result.config.included),
+                verified: Boolean(result && result.verified)
+            };
+        case 'backup.restore': {
+            const counts = (result && result.rowCounts) || {};
+            return {
+                operation: 'restore',
+                tables: counts.tables,
+                mismatches: counts.mismatches,
+                interrupted: result && result.interruptedTotal,
+                fileSets: Array.isArray(result && result.files) ? result.files.length : 0,
+                configRestored: Boolean(result && result.config && result.config.restored),
+                safetyBackup: Boolean(result && result.safetyBackup),
+                schemaChanged: Boolean(result && result.schemaChanged),
+                workersRestarted: Boolean(result && result.workersRestarted)
+            };
+        }
+        case 'data.reset':
+            return {
+                scope: plan.scope || null,
+                ...(plan.feature ? { feature: plan.feature } : {}),
+                backupVerified: Boolean(result && result.backup && result.backup.verified),
+                paused: Boolean(result && result.paused)
+            };
         // Names only (database, schema): no host, port, user, URL or password reaches the ledger.
         case 'database.provision':
             return {
@@ -565,7 +599,7 @@ function mountHost(app, ctx, h) {
         const result = await client.call({
             actor: actorOf(req), method: 'POST', path: `/manager/api/operations/${operationId}/apply`,
             body: { revision: current.revision === undefined ? null : current.revision },
-            ...(INSTALL_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
+            ...(INSTALL_KINDS.includes(current.kind) || MAINTENANCE_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
         });
         const failure = failureOf(result);
         if (failure) throw failure;
@@ -602,6 +636,31 @@ function mountHost(app, ctx, h) {
         return clean(await managerJson(req, 'GET', '/manager/api/install/source', undefined, { query: `?dir=${encodeURIComponent(dir)}` }));
     }));
 
+    // --- Maintenance (backup, restore, reset, migration; #337) -----------------------
+    // Reads only: the manager answers, this file adds nothing. The mutating
+    // kinds go through POST /operations like every other kind.
+
+    app.get(`${BASE}/backup/inspect`, ...guard, route(async (req) => {
+        const dir = req.query.dir;
+        if (typeof dir !== 'string' || dir.length === 0 || dir.length > 4096) throw fail(400, 'INVALID_INPUT', '"dir" must be an absolute path to a backup archive directory.');
+        return clean(await managerJson(req, 'GET', '/manager/api/backup/inspect', undefined, { query: `?dir=${encodeURIComponent(dir)}` }));
+    }));
+
+    app.get(`${BASE}/backup/status`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/backup/status'))));
+
+    app.get(`${BASE}/maintenance`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/maintenance'))));
+
+    app.get(`${BASE}/reset/plan`, ...guard, route(async (req) => {
+        const { scope, feature, ...rest } = req.query || {};
+        if (Object.keys(rest).length > 0 || (scope !== 'instance' && scope !== 'feature') || (feature !== undefined && (typeof feature !== 'string' || !/^[a-z][A-Za-z0-9]{0,31}$/.test(feature)))) {
+            throw fail(400, 'INVALID_INPUT', '"scope" must be "instance" or "feature" (with "feature" naming a feature).');
+        }
+        const query = `?scope=${encodeURIComponent(scope)}${feature !== undefined ? `&feature=${encodeURIComponent(feature)}` : ''}`;
+        return clean(await managerJson(req, 'GET', '/manager/api/reset/plan', undefined, { query }));
+    }));
+
+    app.get(`${BASE}/migrate/status`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/migrate/status'))));
+
     // --- Lifecycle ------------------------------------------------------------------
 
     app.get(`${BASE}/lifecycle`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/lifecycle'))));
@@ -626,6 +685,7 @@ module.exports = {
     BASE,
     KINDS,
     INSTALL_KINDS,
+    MAINTENANCE_KINDS,
     DATABASE_KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,

@@ -212,6 +212,9 @@ and once as the manager's work, with the **operation id as `target`** in both.
 | `host.lifecycle.restart_now` | The countdown was skipped. |
 | `host.lifecycle.cancel` | A scheduled restart was cancelled. |
 | `host.lifecycle.restart` | The workers were restarted. |
+| `host.install.apply` | An `install.*` operation was applied from the Installation page (#330). |
+| `host.backup.apply` | A `backup.create` or `backup.restore` operation was applied (#337). `detail` carries the operation and counts (tables, rows, file sets, whether the config was included or restored, whether a safety backup was taken, interrupted operations). Never a path, a passphrase or a row. |
+| `host.reset.apply` | A `data.reset` operation was applied (#337). `detail` carries the scope, the feature id for a feature scope, whether the backup verified and whether the instance was paused. |
 
 No row carries a secret, a prompt, a path or the attestation text. Previews
 and probes write no row.
@@ -271,9 +274,52 @@ schema…** over the same journey the manager's own page runs
   database and schema), never a connection, a password or an elevated
   credential.
 
+## Maintenance: backup, restore, reset, migration (#337)
+
+The **Maintenance** page (`/host/maintenance`, and a card on the Overview)
+links four journeys - **Backup**, **Restore**, **Reset** and **Migration** -
+that are the setup wizard's journeys (`documentation/setup_wizard.md`,
+Backup, restore, reset and migration) over the Host routes. The rules are in
+`documentation/backup_and_restore.md`; this page adds only what the portal
+route adds.
+
+`POST /operations` now also accepts `backup.create`, `backup.restore` and
+`data.reset`, and applying one writes `host.backup.apply` or
+`host.reset.apply` (see Audit rows). Read-only feeds, all under
+`/api/app/admin/host`:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /backup/status` | Suggested destination, the engine, and the last restore (`restore.json`) so the result survives a reload. |
+| `GET /backup/inspect?dir=` | Read a backup folder's manifest and say what a restore would do or block. Reads only. |
+| `GET /maintenance` | The maintenance barrier view the barrier panel polls. |
+| `GET /reset/plan?scope=&feature=` | What a reset would remove, before any confirmation. |
+| `GET /migrate/status` | Migration state and rollback limit. |
+
+What the portal cannot do, and what it says instead:
+
+- **Restore ends the browser's connection.** While a restore runs the portal
+  refuses changes with `503` and is restarted at cutover, so the page tells you
+  before you start that the result will be on the manager page
+  (`http://127.0.0.1:3400/manager/`) or in `node apps/manager/cli.js status`,
+  and where to release the barrier and resume.
+- **Reset is command-line or manager-page only.** `data.reset` needs a held
+  maintenance barrier (`maintenance.enter` first), which fences this portal;
+  the page shows the commands instead of a button.
+- **The migration preflight is manager-page only** because it takes a database
+  URL; the Host page shows the status and the command.
+- **Barrier release and resume are separate.** The barrier panel can release
+  a barrier from the manager page; the Host page prints the CLI command
+  (`node apps/manager/cli.js release`). There is no "resume everything"
+  control anywhere.
+
+This adds a management and UI integration and regression evidence. It does not
+replace the owner's restore drill on a real host (#249), which stays a human
+check (`documentation/backup_and_restore.md`).
+
 ## Seams
 
-- Reset and restore controls, tour authoring and per-account provider keys are
+- Tour authoring and per-account provider keys are
   out of scope here.
 - The Phase 3 payload tools add or remove features through the same manager
   (`payload.*`); the Features page shows an uninstalled feature but does not

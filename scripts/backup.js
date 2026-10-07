@@ -2,6 +2,11 @@
 /**
  * npm run backup -- [--out <dir>] [--skip-config] [--passphrase-file <path>]
  *
+ * The developer path: it calls the same `backupService.createBackup` as the
+ * installation manager's `goobster-manager backup` and the `backup.create`
+ * operation (documentation/backup_and_restore.md), which add the destination
+ * checks, the verification against the live counts and the audit record.
+ *
  * Writes a backup archive (a directory) of this installation: a consistent
  * database snapshot, the file sets, and config.json encrypted under a
  * passphrase typed now. Runbook: documentation/backup_and_restore.md.
@@ -35,7 +40,8 @@ function usage() {
   --passphrase-file <path>  Read the passphrase from the first line of a file
                             (or set GOOBSTER_BACKUP_PASSPHRASE; otherwise you are prompted)
 
-The database and files are stored unencrypted. Keep the archive on protected storage.`);
+The database and files are stored unencrypted. Keep the archive on protected storage.
+A managed installation: goobster-manager backup --out <dir> (same archive).`);
 }
 
 async function main() {

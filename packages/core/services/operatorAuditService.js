@@ -43,12 +43,13 @@ const ACTIONS = new Set([
     'manager.lifecycle.start', 'manager.lifecycle.stop',
     'manager.owner.create',
     'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
+    'manager.backup.create', 'manager.backup.restore',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.
     'host.features.apply', 'host.config.apply', 'host.defaults.apply',
     'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart',
-    'host.install.apply',
+    'host.install.apply', 'host.backup.apply', 'host.reset.apply',
     'host.database.apply'
 ]);
 

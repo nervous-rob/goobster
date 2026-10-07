@@ -19,6 +19,7 @@ const routes = [
     require('./routes/config').createConfigMount(),
     require('./routes/migrate').mountMigrateRoutes,
     require('./routes/install').createInstallMount(),
+    require('./routes/backup').mountBackupRoutes,
     require('./routes/database').mountDatabaseRoutes
 ];
 
@@ -32,6 +33,7 @@ const kinds = [
     require('./engine/kinds/reset').createKinds,
     require('./engine/kinds/migrate').createKinds,
     require('./engine/kinds/owner').createKinds,
+    require('./engine/kinds/backup').createKinds,
     require('./engine/kinds/database').createKinds
 ];
 

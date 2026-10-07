@@ -1,6 +1,6 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
 import type { InstallOperation } from '../../lib/types';
-import { useTransport } from '../transport';
+import { useTransport, type WizardTransport } from '../transport';
 import { describeError, Details, ErrorSummary, Findings, type Problem } from '../ui';
 
 export type PlanPhase =
@@ -42,10 +42,20 @@ export function PlanFailure({ phase, help }: { phase: Extract<PlanPhase, { kind:
     );
 }
 
+/** What the first crumb of a journey is called: the Installation page by default, "Maintenance" on the Host room's Maintenance page. */
+export const CrumbRoot = createContext('Installation');
+
+/** Plan, validate and apply one kind in a row: for the short operations a journey chains (hold maintenance, release it). */
+export async function planAndApply(transport: WizardTransport, kind: string, input: unknown) {
+    const { operation } = await transport.preview(kind, input);
+    return transport.apply(operation.id);
+}
+
 export function JourneyFrame({ title, children }: { title: string; children: ReactNode }) {
+    const root = useContext(CrumbRoot);
     return (
         <div className="wizard-journey" data-testid="journey">
-            <p className="wizard-crumbs"><a href="#/maintain" data-testid="back-to-maintain">Installation</a> › {title}</p>
+            <p className="wizard-crumbs"><a href="#/maintain" data-testid="back-to-maintain">{root}</a> › {title}</p>
             {children}
         </div>
     );

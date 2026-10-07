@@ -14,6 +14,8 @@ export type Run = {
     error: { message: string; code: string; details: unknown } | null;
     start: () => void;
     starting: boolean;
+    /** What the manager answered to the apply request: in memory only, gone after a reload (the journal never holds it). */
+    result: Record<string, unknown> | null;
 };
 
 function phaseOf(operation: InstallOperation | null, loadError: unknown): RunPhase {
@@ -38,6 +40,7 @@ export function useRun(id: string): Run {
     const client = useQueryClient();
     const [starting, setStarting] = useState(false);
     const [applyError, setApplyError] = useState<Run['error']>(null);
+    const [result, setResult] = useState<Run['result']>(null);
     const query = useQuery({
         queryKey: ['setup', 'operation', id],
         queryFn: () => transport.operation(id),
@@ -60,6 +63,7 @@ export function useRun(id: string): Run {
         setApplyError(null);
         transport.apply(id).then((applied) => {
             client.setQueryData(['setup', 'operation', id], applied.operation);
+            setResult(applied.result);
         }).catch((error: unknown) => {
             if (error instanceof ApiError && error.code === 'NETWORK') return;
             const described = describeError(error);
@@ -71,7 +75,7 @@ export function useRun(id: string): Run {
     const error = applyError || (operation?.status === 'failed' && operation.error
         ? { message: operation.error.message, code: operation.error.code, details: null }
         : (query.error && !reconnecting && phase !== 'gone' ? describeError(query.error) : null));
-    return { operation, phase, reconnecting, error, start, starting };
+    return { operation, phase, reconnecting, error, start, starting, result };
 }
 
 export function failedStepOf(operation: InstallOperation): string | null {

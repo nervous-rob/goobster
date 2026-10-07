@@ -172,7 +172,8 @@ const BACKUP_SET_OWNER = Object.freeze({
 });
 
 const BACKUP_SET_KEPT = Object.freeze({
-    'tavern-campaigns': 'Operator-authored campaign files (data/tavern/campaigns). They are content the operator wrote, not data the instance collected; reset keeps them.'
+    'tavern-campaigns': 'Operator-authored campaign files (data/tavern/campaigns). They are content the operator wrote, not data the instance collected; reset keeps them.',
+    'self-docs': 'Operator-authored notes the model reads through consultDocs (data/self-docs). Content a person wrote; reset keeps it.'
 });
 
 /** Sets a backup does not carry (derived, temporary or regenerable), resolved against the data and cache roots. */

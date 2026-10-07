@@ -1381,7 +1381,8 @@ export type HostProbeOutcome = {
     target: string; ok: boolean; code: string; latencyMs: number; detail: string; whatItDoes: string; usedSaved: boolean;
 };
 export type HostOperationKind = 'features.set' | 'config.set' | 'defaults.set' | 'lifecycle.apply' | InstallOperationKind;
-export type InstallOperationKind = 'install.new' | 'install.reconfigure' | 'install.repair' | 'install.uninstall';
+export type InstallOperationKind = 'install.new' | 'install.reconfigure' | 'install.repair' | 'install.uninstall' | MaintenanceOperationKind;
+export type MaintenanceOperationKind = 'backup.create' | 'backup.restore' | 'data.reset';
 export type HostPlanChange = {
     id: string; from?: boolean; to?: boolean; running?: boolean; action?: 'set' | 'remove'; secret?: boolean; apply?: string;
     section?: string; value?: unknown; ineffective?: boolean; controlledBy?: string;
@@ -1461,6 +1462,55 @@ export type InstallOperation = {
     steps: InstallStepRecord[];
     createdAt?: string; updatedAt?: string;
     error?: { code: string; message: string };
+};
+
+// Maintenance journeys (documentation/backup_and_restore.md, data_reset.md, db_migration.md): backup, restore, reset, migration
+export type BackupFileSet = { id: string; label: string; files: number; bytes?: number; known?: boolean };
+export type BackupInspection = {
+    dir: string; format?: string; createdAt: string | null; version: string | null; engine: string; engineMatches: boolean;
+    fingerprintMatches: boolean; schemaChangeNeedsAcceptance: boolean; tables: number; rows: number; fileSets: BackupFileSet[];
+    configIncluded: boolean; configEncrypted: boolean; archiveEncrypted: boolean; envSecretsToReenter: string[];
+    quiesced: boolean | null; integrity: { ok: boolean; problems: string[] };
+    target: { engine: string; installationRecorded: boolean; dataRootMatches: boolean | null };
+    restorable: boolean; blocks: string[]; warnings: string[];
+};
+export type RestoreRetained = { kind: string; id: string; path: string };
+export type RestoreStatusView = {
+    id: string; status: string; archive: string; archiveCreatedAt: string | null; engine: string; schemaChanged: boolean;
+    startedAt: string | null; completedAt: string | null; resumes: number;
+    mutate: Record<string, { done: boolean; at: string | null }>;
+    failure: { step: string; substep?: string; code: string; at?: string } | null;
+    retained: RestoreRetained[]; advice: string | null;
+};
+export type BackupStatus = {
+    engine: string; installation: { recorded: boolean; installationId: string | null }; suggestedDir: string | null;
+    restore: RestoreStatusView | null; restoreProblem: string | null;
+};
+export type MaintenanceView = {
+    active: boolean; stale?: boolean; phase?: string | null; operationId?: string | null; fence?: number; mutateBegun?: boolean;
+    [key: string]: unknown;
+};
+export type ResetPreview = {
+    scope: 'instance' | 'feature'; feature: string | null; digest: string; confirm: string | null; empty: boolean; featureActive: boolean | null;
+    tables: { cleared: Array<{ table: string; rows?: number }>; partial: unknown[]; cascading: unknown[]; kept: Array<{ table: string; reason?: string }>; recreated: unknown[] };
+    derived: unknown; files: Array<{ id: string; label: string; owner: string; inBackup: boolean; location: string; files?: number; bytes?: number }>;
+    keptFiles: Array<{ id: string; reason?: string }>; neverTouched: unknown;
+    backup: { required: boolean; verified: string; includesConfig: boolean; configEncrypted: boolean };
+    boundary: string; steps: string[];
+};
+export type MigrationReportItem = { code: string; detail?: unknown; extension?: string; action?: string };
+export type MigrationStatus = {
+    state: string; rollbackLimit: string; problem?: string | null;
+    rollback: { possible: boolean; reason?: string; boundary?: string; needsTarget?: boolean };
+    id?: string; startedAt?: string | null; updatedAt?: string | null;
+    progress?: { tablesDone: number; tablesTotal: number; rowsCopied: number; current: string | null } | null;
+    failure?: { step?: string; code?: string } | null;
+    maintenance?: { operationId: string; fence: number; enteredByMigration: boolean } | null;
+};
+export type MigrationPreflight = {
+    ready: boolean; blocks: MigrationReportItem[]; provisioning: MigrationReportItem[]; warnings: MigrationReportItem[];
+    estimate?: { tables?: number; rows?: number; bytes?: number } | null; rollbackLimit?: string;
+    target?: { reachable?: boolean; serverVersion?: string | null; [key: string]: unknown } | null;
 };
 
 // Connecting to an existing PostgreSQL server (documentation/database_connection.md).
