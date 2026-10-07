@@ -338,7 +338,12 @@ the command set change on restart, interactions are refused live.
   turning a feature on or off re-syncs Discord even when the payload is
   unchanged; because the served feature set is part of the hash, every
   installation redeploys its slash commands once after upgrading to the
-  release that introduces it (accepted). A slash command, autocomplete or context menu Discord still
+  release that introduces it (accepted). The Activity's Entry Point
+  ("Launch") command is deliberately *not* removed when `discordActivity`
+  is off: Discord only accepts that as a separate delete the deploy script
+  cannot undo on re-enable (the operator would have to recreate it in the
+  developer portal), and disabling is non-destructive. The button stays and
+  the Activity it opens answers with the gated 404. A slash command, autocomplete or context menu Discord still
   holds for a filtered file is answered ephemerally with "That feature is
   not available on this installation." (autocomplete gets an empty list)
   before any handler runs.
