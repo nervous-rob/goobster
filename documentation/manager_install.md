@@ -16,12 +16,15 @@ headless command line for them. The release payload comes from
 document is about the manager around it.
 
 The one step that needs administrator rights, `register-service`, goes through
-the privileged helper (see "Privileged steps"). On Linux the helper is built
-(#333, [linux_install.md](linux_install.md)): the install registers a systemd
-service, or finishes in a documented manual-manager fallback when it cannot. On
-a platform whose helper does not exist yet (Windows #331, macOS #332) the
-operations answer `501 NOT_IMPLEMENTED`, a fresh install finishes with exit code
-5, and everything is on disk with that one step recorded as deferred.
+the privileged helper (see "Privileged steps"). Each platform has one: Linux
+registers a systemd service (#333, [linux_install.md](linux_install.md)),
+Windows a service run by WinSW as `NT SERVICE\goobster` (#331,
+[windows_install.md](windows_install.md)), macOS a LaunchDaemon or, per user, a
+LaunchAgent (#332, [macos_install.md](macos_install.md)); each finishes in a
+documented manual-manager fallback when it cannot register. On a platform with
+no helper the operations answer `501 NOT_IMPLEMENTED`, a fresh install finishes
+with exit code 5, and everything is on disk with that one step recorded as
+deferred.
 
 ## The installation record
 
@@ -247,8 +250,11 @@ helper (`apps/manager/privileged/`). On Linux the helper implements all but
 `package.install`: it reads one JSON document on stdin, runs as root through
 `sudo -n` or `pkexec`, and validates every field against a closed shape before it
 acts. What it does, how it is started and what it never does are in
-[linux_install.md](linux_install.md), "What runs as root". Where no helper exists
-for the platform, or for `package.install` on Linux, the operation answers `501
+[linux_install.md](linux_install.md), "What runs as root"; the Windows and macOS
+helpers (`win32.js`, `darwin.js`) are described in
+[windows_install.md](windows_install.md) and [macos_install.md](macos_install.md).
+Where an operation has no helper on the platform (`package.install` everywhere,
+`user.create` on Windows), the operation answers `501
 NOT_IMPLEMENTED`; the step is then recorded `deferred` with the operation name,
 never run, and the CLI exits 5. The manager never executes a shell command for
 these. Each operation writes a `manager.privileged.<operation>` audit row.

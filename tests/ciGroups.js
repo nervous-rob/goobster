@@ -85,6 +85,7 @@ const GROUPS = [
             'privilegedHelper', 'linuxService', 'serviceKinds', 'bootstrapStage', 'bootstrapCli',
             'dockerDaemon', 'dockerPostgresKinds',
             'launchdService', 'darwinHelper', 'darwinBootstrapCli', 'darwinBootstrapStage',
+            'windowsService', 'windowsHelper', 'windowsBootstrapCli', 'packageBootstrapWin32',
             'presenceService',
             'reportIntegrations',
             'safeFetch',

@@ -346,6 +346,7 @@ Work, in order:
    `.github/workflows/windows-bootstrap.yml` on `windows-2022`
    (`scripts/windows-bootstrap-proof.ps1`). Unsigned development builds only
    (`-dev`); the Authenticode hook is wired and off, signing keys are #341.
+
    **Status (P3.6, #332): the macOS bootstrapper is built and its journey is
    written; it has not run on a Mac.** `documentation/macos_install.md` is the
    reference. `scripts/package-bootstrap-darwin.js` builds a per-user
