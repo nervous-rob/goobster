@@ -11,6 +11,8 @@
  *   GOOBSTER_MANAGER_TLS_KEY     PEM private key file (LAN mode)
  *   GOOBSTER_MANAGER_STATE_DIR   the manager store (default <dataDir>/manager)
  *   GOOBSTER_MANAGER_RECONCILE=0 never open the application database to reconcile audit records
+ *   GOOBSTER_MANAGER_SUPERVISE=1 run the workers of the layout (same as --supervise; documentation/manager_lifecycle.md)
+ *   GOOBSTER_MANAGER_WORKERS     child (spawn them, default) | external (an OS unit runs each worker)
  *   GOOBSTER_DATA_DIR, GOOBSTER_DB_PATH, GOOBSTER_DB_URL, GOOBSTER_CONFIG_PATH as for the app
  */
 
@@ -57,6 +59,9 @@ function resolveSettings(env = process.env) {
     const port = rawPort === undefined || rawPort === '' ? DEFAULT_PORT : Number(rawPort);
     return {
         env,
+        root,
+        supervise: flag(env.GOOBSTER_MANAGER_SUPERVISE),
+        workersMode: String(env.GOOBSTER_MANAGER_WORKERS || '').trim().toLowerCase() === 'external' ? 'external' : 'child',
         port,
         host: env.GOOBSTER_MANAGER_HOST || (lan ? '0.0.0.0' : '127.0.0.1'),
         lan,

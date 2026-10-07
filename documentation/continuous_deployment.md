@@ -78,9 +78,14 @@ deploy key and clone over SSH; nothing else changes.
    `node initDb.js`.
 6. `systemctl daemon-reload`, then `systemctl start goobster`.
 7. Poll `http://127.0.0.1:3000/health` until it answers, up to
-   `GOOBSTER_HEALTH_TIMEOUT` seconds. `goobster.service` runs
-   `deploy-commands.js` as `ExecStartPre`, so the first probe usually lands a
-   few seconds after the start.
+   `GOOBSTER_HEALTH_TIMEOUT` seconds. `goobster.service` runs the
+   installation manager, which runs `deploy-commands.js` (only the targets
+   whose command hash changed) before it starts the bot, so the first probe
+   usually lands a few seconds after the start. A `standalone` install
+   answers `/health` on the api port instead: set `GOOBSTER_HEALTH_URL`
+   accordingly. An installed unit from before the manager keeps running the
+   bot directly until it is replaced (`GOOBSTER_SYNC_UNIT=true`, or copy
+   `deploy/goobster.service` again); see [manager_lifecycle.md](manager_lifecycle.md).
 8. On failure: stop, `git reset --hard` back to the previous commit, reinstall,
    start, verify. The bot ends the run on the last commit known to boot.
 

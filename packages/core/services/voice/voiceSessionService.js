@@ -261,6 +261,36 @@ class VoiceSessionService {
     }
 
     /**
+     * Restart contract `cancel` (documentation/manager_lifecycle.md): end
+     * every session with a short text notice in its channel through the
+     * gateway seam, record INTERRUPTED, never resume the conversation.
+     * @param {Object} params
+     * @param {{ sendToChannel: Function }|null} params.gateway
+     * @returns {Promise<number>} sessions ended
+     */
+    async endAllSessions({ gateway = null } = {}) {
+        const sessions = [...this.sessions.values()];
+        const workFailureService = require('../workFailureService');
+        await Promise.all(sessions.map(async (session) => {
+            const channelId = session.textChannel?.id;
+            if (gateway && channelId) {
+                await gateway.sendToChannel(channelId, {
+                    content: 'Goobster is restarting, so this voice conversation has ended. Start it again with /voicechat in a minute.'
+                });
+            }
+            this.stopSession(session.guildId);
+            await workFailureService.note({
+                kind: 'chat',
+                workId: `voice:${session.guildId}`,
+                phase: 'shutdown',
+                code: 'INTERRUPTED',
+                reason: 'the voice session ended for a restart'
+            });
+        }));
+        return sessions.length;
+    }
+
+    /**
      * The shared music service, when it holds a live claim on this exact
      * connection (something loaded or queued). Lazily required to avoid a
      * load-time cycle with serviceManager.

@@ -18,9 +18,11 @@ const inventory = require('@goobster/core/features/inventory');
 const { features } = require('@goobster/core/features/featureState');
 const { requireSurface, unavailableResult } = require('@goobster/core/features/gate');
 const { featureCommandFilter } = require('@goobster/core/utils/commandDeployment');
+const lifecycle = require('@goobster/core/runtime/lifecycle');
 const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 
 const UNAVAILABLE_TEXT = 'That feature is not available on this installation.';
+const restartingText = seconds => `Goobster is restarting in ${seconds} s. Try that again in a minute.`;
 const COLLECTOR_PREFIX = 'collector:';
 
 /**
@@ -84,8 +86,8 @@ async function integrationActionRefusal(customId) {
  * Ephemeral standard refusal. Never throws; a dead interaction token is not
  * an error worth surfacing.
  */
-async function replyUnavailable(interaction) {
-    const payload = { content: UNAVAILABLE_TEXT, ephemeral: true, allowedMentions: { parse: [] } };
+async function replyUnavailable(interaction, content = UNAVAILABLE_TEXT) {
+    const payload = { content, ephemeral: true, allowedMentions: { parse: [] } };
     try {
         if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
         else await interaction.reply(payload);
@@ -118,24 +120,30 @@ async function gateComponentInteraction(interaction) {
  * out of this process because its feature is not active (Discord can still
  * hold the old registration for a while). Replies ephemerally and returns
  * true; a command name nothing claims is left to the caller's usual path.
+ *
+ * The same reply answers feature-owned commands while a restart the
+ * manager announced drains this process ("restarting in N s"); core
+ * commands keep working, and a plain stop announces nothing.
  * @param {Object} interaction
  * @param {Map<string, { kind: string, key: string }>} nameIndex from commandNameIndex()
+ * @param {{ restartNotice?: () => ({ secondsLeft: number }|null) }} [worker] the process lifecycle
  */
-async function refuseUnavailableCommand(interaction, nameIndex) {
+async function refuseUnavailableCommand(interaction, nameIndex, worker = lifecycle) {
     const entry = nameIndex.get(interaction.commandName);
     if (!entry) return false;
+    const restarting = worker.restartNotice?.() || null;
     let available;
     try {
         available = featureCommandFilter(entry.kind, entry.key);
     } catch {
         available = false;
     }
-    if (available) return false;
+    if (available && !(restarting && inventory.ownerOf(entry.kind, entry.key)?.owner !== 'core')) return false;
     if (typeof interaction.isAutocomplete === 'function' && interaction.isAutocomplete()) {
         try { await interaction.respond([]); } catch { /* the autocomplete window closed */ }
         return true;
     }
-    await replyUnavailable(interaction);
+    await replyUnavailable(interaction, available ? restartingText(restarting.secondsLeft) : UNAVAILABLE_TEXT);
     return true;
 }
 

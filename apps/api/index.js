@@ -30,6 +30,11 @@
  * mounts the same file into both containers.
  */
 
+// Before anything reads feature state (documentation/manager_lifecycle.md).
+const lifecycle = require('@goobster/core/runtime/lifecycle');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
+lifecycle.boot({ worker: 'api' });
+
 const fs = require('node:fs');
 const logger = require('@goobster/core/utils/logger');
 const { getConnection, closeConnection } = require('@goobster/core/db');
@@ -99,28 +104,56 @@ async function main() {
         schedulers: schedulersEnabled()
     });
 
+    const sandboxService = requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' });
+    lifecycle.onPauseNewWork(() => {
+        runtime.pauseNewWork();
+        sandboxService?.pauseNewWork();
+    });
+
     const port = Number(process.env.GOOBSTER_API_PORT) || DEFAULT_API_PORT;
     const server = app.listen(port, () => {
         logger.info(`Goobster api listening on port ${port} `
             + `(portal ${webAppContext.devMode ? 'DEV MODE - auth bypass on' : 'enabled'} at /app)`);
+        lifecycle.acknowledgeReady();
     });
     attachApiWebSockets(server, webAppContext);
     logger.info('Parlor Live enabled: WS /api/app/parlor/live');
 
-    const shutdown = async () => {
+    let shuttingDown = null;
+    const runShutdown = async (exitCode) => {
         logger.info('api: shutting down...');
         try {
-            await new Promise(resolve => server.close(resolve));
+            lifecycle.pauseNewWork({ reason: 'shutdown' });
+            const boundMs = lifecycle.drainBoundMs();
+            const results = (await Promise.all([
+                runtime.settleInFlight(boundMs),
+                lifecycle.settle([{
+                    name: 'sandboxRun',
+                    drain: () => sandboxService.drainRuns(),
+                    interrupt: () => sandboxService.interruptRunning()
+                }], lifecycle.contractBoundMs('sandboxRun', boundMs))
+            ])).flat();
+            const cut = results.filter(result => result.outcome !== 'settled');
+            if (cut.length > 0) logger.warn(`api: shutdown bound reached; interrupted: ${cut.map(result => result.name).join(', ')}`);
+            await new Promise((resolve) => {
+                server.close(resolve);
+                server.closeIdleConnections?.();
+            });
             await runtime.stop();
             await closeConnection();
         } catch (error) {
             logger.error('api: shutdown error:', error);
         } finally {
-            process.exit(0);
+            process.exit(exitCode);
         }
     };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    const shutdown = ({ exitCode = 0 } = {}) => {
+        if (!shuttingDown) shuttingDown = runShutdown(exitCode);
+        return shuttingDown;
+    };
+    process.on('SIGINT', () => shutdown({ exitCode: 0 }));
+    process.on('SIGTERM', () => shutdown({ exitCode: 0 }));
+    lifecycle.install({ shutdown });
 }
 
 main().catch(error => {

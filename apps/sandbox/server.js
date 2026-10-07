@@ -4,11 +4,18 @@
  * security_opt: [seccomp:unconfined] for bubblewrap.
  *
  * Exported as a builder so tests can construct the app without listening.
+ *
+ * Restart contract `cancel` (documentation/manager_lifecycle.md): once
+ * this process stops new work, /run answers 503 RESTARTING; the runs
+ * already going keep their own timeout inside the bound, and any still
+ * going then are aborted and answered 503 INTERRUPTED, so the submitting
+ * process notes them and nothing is replayed.
  */
 
 const crypto = require('node:crypto');
 const express = require('express');
 const sandboxService = require('@goobster/core/services/sandboxService');
+const lifecycle = require('@goobster/core/runtime/lifecycle');
 
 const TOKEN_HEADER = 'x-goobster-internal-token';
 const DEFAULT_SANDBOX_PORT = 3200;
@@ -25,9 +32,10 @@ function tokenMatches(presented, expected) {
  * @param {Object} [params]
  * @param {Object} [params.sandbox] - sandboxService-shaped override
  * @param {Object} [params.logger]
- * @returns {import('express').Express}
+ * @param {Object} [params.worker] - the process lifecycle (newWorkPaused)
+ * @returns {import('express').Express & { drainRuns: Function }}
  */
-function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
+function createSandboxApp({ sandbox = sandboxService, logger = console, worker = lifecycle } = {}) {
     const app = express();
     app.disable('x-powered-by');
     app.use(express.json({ limit: '2mb' }));
@@ -76,6 +84,10 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
             res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing or bad internal token.' } });
             return;
         }
+        if (worker.newWorkPaused()) {
+            res.status(503).json({ error: { status: 503, code: 'RESTARTING', message: 'The sandbox runner is restarting; run the code again in a minute.' } });
+            return;
+        }
         const runId = typeof req.body?.runId === 'string' && req.body.runId.trim()
             ? req.body.runId.trim().slice(0, 128)
             : crypto.randomUUID();
@@ -87,7 +99,9 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
             return;
         }
         const controller = new AbortController();
-        inflight.set(runId, { controller });
+        let settled;
+        const entry = { controller, interrupted: false, done: new Promise((resolve) => { settled = resolve; }) };
+        inflight.set(runId, entry);
         const onClose = () => {
             if (!res.writableEnded) controller.abort();
         };
@@ -109,6 +123,12 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
             });
             if (!res.headersSent) res.json({ ...result, runId });
         } catch (error) {
+            if (entry.interrupted) {
+                if (!res.headersSent) {
+                    res.status(503).json({ error: { status: 503, code: 'INTERRUPTED', message: 'The sandbox runner restarted before the run finished.' } });
+                }
+                return;
+            }
             if (error?.code === 'ABORTED' || controller.signal.aborted) {
                 if (!res.headersSent) {
                     res.status(200).json({
@@ -129,6 +149,7 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
         } finally {
             res.off('close', onClose);
             inflight.delete(runId);
+            settled();
         }
     });
 
@@ -145,7 +166,72 @@ function createSandboxApp({ sandbox = sandboxService, logger = console } = {}) {
         res.json({ ok: true, found: abortRun(runId) });
     });
 
+    /**
+     * Wait at most `boundMs` for the runs in flight, then cut the rest
+     * (INTERRUPTED). Resolves with how many were cut.
+     */
+    app.drainRuns = async (boundMs) => {
+        const [result] = await lifecycle.settle([{
+            name: 'sandboxRun',
+            drain: () => Promise.all([...inflight.values()].map(item => item.done))
+        }], boundMs);
+        if (result.outcome === 'settled') return 0;
+        const cut = [...inflight.values()];
+        for (const item of cut) {
+            item.interrupted = true;
+            item.controller.abort();
+        }
+        await Promise.allSettled(cut.map(item => item.done));
+        return cut.length;
+    };
+
     return app;
 }
 
-module.exports = { createSandboxApp, DEFAULT_SANDBOX_PORT };
+/**
+ * Listen, acknowledge the revision this start runs, and own the shutdown:
+ * stop new work, drain inside the sandboxRun bound, close, exit.
+ * @returns {{ app: Object, server: import('node:http').Server, shutdown: Function }}
+ */
+function startSandboxRunner({
+    port = Number(process.env.GOOBSTER_SANDBOX_PORT) || DEFAULT_SANDBOX_PORT,
+    logger = console,
+    sandbox = sandboxService,
+    worker = lifecycle,
+    proc = process,
+    exit = code => process.exit(code)
+} = {}) {
+    worker.boot({ worker: 'sandbox', log: logger });
+    const app = createSandboxApp({ sandbox, logger, worker });
+    const server = app.listen(port, () => {
+        logger.info?.(`Goobster sandbox-runner listening on port ${port}`);
+        worker.acknowledgeReady();
+    });
+    worker.onPauseNewWork(() => sandbox.pauseNewWork?.());
+
+    let shuttingDown = null;
+    const runShutdown = async (exitCode) => {
+        worker.pauseNewWork({ reason: 'shutdown' });
+        try {
+            const cut = await app.drainRuns(lifecycle.contractBoundMs('sandboxRun', worker.drainBoundMs()));
+            if (cut > 0) logger.warn?.(`[sandbox-runner] shutdown bound reached; ${cut} run(s) interrupted`);
+        } catch (error) {
+            logger.error?.('[sandbox-runner] drain failed:', error?.message || error);
+        }
+        await new Promise((resolve) => {
+            server.close(resolve);
+            server.closeIdleConnections?.();
+        });
+        exit(exitCode);
+    };
+    const shutdown = ({ exitCode = 0 } = {}) => {
+        if (!shuttingDown) shuttingDown = runShutdown(exitCode);
+        return shuttingDown;
+    };
+    proc.on('SIGINT', () => shutdown({ exitCode: 0 }));
+    proc.on('SIGTERM', () => shutdown({ exitCode: 0 }));
+    worker.install({ shutdown, proc });
+    return { app, server, shutdown };
+}
+
+module.exports = { createSandboxApp, startSandboxRunner, DEFAULT_SANDBOX_PORT };

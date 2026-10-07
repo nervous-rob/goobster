@@ -16,6 +16,13 @@
  *  - Restart safety: orphaned RUNNING expeditions are parked PAUSED at
  *    startup (research spend should not silently resume), their interrupted
  *    cycle is CANCELLED, and QUEUED ones are picked back up.
+ *  - Planned restart (contract `checkpoint`, documentation/manager_lifecycle.md):
+ *    requestCheckpoint() lets the running cycle finish and record its
+ *    effects, then puts the expedition back in the queue with
+ *    stopReason RESTART_CHECKPOINT instead of opening the next cycle; the
+ *    next process resumes with the next cycle, so no completed cycle runs
+ *    twice. A loop the shutdown bound cuts is parked PAUSED and noted
+ *    INTERRUPTED (interruptLive).
  *
  * The semantic work lives behind the injected pipeline
  * (services/spitballResearchPipeline.js); the runner never talks to models
@@ -48,6 +55,67 @@ class SpitballExpeditionRunner {
         this.runnerId = `runner-${crypto.randomBytes(6).toString('hex')}`;
         /** @type {Map<number, Promise<void>>} live run loops by expedition id */
         this._live = new Map();
+        /** Set by requestCheckpoint(): no new cycle opens in this process. */
+        this._checkpointRequested = false;
+    }
+
+    /**
+     * Stop at the next cycle boundary: the running cycle finishes, the
+     * expedition is queued for the next process, nothing new is claimed.
+     * @returns {number[]} the expeditions this process is still driving
+     */
+    requestCheckpoint() {
+        this._checkpointRequested = true;
+        return [...this._live.keys()];
+    }
+
+    /** Settles once every live loop reached its checkpoint (or ended). */
+    async waitForCheckpoint() {
+        await Promise.allSettled([...this._live.values()]);
+    }
+
+    /**
+     * The shutdown bound passed mid-cycle: park each expedition this runner
+     * still drives as PAUSED (the owner continues it; research spend never
+     * resumes silently), cancel its open cycle and note INTERRUPTED.
+     * @returns {Promise<number[]>}
+     */
+    async interruptLive() {
+        const ids = [...this._live.keys()];
+        const workFailureService = require('./workFailureService');
+        for (const id of ids) {
+            const parked = (await db.run(
+                `UPDATE spitball_expeditions
+                 SET status = 'PAUSED', lastError = 'Interrupted by a restart before the cycle finished.',
+                     stopReason = NULL, runnerId = NULL, updatedAt = datetime('now')
+                 WHERE id = @id AND status = 'RUNNING' AND runnerId = @runnerId`,
+                { id, runnerId: this.runnerId }
+            )).changes > 0;
+            if (!parked) continue;
+            await db.run(
+                `UPDATE spitball_expedition_cycles
+                 SET status = 'CANCELLED', lastError = 'The process restarted mid-cycle.', finishedAt = datetime('now')
+                 WHERE expeditionId = @id AND status = 'RUNNING'`,
+                { id }
+            );
+            await workFailureService.note({ kind: 'expedition', workId: id, phase: 'shutdown', code: 'INTERRUPTED', reason: 'the process restarted mid-cycle' });
+        }
+        return ids;
+    }
+
+    /** Process shutdown: never open another cycle here. */
+    async stop() {
+        this.requestCheckpoint();
+    }
+
+    async _checkpointForRestart(expeditionId) {
+        await db.run(
+            `UPDATE spitball_expeditions
+             SET status = 'QUEUED', stopReason = 'RESTART_CHECKPOINT', runnerId = NULL, updatedAt = datetime('now')
+             WHERE id = @id AND status = 'RUNNING' AND runnerId = @runnerId`,
+            { id: Number(expeditionId), runnerId: this.runnerId }
+        );
+        logger.info?.(`[spitball] Expedition #${expeditionId} checkpointed for a restart; the next process continues it`);
     }
 
     get reflection() {
@@ -91,7 +159,7 @@ class SpitballExpeditionRunner {
     kick(expeditionId) {
         if (features.enforcedOff('expeditions')) return unavailableResult('expeditions');
         const id = Number(expeditionId);
-        if (!Number.isFinite(id) || this._live.has(id)) return;
+        if (!Number.isFinite(id) || this._live.has(id) || this._checkpointRequested) return;
         const loop = this._runLoop(id)
             .catch(error => logger.error?.(`[spitball] Expedition #${id} loop crashed: ${error.message}`))
             .finally(() => this._live.delete(id));
@@ -138,8 +206,14 @@ class SpitballExpeditionRunner {
 
     async _runLoop(expeditionId) {
         if (features.enforcedOff('expeditions')) return;
+        if (this._checkpointRequested) return;
         const claimed = await this.service.claimForRun(expeditionId, { runnerId: this.runnerId });
         if (!claimed) return;
+        await db.run(
+            `UPDATE spitball_expeditions SET stopReason = NULL
+             WHERE id = @id AND status = 'RUNNING' AND stopReason = 'RESTART_CHECKPOINT'`,
+            { id: Number(expeditionId) }
+        );
         // Every search call, sandbox second and failure inside the loop is
         // this expedition's (utils/workContext.js).
         const owner = await this.service.getById(expeditionId);
@@ -155,6 +229,10 @@ class SpitballExpeditionRunner {
         while (true) {
             const expedition = await this.service.getById(expeditionId);
             if (!expedition || expedition.status !== 'RUNNING') return; // paused/cancelled externally
+            if (this._checkpointRequested) {
+                await this._checkpointForRestart(expeditionId);
+                return;
+            }
 
             const frontierInput = await this.service.buildFrontierInput(expedition);
             const cycle = await this.service.startCycle(expeditionId, { frontierInput });

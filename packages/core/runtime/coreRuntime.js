@@ -39,13 +39,22 @@
  * history retention; the startup catch-up and every scheduled worker wait
  * until the operator resumes from the Host room, then start on their own
  * without a process restart.
+ *
+ * **Stop new work** (documentation/manager_lifecycle.md) is not that flag:
+ * `pauseNewWork()` is this process getting ready to exit. Every scheduler
+ * stops opening passes, a step that has not started yet never starts, and
+ * a paused instance stops watching for its resume; `settleInFlight(ms)`
+ * then waits, bounded, for the passes already running (contract `drain`)
+ * and for the expedition checkpoint (contract `checkpoint`).
  */
 
 const { toGateway } = require('../gateway');
 const { requireSurface, surfaceActive } = require('../features/gate');
+const { settle, contractBoundMs } = require('./lifecycle');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const FOLLOWUP_INTERVAL_MS = 60 * 1000;
+const IN_FLIGHT_POLL_MS = 100;
 /**
  * Attention candidate generators that read a feature's tables, keyed by
  * generator name; the owner is whoever the inventory says owns the table.
@@ -78,7 +87,8 @@ const ABSENT = Symbol('absent');
  * Start the core runtime. Resolves once startup has been attempted for
  * every worker; returns a handle whose `stop()` shuts them down.
  * @param {CoreRuntimeOptions} [options]
- * @returns {Promise<{ started: string[], skipped: string[], stop: () => Promise<void>, services: Object }>}
+ * @returns {Promise<{ started: string[], skipped: string[], stop: () => Promise<void>, pauseNewWork: () => boolean,
+ *   settleInFlight: (boundMs: number) => Promise<Array<{ name: string, outcome: string }>>, services: Object }>}
  */
 async function startCoreRuntime({
     client = null,
@@ -103,6 +113,19 @@ async function startCoreRuntime({
     const report = [];
     const services = {};
     const stoppers = [];
+    const pausers = [];
+    const inFlight = [];
+    const settleTasks = [];
+    let newWorkPaused = false;
+
+    /** Register what stopping new work means for a step; runs at once when that already happened. */
+    const onPause = (fn) => {
+        if (newWorkPaused) {
+            Promise.resolve().then(fn).catch(() => {});
+        } else {
+            pausers.push(fn);
+        }
+    };
 
     /**
      * Run one startup step; a failure disables that worker only. A step whose
@@ -114,6 +137,11 @@ async function startCoreRuntime({
      *   steps that belong to one (checked against the inventory by the specs)
      */
     const step = async (name, fn, { feature } = {}) => {
+        if (newWorkPaused) {
+            skipped.push(name);
+            report.push({ name, status: 'skipped', reason: 'restarting' });
+            return;
+        }
         let blocked;
         try {
             blocked = requireSurface('runtimeStep', name);
@@ -224,6 +252,10 @@ async function startCoreRuntime({
         let starting = false;
         const watch = setInterval(async () => {
             if (starting) return;
+            if (newWorkPaused) {
+                clearInterval(watch);
+                return;
+            }
             let stillPaused = true;
             try {
                 stillPaused = await instanceState.isPaused();
@@ -241,6 +273,7 @@ async function startCoreRuntime({
         }, pausePollMs);
         watch.unref?.();
         stoppers.push(async () => clearInterval(watch));
+        onPause(() => clearInterval(watch));
         return finish();
     }
 
@@ -312,6 +345,7 @@ async function startCoreRuntime({
             automation.start();
             services.automation = automation;
             stoppers.push(async () => automation.stop());
+            onPause(() => automation.stop());
         });
         await step('followupDelivery', () => {
             // The bot's HeartbeatService already runs this pass on its own
@@ -325,6 +359,7 @@ async function startCoreRuntime({
             timer.unref?.();
             services.followupTimer = timer;
             stoppers.push(async () => clearInterval(timer));
+            onPause(() => clearInterval(timer));
         });
         await step('personalHeartbeat', () => {
             const PersonalHeartbeatService = load('PersonalHeartbeatService', () => require('../services/personalHeartbeatService'));
@@ -333,6 +368,8 @@ async function startCoreRuntime({
             personal.start();
             services.personalHeartbeat = personal;
             stoppers.push(async () => personal.stop());
+            onPause(() => personal.stop());
+            inFlight.push(() => personal.ticking === true);
         });
         await step('spitballExpeditions', async () => {
             const runner = load('spitballExpeditionRunner', () => requireOptional('../services/spitballExpeditionRunner', { feature: 'expeditions' }));
@@ -342,16 +379,30 @@ async function startCoreRuntime({
                 logger.info?.(`[runtime] Spitball: picked up ${kicked.length} queued expedition(s): ${kicked.join(', ')}`);
             }
             stoppers.push(async () => { await runner.stop?.(); });
+            onPause(() => runner.requestCheckpoint?.());
+            if (typeof runner.waitForCheckpoint === 'function') {
+                settleTasks.push({
+                    name: 'expedition',
+                    contract: 'expedition',
+                    drain: () => runner.waitForCheckpoint(),
+                    interrupt: () => runner.interruptLive?.()
+                });
+            }
         }, { feature: 'expeditions' });
         await step('memoryConsolidation', () => {
             const consolidation = load('memoryConsolidationService', () => require('../services/memoryConsolidationService'));
             consolidation.start();
             stoppers.push(async () => consolidation.stop?.());
+            onPause(() => consolidation.stop?.());
+            inFlight.push(() => consolidation.running === true);
         });
         await step('knowledgeReflection', () => {
             const reflection = load('knowledgeReflectionService', () => require('../services/knowledgeReflectionService'));
             reflection.start();
             stoppers.push(async () => reflection.stop?.());
+            let reflectionStopped = null;
+            onPause(() => { reflectionStopped = Promise.resolve(reflection.stop?.()).catch(() => {}); });
+            settleTasks.push({ name: 'knowledgeReflection', contract: 'runtimeStep', drain: () => reflectionStopped });
         });
         await step('ledgerRetention', () => {
             // work_failures / resource_events / operator_audit retention
@@ -359,6 +410,7 @@ async function startCoreRuntime({
             const ledgerRetention = load('ledgerRetentionService', () => require('../services/ledgerRetentionService'));
             ledgerRetention.start();
             stoppers.push(async () => ledgerRetention.stop?.());
+            onPause(() => ledgerRetention.stop?.());
         });
 
         // --- Discord-bound workers (need the live client) ---------------------
@@ -370,6 +422,8 @@ async function startCoreRuntime({
                 heartbeat.start();
                 services.heartbeat = heartbeat;
                 stoppers.push(async () => heartbeat.stop());
+                onPause(() => heartbeat.stop());
+                inFlight.push(() => heartbeat.ticking === true);
             });
             await step('agentTracker', () => {
                 const AgentTrackerService = load('AgentTrackerService', () => requireOptional('../services/agentTrackerService', { feature: 'cursor' }));
@@ -378,6 +432,7 @@ async function startCoreRuntime({
                 tracker.start();
                 services.agentTracker = tracker;
                 stoppers.push(async () => tracker.stop());
+                onPause(() => tracker.stop());
             }, { feature: 'cursor' });
             await step('monologue', () => {
                 const MonologueService = load('MonologueService', () => require('../services/monologueService'));
@@ -385,6 +440,8 @@ async function startCoreRuntime({
                 monologue.start();
                 services.monologue = monologue;
                 stoppers.push(async () => monologue.stop());
+                onPause(() => monologue.stop());
+                inFlight.push(() => monologue.ticking === true);
             });
             await step('exchangeRiskEngine', () => {
                 const RiskEngine = load('RiskEngine', () => requireOptional('../services/exchange/riskEngine', { feature: 'exchange' }));
@@ -393,6 +450,8 @@ async function startCoreRuntime({
                 engine.start();
                 services.exchangeRiskEngine = engine;
                 stoppers.push(async () => engine.stop());
+                onPause(() => engine.stop());
+                inFlight.push(() => engine.running === true);
             }, { feature: 'exchange' });
         } else {
             skipped.push('heartbeat', 'agentTracker', 'monologue', 'exchangeRiskEngine');
@@ -416,6 +475,52 @@ async function startCoreRuntime({
             pausedAtStart: paused,
             services,
             gateway: resolvedGateway,
+            /**
+             * Stop opening new passes in this process (idempotent). Not the
+             * operator pause flag: nothing durable changes.
+             * @returns {boolean} true on the first call
+             */
+            pauseNewWork() {
+                if (newWorkPaused) return false;
+                newWorkPaused = true;
+                for (const pauser of pausers.splice(0)) {
+                    try {
+                        pauser();
+                    } catch (error) {
+                        logger.error?.(`[runtime] Stop-new-work failed: ${error?.message || error}`);
+                    }
+                }
+                logger.info?.('[runtime] No new scheduled work in this process');
+                return true;
+            },
+            get newWorkPaused() {
+                return newWorkPaused;
+            },
+            /**
+             * Wait for the passes already running and the expedition
+             * checkpoint, each at most its contract's bound and never past
+             * `boundMs`; whatever is still going then is interrupted. Calls
+             * pauseNewWork() first. Never throws.
+             */
+            async settleInFlight(boundMs) {
+                this.pauseNewWork();
+                const tasks = [...settleTasks];
+                if (inFlight.length > 0) {
+                    tasks.push({
+                        name: 'runtimeSteps',
+                        contract: 'runtimeStep',
+                        drain: () => new Promise((resolve) => {
+                            const check = () => {
+                                if (!inFlight.some(busy => { try { return busy(); } catch { return false; } })) return resolve();
+                                setTimeout(check, IN_FLIGHT_POLL_MS).unref?.();
+                            };
+                            check();
+                        })
+                    });
+                }
+                const settled = await Promise.all(tasks.map(task => settle([task], contractBoundMs(task.contract, boundMs))));
+                return settled.flat();
+            },
             async stop() {
                 if (stopped) return;
                 stopped = true;

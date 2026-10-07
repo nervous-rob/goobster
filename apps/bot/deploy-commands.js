@@ -1,16 +1,18 @@
+// A staged revision the manager runs this with deploys the staged feature set.
+require('@goobster/core/runtime/lifecycle').boot({ worker: 'bot' });
+
 const { REST, Routes, RateLimitError } = require('discord.js');
-const fs = require('node:fs');
 const path = require('node:path');
 const { validateConfig } = require('@goobster/core/utils/configValidator');
 const config = require('@goobster/core/config/configJson').load();
 
 const { clientId, guildIds, token } = config;
 
-// Cache file storing a hash of the last successful deployment. Skips the
-// Discord API call entirely when nothing changed - important on devices that
-// restart often (power loss on a Raspberry Pi), since command registration is
-// aggressively rate limited by Discord.
-const DEPLOY_CACHE_FILE = path.join(require('@goobster/core/runtimePaths').dataDir, '.command-deploy-hash');
+// Per-target hashes of the last acknowledged deployment live in
+// <dataDir>/command-deploy.json. An unchanged target skips the Discord API
+// call entirely - important on devices that restart often (power loss on a
+// Raspberry Pi), since command registration is aggressively rate limited.
+const DATA_DIR = require('@goobster/core/runtimePaths').dataDir;
 const FORCE_DEPLOY = process.argv.includes('--force');
 
 // Payload assembly is shared with scripts/verify-global-commands.js and
@@ -18,8 +20,8 @@ const FORCE_DEPLOY = process.argv.includes('--force');
 const {
 	collectCommandPayloads,
 	computeDeployHash,
+	deployCommandsIfChanged,
 	featureCommandFilter,
-	mergeEntryPointCommands,
 	validateGlobalCommandPayload
 } = require('@goobster/core/utils/commandDeployment');
 
@@ -45,21 +47,10 @@ if (payloadIssues.length > 0) {
 	process.exit(1);
 }
 
-// The hash covers the payload, the deployment targets and the active feature
-// set, so enabling or disabling a feature always re-syncs Discord.
-const deployHash = computeDeployHash({ clientId, guildIds, guildCommands, globalCommands });
-
-if (!FORCE_DEPLOY) {
-	try {
-		const previousHash = fs.readFileSync(DEPLOY_CACHE_FILE, 'utf8').trim();
-		if (previousHash === deployHash) {
-			console.log('Slash commands unchanged since last deployment - skipping (use --force to override).');
-			process.exit(0);
-		}
-	} catch {
-		// No cache file yet - proceed with deployment.
-	}
-}
+// Each target hash covers its payload, its scope and the active feature set,
+// so enabling or disabling a feature always re-syncs Discord. The combined
+// hash is what the legacy .command-deploy-hash file recorded.
+const legacyHash = computeDeployHash({ clientId, guildIds, guildCommands, globalCommands });
 
 // Construct and prepare an instance of the REST module.
 //
@@ -104,62 +95,35 @@ try {
 			console.log(`Client ID: ${clientId}`);
 			console.log(`Guild IDs: ${guildIds.join(', ')}`);
 
-			// Deploy guild-only commands to each guild
-			const deployPromises = guildIds.map(async guildId => {
-				try {
-					console.log(`Deploying commands to guild ${guildId}...`);
-					const data = await rest.put(
-						Routes.applicationGuildCommands(clientId, guildId),
-						{ body: guildCommands }
-					);
-					console.log(`Successfully reloaded ${data.length} commands for guild ${guildId}`);
-					return data;
-				} catch (error) {
-					console.error(`Failed to deploy commands to guild ${guildId}:`, error);
-					if (error.code === 50001) {
-						console.error('Missing permissions in guild. Bot needs applications.commands scope.');
-					} else if (error.code === 50013) {
-						console.error('Missing permissions in guild. Bot needs Manage Server permission.');
-					}
-					throw error;
-				}
+			// Guild-only commands go to each guild; DM-enabled ones are
+			// registered globally (up to an hour to propagate the first
+			// time), carrying the Activity Entry Point command through
+			// unchanged (API error 50240).
+			const outcome = await deployCommandsIfChanged({
+				rest,
+				routes: Routes,
+				clientId,
+				guildIds,
+				guildCommands,
+				globalCommands,
+				dataDir: DATA_DIR,
+				legacyHash,
+				force: FORCE_DEPLOY,
+				log: console.log
 			});
-
-			// DM-enabled commands are registered globally (may take up to an
-			// hour to propagate everywhere on first deployment).
-			deployPromises.push((async () => {
-				try {
-					console.log('Deploying global (DM-enabled) commands...');
-
-					// Apps with an Activity have a PRIMARY_ENTRY_POINT command
-					// (type 4, the Activity "Launch" command) that a bulk
-					// update must not remove (API error 50240). Fetch the
-					// existing global commands and carry it through unchanged.
-					const existingGlobal = await rest.get(Routes.applicationCommands(clientId));
-					const body = mergeEntryPointCommands(existingGlobal, globalCommands);
-					const preservedCount = body.length - globalCommands.length;
-					if (preservedCount > 0) {
-						console.log(`Preserving ${preservedCount} Entry Point command(s):`, body.slice(0, preservedCount).map(cmd => cmd.name));
-					}
-
-					const data = await rest.put(
-						Routes.applicationCommands(clientId),
-						{ body }
-					);
-					console.log(`Successfully reloaded ${data.length} global commands`);
-					return data;
-				} catch (error) {
-					console.error('Failed to deploy global commands:', error);
-					throw error;
+			if (outcome.skipped.length > 0) {
+				console.log(`Unchanged since the last acknowledged deployment, skipped: ${outcome.skipped.join(', ')} (use --force to override).`);
+			}
+			for (const { key, error } of outcome.failed) {
+				console.error(`Failed to deploy commands to ${key}:`, error);
+				if (error.code === 50001) {
+					console.error('Missing permissions in guild. Bot needs applications.commands scope.');
+				} else if (error.code === 50013) {
+					console.error('Missing permissions in guild. Bot needs Manage Server permission.');
 				}
-			})());
-
-			await Promise.all(deployPromises);
+			}
+			if (outcome.failed.length > 0) throw outcome.failed[0].error;
 			console.log('All command deployments completed');
-
-			// Record the successful deployment so unchanged restarts can skip it.
-			fs.mkdirSync(path.dirname(DEPLOY_CACHE_FILE), { recursive: true });
-			fs.writeFileSync(DEPLOY_CACHE_FILE, deployHash, 'utf8');
 
 			process.exit(0);
 		} catch (error) {

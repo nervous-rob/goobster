@@ -1,3 +1,8 @@
+// Before anything reads feature state: a staged revision the manager started
+// this process with runs the staged feature document (manager_lifecycle.md).
+const lifecycle = require('@goobster/core/runtime/lifecycle');
+lifecycle.boot({ worker: 'bot' });
+
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
@@ -145,6 +150,16 @@ const { refuseUnavailableCommand } = require('./events/interactionCreate');
 
 logger.info('Loading event handlers...');
 
+// Interaction handlers still running (commands, and buttons such as a
+// confirmed integration action): a shutdown drains them inside the
+// integrationAction bound before the process exits.
+const interactionsInFlight = new Set();
+function trackInteraction(work) {
+	const entry = Promise.resolve(work).finally(() => interactionsInFlight.delete(entry));
+	interactionsInFlight.add(entry);
+	return entry;
+}
+
 // Load event handlers
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
@@ -156,6 +171,8 @@ for (const file of eventFiles) {
 		const event = require(filePath);
 		if (event.once) {
 			client.once(event.name, (...args) => event.execute(...args));
+		} else if (event.name === Events.InteractionCreate) {
+			client.on(event.name, (...args) => trackInteraction(event.execute(...args)));
 		} else {
 			client.on(event.name, (...args) => event.execute(...args));
 		}
@@ -407,6 +424,8 @@ client.once(Events.ClientReady, async readyClient => {
 		logger.info('Music playback not active: shared music service and presence listeners not started');
 	}
 
+	await lifecycle.acknowledgeReady();
+
 	// Initial presence update
 	await updateGlobalPresence(readyClient);
 	// Shutdown cleanup is handled by the single SIGINT/SIGTERM handler below.
@@ -432,11 +451,13 @@ async function rejectGuildOnlyCommandInDm(interaction, command) {
 	return true;
 }
 
-client.on(Events.InteractionCreate, async interaction => {
+client.on(Events.InteractionCreate, interaction => trackInteraction(handleCommandInteraction(interaction)));
+
+async function handleCommandInteraction(interaction) {
     // A command whose file was not loaded because its feature is off: answer
     // (ephemeral) before anything else, never run it.
     if ((interaction.isAutocomplete() || interaction.isContextMenuCommand() || interaction.isChatInputCommand())
-        && !client.commands.has(interaction.commandName)
+        && (!client.commands.has(interaction.commandName) || lifecycle.restartNotice())
         && await refuseUnavailableCommand(interaction, commandNames)) {
         return;
     }
@@ -516,7 +537,7 @@ client.on(Events.InteractionCreate, async interaction => {
 	}
 	// Note: button interactions (e.g. search approval) are handled by
 	// events/interactionCreate.js, which is loaded by the events loader above.
-});
+}
 
 // Add reaction handlers
 client.on('messageReactionAdd', async (reaction, user) => {
@@ -601,10 +622,62 @@ client.ws.on('close', (event) => {
 	logger.info(`WebSocket closed: ${typeof event === 'object' ? JSON.stringify(event) : event}`);
 });
 
-// Graceful shutdown handling
-const shutdown = async () => {
+/**
+ * Stop new work, then give in-flight work its restart contract inside the
+ * drain bound (documentation/manager_lifecycle.md): scheduled passes and
+ * interaction handlers drain, expeditions checkpoint, sandbox runs keep their own timeout and are noted
+ * INTERRUPTED past the bound, voice sessions end with a notice.
+ */
+async function drainWork() {
+        lifecycle.pauseNewWork({ reason: 'shutdown' });
+        const boundMs = lifecycle.drainBoundMs();
+        const sandboxService = requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' });
+        const pending = [];
+        if (sandboxService) {
+                pending.push(lifecycle.settle([{
+                        name: 'sandboxRun',
+                        drain: () => sandboxService.drainRuns(),
+                        interrupt: () => sandboxService.interruptRunning()
+                }], lifecycle.contractBoundMs('sandboxRun', boundMs)));
+        }
+        pending.push(lifecycle.settle([{
+                name: 'integrationAction',
+                drain: () => Promise.allSettled([...interactionsInFlight])
+        }], lifecycle.contractBoundMs('integrationAction', boundMs)));
+        if (client.coreRuntime?.settleInFlight) pending.push(client.coreRuntime.settleInFlight(boundMs));
+        const voiceSessionService = VOICE_ACTIVE
+                ? requireOptional('@goobster/core/services/voice/voiceSessionService', { feature: 'voice' })
+                : null;
+        if (voiceSessionService) {
+                const gateway = client.coreRuntime?.gateway || require('@goobster/core/gateway').toGateway(client);
+                pending.push(lifecycle.settle([{
+                        name: 'voiceSession',
+                        drain: () => voiceSessionService.endAllSessions({ gateway })
+                }], lifecycle.contractBoundMs('voiceSession', boundMs)));
+        }
+        const cut = (await Promise.all(pending)).flat().filter(result => result.outcome !== 'settled');
+        if (cut.length > 0) logger.warn(`Shutdown bound reached; interrupted: ${cut.map(result => result.name).join(', ')}`);
+}
+
+lifecycle.onPauseNewWork(() => {
+        client.coreRuntime?.pauseNewWork?.();
+        requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' })?.pauseNewWork();
+});
+
+// Graceful shutdown handling; one run whatever asks (signal, restart request, orphan watch)
+let shuttingDown = null;
+const shutdown = ({ exitCode = 0 } = {}) => {
+        if (!shuttingDown) shuttingDown = runShutdown(exitCode);
+        return shuttingDown;
+};
+const runShutdown = async (exitCode) => {
         logger.info('Shutting down...');
         try {
+                try {
+                        await drainWork();
+                } catch (drainError) {
+                        logger.error('Error draining in-flight work:', drainError);
+                }
                 if (client.musicService) {
                         logger.debug('Cleaning up music service...');
                         client.musicService.dispose();
@@ -640,12 +713,13 @@ const shutdown = async () => {
 	} catch (error) {
 		logger.error('Error during shutdown:', error);
 	} finally {
-		process.exit();
+		process.exit(exitCode);
 	}
 };
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown({ exitCode: 0 }));
+process.on('SIGTERM', () => shutdown({ exitCode: 0 }));
+lifecycle.install({ shutdown });
 
 logger.info('Attempting to log in...');
 
@@ -668,10 +742,8 @@ try {
 	process.exit(1);
 }
 
-// TODO: Add graceful shutdown handling for voice connections
 // TODO: Add retry mechanism for failed guild command deployments
 // TODO: Add proper error handling for button interactions outside of search
-// TODO: Add proper cleanup for voice sessions on bot restart
 // TODO: Add health check endpoint for Docker container
 // TODO: Add monitoring for WebSocket connection stability
 // TODO: Add proper handling for Discord API rate limits

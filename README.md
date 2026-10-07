@@ -414,6 +414,15 @@ pm2 start ecosystem.config.js
 pm2 save && pm2 startup
 ```
 
+Both run the installation manager (`apps/manager/index.js --supervise`),
+which deploys slash commands when they changed, runs the bot (or the api,
+or both, per layout) as its child, restarts it on a crash, and performs
+staged restarts for feature changes. The manager listens on
+`127.0.0.1:3400` only; from another machine use
+`ssh -L 3400:127.0.0.1:3400 pi@<host>`. Each file keeps a commented block
+for running the bot directly. See
+[documentation/manager_lifecycle.md](documentation/manager_lifecycle.md).
+
 ## Automatic Updates
 
 Keep a Pi in sync with `main` without logging in. A systemd timer checks the

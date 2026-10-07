@@ -6,6 +6,16 @@
 #
 # Only `web` (nginx) is published. Point a tunnel at localhost:3000.
 # Put the Postgres volume on a USB SSD, not an SD card (see documentation/postgres_setup.md).
+#
+# bot, api and sandbox are *external* workers of the installation manager
+# (documentation/manager_lifecycle.md): Docker starts and restarts them
+# (`restart: unless-stopped` also restarts a worker that exits 75 to pick up
+# a staged revision); a manager run with GOOBSTER_MANAGER_WORKERS=external
+# against the same data volume only asks for restarts through the control
+# files under /app/data/manager, checks health and waits for revision acks.
+# Docker sends SIGKILL 10 s after SIGTERM, so GOOBSTER_LIFECYCLE_DRAIN_SECONDS
+# keeps the in-flight drain inside that; raising it needs a matching
+# `stop_grace_period` on the service.
 
 name: goobster
 
@@ -51,6 +61,8 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
       GOOBSTER_SANDBOX_URL: http://sandbox:3200
       GOOBSTER_RUNNER_ID: bot
+      GOOBSTER_SUPERVISOR: docker
+      GOOBSTER_LIFECYCLE_DRAIN_SECONDS: "8"
     volumes:
       - ../config.json:/app/config.json:ro
       - goobster-data:/app/data
@@ -87,6 +99,10 @@ services:
       GOOBSTER_SANDBOX_MAX_CONCURRENT: ${GOOBSTER_SANDBOX_MAX_CONCURRENT:-1}
       GOOBSTER_SANDBOX_MAX_PER_ACCOUNT: ${GOOBSTER_SANDBOX_MAX_PER_ACCOUNT:-1}
       GOOBSTER_SANDBOX_RUNS_PER_WINDOW: ${GOOBSTER_SANDBOX_RUNS_PER_WINDOW:-10}
+      # The runner sees only the sandbox subtree, so it has no control
+      # file: Docker's SIGTERM is its only stop request.
+      GOOBSTER_SUPERVISOR: docker
+      GOOBSTER_LIFECYCLE_DRAIN_SECONDS: "8"
     volumes:
       # Never mount config.json or the full data volume: a snippet must
       # not be able to read bot secrets or another user's project. The
@@ -126,6 +142,8 @@ services:
       GOOBSTER_API_PORT: "3100"
       GOOBSTER_SANDBOX_URL: http://sandbox:3200
       GOOBSTER_RUNNER_ID: api
+      GOOBSTER_SUPERVISOR: docker
+      GOOBSTER_LIFECYCLE_DRAIN_SECONDS: "8"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
