@@ -96,7 +96,7 @@ describe('ownership', () => {
             'apps/bot/index.js:require',
             'apps/bot/index.js:require',
             'apps/bot/index.js:require',
-            'packages/core/services/backupService.js:require',
+            'packages/core/services/backupArchive.js:require',
             'packages/core/utils/commandDeployment.js:require'
         ]);
     });
