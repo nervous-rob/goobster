@@ -17,7 +17,10 @@
  *         @goobster/core/      real directory (no workspace symlink)
  *       apps/api, apps/web/dist, [apps/sandbox], documentation/, campaigns/, clients/
  *       scripts/package-smoke.js
- *     payload-manifest.json    every file with its SHA-256, every native binary, licences
+ *     payload-manifest.json    the signed release catalogue: every file with its SHA-256 and
+ *                              owner, dependencies, chunks, native binaries, licences
+ *     payload-manifest.sig     Ed25519 signature (only with --dev-sign or scripts/package-sign.js)
+ *     payload-selection.json   the profile and the features this copy carries
  *
  * Mutable state (data, cache, logs, config.json) is NOT in the payload; the
  * launcher points GOOBSTER_DATA_DIR / _CACHE_DIR / _LOG_DIR / _CONFIG_PATH at
@@ -27,6 +30,7 @@
  *   node scripts/package-runtime.js [--target <id>] [--out <dir>] [--force]
  *        [--with-sandbox] [--build-web] [--node-binary <path>] [--cache-dir <dir>]
  *        [--report-dir <dir>] [--keep-staging]
+ *        [--profile minimal|full | --features <id,id,...>] [--dev-sign]
  *
  *   --target       host only (linux-x64, linux-arm64, darwin-x64, darwin-arm64,
  *                  win32-x64). Native modules are fetched for the machine that
@@ -37,6 +41,15 @@
  *   --build-web    run `npm run build:web` first when apps/web/dist is missing
  *   --node-binary  OFFLINE FALLBACK: bundle this node binary instead of
  *                  downloading. The payload is marked runtimeVerified=false.
+ *   --profile      `full` (default: every feature) or `minimal` (core only)
+ *   --features     a custom selection; each feature's `dependsOn` is added.
+ *                  The release catalogue is built from the whole tree, then the
+ *                  files, dependency directories and portal chunks of every
+ *                  unselected feature are deleted (documentation/packaging.md).
+ *                  A selection with `sandbox` includes apps/sandbox.
+ *   --dev-sign     sign the manifest with a throwaway development key (made in a
+ *                  0700 temp directory and deleted after signing); the public key
+ *                  is written to the report directory for the smoke check.
  *
  * The recipe is deterministic given the lockfile, the Node pin
  * (scripts/package-node-pins.json) and the upstream prebuilt binaries: the
@@ -51,6 +64,10 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 
 const rules = require('./lib/packageRules');
+const stage = require('./lib/payloadStage');
+const { computeOwnership, buildReleaseManifest } = require('./lib/payloadManifest');
+const { readFeatureChunks, pruneDist, INSTALLED_FILE } = require('./lib/frontendChunks');
+const catalog = require('../packages/core/features/catalog');
 const { download } = require('./lib/download');
 const { inspectBinary, looksLikeBinary, compareVersions } = require('./lib/nativeBinaryInfo');
 
@@ -62,7 +79,8 @@ const SERVER_WORKSPACES = [
 const SANDBOX_WORKSPACE = { name: '@goobster/sandbox', dir: 'apps/sandbox', mode: 'app' };
 const STATIC_TREES = ['documentation', 'campaigns', 'clients'];
 const STATIC_FILES = ['README.md', 'LICENSE', 'changelog.md'];
-const SMOKE_FILES = ['scripts/package-smoke.js', 'scripts/lib/nativeBinaryInfo.js'];
+const SMOKE_FILES = ['scripts/package-smoke.js', 'scripts/lib/nativeBinaryInfo.js', 'scripts/lib/payloadStage.js'];
+const PROFILES = ['minimal', 'full'];
 const PERMISSIVE_LICENSE = /^(MIT|ISC|BSD-[23]-Clause|Apache-2\.0|0BSD|BlueOak-1\.0\.0|CC0-1\.0|CC-BY-4\.0|Unlicense|Python-2\.0|MIT-0|WTFPL|Zlib)$/i;
 
 // --------------------------------------------------------------------------
@@ -70,7 +88,7 @@ const PERMISSIVE_LICENSE = /^(MIT|ISC|BSD-[23]-Clause|Apache-2\.0|0BSD|BlueOak-1
 // --------------------------------------------------------------------------
 
 function parseArgs(argv) {
-    const options = { force: false, withSandbox: false, buildWeb: false, keepStaging: false };
+    const options = { force: false, withSandbox: false, buildWeb: false, keepStaging: false, devSign: false };
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
         const value = () => {
@@ -87,10 +105,27 @@ function parseArgs(argv) {
         else if (arg === '--with-sandbox') options.withSandbox = true;
         else if (arg === '--build-web') options.buildWeb = true;
         else if (arg === '--keep-staging') options.keepStaging = true;
+        else if (arg === '--profile') options.profile = value();
+        else if (arg === '--features') options.features = value().split(',').map(id => id.trim()).filter(Boolean);
+        else if (arg === '--dev-sign') options.devSign = true;
         else if (arg === '-h' || arg === '--help') options.help = true;
         else throw new Error(`Unknown option: ${arg}`);
     }
+    if (options.profile !== undefined && !PROFILES.includes(options.profile)) throw new Error(`--profile must be one of ${PROFILES.join(', ')}`);
+    if (options.profile !== undefined && options.features) throw new Error('--profile and --features are alternatives; pass one');
     return options;
+}
+
+/** `{ name, features }` for the requested selection; features are catalog ids without core, dependsOn included. */
+function resolveSelection(options) {
+    const optional = catalog.FEATURE_IDS.filter(id => id !== 'core');
+    if (options.features) {
+        const unknown = options.features.filter(id => !optional.includes(id));
+        if (unknown.length) throw new Error(`Unknown feature(s) for --features: ${unknown.join(', ')} (known: ${optional.join(', ')})`);
+        return { name: 'custom', features: catalog.closure(options.features).filter(id => id !== 'core') };
+    }
+    if (options.profile === 'minimal') return { name: 'minimal', features: [] };
+    return { name: 'full', features: optional };
 }
 
 function help() {
@@ -593,7 +628,10 @@ async function main() {
     log(`target ${targetId} | host Node ${process.version} (ABI ${process.versions.modules}) | npm ${childProcess.spawnSync(process.execPath, [resolveNpmCli(), '--version'], { encoding: 'utf8' }).stdout.trim()}`);
     log(`payload: ${outDir}`);
 
-    const workspaces = options.withSandbox ? [...SERVER_WORKSPACES, SANDBOX_WORKSPACE] : SERVER_WORKSPACES;
+    const selection = resolveSelection(options);
+    const withSandbox = options.withSandbox || (Boolean(options.features) && selection.features.includes('sandbox'));
+    const workspaces = withSandbox ? [...SERVER_WORKSPACES, SANDBOX_WORKSPACE] : SERVER_WORKSPACES;
+    log(`profile ${selection.name}: ${selection.features.length ? selection.features.join(', ') : 'core only'}`);
 
     // 1. Bundled Node runtime.
     const runtimeDir = path.join(outDir, 'runtime');
@@ -639,7 +677,11 @@ async function main() {
         if (!options.buildWeb) throw new Error('apps/web/dist is not built. Run `npm run build:web` first or pass --build-web.');
         run(process.execPath, [resolveNpmCli(), 'run', 'build:web'], { cwd: REPO_ROOT, label: 'npm run build:web' });
     }
-    fs.cpSync(webDist, path.join(appDir, 'apps', 'web', 'dist'), { recursive: true, dereference: false, verbatimSymlinks: true });
+    const payloadDist = path.join(appDir, 'apps', 'web', 'dist');
+    fs.cpSync(webDist, payloadDist, { recursive: true, dereference: false, verbatimSymlinks: true });
+    removeTree(path.join(payloadDist, INSTALLED_FILE));
+    const chunkMap = readFeatureChunks(payloadDist);
+    if (!chunkMap) throw new Error('apps/web/dist has no feature-chunks.json: rebuild it with `npm run build:web`.');
     for (const tree of STATIC_TREES) excludedTracked.push(...copyTracked(tree, appDir).excluded);
     for (const file of STATIC_FILES) if (fs.existsSync(path.join(REPO_ROOT, file))) copyFile(path.join(REPO_ROOT, file), path.join(appDir, file));
     for (const file of SMOKE_FILES) copyFile(path.join(REPO_ROOT, file), path.join(appDir, file));
@@ -679,14 +721,30 @@ async function main() {
     }));
     const payloadDigest = crypto.createHash('sha256').update(files.map(file => `${file.sha256}  ${file.path}\n`).join('')).digest('hex');
     const lockfileSha256 = sha256File(path.join(REPO_ROOT, 'package-lock.json'));
-    const manifest = {
+
+    // 5. The release catalogue: every file of the whole tree with its owner.
+    const ownership = computeOwnership({ root: REPO_ROOT, catalog, target, withSandbox });
+    for (const conflict of ownership.conflicts) violations.push({ rule: 'ownership-conflict', rel: `${conflict.file} (${conflict.owners.join(', ')})` });
+    for (const missing of ownership.missingPackages) violations.push({ rule: 'import-not-in-lockfile', rel: `${missing.from} -> ${missing.package}` });
+    const corePackage = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'packages', 'core', 'package.json'), 'utf8'));
+    const release = buildReleaseManifest({
+        ownership,
+        catalog,
+        coreVersion: corePackage.version,
+        target: { id: targetId, platform: target.platform, arch: target.arch },
+        node: { version: rules.pins.nodeVersion, abi: rules.pins.moduleVersion },
+        files,
+        chunks: chunkMap.chunks,
+        nativeBinaries: binaries.map(({ rel }) => ({ path: rel }))
+    });
+    let manifest = {
+        ...release,
         schema: 1,
-        target: targetId,
         goobsterVersion: rootManifest.version,
         commit: (gitOutput(['rev-parse', 'HEAD']) || '').trim() || null,
         lockfileSha256,
         node: {
-            version: rules.pins.nodeVersion,
+            ...release.node,
             moduleVersion: rules.pins.moduleVersion,
             archive: archiveInfo ? archiveInfo.file : null,
             archiveSha256: archiveInfo ? archiveInfo.sha256 : null,
@@ -703,10 +761,64 @@ async function main() {
             const { symbolVersions, ...summary } = info; // eslint-disable-line no-unused-vars
             return { path: rel, size, ...summary };
         }),
-        licenses: { total: licenses.length, nonPermissive },
-        files
+        licenses: { total: licenses.length, nonPermissive }
     };
-    fs.writeFileSync(path.join(outDir, 'payload-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+    let signature = null;
+    let publicKeyPath = null;
+    if (options.devSign) {
+        const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-payload-dev-key-'));
+        try {
+            const key = stage.generateDevKeyPair(path.join(keyDir, 'key'));
+            ({ manifest, signature } = stage.signManifest(manifest, fs.readFileSync(key.privateKeyPath, 'utf8')));
+            publicKeyPath = path.join(reportDir, `payload-dev-key-${targetId}.pub.pem`);
+            fs.copyFileSync(key.publicKeyPath, publicKeyPath);
+        } finally {
+            removeTree(keyDir);
+        }
+        log(`signed with a throwaway development key ${manifest.signing.keyId} (private key deleted); public key: ${publicKeyPath}`);
+    }
+    stage.writeManifest(outDir, manifest, signature);
+
+    // 6. Apply the selection: what an unselected feature owns is deleted, not hidden.
+    const selected = stage.selectPayload(manifest, { features: selection.features });
+    const emptied = new Set();
+    for (const rel of selected.excluded.files) {
+        fs.rmSync(path.join(outDir, ...rel.split('/')), { force: true });
+        emptied.add(path.dirname(path.join(outDir, ...rel.split('/'))));
+    }
+    for (const dir of [...emptied].sort((a, b) => b.length - a.length)) {
+        let current = dir;
+        while (current.startsWith(`${outDir}${path.sep}`) && fs.existsSync(current) && fs.readdirSync(current).length === 0) {
+            fs.rmdirSync(current);
+            current = path.dirname(current);
+        }
+    }
+    const prunedDist = pruneDist(payloadDist, { installed: selected.features.filter(id => id !== 'core') });
+    fs.writeFileSync(path.join(outDir, stage.SELECTION_FILE), stage.canonicalJson(stage.selectionDocument(selected, selection.name)));
+    for (const dir of selected.excluded.dependencies) {
+        if (fs.existsSync(path.join(outDir, ...dir.split('/')))) violations.push({ rule: 'excluded-dependency-present', rel: dir });
+    }
+    for (const chunk of selected.excluded.chunks) {
+        if (fs.existsSync(path.join(payloadDist, ...chunk.split('/')))) violations.push({ rule: 'excluded-chunk-present', rel: chunk });
+    }
+    for (const file of prunedDist.removed) violations.push({ rule: 'chunk-outside-the-catalogue', rel: file });
+    let verified = null;
+    try {
+        verified = stage.verifyPayload(outDir, {
+            expectedTarget: targetId,
+            nodeAbi: rules.pins.moduleVersion,
+            coreVersion: corePackage.version,
+            publicKey: publicKeyPath ? fs.readFileSync(publicKeyPath, 'utf8') : undefined,
+            devMode: !signature
+        });
+        log(`verifyPayload: ${verified.signed ? `signature verified (key ${verified.keyId})` : 'UNSIGNED development payload (signature not checked)'}; ${verified.files} files, release ${verified.releaseId}`);
+    } catch (error) {
+        violations.push({ rule: `payload-verify:${error.code || 'ERROR'}`, rel: error.message });
+    }
+    const exclusiveAbsent = manifest.dependencies.filter(dep => dep.exclusive && selected.excluded.dependencies.includes(dep.path)).map(dep => dep.name);
+    log(`selection: ${selected.features.length} feature group(s) kept; removed ${selected.excluded.files.length} files, ${selected.excluded.dependencies.length} dependency directories (${exclusiveAbsent.length} exclusive), ${selected.excluded.chunks.length} portal chunks`);
+    const finalEntries = walk(outDir);
+    const finalFiles = finalEntries.filter(entry => entry.type === 'file');
 
     const report = {
         target: targetId,
@@ -716,15 +828,31 @@ async function main() {
         bundledNode: bundledVersion.stdout.trim(),
         runtimeVerified: runtime.verified,
         payloadDigest,
-        sizeBytes: {
-            total: files.reduce((sum, file) => sum + file.size, 0),
-            runtime: treeSize(entries, 'runtime'),
-            nodeModules: treeSize(entries, 'app/node_modules'),
-            webDist: treeSize(entries, 'app/apps/web/dist'),
-            documentation: treeSize(entries, 'app/documentation')
+        profile: selection.name,
+        features: selected.features,
+        excluded: {
+            features: selected.excluded.features,
+            files: selected.excluded.files.length,
+            dependencies: selected.excluded.dependencies.length,
+            exclusiveDependencies: exclusiveAbsent,
+            chunks: selected.excluded.chunks.length
         },
-        fileCount: files.length,
-        symlinks: entries.filter(entry => entry.type === 'symlink').length,
+        unreferencedDependencies: manifest.unreferenced,
+        signed: Boolean(signature),
+        keyId: manifest.signing ? manifest.signing.keyId : null,
+        devPublicKey: publicKeyPath,
+        releaseId: verified ? verified.releaseId : null,
+        sizeBytes: {
+            total: finalFiles.reduce((sum, file) => sum + file.size, 0),
+            runtime: treeSize(finalEntries, 'runtime'),
+            nodeModules: treeSize(finalEntries, 'app/node_modules'),
+            webDist: treeSize(finalEntries, 'app/apps/web/dist'),
+            documentation: treeSize(finalEntries, 'app/documentation'),
+            catalogue: files.reduce((sum, file) => sum + file.size, 0)
+        },
+        fileCount: finalFiles.length,
+        catalogueFileCount: files.length,
+        symlinks: finalEntries.filter(entry => entry.type === 'symlink').length,
         prebuiltBinariesFetched: installLog.prebuildFetches,
         compilerOutputLines: installLog.compileOutput.length,
         prunedEntries: pruned.length,
@@ -757,4 +885,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, redact };
+module.exports = { parseArgs, resolveSelection, redact };

@@ -27,6 +27,11 @@
  *      set, proving the roots are relocatable
  *   7. restricted permissions: --read-only-data points the data directory at
  *      a read-only location and reports the failure instead of passing
+ *   8. the payload verifies against its release manifest (payload.verify: the
+ *      signature with --public-key, otherwise labelled as an unsigned
+ *      development payload) and the features its selection leaves out are
+ *      physically absent: files, dependency directories, portal chunks
+ *      (payload.exclusive-absence; documentation/packaging.md)
  *
  * Options:
  *   --report <file>      write the JSON report there (also printed to stdout)
@@ -35,6 +40,16 @@
  *                        to FAIL with an actionable message (exit 1)
  *   --no-launcher        skip step 6
  *   --allow-system-node  do not require the bundled runtime (local debugging)
+ *   --public-key <pem>   verify the manifest signature with this Ed25519 key
+ *   --routes             boot the API once more with a features.json written from
+ *                        the selection and check /api/app/features, a route of
+ *                        every selected feature (answers) and of every excluded
+ *                        one (404)
+ *   --dormant-probe <dir> run <dir>/reducedPayloadProbe.js (with dormantSeed.js and
+ *                        loadRecorder.js beside it, copied from tests/helpers)
+ *                        against this payload's core: two accounts with rows in
+ *                        every feature table, then the data report, the export and
+ *                        erasure with the excluded feature modules absent
  *
  * The report never contains environment values, tokens or user content; the
  * environment handed to the API child is an allow-list.
@@ -49,6 +64,7 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 
 const { inspectBinary } = require('./lib/nativeBinaryInfo');
+const stage = require('./lib/payloadStage');
 
 const CODE_ROOT = path.resolve(__dirname, '..');
 const PAYLOAD_ROOT = path.resolve(CODE_ROOT, '..');
@@ -72,6 +88,9 @@ function parseArgs(argv) {
         else if (arg === '--read-only-data') parsed.readOnlyData = true;
         else if (arg === '--no-launcher') parsed.launcher = false;
         else if (arg === '--allow-system-node') parsed.allowSystemNode = true;
+        else if (arg === '--public-key') parsed.publicKey = path.resolve(argv[++i]);
+        else if (arg === '--routes') parsed.routes = true;
+        else if (arg === '--dormant-probe') parsed.dormantProbe = path.resolve(argv[++i]);
         else throw new Error(`Unknown option: ${arg}`);
     }
     return parsed;
@@ -169,9 +188,21 @@ function sha256File(file) {
     return hash.digest('hex');
 }
 
+/** The files this copy's selection carries (every group when there is no selection file). */
+function selectionOf(manifest) {
+    const selection = stage.readSelection(PAYLOAD_ROOT);
+    const resolved = stage.selectPayload(manifest, { features: selection ? selection.features : Object.keys(manifest.groups) });
+    return { ...resolved, profile: selection ? selection.profile : null };
+}
+
+function targetIdOf(manifest) {
+    return manifest.target && typeof manifest.target === 'object' ? manifest.target.id : manifest.target;
+}
+
 function verifyPayloadAgainstManifest(manifest, { hash }) {
     const { files, symlinks } = walkCodeRoot();
-    const expected = new Map(manifest.files.map(file => [file.path, file]));
+    const selected = new Set(selectionOf(manifest).files);
+    const expected = new Map(manifest.files.filter(file => selected.has(file.path)).map(file => [file.path, file]));
     const missing = [];
     const extra = [];
     const changed = [];
@@ -180,7 +211,7 @@ function verifyPayloadAgainstManifest(manifest, { hash }) {
         if (!found) missing.push(relPath);
         else if (found.size !== file.size || (hash && sha256File(found.full) !== file.sha256)) changed.push(relPath);
     }
-    for (const relPath of files.keys()) if (relPath !== 'payload-manifest.json' && !expected.has(relPath)) extra.push(relPath);
+    for (const relPath of files.keys()) if (!stage.LOCAL_FILES.includes(relPath) && !expected.has(relPath)) extra.push(relPath);
     return { fileCount: expected.size, missing, extra, changed, symlinks };
 }
 
@@ -192,6 +223,19 @@ function freePort() {
             const { port } = server.address();
             server.close(() => resolve(port));
         });
+    });
+}
+
+function send(port, { method = 'GET', pathname, headers = {}, body = null }) {
+    return new Promise((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers, timeout: REQUEST_TIMEOUT_MS, agent: false }, (res) => {
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
+        });
+        req.on('timeout', () => req.destroy(new Error(`timeout requesting ${pathname}`)));
+        req.on('error', reject);
+        req.end(body);
     });
 }
 
@@ -327,7 +371,7 @@ function waitForExit(child, timeoutMs) {
 }
 
 /** Run the API once, probe it, stop it. `mode` is 'direct' (bundled node + index.js) or 'launcher'. */
-async function runApi(mode, roots) {
+async function runApi(mode, roots, probe = null) {
     const port = await freePort();
     const indexJs = path.join(CODE_ROOT, 'apps', 'api', 'index.js');
     let child;
@@ -375,6 +419,7 @@ async function runApi(mode, roots) {
         const katex = await request(port, '/app/vendor/katex/katex.min.css');
         assert(katex.status === 200, `GET /app/vendor/katex/katex.min.css answered ${katex.status}; node_modules layout is wrong`);
         result.katexStatic = katex.status;
+        if (probe) result.probe = await probe(port);
     } catch (error) {
         child.kill();
         await waitForExit(child, 5000);
@@ -406,6 +451,135 @@ async function runApi(mode, roots) {
 }
 
 // --------------------------------------------------------------------------
+// reduced payloads (documentation/packaging.md)
+// --------------------------------------------------------------------------
+
+const ROUTE_PROBES = {
+    projects: { method: 'GET', pathname: '/api/app/observatory/projects' },
+    voice: { method: 'GET', pathname: '/api/app/voice/capabilities' },
+    music: { method: 'GET', pathname: '/api/app/studio/songs' },
+    exchange: { method: 'GET', pathname: '/api/app/exchange/overview' },
+    expeditions: { method: 'GET', pathname: '/api/app/spitball/expeditions' },
+    mcp: { method: 'POST', pathname: '/mcp', body: '{}' }
+};
+const PROBE_USER = '610000000000000001';
+const PROBE_FILES = ['reducedPayloadProbe.js', 'dormantSeed.js', 'loadRecorder.js'];
+
+function payloadPathExists(relPath) {
+    return fs.existsSync(path.join(PAYLOAD_ROOT, ...relPath.split('/')));
+}
+
+/** What the selection removed that is still on disk, and what it kept that is not. */
+function selectionAbsence(manifest, resolved) {
+    const dist = 'app/apps/web/dist/';
+    const keptDirs = resolved.dependencies.filter(Boolean);
+    const holdsKept = dir => keptDirs.some(kept => kept.startsWith(`${dir}/`));
+    return {
+        present: {
+            files: resolved.excluded.files.filter(payloadPathExists),
+            dependencies: resolved.excluded.dependencies.filter(dir => dir && !holdsKept(dir) && payloadPathExists(dir)),
+            chunks: resolved.excluded.chunks.filter(chunk => payloadPathExists(`${dist}${chunk}`))
+        },
+        missing: {
+            files: resolved.files.filter(file => !payloadPathExists(file)),
+            dependencies: keptDirs.filter(dir => !payloadPathExists(dir)),
+            chunks: resolved.chunks.filter(chunk => !payloadPathExists(`${dist}${chunk}`))
+        },
+        exclusive: [...new Set(manifest.dependencies.filter(dep => dep.exclusive && resolved.excluded.dependencies.includes(dep.path)).map(dep => dep.name))].sort()
+    };
+}
+
+function writeFeatureState(roots, manifest, resolved) {
+    const features = {};
+    for (const id of Object.keys(manifest.groups)) {
+        if (id === 'core') continue;
+        const installed = resolved.features.includes(id);
+        features[id] = { installed, active: installed };
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    fs.writeFileSync(path.join(roots.data, 'features.json'), `${JSON.stringify({ version: 1, revision: 1, updatedAt: stamp, origin: 'operator', features }, null, 2)}\n`);
+}
+
+async function probeRoutes(port, manifest, resolved) {
+    const origin = `http://127.0.0.1:${port}`;
+    const login = await send(port, {
+        method: 'POST',
+        pathname: '/api/app/auth/dev-session',
+        headers: { 'content-type': 'application/json', origin },
+        body: JSON.stringify({ userId: PROBE_USER, name: 'package smoke' })
+    });
+    assert(login.status === 200, `dev sign-in answered ${login.status}`);
+    const cookie = String((login.headers['set-cookie'] || [])[0] || '').split(';')[0];
+    const headers = { cookie, origin, 'content-type': 'application/json' };
+    const listed = await send(port, { pathname: '/api/app/features', headers });
+    assert(listed.status === 200, `/api/app/features answered ${listed.status}`);
+    const status = JSON.parse(listed.body);
+    const disagree = Object.keys(manifest.groups).filter(id => id !== 'core' && status.features?.[id]?.installed !== resolved.features.includes(id));
+    assert(disagree.length === 0, `/api/app/features disagrees with the selection about ${disagree.join(', ')}`);
+    const routes = {};
+    const wrong = [];
+    for (const [id, route] of Object.entries(ROUTE_PROBES)) {
+        if (!manifest.groups[id]) continue;
+        const answer = await send(port, { ...route, headers });
+        const selected = resolved.features.includes(id);
+        routes[id] = { selected, status: answer.status };
+        if (selected ? answer.status === 404 || answer.status >= 500 : answer.status !== 404) wrong.push(`${id} (${selected ? 'selected' : 'excluded'}) answered ${answer.status}`);
+    }
+    assert(wrong.length === 0, `routes: ${wrong.join('; ')}`);
+    return { source: status.source, routes };
+}
+
+function runDormantProbe(roots, resolved) {
+    const dir = options.dormantProbe;
+    for (const file of PROBE_FILES) assert(fs.existsSync(path.join(dir, file)), `${file} is missing from --dormant-probe`);
+    assert(!insidePayload(dir), 'the dormant-data probe must live outside the payload');
+    const out = path.join(roots.home, 'probe.json');
+    const loadLog = path.join(roots.home, 'probe-load.json');
+    const env = childEnvironment(roots, 0, {
+        NODE_ENV: 'production',
+        NODE_PATH: path.join(CODE_ROOT, 'node_modules'),
+        GOOBSTER_WORKSPACE_ROOT: CODE_ROOT,
+        GOOBSTER_DATA_DIR: roots.data,
+        GOOBSTER_UPLOADS_DIR: path.join(roots.data, 'uploads'),
+        GOOBSTER_CACHE_DIR: roots.cache,
+        GOOBSTER_LOG_DIR: roots.logs,
+        GOOBSTER_CONFIG_PATH: roots.config,
+        GOOBSTER_PROBE_OUT: out,
+        GOOBSTER_LOAD_LOG: loadLog
+    });
+    delete env.GOOBSTER_API_PORT;
+    const run = childProcess.spawnSync(process.execPath, ['--require', path.join(dir, 'loadRecorder.js'), path.join(dir, 'reducedPayloadProbe.js')], {
+        cwd: roots.home, env, encoding: 'utf8', timeout: 180000
+    });
+    assert(run.status === 0, `the probe exited with ${run.status === null ? `signal ${run.signal}` : `code ${run.status}`}: ${scrub(`${run.stderr || ''}`.split('\n').filter(Boolean).slice(-3).join(' | '))}`);
+    const summary = JSON.parse(fs.readFileSync(out, 'utf8'));
+    assert(!summary.error, `the probe failed: ${scrub(summary.error || '')}`);
+    assert(summary.seeded === summary.tables, `seeded ${summary.seeded} of ${summary.tables} feature tables`);
+    assert(summary.report.secrets.length === 0 && summary.auditMissing.A.length === 0 && summary.auditMissing.B.length === 0, 'the data report or the audit misses dormant data or carries a secret');
+    const exported = summary.export;
+    assert(exported.status === 'READY' && exported.missingTables.length === 0 && !exported.carriesOtherAccount && exported.carriesOwnContent && exported.secrets.length === 0,
+        `the export is incomplete or leaks: status ${exported.status}, ${exported.missingTables.length} missing table(s), other account ${exported.carriesOtherAccount}, ${exported.secrets.length} secret(s)`);
+    const forget = summary.forget;
+    assert(forget.ok && forget.remainingA.length === 0 && forget.wrongTotals.length === 0 && forget.changedB.length === 0 && forget.vecAfter.indexed === forget.vecAfter.stored,
+        `erasure left rows behind or touched the other account: ${forget.remainingA.length} remaining, ${forget.changedB.length} changed, vec ${forget.vecAfter.indexed}/${forget.vecAfter.stored}`);
+    const load = JSON.parse(fs.readFileSync(loadLog, 'utf8'));
+    const excluded = new Set(resolved.excluded.files);
+    const probeRoot = fs.realpathSync(dir);
+    const outside = load.loaded.filter(file => path.isAbsolute(file) && !insidePayload(file) && !file.startsWith(`${probeRoot}${path.sep}`) && !file.startsWith(`${dir}${path.sep}`));
+    const excludedLoaded = load.loaded.filter(file => path.isAbsolute(file) && insidePayload(file) && excluded.has(rel(file)));
+    assert(outside.length === 0, `the probe loaded ${outside.length} file(s) from outside the payload, e.g. ${scrub(outside[0] || '')}`);
+    assert(excludedLoaded.length === 0, `the probe loaded ${excludedLoaded.length} file(s) the selection removed, e.g. ${rel(excludedLoaded[0] || '')}`);
+    return {
+        engine: summary.engine,
+        tables: summary.tables,
+        export: { status: exported.status, missingTables: exported.missingTables.length },
+        forget: { remainingA: forget.remainingA.length, changedB: forget.changedB.length, vecBefore: forget.vecBefore, vecAfter: forget.vecAfter },
+        modulesLoaded: load.loaded.length,
+        failedResolutions: load.missing.length
+    };
+}
+
+// --------------------------------------------------------------------------
 // main
 // --------------------------------------------------------------------------
 
@@ -432,7 +606,50 @@ async function main() {
             return !parts.includes('node_modules') && parts.slice(0, -1).some(part => state.has(part));
         });
         assert(offending.length === 0, `payload contains config/user data/state/test files: ${offending.slice(0, 3).join(', ')}`);
-        return { target: manifest.target, files: beforeVerify.fileCount, payloadDigest: manifest.payloadDigest, symlinks: 0 };
+        return { target: targetIdOf(manifest), files: beforeVerify.fileCount, payloadDigest: manifest.payloadDigest, symlinks: 0 };
+    });
+
+    let resolved = null;
+    await check('payload.verify', () => {
+        assert(manifest, 'no manifest');
+        const publicKey = options.publicKey ? fs.readFileSync(options.publicKey, 'utf8') : undefined;
+        const result = stage.verifyPayload(PAYLOAD_ROOT, {
+            expectedTarget: `${process.platform}-${process.arch}`,
+            nodeAbi: process.versions.modules,
+            publicKey,
+            devMode: !publicKey
+        });
+        return {
+            label: result.signed ? `signature verified (key ${result.keyId})` : 'UNSIGNED DEVELOPMENT PAYLOAD: signature not checked (pass --public-key to check it)',
+            signed: result.signed,
+            devMode: result.devMode,
+            keyId: result.keyId,
+            releaseId: result.releaseId,
+            profile: result.profile,
+            files: result.files
+        };
+    });
+
+    await check('payload.exclusive-absence', () => {
+        assert(manifest, 'no manifest');
+        resolved = selectionOf(manifest);
+        const found = selectionAbsence(manifest, resolved);
+        const leftovers = [...found.present.files, ...found.present.dependencies, ...found.present.chunks];
+        assert(leftovers.length === 0, `${leftovers.length} file(s), dependency directories or chunks of excluded features are still in the payload, e.g. ${leftovers[0]}`);
+        const gaps = [...found.missing.files, ...found.missing.dependencies, ...found.missing.chunks];
+        assert(gaps.length === 0, `${gaps.length} selected file(s), dependency directories or chunks are missing, e.g. ${gaps[0]}`);
+        return {
+            profile: resolved.profile,
+            features: resolved.features,
+            excludedFeatures: resolved.excluded.features,
+            absent: {
+                files: resolved.excluded.files.length,
+                dependencies: resolved.excluded.dependencies.length,
+                exclusiveDependencies: found.exclusive,
+                chunks: resolved.excluded.chunks.length
+            },
+            present: { files: resolved.files.length, dependencies: resolved.dependencies.length, chunks: resolved.chunks.length }
+        };
     });
 
     await check('runtime.bundled', () => {
@@ -442,7 +659,7 @@ async function main() {
         assert(same || options.allowSystemNode, `this Node (${process.execPath}) is not the bundled runtime (${rel(bundled)}); run the smoke check with the payload's own node`);
         assert(process.versions.node === manifest.node.version || options.allowSystemNode, `Node ${process.versions.node} != pinned ${manifest.node.version}`);
         assert(process.versions.modules === manifest.node.moduleVersion, `module ABI ${process.versions.modules} != ${manifest.node.moduleVersion}`);
-        assert(`${process.platform}-${process.arch}` === manifest.target, `payload target ${manifest.target} does not match this host ${process.platform}-${process.arch}`);
+        assert(`${process.platform}-${process.arch}` === targetIdOf(manifest), `payload target ${targetIdOf(manifest)} does not match this host ${process.platform}-${process.arch}`);
         return { bundled: same, node: process.versions.node, abi: process.versions.modules, napi: process.versions.napi, runtimeVerified: manifest.node.runtimeVerified };
     });
 
@@ -463,7 +680,9 @@ async function main() {
         assert(manifest, 'no manifest');
         const wrong = [];
         let count = 0;
+        const carried = resolved ? new Set(resolved.files) : null;
         for (const binary of manifest.nativeBinaries) {
+            if (carried && !carried.has(binary.path)) continue;
             const info = inspectBinary(path.join(PAYLOAD_ROOT, binary.path));
             count += 1;
             if (!info.arch.includes(process.arch)) wrong.push(`${binary.path} (${info.arch.join('+')})`);
@@ -569,7 +788,17 @@ async function main() {
         return { sharp: sharp.versions.sharp || require('sharp/package.json').version, vips: sharp.versions.vips, formats: ['png', 'webp', 'jpeg'] };
     });
 
+    const notCarried = (...names) => {
+        if (!resolved) return null;
+        const left = names.filter(name => resolved.excluded.dependencies.includes(`app/node_modules/${name}`));
+        if (left.length !== names.length) return null;
+        const owners = [...new Set(manifest.dependencies.filter(dep => left.some(name => dep.path === `app/node_modules/${name}`)).flatMap(dep => dep.owners))].sort();
+        return { skip: `not in this payload: ${names.join(', ')} belong to ${owners.join(', ')} (profile ${resolved.profile || 'full'})` };
+    };
+
     await check('native.sodium-native', () => {
+        const absent = notCarried('sodium-native');
+        if (absent) return absent;
         const sodium = require('sodium-native');
         const out = Buffer.alloc(32);
         sodium.crypto_generichash(out, Buffer.from('abc'));
@@ -580,6 +809,8 @@ async function main() {
     });
 
     await check('native.napi-rs-canvas', () => {
+        const absent = notCarried('@napi-rs/canvas');
+        if (absent) return absent;
         const { createCanvas } = require('@napi-rs/canvas');
         const canvas = createCanvas(8, 8);
         canvas.getContext('2d').fillRect(0, 0, 4, 4);
@@ -588,12 +819,16 @@ async function main() {
     });
 
     await check('native.snazzah-davey', () => {
+        const absent = notCarried('@snazzah/davey');
+        if (absent) return absent;
         const davey = require('@snazzah/davey');
         assert(davey && Object.keys(davey).length > 0, 'davey exports nothing');
         return { exports: Object.keys(davey).length };
     });
 
     await check('wasm.libsodium-and-opus', async () => {
+        const absent = notCarried('libsodium-wrappers', 'opusscript');
+        if (absent) return absent;
         const sodium = require('libsodium-wrappers');
         await sodium.ready;
         assert(sodium.to_hex(sodium.crypto_generichash(32, 'abc')).length === 64, 'libsodium-wrappers hash failed');
@@ -636,6 +871,23 @@ async function main() {
         });
     } else {
         checks.push({ name: 'api.standalone.launcher', status: 'skip', detail: options.launcher ? 'the database did not open' : '--no-launcher', ms: 0 });
+    }
+
+    if (options.routes) {
+        await check('payload.routes', async () => {
+            assert(manifest && resolved, 'no manifest');
+            const routeRoots = makeInstance('routes');
+            fs.writeFileSync(routeRoots.config, `${JSON.stringify({ webapp: { enabled: true, devMode: true }, discord: { enabled: false } }, null, 2)}\n`);
+            writeFeatureState(routeRoots, manifest, resolved);
+            const result = await runApi('direct', routeRoots, port => probeRoutes(port, manifest, resolved));
+            return { health: result.health, exit: result.exit, ...result.probe };
+        });
+    }
+    if (options.dormantProbe) {
+        await check('payload.dormantData', () => {
+            assert(manifest && resolved, 'no manifest');
+            return runDormantProbe(makeInstance('dormant'), resolved);
+        });
     }
 
     await check('config.relocatable', () => {
@@ -682,8 +934,10 @@ async function main() {
         tool: 'package-smoke',
         startedAt,
         finishedAt: new Date().toISOString(),
-        target: manifest ? manifest.target : `${process.platform}-${process.arch}`,
+        target: manifest ? targetIdOf(manifest) : `${process.platform}-${process.arch}`,
         payloadDigest: manifest ? manifest.payloadDigest : null,
+        profile: resolved ? resolved.profile : null,
+        features: resolved ? resolved.features : null,
         node: { version: process.versions.node, abi: process.versions.modules },
         options: { readOnlyData: Boolean(options.readOnlyData), launcher: options.launcher },
         summary: {

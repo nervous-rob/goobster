@@ -270,6 +270,18 @@ describe('release manifest v1', () => {
         expect(payload.canonicalJson(build(again))).toBe(payload.canonicalJson(manifest));
         expect(payload.canonicalJson({ b: 1, a: [{ d: 2, c: 3 }] })).toBe('{\n  "a": [\n    {\n      "c": 3,\n      "d": 2\n    }\n  ],\n  "b": 1\n}\n');
     });
+
+    test('built from payload files, it lists only the dependencies that have files there', () => {
+        const kept = manifest.dependencies.find(dep => dep.name === 'discord.js' && dep.path);
+        const dropped = manifest.dependencies.find(dep => dep.name === 'sharp' && dep.path);
+        const files = manifest.files.slice(0, 200).map(({ path: filePath, sha256, size }) => ({ path: filePath, sha256, size }));
+        files.push({ path: `${kept.path}/package.json`, sha256: '0'.repeat(64), size: 2 });
+        const fromPayload = payload.buildReleaseManifest({ ownership, catalog, coreVersion: '1.2.3', target: TARGET, node: NODE, files });
+        const paths = fromPayload.dependencies.map(dep => dep.path);
+        expect(paths).toContain(kept.path);
+        expect(paths).not.toContain(dropped.path);
+        expect(fromPayload.groups.exchange.dependencies).not.toContain('sharp');
+    });
 });
 
 describe('selectPayload', () => {

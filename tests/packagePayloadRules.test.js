@@ -187,3 +187,33 @@ describe('nativeBinaryInfo', () => {
         expect(looksLikeBinary('index.js')).toBe(false);
     });
 });
+
+describe('package-runtime selection flags', () => {
+    const { parseArgs, resolveSelection } = require('../scripts/package-runtime');
+
+    test('no selection flag keeps the full payload', () => {
+        const options = parseArgs(['--out', '/tmp/x']);
+        expect(options).toMatchObject({ devSign: false });
+        expect(options.profile).toBeUndefined();
+        const selection = resolveSelection(options);
+        expect(selection.name).toBe('full');
+        expect(selection.features).toEqual(expect.arrayContaining(['discord', 'music', 'voice', 'sandbox']));
+        expect(selection.features).not.toContain('core');
+    });
+
+    test('--profile minimal is core only, --features closes over dependsOn, --dev-sign is recorded', () => {
+        expect(resolveSelection(parseArgs(['--profile', 'minimal']))).toEqual({ name: 'minimal', features: [] });
+        expect(resolveSelection(parseArgs(['--features', 'projects, sandbox']))).toEqual({ name: 'custom', features: ['projects', 'sandbox'] });
+        const music = resolveSelection(parseArgs(['--features', 'music']));
+        expect(music.name).toBe('custom');
+        expect(music.features).toContain('music');
+        expect(parseArgs(['--dev-sign']).devSign).toBe(true);
+    });
+
+    test('bad selections are refused before anything is built', () => {
+        expect(() => parseArgs(['--profile', 'tiny'])).toThrow(/--profile must be one of minimal, full/);
+        expect(() => parseArgs(['--profile', 'minimal', '--features', 'voice'])).toThrow(/alternatives/);
+        expect(() => parseArgs(['--features'])).toThrow(/needs a value/);
+        expect(() => resolveSelection(parseArgs(['--features', 'voice,warpdrive']))).toThrow(/Unknown feature\(s\) for --features: warpdrive/);
+    });
+});

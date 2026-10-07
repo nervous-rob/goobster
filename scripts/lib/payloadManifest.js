@@ -397,13 +397,23 @@ function compatibleRange(version) {
  * @param {string} params.coreVersion
  * @param {{ id: string, platform: string, arch: string }} params.target
  * @param {{ version: string, abi: string }} params.node
- * @param {Array<{ path: string, sha256: string, size: number }>} [params.files]  payload files; defaults to the source files
+ * @param {Array<{ path: string, sha256: string, size: number }>} [params.files]  payload files; defaults to the source files.
+ *   When given, a lockfile package with no file among them (another platform's optional binary) is not listed.
  * @param {Object<string, string>} [params.chunks]   dist-relative chunk file -> feature id or 'core'
  * @param {Array<{ path: string }>} [params.nativeBinaries] binaries found in the payload
  * @param {string} [params.root]  repository root, to hash source files when `files` is omitted
  */
 function buildReleaseManifest({ ownership, catalog, coreVersion, target, node, files, chunks = {}, nativeBinaries = [], root }) {
-    const dependencies = ownership.dependencies.map((dep) => {
+    const carried = files ? new Set(files.map(file => file.path)) : null;
+    const holdsFiles = (dir) => {
+        for (const file of carried) if (file.startsWith(`${dir}/`)) return true;
+        return false;
+    };
+    const dependencies = ownership.dependencies.filter((dep) => {
+        if (!carried) return true;
+        const dir = payloadDirOfLockKey(dep.path);
+        return !dir || holdsFiles(dir);
+    }).map((dep) => {
         const dir = payloadDirOfLockKey(dep.path);
         const binaries = dir ? nativeBinaries.filter(binary => binary.path.startsWith(`${dir}/`)).map(binary => binary.path).sort() : [];
         return {
