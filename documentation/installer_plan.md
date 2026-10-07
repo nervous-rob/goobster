@@ -372,6 +372,24 @@ Work:
    instances. The explainer and a recommendation from the selected
    features.
 
+   **Status (P4.5, #338): existing server built (PR pending review).** The
+   chooser (SQLite, an existing PostgreSQL server, and the Docker and native
+   entries disabled with "Available in a later version of this installer"),
+   workload guidance without user-count thresholds, the connection form and
+   the read-only `database test` (route `POST /manager/api/database/test`,
+   `database test` in the CLI), the kinds `database.provision` (an elevated
+   credential used once, least-privilege role, ticked actions, DBA SQL for an
+   unprivileged hosted server), `database.schema.apply` and
+   `database.connect` (maintenance barrier, probe, validation on the target,
+   overlay write, record update, barrier left up unless released), the
+   Postgres `database` answer of `install.new`, the setup wizard step, the
+   Database maintenance journey and the Host Database page. A SQLite
+   database that holds data is routed to the migration (`MIGRATION_REQUIRED`).
+   Not built here: Docker and native PostgreSQL provisioning, bind and
+   storage edits for a server the manager owns, cluster tuning and
+   PostgreSQL major upgrades. See
+   [database_connection.md](database_connection.md).
+
 Acceptance: every operation refuses to start while another holds the
 lock; an interrupted restore or migration recovers to a stated state;
 reset leaves no table with rows on either engine.

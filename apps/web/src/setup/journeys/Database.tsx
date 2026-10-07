@@ -103,10 +103,13 @@ function ConnectionStep({ mode, go }: { mode: 'connect' | 'schema'; go: Go }) {
     }, [database.engine, update]);
     const problems = shown;
     const state = report?.schema?.state;
-    const ready = mode === 'connect' ? usable(report) : Boolean(report && report.verdict.ok && (state === 'empty' || state === 'goobster-older'));
-    const reason = mode === 'schema' && report && !ready && report.verdict.ok
-        ? (state === 'goobster-current' ? 'The schema is already up to date: there is nothing to apply.' : 'The schema can only be applied to an empty schema or to Goobster\'s own older one.')
-        : null;
+    const ready = mode === 'connect'
+        ? Boolean(report && usable(report) && state !== 'empty')
+        : Boolean(report && report.verdict.ok && (state === 'empty' || state === 'goobster-older'));
+    const reason = !report || ready || !report.verdict.ok ? null
+        : mode === 'connect'
+            ? (state === 'empty' ? 'The schema is empty. Update the schema first (back on the Database page), then connect.' : null)
+            : (state === 'goobster-current' ? 'The schema is already up to date: there is nothing to apply.' : 'The schema can only be applied to an empty schema or to Goobster\'s own older one.');
 
     return (
         <JourneyFrame title={mode === 'connect' ? 'Connect to a server' : 'Update the schema'}>

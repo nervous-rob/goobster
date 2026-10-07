@@ -436,6 +436,13 @@ registered twice is a startup error, and the privileged names stay refused.
   `db.migrate.rollback`, `GET /manager/api/migrate/status`,
   `POST /manager/api/migrate/preflight`, the environment overlay above and
   `migrate preflight|run|rollback|status` in the CLI.
+- **#338 (connect to an existing PostgreSQL server):** done in
+  `documentation/database_connection.md`: `database.provision`,
+  `database.schema.apply`, `database.connect`, `GET /manager/api/database/status`,
+  `POST /manager/api/database/test` (read only) and `database
+  test|provision|schema|connect|status` in the CLI. The connection is
+  written only to the environment overlay; `install.new` accepts a Postgres
+  `database` answer with a `connection`.
 - **#255 (stronger auth):** `bridge.requireStrongAuth()`.
 
 ## Tests

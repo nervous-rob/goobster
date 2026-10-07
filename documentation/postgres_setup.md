@@ -95,6 +95,11 @@ sudo -u postgres psql -d goobster -c \
 (Both extensions are "trusted", so the adapter can also create them itself on
 first connect; pre-creating them as superuser just removes a variable.)
 
+The manager can do this step from the browser or the command line, with an
+administrator's credential it uses once and does not keep: the role it
+creates can log in and nothing else (no superuser, no database or role
+creation). See [database_connection.md](database_connection.md).
+
 Pi-friendly memory settings (optional but recommended on 4GB):
 
 ```sql
@@ -105,6 +110,14 @@ ALTER SYSTEM SET max_connections = 40;
 then `sudo systemctl restart postgresql`.
 
 ## 4. Migrate your existing data
+
+(Starting a new installation on a server you already run, or connecting an
+installation that has no data yet? That is not a migration: use the wizard's
+**An existing PostgreSQL server** or **Database** page, see
+[database_connection.md](database_connection.md). It tests the server read
+only, can create the role, database, schema and extensions with an
+administrator's credential that is used once, and refuses to point an
+installation whose SQLite file holds data at an empty server.)
 
 For an installation managed by the manager, use the supported path
 ([db_migration.md](db_migration.md)): a read-only preflight, a verified
@@ -181,6 +194,24 @@ file was never modified. (Anything written *after* the switch lives only in
 Postgres, so treat the rollback window accordingly.) With the manager's
 migration the same limit is enforced: `migrate rollback` is possible until the
 first write reaches Postgres, then refused (`POSTGRES_HAS_WRITES`).
+
+## Upgrading the server
+
+Moving the PostgreSQL server itself to a newer major version (say 16 to 17) is
+the administrator's job and happens outside Goobster; the manager does not do
+it in this version. It is not the same as updating Goobster's schema (adding
+tables and columns to a database Goobster already owns, which is safe to
+repeat) and not the same as changing the connection (telling Goobster where
+the server is; see [database_connection.md](database_connection.md)).
+
+For a server you run: take a backup of the database (`pg_dump`, plus the
+Goobster backup of the installation), stop the application, upgrade the
+cluster with your distribution's tool (`pg_upgradecluster` on Debian, or a
+dump and restore), install the matching pgvector package for the new major
+version, start the server, and connect again if its address changed. Goobster
+needs PostgreSQL 13 or newer and the `vector` and `citext` extensions; the
+Database page's **Test connection** reports the server version and the
+extensions before anything is changed.
 
 ## Troubleshooting
 
