@@ -332,6 +332,44 @@ function inspectBackup(dir) {
     return manifest;
 }
 
+/**
+ * Check a freshly written archive against the live database it came from:
+ * the manifest is valid, its schema fingerprint is this code's, and (for a
+ * SQLite archive) the snapshot file itself opens read-only and holds the
+ * expected row count per table. Reads the archive only.
+ * @param {string} dir
+ * @param {{ expectCounts: Record<string, number> }} options live row counts to compare against
+ * @returns {{ ok: boolean, fingerprintMatches: boolean, mismatches: Array<{ table: string, expected: number, actual: number|null }>, manifest: Object }}
+ */
+function verifyBackup(dir, { expectCounts } = {}) {
+    const manifest = inspectBackup(dir);
+    const fingerprintMatches = manifest.schemaFingerprint === schemaFingerprint();
+    const mismatches = [];
+    if (manifest.database.kind === 'sqlite-file') {
+        const Database = require('better-sqlite3');
+        const snapshot = new Database(path.join(dir, manifest.database.file), { readonly: true, fileMustExist: true });
+        try {
+            for (const [table, expected] of Object.entries(expectCounts || {})) {
+                if (COUNT_EXEMPT.has(table)) continue;
+                let actual = null;
+                try {
+                    actual = snapshot.prepare(`SELECT COUNT(*) AS c FROM ${/^[a-z_][a-z0-9_]*$/.test(table) ? table : `"${table}"`}`).get().c;
+                } catch { }
+                if (actual !== expected) mismatches.push({ table, expected, actual });
+            }
+        } finally {
+            snapshot.close();
+        }
+    } else {
+        for (const [table, expected] of Object.entries(expectCounts || {})) {
+            if (COUNT_EXEMPT.has(table)) continue;
+            const recorded = manifest.tables ? manifest.tables[table] : undefined;
+            if (recorded !== expected) mismatches.push({ table, expected, actual: recorded === undefined ? null : recorded });
+        }
+    }
+    return { ok: fingerprintMatches && mismatches.length === 0, fingerprintMatches, mismatches, manifest };
+}
+
 // --- Restore --------------------------------------------------------------
 
 /**
@@ -670,6 +708,7 @@ async function restoreBackup({
 module.exports = {
     createBackup,
     inspectBackup,
+    verifyBackup,
     restoreBackup,
     interruptInFlightWork,
     schemaFingerprint,

@@ -34,6 +34,7 @@ const { createLifecycleStore } = require('./store');
 const layouts = require('./layouts');
 const stage = require('./stage');
 const { checkHealth: defaultCheckHealth } = require('./health');
+const { noteWorkerStart } = require('../migration/state');
 
 const DEFAULT_POLICY = Object.freeze({
     backoffMs: layouts.BACKOFF_MS,
@@ -260,6 +261,8 @@ function createSupervisor({
             watch(slot, generation);
             return generation;
         }
+
+        noteWorkerStart({ storeDir: settings.storeDir, fs, now });
 
         if (await checkHealth(worker.healthUrl)) {
             slot.state = 'conflict';
