@@ -382,7 +382,7 @@ describe('core runtime: stop new work, drain inside the bound', () => {
 
     test('each in-flight kind gets its own contract bound inside the drain window: passes 15 s, the expedition checkpoint 45 s', async () => {
         const log = [];
-        const { deps, FakePersonal, runner } = fakeDeps(log);
+        const { deps, FakePersonal } = fakeDeps(log);
         const runtime = await startCoreRuntime({ gateway: null, logger: quiet, deps });
         FakePersonal.last.ticking = true;
         jest.useFakeTimers();
