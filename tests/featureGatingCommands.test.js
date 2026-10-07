@@ -58,10 +58,8 @@ const {
     collectCommandPayloads,
     commandNameIndex,
     computeDeployHash,
-    entryPointCommandsToRemove,
     featureCommandFilter,
-    listCommandFiles,
-    mergeEntryPointCommands
+    listCommandFiles
 } = require('@goobster/core/utils/commandDeployment');
 const interactionCreate = require('../apps/bot/events/interactionCreate');
 
@@ -419,47 +417,6 @@ describe('deploy hash', () => {
 /* ------------------------------------------------------------------ */
 /* Stale commands                                                       */
 /* ------------------------------------------------------------------ */
-
-describe('the Activity Entry Point command', () => {
-    const entryPoint = { id: '900', name: 'launch', type: 4, handler: 2 };
-    const existing = [entryPoint, { id: '901', name: 'chat', type: 1 }];
-    const payload = [{ name: 'chat', type: 1 }];
-
-    test('no state file: it is carried through unchanged and nothing is removed (legacy parity)', () => {
-        useState({ config: DEFAULT_CONFIG });
-        expect(entryPointCommandsToRemove(existing)).toEqual([]);
-        expect(mergeEntryPointCommands(existing, payload)).toEqual([entryPoint, ...payload]);
-    });
-
-    test('an env override alone that does not touch the Activity keeps it too', () => {
-        useState({ config: DEFAULT_CONFIG, env: { GOOBSTER_FEATURE_MUSIC: 'off' } });
-        expect(mergeEntryPointCommands(existing, payload)).toEqual([entryPoint, ...payload]);
-    });
-
-    test('a state file with the Activity on keeps it', () => {
-        useState({ config: EVERYTHING_ON, inactive: ['music'] });
-        expect(entryPointCommandsToRemove(existing)).toEqual([]);
-        expect(mergeEntryPointCommands(existing, payload)).toEqual([entryPoint, ...payload]);
-    });
-
-    test.each([
-        ['discordActivity off in the state file', { inactive: ['discordActivity'] }],
-        ['discord off (the Activity depends on it)', { inactive: ['discord'] }],
-        ['an env override forcing the Activity off', { env: { GOOBSTER_FEATURE_DISCORD_ACTIVITY: 'off' } }]
-    ])('with %s it is dropped from the bulk body and listed for a separate delete', (label, options) => {
-        useState({ config: EVERYTHING_ON, ...options });
-        expect(entryPointCommandsToRemove(existing)).toEqual([entryPoint]);
-        expect(mergeEntryPointCommands(existing, payload)).toEqual(payload);
-        expect(mergeEntryPointCommands(undefined, payload)).toEqual(payload);
-    });
-
-    test('deploy-commands.js deletes the stale Entry Point before the bulk overwrite', () => {
-        const deploy = fs.readFileSync(path.join(__dirname, '..', 'apps', 'bot', 'deploy-commands.js'), 'utf8');
-        expect(deploy.indexOf('entryPointCommandsToRemove(existingGlobal)')).toBeGreaterThan(-1);
-        expect(deploy.indexOf('rest.delete(')).toBeGreaterThan(deploy.indexOf('entryPointCommandsToRemove(existingGlobal)'));
-        expect(deploy.indexOf('rest.delete(')).toBeLessThan(deploy.indexOf('mergeEntryPointCommands(existingGlobal'));
-    });
-});
 
 describe('stale slash commands, autocomplete and context menus', () => {
     function fakeInteraction(commandName, { autocomplete = false } = {}) {

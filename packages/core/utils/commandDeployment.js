@@ -219,34 +219,16 @@ function computeDeployHash({ clientId, guildIds, guildCommands, globalCommands, 
 }
 
 /**
- * Entry Point commands this installation no longer serves: the Activity
- * "Launch" command while the Activity is enforced off (`discordActivity` off
- * in a state file, by env override, or because `discord` is). Discord refuses
- * a bulk overwrite that drops an Entry Point command (error 50240), so the
- * deploy script must delete these individually first
- * (`DELETE /applications/:id/commands/:commandId`) and then bulk-overwrite
- * with `mergeEntryPointCommands`. Always empty in a legacy install.
- * @param {Object[]} existingGlobalCommands - GET /applications/:id/commands result
- * @returns {Object[]}
- */
-function entryPointCommandsToRemove(existingGlobalCommands) {
-    if (!features.enforcedOff('discordActivity')) return [];
-    return (existingGlobalCommands || []).filter(cmd => cmd.type === ENTRY_POINT_TYPE);
-}
-
-/**
  * Bulk-overwriting global commands may not remove the app's Entry Point
  * command (API error 50240): carry any existing Entry Point commands
- * through the update unchanged, except those the installation no longer
- * serves (`entryPointCommandsToRemove`, which the caller deletes first).
+ * through the update unchanged.
  * @param {Object[]} existingGlobalCommands - GET /applications/:id/commands result
  * @param {Object[]} globalCommands - the new global command payloads
  * @returns {Object[]} bulk-overwrite body
  */
 function mergeEntryPointCommands(existingGlobalCommands, globalCommands) {
-    const removed = new Set(entryPointCommandsToRemove(existingGlobalCommands));
     const entryPointCommands = (existingGlobalCommands || [])
-        .filter(cmd => cmd.type === ENTRY_POINT_TYPE && !removed.has(cmd));
+        .filter(cmd => cmd.type === ENTRY_POINT_TYPE);
     return [...entryPointCommands, ...globalCommands];
 }
 
@@ -322,7 +304,6 @@ module.exports = {
     activeFeatureIds,
     computeDeployHash,
     collectCommandPayloads,
-    entryPointCommandsToRemove,
     mergeEntryPointCommands,
     validateGlobalCommandPayload
 };

@@ -18,7 +18,6 @@ const FORCE_DEPLOY = process.argv.includes('--force');
 const {
 	collectCommandPayloads,
 	computeDeployHash,
-	entryPointCommandsToRemove,
 	featureCommandFilter,
 	mergeEntryPointCommands,
 	validateGlobalCommandPayload
@@ -137,12 +136,6 @@ try {
 					// update must not remove (API error 50240). Fetch the
 					// existing global commands and carry it through unchanged.
 					const existingGlobal = await rest.get(Routes.applicationCommands(clientId));
-					// With the Activity switched off the Launch command is
-					// dropped, but Discord only accepts that as a separate delete.
-					for (const stale of entryPointCommandsToRemove(existingGlobal)) {
-						console.log(`Removing Entry Point command "${stale.name}" (the Activity is not available on this installation).`);
-						await rest.delete(Routes.applicationCommand(clientId, stale.id));
-					}
 					const body = mergeEntryPointCommands(existingGlobal, globalCommands);
 					const preservedCount = body.length - globalCommands.length;
 					if (preservedCount > 0) {
