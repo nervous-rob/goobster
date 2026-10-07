@@ -31,7 +31,8 @@ const { createHostManagerClient, HostManagerError, PROBE_TIMEOUT_MS, INSTALL_TIM
 /** Under /api/app/admin so the inventory's existing core claim covers it (features/inventory.js). */
 const BASE = '/api/app/admin/host';
 const INSTALL_KINDS = Object.freeze(['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall']);
-const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS]);
+const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect']);
+const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...DATABASE_KINDS]);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
     'config.set': 'host.config.apply',
@@ -40,7 +41,10 @@ const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'install.new': 'host.install.apply',
     'install.reconfigure': 'host.install.apply',
     'install.repair': 'host.install.apply',
-    'install.uninstall': 'host.install.apply'
+    'install.uninstall': 'host.install.apply',
+    'database.provision': 'host.database.apply',
+    'database.schema.apply': 'host.database.apply',
+    'database.connect': 'host.database.apply'
 });
 const LIFECYCLE_ACTIONS = Object.freeze({
     'restart-now': 'host.lifecycle.restart_now',
@@ -82,15 +86,15 @@ function fail(status, code, message, details = null, extra = null) {
 }
 
 /** A JSON-safe copy of manager-supplied details: bounded depth, string length and size. */
-function clean(value, depth = 0) {
+function clean(value, depth = 0, limit = 5) {
     if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
     if (typeof value === 'string') return value.length > 400 ? `${value.slice(0, 400)}...` : value;
-    if (depth >= 5) return null;
-    if (Array.isArray(value)) return value.slice(0, 50).map(item => clean(item, depth + 1));
+    if (depth >= limit) return null;
+    if (Array.isArray(value)) return value.slice(0, 50).map(item => clean(item, depth + 1, limit));
     if (value && typeof value === 'object') {
         const out = {};
         for (const [key, item] of Object.entries(value).slice(0, 50)) {
-            if (item !== undefined) out[key] = clean(item, depth + 1);
+            if (item !== undefined) out[key] = clean(item, depth + 1, limit);
         }
         return out;
     }
@@ -366,6 +370,20 @@ function mountHost(app, ctx, h) {
         };
     }));
 
+    // --- Database connection (documentation/database_connection.md) ----------------
+
+    app.get(`${BASE}/database/status`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/database/status'), 0, 7)));
+
+    /** The read-only probe. The password travels in this one request body to the manager and is never kept, logged, audited or echoed. */
+    app.post(`${BASE}/database/test`, ...guard, route(async (req) => {
+        const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+        if (Object.keys(body).some(key => key !== 'connection')) throw fail(400, 'INVALID_INPUT', 'The request has a field the connection test does not accept.');
+        const result = await client.call({ actor: actorOf(req), method: 'POST', path: '/manager/api/database/test', body, timeoutMs: PROBE_TIMEOUT_MS });
+        const failure = failureOf(result);
+        if (failure) throw failure;
+        return clean(result.body || {}, 0, 8);
+    }));
+
     // --- Preview ----------------------------------------------------------------
 
     function featuresInput(input) {
@@ -496,6 +514,28 @@ function mountHost(app, ctx, h) {
                 restartRequired: Boolean(result && result.restartRequired)
             };
         }
+        // Names only (database, schema): no host, port, user, URL or password reaches the ledger.
+        case 'database.provision':
+            return {
+                operation: 'provision',
+                database: plan.database ? { database: plan.database.database, schema: plan.database.schema } : null,
+                actions: Array.isArray(plan.actions) ? plan.actions.map(item => item.action) : [],
+                done: Array.isArray(result && result.done) ? result.done.map(item => `${item.action}:${item.status}`) : []
+            };
+        case 'database.schema.apply':
+            return {
+                operation: 'schema',
+                database: plan.database ? { database: plan.database.database, schema: plan.database.schema } : null,
+                effect: plan.effect || null,
+                before: (result && result.before) || null
+            };
+        case 'database.connect':
+            return {
+                operation: 'connect',
+                from: plan.from ? plan.from.engine : null,
+                database: plan.to ? { database: plan.to.database, schema: plan.to.schema, tls: (plan.to.tls && plan.to.tls.mode) || null } : null,
+                schema: (result && result.schema) || null
+            };
         default:
             return {};
         }
@@ -525,7 +565,7 @@ function mountHost(app, ctx, h) {
         const result = await client.call({
             actor: actorOf(req), method: 'POST', path: `/manager/api/operations/${operationId}/apply`,
             body: { revision: current.revision === undefined ? null : current.revision },
-            ...(INSTALL_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
+            ...(INSTALL_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
         });
         const failure = failureOf(result);
         if (failure) throw failure;
@@ -586,6 +626,7 @@ module.exports = {
     BASE,
     KINDS,
     INSTALL_KINDS,
+    DATABASE_KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,
     KEEPS_DATA

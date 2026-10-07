@@ -42,6 +42,37 @@
             "additionalProperties": false,
             "properties": { "engine": { "enum": ["sqlite", "postgres"] } }
         },
+        "dbConnection": {
+            "type": "object",
+            "description": "An existing PostgreSQL server (documentation/database_connection.md). The password is a secret: the answers file must be mode 0600; the CLI also reads it from a hidden prompt or GOOBSTER_DB_PASSWORD_FILE.",
+            "additionalProperties": false,
+            "required": ["host", "database", "user"],
+            "properties": {
+                "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+                "port": { "type": "integer" },
+                "database": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "schema": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "user": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "password": { "type": "string", "maxLength": 512 },
+                "tls": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "mode": { "enum": ["disable", "prefer", "require", "verify-full"] },
+                        "caFile": { "$ref": "#/definitions/absolutePath" }
+                    }
+                }
+            }
+        },
+        "newDatabase": {
+            "type": "object",
+            "description": "install: the engine, and for postgres the existing server to use. Without `connection` a postgres install uses GOOBSTER_DB_URL as before.",
+            "additionalProperties": false,
+            "properties": {
+                "engine": { "enum": ["sqlite", "postgres"] },
+                "connection": { "$ref": "#/definitions/dbConnection" }
+            }
+        },
         "config": {
             "type": "array",
             "maxItems": 64,
@@ -67,7 +98,7 @@
                 "features": { "$ref": "#/definitions/featureList" },
                 "layout": { "$ref": "#/definitions/layout" },
                 "roots": { "$ref": "#/definitions/roots" },
-                "database": { "$ref": "#/definitions/database" },
+                "database": { "$ref": "#/definitions/newDatabase" },
                 "release": { "$ref": "#/definitions/release" },
                 "runtimeUser": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" },
                 "config": { "$ref": "#/definitions/config" },
@@ -212,6 +243,67 @@
                 "target": { "$ref": "#/definitions/migrateTarget" },
                 "confirm": { "type": "string", "minLength": 1, "maxLength": 200 },
                 "releaseMaintenance": { "type": "boolean" }
+            }
+        },
+        "database-test": {
+            "type": "object",
+            "description": "`goobster-manager database test`: the read-only probe of an existing server. Nothing is written to the server or to the installation.",
+            "additionalProperties": false,
+            "required": ["connection"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "connection": { "$ref": "#/definitions/dbConnection" }
+            }
+        },
+        "database-provision": {
+            "type": "object",
+            "description": "`goobster-manager database provision`: create what the probe said is missing, with an elevated credential used for this operation only and never saved. `actions` lists exactly what to do.",
+            "additionalProperties": false,
+            "required": ["connection", "elevated", "actions"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "connection": { "$ref": "#/definitions/dbConnection" },
+                "elevated": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["user"],
+                    "properties": {
+                        "user": { "type": "string", "minLength": 1, "maxLength": 63 },
+                        "password": { "type": "string", "maxLength": 512 },
+                        "database": { "type": "string", "minLength": 1, "maxLength": 63 }
+                    }
+                },
+                "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "items": { "enum": ["create-role", "create-database", "create-extension.citext", "create-extension.vector", "create-schema", "grant"] }
+                }
+            }
+        },
+        "database-schema": {
+            "type": "object",
+            "description": "`goobster-manager database schema`: apply Goobster's schema to an empty schema, or bring an older Goobster schema up to date. Never on a schema that holds anything else.",
+            "additionalProperties": false,
+            "required": ["connection"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "connection": { "$ref": "#/definitions/dbConnection" }
+            }
+        },
+        "database-connect": {
+            "type": "object",
+            "description": "`goobster-manager database connect`: point an existing installation at the server (inside the maintenance barrier). A SQLite installation that holds data is refused: that is `migrate`.",
+            "additionalProperties": false,
+            "required": ["connection"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "connection": { "$ref": "#/definitions/dbConnection" },
+                "release": { "type": "boolean" }
             }
         }
     }

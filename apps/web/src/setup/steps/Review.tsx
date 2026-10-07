@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { InstallOperation } from '../../lib/types';
 import { typedSecret, useAnswers, type Answers } from '../answers';
 import { useConfigReport, useSource, useSuggest } from '../data';
-import { hasDiscordToken, installInput, layoutFor, ownerInput, ownerProblems, fieldProblems, pathProblem, selectedFeatures, titleOf } from '../model';
+import { databaseProblems, hasDiscordToken, installInput, layoutFor, ownerInput, ownerProblems, fieldProblems, pathProblem, selectedFeatures, titleOf } from '../model';
 import { blocks, NewPlan } from '../plan';
 import { useTransport } from '../transport';
 import { describeError, Details, ErrorSummary, StepFrame, StepNav, type Problem } from '../ui';
@@ -33,7 +33,8 @@ export function digestOf(answers: Answers, secretIds: ReadonlySet<string>): stri
     return JSON.stringify({
         label: answers.label, source: answers.sourceDir, unsigned: answers.allowUnsigned, layout: answers.layout, roots: answers.roots,
         features: answers.features, fields, defaults: answers.instanceDefaults,
-        owner: { create: answers.owner.create, login: answers.owner.loginName, display: answers.owner.displayName }
+        owner: { create: answers.owner.create, login: answers.owner.loginName, display: answers.owner.displayName },
+        database: { ...answers.database, password: '' }
     });
 }
 
@@ -76,8 +77,9 @@ export function Review({ go }: StepProps) {
         found.push(...owner.map((problem) => ({ message: problem.message, href: problem.href })));
         found.push(...fieldProblems(current, fields, Object.keys(current.fields)).map((problem) => ({ message: problem.message, href: hrefForField(problem.message.split(':')[0]) })));
         for (const id of current.reenter) {
-            if (id !== 'owner.password') found.push({ message: `Enter ${id} again (this page does not keep keys), or leave it out.`, href: '#/setup/connections' });
+            if (id !== 'owner.password' && id !== 'database.password') found.push({ message: `Enter ${id} again (this page does not keep keys), or leave it out.`, href: '#/setup/connections' });
         }
+        found.push(...databaseProblems(current, layoutFor(current, fields)).map((problem) => ({ message: problem.message, href: problem.href })));
         return found;
     }, [fields]);
 
@@ -88,7 +90,7 @@ export function Review({ go }: StepProps) {
         const secrets = secretIds();
         const digest = digestOf(current, secrets);
         const previous = readRun();
-        const typedAny = Object.entries(current.fields).some(([id, draft]) => secrets.has(id) && typedSecret(draft)) || current.owner.password !== '';
+        const typedAny = Object.entries(current.fields).some(([id, draft]) => secrets.has(id) && typedSecret(draft)) || current.owner.password !== '' || current.database.password !== '';
         if (previous && previous.digest === digest && !typedAny) {
             try {
                 const [operation, owner] = await Promise.all([

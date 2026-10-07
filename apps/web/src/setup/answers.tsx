@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { FieldDraft } from '../rooms/host/FieldControl';
+import { EMPTY_DATABASE, type DatabaseAnswer } from './database/model';
 
 /**
  * Everything the person has typed in the wizard. Non-secret answers are kept
@@ -21,6 +22,8 @@ export type Answers = {
     fields: Record<string, FieldDraft>;
     instanceDefaults: Record<string, FieldDraft>;
     owner: OwnerAnswer;
+    /** SQLite, or an existing PostgreSQL server; its password is kept in memory only. */
+    database: DatabaseAnswer;
     /** Secret field ids the person typed that the page no longer holds: they must be entered again. */
     reenter: string[];
 };
@@ -37,6 +40,7 @@ export const EMPTY_ANSWERS: Answers = {
     fields: {},
     instanceDefaults: {},
     owner: EMPTY_OWNER,
+    database: EMPTY_DATABASE,
     reenter: []
 };
 
@@ -44,11 +48,15 @@ const STORAGE_KEY = 'goobster-setup-answers';
 /** The id the owner's password goes by in `reenter` (it is not a catalog field). */
 export const OWNER_PASSWORD = 'owner.password';
 
-function secretFree(answers: Answers, secretIds: ReadonlySet<string>): Omit<Answers, 'owner'> & { owner: Omit<OwnerAnswer, 'password' | 'repeat'> } {
+/** The id the database password goes by in `reenter`. */
+export const DATABASE_PASSWORD = 'database.password';
+
+function secretFree(answers: Answers, secretIds: ReadonlySet<string>): Omit<Answers, 'owner' | 'database'> & { owner: Omit<OwnerAnswer, 'password' | 'repeat'>; database: Omit<DatabaseAnswer, 'password'> } {
     const fields: Record<string, FieldDraft> = {};
     for (const [id, draft] of Object.entries(answers.fields)) if (!secretIds.has(id)) fields[id] = draft;
     const { password: _password, repeat: _repeat, ...owner } = answers.owner;
-    return { ...answers, fields, owner };
+    const { password: _databasePassword, ...database } = answers.database;
+    return { ...answers, fields, owner, database };
 }
 
 function load(key: string): Answers {
@@ -61,6 +69,7 @@ function load(key: string): Answers {
             ...parsed,
             roots: { ...EMPTY_ANSWERS.roots, ...(parsed.roots || {}) },
             owner: { ...EMPTY_OWNER, ...(parsed.owner || {}), password: '', repeat: '' },
+            database: { ...EMPTY_DATABASE, ...(parsed.database || {}), password: '' },
             fields: parsed.fields || {},
             instanceDefaults: parsed.instanceDefaults || {},
             reenter: Array.isArray(parsed.reenter) ? parsed.reenter : []
@@ -117,7 +126,8 @@ export function AnswersProvider({ storageKey = STORAGE_KEY, children }: { storag
             else fields[id] = draft;
         }
         if (previous.owner.password) reenter.add(OWNER_PASSWORD);
-        return { ...previous, fields, owner: { ...previous.owner, password: '', repeat: '' }, reenter: [...reenter] };
+        if (previous.database.password) reenter.add(DATABASE_PASSWORD);
+        return { ...previous, fields, owner: { ...previous.owner, password: '', repeat: '' }, database: { ...previous.database, password: '' }, reenter: [...reenter] };
     }), []);
     const reset = useCallback(() => {
         try { window.sessionStorage.removeItem(storageKey); } catch { /* ignore */ }

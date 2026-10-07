@@ -66,6 +66,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         return { code: 0 };
     }
     const settings = resolveSettings(env);
+    if (installDeps) settings.installDeps = installDeps;
     if (settings.dbUrl && !env.GOOBSTER_DB_URL) {
         // The overlay's connection must also select the facade the manager's own audit reconciliation opens.
         env.GOOBSTER_DB_URL = settings.dbUrl;

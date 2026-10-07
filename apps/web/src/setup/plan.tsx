@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { InstallOperation } from '../lib/types';
+import { describeDatabase } from './database/DatabasePlans';
 import { LAYOUT_TEXT, summarizeRoots } from './model';
 import { Findings, formatBytes, StepList } from './ui';
 
@@ -36,7 +37,7 @@ export function NewPlan({ operation, titles }: { operation: InstallOperation; ti
             <Facts testId="plan-facts" rows={[
                 ['Layout', <span key="l"><strong>{target?.layout}</strong> <span className="hint">{LAYOUT_TEXT[target?.layout || ''] || ''}</span></span>],
                 ['Parts', (target?.features || []).map(titles).join(', ') || 'Core only'],
-                ['Database', target?.database?.engine === 'sqlite' ? 'SQLite, one file in the data folder' : (target?.database?.engine || '')],
+                ['Database', describeDatabase(plan)],
                 ['Copied', plan.source?.bytes ? `${formatBytes(plan.source.bytes)} in ${plan.source.files ?? '?'} files` : 'nothing new'],
                 ['Settings written', plan.config ? `${plan.config.settings.length} setting${plan.config.settings.length === 1 ? '' : 's'}${plan.config.secretCount ? `, ${plan.config.secretCount} key${plan.config.secretCount === 1 ? '' : 's'} (never shown)` : ''}` : 'none'],
                 ['Starts at boot', plan.registerService === false ? 'No: start it from this page or the Host room (a later version registers it as a service)' : 'Yes']
