@@ -50,7 +50,7 @@ async function validateOnTarget({
     settings,
     url,
     fs = nodeFs,
-    adapter = createChildAdapter(),
+    adapter = createChildAdapter({ stdio: 'ignore' }),
     checkHealth = defaultCheckHealth,
     healthTimeoutMs = DEFAULT_HEALTH_TIMEOUT_MS,
     allocatePort = freePort

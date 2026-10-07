@@ -323,6 +323,18 @@ describe('what needs no Postgres target', () => {
         expect(refused.message).toBe(ROLLBACK_LIMIT);
     }, 120000);
 
+    test('a migration that is running or failed can be rolled back until it is switched; the status says whether the target is needed', async () => {
+        const env = await setup();
+        const { settings } = env;
+        const state = createMigrationState({ storeDir: settings.storeDir });
+        const target = require('@goobster/core/db/migration/target').describeTarget(UNREACHABLE);
+        const base = { version: 1, id: 'mig_cccccccccccc', status: 'running', signature: 's', installationId: env.installation().installationId, target, startedAt: new Date().toISOString(), steps: { preflight: { done: true } } };
+        state.write(base);
+        expect(migrationStatus({ settings }).rollback).toEqual({ possible: true, boundary: 'before-cutover', needsTarget: false });
+        state.write({ ...base, status: 'failed', steps: { preflight: { done: true }, provision: { done: true, createdTables: ['users'] } } });
+        expect(migrationStatus({ settings }).rollback).toEqual({ possible: true, boundary: 'before-cutover', needsTarget: true });
+    }, 60000);
+
     test('a barrier released after the cutover also closes the rollback, without a worker start', async () => {
         const env = await setup();
         const { settings } = env;

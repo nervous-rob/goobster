@@ -51,7 +51,7 @@ function migrationStatus({ settings, fs = nodeFs, now = () => new Date() }) {
     if (doc.status === 'rolled-back') rollback = { possible: false, reason: 'ALREADY_ROLLED_BACK' };
     else if (writes) rollback = { possible: false, reason: 'POSTGRES_HAS_WRITES', boundary: 'passed', acceptedWritesAt: writes.at };
     else if (doc.status === 'switched') rollback = { possible: true, boundary: 'before-first-postgres-write' };
-    else rollback = { possible: Boolean(doc.steps && doc.steps.provision), boundary: 'before-cutover' };
+    else rollback = { possible: true, boundary: 'before-cutover', needsTarget: Boolean(doc.steps && doc.steps.provision) };
     const steps = {};
     for (const name of STEPS) {
         if (doc.steps && doc.steps[name]) steps[name] = pick(doc.steps[name], STEP_FIELDS);

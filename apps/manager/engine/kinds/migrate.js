@@ -453,6 +453,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 const resolved = await b.preflight({ actor: record.actor, ctx });
                 const { fence } = b.begin({ operationId: record.id, actor: record.actor, via: record.via, reason: 'migration' });
                 ctx.scratch.maintenance = { operationId: record.id, fence, entered: true };
+                store.update(next => ({ ...next, maintenance: { operationId: record.id, fence, entered: true } }));
                 const out = await b.quiesce({ operationId: record.id, fence, resolved, timeoutSeconds: 120, actor: record.actor });
                 await b.verify({ operationId: record.id, fence, resolved, writers: out.writers, sent: out.sent, actor: record.actor });
                 store.update(next => ({ ...next, maintenance: { operationId: record.id, fence, entered: true } }));

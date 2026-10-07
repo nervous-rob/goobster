@@ -502,6 +502,9 @@ async function run(argv, io = {}) {
             for (const finding of view.findings || []) progress(`  ${finding.code}: ${finding.detail}`);
         }
         if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
+        if (report.command === 'migrate' && error && error.code === 'STALE_MAINTENANCE') {
+            progress('Clear it with "migrate rollback --confirm <installationId> --release" (it releases a barrier this CLI left behind), then run again.');
+        }
         if (code === EXIT.INTERRUPTED && report.command === 'migrate') {
             progress('Or undo it with "migrate rollback --confirm <installationId>" while the rollback is still possible. "migrate status" shows where it stands.');
         }
@@ -552,6 +555,18 @@ async function runMigrate(c) {
     };
 
     const kindName = MIGRATE_KIND[sub];
+    // The barrier's waits are unref'd timers (the manager normally has a server keeping it alive); this process has none.
+    const keepAlive = setInterval(() => { }, 1000);
+    try {
+        return await migrateOperation({ ...c, input, prompter, settings, kindName });
+    } finally {
+        clearInterval(keepAlive);
+    }
+}
+
+async function migrateOperation(c) {
+    const { sub, flags, fs, io, out, progress, finish, json, input: given, prompter, settings, kindName } = c;
+    let input = given;
     const manager = createManager({
         settings,
         fs,
@@ -697,7 +712,13 @@ function usage() {
 }
 
 if (require.main === module) {
+    let finished = false;
+    // An event loop that empties before run() settles must never look like success.
+    process.on('exit', () => {
+        if (!finished) process.exitCode = EXIT.UNEXPECTED;
+    });
     run(process.argv.slice(2)).then((code) => {
+        finished = true;
         process.exitCode = code;
     });
 }
