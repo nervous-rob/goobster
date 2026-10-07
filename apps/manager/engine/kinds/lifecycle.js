@@ -259,7 +259,7 @@ function createLifecycleKinds({ settings, fs = nodeFs, now = () => new Date() })
         steps: [
             {
                 name: 'cancel',
-                run() {
+                run(record, ctx) {
                     let cancelled = null;
                     lifecycle().update((doc) => {
                         if (!doc.pending) throw new ManagerError(409, 'NOTHING_PENDING', 'There is no scheduled restart.');
@@ -272,10 +272,12 @@ function createLifecycleKinds({ settings, fs = nodeFs, now = () => new Date() })
                         lifecycle().event(doc, 'cancelled', { revision: cancelled });
                         return doc;
                     });
-                    return { revision: cancelled };
+                    ctx.scratch.out = { revision: cancelled };
+                    return ctx.scratch.out;
                 }
             }
-        ]
+        ],
+        result: (scratch) => scratch.out || null
     };
 
     const restartKind = {

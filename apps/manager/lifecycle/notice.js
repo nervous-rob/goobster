@@ -53,9 +53,12 @@ async function announce({
         delivery.catch(() => {});
         let timer;
         const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), NOTICE_TIMEOUT_MS); });
-        const raced = await Promise.race([delivery.then(() => 'ok'), timeout]);
-        clearTimeout(timer);
-        return raced === 'ok' ? { delivered: true, reason: null } : { delivered: false, reason: 'NOTICE_TIMEOUT' };
+        try {
+            const raced = await Promise.race([delivery.then(() => 'ok'), timeout]);
+            return raced === 'ok' ? { delivered: true, reason: null } : { delivered: false, reason: 'NOTICE_TIMEOUT' };
+        } finally {
+            clearTimeout(timer);
+        }
     } catch {
         return { delivered: false, reason: 'NOTICE_FAILED' };
     } finally {

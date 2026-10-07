@@ -50,6 +50,7 @@ const GROUPS = [
             'managerBridge',
             'managerEngine',
             'managerSupervisor',
+            'managerLifecycle',
             'commandDeployHash',
             'workInterruption',
             'presenceService',
