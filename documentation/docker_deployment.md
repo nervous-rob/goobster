@@ -57,6 +57,18 @@ Degraded mode: if the bot container is down, DM-scoped portal surfaces keep
 working (chat, tasks CRUD, library, decks) against the configured
 `clientId`; guild-scoped panes return `BOT_OFFLINE`.
 
+### A managed PostgreSQL container, without compose
+
+These profiles are run by hand. The installation manager can also create and
+look after a single PostgreSQL container for an installation that runs as the
+manager's own workers (no Goobster container): the explicit choice
+"PostgreSQL in Docker (managed by this installer)" in the setup wizard, or
+`goobster-manager database docker provision`. It pins the same pgvector image
+by digest, labels what it creates (`io.goobster.installation`) and never
+touches containers it did not create. It is independent of the compose
+profiles above and does not start or replace them; see
+[docker_postgres.md](docker_postgres.md).
+
 ## Prerequisites
 - Docker installed
 - Docker Compose

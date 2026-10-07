@@ -407,10 +407,34 @@ Work:
    Postgres `database` answer of `install.new`, the setup wizard step, the
    Database maintenance journey and the Host Database page. A SQLite
    database that holds data is routed to the migration (`MIGRATION_REQUIRED`).
-   Not built here: Docker and native PostgreSQL provisioning, bind and
+   Not built here: native PostgreSQL provisioning, bind and
    storage edits for a server the manager owns, cluster tuning and
    PostgreSQL major upgrades. See
    [database_connection.md](database_connection.md).
+
+   **Status (P4.6, #339): explicitly chosen Docker container built (stacked
+   on #338).** The Docker entry of the chooser is enabled only after the
+   daemon check passes (CLI, daemon, socket permission, Desktop or Engine,
+   platform, the pinned image, the host `pg_dump` against the server major);
+   the image is `pgvector/pgvector:pg17` by digest in
+   `packages/core/db/docker/image.js` and a major upgrade is manual
+   (`MAJOR_UPGRADE_IS_MANUAL`); the container, volume and network are named
+   `goobster-pg-<id8>`, `goobster-pgdata-<id8>` and `goobster-<id8>` and carry
+   `io.goobster.installation|role|manager` labels that every change checks
+   (`RESOURCE_FOREIGN`); the kinds `database.docker.provision` (preflight,
+   create, wait-healthy, provision through the #338 library, verify),
+   `.start`, `.stop`, `.repair` and `.reconfigure` (backup first, inside a held
+   barrier); generated passwords that never reach argv, the journal, the
+   audit log or a state file (the application's URL lives only in the
+   manager's overlay, `database.connect { owned: docker }` is the cutover);
+   the `DATABASE_NOT_READY` gate before workers start; an uninstall that keeps
+   the data unless `removeDockerData` is set; `GET /manager/api/docker/status`,
+   `goobster-manager database docker ...`, the Database step option, the
+   instance card on the Database page and the Host proxy. Unit and route tests
+   run against a fake `docker` executable; the real-container block runs with
+   `GOOBSTER_DOCKER_TESTS=1` in a CI job that has a daemon. Not built here:
+   native PostgreSQL (#340), moving a data directory, a remote Docker host and
+   Windows containers. See [docker_postgres.md](docker_postgres.md).
    PR [#365](https://github.com/nervous-rob/goobster/pull/365) (stacked on
    #363, merging #362): SQLite full suite 276 suites / 5551 passed; Postgres
    `core` 2186 and `portal` 1116 passed in isolated schemas, the real-server
