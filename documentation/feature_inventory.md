@@ -213,7 +213,15 @@ routes keep the answer the existing code gives (an unmounted router, the
 MCP token routes that stay open so a token can be revoked, Discord login's
 `LOGIN_UNAVAILABLE`). A refusal is enforced when the state file is in force,
 when `GOOBSTER_FEATURE_<ID>` forces the owner off, or when a dependency is
-enforced off (`featureGate.enforced`).
+enforced off. The rule is `featureState.enforcedOff`, shared with the tool,
+MCP, command and step gates through `features/gate.js` (see
+`documentation/feature_state.md`, "Reported versus enforced").
+
+Ownership change made while wiring this: the portal's MCP token management
+(`GET /api/app/mcp`, `POST /api/app/mcp/tokens`, `DELETE
+/api/app/mcp/tokens/:id`) is `core`, not `mcp`. Revoking a token is a
+management action that must stay reachable when the MCP transport is off;
+the transport itself (`/mcp` on the bot and api servers, stdio) is `mcp`.
 
 #### Routes reachable with everything off
 
