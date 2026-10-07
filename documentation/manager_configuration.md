@@ -267,6 +267,20 @@ a default model with no default provider (`DEFAULT_MODEL_WITHOUT_PROVIDER`).
 The manager opens the application database for these calls only and closes it
 again.
 
+## Update policy
+
+The one setting that is not a `config.json` field: **how this installation
+updates itself** lives in the manager's installation record as `update`
+(`channel`, `mode`, an optional `window` and a `source`), because the manager
+that applies updates must read it when the application's configuration is
+broken. It is set by the install answers, the setup wizard and the adoption
+question, and changed with `update.policy` (`goobster-manager update policy`,
+`POST /manager/api/update/policy`, the Updates panel on the Host card). The
+default is `mode: off`. `documentation/manager_update.md` is the reference:
+modes, windows, sources, the apply, the handoff and the rollback rules. The
+field catalog, `config.set` and the effective report do not list it and do not
+change it.
+
 ## API summary
 
 | Route / kind | Auth | Notes |
@@ -275,6 +289,7 @@ again.
 | `POST /manager/api/config/probe` | assertion or session, nonce for a session | body never journaled |
 | `config.set` | operations API | `manager.config.set` audit record |
 | `defaults.set` | operations API | `manager.defaults.set` audit record |
+| `update.policy` | operations API | `manager.update.policy` audit record; see `documentation/manager_update.md` |
 
 Both audit actions are written to the manager's pending audit log and
 reconciled into `operator_audit` (`target` is the operation id) like the other
