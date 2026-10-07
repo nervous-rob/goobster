@@ -269,7 +269,11 @@ inert and answers ready without running any command.
 
 The default keeps your data, as for every other database. Uninstalling with
 the defaults **leaves the container, the volume and the network exactly as they
-are** and says so in the plan; the container keeps running.
+are** and says so in the plan; the container keeps running. That is true of a
+delete-data uninstall too: "delete my data" removes the data root and the
+manager's overlay (the only copy of the application password), not the Docker
+volume, so the plan carries the warning `DOCKER_DATA_RETAINED` naming the volume
+until you also choose `removeDockerData`.
 
 `removeDockerData: true` (the "Also remove the Docker database" choice, with
 the installation id typed as the confirmation) removes **exactly the resources

@@ -754,6 +754,11 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         const confirmation = { required: !keepData || removeDockerData, satisfied: (keepData && !removeDockerData) || raw.confirm === doc.installationId };
         const dockerDatabase = await dockerUninstallView(doc, removeDockerData);
         const pre = { ok: true, findings: [...dockerDatabase.findings] };
+        // "Delete my data" does not reach into Docker on its own: the volume keeps the
+        // database, and the overlay that held the only credential goes with the data root.
+        if (!keepData && !removeDockerData && dockerDatabase.view) {
+            pre.findings.push({ code: 'DOCKER_DATA_RETAINED', severity: 'warn', detail: `the Docker database keeps its data in the volume "${dockerDatabase.view.names.volume}" (and its container keeps running); this uninstall removes neither. Pass removeDockerData to delete them too, or remove them by hand afterwards.` });
+        }
         if (roots.managerStore !== settings.storeDir) pre.findings.push({ code: 'ROOTS_MISMATCH', severity: 'block', detail: 'the recorded manager store is not where this manager keeps it' });
         if (registry.get(settings.storeDir)) pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: 'the manager is supervising the application workers' });
         // The registry only sees this process; the CLI runs in another one, so the
@@ -769,7 +774,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                 }
             }
         }
-        pre.ok = pre.findings.length === 0;
+        pre.ok = pre.findings.every(item => item.severity !== 'block');
         const steps = stepList(UNINSTALL_STEPS);
         const signature = core.signatureOf({ kind: 'install.uninstall', id: doc.installationId, keepData, removeDockerData });
         const plan = {

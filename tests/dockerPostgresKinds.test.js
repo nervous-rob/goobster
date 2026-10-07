@@ -841,10 +841,22 @@ describe('uninstall', () => {
         expect(planned.plan.dockerDatabase).toMatchObject({ action: 'kept' });
         expect(applied.operation.status).toBe('applied');
         expect(fake.mutations()).toEqual([]);
+
         const state = fake.state();
         expect(Object.keys(state.containers)).toEqual(expect.arrayContaining([names.container, 'their-pg16']));
         expect(Object.keys(state.volumes)).toEqual(expect.arrayContaining([names.volume, 'their-pg16-data']));
         expect(Object.keys(state.networks)).toEqual(expect.arrayContaining([names.network, 'their-net']));
+    }, 180000);
+
+    test('a delete-data uninstall without removeDockerData warns that the volume and container stay', async () => {
+        const { harness, doc, names } = await installed();
+        const dry = await drive(harness, 'install.uninstall', { keepData: false, confirm: doc.installationId }, { apply: false });
+        const warning = dry.planned.plan.preflight.findings.find(item => item.code === 'DOCKER_DATA_RETAINED');
+        expect(warning).toMatchObject({ severity: 'warn' });
+        expect(warning.detail).toContain(names.volume);
+        expect(dry.planned.plan.preflight.ok).toBe(true);
+        const kept = await drive(harness, 'install.uninstall', { keepData: true }, { apply: false });
+        expect(kept.planned.plan.preflight.findings.some(item => item.code === 'DOCKER_DATA_RETAINED')).toBe(false);
     }, 180000);
 
     test('removeDockerData needs the installation id as confirmation and removes exactly our three resources', async () => {
