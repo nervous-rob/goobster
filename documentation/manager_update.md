@@ -70,11 +70,12 @@ The setup wizard asks once, on a fresh install (the default shown is
 `check`), and an adoption of an instance that has an `auto-update.sh` timer
 asks at adoption. On a terminal the install and adopt commands ask the same
 question; a scripted run puts `update` in the answers file (`mode` and
-optionally `channel`, `window` and `source`).
+optionally `channel`; the window and the source are set afterwards with
+`update policy`).
 
 ## What an update does
 
-Four operation kinds carry the work, all of them in the step ledger of
+Five operation kinds carry the work, all of them in the step ledger of
 `documentation/manager.md` (a plan, a confirmation, one audit entry):
 
 | Kind | What it does | Ledger steps |
