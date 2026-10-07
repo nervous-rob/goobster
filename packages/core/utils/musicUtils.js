@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType } = require('discord.js');
+const { discord } = require('./optionalModule');
 
 // Map to store active collectors, keyed by user ID
 const activeCollectors = new Map();
@@ -59,7 +59,7 @@ function generatePages(tracks, title, tracksPerPage, currentSearchQuery = null) 
             return `${i + index + 1}. ${trackTitle}\n   by ${artist}\n   Date: ${dateString}\n`; // Consistent date label
         }).join('\n');
         
-        const embed = new EmbedBuilder()
+        const embed = new discord.EmbedBuilder()
             .setColor('#0099ff')
             .setTitle(baseTitle)
             .setDescription(description || 'No tracks on this page.')
@@ -70,7 +70,7 @@ function generatePages(tracks, title, tracksPerPage, currentSearchQuery = null) 
     }
     // Handle case where there are tracks but filtering results in none
     if (pages.length === 0 && tracks.length > 0) {
-         const embed = new EmbedBuilder()
+         const embed = new discord.EmbedBuilder()
             .setColor('#ffcc00') // Use a different color for notice
             .setTitle(baseTitle)
             .setDescription(currentSearchQuery 
@@ -115,50 +115,50 @@ async function createTrackListUI(interaction, initialTracks, title = 'Available 
     let pages = generatePages(currentTracks, title, tracksPerPage, currentSearchQuery);
 
     // --- Action Row (Sort, Search, Clear) ---
-    const actionRow = new ActionRowBuilder()
+    const actionRow = new discord.ActionRowBuilder()
         .addComponents(
-            new ButtonBuilder()
+            new discord.ButtonBuilder()
                 .setCustomId('sort_title')
                 .setLabel('Sort Title')
-                .setStyle(ButtonStyle.Primary)
+                .setStyle(discord.ButtonStyle.Primary)
                 .setEmoji('🔡'),
-            new ButtonBuilder()
+            new discord.ButtonBuilder()
                 .setCustomId('sort_date')
                 .setLabel('Sort Date')
-                .setStyle(ButtonStyle.Primary)
+                .setStyle(discord.ButtonStyle.Primary)
                 .setEmoji('📅'),
-            new ButtonBuilder()
+            new discord.ButtonBuilder()
                 .setCustomId('search_button')
                 .setLabel('Search')
-                .setStyle(ButtonStyle.Success)
+                .setStyle(discord.ButtonStyle.Success)
                 .setEmoji('🔍'),
-             new ButtonBuilder()
+             new discord.ButtonBuilder()
                 .setCustomId('clear_search_button')
                 .setLabel('Show All')
-                .setStyle(ButtonStyle.Danger)
+                .setStyle(discord.ButtonStyle.Danger)
                 .setEmoji('✖️')
                 .setDisabled(true) // Initially disabled
         );
 
     // Navigation buttons
-    const navRow = new ActionRowBuilder()
+    const navRow = new discord.ActionRowBuilder()
         .addComponents(
-            new ButtonBuilder()
+            new discord.ButtonBuilder()
                 .setCustomId('first')
                 .setLabel('First')
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
+                .setStyle(discord.ButtonStyle.Primary),
+            new discord.ButtonBuilder()
                 .setCustomId('prev')
                 .setLabel('Previous')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
+                .setStyle(discord.ButtonStyle.Secondary),
+            new discord.ButtonBuilder()
                 .setCustomId('next')
                 .setLabel('Next')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
+                .setStyle(discord.ButtonStyle.Secondary),
+            new discord.ButtonBuilder()
                 .setCustomId('last')
                 .setLabel('Last')
-                .setStyle(ButtonStyle.Primary)
+                .setStyle(discord.ButtonStyle.Primary)
         );
 
     // Send first page with new action row and navigation
@@ -190,16 +190,16 @@ async function createTrackListUI(interaction, initialTracks, title = 'Available 
                 // Handle Search first, as it uses showModal (an initial response) 
                 // and cannot be deferred beforehand.
                 if (i.customId === 'search_button') {
-                    const modal = new ModalBuilder()
+                    const modal = new discord.ModalBuilder()
                         .setCustomId(searchModalCustomId)
                         .setTitle('Search Tracks');
-                    const searchInput = new TextInputBuilder()
+                    const searchInput = new discord.TextInputBuilder()
                         .setCustomId(searchInputCustomId)
                         .setLabel("Enter artist or title")
-                        .setStyle(TextInputStyle.Short)
+                        .setStyle(discord.TextInputStyle.Short)
                         .setPlaceholder('e.g., Queen, Bohemian Rhapsody')
                         .setRequired(true);
-                    const firstActionRow = new ActionRowBuilder().addComponents(searchInput);
+                    const firstActionRow = new discord.ActionRowBuilder().addComponents(searchInput);
                     modal.addComponents(firstActionRow);
                     
                     // Show the modal *instead* of deferring the button interaction

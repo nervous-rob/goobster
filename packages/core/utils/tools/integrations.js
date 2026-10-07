@@ -6,7 +6,7 @@
 const path = require('node:path');
 const perplexityService = require('../../services/perplexityService');
 const imageDetectionHandler = require('../imageDetectionHandler');
-const { PermissionFlagsBits } = require('discord.js');
+const { discord } = require('../optionalModule');
 const { windowLines, formatTextWindow, fenceLanguage } = require('../toolResultWindow');
 const {
     getCommandAdapter,
@@ -145,7 +145,7 @@ module.exports = {
 
                 // Check bot permissions
                 const permissions = voiceChannel.permissionsFor(interactionContext.client.user);
-                if (!permissions.has(PermissionFlagsBits.Connect) || !permissions.has(PermissionFlagsBits.Speak)) {
+                if (!permissions.has(discord.PermissionFlagsBits.Connect) || !permissions.has(discord.PermissionFlagsBits.Speak)) {
                     return '❌ I need permissions to join and speak in your voice channel.';
                 }
             }

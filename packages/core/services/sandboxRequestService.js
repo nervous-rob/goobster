@@ -31,7 +31,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { discord } = require('../utils/optionalModule');
 
 const db = require('../db');
 const logger = require('../utils/logger');
@@ -571,9 +571,9 @@ class SandboxRequestService {
     // --- Approver interaction -------------------------------------------------------
 
     _buttons(id) {
-        return new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`approve_sbxreq_${id}`).setLabel('Approve').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`deny_sbxreq_${id}`).setLabel('Deny').setStyle(ButtonStyle.Danger)
+        return new discord.ActionRowBuilder().addComponents(
+            new discord.ButtonBuilder().setCustomId(`approve_sbxreq_${id}`).setLabel('Approve').setStyle(discord.ButtonStyle.Success),
+            new discord.ButtonBuilder().setCustomId(`deny_sbxreq_${id}`).setLabel('Deny').setStyle(discord.ButtonStyle.Danger)
         );
     }
 
@@ -581,7 +581,7 @@ class SandboxRequestService {
         const lines = payload.resolved.map(pkg =>
             `${pkg.requested ? '**' : ''}${pkg.name}==${pkg.version}${pkg.requested ? '**' : ' (dependency)'}`
             + `${Number.isFinite(pkg.sizeBytes) ? ` · ${(pkg.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : ''}`);
-        return new EmbedBuilder()
+        return new discord.EmbedBuilder()
             .setColor(0xf0b429)
             .setTitle('📦 Install Python packages into the sandbox overlay?')
             .setDescription(
@@ -593,7 +593,7 @@ class SandboxRequestService {
     }
 
     _fetchEmbed(id, userId, payload) {
-        return new EmbedBuilder()
+        return new discord.EmbedBuilder()
             .setColor(0xf0b429)
             .setTitle('🌐 Fetch a file into an Observatory workspace?')
             .setDescription(

@@ -1,4 +1,4 @@
-const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { discord } = require('../utils/optionalModule');
 const db = require('../db');
 const cursorAgentService = require('./cursorAgentService');
 const integrationAudit = require('./integrationAudit');
@@ -137,7 +137,7 @@ class AgentTrackerService {
             .trim();
         if (!content) return true;
 
-        if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+        if (!message.member?.permissions?.has(discord.PermissionFlagsBits.ManageGuild)) {
             await message.react('🚫').catch(() => {});
             await message.reply({ content: '❌ Only members with Manage Server can send the agent follow-ups.', allowedMentions: { repliedUser: false } }).catch(() => {});
             return true;
@@ -241,7 +241,7 @@ class AgentTrackerService {
             if (!channel?.isTextBased?.()) return;
 
             const emoji = STATUS_EMOJI[row.status] || '🤖';
-            const embed = new EmbedBuilder()
+            const embed = new discord.EmbedBuilder()
                 .setColor(row.status === 'FINISHED' ? 0x2ea043 : row.status === 'ERROR' ? 0xda3633 : 0x5865f2)
                 .setTitle(`${emoji} Cursor agent ${row.status.toLowerCase()}: ${String(row.prompt).slice(0, 120)}`)
                 .setDescription(row.summary ? String(row.summary).slice(0, 1000) : null)

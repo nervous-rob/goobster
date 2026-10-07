@@ -3,7 +3,7 @@
  * concurrent messages can't create duplicate threads) and AI-generated
  * thread names.
  */
-const { ThreadAutoArchiveDuration } = require('discord.js');
+const { discord } = require('../optionalModule');
 const aiService = require('../../services/aiService');
 
 const threadLocks = new Map();
@@ -28,7 +28,7 @@ async function getOrCreateThreadSafely(channel, threadName) {
                 console.log(`Creating new thread "${threadName}" in channel ${channel.name}`);
                 thread = await channel.threads.create({
                     name: threadName,
-                    autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+                    autoArchiveDuration: discord.ThreadAutoArchiveDuration.OneWeek,
                     reason: 'New Goobster chat thread'
                 });
             } else {

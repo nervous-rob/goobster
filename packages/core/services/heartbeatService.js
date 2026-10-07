@@ -5,7 +5,7 @@ const knowledgeGraphService = require('./knowledgeGraphService');
 const followupService = require('./followupService');
 const { resolveDisplayNames } = require('../utils/channelDigest');
 const { getProactiveMode, PROACTIVE_MODE } = require('../utils/guildSettings');
-const { ActivityType } = require('discord.js');
+const { discord } = require('../utils/optionalModule');
 
 // How often the heartbeat considers acting (per process tick)
 const TICK_INTERVAL_MS = 20 * 60 * 1000;
@@ -363,7 +363,7 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
 
     _setPresence(text) {
         this.client.user.setPresence({
-            activities: [{ type: ActivityType.Custom, name: text, state: text }],
+            activities: [{ type: discord.ActivityType.Custom, name: text, state: text }],
             status: 'online'
         }).catch?.(() => {});
     }

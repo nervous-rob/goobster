@@ -6,6 +6,7 @@ const workContext = require('../utils/workContext');
 const { toGateway } = require('../gateway');
 const { isInboxChannelId } = require('./inboxService');
 const { surfaceActive } = require('../features/gate');
+const { discord } = require('../utils/optionalModule');
 
 class AutomationService {
     /**
@@ -554,7 +555,7 @@ class AutomationService {
 
     async executeDigest(automation, channel) {
         const { generateDigest } = require('../utils/channelDigest');
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder } = discord;
 
         let hours = 24;
         try {

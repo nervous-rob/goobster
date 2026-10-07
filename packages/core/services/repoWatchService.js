@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { discord } = require('../utils/optionalModule');
 const db = require('../db');
 
 // Event keys guilds can subscribe to, and the GitHub webhook events they map to.
@@ -177,7 +177,7 @@ class RepoWatchService {
         return posted;
     }
 
-    /** @returns {EmbedBuilder|null} null = event not worth posting */
+    /** @returns {discord.EmbedBuilder|null} null = event not worth posting */
     _buildEmbed(event, payload) {
         const repo = payload.repository?.full_name;
         const actor = payload.sender?.login || 'someone';
@@ -190,7 +190,7 @@ class RepoWatchService {
                 `[\`${commit.id.slice(0, 7)}\`](${commit.url}) ${String(commit.message).split('\n')[0].slice(0, 80)}`
             );
             if (commits.length > 5) lines.push(`…and ${commits.length - 5} more`);
-            return new EmbedBuilder()
+            return new discord.EmbedBuilder()
                 .setColor(GITHUB_COLOR)
                 .setTitle(`⬆️ ${commits.length} commit${commits.length === 1 ? '' : 's'} to ${repo}:${branch}`)
                 .setURL(payload.compare || null)
@@ -210,7 +210,7 @@ class RepoWatchService {
             else if (action === 'closed' && pr.merged) { headline = '🟣 PR merged'; color = MERGE_COLOR; }
             else if (action === 'closed') headline = '❌ PR closed';
             if (!headline) return null;
-            return new EmbedBuilder()
+            return new discord.EmbedBuilder()
                 .setColor(color)
                 .setTitle(`${headline}: #${pr.number} ${String(pr.title).slice(0, 200)}`)
                 .setURL(pr.html_url)
@@ -224,7 +224,7 @@ class RepoWatchService {
             const action = payload.action;
             if (!['opened', 'reopened', 'closed'].includes(action)) return null;
             const emoji = action === 'closed' ? '✅' : '🐛';
-            return new EmbedBuilder()
+            return new discord.EmbedBuilder()
                 .setColor(GITHUB_COLOR)
                 .setTitle(`${emoji} Issue ${action}: #${issue.number} ${String(issue.title).slice(0, 200)}`)
                 .setURL(issue.html_url)
@@ -236,7 +236,7 @@ class RepoWatchService {
         if (event === 'release') {
             if (payload.action !== 'published') return null;
             const release = payload.release;
-            return new EmbedBuilder()
+            return new discord.EmbedBuilder()
                 .setColor(GITHUB_COLOR)
                 .setTitle(`🚀 Release published: ${release.name || release.tag_name}`)
                 .setURL(release.html_url)
@@ -249,7 +249,7 @@ class RepoWatchService {
             // Failures only — green runs would drown the channel.
             const run = payload.workflow_run;
             if (payload.action !== 'completed' || run.conclusion !== 'failure') return null;
-            return new EmbedBuilder()
+            return new discord.EmbedBuilder()
                 .setColor(FAILURE_COLOR)
                 .setTitle(`❌ CI failed: ${run.name} on ${run.head_branch}`)
                 .setURL(run.html_url)

@@ -2,7 +2,7 @@
  * Message-reaction controls on bot replies: regenerate (🔄), pin (📌),
  * branch (🌱), mark helpful (💡), deep dive (🔍), and summarize (📝).
  */
-const { ThreadAutoArchiveDuration } = require('discord.js');
+const { discord } = require('../optionalModule');
 const db = require('../../db');
 const aiService = require('../../services/aiService');
 const { chunkMessage } = require('../index');
@@ -110,7 +110,7 @@ async function handleReactionAdd(reaction, user) {
             const newThread = await msg.channel.threads.create({
                 name: branchName,
                 startMessage: msg,
-                autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek
+                autoArchiveDuration: discord.ThreadAutoArchiveDuration.OneWeek
             });
             await newThread.send("🌱 New conversation branch created! Previous context will be maintained.");
         } else if (reaction.emoji.name === '💡') {

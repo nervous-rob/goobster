@@ -23,6 +23,7 @@ const db = require('../db');
 const identityConfig = require('../config/identityConfig');
 const logger = require('../utils/logger');
 const { toGateway } = require('../gateway');
+const { discord } = require('../utils/optionalModule');
 
 const SOURCE_TYPE = 'access_request';
 const MAX_NOTE = 280;
@@ -351,7 +352,7 @@ class AccessRequestService {
     }
 
     _buttons(id) {
-        const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = discord;
         return new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`approve_${BUTTON_TYPE}_${id}`).setLabel('Approve').setStyle(ButtonStyle.Success),
             new ButtonBuilder().setCustomId(`decline_${BUTTON_TYPE}_${id}`).setLabel('Decline').setStyle(ButtonStyle.Danger)
@@ -359,7 +360,7 @@ class AccessRequestService {
     }
 
     _embed(row, name, discordId) {
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder } = discord;
         const who = discordId ? `<@${discordId}> (${name})` : name;
         return new EmbedBuilder()
             .setColor(0x5865f2)
