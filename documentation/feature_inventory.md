@@ -358,8 +358,36 @@ the command set change on restart, interactions are refused live.
   their owner is off; the other ten and their order are untouched
   (`// messageCreate#NN` markers, asserted by the spec).
 
-Specs: `tests/featureGatingCommands.test.js` and
-`tests/featureGatingRuntime.test.js` (no-file baseline equals the
+- Service seams: a door can be bypassed by a caller that reaches a service
+  through a route or loop owned by another feature, so the work itself
+  refuses with `features.enforcedOff` (a no-op without a state file or
+  override). `observatoryService` (`executionEnabled` and `_requireEnabled`,
+  so run, resume, render and fetch data) refuses with `FEATURE_UNAVAILABLE`
+  and inherits a sandbox or projects that is off through the dependency
+  rule; `sandboxService.enabled` and `run` follow `sandbox`;
+  `spitballExpeditionService` (`enabled`, `createExpedition`, so no orphan
+  row) and `spitballExpeditionRunner` (`kick`, `_runLoop`) follow
+  `expeditions`. Mission `job` and `expedition` steps refuse before they are
+  claimed (the step stays `READY`) and project trigger `run_script`, `render`
+  and `fetch_data` fail with `FEATURE_UNAVAILABLE`; both write one
+  `work_failures` row carrying the code and the step or trigger id, never the
+  script. A refused cron trigger fire or wheel automation is claimed so it
+  waits for its next time, but `lastRun` and `automation-ran` are not
+  written; the wheel claim order is decided before `markRan`. The personal
+  heartbeat reconciles mission steps only while `missionReconcile` is
+  available, and a reconcile never re-queues or kicks an expedition while
+  `expeditions` is off. The exchange risk sweep skips prediction settlement
+  while `gambling` is off (`marketsSkipped: 'gambling'`). `pushService`
+  and `mailService` read `enabled` as legacy AND not enforced off; nothing is
+  pushed or mailed while off, stored subscriptions stay and
+  `pushService.unsubscribe` keeps working. `VoiceService.initialize` builds
+  `MusicService` (which probes ffmpeg) and `AmbientService` only while
+  `music` is available. `followedSourceService.prepareResearch` refuses
+  before it creates an expedition.
+
+Specs: `tests/featureGatingCommands.test.js`,
+`tests/featureGatingRuntime.test.js` and `tests/featureGatingServices.test.js`
+(the service seams, on the live config modules; no-file baseline equals the
 unfiltered walk, env-override-only filtering, one-feature-off loops over
 every manageable feature, standalone/paired/paused→resume shapes, a boot
 harness that spies on listeners, the loader and the adapters).
