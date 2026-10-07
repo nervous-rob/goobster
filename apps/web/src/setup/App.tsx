@@ -70,6 +70,17 @@ function Page({ children, banner }: { children: ReactNode; banner?: ReactNode })
     );
 }
 
+function RecoveryState({ reason }: { reason?: string | null }) {
+    return (
+        <StepFrame id="recovery-state" title="This installation needs attention first"
+            lead={reason ? `The manager reports: ${reason}` : 'The manager is in recovery: it cannot read the installation record or the saved settings.'}>
+            <p>Goobster files already exist here, but the manager has no record of installing them. Nothing is installed over them from this page. Adopting or restoring the record is done from the command line on the machine:</p>
+            <pre><code>node apps/manager/cli.js adopt</code></pre>
+            <p className="hint">Run the manager&apos;s command line help to see every option. When the record reads again, reload this page.</p>
+        </StepFrame>
+    );
+}
+
 function Shell() {
     const client = useQueryClient();
     const { place, go } = useRoute();
@@ -169,16 +180,7 @@ function Shell() {
         );
     }
     if (session.isError && session.error instanceof ApiError && session.error.code === 'STATE_NOT_ALLOWED') {
-        return (
-            <Page banner={banner}>
-                <StepFrame id="recovery-state" title="This installation needs attention first"
-                    lead={manager.reason ? `The manager reports: ${manager.reason}` : 'The manager is in recovery: it cannot read the installation record or the saved settings.'}>
-                    <p>Only a few repairs are open until that is put right. Adopting or restoring the record is done from the command line on the machine:</p>
-                    <pre><code>node apps/manager/cli.js adopt</code></pre>
-                    <p className="hint">Run the manager&apos;s command line help to see every option. When the record reads again, reload this page.</p>
-                </StepFrame>
-            </Page>
-        );
+        return <Page banner={banner}><RecoveryState reason={manager.reason} /></Page>;
     }
     if (!session.data) {
         return (
@@ -191,6 +193,9 @@ function Shell() {
     }
 
     const installed = session.data.installed === true;
+    if (manager.state === 'recovery' && !installed) {
+        return <Page banner={banner}><RecoveryState reason={manager.reason} /></Page>;
+    }
     const journey = place.journey;
     const step = place.step || (journey === 'setup' ? 'welcome' : '');
     let body: ReactNode;

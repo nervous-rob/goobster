@@ -541,3 +541,61 @@ test.describe('the same journeys from the portal Host room', () => {
         await expect(page.getByTestId('stop-workers')).toHaveCount(0);
     });
 });
+
+test.describe('the right journey for the state the installation is in', () => {
+    test('a fresh installation opens the setup, at any of the manager paths', async ({ page }) => {
+        const h = await installation();
+        for (const suffix of ['', 'setup']) {
+            await page.goto(`${h.url}/manager/${suffix}`);
+            await expect(page.getByRole('heading', { name: 'Set up Goobster' })).toBeVisible();
+            await expect(page.getByLabel('Setup credential')).toBeVisible();
+        }
+        const headers = (await page.request.get(`${h.url}/manager/`)).headers();
+        expect(headers['cache-control']).toContain('no-store');
+        expect(headers['x-content-type-options']).toBe('nosniff');
+        expect(headers['x-frame-options']).toBe('DENY');
+        expect(headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    });
+
+    test('files that exist without a manager record put the manager in recovery: unlock, then the plain explanation', async ({ page }) => {
+        const h = await installation();
+        await h.stop();
+        fs.writeFileSync(path.join(h.data, 'goobster.sqlite'), Buffer.concat([Buffer.from('SQLite format 3\0'), Buffer.alloc(4096)]));
+        await h.start();
+        const status = await (await page.request.get(`${h.url}/manager/api/status`)).json();
+        expect(status.state).toBe('recovery');
+
+        await page.goto(`${h.url}/manager/recovery`);
+        await expect(page.getByTestId('unlock-form')).toBeVisible();
+        await page.getByLabel('Recovery credential').fill(await h.mintRecovery());
+        await page.getByTestId('unlock-submit').click();
+        await expect(page.getByTestId('step-recovery-state')).toBeVisible();
+        await expect(page.getByTestId('step-recovery-state')).toContainText('node apps/manager/cli.js adopt');
+        await screenshot(page, 'recovery-state');
+    });
+
+    test('an installation whose database cannot be opened is recovered through repair from /manager/recovery', async ({ page }) => {
+        const h = await installation();
+        await h.provision({ features: [] });
+        fs.writeFileSync(path.join(h.data, 'goobster.sqlite'), 'this is not a database'.repeat(300));
+
+        await page.goto(`${h.url}/manager/recovery`);
+        await expect(page.getByTestId('unlock-form')).toBeVisible();
+        await page.getByLabel('Recovery credential').fill(await h.mintRecovery());
+        await page.getByTestId('unlock-submit').click();
+        await expect(page.getByRole('heading', { name: 'Recover this installation' })).toBeVisible();
+        await expect(page.getByTestId('repair-recommended')).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId('action-repair')).toHaveClass(/primary/);
+        await screenshot(page, 'recovery-broken-database');
+    });
+
+    test('an installation that is installed and healthy opens the maintenance page, not the setup', async ({ page, context }) => {
+        const h = await installation();
+        const p = await h.provision({ features: [] });
+        await signInManager(context, h, p);
+        await page.goto(`${h.url}/manager/#/setup/welcome`);
+        await expect(page.getByTestId('step-maintain')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'This installation' })).toBeVisible();
+        await expect(page.getByTestId('action-reconfigure')).toBeEnabled();
+    });
+});
