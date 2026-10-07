@@ -182,7 +182,7 @@ and result are announced to assistive technology (`aria-live`).
 ## Manager unavailable
 
 The Host pages need the manager. When it cannot be used, the page shows a card
-(`GET /api/app/host/manager` answers `200`, never `500`) with one of these
+(`GET /api/app/admin/host/manager` answers `200`, never `500`) with one of these
 conditions and its remedy:
 
 | Code | Meaning | Remedy |
@@ -218,7 +218,7 @@ and probes write no row.
 
 ## API (portal)
 
-All routes are under `/api/app/host`, behind sign-in and the operator check.
+All routes are under `/api/app/admin/host` (the admin prefix the feature inventory already claims for core), behind sign-in and the operator check.
 
 | Route | Purpose |
 | --- | --- |

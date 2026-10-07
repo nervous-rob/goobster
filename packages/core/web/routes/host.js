@@ -28,6 +28,8 @@ const featureCatalog = require('../../features/catalog');
 const fieldCatalog = require('../../config/fieldCatalog');
 const { createHostManagerClient, HostManagerError, PROBE_TIMEOUT_MS } = require('../hostManagerClient');
 
+/** Under /api/app/admin so the inventory's existing core claim covers it (features/inventory.js). */
+const BASE = '/api/app/admin/host';
 const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply']);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
@@ -218,7 +220,7 @@ function mountHost(app, ctx, h) {
 
     // --- Manager status -----------------------------------------------------
 
-    app.get('/api/app/host/manager', ...guard, route(async () => {
+    app.get(`${BASE}/manager`, ...guard, route(async () => {
         const bridgeAvailable = client.bridge.available();
         let status;
         try {
@@ -311,7 +313,7 @@ function mountHost(app, ctx, h) {
         };
     }
 
-    app.get('/api/app/host/features', ...guard, route(async (req) => {
+    app.get(`${BASE}/features`, ...guard, route(async (req) => {
         const local = ctx.features.status();
         let remote = null;
         let managerCode = null;
@@ -341,12 +343,12 @@ function mountHost(app, ctx, h) {
 
     // --- Configuration report ---------------------------------------------------
 
-    app.get('/api/app/host/config', ...guard, route(async (req) => {
+    app.get(`${BASE}/config`, ...guard, route(async (req) => {
         const report = await managerJson(req, 'GET', '/manager/api/config');
         return scrubReport(report);
     }));
 
-    app.post('/api/app/host/config/probe', ...guard, route(async (req) => {
+    app.post(`${BASE}/config/probe`, ...guard, route(async (req) => {
         const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
         const result = await client.call({ actor: actorOf(req), method: 'POST', path: '/manager/api/config/probe', body, timeoutMs: PROBE_TIMEOUT_MS });
         const failure = failureOf(result);
@@ -403,7 +405,7 @@ function mountHost(app, ctx, h) {
         return false;
     }
 
-    app.post('/api/app/host/operations', ...guard, route(async (req) => {
+    app.post(`${BASE}/operations`, ...guard, route(async (req) => {
         const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
         const { kind, input, ...rest } = body;
         if (Object.keys(rest).length > 0) throw fail(400, 'INVALID_INPUT', 'The request has a field the operations API does not accept.');
@@ -474,7 +476,7 @@ function mountHost(app, ctx, h) {
         }
     }
 
-    app.post('/api/app/host/operations/:id/apply', ...guard, route(async (req) => {
+    app.post(`${BASE}/operations/:id/apply`, ...guard, route(async (req) => {
         const operationId = String(req.params.id);
         if (!OPERATION_ID.test(operationId)) throw fail(400, 'INVALID_INPUT', 'That is not an operation id.');
         if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
@@ -516,10 +518,10 @@ function mountHost(app, ctx, h) {
 
     // --- Lifecycle ------------------------------------------------------------------
 
-    app.get('/api/app/host/lifecycle', ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/lifecycle'))));
+    app.get(`${BASE}/lifecycle`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/lifecycle'))));
 
     for (const [name, action] of Object.entries(LIFECYCLE_ACTIONS)) {
-        app.post(`/api/app/host/lifecycle/${name}`, ...guard, route(async (req) => {
+        app.post(`${BASE}/lifecycle/${name}`, ...guard, route(async (req) => {
             const answer = await managerJson(req, 'POST', `/manager/api/lifecycle/${name}`);
             const operation = viewOf(answer.operation);
             await operatorAudit.record({
@@ -535,6 +537,7 @@ function mountHost(app, ctx, h) {
 
 module.exports = {
     mountHost,
+    BASE,
     KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,
