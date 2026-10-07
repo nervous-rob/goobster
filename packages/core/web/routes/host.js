@@ -431,6 +431,10 @@ function mountHost(app, ctx, h) {
             }
         }
 
+        if (kind === 'config.set' && managerInput && typeof managerInput === 'object' && managerInput.force !== undefined) {
+            throw fail(400, 'INVALID_INPUT', 'A setting the environment controls cannot be overridden from the portal; change the environment instead.');
+        }
+
         const planned = await managerJson(req, 'POST', '/manager/api/operations', { kind, input: managerInput });
         const operationId = planned.operation && planned.operation.id;
         if (typeof operationId !== 'string' || !OPERATION_ID.test(operationId)) {

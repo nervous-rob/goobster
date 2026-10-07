@@ -105,6 +105,7 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         accountExports: deps.accountExports || require('../services/accountExportService'),
         instanceState: deps.instanceState || instanceStateService,
         features: deps.features || featureState,
+        hostManager: deps.hostManager || null,
         push: deps.push || require('../services/pushService'),
         events: deps.events || eventBusService
     };
