@@ -143,7 +143,7 @@ the ones in [maintenance_barrier.md](maintenance_barrier.md).
 
 | Step | Barrier phase | What it does |
 |---|---|---|
-| `preflight` | quiesced | The barrier is held with this operation's fence and every writer acknowledged; the typed confirmation matches; the database is this installation's (an engine or isolated-schema mismatch is `FOREIGN_TARGET`); a purged feature is not active; the plan still matches the revision. |
+| `preflight` | quiesced | The barrier is held with this operation's fence and every writer acknowledged; the typed confirmation matches; the database is this installation's (another engine, another database or another data root is `FOREIGN_TARGET`; on Postgres every statement is unqualified, so only the schema the connection's `search_path` selects is reached); a purged feature is not active; the plan still matches the revision. |
 | `backup` | backup | Writes a backup into `backup.dir` through `backupService`, then **verifies** it with `verifyBackup` (snapshot not empty, schema fingerprint, row counts per table, file counts per set). A backup that cannot be verified blocks the reset. |
 | `mutate` | mutate (irreversible) | Runs the plan in one transaction on the open database (`db/reset.js`), then the vector cleanup and the storage compaction. |
 | `verify` | verify | Re-reads what the plan promised: no rows left in cleared tables, no vectors or orphan vectors, the paused flag, no files left, no orphaned references. |

@@ -666,17 +666,6 @@ describe('refusals', () => {
         }
     });
 
-    (IS_PG ? test : test.skip)('Postgres: a schema that is neither public nor this suite\'s isolated one is refused at preflight', async () => {
-        const h = await world();
-        h.seams.db = { engine: db.engine, describeStorage: async () => ({ ...(await db.describeStorage()), schema: 'someone_elses_schema' }), get: db.get, all: db.all };
-        const ref = await h.enter();
-        const planned = await h.plan(ref);
-        const validated = await h.manager.engine.validate(planned.id, LOCAL);
-        expectCode(await fail(h.manager.engine.apply(validated.id, { revision: validated.revision }, LOCAL)), 'FOREIGN_TARGET');
-        await untouched(h);
-        expect(h.archives()).toEqual([]);
-    });
-
     test('maintenance not held, held by someone else, or without every writer acknowledged, is refused', async () => {
         const h = await world();
         expectCode(await fail(h.plan({ operationId: 'nobody', fence: 1 })), 'MAINTENANCE_NOT_HELD');

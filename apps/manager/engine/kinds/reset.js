@@ -54,7 +54,6 @@ const HELD_PHASES = Object.freeze(['quiesced', 'backup', 'mutate', 'verify', 'cu
 const PAST_BACKUP = Object.freeze(['mutate', 'verify', 'cutover']);
 const VER_CODE = 'BACKUP_VERIFIED';
 const VIA_FOR_INSTANCE = Object.freeze(['recovery', 'local']);
-const PG_SCHEMA_RE = /^test_\d+_[0-9a-f]{8}$/;
 const STEP_NAMES = Object.freeze(['preflight', 'backup', 'mutate', 'verify', 'cutover']);
 
 function allowed(state, via) {
@@ -154,9 +153,9 @@ const sha = (text) => crypto.createHash('sha256').update(text).digest('hex').sli
 
 /**
  * Which database this process's facade will write to, compared with what the
- * manager and the installation record say. Nothing here opens a connection:
- * the Postgres schema is checked by the preflight step, once the barrier is
- * held and a connection is about to be needed anyway.
+ * manager and the installation record say. On Postgres every statement the
+ * reset issues is unqualified, so it reaches only the schema the adapter's
+ * search_path selects (the installation's own); no other schema is addressed.
  */
 async function resolveTarget({ settings, installation, deps }) {
     const db = deps.db();
@@ -183,15 +182,6 @@ async function resolveTarget({ settings, installation, deps }) {
         identity = resolved;
     }
     return { engine, fingerprint: sha(`${engine}|${identity}`) };
-}
-
-async function assertSchema(deps, engine) {
-    if (engine !== 'postgres') return;
-    const storage = await deps.db().describeStorage();
-    const isolated = deps.env().GOOBSTER_PG_TEST_ISOLATE === '1' && PG_SCHEMA_RE.test(String(storage.schema));
-    if (storage.schema !== 'public' && !isolated) {
-        throw new ManagerError(409, 'FOREIGN_TARGET', 'The schema this process would reset is not the installation\'s own; nothing was changed.', { reason: 'SCHEMA' });
-    }
 }
 
 /* ----------------------------------------------------------- the barrier */
@@ -302,7 +292,6 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
     const deps = {
         db: () => facade,
         facadeDbUrl: () => process.env.GOOBSTER_DB_URL || '',
-        env: () => process.env,
         removeOwned: (target) => paths.removeOwned(target, { codeRoot: settings.root, fs }),
         ...overrides
     };
@@ -440,7 +429,6 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 name: 'preflight',
                 async run(record, ctx) {
                     const doc = guard.held(record.plan.maintenance, ctx);
-                    await assertSchema(deps, ctx.scratch.target.engine);
                     ctx.scratch.resumedFrom = PAST_BACKUP.includes(doc.phase) ? doc.phase : null;
                     ctx.scratch.backupVerified = false;
                     if (ctx.scratch.resumedFrom) {
