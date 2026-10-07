@@ -285,6 +285,7 @@ const GROUPS = [
             'approvalExecutor',
             'dmPrivacy',
             'exchangePrivacy',
+            'featureDormantData',
             'memoryPrivacy',
             'privacyService',
             'accountExport',
