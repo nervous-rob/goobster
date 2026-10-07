@@ -228,6 +228,7 @@ All routes are under `/api/app/admin/host` (the admin prefix the feature invento
 | `POST /config/probe` | The explicit provider check. |
 | `POST /operations` `{ kind, input }` | Plan and validate `features.set`, `config.set`, `defaults.set` or `lifecycle.apply`; returns the plan without applying. |
 | `POST /operations/:id/apply` | Apply the previewed operation. |
+| `GET /install/suggest`, `/install/record`, `/install/source?dir=`, `GET /operations/:id` | Read-only feeds for the Installation page and for polling an operation after a reload. |
 | `GET /lifecycle` | The restart panel's model. |
 | `POST /lifecycle/restart-now`, `/cancel`, `/restart` | The three buttons. |
 
@@ -236,6 +237,20 @@ A manager `4xx` is passed through with its own `code` (`REVISION_CONFLICT`,
 `NOTHING_PENDING`, `ALREADY_COMMITTED`, and so on). A manager `5xx` or a
 refused assertion becomes `502` with `MANAGER_ERROR` or `MANAGER_BRIDGE_REFUSED`.
 An unreachable manager is `503 MANAGER_UNAVAILABLE`.
+
+## Installation: reconfigure, repair, uninstall (#330)
+
+The **Installation** page (`/host/installation`, and a card on the Overview)
+offers **Reconfigure…**, **Repair…** and **Uninstall…** for an operator. They
+are the setup wizard's maintenance journeys (`documentation/setup_wizard.md`)
+over the same Host routes: `POST /operations` accepts `install.new`,
+`install.reconfigure`, `install.repair` and `install.uninstall` and returns
+the manager's plan with its preflight findings (a refusal carries the plan it
+was refused with), and applying one writes the audit row
+`host.install.apply` with the operation, layout, feature ids and whether data
+was kept. The browser holds no manager credential. Uninstall cannot finish
+from here while the portal runs, because the portal is one of the programs it
+removes; the page says so and points at the manager's own page.
 
 ## Seams
 

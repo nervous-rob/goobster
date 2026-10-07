@@ -253,17 +253,27 @@ Work, in order:
    `config.json`; database (SQLite only in this phase); instance defaults;
    review and progress; first-run check.
 
-   **Status (P3.3, #329): engine and CLI built, no wizard screens yet.**
+   **Status (P3.3, #329): engine and CLI built; the wizard screens follow in P3.4.**
    `documentation/manager_install.md` is the reference. Done: the version 2
    installation record with explicit ownership; read-only discovery of
    payload, Raspberry Pi script, PM2, Docker and manual installs; preflight;
    the `install.new`, `install.reconfigure`, `install.repair` and
    `install.uninstall` kinds and the managed form of `adopt` (with updater
    reconcile); resume after interruption; uninstall that keeps data by
-   default and writes a tombstone. Not done: the wizard screens (item 3
-   itself), network download and archive sources, and every privileged
+   default and writes a tombstone. Not done: network download and archive
+   sources, and every privileged
    operation (`service.register`, `service.unregister`, `updater.disable`,
    `user.create` answer 501, so no OS service registration has been tested).
+   **Status (P3.4, #330): the wizard screens are built (PR pending).**
+   `documentation/setup_wizard.md` is the reference. The manager serves a
+   static client at `/manager/` (setup, recovery and maintenance pages, an
+   `HttpOnly` cookie session) and the portal's Host room has an Installation
+   page for Reconfigure, Repair and Uninstall through the bridge. Both run the
+   same engine, kinds and field components as the CLI. New manager kinds:
+   `owner.create`, `lifecycle.start`, `lifecycle.stop`. Postgres is shown
+   disabled; service registration (#331-#333) and maintenance, reset and
+   migration (#334-#336) are not wired in. Proven on Linux x64 in Playwright
+   against throwaway directories and a fake Ollama.
 4. Headless CLI running the same engine (answers file or prompts).
 
    **Status (P3.3, #329): built.** `apps/manager/cli.js` (`install`,
@@ -272,7 +282,8 @@ Work, in order:
    `apps/manager/install/answers.schema.json` or prompts, supports
    `--dry-run` and `--json`, refuses secrets on the command line, and
    exits 0/2/3/4/5 as documented. Proven on Linux x64 against throwaway
-   directories only.
+   directories only. The wizard (item 3) drives the same engine and kinds, so
+   an answers file and the browser journeys produce the same plans.
 5. Bootstrappers: Windows NSIS, macOS pkg, Linux script and AppImage;
    privileged operations limited to service registration and package
    installation; the installation registry per user; repair keeps `data/`

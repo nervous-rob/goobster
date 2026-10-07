@@ -123,6 +123,19 @@ every store file and response).
    unless the installation is unclaimed). Ten failed attempts in a minute are
    `429 TOO_MANY_ATTEMPTS`.
 
+## The setup client
+
+`GET /manager/`, `/manager/setup` and `/manager/recovery` serve the setup and
+maintenance wizard (`documentation/setup_wizard.md`), a static bundle built
+into `apps/web/dist/setup/`, with its own headers (`no-store`, `nosniff`,
+`X-Frame-Options: DENY`, a same-origin-only CSP) while `/manager/api` stays
+JSON-only. Claiming and unlocking also set an `HttpOnly`, `SameSite=Strict`
+session cookie (`goobster-manager-session`, path `/manager`) that is accepted
+only when the request carries no `Authorization` header; the per-mutation
+nonce stays a request header the page generates, and
+`POST /manager/api/session/logout` clears the cookie. A manager restart
+drops the session, and the page then asks for a recovery credential.
+
 ## Local recovery
 
 For the operator at the machine when the portal is gone, the owner is
@@ -236,6 +249,8 @@ failed apply also returns the `operation` record.
 | `GET /status` | none | all |
 | `POST /claim` | bootstrap credential | unclaimed |
 | `POST /recovery/unlock` | recovery credential, local request | claimed, recovery |
+| `POST /session/logout` | session (cookie or bearer) | all |
+| `GET /install/suggest`, `/install/source`, `/install/record`, `/install/first-run` | assertion or session | claimed; recovery with a recovery session |
 | `GET /features` | assertion or session | claimed; recovery with a recovery session |
 | `GET /operations`, `GET /operations/:id` | assertion or session | claimed; recovery with a recovery session |
 | `POST /operations` | assertion or session | per kind |

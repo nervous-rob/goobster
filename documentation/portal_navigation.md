@@ -101,7 +101,7 @@ the state, so a stale client cannot reach a disabled feature.
 | Music Lab | `/conservatory`, `/conservatory/<mode>` | unchanged |
 | Trading game | `/exchange` | unchanged |
 | Card decks | `/decks` | unchanged |
-| Usage & limits, Settings, Host | `/usage`, `/settings`, `/settings/:section`, `/host`, `/host/features`, `/host/connections`, `/host/defaults` | unchanged; the Host pages (operators only) are described in `host_operations.md` |
+| Usage & limits, Settings, Host | `/usage`, `/settings`, `/settings/:section`, `/host`, `/host/features`, `/host/connections`, `/host/defaults`, `/host/installation` | unchanged; the Host pages (operators only) are described in `host_operations.md`; `/host/installation` hosts the Reconfigure, Repair and Uninstall journeys of `setup_wizard.md` |
 | Shared conversation | `/share/:token` | unchanged (public, renders inside the shell without a session) |
 | Documentation | `/docs` → `/docs/getting-started`, `/docs/:slug#section` | public, linked from the sidebar footer; generated from selected repository Markdown |
 | Shared project dashboard | `/app/observatory/share/:token` | **server-handled**, never a SPA route - the registry excludes it so a public share is never swallowed by the Projects route |
