@@ -85,7 +85,7 @@ function _resetForTests() {
     absences.clear();
 }
 
-const requireOwn = forModule(module);
+const requireOptional = forModule(module);
 
 /**
  * discord.js, loaded on first property access (packaging_proof.md B6). Core
@@ -99,7 +99,7 @@ const requireOwn = forModule(module);
 const discord = new Proxy({}, {
     get(_target, name) {
         if (typeof name === 'symbol') return undefined;
-        const library = requireOwn('discord.js', { feature: 'discord' });
+        const library = requireOptional('discord.js', { feature: 'discord' });
         if (!library) {
             const { GatewayDisabledError } = require('../gateway/errors');
             throw new GatewayDisabledError();
@@ -107,7 +107,7 @@ const discord = new Proxy({}, {
         return library[name];
     },
     has(_target, name) {
-        const library = requireOwn('discord.js', { feature: 'discord' });
+        const library = requireOptional('discord.js', { feature: 'discord' });
         return Boolean(library) && name in library;
     }
 });

@@ -42,6 +42,7 @@ const GROUPS = [
             'identityService',
             'nativeAuth',
             'packagePayloadRules',
+            'payloadManifest',
             'emailAuth',
             'integrationActions',
             'integrationsWebhooks',
