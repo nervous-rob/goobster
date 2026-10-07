@@ -340,6 +340,17 @@ turns this off).
 `status.audit.pending` counts what is waiting. Erasure (`privacyService`)
 reaches the reconciled rows like any other `operator_audit` row.
 
+## Maintenance barrier
+
+The manager owns the maintenance barrier, a durable fenced state in which
+no application process writes (restore, reset and migration run inside it).
+It lives in the manager store (`maintenance.json`, so the application
+database is not needed to know about it), is entered and released by the
+`maintenance.enter` and `maintenance.release` operations, is read at
+`GET /manager/api/maintenance` and summarised in `GET /status`, and is
+honoured across a manager restart. While it is up the audit reconciliation
+is deferred. See [maintenance_barrier.md](maintenance_barrier.md).
+
 ## Seams for later work
 
 Extensions register in `apps/manager/extensions.js`: a route family is one

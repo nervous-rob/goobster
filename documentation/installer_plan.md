@@ -272,6 +272,24 @@ Work:
 1. Maintenance state: operation lock honoured by every application
    process, durable progress, cancellation rules, recovery after
    interruption.
+
+   **Status (P4.1, #334): built.** The maintenance barrier is a
+   manager-owned state in `<store>/maintenance.json` with a persisted
+   monotonic fencing token, the phases `plan, preflight, backup, quiesce,
+   mutate, verify, cutover, release`, a cancel-safe boundary (through
+   `quiesce`) and an irreversible boundary (`mutate` begun). Kinds
+   `maintenance.enter` and `maintenance.release` (audit actions
+   `manager.maintenance.enter` and `manager.maintenance.release`) refuse
+   unless every registered writer acknowledged the fence; an unknown,
+   unacknowledging or unfenceable writer blocks entry. Each process closes
+   admission (503 `MAINTENANCE` on mutating routes and webhooks, Discord
+   refusals, refused WebSocket upgrades, a stopped runtime), drains, then
+   sets a database fence that the facade and both engines enforce. A barrier
+   that is up at manager start is honoured, never auto-resumed. Plan,
+   preflight, quiesce, verify-of-quiescence and release are implemented;
+   `backup`, `mutate` and `cutover` are hooks for P4.2 to P4.4. Maintenance
+   is not the paused flag. The writer inventory, state machine and recovery
+   rules are in [maintenance_barrier.md](maintenance_barrier.md).
 2. Reset rewritten for the whole current schema on both engines, with
    explicit scope (everything, or per feature's dormant data) and typed
    confirmation.
