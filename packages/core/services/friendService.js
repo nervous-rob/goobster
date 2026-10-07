@@ -833,7 +833,7 @@ class FriendService {
 
     _portalUrl(path) {
         try {
-            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            const publicUrl = require('../config/configJson').load().webapp?.publicUrl;
             if (typeof publicUrl === 'string' && publicUrl) {
                 return `${publicUrl.replace(/\/+$/, '')}/app${path}`;
             }

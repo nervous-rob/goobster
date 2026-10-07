@@ -118,7 +118,7 @@ class ParlorLiveService {
         if (this._deps.elevenLabsKey) return this._deps.elevenLabsKey();
         if (process.env.ELEVENLABS_API_KEY) return process.env.ELEVENLABS_API_KEY;
         try {
-            return require('../../../config.json').elevenlabs?.apiKey || null;
+            return require('../config/configJson').load().elevenlabs?.apiKey || null;
         } catch {
             return null;
         }

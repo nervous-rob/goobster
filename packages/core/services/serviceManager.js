@@ -1,5 +1,5 @@
 const VoiceService = require('./voice');
-const config = require('../../../config.json');
+const config = require('../config/configJson').load();
 
 // Instantiate the service once
 const voiceService = new VoiceService(config);
