@@ -47,6 +47,7 @@ const { toGateway, isGatewayUnavailable } = require('../gateway');
 const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const observatoryConfig = require('../config/observatoryConfig');
+const { features } = require('../features/featureState');
 const sandboxService = require('./sandboxService');
 const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
@@ -302,8 +303,16 @@ class ObservatoryService {
      * switch AND the sandbox it rides on. `enabled` is the historical name
      * for the same gate (the tool registry and the agent tool read it).
      */
+    /**
+     * The legacy switches AND not enforced off by feature state (#318
+     * review). `enforcedOff('observatory')` also covers a sandbox or projects
+     * that is enforced off (the dependency rule). With no usable
+     * data/features.json and no GOOBSTER_FEATURE_OBSERVATORY override the
+     * second term is always true, so this is the legacy value unchanged.
+     */
     get executionEnabled() {
-        return this.config.enabled === true && this.sandbox.enabled === true;
+        return this.config.enabled === true && this.sandbox.enabled === true
+            && !features.enforcedOff('observatory');
     }
 
     get enabled() {
@@ -403,6 +412,12 @@ class ObservatoryService {
 
     /** Guard for anything that spends compute (run, resume, render, fetch, command). */
     async _requireEnabled() {
+        if (features.enforcedOff('observatory')) {
+            const error = new ObservatoryError(404, 'FEATURE_UNAVAILABLE',
+                'Code execution is not available on this installation.');
+            error.feature = 'observatory';
+            throw error;
+        }
         if (!this.organizationEnabled) {
             throw new ObservatoryError(403, 'PROJECTS_DISABLED', 'Projects are turned off on this server.');
         }
