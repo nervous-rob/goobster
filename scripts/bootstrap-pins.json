@@ -1,0 +1,28 @@
+{
+    "version": 1,
+    "note": "Tools the Linux bootstrap build downloads, pinned by URL and SHA-256. A download that does not match its pin is discarded and the AppImage is skipped with APPIMAGE_SKIPPED; nothing unpinned is ever executed. Update a pin only after checking the new release's own checksums.",
+    "appimagetool": {
+        "version": "1.9.0",
+        "source": "https://github.com/AppImage/appimagetool/releases/tag/1.9.0",
+        "x64": {
+            "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage",
+            "sha256": "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1"
+        },
+        "arm64": {
+            "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-aarch64.AppImage",
+            "sha256": "04f45ea45b5aa07bb2b071aed9dbf7a5185d3953b11b47358c1311f11ea94a96"
+        }
+    },
+    "appimageRuntime": {
+        "source": "https://github.com/AppImage/type2-runtime/releases/tag/continuous",
+        "note": "The runtime that mounts the image. The upstream URL is a rolling 'continuous' release, so a new upstream build changes the hash and the pin must be refreshed on purpose.",
+        "x64": {
+            "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64",
+            "sha256": "156f4bdbde9c52d01814600013e0a273f0118dc2de98975f3c8c63427ec79074"
+        },
+        "arm64": {
+            "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64",
+            "sha256": "b4ff0030242d0c3bb12ce40541828303cf167493f4793456f0436edd6255c39d"
+        }
+    }
+}
