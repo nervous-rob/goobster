@@ -19,29 +19,29 @@ const { unavailableResult } = require('../features/gate');
 const FEATURE_ID = 'observatory';
 
 function patchExecutionSeam(target) {
-    if (target.__featureSeam) return target;
-    const proto = Object.getPrototypeOf(target);
+    const proto = target.ObservatoryService.prototype;
+    if (Object.prototype.hasOwnProperty.call(proto, '__featureSeam')) return target;
     const reported = Object.getOwnPropertyDescriptor(proto, 'executionEnabled');
-    const requireEnabled = target._requireEnabled;
+    const requireEnabled = proto._requireEnabled;
 
-    Object.defineProperty(target, 'executionEnabled', {
+    Object.defineProperty(proto, 'executionEnabled', {
         configurable: true,
         get() {
             return reported.get.call(this) && !features.enforcedOff(FEATURE_ID);
         }
     });
 
-    target._requireEnabled = async function featureGatedRequireEnabled(...args) {
+    proto._requireEnabled = async function featureGatedRequireEnabled(...args) {
         if (features.enforcedOff(FEATURE_ID)) {
             const refusal = unavailableResult(FEATURE_ID);
-            const error = new service.ObservatoryError(404, refusal.code,
+            const error = new target.ObservatoryError(404, refusal.code,
                 'Code execution is not available on this installation.');
             error.feature = refusal.feature;
             throw error;
         }
         return requireEnabled.apply(this, args);
     };
-    Object.defineProperty(target, '__featureSeam', { value: true });
+    Object.defineProperty(proto, '__featureSeam', { value: true });
     return target;
 }
 
