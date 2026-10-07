@@ -16,6 +16,7 @@ const { dmScopeId } = require('../utils/dmScope');
 const mcpConfig = require('../config/mcpConfig');
 const { KINDS } = require('../services/selfDocsService');
 const { surfaceActive, GateError } = require('../features/gate');
+const { features } = require('../features/featureState');
 
 const READ_ONLY = {
     readOnlyHint: true,
@@ -580,7 +581,7 @@ async function callTool(userId, name, args, { scope = 'read' } = {}) {
 
 function describeServer() {
     return {
-        enabled: mcpConfig.enabled,
+        enabled: features.isActive('mcp'),
         endpoint: mcpConfig.path,
         readOnly: true,
         tools: toolNames(),

@@ -5,6 +5,7 @@ const { isDmScopeId } = require('../utils/dmScope');
 const workContext = require('../utils/workContext');
 const { toGateway } = require('../gateway');
 const { isInboxChannelId } = require('./inboxService');
+const { surfaceActive } = require('../features/gate');
 
 class AutomationService {
     /**
@@ -338,6 +339,14 @@ class AutomationService {
                 return;
             }
 
+            // The Wheel is gambling's: a refused fire was claimed (so it waits
+            // for its next scheduled time) but it never ran, so it is not
+            // recorded as a run and publishes no event.
+            if (automation.promptText === '__GOBLIN_WHEEL__' && !surfaceActive('command', 'economy/wheel.js')) {
+                console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
+                return;
+            }
+
             // Get the channel
             const channel = await this.client.channels.fetch(automation.channelId);
             if (!channel) {
@@ -584,6 +593,12 @@ class AutomationService {
     }
 
     async executeWheel(automation, channel) {
+        // The Wheel needs gambling and the exchange; a disabled installation
+        // spins nothing, posts nothing and records no failure.
+        if (!surfaceActive('command', 'economy/wheel.js')) {
+            console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
+            return;
+        }
         const wheelService = require('./exchange/wheelService');
         const economyService = require('./economyService');
         const { buildWheelEmbed, resolveNames } = require('./exchange/wheelPresenter');
