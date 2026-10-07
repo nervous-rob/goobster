@@ -96,8 +96,8 @@ function createApplier({ core, store, journal, logger = console }) {
     }
 
     function prewarm() {
-        for (const name of ['./apply', './runtime', '../maintenance/barrier', '../backup/runChild', '../install/release', '../lifecycle/registry']) {
-            try { require(name); } catch { }
+        for (const load of [() => require('./apply'), () => require('./runtime'), () => require('../maintenance/barrier'), () => require('../backup/runChild'), () => require('../install/release'), () => require('../lifecycle/registry')]) {
+            try { load(); } catch { }
         }
         for (const load of [release.payloadStage, release.releaseIndex]) {
             try { load(); } catch { }
