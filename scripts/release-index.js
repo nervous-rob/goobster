@@ -19,7 +19,9 @@
  *                  append one index entry (target, size, SHA-256, signing state) to a JSON list
  *   build           --dir <release-dir> --entries <file>... --tag <tag> [--dispatch] [--source-revision <sha>]
  *                   [--built-at <iso>] [--min-upgrade-from <version>] [--lockfile <package-lock.json>]
- *                  assemble release-index.json beside the artifacts (and check each against its entry)
+ *                   [--drop-unsigned-targets]
+ *                  assemble release-index.json beside the artifacts (and check each against its entry);
+ *                  --drop-unsigned-targets withdraws every target with an unsigned artifact (stable releases)
  *   sign            --dir <release-dir> --key <private.pem>
  *   verify          <dir> [--policy production|development] [--public-key <pem>]... [--key-list <file>]
  *                   [--no-key-list] [--target <id>] [--abi <n>] [--current-version <v>] [--allow-downgrade]
@@ -55,7 +57,7 @@ function parseArgs(argv) {
     const [command, ...rest] = argv;
     const options = { command, positional: [], lists: {} };
     const LIST = new Set(['--public-key', '--entries']);
-    const FLAGS = new Set(['--dispatch', '--allow-downgrade', '--require-files', '--no-key-list']);
+    const FLAGS = new Set(['--dispatch', '--allow-downgrade', '--require-files', '--no-key-list', '--drop-unsigned-targets']);
     const camel = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
     for (let i = 0; i < rest.length; i += 1) {
         const arg = rest[i];
@@ -147,6 +149,27 @@ function sha256Of(file) {
 
 function listFiles(dir) {
     return fs.readdirSync(dir).filter(name => fs.lstatSync(path.join(dir, name)).isFile()).sort();
+}
+
+/**
+ * A target any of whose artifacts is not `signed` is withdrawn from the release: its entries leave `artifacts` (in
+ * place), its files and its dependency inventory are deleted from `dir`. Returns `[{ target, files }]`.
+ */
+function dropUnsignedTargets(dir, artifacts) {
+    const unsigned = new Set(artifacts.filter(artifact => artifact.signing.status !== 'signed').map(artifact => artifact.target));
+    const dropped = [];
+    for (const target of [...unsigned].sort()) {
+        const files = [];
+        for (let i = artifacts.length - 1; i >= 0; i -= 1) {
+            if (artifacts[i].target !== target) continue;
+            const [gone] = artifacts.splice(i, 1);
+            if (index.bareFileName(gone.file)) fs.rmSync(path.join(dir, gone.file), { force: true });
+            files.push(gone.file);
+        }
+        fs.rmSync(path.join(dir, `${index.INVENTORY_PREFIX}${target}.json`), { force: true });
+        dropped.push({ target, files: files.sort() });
+    }
+    return dropped;
 }
 
 const COMMANDS = {
@@ -243,6 +266,7 @@ const COMMANDS = {
             const parsed = readJson(file);
             artifacts.push(...(Array.isArray(parsed) ? parsed : [parsed]));
         }
+        const dropped = options.dropUnsignedTargets ? dropUnsignedTargets(dir, artifacts) : [];
         for (const artifact of artifacts) {
             const full = path.join(dir, artifact.file);
             if (!index.bareFileName(artifact.file) || !fs.existsSync(full)) throw Object.assign(new Error(`${artifact.file} is not in ${dir}`), { code: index.CODES.ARTIFACT_MISSING });
@@ -273,7 +297,7 @@ const COMMANDS = {
             inventories
         });
         index.writeIndex(dir, built, null);
-        return { status: 0, result: { index: index.INDEX_FILE, channel: derived.channel, artifacts: built.artifacts.length, targets: [...new Set(built.artifacts.map(item => item.target))] } };
+        return { status: 0, result: { index: index.INDEX_FILE, channel: derived.channel, artifacts: built.artifacts.length, targets: [...new Set(built.artifacts.map(item => item.target))], dropped } };
     },
 
     sign(options) {

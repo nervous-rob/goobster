@@ -609,6 +609,40 @@ describe('the release-index command line', () => {
         expect(JSON.parse(badTag.out).code).toBe('TAG_INVALID');
     });
 
+    test('build --drop-unsigned-targets withdraws a target with an unsigned artifact: entries, files and inventory', async () => {
+        const dir = tempDir('drop');
+        const entries = path.join(tempDir('drop-entries'), 'entries.json');
+        const specs = [
+            { file: 'goobster-1.0.0-linux-x64.run', target: 'linux-x64', kind: 'bootstrap', signing: { status: 'signed', method: 'ed25519-only' } },
+            { file: 'goobster-1.0.0-win32-x64.exe', target: 'win32-x64', kind: 'exe', signing: { status: 'unsigned-dev', reason: 'NO_AUTHENTICODE' } },
+            { file: 'goobster-payload-1.0.0-win32-x64.tar.gz', target: 'win32-x64', kind: 'payload', signing: { status: 'signed', method: 'ed25519-only' } }
+        ];
+        const made = specs.map((spec) => {
+            const content = Buffer.from(`${spec.file}\n`);
+            fs.writeFileSync(path.join(dir, spec.file), content);
+            return { ...spec, sha256: sha(content), size: content.length };
+        });
+        fs.writeFileSync(entries, JSON.stringify(made));
+        for (const target of ['linux-x64', 'win32-x64']) fs.writeFileSync(path.join(dir, `dependency-inventory-${target}.json`), '{"version":1}\n');
+
+        const built = await run(['build', '--dir', dir, '--entries', entries, '--tag', 'v1.0.0', '--source-revision', SOURCE, '--drop-unsigned-targets']);
+        expect(built.status).toBe(0);
+        expect(JSON.parse(built.out)).toMatchObject({ targets: ['linux-x64'], artifacts: 1, dropped: [{ target: 'win32-x64', files: ['goobster-1.0.0-win32-x64.exe', 'goobster-payload-1.0.0-win32-x64.tar.gz'] }] });
+        expect(fs.readdirSync(dir).sort()).toEqual(['dependency-inventory-linux-x64.json', 'goobster-1.0.0-linux-x64.run', 'release-index.json']);
+        const document = JSON.parse(fs.readFileSync(path.join(dir, index.INDEX_FILE), 'utf8'));
+        expect(document.inventories.map(item => item.target)).toEqual(['linux-x64']);
+    });
+
+    test('build without the flag keeps an unsigned target (a prerelease says so in its notes)', async () => {
+        const dir = tempDir('keep');
+        const entries = path.join(tempDir('keep-entries'), 'entries.json');
+        const content = Buffer.from('x\n');
+        fs.writeFileSync(path.join(dir, 'goobster-1.0.0-win32-x64.exe'), content);
+        fs.writeFileSync(entries, JSON.stringify([{ file: 'goobster-1.0.0-win32-x64.exe', target: 'win32-x64', kind: 'exe', sha256: sha(content), size: 2, signing: { status: 'unsigned-dev', reason: 'NO_AUTHENTICODE' } }]));
+        const built = await run(['build', '--dir', dir, '--entries', entries, '--tag', 'v1.0.0-rc.2', '--source-revision', SOURCE]);
+        expect(JSON.parse(built.out)).toMatchObject({ artifacts: 1, dropped: [] });
+    });
+
     test('plan: a stable tag with no key exits 2 with RELEASE_BLOCKED_UNSIGNED; a dispatch run is a prerelease development build', async () => {
         const blocked = await run(['plan', '--tag', 'v1.0.0'], { GOOBSTER_RELEASE_SIGNING_KEY_PEM: '' });
         expect(blocked.status).toBe(2);
