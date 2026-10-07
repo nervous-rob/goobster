@@ -17,6 +17,11 @@
 # and the Node.js bootstrap, so it needs no sudo. It still heals the music
 # CLI venv (missing, orphaned, or missing yt-dlp/spotdl) via
 # scripts/ensure-music-cli.sh.
+#
+# The script records how it installed in data/.install-origin
+# ({"kind":"rpi-script","version":1}). The Goobster manager's discovery reads
+# that marker to recognise the install and offer to adopt it (documentation/
+# manager_install.md); the script itself never reads the manager's state.
 
 set -euo pipefail
 
@@ -117,6 +122,7 @@ npm prune --omit=dev
 
 # --- Runtime directories ----------------------------------------------------
 mkdir -p data/music data/ambience data/images data/playlists cache/music logs
+printf '{"kind":"rpi-script","version":1}\n' > data/.install-origin
 
 # --- Config ------------------------------------------------------------------
 if [[ ! -f config.json ]]; then

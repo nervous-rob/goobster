@@ -172,6 +172,15 @@ is refused with `409 ADOPT_NEEDS_CONFIRMATION` until the input says
 `installation.json.unreadable-<time>`, never deleted. A usable store is
 `409 ALREADY_INSTALLED`.
 
+`adopt` also has a managed form for an instance found on the host (a
+Raspberry Pi script install, a manual checkout, PM2, Docker): with a
+`candidateId` or `roots` it records the instance in place, reconciles its
+updater (cron lines are commented reversibly, a systemd timer needs the
+guarded `scripts/auto-update.sh` and the privileged helper, a PM2 watch is a
+conflict) and moves nothing. The install, reconfigure, repair and uninstall
+kinds, the headless CLI (`apps/manager/cli.js`) and the version 2 installation
+record are in `documentation/manager_install.md`.
+
 ## Operations: the setup engine
 
 `apps/manager/engine/` is the one engine the wizard, the headless CLI and
@@ -361,11 +370,12 @@ operation-kind family is one module under `apps/manager/engine/kinds/`
 exporting `({ settings, fs, now, logger }) => OperationKind[]`. A kind name
 registered twice is a startup error, and the privileged names stay refused.
 
-- **#324 (config, providers, defaults):** new kinds in `apps/manager/engine/kinds/`
-  following `features.set`; secret values go in the kind's `privateInput`,
-  never the plan (the journal scrubs any value under a key-shaped name to
-  `"sk-…[redacted]"` as a backstop). A fresh-install preset
-  (`featureState.freshPreset()`) is a defaults decision for #324; today the
+- **#324 (config, providers, defaults):** done: `config.set`, `defaults.set`,
+  `GET /manager/api/config` and `POST /manager/api/config/probe`, described in
+  `documentation/manager_configuration.md`. Secret values go in the kind's
+  `privateInput`, never the plan (the journal scrubs any value under a
+  key-shaped name to `"sk-…[redacted]"` as a backstop). A fresh-install
+  feature preset (`featureState.freshPreset()`) is still undecided; today the
   first `features.set` builds on the legacy seed.
 - **#325 (supervisor, restart):** done in `documentation/manager_lifecycle.md`:
   `--supervise` runs the layout's workers, `lifecycle.apply` stages a

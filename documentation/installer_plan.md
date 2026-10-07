@@ -159,7 +159,8 @@ Status (issues #323 - #326 under epic #315):
 | Issue | Scope | State |
 |---|---|---|
 | #323 | `apps/manager`: own store, setup engine, bootstrap and recovery credentials, portal bridge, transport, privilege boundary, audit reconciliation | Workspace `apps/manager`, bridge minter `packages/core/web/managerBridge.js`, specs `tests/managerBoot.test.js`, `tests/managerAuth.test.js`, `tests/managerEngine.test.js`, `tests/managerBridge.test.js`; `documentation/manager.md` (PR pending review) |
-| #325 | Supervision of every layout, staged restart with a 60 s grace period, restart contracts for long-running work, per-target command deploy | `apps/manager/lifecycle/` (layouts, child and external adapters, supervisor, `lifecycle.json`), the `lifecycle.apply` / `lifecycle.restart` / `lifecycle.cancel` kinds and `/manager/api/lifecycle*` routes, `--supervise`; worker side `packages/core/runtime/{lifecycle,revisionAck}.js` (exit 75, stop new work, revision acks); `deploy/goobster.service` and `ecosystem.config.js` run the manager. Specs `tests/managerSupervisor.test.js`, `tests/managerLifecycle.test.js`, `tests/lifecycleAdapters.test.js`, `tests/commandDeployHash.test.js`, `tests/workInterruption.test.js`; `documentation/manager_lifecycle.md` |
+| #324 | Shared configuration: field catalog (`packages/core/config/fieldCatalog.js`), effective settings with sources, safe `config.json` writes (`configFile.js`), `config.set` and `defaults.set` kinds, `GET /manager/api/config`, explicit provider probes, instance defaults | `packages/core/config/{fieldCatalog,effectiveConfig,configFile}.js`, `providerProbeService.js`, `instanceDefaultsService.js`, `apps/manager/{configView.js,routes/config.js,engine/kinds/{config,defaults}.js}`, generator `scripts/generate-config-reference.js`, specs `tests/{configFieldCatalog,effectiveConfig,configFile,providerProbes,instanceDefaults,managerConfig}.test.js`; `documentation/manager_configuration.md`, `documentation/config_reference.md` (PR pending review) |
+| #325 | Supervision of every layout, staged restart with a 60 s grace period, restart contracts for long-running work, per-target command deploy | `apps/manager/lifecycle/` (layouts, child and external adapters, supervisor, `lifecycle.json`), the `lifecycle.apply` / `lifecycle.restart` / `lifecycle.cancel` kinds and `/manager/api/lifecycle*` routes, `--supervise`; worker side `packages/core/runtime/{lifecycle,revisionAck}.js` (exit 75, stop new work, revision acks); `deploy/goobster.service` and `ecosystem.config.js` run the manager. Specs `tests/managerSupervisor.test.js`, `tests/managerLifecycle.test.js`, `tests/lifecycleAdapters.test.js`, `tests/commandDeployHash.test.js`, `tests/workInterruption.test.js`; `documentation/manager_lifecycle.md` (PR pending review) |
 
 Work:
 
@@ -250,7 +251,27 @@ Work, in order:
    cost; keys with links, live probes and restricted-permission writes to
    `config.json`; database (SQLite only in this phase); instance defaults;
    review and progress; first-run check.
+
+   **Status (P3.3, #329): engine and CLI built, no wizard screens yet.**
+   `documentation/manager_install.md` is the reference. Done: the version 2
+   installation record with explicit ownership; read-only discovery of
+   payload, Raspberry Pi script, PM2, Docker and manual installs; preflight;
+   the `install.new`, `install.reconfigure`, `install.repair` and
+   `install.uninstall` kinds and the managed form of `adopt` (with updater
+   reconcile); resume after interruption; uninstall that keeps data by
+   default and writes a tombstone. Not done: the wizard screens (item 3
+   itself), network download and archive sources, and every privileged
+   operation (`service.register`, `service.unregister`, `updater.disable`,
+   `user.create` answer 501, so no OS service registration has been tested).
 4. Headless CLI running the same engine (answers file or prompts).
+
+   **Status (P3.3, #329): built.** `apps/manager/cli.js` (`install`,
+   `adopt`, `reconfigure`, `repair`, `uninstall`, `plan`, `status`,
+   `discover`, `schema`) takes a mode 0600 answers file validated against
+   `apps/manager/install/answers.schema.json` or prompts, supports
+   `--dry-run` and `--json`, refuses secrets on the command line, and
+   exits 0/2/3/4/5 as documented. Proven on Linux x64 against throwaway
+   directories only.
 5. Bootstrappers: Windows NSIS, macOS pkg, Linux script and AppImage;
    privileged operations limited to service registration and package
    installation; the installation registry per user; repair keeps `data/`

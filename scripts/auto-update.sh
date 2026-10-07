@@ -134,6 +134,22 @@ else
     SYSTEMCTL=(sudo systemctl)
 fi
 
+# goobster-manager-guard: when the Goobster manager owns updates for this
+# install (its sealed record says updater.kind is "manager"), this script must
+# not act. The marker in this line is how the manager recognises a guarded copy
+# of the script (apps/manager/install/updaters.js); keep it.
+manager_owns_updates() {
+    local store="${GOOBSTER_MANAGER_STATE_DIR:-${REPO_DIR}/data/manager}"
+    [[ -r "${store}/installation.json" ]] || return 1
+    command -v node >/dev/null 2>&1 || return 1
+    node -e '
+        try {
+            const doc = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            process.exit(doc && doc.updater && doc.updater.kind === "manager" ? 0 : 1);
+        } catch { process.exit(1); }
+    ' "${store}/installation.json"
+}
+
 # --- Helpers ---------------------------------------------------------------
 
 log() {
@@ -302,6 +318,11 @@ start_service() {
 }
 
 # --- Detect ----------------------------------------------------------------
+
+if manager_owns_updates; then
+    log "The Goobster manager owns updates for ${REPO_DIR}; this updater has nothing to do"
+    exit 0
+fi
 
 log "Checking ${REMOTE}/${BRANCH} for updates (repo=${REPO_DIR}, user=${RUN_USER})"
 run_git fetch --prune --quiet "${REMOTE}" "${BRANCH}" \
