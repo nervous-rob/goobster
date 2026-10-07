@@ -67,8 +67,16 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             { findings: blocks.map(item => ({ code: item.code, detail: item.detail })) });
     }
 
-    function sourceInfo(sourceDir) {
+    /** Read a source's manifest and, with `releaseInput`, check its signature and structure (sizes only; staging hashes). */
+    function sourceInfo(sourceDir, releaseInput = null) {
         const loaded = release.loadManifest(sourceDir, fs);
+        if (releaseInput) {
+            try {
+                stageLib().verifyPayload(loaded.dir, { ...release.verifyOptions(releaseInput, fs), hash: false });
+            } catch (error) {
+                throw release.mapPayloadError(error) || error;
+            }
+        }
         try {
             return { ...loaded, selection: stageLib().readSelection(loaded.dir) };
         } catch (error) {
@@ -165,7 +173,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             existing = core.ownedInstall(ctx, { requireManaged: false });
         } else if (read.status !== 'missing') {
             throw new ManagerError(409, 'STORE_UNUSABLE', 'installation.json exists but cannot be used; recover it with adopt before installing.');
-        } else if (!tomb.present && ctx.evidence().length > 0) {
+        } else if (!tomb.present && ctx.evidence().some(item => item !== 'postgres-url')) {
             throw new ManagerError(409, 'EXISTING_INSTALLATION', 'An application installation already exists here; adopt it instead of installing over it.');
         }
         if (existing && model.isManaged(existing)) {
@@ -176,7 +184,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             if (existing.origin !== 'install') throw new ManagerError(409, 'ALREADY_INSTALLED', 'This installation was adopted, not installed by the manager; use install.repair or install.reconfigure.');
         }
 
-        const info = sourceInfo(parsed.source);
+        const info = sourceInfo(parsed.source, parsed.release);
         const asked = parsed.features || (info.selection ? info.selection.features : Object.keys(info.manifest.groups));
         const picked = release.selection(info.manifest, asked);
         const selected = picked.resolved.features;
@@ -409,7 +417,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         let selected = doc.release ? doc.release.features : [];
         if (codeMoved) {
             sourceDir = input.source !== undefined ? absolutePath(input.source, 'source') : path.join(doc.roots.code, 'current');
-            const info = sourceInfo(sourceDir);
+            const info = sourceInfo(sourceDir, parsedRelease);
             manifest = info.manifest;
             if (info.releaseId !== doc.release.releaseId) throw new ManagerError(409, 'RELEASE_MISMATCH', 'The source is not the release recorded for this installation.');
         } else if (doc.release) {
