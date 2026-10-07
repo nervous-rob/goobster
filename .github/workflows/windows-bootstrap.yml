@@ -158,9 +158,14 @@ jobs:
       - name: The journey leaves nothing registered
         if: always()
         run: |
-          sc.exe query goobster | Tee-Object -FilePath "$env:REPORTS\service-after-$env:TARGET.txt"
-          if ($LASTEXITCODE -ne 1060) { throw 'a service named goobster is still registered' }
+          $query = & sc.exe query goobster 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $query | Tee-Object -FilePath "$env:REPORTS\service-after-$env:TARGET.txt"
+          # 1060 is ERROR_SERVICE_DOES_NOT_EXIST, the one answer this step accepts.
+          if ($code -ne 1060) { throw "a service named goobster is still registered (sc.exe exited $code)" }
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Goobster') { throw 'the Programs and Features entry is still there' }
+          # The runner exits the step with the last native exit code; sc.exe's 1060 is the expected answer, not a failure.
+          exit 0
 
       - name: Job summary
         if: always()
