@@ -22,6 +22,7 @@ const GROUPS = [
             'ciGroups',
             'cliResolver',
             'configFieldCatalog',
+            'configFile',
             'effectiveConfig',
             'cursorAgentService',
             'dbSchemaUpgrade',
