@@ -77,10 +77,17 @@ the page; nothing on the machine changes until the review.
    Choosing it shows the check, the port, listen address and storage form and
    a preview of the container, volume and network names that will be created;
    passwords are generated and never shown. A server the installer would set
-   up as a native package is listed and disabled with the sentence "Available
-   in a later version of this installer". See
-   [database_connection.md](database_connection.md) and
-   [docker_postgres.md](docker_postgres.md).
+   up as a native package is **PostgreSQL on this machine (managed by this
+   installer)**: enabled only on a supported Linux host (Debian 12, Ubuntu
+   22.04+, AlmaLinux or Rocky 9) where an elevation is available, otherwise
+   disabled with the reason. Choosing it shows the host check (which packages
+   would be installed and from where, the clusters that already exist and are
+   left alone), a form (port, listen address, data directory, approval to install
+   the packages) with live problems and a preview of the cluster that will be
+   created; the password is generated and never shown. See
+   [database_connection.md](database_connection.md),
+   [docker_postgres.md](docker_postgres.md) and
+   [native_postgres.md](native_postgres.md).
 6. **Defaults**: the installation's and the assistant's names, and what a
    new person inherits. The defaults are saved right after the database is
    created.
@@ -265,11 +272,13 @@ manager operation.
 
 ## What is not here yet
 
-- **A PostgreSQL server the installer installs as a native package**: shown,
-  disabled, with "Available in a later version of this installer". An
-  existing server ([database_connection.md](database_connection.md)) and a
-  Docker container the installer manages
-  ([docker_postgres.md](docker_postgres.md)) are supported.
+- **Moving a native database's data directory** and **removing the native
+  cluster at uninstall**: command-line and answers-file jobs
+  (`database native relocate`, `removeNativeData`;
+  [native_postgres.md](native_postgres.md)). An existing server
+  ([database_connection.md](database_connection.md)), a Docker container the
+  installer manages ([docker_postgres.md](docker_postgres.md)) and a native
+  cluster it creates are supported choices.
 - **Registering Goobster as a service** from the page. On Linux the
   bootstrapper registers a systemd service as part of the install
   ([linux_install.md](linux_install.md)) and the finished page says whether it did

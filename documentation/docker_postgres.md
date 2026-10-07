@@ -24,8 +24,8 @@ hand-run compose profile (Postgres, bot, api and nginx together): the managed
 instance is one container for the database only, started and checked by the
 manager, while Goobster itself still runs as the manager's own workers.
 
-**What it is not.** It is not a native PostgreSQL install (listed in the
-chooser as "Available in a later version of this installer"), not a
+**What it is not.** It is not a native PostgreSQL install (that is
+[native_postgres.md](native_postgres.md), #340), not a
 PostgreSQL server upgrade (a major upgrade is manual, below), not a way to
 manage a container somebody else made, not Docker Desktop's remote contexts
 and not the Windows-containers mode.
@@ -286,8 +286,8 @@ folder you chose is never deleted, even then: the plan lists it as retained.
 ## Where it shows
 
 - **Setup wizard, Database step.** The chooser offers SQLite, an existing
-  server, **PostgreSQL in Docker (managed by this installer)** and the native
-  entry (disabled, "Available in a later version of this installer"). The
+  server, **PostgreSQL in Docker (managed by this installer)** and **PostgreSQL on
+  this machine** ([native_postgres.md](native_postgres.md)). The
   Docker entry is enabled only after the daemon check passes; otherwise it is
   disabled and the reason follows it. Choosing it shows the check (each
   failure with its remedy, the image and whether it is downloaded, the backup

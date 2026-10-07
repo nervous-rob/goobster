@@ -241,11 +241,6 @@ afterAll(async () => {
 });
 
 
-const names = (h) => {
-    const { createNativeService } = require('@goobster/manager/native/service');
-    return createNativeService({ settings: h.settings }).resourceNames(h.manager.store.readInstallation().doc.installationId, 'debian', 'goobster', h.dataDirectory);
-};
-
 const run = async (h, cookie, kind, input = {}) => {
     const preview = await h.api(cookie, 'POST', '/operations', { kind, input });
     expect(preview.status).toBe(200);

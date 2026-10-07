@@ -282,6 +282,17 @@ schema…** over the same journey the manager's own page runs
   user, URL or password). The page shows the instance and runs the same
   journey as the manager's own page
   (`documentation/docker_postgres.md`).
+- `GET /api/app/admin/host/native/status` (#340): the native PostgreSQL host
+  check (distribution, packages, the clusters that exist and which of them the
+  manager owns, elevation, backup tools) and what the manager owns (cluster
+  name and state, port, data directory), read only; `?storage=<absolute path>`
+  adds the free space and reachability there. `POST /operations` also accepts
+  `database.native.provision`, `.start`, `.stop`, `.repair` and `.relocate`;
+  applying one writes `host.database.apply` with the kind and the cluster and
+  service names only (no path, port, address, URL or password). These
+  operations may run for a long time (package downloads), so the proxy waits up
+  to 30 minutes for their apply. The page shows the cluster and runs the same
+  journey as the manager's own page (`documentation/native_postgres.md`).
 
 ## Maintenance: backup, restore, reset, migration (#337)
 
