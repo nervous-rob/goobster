@@ -122,6 +122,7 @@ const GROUPS = [
             'featureGatingRoutes',
             'featureGatingWebsocket',
             'featureGatingPortal',
+            'hostRoutes',
             'frontendChunks',
             'friendService',
             'markdownRenderer',
