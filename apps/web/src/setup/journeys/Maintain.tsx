@@ -38,6 +38,7 @@ export function Maintain({ go, recovery }: { go: (journey: string, step?: string
                 <button type="button" className="btn" onClick={() => go('reconfigure', 'edit')} disabled={!record.data?.installed} data-testid="action-reconfigure">Reconfigure…</button>
                 <button type="button" className={`btn${databaseBroken || recovery ? ' primary' : ''}`} onClick={() => go('repair', 'scope')} disabled={!record.data?.installed} data-testid="action-repair">Repair…</button>
                 <button type="button" className="btn danger" onClick={() => go('uninstall', 'choose')} disabled={!record.data?.installed} data-testid="action-uninstall">Uninstall…</button>
+                <button type="button" className="btn" onClick={() => go('database', 'status')} disabled={!record.data?.installed} data-testid="action-database">Database…</button>
             </div>
             {suggest.data && data && <p className="hint">Logs are in <code>{data.roots?.logs}</code>.</p>}
             {data && <HealthPanel onResult={setHealth} canStart={transport.mode === 'manager'} />}

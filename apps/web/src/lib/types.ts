@@ -1462,3 +1462,49 @@ export type InstallOperation = {
     createdAt?: string; updatedAt?: string;
     error?: { code: string; message: string };
 };
+
+// Connecting to an existing PostgreSQL server (documentation/database_connection.md).
+export type DatabaseOperationKind = 'database.provision' | 'database.schema.apply' | 'database.connect';
+export type DatabaseFinding = { code: string; detail: string; remediation?: string; [key: string]: unknown };
+export type DatabaseExtensionState = { available: boolean; installed: boolean; trusted: boolean | null; state: string; summary: string; canCreate: boolean };
+export type DatabaseSchemaState = {
+    name: string; exists: boolean; state: 'missing-schema' | 'empty' | 'goobster-current' | 'goobster-older' | 'goobster-newer' | 'foreign';
+    fingerprint: string | null; expectedFingerprint: string; tables: number; foreign: string[]; missingTables: string[]; missingColumns: string[]; extraColumns: string[];
+};
+export type DatabaseProvisioningStep = { action: string; reason: string; statements: string[] };
+export type DatabaseReport = {
+    target: { host: string; port: number; database: string; schema: string; user: string; local?: boolean; tls: { mode: string; ca: boolean } };
+    reachable: boolean;
+    auth: 'ok' | 'wrong-credentials' | 'database-missing' | 'permission-denied' | 'tls-failed' | 'unreachable';
+    code: string | null;
+    server: { version: number; text: string; supported: boolean; minimum: number } | null;
+    client: { pg: string | null };
+    tls: { requested: string; effective: string; encrypted: boolean | null; protocol: string | null; verified: boolean };
+    role: { user: string; superuser: boolean; createDatabase: boolean; createRole: boolean } | null;
+    privileges: { connect: boolean; createInDatabase: boolean; createInSchema: boolean };
+    schema: DatabaseSchemaState | null;
+    extensions: Record<string, DatabaseExtensionState> | null;
+    active: boolean;
+    verdict: {
+        ok: boolean; next: string; blocks: DatabaseFinding[]; warnings: DatabaseFinding[]; notes: DatabaseFinding[];
+        provisioning: { required: DatabaseProvisioningStep[]; dba: string[] };
+    };
+};
+export type DatabaseStatus = {
+    engine: 'sqlite' | 'postgres';
+    record: { engine: string | null; external: boolean | null } | null;
+    mismatch: boolean;
+    layout: string | null;
+    pairedRefusesSqlite: boolean;
+    connection: { host: string; port: number; database: string; user: string; schema?: string; source: string; tls?: unknown } | null;
+    overlay: { present: boolean; problem?: unknown };
+    overridden: boolean;
+    sqlite: { present: boolean; readable: boolean; empty: boolean; tables: number; rows: number; bookkeepingRows: number; populated: string[] } | null;
+    migration: { state: string };
+    maintenance: { active: boolean; phase: string | null; stale: boolean } | null;
+    managed: boolean;
+    storage: { owner: 'installation' | 'external'; external: boolean };
+};
+export type DatabaseConnectionBody = {
+    host: string; port?: number; database: string; schema?: string; user: string; password: string; tls?: { mode: string; caFile?: string };
+};

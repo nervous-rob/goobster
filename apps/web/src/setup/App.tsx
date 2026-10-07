@@ -6,6 +6,7 @@ import { AnswersProvider } from './answers';
 import { managerApi, managerTransport } from './api';
 import { UnlockForm } from './Gate';
 import { KEYS } from './data';
+import { DatabaseJourney } from './journeys/Database';
 import { Maintain } from './journeys/Maintain';
 import { Reconfigure } from './journeys/Reconfigure';
 import { Repair } from './journeys/Repair';
@@ -28,7 +29,7 @@ import { describeError, isSessionProblem, LiveRegion, StepFrame } from './ui';
 
 const MAINTENANCE_ANSWERS = 'goobster-setup-maintenance-answers';
 const AFTER_INSTALL = new Set(['progress', 'first-run', 'done']);
-const JOURNEYS = new Set(['reconfigure', 'repair', 'uninstall']);
+const JOURNEYS = new Set(['reconfigure', 'repair', 'uninstall', 'database']);
 const hostValue = { probe: managerTransport.probe, docHref: managerTransport.docHref };
 
 function createClient(): QueryClient {
@@ -202,8 +203,8 @@ function Shell() {
     let maintenance = true;
 
     if (JOURNEYS.has(journey)) {
-        const props = { step: step || (journey === 'uninstall' ? 'choose' : journey === 'repair' ? 'scope' : 'edit'), id: place.id, go: goJourney(journey) };
-        body = journey === 'reconfigure' ? <Reconfigure {...props} /> : journey === 'repair' ? <Repair {...props} /> : <Uninstall {...props} />;
+        const props = { step: step || (journey === 'uninstall' ? 'choose' : journey === 'repair' ? 'scope' : journey === 'database' ? 'status' : 'edit'), id: place.id, go: goJourney(journey) };
+        body = journey === 'reconfigure' ? <Reconfigure {...props} /> : journey === 'repair' ? <Repair {...props} /> : journey === 'database' ? <DatabaseJourney {...props} /> : <Uninstall {...props} />;
     } else if (journey === 'maintain' || (installed && !(journey === 'setup' && AFTER_INSTALL.has(step))) || (!installed && journey !== 'setup' && journey !== '')) {
         body = <Maintain go={(next, nextStep) => go({ journey: next, step: nextStep })} recovery={recoveryPage} />;
     } else {

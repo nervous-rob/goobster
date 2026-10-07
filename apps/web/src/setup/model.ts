@@ -1,6 +1,7 @@
 import type { HostConfigField, InstallSource, InstallSuggest } from '../lib/types';
 import { buildChanges } from '../rooms/host/drafts';
 import { OWNER_PASSWORD, typedSecret, type Answers } from './answers';
+import { connectionBody, connectionProblems } from './database/model';
 
 export const OWNER_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
 export const PASSWORD_MIN = 15;
@@ -100,11 +101,30 @@ export function installInput(params: {
         features: selectedFeatures(answers, source),
         layout,
         roots: rootsFor(answers, suggest),
-        database: { engine: 'sqlite' },
+        database: databaseInput(answers),
         ...(answers.allowUnsigned ? { release: { allowUnsigned: true } } : {}),
         config: configChanges(answers, fields, layout).entries,
         registerService: false
     };
+}
+
+/** The `database` answer: SQLite, or the connection to an existing server (the password is in this object only until the plan is made). */
+export function databaseInput(answers: Answers): Record<string, unknown> {
+    return answers.database.engine === 'postgres'
+        ? { engine: 'postgres', connection: connectionBody(answers.database) }
+        : { engine: 'sqlite' };
+}
+
+export function databaseProblems(answers: Answers, layout: string): Problem[] {
+    const href = '#/setup/database';
+    if (answers.database.engine === 'postgres') {
+        return connectionProblems(answers.database).map((problem) => ({
+            field: problem.field,
+            message: problem.field === 'db-password' && answers.reenter.includes('database.password') ? 'Enter the database password again: this page no longer holds it.' : problem.message,
+            href
+        }));
+    }
+    return layout === 'paired' ? [{ message: 'The paired layout needs PostgreSQL; SQLite cannot be used with it.', href }] : [];
 }
 
 export function ownerInput(answers: Answers): Record<string, unknown> {
