@@ -338,6 +338,13 @@ the command set change on restart, interactions are refused live.
   holds for a filtered file is answered ephemerally with "That feature is
   not available on this installation." (autocomplete gets an empty list)
   before any handler runs.
+- The Activity Entry Point ("Launch") command is carried through the global
+  bulk overwrite only while the Activity is served; with `discordActivity`
+  enforced off (`commandDeployment.entryPointCommandsToRemove`),
+  `deploy-commands.js` deletes it separately first, because Discord rejects
+  a bulk overwrite that drops it (error 50240). Unchanged without a state
+  file. Turning the Activity back on does not recreate the command; if it
+  is missing afterwards, recreate it in the Discord developer portal.
 - Components and modals: `interactionCreate.gateComponentInteraction`
   resolves the customId to its inventory row - the full id first through
   the `collector:<id>` keys (so `clear_search_button` is left to the music
