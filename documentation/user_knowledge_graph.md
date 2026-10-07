@@ -1,3 +1,7 @@
+---
+feature: knowledge
+---
+
 # User Knowledge Graph
 
 Goobster stores conversational memory at three layers. This document specifies how those layers consolidate into one **user knowledge graph** — nodes (distilled notes), typed edges (semantic relationships), tags (concept clusters), and provenance (traceability back to raw memories and legacy facts).

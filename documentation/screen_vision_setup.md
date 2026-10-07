@@ -1,3 +1,7 @@
+---
+feature: screenVision
+---
+
 # Screen Vision - letting Goobster see players' screens
 
 Discord's API does not let bots watch Go Live screen shares (video is

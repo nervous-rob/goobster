@@ -9,6 +9,7 @@ import { useMe } from '../hooks/useSession';
 import { Modal } from './Modal';
 import { BriefView, ExpeditionBriefs } from './ExpeditionBrief';
 import type { ContinuationProposal, Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
+import { featureActive } from '../lib/rooms';
 
 const STATUS_ICONS: Record<string, string> = {
     DRAFT: '📝', QUEUED: '⏳', RUNNING: '🧭', PAUSED: '⏸️',
@@ -155,7 +156,7 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
     const projectsQ = useQuery({
         queryKey: keys.observatory,
         queryFn: () => api.observatoryProjects() as Promise<{ projects: Array<{ id: number; slug: string; name: string }> }>,
-        enabled: Boolean(me.features?.observatory)
+        enabled: featureActive(me, 'observatory')
     });
     const [seed, setSeed] = useState('');
     const [lensId, setLensId] = useState<string | null>(null);
@@ -199,7 +200,7 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
                 evidence, and growing connected notes in your Spitball — or a project’s graph.
             </p>
 
-            {me.features?.observatory && (projectsQ.data?.projects || []).length > 0 && (
+            {featureActive(me, 'observatory') && (projectsQ.data?.projects || []).length > 0 && (
                 <div className="field">
                     <label htmlFor="exp-project">Into project <span className="optional">optional</span></label>
                     <select

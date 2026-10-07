@@ -95,6 +95,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
         if (!activeId || !data) return null;
         const progress = progressFor(data, activeId);
         const entry = entryFor(data, activeId);
+        if (entry?.available === false) return null;
         if (!progress || !entry) return null;
         return { tutorialId: activeId, progress, entry };
     }, [activeId, data]);
@@ -129,6 +130,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     }, [data, invalidate, queryClient]);
 
     const resume = useCallback(async (tutorialId: string) => {
+        if (entryFor(data, tutorialId)?.available === false) return;
         pausedRef.current.delete(tutorialId);
         setOffer(null);
         setActiveId(tutorialId);
@@ -141,6 +143,7 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     }, [data, postEvent]);
 
     const replay = useCallback(async (tutorialId: string) => {
+        if (entryFor(data, tutorialId)?.available === false) return;
         pausedRef.current.delete(tutorialId);
         offeredRef.current.delete(tutorialId);
         await api.resetTutorial(tutorialId);
@@ -167,12 +170,13 @@ export function TutorialProvider({ children }: { children: ReactNode }) {
     }, [data, invalidate, queryClient]);
 
     const resetOne = useCallback(async (tutorialId: string) => {
+        if (entryFor(data, tutorialId)?.available === false) return;
         if (activeId === tutorialId) setActiveId(null);
         pausedRef.current.delete(tutorialId);
         offeredRef.current.delete(tutorialId);
         await api.resetTutorial(tutorialId);
         await invalidate();
-    }, [activeId, invalidate]);
+    }, [activeId, data, invalidate]);
 
     const resetAll = useCallback(async () => {
         setActiveId(null);

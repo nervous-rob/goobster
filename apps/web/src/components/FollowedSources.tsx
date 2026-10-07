@@ -6,6 +6,7 @@ import { useMe } from '../hooks/useSession';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
+import { featureActive } from '../lib/rooms';
 
 export function FollowedSources({ projectId, topicNodeId }: { projectId?: number; topicNodeId?: number }) {
     const me = useMe();
@@ -70,7 +71,7 @@ export function FollowedSources({ projectId, topicNodeId }: { projectId?: number
                     <p className="source-excerpt">{entry.extractedText || 'Older text has expired; its source identity is retained.'}</p>
                     <div className="follow-source-actions">
                         <button className="btn small" disabled={action.isPending} aria-pressed={Boolean(entry.kept)} onClick={() => action.mutate(() => api.sourceKeep(source.id, entry.id, !entry.kept))}>{entry.kept ? 'Unkeep change' : 'Keep change'}</button>
-                        {me.features?.spitball && !entry.expeditionId && <button className="btn small" disabled={action.isPending} onClick={() => action.mutate(async () => {
+                        {featureActive(me, 'expeditions') && !entry.expeditionId && <button className="btn small" disabled={action.isPending} onClick={() => action.mutate(async () => {
                             await api.sourceResearch(source.id, entry.id); void client.invalidateQueries({ queryKey: ['spitball'] }); toast('Private research draft prepared. Review it in Knowledge → Research, then choose Start research.');
                         })}>Prepare private research</button>}
                         {entry.expeditionId && <Link className="btn small" to={'/knowledge/research' as never}>Review research draft</Link>}

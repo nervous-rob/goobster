@@ -8,6 +8,7 @@ import { useToast } from '../hooks/useToast';
 import { Modal } from './Modal';
 import { TransferNoteModal } from './TransferNoteModal';
 import type { SaveMessageAsNoteResult, UserNote } from '../lib/types';
+import { featureActive } from '../lib/rooms';
 
 const MAX_LABEL = 120;
 const MAX_CONTENT = 1000;
@@ -121,7 +122,7 @@ export function SaveNoteModal({
                     >
                         Open Notes
                     </button>
-                    {me.features?.projects !== false && (
+                    {featureActive(me, 'projects') && (
                         <button
                             type="button"
                             className="btn primary"

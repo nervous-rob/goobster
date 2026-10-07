@@ -8,7 +8,7 @@ import { useMe } from '../hooks/useSession';
 import { MenuButton } from '../shell/MenuButton';
 import { useTutorials } from '../tutorials/TutorialProvider';
 import { useToast } from '../hooks/useToast';
-import { PRIMARY_ROOMS, isRoomAvailable } from '../lib/rooms';
+import { PRIMARY_ROOMS, isRoomAvailable, featureActive } from '../lib/rooms';
 import { BerryMark } from '../components/BerryMark';
 
 type HomePayload = {
@@ -107,7 +107,7 @@ export function HomeRoom() {
                             <button type="button" className="btn" data-tour="home-new-note" onClick={() => navigate({ to: '/knowledge' })}>
                                 🧠 New note
                             </button>
-                            {(observatory.enabled || me.features?.projects) && (
+                            {(observatory.enabled || featureActive(me, 'projects')) && (
                                 <button type="button" className="btn" data-tour="home-new-project" onClick={() => navigate({ to: '/projects' })}>
                                     🔭 New project
                                 </button>
@@ -210,7 +210,7 @@ export function HomeRoom() {
                                         ? `${workshop.discoveredCount} generated app${workshop.discoveredCount === 1 ? '' : 's'} waiting to be filed under a project.`
                                         : 'Ask in Chat: “build me a …” and the app waits here until you file it under a project.'}</div>}
                             />
-                            {(observatory.enabled || me.features?.projects) && (
+                            {(observatory.enabled || featureActive(me, 'projects')) && (
                                 <Card title="Projects" extraClass={`home-card-obs${observatory.runningJobs ? ' is-live' : ''}`}
                                     action="Open Projects →" onClick={() => navigate({ to: '/projects' })}
                                     body={observatory.projectCount

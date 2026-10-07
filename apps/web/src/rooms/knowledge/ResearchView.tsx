@@ -1,6 +1,7 @@
-import { Link } from '@tanstack/react-router';
 import { ExpeditionsTab } from '../../components/Expeditions';
 import { useMe } from '../../hooks/useSession';
+import { ROOM_BY_ID, viewUnavailability } from '../../lib/rooms';
+import { UnavailableNotice } from '../../shell/UnavailableState';
 
 /**
  * Knowledge → Research (Expeditions): autonomous research runs that write
@@ -11,13 +12,12 @@ import { useMe } from '../../hooks/useSession';
  */
 export function ResearchView() {
     const me = useMe();
-    if (!me.features?.spitball) {
+    const research = ROOM_BY_ID.knowledge.views?.find((view) => view.id === 'research');
+    const blocked = research ? viewUnavailability(ROOM_BY_ID.knowledge, research, me) : null;
+    if (blocked && blocked.kind === 'feature') {
         return (
             <div className="pane-body" data-tour="knowledge-research">
-                <div className="empty">
-                    Research expeditions are not enabled on this installation.{' '}
-                    <Link to="/knowledge/notes">Back to Notes</Link>
-                </div>
+                <UnavailableNotice info={blocked} back={{ to: '/knowledge/notes', label: 'Back to Notes' }} />
             </div>
         );
     }

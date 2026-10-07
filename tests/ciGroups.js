@@ -97,6 +97,7 @@ const GROUPS = [
             'directMessageService',
             'featureGatingRoutes',
             'featureGatingWebsocket',
+            'featureGatingPortal',
             'friendService',
             'markdownRenderer',
             'documentationWiki',

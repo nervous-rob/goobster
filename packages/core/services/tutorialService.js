@@ -11,13 +11,20 @@
 
 const db = require('../db');
 const catalogModule = require('../config/tutorialCatalog');
+const inventory = require('../features/inventory');
+const gate = require('../features/gate');
+const { features } = require('../features/featureState');
 
 const {
     TUTORIAL_BY_ID,
     ACTIONS,
     capabilityMet,
-    isTutorialPermitted
+    isTutorialPermitted,
+    requiredFeatureIds
 } = catalogModule;
+
+/** The legacy capability keys (`caps.features`) that predate the feature catalog ids. */
+const LEGACY_CAP_KEYS = { expeditions: 'spitball' };
 
 /** @type {typeof catalogModule | null} */
 let catalogOverride = null;
@@ -159,6 +166,71 @@ function resolveTutorial(tutorialId) {
     return tutorial;
 }
 
+function reasonCodes(reasons) {
+    return (reasons || []).map((reason) => ({
+        code: reason.code,
+        ...(reason.dependency ? { dependency: reason.dependency } : {})
+    }));
+}
+
+/** The first required feature the caller's legacy capability snapshot says is off, or null. */
+function capsBlockedFeature(tutorial, caps = {}) {
+    for (const id of requiredFeatureIds(tutorial?.requires)) {
+        const legacyKey = LEGACY_CAP_KEYS[id] || id;
+        if (caps.features?.[legacyKey] === false) return id;
+        if (id === 'discord' && caps.discordEnabled === false) return id;
+    }
+    return null;
+}
+
+/**
+ * Whether a tour's feature is available on this installation, as the portal
+ * reports it: every feature the tour requires must be active (the reported
+ * value, which equals today's legacy flags when there is no features.json)
+ * and not switched off in the caller's capability snapshot. An unavailable
+ * tour is listed with the blocking feature and reason codes; nothing here
+ * writes or hides progress.
+ * @returns {{ available: boolean, feature: string|null, reasons: Array<{ code: string, dependency?: string }> }}
+ */
+function tutorialAvailability(tutorial, caps = {}) {
+    for (const id of requiredFeatureIds(tutorial?.requires)) {
+        const state = features.availability(id);
+        if (!state.active) return { available: false, feature: id, reasons: reasonCodes(state.reasons) };
+        if (capsBlockedFeature({ requires: { feature: id } }, caps)) {
+            return { available: false, feature: id, reasons: [{ code: 'DISABLED' }] };
+        }
+    }
+    return { available: true, feature: null, reasons: [] };
+}
+
+/**
+ * Server-side refusal for a tour that cannot run here: its feature is
+ * switched off by the installation (`featureState.enforcedOff`, the one rule
+ * every surface shares, so with no features.json that rule alone refuses
+ * nothing) or the caller's capability snapshot - the legacy host switches -
+ * says it is off. Throws the standard FEATURE_UNAVAILABLE result before any
+ * progress is read or written.
+ */
+function refuseIfUnavailable(tutorial, caps = {}) {
+    const claimed = inventory.ownerOf('tutorial', tutorial.id);
+    const feature = (claimed ? gate.requireSurface('tutorial', tutorial.id)?.feature : null)
+        || capsBlockedFeature(tutorial, caps);
+    if (feature) {
+        throw new TutorialError(404, gate.FEATURE_UNAVAILABLE,
+            'That feature is not available on this installation.', { feature });
+    }
+}
+
+function blockedByInstallation(tutorial, caps) {
+    try {
+        refuseIfUnavailable(tutorial, caps);
+        return false;
+    } catch (error) {
+        if (error instanceof TutorialError) return true;
+        throw error;
+    }
+}
+
 function stepById(tutorial, stepId) {
     return (tutorial.steps || []).find((s) => s.id === stepId) || null;
 }
@@ -247,6 +319,7 @@ async function applyEvent({
     if (!isTutorialPermitted(tutorial, caps)) {
         throw new TutorialError(403, 'TUTORIAL_FORBIDDEN', 'This tutorial is not available for your account.');
     }
+    refuseIfUnavailable(tutorial, caps);
 
     const version = tutorial.version;
     const prior = await findEvent(accountId, tutorialId, version, eventId);
@@ -402,6 +475,7 @@ async function resetOne({ accountId, tutorialId, caps = {} }) {
     if (!isTutorialPermitted(tutorial, caps)) {
         throw new TutorialError(403, 'TUTORIAL_FORBIDDEN', 'This tutorial is not available for your account.');
     }
+    refuseIfUnavailable(tutorial, caps);
     const version = tutorial.version;
     return db.transaction(async (tx) => {
         const current = await lockProgress(accountId, tutorialId, version, tx);
@@ -417,7 +491,10 @@ async function resetOne({ accountId, tutorialId, caps = {} }) {
 async function resetAll({ accountId, caps = {} }) {
     if (!accountId) throw new TutorialError(401, 'UNAUTHENTICATED', 'Sign in required.');
     const cat = catalog();
+    // A tour switched off by the installation keeps its saved progress
+    // untouched, so turning the feature back on restores it.
     const permitted = (cat.TUTORIALS || []).filter((t) => isTutorialPermitted(t, caps))
+        .filter((t) => !blockedByInstallation(t, caps))
         .sort((a, b) => a.id.localeCompare(b.id));
     const results = [];
     await db.transaction(async (tx) => {
@@ -487,7 +564,10 @@ async function markOrientationOffered(accountId) {
 
 /**
  * Permitted catalog entries plus progress rows and the auto-start preference.
- * Sample content is attached for demos — it is never mixed into retrieval.
+ * A tour whose feature is unavailable on this installation stays in the list
+ * with `available: false` and the blocking feature and reason codes; its
+ * saved progress is still returned. Sample content is attached for demos —
+ * it is never mixed into retrieval.
  */
 async function listForAccount({ accountId, caps = {} }) {
     if (!accountId) throw new TutorialError(401, 'UNAUTHENTICATED', 'Sign in required.');
@@ -500,25 +580,32 @@ async function listForAccount({ accountId, caps = {} }) {
     }
     const preferences = await getPreferences(accountId);
     return {
-        catalog: tutorials.map((t) => ({
-            id: t.id,
-            roomId: t.roomId,
-            version: t.version,
-            title: t.title,
-            hostOnly: Boolean(t.hostOnly),
-            stepIds: (t.steps || []).map((s) => s.id),
-            steps: (t.steps || []).map((s) => ({
-                id: s.id,
-                title: s.title || s.id,
-                body: s.body || null,
-                anchorId: s.anchorId || null,
-                path: s.path || null,
-                demo: s.demo || null,
-                preview: s.preview || null,
-                keepablePieceId: s.keepablePieceId || null
-            })),
-            launchable: (t.steps || []).some((s) => capabilityMet(s.requires, caps))
-        })),
+        catalog: tutorials.map((t) => {
+            const availability = tutorialAvailability(t, caps);
+            return {
+                id: t.id,
+                roomId: t.roomId,
+                version: t.version,
+                title: t.title,
+                hostOnly: Boolean(t.hostOnly),
+                available: availability.available,
+                unavailable: availability.available
+                    ? null
+                    : { feature: availability.feature, reasons: availability.reasons },
+                stepIds: (t.steps || []).map((s) => s.id),
+                steps: (t.steps || []).map((s) => ({
+                    id: s.id,
+                    title: s.title || s.id,
+                    body: s.body || null,
+                    anchorId: s.anchorId || null,
+                    path: s.path || null,
+                    demo: s.demo || null,
+                    preview: s.preview || null,
+                    keepablePieceId: s.keepablePieceId || null
+                })),
+                launchable: availability.available && (t.steps || []).some((s) => capabilityMet(s.requires, caps))
+            };
+        }),
         progress,
         preferences,
         sample: samples.getSample()
@@ -641,6 +728,7 @@ module.exports = {
     _setCatalogForTests,
     // Re-export for callers that already hold the service.
     resolveTutorial,
+    tutorialAvailability,
     isTutorialPermitted: (tutorialId, caps) => {
         try {
             return isTutorialPermitted(resolveTutorial(tutorialId), caps);
