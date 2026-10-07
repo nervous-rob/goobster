@@ -284,14 +284,14 @@ type NativePlan = {
     request?: { port: number; bind: string; dataDirectory?: string | null };
     port?: { chosen?: number; suggestion?: number | null };
     findings?: Array<{ code: string; severity: 'block' | 'warn' | 'note'; detail: string; remedy?: string }>;
-    packages?: Record<string, { names: string[]; installed: boolean }>;
+    packages?: { install?: string[]; repository?: string | null; willInstall?: boolean; approved?: boolean };
     connect?: string;
 };
 
 function NativeProvisionPlan({ plan }: { plan: NativePlan }) {
     const findings = (plan.findings || []).filter((item) => item.severity !== 'note' || item.code.startsWith('RESUME') || item.code === 'CLUSTER_NAME_CHOSEN' || item.code === 'PACKAGES_WILL_INSTALL')
         .map((item) => ({ code: item.code, severity: item.severity === 'note' ? 'warn' as const : item.severity, detail: `${item.detail}${item.remedy ? ` ${item.remedy}` : ''}` }));
-    const installing = Object.values(plan.packages || {}).filter((item) => !item.installed).flatMap((item) => item.names);
+    const installing = plan.packages?.install || [];
     return (
         <div data-testid="plan-native">
             <dl className="wizard-facts">

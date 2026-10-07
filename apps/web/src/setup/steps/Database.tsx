@@ -5,7 +5,7 @@ import { ConnectionForm, TestConnection } from '../database/ConnectionForm';
 import { DockerOption, dockerReady, gateOf, useDockerStatus } from '../database/DockerOption';
 import { NativeOption, nativeBlockText, nativeGateOf, nativeReady, useNativeStatus } from '../database/NativeOption';
 import { EngineGuidance, ServerStorageBlock, StorageOwnership } from '../database/Explain';
-import { connectionProblems, DOCKER_LABEL, isLoopback, NATIVE_LABEL, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
+import { connectionProblems, DOCKER_LABEL, isLoopback, nativeProblems, NATIVE_LABEL, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
 import { Provision } from '../database/Provision';
 import { useConfigReport, useSuggest } from '../data';
 import { layoutFor } from '../model';
@@ -119,7 +119,7 @@ export function Database({ go }: StepProps) {
             )}
             {native && (
                 <>
-                    <NativeOption value={database.native} onChange={(next) => setDatabase({ ...database, native: next })} problems={shown} />
+                    <NativeOption value={database.native} onChange={(next) => setDatabase({ ...database, native: next })} problems={nativeProblems(database.native)} />
                     <StorageOwnership engine="postgres" native />
                     <p className="hint" data-testid="native-next-hint">
                         {ready

@@ -235,10 +235,11 @@ function createNativeService({ settings, fs = nodeFs, now = () => new Date(), lo
         const read = record();
         const report = await inspect({ doc: read.doc, candidatePath: storagePath });
         const family = report.distro ? report.distro.family : null;
+        const choice = chooseClusterName(report, installationId, read.doc);
         const view = {
             host: publicHost(report),
             elevation: elevation(),
-            names: resourceNames(installationId, family, read.doc ? read.doc.cluster.name : null, read.doc ? read.doc.cluster.dataDirectory : null),
+            names: resourceNames(installationId, family, choice.template ? null : choice.name, read.doc ? read.doc.cluster.dataDirectory : null),
             record: publicRecord(read.doc),
             recordProblem: read.problem,
             owned: null,

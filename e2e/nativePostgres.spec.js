@@ -162,16 +162,18 @@ test.describe('the native choice in the database step', () => {
         await expect(page.getByTestId('nav-next')).toBeDisabled();
         await page.getByTestId('native-install-packages').check();
         await page.getByTestId('native-port').fill('80');
-        await expect(page.getByTestId('nav-next')).toBeEnabled();
-        await page.getByTestId('nav-next').click();
         await expect(page.getByTestId('native-port-problem')).toBeVisible();
+        await expect(page.getByTestId('nav-next')).toBeDisabled();
         await page.getByTestId('native-port').fill('5433');
+        await expect(page.getByTestId('native-port-problem')).toHaveCount(0);
         await page.getByTestId('native-bind').fill('0.0.0.0');
         await expect(page.getByTestId('native-lan')).toBeVisible();
+        await expect(page.getByTestId('native-bind-problem')).toBeVisible();
+        await expect(page.getByTestId('nav-next')).toBeDisabled();
         await page.getByTestId('native-bind').fill('127.0.0.1');
         await page.getByTestId('native-path').fill('relative/data');
-        await page.getByTestId('nav-next').click();
         await expect(page.getByTestId('native-path-problem')).toBeVisible();
+        await expect(page.getByTestId('nav-next')).toBeDisabled();
         await page.getByTestId('native-path').fill('');
 
         await expect(page.getByTestId('native-next-hint')).toContainText('This machine is ready');

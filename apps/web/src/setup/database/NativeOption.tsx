@@ -40,6 +40,8 @@ export function nativeBlockText(gate: NativeGate): string {
     return '';
 }
 
+const versionOf = (value: string | null | undefined) => (value || '').replace(/^pg_dump \(PostgreSQL\)\s*/, '');
+
 const row = (name: string, value: ReactNode) => <div key={name} className="wizard-fact"><dt>{name}</dt><dd>{value}</dd></div>;
 
 function packagesMissing(status: NativeStatus): string[] {
@@ -74,7 +76,7 @@ export function NativeHostCard({ gate, status }: { gate: NativeGate; status?: Na
                     {row('Packages', host.packageManager ? <span data-testid="native-packages">{packagesMissing(status as NativeStatus).length === 0 ? `PostgreSQL ${host.major} is installed` : `PostgreSQL ${host.major} is not installed yet (${host.packageManager} installs ${packagesMissing(status as NativeStatus).join(', ')})`}</span> : 'not checked')}
                     {row('Administrator rights', <span data-testid="native-elevation" data-available={String(status?.elevation.available)}>{status?.elevation.available ? 'available (a privileged helper can run)' : 'not available without a password prompt'}</span>)}
                     {row('Other clusters', <span data-testid="native-clusters">{clusters.length === 0 ? 'none; the installer would create the first' : clusters.map((cluster) => `${cluster.name} (PostgreSQL ${cluster.version ?? '?'}, port ${cluster.port ?? '?'})`).join(', ')}{clusters.some((cluster) => !cluster.owned) ? ' — left exactly as they are' : ''}</span>)}
-                    {row('Backup tools', host.backupTools ? <span data-testid="native-backup-tools" data-code={host.backupTools.code}>{host.backupTools.ok ? `pg_dump ${host.backupTools.version || ''} can back this database up` : (host.backupTools.code === 'BACKUP_TOOLS_MISSING' ? 'pg_dump is not installed here' : `${host.backupTools.version || 'pg_dump'} is older than the database`)}</span> : 'not checked')}
+                    {row('Backup tools', host.backupTools ? <span data-testid="native-backup-tools" data-code={host.backupTools.code}>{host.backupTools.ok ? `pg_dump ${versionOf(host.backupTools.version)} can back this database up` : (host.backupTools.code === 'BACKUP_TOOLS_MISSING' ? 'pg_dump is not installed here' : `pg_dump ${versionOf(host.backupTools.version) || ''} is older than the database`)}</span> : 'not checked')}
                 </dl>
             )}
         </div>
@@ -139,7 +141,7 @@ export function NativeForm({ value, onChange, status, problems = [] }: FormProps
             )}
             {backup && (
                 <div className="wizard-callout" data-testid="native-tools-problem">
-                    <p>{backup.code === 'BACKUP_TOOLS_MISSING' ? 'pg_dump is not installed on this machine, so Goobster\'s backups cannot read this database.' : `The pg_dump on this machine (${backup.version || 'unknown'}) is older than the database, so Goobster\'s backups cannot read it.`}</p>
+                    <p>{backup.code === 'BACKUP_TOOLS_MISSING' ? 'pg_dump is not installed on this machine, so Goobster\'s backups cannot read this database.' : `The pg_dump on this machine (${versionOf(backup.version) || 'unknown'}) is older than the database, so Goobster\'s backups cannot read it.`}</p>
                     {backup.remedy && <p className="hint">{backup.remedy}</p>}
                     <label className="wizard-choice">
                         <input type="checkbox" checked={value.acknowledgeBackupTools} onChange={(event) => set('acknowledgeBackupTools', event.target.checked)} data-testid="native-tools-ack" />
