@@ -12,13 +12,12 @@
 
 /** @type {Array<(api: import('express').Router, helpers: import('./server').RouteHelpers) => void>} */
 const routes = [
-    require('./routes/config').createConfigMount(),
     require('./routes/lifecycle').mountLifecycleRoutes,
     require('./routes/maintenance').mountMaintenanceRoutes,
     require('./routes/reset').mountResetRoutes,
     require('./routes/config').createConfigMount(),
-    require('./routes/migrate').mountMigrateRoutes,
     require('./routes/install').createInstallMount(),
+    require('./routes/migrate').mountMigrateRoutes,
     require('./routes/backup').mountBackupRoutes,
     require('./routes/database').mountDatabaseRoutes,
     require('./routes/docker').mountDockerRoutes,
@@ -27,14 +26,14 @@ const routes = [
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
 const kinds = [
+    require('./engine/kinds/lifecycle').createLifecycleKinds,
+    require('./engine/kinds/maintenance').createMaintenanceKinds,
     require('./engine/kinds/config').createKinds,
     require('./engine/kinds/defaults').createKinds,
-    require('./engine/kinds/lifecycle').createLifecycleKinds,
     require('./engine/kinds/install').createKinds,
-    require('./engine/kinds/maintenance').createMaintenanceKinds,
+    require('./engine/kinds/owner').createKinds,
     require('./engine/kinds/reset').createKinds,
     require('./engine/kinds/migrate').createKinds,
-    require('./engine/kinds/owner').createKinds,
     require('./engine/kinds/backup').createKinds,
     require('./engine/kinds/database').createKinds,
     require('./engine/kinds/dockerPostgres').createKinds,
