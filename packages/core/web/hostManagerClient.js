@@ -22,6 +22,7 @@ const { createManagerBridge, ManagerBridgeError } = require('./managerBridge');
 const STATUS_TIMEOUT_MS = 3000;
 const CALL_TIMEOUT_MS = 15_000;
 const PROBE_TIMEOUT_MS = 40_000;
+const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RESPONSE_BYTES = 1_000_000;
 const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)$/i;
 
@@ -82,11 +83,11 @@ function createHostManagerClient(options = {}) {
     const resolveBase = options.baseUrl || (() => managerConfig.resolveUrl());
     const bridge = options.bridge || createManagerBridge();
 
-    async function send({ method, path, headers = {}, body, timeoutMs }) {
+    async function send({ method, path, query = '', headers = {}, body, timeoutMs }) {
         const base = validateBaseUrl(resolveBase());
         let response;
         try {
-            response = await fetchImpl(`${base}${path}`, {
+            response = await fetchImpl(`${base}${path}${query}`, {
                 method,
                 headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
                 body: body === undefined ? undefined : JSON.stringify(body),
@@ -124,9 +125,10 @@ function createHostManagerClient(options = {}) {
          * One authenticated manager call on behalf of the signed-in operator.
          * Resolves with `{ status, body, ok }` for any manager answer (so a 409
          * is data the route passes through); rejects only when no answer
-         * exists (unreachable, key missing, URL refused).
+         * exists (unreachable, key missing, URL refused). `query` ("?a=b") is
+         * sent but never signed: an assertion binds the method and path only.
          */
-        async call({ actor, method, path, body, timeoutMs = CALL_TIMEOUT_MS }) {
+        async call({ actor, method, path, query = '', body, timeoutMs = CALL_TIMEOUT_MS }) {
             let headers;
             try {
                 headers = bridge.headers({ actor, method, path });
@@ -139,7 +141,7 @@ function createHostManagerClient(options = {}) {
                 }
                 throw error;
             }
-            return send({ method, path, headers, body, timeoutMs });
+            return send({ method, path, query, headers, body, timeoutMs });
         }
     };
 }
@@ -148,5 +150,6 @@ module.exports = {
     HostManagerError,
     createHostManagerClient,
     validateBaseUrl,
-    PROBE_TIMEOUT_MS
+    PROBE_TIMEOUT_MS,
+    INSTALL_TIMEOUT_MS
 };

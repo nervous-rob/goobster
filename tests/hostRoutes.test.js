@@ -38,6 +38,8 @@ const { createManagerApp } = require('@goobster/manager/server');
 const { createStore } = require('@goobster/manager/store/installation');
 const { mountLifecycleRoutes } = require('@goobster/manager/routes/lifecycle');
 const { createConfigMount } = require('@goobster/manager/routes/config');
+const { createInstallMount } = require('@goobster/manager/routes/install');
+const { makeRelease, freePort } = require('./helpers/installFixture');
 const extensions = require('@goobster/manager/extensions');
 const configView = require('@goobster/manager/configView');
 const { createSupervisor } = require('@goobster/manager/lifecycle/supervisor');
@@ -70,7 +72,7 @@ function closeServer(server) {
 }
 
 /** A manager (claimed, optionally supervising fake workers) and a portal wired to it. */
-async function harness({ config = {}, env = {}, claim = true, supervise = false, guildIds, probe, baseUrl } = {}) {
+async function harness({ config = {}, env = {}, claim = true, supervise = false, guildIds, probe, baseUrl, install = false } = {}) {
     const root = newRoot();
     fs.writeFileSync(path.join(root, 'config.json'), `${JSON.stringify(supervise ? { webapp: { enabled: true }, ...config } : config, null, 4)}\n`, { mode: 0o600 });
     const settings = resolveSettings({
@@ -79,6 +81,7 @@ async function harness({ config = {}, env = {}, claim = true, supervise = false,
         GOOBSTER_MANAGER_PORT: '0',
         GOOBSTER_MANAGER_RECONCILE: '0',
         GOOBSTER_RUNTIME_MODE: 'standalone',
+        ...(install ? { GOOBSTER_WORKSPACE_ROOT: path.join(root, 'app'), GOOBSTER_API_PORT: String(await freePort()), PORT: String(await freePort()), HOME: root, PATH: process.env.PATH } : {}),
         ...(claim
             ? (process.env.GOOBSTER_DB_URL ? { GOOBSTER_DB_URL: process.env.GOOBSTER_DB_URL } : { GOOBSTER_DB_PATH: process.env.GOOBSTER_DB_PATH })
             : { GOOBSTER_DB_PATH: path.join(root, 'nothing-here.sqlite') }),
@@ -89,9 +92,16 @@ async function harness({ config = {}, env = {}, claim = true, supervise = false,
         store.init();
         store.createInstallation({ origin: 'claim', ownerLabel: 'Rob' });
     }
+    if (install) {
+        fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+        settings.installDeps = {
+            home: root, readCrontab: () => null, writeCrontab: () => {}, discover: () => ({ candidates: [], searched: 0 }),
+            initDatabase: async () => ({ engine: 'sqlite', tables: 1 }), checkOwner: async () => ({ ok: true, accounts: 1, operators: 1 }), checkHealth: async () => false
+        };
+    }
     const manager = createManager({ settings, logger: silent, extraKinds: extensions.kinds, reconcileDeps: { closeAfter: false } });
     await manager.init();
-    const mounts = [mountLifecycleRoutes, createConfigMount(probe ? { probe } : {})];
+    const mounts = [mountLifecycleRoutes, createConfigMount(probe ? { probe } : {}), createInstallMount()];
     const managerServer = await listen(createManagerApp(manager, { logger: silent, mounts }));
     cleanups.push(() => closeServer(managerServer));
     const managerPort = managerServer.address().port;
@@ -236,7 +246,9 @@ describe('authorization', () => {
             ['GET', '/manager'], ['GET', '/features'], ['GET', '/config'], ['POST', '/config/probe', { target: 'openai' }],
             ['POST', '/operations', { kind: 'features.set', input: { changes: { tavern: false } } }],
             ['POST', '/operations/abcdef123456/apply', {}], ['GET', '/lifecycle'],
-            ['POST', '/lifecycle/restart-now', {}], ['POST', '/lifecycle/cancel', {}], ['POST', '/lifecycle/restart', {}]
+            ['POST', '/lifecycle/restart-now', {}], ['POST', '/lifecycle/cancel', {}], ['POST', '/lifecycle/restart', {}],
+            ['GET', '/install/suggest'], ['GET', '/install/record'], ['GET', '/install/source?dir=%2Ftmp'], ['GET', '/operations/abcdef123456'],
+            ['POST', '/operations', { kind: 'install.repair', input: {} }], ['POST', '/operations', { kind: 'install.uninstall', input: {} }]
         ];
         const before = h.manager.journal.readAudit().entries.length;
         for (const [method, route, body] of calls) {
@@ -729,8 +741,114 @@ describe('the restart controls', () => {
 describe('the audit vocabulary', () => {
     test('every action the proxy writes is a known operator_audit action', () => {
         for (const action of ['host.features.apply', 'host.config.apply', 'host.defaults.apply', 'host.lifecycle.apply',
-            'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart']) {
+            'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart', 'host.install.apply']) {
             expect(operatorAudit.ACTIONS).toContain(action);
         }
+    });
+});
+
+describe('the installation journeys (#330)', () => {
+    async function installed() {
+        const h = await harness({ install: true });
+        const release = makeRelease(newRoot());
+        const { engine } = h.manager;
+        const local = { principal: 'local:cli', via: 'local' };
+        const planned = await engine.plan('install.new', { source: release.dir, features: ['tavern'], layout: 'standalone', registerService: false, release: { allowUnsigned: true } }, local, { internal: true });
+        await engine.validate(planned.id, local);
+        await engine.apply(planned.id, { revision: null }, local);
+        const cookie = await operatorCookie(h);
+        return { h, release, cookie };
+    }
+
+    const sourceInput = (release, extra = {}) => ({ source: release.dir, release: { allowUnsigned: true }, ...extra });
+
+    test('suggest, record and source answer an operator and a member learns nothing', async () => {
+        const { h, release, cookie } = await installed();
+        const suggest = await h.api(cookie, 'GET', '/install/suggest');
+        expect(suggest.status).toBe(200);
+        expect(suggest.json.roots.code.fixed).toBe(false);
+        expect(suggest.json.database.engines.find(entry => entry.engine === 'postgres').available).toBe(false);
+        const record = await h.api(cookie, 'GET', '/install/record');
+        expect(record.json).toMatchObject({ installed: true, record: { layout: 'standalone', release: { features: ['core', 'tavern'] } } });
+        const source = await h.api(cookie, 'GET', `/install/source?dir=${encodeURIComponent(release.dir)}`);
+        expect(source.status).toBe(200);
+        expect(source.json.features.map(feature => feature.id)).toContain('tavern');
+        const bad = await h.api(cookie, 'GET', '/install/source');
+        expect(bad.status).toBe(400);
+        const member = await signIn(h.request, MEMBER, 'Sam');
+        for (const route of ['/install/suggest', '/install/record']) expect((await h.api(member, 'GET', route)).status).toBe(403);
+    });
+
+    test('repair through the proxy: preview writes nothing, apply is audited as host.install.apply with names only', async () => {
+        const { h, release, cookie } = await installed();
+        const before = (await auditRows('host.install.apply')).length;
+        const preview = await h.api(cookie, 'POST', '/operations', { kind: 'install.repair', input: sourceInput(release) });
+        expect(preview.status).toBe(200);
+        expect(preview.json.operation).toMatchObject({ kind: 'install.repair', status: 'validated' });
+        expect((await auditRows('host.install.apply')).length).toBe(before);
+
+        const id = preview.json.operation.id;
+        const applied = await h.api(cookie, 'POST', `/operations/${id}/apply`, {});
+        expect(applied.status).toBe(200);
+        expect(applied.json.operation.status).toBe('applied');
+        const rows = await auditRows('host.install.apply');
+        expect(rows).toHaveLength(before + 1);
+        const row = rows[rows.length - 1];
+        expect(row.target).toBe(id);
+        expect(row.actor).toBe(OPERATOR);
+        expect(row.detail).toMatchObject({ operation: 'repair', layout: 'standalone', features: ['core', 'tavern'] });
+        expect(JSON.stringify(row.detail)).not.toContain(h.root);
+        expect(JSON.stringify(row.detail)).not.toContain(release.dir);
+
+        const read = await h.api(cookie, 'GET', `/operations/${id}`);
+        expect(read.status).toBe(200);
+        expect(read.json.operation).toMatchObject({ id, kind: 'install.repair', status: 'applied' });
+        const missing = await h.api(cookie, 'GET', '/operations/abcdef123456');
+        expect(missing.status).toBeGreaterThanOrEqual(400);
+    });
+
+    test('reconfigure: a secret is typed once, never returns, and the audit row names the field only', async () => {
+        const { h, cookie } = await installed();
+        const preview = await h.api(cookie, 'POST', '/operations', { kind: 'install.reconfigure', input: { config: [{ id: 'ai.openai.apiKey', value: PLANTED }, { id: 'ollama.model', value: 'llama3.2:1b' }] } });
+        expect(preview.status).toBe(200);
+        expect(preview.text).not.toContain(PLANTED);
+        const id = preview.json.operation.id;
+        const applied = await h.api(cookie, 'POST', `/operations/${id}/apply`, {});
+        expect(applied.status).toBe(200);
+        const rows = await auditRows('host.install.apply');
+        expect(rows[0].detail).toMatchObject({ operation: 'reconfigure' });
+        expect(rows[0].detail.fields).toEqual(expect.arrayContaining(['ai.openai.apiKey', 'ollama.model']));
+        expect(JSON.stringify(rows)).not.toContain(PLANTED);
+        for (const text of h.texts) expect(text).not.toContain(PLANTED);
+        expect(fs.readFileSync(h.settings.configPath, 'utf8')).toContain(PLANTED);
+    });
+
+    test('a root outside the allowed bases is refused for the portal, with the manager\'s own finding', async () => {
+        const { h, cookie } = await installed();
+        const elsewhere = path.join(os.tmpdir(), `elsewhere-${crypto.randomBytes(3).toString('hex')}`, 'goobster');
+        const preview = await h.api(cookie, 'POST', '/operations', { kind: 'install.reconfigure', input: { roots: { cache: elsewhere } } });
+        const findings = ((preview.json.operation || preview.json.operation || {}).plan || {}).preflight;
+        const codes = preview.status === 200 ? findings.findings.map(item => item.code) : [preview.json.error.code];
+        expect(codes.some(code => ['ROOT_OUTSIDE_ALLOWED_BASES', 'PREFLIGHT_FAILED'].includes(code))).toBe(true);
+        expect(fs.existsSync(elsewhere)).toBe(false);
+    });
+
+    test('uninstall keeping data: the confirmation for deleting it is the installation id, and the audit row says keepData', async () => {
+        const { h, cookie } = await installed();
+        const record = (await h.api(cookie, 'GET', '/install/record')).json.record;
+        const refused = await h.api(cookie, 'POST', '/operations', { kind: 'install.uninstall', input: { keepData: false } });
+        expect(refused.status).toBe(400);
+        expect(refused.json.error.code).toMatch(/CONFIRM/);
+        const wrong = await h.api(cookie, 'POST', '/operations', { kind: 'install.uninstall', input: { keepData: false, confirm: 'not-the-id' } });
+        expect(wrong.status).toBe(400);
+        expect(fs.existsSync(h.settings.dataDir)).toBe(true);
+
+        const keep = await h.api(cookie, 'POST', '/operations', { kind: 'install.uninstall', input: { keepData: true } });
+        expect(keep.json.operation.plan.confirmation).toEqual({ required: false, satisfied: true });
+        const applied = await h.api(cookie, 'POST', `/operations/${keep.json.operation.id}/apply`, {});
+        expect(applied.status).toBe(200);
+        const rows = await auditRows('host.install.apply');
+        expect(rows[rows.length - 1].detail).toMatchObject({ operation: 'uninstall', keepData: true });
+        expect(record.installationId).toMatch(/\S/);
     });
 });

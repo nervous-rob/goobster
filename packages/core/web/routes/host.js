@@ -26,16 +26,21 @@ const db = require('../../db');
 const operatorAudit = require('../../services/operatorAuditService');
 const featureCatalog = require('../../features/catalog');
 const fieldCatalog = require('../../config/fieldCatalog');
-const { createHostManagerClient, HostManagerError, PROBE_TIMEOUT_MS } = require('../hostManagerClient');
+const { createHostManagerClient, HostManagerError, PROBE_TIMEOUT_MS, INSTALL_TIMEOUT_MS } = require('../hostManagerClient');
 
 /** Under /api/app/admin so the inventory's existing core claim covers it (features/inventory.js). */
 const BASE = '/api/app/admin/host';
-const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply']);
+const INSTALL_KINDS = Object.freeze(['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall']);
+const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS]);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
     'config.set': 'host.config.apply',
     'defaults.set': 'host.defaults.apply',
-    'lifecycle.apply': 'host.lifecycle.apply'
+    'lifecycle.apply': 'host.lifecycle.apply',
+    'install.new': 'host.install.apply',
+    'install.reconfigure': 'host.install.apply',
+    'install.repair': 'host.install.apply',
+    'install.uninstall': 'host.install.apply'
 });
 const LIFECYCLE_ACTIONS = Object.freeze({
     'restart-now': 'host.lifecycle.restart_now',
@@ -475,6 +480,22 @@ function mountHost(app, ctx, h) {
             return { fields: (plan.changes || []).map(change => ({ id: change.id, action: change.action })) };
         case 'lifecycle.apply':
             return { changeRef: plan.changeRef, graceSeconds: plan.graceSeconds, toRevision: plan.toRevision };
+        case 'install.new':
+        case 'install.reconfigure':
+        case 'install.repair':
+        case 'install.uninstall': {
+            const target = plan.target || {};
+            const changes = plan.changes || {};
+            return {
+                operation: operation.kind.slice('install.'.length),
+                layout: target.layout || null,
+                features: Array.isArray(target.features) ? target.features : [],
+                ...(operation.kind === 'install.uninstall' ? { keepData: plan.keepData === true } : {}),
+                ...(Array.isArray(changes.config) ? { fields: changes.config } : {}),
+                ...(operation.kind === 'install.reconfigure' ? { rootsChanged: Boolean(changes.roots && (Array.isArray(changes.roots) ? changes.roots.length : Object.keys(changes.roots).length)), layoutChanged: Boolean(changes.layout) } : {}),
+                restartRequired: Boolean(result && result.restartRequired)
+            };
+        }
         default:
             return {};
         }
@@ -503,7 +524,8 @@ function mountHost(app, ctx, h) {
 
         const result = await client.call({
             actor: actorOf(req), method: 'POST', path: `/manager/api/operations/${operationId}/apply`,
-            body: { revision: current.revision === undefined ? null : current.revision }
+            body: { revision: current.revision === undefined ? null : current.revision },
+            ...(INSTALL_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
         });
         const failure = failureOf(result);
         if (failure) throw failure;
@@ -518,6 +540,26 @@ function mountHost(app, ctx, h) {
             detail: auditDetail(operation, outcome, Boolean(enablesGambling && memory && memory.attestation))
         });
         return { operation, result: outcome };
+    }));
+
+    // --- Installation (the wizard's maintenance journeys, #330) ----------------------
+
+    app.get(`${BASE}/operations/:id`, ...guard, route(async (req) => {
+        const operationId = String(req.params.id);
+        if (!OPERATION_ID.test(operationId)) throw fail(400, 'INVALID_INPUT', 'That is not an operation id.');
+        const current = await managerJson(req, 'GET', `/manager/api/operations/${operationId}`);
+        if (!current || !KINDS.includes(current.kind)) throw fail(404, 'NOT_FOUND', 'No such operation.');
+        return { operation: viewOf(current) };
+    }));
+
+    app.get(`${BASE}/install/suggest`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/install/suggest'))));
+
+    app.get(`${BASE}/install/record`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/install/record'))));
+
+    app.get(`${BASE}/install/source`, ...guard, route(async (req) => {
+        const dir = req.query.dir;
+        if (typeof dir !== 'string' || dir.length === 0 || dir.length > 4096) throw fail(400, 'INVALID_INPUT', '"dir" must be an absolute path to a release directory.');
+        return clean(await managerJson(req, 'GET', '/manager/api/install/source', undefined, { query: `?dir=${encodeURIComponent(dir)}` }));
     }));
 
     // --- Lifecycle ------------------------------------------------------------------
@@ -543,6 +585,7 @@ module.exports = {
     mountHost,
     BASE,
     KINDS,
+    INSTALL_KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,
     KEEPS_DATA
