@@ -346,6 +346,31 @@ Work, in order:
    `.github/workflows/windows-bootstrap.yml` on `windows-2022`
    (`scripts/windows-bootstrap-proof.ps1`). Unsigned development builds only
    (`-dev`); the Authenticode hook is wired and off, signing keys are #341.
+   **Status (P3.6, #332): the macOS bootstrapper is built and its journey is
+   written; it has not run on a Mac.** `documentation/macos_install.md` is the
+   reference. `scripts/package-bootstrap-darwin.js` builds a per-user
+   `goobster-<version>-darwin-<arch>[-dev].tar.gz` (`install.command`) and, on a
+   Mac, an installer `.pkg` (`pkgbuild`, `productbuild`, macOS 13 or newer) whose
+   `postinstall` starts `apps/manager/bootstrap/darwin.js`: headless and
+   machine-wide as root when `/etc/goobster-answers.json` is present (a
+   LaunchDaemon `io.goobster.goobster` running as the hidden `_goobster`
+   account), otherwise the wizard for the console user (a LaunchAgent). The
+   privileged helper gains a macOS module (`service.register`,
+   `service.unregister`, `user.create` through `launchctl` and `dscl`; root,
+   `sudo -n`, then the `osascript` administrator prompt with a file
+   transport); the `launchd` service kind is one definition with a machine and
+   a user scope. The uninstall never deletes the `_goobster` account (the
+   privileged protocol has no operation for it). Apple signing and
+   notarization are wired and off by default (P5.1). Proven locally on Linux
+   only by Jest through injected command runners and fake executables:
+   `tests/launchdService.test.js`, `darwinHelper.test.js`,
+   `darwinBootstrapCli.test.js` and `darwinBootstrapStage.test.js` (125 passed,
+   1 skipped on SQLite and on Postgres); the packager built the tar.gz, the
+   Distribution tree and the report from a foreign Linux payload and reported
+   `PKG_SKIPPED`. `launchctl`, `dscl`, `pkgbuild`, `installer` and the restart
+   after `SIGKILL` are proven only by `.github/workflows/macos-bootstrap.yml`
+   (`macos-15` and `macos-15-intel`) running `scripts/macos-bootstrap-proof.sh`,
+   which has not run yet.
 
 Acceptance: selective-installation tests prove an excluded feature's
 files, dependencies and frontend bundle are absent; Playwright journeys

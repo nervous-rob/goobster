@@ -237,6 +237,9 @@ checkout at the documented Raspberry Pi paths; a checkout unit keeps
 `ProtectSystem=full` (the account's home stays writable, as before the
 installer) and `tests/linuxService.test.js` keeps the file identical to the
 renderer's output.
+The installer and the manager CLI set their umask to at least `022`, so the
+directories they create are `0755` whatever the calling shell's umask was (a
+runner or cron job with umask `0` would otherwise leave the payload world-writable).
 
 ```bash
 systemctl status goobster
@@ -383,8 +386,10 @@ deterministic: the same payload gives the same bytes (the archive times are
 `SOURCE_DATE_EPOCH` or a fixed constant, entries are sorted, nothing carries a
 timestamp or the build host). The AppImage is built by `appimagetool`, which is
 **pinned by URL and SHA-256** (with its type 2 runtime) in `scripts/bootstrap-pins.json`;
-nothing unpinned is ever executed. When the tool cannot be fetched or does not
-match its hash the report says `APPIMAGE_SKIPPED` with a reason
+nothing unpinned is ever executed. The tool itself needs `desktop-file-validate`
+on the build host (Debian/Ubuntu package `desktop-file-utils`); without it the
+build reports `APPIMAGETOOL_FAILED` naming the missing command. When the tool
+cannot be fetched or does not match its hash the report says `APPIMAGE_SKIPPED` with a reason
 (`NOT_REQUESTED`, `APPDIR_ONLY`, `HOST_ARCH_MISMATCH`, `TOOL_UNAVAILABLE`,
 `TOOL_HASH_MISMATCH`, `APPIMAGETOOL_FAILED`), and `--require-appimage` turns a
 skip into a failure. The runtime URL points at a rolling release, so its pin may

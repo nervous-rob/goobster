@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Goobster</title></head>
+<body style="font-family: -apple-system, sans-serif; font-size: 13px;">
+<h2>Goobster @VERSION@ for macOS (@ARCH@)</h2>
+@BUILD_NOTICE_HTML@
+<p>This installer puts the Goobster release on this Mac and starts the Goobster install wizard in your web browser.
+Nothing is configured until you finish the wizard.</p>
+<ul>
+<li>The wizard runs as you, on <code>127.0.0.1:3400</code> only. It is never reachable from the network.</li>
+<li>By default Goobster is installed for your own account and runs while you are logged in (a launch agent).</li>
+<li>An administrator who wants the always-on, machine-wide service (a launch daemon that runs as the hidden
+<code>_goobster</code> account) provides an answers file at <code>/etc/goobster-answers.json</code> before running this installer; see the documentation.</li>
+</ul>
+<p>Requires macOS 13 Ventura or newer.</p>
+</body>
+</html>

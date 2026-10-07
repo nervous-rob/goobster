@@ -38,7 +38,8 @@ const serviceRecord = require('./serviceRecord');
 
 const DEFINITIONS = Object.freeze({
     systemd: require('./systemdService'),
-    'windows-service': require('./windowsService')
+    'windows-service': require('./windowsService'),
+    launchd: require('./launchdService')
 });
 
 const REQUIRED = Object.freeze(['kind', 'platforms', 'serviceName', 'fallbackFileName', 'installedFileName', 'installedPath', 'render', 'manualInstructions', 'statusCommand', 'removeByHand', 'account', 'registerInput', 'unregisterInput']);

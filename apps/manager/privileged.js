@@ -39,12 +39,13 @@ const INPUT_SHAPES = Object.freeze({
 const IMPLEMENTED = Object.freeze({
     linux: Object.freeze(['service.register', 'service.unregister', 'updater.disable', 'user.create']),
     win32: Object.freeze(['service.register', 'service.unregister']),
-    darwin: Object.freeze([])
+    darwin: Object.freeze(['service.register', 'service.unregister', 'user.create'])
 });
 
 const PLATFORM_MODULES = Object.freeze({
     linux: () => require('./privileged/linux'),
-    win32: () => require('./privileged/win32')
+    win32: () => require('./privileged/win32'),
+    darwin: () => require('./privileged/darwin')
 });
 
 function isPrivileged(name) {

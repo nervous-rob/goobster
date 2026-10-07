@@ -416,8 +416,11 @@ does the same as the units; Ctrl-C stops the workers first.
   register/unregister steps are kind-neutral: a platform adds its definition
   to `apps/manager/platform/serviceKinds.js` (text, installed path, fallback
   file, by-hand commands, account rules) and the steps, the ownership record
-  and the bootstrap's closing message follow it. The Windows service is done
-  too (#331, [windows_install.md](windows_install.md)): the same steps with the
+  and the bootstrap's closing message follow it. The macOS job is done too (#332,
+  [macos_install.md](macos_install.md)): `launchdPlist.js` renders it, with
+  `ExitTimeOut` 120 so launchd's `SIGTERM` to the manager alone is followed by
+  the same drain. So is the Windows service (#331,
+  [windows_install.md](windows_install.md)): the same steps with the
   `windows-service` definition, a WinSW host running the manager as
   `NT SERVICE\goobster`, and a 120 s stop bound whose gracefulness the CI journey checks.
 - **#334 (maintenance barrier):** done in

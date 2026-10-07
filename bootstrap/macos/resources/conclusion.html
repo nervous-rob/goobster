@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Goobster</title></head>
+<body style="font-family: -apple-system, sans-serif; font-size: 13px;">
+<h2>The Goobster installer has been unpacked</h2>
+<p>If someone is logged in at this Mac, the install wizard opens in the browser at
+<code>http://127.0.0.1:3400/manager/</code>. If it does not, or the window was closed, run this in Terminal:</p>
+<pre>/opt/goobster/stage/@VERSION@/runtime/bin/node /opt/goobster/stage/@VERSION@/app/apps/manager/bootstrap/darwin.js --payload /opt/goobster/stage/@VERSION@ --per-user --open-browser</pre>
+<p>When an answers file named <code>/etc/goobster-answers.json</code> was present, the machine-wide install was done without a wizard;
+its result is in <code>/var/log/goobster-install.log</code>.</p>
+<p>The unpacked copy under <code>/opt/goobster/stage</code> can be deleted once Goobster is installed.</p>
+</body>
+</html>
