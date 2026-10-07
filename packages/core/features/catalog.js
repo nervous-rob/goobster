@@ -40,8 +40,13 @@ const CORE_TEXT = {
     configKeys: [],
     docs: ['documentation/architecture.md', 'documentation/feature_inventory.md'],
     payload: {
-        // Inside a feature's directory but needed by the shell (Forget everything clears Music Lab storage).
-        files: ['apps/web/src/music-lab/lib/{forget,storage,sampleStore}.ts'],
+        // Inside a feature's directory but used by core: the shell's Forget
+        // everything clears Music Lab storage; the Parlor's live audio uses
+        // the PCM helpers.
+        files: [
+            'apps/web/src/music-lab/lib/{forget,storage,sampleStore}.ts',
+            'packages/core/services/voice/pcmUtils.js'
+        ],
         system: [{ name: 'ollama', kind: 'binary' }]
     }
 };

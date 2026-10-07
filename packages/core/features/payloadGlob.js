@@ -7,7 +7,8 @@
  *
  * When several groups' globs match one file, the most specific glob wins:
  * the one with the longest literal prefix before its first wildcard (an
- * exact path beats any wildcard). Two different groups tied for the most
+ * exact path beats any wildcard; on an equal prefix `{a,b}` beats `*`/`?`,
+ * which beats `**`). Two different groups tied for the most
  * specific match is an ownership conflict, never a silent choice.
  */
 
@@ -40,10 +41,11 @@ function compileGlob(glob) {
         }
     }
     const wildcard = glob.search(/[*?{]/);
+    const rank = !/[*?]/.test(glob) ? 2 : glob.includes('**') ? 0 : 1;
     return {
         glob,
         regex: new RegExp(`^${source}$`),
-        specificity: wildcard === -1 ? Number.MAX_SAFE_INTEGER : wildcard
+        specificity: wildcard === -1 ? Number.MAX_SAFE_INTEGER : wildcard * 4 + rank
     };
 }
 

@@ -55,7 +55,8 @@ module.exports = {
         payload: {
             files: [
                 'apps/sandbox/**',
-                'packages/core/services/{sandboxService,sandboxRequestService,sandboxPackagesStore}.js'
+                'packages/core/services/{sandboxService,sandboxRequestService,sandboxPackagesStore}.js',
+                'packages/core/utils/tools/sandbox.js'
             ],
             system: [{ name: 'bubblewrap', kind: 'binary' }, { name: 'python3-venv', kind: 'os-package' }]
         }

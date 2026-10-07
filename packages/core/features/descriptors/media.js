@@ -37,7 +37,7 @@ module.exports = {
                 'packages/core/services/urlPlayService.js',
                 'packages/core/services/studioLiveService.js',
                 'packages/core/services/voice/{musicService,ambientService,elevenLabsAudioService}.js',
-                'packages/core/utils/{musicUtils,songPatch,spotifyWebApi,cliResolver}.js',
+                'packages/core/utils/{musicUtils,spotifyWebApi,cliResolver}.js',
                 'packages/core/web/routes/studio.js',
                 'apps/web/src/music-lab/**'
             ],
@@ -72,7 +72,7 @@ module.exports = {
                 'apps/bot/commands/chat/{speak,voicechat}.js',
                 'packages/core/services/voice/**',
                 'packages/core/services/{webVoiceService,voiceLiveService,transcriptionService}.js',
-                'packages/core/utils/{ttsAccent,speechStyles}.js'
+                'packages/core/utils/speechStyles.js'
             ],
             system: [{ name: 'ffmpeg', kind: 'binary' }]
         }
@@ -103,7 +103,7 @@ module.exports = {
             files: [
                 'apps/bot/commands/economy/points.js',
                 'packages/core/services/economyService.js',
-                'packages/core/utils/tools/exchange.js'
+                'packages/core/utils/tools/economy.js'
             ]
         }
     },
@@ -119,6 +119,7 @@ module.exports = {
                 'packages/core/services/exchange/**',
                 'packages/core/services/{stockService,stockPortfolioService,webExchangeService}.js',
                 'packages/core/utils/stockChart.js',
+                'packages/core/utils/tools/exchange.js',
                 'apps/web/src/rooms/ExchangeRoom.tsx'
             ],
             frontend: ['exchange']
@@ -135,7 +136,8 @@ module.exports = {
                 'apps/bot/commands/economy/gamble.js',
                 'packages/core/services/gamblingService.js',
                 'packages/core/services/tableGames/**',
-                'packages/core/utils/pokerHands.js'
+                'packages/core/utils/pokerHands.js',
+                'packages/core/utils/tools/gambling.js'
             ]
         }
     }
