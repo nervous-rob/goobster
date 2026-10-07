@@ -19,6 +19,7 @@
  *   --public-key <file>      trusted Ed25519 public key (PEM) for a signed build
  *   --installer <path>       the .exe itself, shown in messages
  *   --uninstaller <path>     the uninstaller NSIS left on disk; registered under HKCU for Programs and Features
+ *   --log <file>             also append everything this prints to <file> (the .exe is a GUI program with no console)
  *   --headless --answers <file>   no browser: run `install` from the answers (apps/manager/install/answers.schema.json)
  *   --base <dir>             default every root under <dir> instead of %LOCALAPPDATA%\Goobster (%ProgramData%\Goobster when elevated)
  *   --open-browser           open the wizard with explorer.exe (otherwise only print the address)
@@ -69,16 +70,19 @@ asks for administrator rights through UAC when it is registered. See documentati
 function parseArgs(argv) {
     const rest = [];
     let uninstaller = null;
+    let log = null;
     for (let i = 0; i < argv.length; i++) {
-        if (argv[i] === '--uninstaller') {
+        if (argv[i] === '--uninstaller' || argv[i] === '--log') {
+            const flag = argv[i];
             const value = argv[++i];
-            if (value === undefined || value === '') throw new BootstrapUsage('USAGE', '--uninstaller needs a value.');
-            uninstaller = value;
+            if (value === undefined || value === '') throw new BootstrapUsage('USAGE', `${flag} needs a value.`);
+            if (flag === '--log') log = value;
+            else uninstaller = value;
         } else {
             rest.push(argv[i]);
         }
     }
-    return { ...base.parseArgs(rest), uninstaller };
+    return { ...base.parseArgs(rest), uninstaller, log };
 }
 
 /**
@@ -154,6 +158,16 @@ function registryCommands({ roots, version, uninstaller }) {
         number('NoModify', 1),
         number('NoRepair', 1)
     ];
+}
+
+/** A writable that also appends to a file; a log that cannot be written never stops the install. */
+function teeTo(stream, file, fs) {
+    return {
+        write(chunk, ...rest) {
+            try { fs.appendFileSync(file, chunk); } catch { }
+            return stream.write(chunk, ...rest);
+        }
+    };
 }
 
 function systemRootOf(env) {
@@ -339,13 +353,19 @@ function signalFromProcess() {
  * @returns {Promise<number>} the exit code
  */
 async function run(argv, io = {}) {
-    const stdout = io.stdout || process.stdout;
-    const stderr = io.stderr || process.stderr;
+    let stdout = io.stdout || process.stdout;
+    let stderr = io.stderr || process.stderr;
     const fs = io.fs || nodeFs;
     const env = io.env || process.env;
     const platform = io.platform || process.platform;
     try {
         const args = parseArgs(argv);
+        if (args.log) {
+            const logFile = path.resolve(args.log);
+            try { fs.mkdirSync(path.dirname(logFile), { recursive: true }); } catch { }
+            stdout = teeTo(stdout, logFile, fs);
+            stderr = teeTo(stderr, logFile, fs);
+        }
         if (args.help) {
             stdout.write(`${HELP}\n`);
             return 0;

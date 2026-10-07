@@ -15,6 +15,7 @@
 ;   goobster-<version>-win32-x64[-dev].exe                          the install wizard in the browser
 ;   goobster-<version>-win32-x64[-dev].exe /S /ANSWERS=<file>       unattended install from an answers file
 ;   ... /BASE=<dir>                                                 install under <dir> instead of %LOCALAPPDATA%\Goobster
+;   ... /LOG=<file>                                                 where an unattended install writes what it prints (default <base>\install.log)
 ;
 ; Silent runs are asynchronous unless started with `start /wait` (cmd) or
 ; `Start-Process -Wait -PassThru` (PowerShell); the exit code is the manager's
@@ -71,6 +72,7 @@ UninstPage instfiles
 
 Var AnswersFile
 Var BaseDir
+Var LogFile
 Var Stage
 Var Command
 Var ExitCode
@@ -120,6 +122,21 @@ Function .onInit
     ${GetOptions} $0 "/BASE=" $BaseDir
     ${If} ${Errors}
         StrCpy $BaseDir ""
+    ${EndIf}
+
+    ClearErrors
+    ${GetOptions} $0 "/LOG=" $LogFile
+    ${If} ${Errors}
+        StrCpy $LogFile ""
+    ${EndIf}
+
+    ${If} $LogFile != ""
+        StrCpy $ScanText $LogFile
+        Call ScanForbidden
+        ${If} $ScanBad == 1
+            SetErrorLevel 2
+            Abort "/LOG holds a character this installer does not pass on."
+        ${EndIf}
     ${EndIf}
 
     ${If} $AnswersFile != ""
@@ -179,9 +196,22 @@ Section "Install"
     ${EndIf}
 
     ${If} $AnswersFile != ""
-        StrCpy $Command '$Command --headless --answers "$AnswersFile"'
+        ${If} $LogFile == ""
+            StrCpy $LogFile "$INSTDIR\install.log"
+        ${EndIf}
+        StrCpy $Command '$Command --headless --answers "$AnswersFile" --log "$LogFile"'
+        StrLen $0 $Command
+        ${If} $0 > 1000
+            SetErrorLevel 2
+            Abort "The install paths are too long for this installer; use a shorter /BASE or /ANSWERS path."
+        ${EndIf}
         DetailPrint "Installing from the answers file"
-        ExecWait '$Command' $ExitCode
+        nsExec::Exec '$Command'
+        Pop $ExitCode
+        ${If} $ExitCode == "error"
+        ${OrIf} $ExitCode == "timeout"
+            StrCpy $ExitCode 1
+        ${EndIf}
         RMDir /r "$Stage"
         RMDir "$INSTDIR\stage"
         ReadRegStr $Registered HKCU "${UNINSTALL_KEY}" "InstallLocation"
@@ -196,6 +226,11 @@ Section "Install"
         ${EndIf}
     ${Else}
         StrCpy $Command '$Command --open-browser'
+        StrLen $0 $Command
+        ${If} $0 > 1000
+            SetErrorLevel 2
+            Abort "The install paths are too long for this installer; use a shorter /BASE path."
+        ${EndIf}
         DetailPrint "Starting the install wizard; it opens in your browser."
         Exec '$Command'
     ${EndIf}
@@ -235,7 +270,12 @@ Section "Uninstall"
     FileClose $0
 
     DetailPrint "Removing the Goobster code and service; your data is kept."
-    ExecWait '"$SYSDIR\cmd.exe" /d /s /c ""$CodeRoot\goobster-manager.cmd" uninstall --answers "$PLUGINSDIR\uninstall-answers.json" --yes"' $ExitCode
+    nsExec::ExecToLog '"$SYSDIR\cmd.exe" /d /s /c ""$CodeRoot\goobster-manager.cmd" uninstall --answers "$PLUGINSDIR\uninstall-answers.json" --yes"'
+    Pop $ExitCode
+    ${If} $ExitCode == "error"
+    ${OrIf} $ExitCode == "timeout"
+        StrCpy $ExitCode 1
+    ${EndIf}
     ${If} $ExitCode != 0
         SetErrorLevel $ExitCode
         Abort "The uninstall did not finish (exit $ExitCode). Nothing else was removed."

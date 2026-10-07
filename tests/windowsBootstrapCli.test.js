@@ -254,6 +254,19 @@ describe('--headless --answers (silent install)', () => {
         expect(seen.createRuntimeUser).toBeUndefined();
     });
 
+    test('--log appends everything printed to the file, creating its folder, and a log that cannot be written never stops the install', async () => {
+        const logs = path.join(scratch('win-log'), 'nested dir', 'install.log');
+        const result = await headless({ extraArgs: ['--log', logs] });
+        expect(result.code).toBe(0);
+        const text = fs.readFileSync(logs, 'utf8');
+        expect(text).toContain('install.new: applied');
+        expect(text).toContain('UNSIGNED DEVELOPMENT BUILD');
+        const blocked = path.join(scratch('win-blocked'), 'file');
+        fs.writeFileSync(blocked, 'x');
+        expect((await headless({ extraArgs: ['--log', path.join(blocked, 'install.log')] })).code).toBe(0);
+        expect(() => win32.parseArgs(['--log'])).toThrow(/needs a value/);
+    });
+
     test('--dry-run writes nothing and finishes nothing; a failed install finishes nothing', async () => {
         const dry = await headless({ extraArgs: ['--dry-run'] });
         expect(dry.code).toBe(0);
