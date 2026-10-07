@@ -24,7 +24,15 @@ module.exports = {
             }
         ],
         configKeys: ['github.agentLabel'],
-        docs: ['documentation/github_cursor_integration.md']
+        docs: ['documentation/github_cursor_integration.md'],
+        payload: {
+            files: [
+                'apps/bot/commands/utility/github.js',
+                'apps/bot/web/integrationsApi.js',
+                'packages/core/services/{githubService,repoWatchService}.js',
+                'packages/core/utils/issueCapture.js'
+            ]
+        }
     },
     cursor: {
         title: 'Cursor agents',
@@ -51,7 +59,13 @@ module.exports = {
         ],
         configKeys: ['cursor.model', 'cursor.pollIntervalMs'],
         docs: ['documentation/github_cursor_integration.md'],
-        helpUrl: 'https://cursor.com/docs/cloud-agent'
+        helpUrl: 'https://cursor.com/docs/cloud-agent',
+        payload: {
+            files: [
+                'apps/bot/commands/utility/agent.js',
+                'packages/core/services/{cursorAgentService,agentTrackerService}.js'
+            ]
+        }
     },
     screenVision: {
         title: 'Screen Vision',
@@ -63,7 +77,15 @@ module.exports = {
         },
         apiKeys: [],
         configKeys: ['screenVision.enabled', 'screenVision.publicUrl', 'screenVision.releasesUrl'],
-        docs: ['documentation/screen_vision_setup.md']
+        docs: ['documentation/screen_vision_setup.md'],
+        payload: {
+            files: [
+                'apps/bot/commands/utility/screenvision.js',
+                'apps/bot/web/{screenVisionApi.js,screen-companion.html}',
+                'packages/core/services/screenVisionService.js',
+                'clients/screen-companion/**'
+            ]
+        }
     },
     gba: {
         title: 'GBA',
@@ -75,7 +97,16 @@ module.exports = {
         },
         apiKeys: [],
         configKeys: ['gbaRun.enabled'],
-        docs: ['documentation/goobster_plays_pokemon.md']
+        docs: ['documentation/goobster_plays_pokemon.md'],
+        payload: {
+            files: [
+                'apps/bot/commands/utility/gbarun.js',
+                'apps/bot/web/gbaRunApi.js',
+                'packages/core/services/gbaRunService.js',
+                'clients/gba-mcp/**'
+            ],
+            system: [{ name: 'mgba', kind: 'binary' }]
+        }
     },
     discordActivity: {
         title: 'Discord Activity',
@@ -95,6 +126,12 @@ module.exports = {
             }
         ],
         configKeys: ['activity.enabled', 'activity.devMode'],
-        docs: ['documentation/activity_setup.md']
+        docs: ['documentation/activity_setup.md'],
+        payload: {
+            files: [
+                'apps/bot/web/activity/**',
+                'apps/bot/web/activityApi.js'
+            ]
+        }
     }
 };

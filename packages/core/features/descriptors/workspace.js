@@ -10,7 +10,18 @@ module.exports = {
         },
         apiKeys: [],
         configKeys: ['projects.enabled'],
-        docs: ['documentation/projects.md']
+        docs: ['documentation/projects.md'],
+        payload: {
+            files: [
+                'packages/core/services/{projectService,projectAssetService,projectMissionService,projectTriggerService}.js',
+                'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService}.js',
+                'packages/core/utils/projectSetupContract.js',
+                'packages/core/web/routes/projects.js',
+                'apps/web/src/rooms/projects/**',
+                'apps/web/src/rooms/observatory/**'
+            ],
+            frontend: ['projects']
+        }
     },
     observatory: {
         title: 'Observatory',
@@ -22,7 +33,13 @@ module.exports = {
         },
         apiKeys: [],
         configKeys: ['observatory.enabled', 'observatory.ffmpegCommand'],
-        docs: ['documentation/projects.md', 'documentation/code_sandbox.md']
+        docs: ['documentation/projects.md', 'documentation/code_sandbox.md'],
+        payload: {
+            files: [
+                'packages/core/utils/tools/observatory.js'
+            ],
+            system: [{ name: 'ffmpeg', kind: 'binary' }]
+        }
     },
     sandbox: {
         title: 'Sandbox',
@@ -34,7 +51,14 @@ module.exports = {
         },
         apiKeys: [],
         configKeys: ['sandbox.enabled', 'sandbox.scope', 'sandbox.approverUserIds'],
-        docs: ['documentation/code_sandbox.md']
+        docs: ['documentation/code_sandbox.md'],
+        payload: {
+            files: [
+                'apps/sandbox/**',
+                'packages/core/services/{sandboxService,sandboxRequestService,sandboxPackagesStore}.js'
+            ],
+            system: [{ name: 'bubblewrap', kind: 'binary' }, { name: 'python3-venv', kind: 'os-package' }]
+        }
     },
     mcp: {
         title: 'MCP server',
@@ -47,14 +71,28 @@ module.exports = {
         apiKeys: [],
         configKeys: ['mcp.enabled', 'mcp.maxTokensPerUser', 'mcp.requestsPerMinute', 'mcp.defaultTokenDays'],
         docs: ['documentation/mcp.md'],
-        helpUrl: 'https://modelcontextprotocol.io'
+        helpUrl: 'https://modelcontextprotocol.io',
+        payload: {
+            files: [
+                'apps/mcp/**',
+                'packages/core/mcp/**'
+            ]
+        }
     },
     knowledge: {
         title: 'Knowledge',
         summary: 'The Spitball editing surface: notes, transfers, note attachments and the Knowledge room.',
         apiKeys: [],
         configKeys: [],
-        docs: ['documentation/user_knowledge_graph.md', 'documentation/spitball_expeditions.md']
+        docs: ['documentation/user_knowledge_graph.md', 'documentation/spitball_expeditions.md'],
+        payload: {
+            files: [
+                'packages/core/web/routes/{spitball,noteAttachments}.js',
+                'packages/core/config/spitballLensConfig.js',
+                'apps/web/src/rooms/knowledge/**'
+            ],
+            frontend: ['knowledge']
+        }
     },
     expeditions: {
         title: 'Expeditions',
@@ -73,6 +111,16 @@ module.exports = {
             }
         ],
         configKeys: ['spitball.enabled', 'spitball.maxActiveExpeditionsPerUser'],
-        docs: ['documentation/spitball_expeditions.md']
+        docs: ['documentation/spitball_expeditions.md'],
+        payload: {
+            files: [
+                'packages/core/services/{spitballExpeditionService,spitballExpeditionRunner,spitballResearchPipeline,expeditionBriefService}.js',
+                'packages/core/services/{costReportService,spitballSearchService}.js',
+                'packages/core/utils/{researchBrief,researchSources}.js',
+                'apps/web/src/components/{Expeditions,ExpeditionBrief}.tsx',
+                'apps/web/src/rooms/knowledge/ResearchView.tsx'
+            ],
+            frontend: ['expeditions']
+        }
     }
 };
