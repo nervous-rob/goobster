@@ -632,13 +632,7 @@ const knownGaps = [
     { issue: '#321', surface: 'tutorials.knowledge.research', note: 'Declares no requirement although the Research view needs expeditions.' },
     { issue: '#321', surface: 'tutorials.projects.runs', note: 'Requires only projects although runs need observatory.' },
     { issue: '#321', surface: 'tutorials.trading.basics', note: 'Requires only discord although trading needs exchange.' },
-    { issue: '#321', surface: 'tutorials', note: 'A tour whose requirement is unmet is omitted from the listing instead of being reported unavailable.' },
-    { issue: '#322', surface: 'tables.screen_vision_clients', note: 'Not reached by forgetUser (owner screenVision).' },
-    { issue: '#322', surface: 'tables.agent_runs', note: 'Not reached by forgetUser (owner cursor).' },
-    { issue: '#322', surface: 'tables.repo_watches', note: 'Not reached by forgetUser (owner github).' },
-    { issue: '#322', surface: 'tables.integration_audit', note: 'Not reached by forgetUser (owner github).' },
-    { issue: '#322', surface: 'tables.pending_integration_actions', note: 'Not reached by forgetUser (owner github).' },
-    { issue: '#322', surface: 'accountExport', note: 'Export gaps: economy, exchange, tavern, studio, gba, push, friends and DMs, user_integrations, sandbox.' }
+    { issue: '#321', surface: 'tutorials', note: 'A tour whose requirement is unmet is omitted from the listing instead of being reported unavailable.' }
 ];
 
 function normalize(value) {
