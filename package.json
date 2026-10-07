@@ -22,6 +22,7 @@
     "db-init": "node scripts/initDb.js",
     "mcp": "node apps/mcp/index.js",
     "mcp:token": "node scripts/mcp-token.js",
+    "manager": "node apps/manager/index.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "docs:seed": "node scripts/seed-self-docs.js",

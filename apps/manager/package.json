@@ -1,0 +1,15 @@
+{
+  "name": "@goobster/manager",
+  "version": "1.0.0",
+  "description": "Goobster manager: the database-independent control process for setup, recovery and (later) restart, with its own store for installation identity, operations and audit.",
+  "private": true,
+  "license": "MIT",
+  "main": "index.js",
+  "dependencies": {
+    "@goobster/core": "*",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -26,7 +26,10 @@ const ACTIONS = new Set([
     'access.approve', 'access.decline',
     'signup.mail_test',
     'instance.resume', 'instance.restore', 'instance.pause',
-    'limits.change'
+    'limits.change',
+    // Written by the manager's audit reconciliation (documentation/manager.md);
+    // `target` is the manager operation id.
+    'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */
