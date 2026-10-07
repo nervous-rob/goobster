@@ -23,6 +23,7 @@ const { createManager } = require('./manager');
 const { createManagerApp } = require('./server');
 const extensions = require('./extensions');
 
+const STOP_CONNECTION_GRACE_MS = 1500;
 const RECONCILE_INTERVAL_MS = 60_000;
 const CLAIM_POLL_MS = 1000;
 
@@ -205,7 +206,13 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
                 const forced = result.workers.filter(w => w.forced).map(w => w.name);
                 if (forced.length) logger.warn(`[manager] killed after the stop bound: ${forced.join(', ')}`);
             }
-            await new Promise(resolve => server.close(() => resolve()));
+            await new Promise(resolve => {
+                // A browser tab polling over a kept-alive connection would hold close() open indefinitely.
+                const force = setTimeout(() => server.closeAllConnections(), STOP_CONNECTION_GRACE_MS);
+                force.unref();
+                server.close(() => { clearTimeout(force); resolve(); });
+                server.closeIdleConnections();
+            });
         })();
         return stopping;
     };

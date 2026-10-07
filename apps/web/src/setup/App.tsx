@@ -89,7 +89,7 @@ function Shell() {
         queryFn: () => managerTransport.record(),
         enabled: Boolean(state) && (state !== 'unclaimed' || claimed) && !ended,
         retry: false,
-        refetchInterval: (query) => (query.state.error ? 2000 : 20_000),
+        refetchInterval: (query) => (query.state.error ? 2000 : 5000),
         refetchOnWindowFocus: true,
         staleTime: 0
     });

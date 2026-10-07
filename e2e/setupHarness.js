@@ -10,6 +10,7 @@
  * (the e2e portal has no other fake provider). Nothing here touches the
  * repository, the user's home directory or any real configuration.
  */
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -187,6 +188,17 @@ async function createSetupInstallation(options = {}) {
         return match[1];
     }
 
+    /** A new setup credential: the documented command replaces the one before it. */
+    async function mintBootstrap() {
+        let printed = '';
+        const out = { write: (text) => { printed += text; }, isTTY: false };
+        const outcome = await main(['--mint-bootstrap'], { env, stdout: out, logger: silent });
+        if (outcome.code !== 0) throw new Error('could not mint a setup credential');
+        const match = /Setup credential: (\S+)/.exec(printed);
+        if (!match) throw new Error('no setup credential was printed');
+        return match[1];
+    }
+
     async function claim(label = 'E2E host') {
         const response = await fetch(`${url}/manager/api/claim`, {
             method: 'POST',
@@ -194,6 +206,52 @@ async function createSetupInstallation(options = {}) {
             body: JSON.stringify({ credential: setupCredential(), label })
         });
         if (response.status !== 200) throw new Error(`claim failed: ${response.status}`);
+    }
+
+    /**
+     * Claim and install through the manager's own HTTP API, the way the wizard does, so a maintenance journey
+     * starts from a real installation. Returns the session cookie for the browser, and a small client.
+     */
+    async function provision({ features = [], owner = true, start = false } = {}) {
+        const claimed = await fetch(`${url}/manager/api/claim`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ credential: setupCredential(), label: 'E2E host' })
+        });
+        if (claimed.status !== 200) throw new Error(`claim failed: ${claimed.status}`);
+        const cookie = claimed.headers.get('set-cookie').split(';')[0];
+        const call = async (method, route, body) => {
+            const response = await fetch(`${url}/manager/api${route}`, {
+                method,
+                headers: { 'content-type': 'application/json', cookie, 'x-goobster-nonce': crypto.randomBytes(32).toString('base64url') },
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+            return { status: response.status, json: await response.json().catch(() => null) };
+        };
+        const run = async (kind, input) => {
+            const planned = await call('POST', '/operations', { kind, input });
+            if (planned.status !== 200) throw new Error(`${kind} plan failed: ${JSON.stringify(planned.json)}`);
+            const id = planned.json.operation.id;
+            const validated = await call('POST', `/operations/${id}/validate`, {});
+            if (validated.status !== 200) throw new Error(`${kind} validate failed: ${JSON.stringify(validated.json)}`);
+            const applied = await call('POST', `/operations/${id}/apply`, { revision: validated.json.operation.revision });
+            if (applied.status !== 200) throw new Error(`${kind} apply failed: ${JSON.stringify(applied.json)}`);
+            return applied.json;
+        };
+        await run('install.new', {
+            source: release.dir, features, layout: 'standalone', roots: { code }, database: { engine: 'sqlite' },
+            config: [{ id: 'webapp.enabled', value: true }], registerService: false
+        });
+        if (owner) await run('owner.create', { loginName: 'owner-one', password: 'plain-walnut-ladder-kettle-7' });
+        if (start) {
+            await run('lifecycle.start', undefined);
+            await waitFor(async () => {
+                const lifecycle = await call('GET', '/lifecycle');
+                return lifecycle.json.workers.length > 0 && lifecycle.json.workers.every((worker) => worker.healthy === true);
+            }, { what: 'the api worker to answer' });
+        }
+        const [name, value] = cookie.split('=');
+        return { cookie, session: { name, value }, call, run };
     }
 
     async function destroy() {
@@ -213,7 +271,7 @@ async function createSetupInstallation(options = {}) {
         get manager() { return running ? running.manager : null; },
         get supervisor() { return running ? running.supervisor : null; },
         get log() { return lines.join('\n'); },
-        setupCredential, mintRecovery, claim, start, stop, restart, destroy
+        setupCredential, mintBootstrap, mintRecovery, claim, provision, start, stop, restart, destroy
     };
 }
 

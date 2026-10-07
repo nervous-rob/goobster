@@ -8,6 +8,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { test, expect } = require('@playwright/test');
+const { createSecondServer, login } = require('./helpers');
+const C = require('./constants');
 const { createSetupInstallation, waitFor, REPLY } = require('./setupHarness');
 
 const ARTIFACTS = process.env.GOOBSTER_E2E_ARTIFACTS || '/opt/cursor/artifacts';
@@ -78,6 +80,15 @@ async function stepsToReview(page, { ollama = null, owner = true } = {}) {
     await expect(page.getByTestId('step-review')).toBeVisible();
 }
 
+async function signInManager(context, h, provisioned) {
+    await context.addCookies([{ name: provisioned.session.name, value: provisioned.session.value, domain: '127.0.0.1', path: '/manager', httpOnly: true, sameSite: 'Strict' }]);
+}
+
+/** Every worker row healthy, as the page shows it. */
+async function expectHealthy(page) {
+    await expect(page.getByTestId('worker-row').first()).toHaveAttribute('data-stage', 'healthy', { timeout: 60_000 });
+}
+
 test.describe('first-time setup', () => {
     test('a fresh installation goes from the setup credential to a first chat', async ({ page }) => {
         const h = await installation();
@@ -129,5 +140,205 @@ test.describe('first-time setup', () => {
         await expect(page.getByRole('paragraph').filter({ hasText: REPLY })).toBeVisible({ timeout: 60_000 });
         expect(h.ollama.requests.some((line) => line.startsWith('POST /api/chat'))).toBe(true);
         await screenshot(page, 'first-chat');
+    });
+});
+
+test.describe('setup credentials and how a session ends', () => {
+    test('a stale setup credential is refused, and the page says exactly how to get a new one', async ({ page }) => {
+        const h = await installation();
+        const stale = h.setupCredential();
+        const fresh = await h.mintBootstrap();
+        expect(fresh).not.toBe(stale);
+
+        await page.goto(`${h.url}/manager/`);
+        await page.getByLabel('Setup credential').fill(stale);
+        await page.getByTestId('claim-submit').click();
+        const failure = page.getByRole('alert').filter({ hasText: 'Fix these before you continue' });
+        await expect(failure).toContainText('not valid');
+        await expect(page.getByTestId('mint-command')).toHaveText('node apps/manager/index.js --mint-bootstrap');
+        await expect(page.getByLabel('Setup credential')).toHaveValue('');
+        expect((await page.context().cookies()).some((cookie) => cookie.name === 'goobster-manager-session')).toBe(false);
+
+        await page.getByLabel('Setup credential').fill(fresh);
+        await page.getByTestId('claim-submit').click();
+        await expect(page.getByTestId('step-where')).toBeVisible();
+    });
+
+    test('a restarted manager ends the session; the page asks for a recovery credential and carries on where it was', async ({ page, context }) => {
+        const h = await installation();
+        const p = await h.provision({ features: [] });
+        await signInManager(context, h, p);
+        await page.goto(`${h.url}/manager/#/setup/first-run`);
+        await expect(page.getByTestId('step-first-run')).toBeVisible();
+
+        await h.stop();
+        await expect(page.getByTestId('reconnecting').first()).toBeVisible({ timeout: 30_000 });
+        await h.start();
+
+        await expect(page.getByTestId('unlock-form')).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId('mint-command')).toHaveText('node apps/manager/index.js --mint-recovery');
+        const recovery = await h.mintRecovery();
+        await page.getByLabel('Recovery credential').fill(recovery);
+        await page.getByTestId('unlock-submit').click();
+        await expect(page.getByTestId('step-first-run')).toBeVisible();
+        expect(page.url()).toContain('#/setup/first-run');
+
+        // The credential works once.
+        const replay = await page.request.post(`${h.url}/manager/api/recovery/unlock`, { data: { credential: recovery } });
+        expect(replay.status()).toBe(401);
+    });
+});
+
+test.describe('back, reload and reconnect during an install', () => {
+    test('reloading while the install runs returns to the same operation and finishes the owner and start stages', async ({ page }) => {
+        const h = await installation();
+        await claim(page, h);
+        await stepsToReview(page);
+        await expect(page.getByTestId('review-answers')).toBeVisible();
+
+        // The server applies the install; the answer reaches the page late, and the page is reloaded before it does.
+        await page.route('**/manager/api/operations/*/apply', async (route) => {
+            const response = await route.fetch();
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+            await route.fulfill({ response }).catch(() => {});
+        });
+        await next(page, 'Install');
+        await expect(page.getByTestId('step-progress')).toBeVisible();
+        const hash = await page.evaluate(() => window.location.hash);
+        expect(hash).toMatch(/^#\/setup\/progress\/[A-Za-z0-9-]+$/);
+        await page.waitForTimeout(800);
+        await page.unroute('**/manager/api/operations/*/apply');
+        await page.reload();
+
+        await expect(page.getByTestId('step-progress')).toBeVisible();
+        expect(await page.evaluate(() => window.location.hash)).toBe(hash);
+        await expect(page.getByTestId('operation-applied')).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId('nav-next').filter({ hasText: 'Check that it works' })).toBeEnabled({ timeout: 60_000 });
+        await next(page, 'Check that it works');
+        await expectHealthy(page);
+    });
+
+    test('Back and Forward keep each step\'s answers, and the browser history holds no secret', async ({ page }) => {
+        const h = await installation();
+        await claim(page, h);
+        await next(page); // features
+        await next(page); // connections
+        await page.getByTestId('owner-login').fill(LOGIN);
+        await page.getByTestId('owner-password').fill(PASSWORD);
+        await page.getByTestId('owner-repeat').fill(PASSWORD);
+        await next(page); // database
+        await expect(page.getByTestId('step-database')).toBeVisible();
+
+        await page.goBack();
+        await expect(page.getByTestId('step-connections')).toBeVisible();
+        await expect(page.getByTestId('owner-login')).toHaveValue(LOGIN);
+        await page.goForward();
+        await expect(page.getByTestId('step-database')).toBeVisible();
+
+        const leaks = await page.evaluate((secret) => {
+            const dump = (store) => Object.keys(store).map((key) => `${key}=${store.getItem(key)}`).join('\n');
+            return {
+                url: window.location.href.includes(secret),
+                state: JSON.stringify(window.history.state || {}).includes(secret),
+                local: dump(window.localStorage).includes(secret),
+                session: dump(window.sessionStorage).includes(secret),
+                cookie: document.cookie.includes(secret)
+            };
+        }, PASSWORD);
+        expect(leaks).toEqual({ url: false, state: false, local: false, session: false, cookie: false });
+        const stored = await page.evaluate(() => window.sessionStorage.getItem('goobster-setup-answers'));
+        expect(stored).toContain(LOGIN);
+    });
+});
+
+test.describe('probes, failed plans and secrets', () => {
+    test('a failed Ollama probe says what went wrong and keeps the answers', async ({ page }) => {
+        const h = await installation({ env: { OLLAMA_HOST: undefined, OLLAMA_MODEL: undefined } });
+        await claim(page, h);
+        await next(page);
+        await next(page);
+        await expect(page.getByTestId('step-connections')).toBeVisible();
+        const host = page.locator('[data-field="ollama.host"]');
+        await host.getByTestId('field-input').fill('http://127.0.0.1:9');
+        await host.getByTestId('probe-run').click();
+        const result = host.getByTestId('probe-result');
+        await expect(result).toBeVisible();
+        await expect(result).not.toContainText('undefined');
+        await expect(result).toHaveText(/./);
+        await expect(host.getByTestId('field-input')).toHaveValue('http://127.0.0.1:9');
+        await screenshot(page, 'failed-probe');
+    });
+
+    test('a failed plan keeps non-secret answers, empties secret fields with an enter-again note, and recovers', async ({ page }) => {
+        let busy = true;
+        const h = await installation({ installDeps: { probePort: async () => (busy ? 'busy' : 'free') } });
+        await claim(page, h);
+        await next(page);
+        await next(page);
+        await page.getByTestId('owner-login').fill(LOGIN);
+        await page.getByTestId('owner-display').fill('Rob');
+        await page.getByTestId('owner-password').fill(PASSWORD);
+        await page.getByTestId('owner-repeat').fill(PASSWORD);
+        for (let step = 0; step < 4; step += 1) await next(page);
+        await expect(page.getByTestId('step-review')).toBeVisible();
+
+        await expect(page.getByTestId('review-findings')).toContainText('already in use');
+        await expect(page.getByRole('alert')).toBeVisible();
+        await screenshot(page, 'failed-plan');
+        expect(await page.evaluate(() => window.sessionStorage.getItem('goobster-setup-answers'))).not.toContain(PASSWORD);
+
+        await page.getByTestId('nav-back').click();
+        await page.goto(`${h.url}/manager/#/setup/connections`);
+        await expect(page.getByTestId('step-connections')).toBeVisible();
+        await expect(page.getByTestId('owner-login')).toHaveValue(LOGIN);
+        await expect(page.getByTestId('owner-display')).toHaveValue('Rob');
+        await expect(page.getByTestId('owner-password')).toHaveValue('');
+        await expect(page.getByTestId('enter-again')).toBeVisible();
+        await expect(page.getByTestId('enter-again')).not.toContainText(PASSWORD);
+
+        // Next without the password: the summary names the field and links to it.
+        await next(page);
+        const summary = page.getByRole('alert').filter({ hasText: 'Fix these before you continue' });
+        await expect(summary.getByRole('link')).toHaveAttribute('href', /#owner-password|#owner/);
+
+        busy = false;
+        await page.getByTestId('owner-password').fill(PASSWORD);
+        await page.getByTestId('owner-repeat').fill(PASSWORD);
+        for (let step = 0; step < 4; step += 1) await next(page);
+        await expect(page.getByTestId('step-review')).toBeVisible();
+        await expect(page.getByTestId('plan-new')).toBeVisible();
+        await expect(page.getByTestId('review-findings')).toHaveCount(0);
+        await next(page, 'Install');
+        await expect(page.getByTestId('operation-applied')).toBeVisible({ timeout: 60_000 });
+    });
+});
+
+test.describe('small screens', () => {
+    test('at 360 px wide every step is one column, nothing scrolls sideways, and controls keep their names', async ({ page }) => {
+        await page.setViewportSize({ width: 360, height: 740 });
+        const h = await installation();
+        await claim(page, h);
+        const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        for (const id of ['where', 'features', 'connections', 'database', 'defaults', 'access', 'review']) {
+            await expect(page.getByTestId(`step-${id}`)).toBeVisible();
+            expect(await overflow(), `${id} scrolls sideways`).toBeLessThanOrEqual(1);
+            const column = await page.getByTestId(`step-${id}`).evaluate((node) => {
+                const box = node.getBoundingClientRect();
+                return { left: box.left, right: box.right, inside: window.innerWidth };
+            });
+            expect(column.right).toBeLessThanOrEqual(column.inside);
+            for (const control of await page.locator(`[data-testid="step-${id}"] button`).all()) {
+                const name = (await control.innerText()).trim() || (await control.getAttribute('aria-label'));
+                expect(name, `${id} has an unnamed button`).toBeTruthy();
+            }
+            if (id === 'review') break;
+            if (id === 'connections') {
+                await page.getByTestId('owner-login').fill(LOGIN);
+                await page.getByTestId('owner-password').fill(PASSWORD);
+                await page.getByTestId('owner-repeat').fill(PASSWORD);
+            }
+            await next(page);
+        }
+        await screenshot(page, 'small-viewport');
     });
 });
