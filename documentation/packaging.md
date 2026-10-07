@@ -356,9 +356,10 @@ must stop the service before activating and start it afterwards.
   payload as unverified and labels it the same way (`signed: false`),
   which is why only a key, never development mode, may stand behind a
   release.
-- There are no production keys yet. Key custody, rotation and the trusted
-  key list a release build embeds are #341. Until then every payload is a
-  development payload, and release notes must say so.
+- There are no production keys yet. Key custody, rotation, the trusted
+  key list (`scripts/release-keys.json`) and the signed release index that
+  covers a whole release are in [release.md](release.md) (#341). Until a key
+  is supplied every payload is a development payload, and release notes say so.
 
 ## Adding and removing features
 
@@ -437,7 +438,7 @@ it in a `.run` and an AppImage ([linux_install.md](linux_install.md)),
 ([windows_install.md](windows_install.md)) and
 `scripts/package-bootstrap-darwin.js` in a `.pkg` and a per-user `.tar.gz`
 ([macos_install.md](macos_install.md)), none of them changing a byte of it.
-Production signing keys are #341.
+Production signing keys and the release pipeline: [release.md](release.md) (#341).
 
 ## Building
 
@@ -502,7 +503,7 @@ packages out.
 
 Not verified: reduced payloads on the other four targets (the #327 matrix
 there still builds the full payload only), and signing with a production
-key (#341).
+key ([release.md](release.md), #341).
 
 A note for anyone booting a whole runtime under `GOOBSTER_PG_TEST_ISOLATE=1`
 (as `tests/payloadReduced.test.js` does on the Postgres job; the smoke

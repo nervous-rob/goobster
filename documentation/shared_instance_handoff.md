@@ -15,7 +15,7 @@ Companion to [shared_instance_product_spec.md](shared_instance_product_spec.md) 
 
 | Roadmap item | Status | What is left |
 |---|---|---|
-| #262 Name and license | **Shipped** ([ADR 0012](adr/0012-name-and-license.md), PR #275) | Trademark and domain search before any public listing (#259 depends on it). |
+| #262 Name and license | **Shipped** ([ADR 0012](adr/0012-name-and-license.md), PR #275) | Trademark and domain search before any public listing (#259 depends on it). The release pipeline (#341, [release.md](release.md)) can produce signed artifacts once the owner supplies a key and certificates; it claims no listing and no search. |
 | #249 Backup and tested restore | **Shipped** (PR #276, [backup_and_restore.md](backup_and_restore.md)) | The **dated recovery test on the actual host** (runbook §"The recovery test"). Record the date and result on #249. |
 | #256 work_failures, resource_events, operator_audit | **Shipped** (PR #277, [work_ledger.md](work_ledger.md)) | Nothing. #248 now supplies the reservation writer. |
 | #247 Shared-instance safety | **Shipped** (PR #274, [shared_instance_safety.md](shared_instance_safety.md)) | The **strong-isolation canary on the actual host**, run as the production execution service. Required before a second account. |

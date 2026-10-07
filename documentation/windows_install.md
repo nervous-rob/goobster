@@ -38,7 +38,7 @@ you start it, and `bootstrap-report-win32-x64.json` records `"signed": false`.
 A `-dev` build installs only on a machine you trust. A build is a release build
 only when `payload-manifest.sig` verifies against the public key the builder
 was given (`--public-key`); production keys and a code-signing certificate are
-not part of this repository (#341). The signing hook exists and is off (see
+not part of this repository ([release.md](release.md), #341). The signing hook exists and is off (see
 "Building the installer").
 
 ## Supported platforms

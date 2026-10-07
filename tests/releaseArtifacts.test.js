@@ -109,6 +109,7 @@ describe('the entry rules', () => {
     test('a violation reports a sanitised path, never raw control characters', () => {
         const [violation] = scan.checkEntry({ path: 'app/\u001b[31m/../x', type: 'file' });
         expect(violation.rule).toBe('path-traversal');
+        // eslint-disable-next-line no-control-regex -- asserting that control characters are gone is the point
         expect(violation.path).not.toMatch(/[\u0000-\u001f]/);
     });
 

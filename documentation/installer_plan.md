@@ -245,7 +245,7 @@ Work, in order:
    builds minimal, voice and projects+sandbox payloads on `ubuntu-24.04`,
    and runs routes, dormant-data and tamper probes against them. Reduced
    payloads on the other four targets are unverified. Production signing
-   keys are #341. The wizard (#329) and the bootstrappers (#331) consume
+   keys are a release matter (`documentation/release.md`, #341). The wizard (#329) and the bootstrappers (#331) consume
    the seams listed in `documentation/packaging.md`, "The manager seam".
 3. Wizard screens, each with an "about this" panel: mode (install,
    reconfigure, repair, uninstall); features with size, dependencies and
@@ -316,7 +316,7 @@ Work, in order:
    `bootstrapStage.test.js`, `bootstrapCli.test.js`). `systemctl enable --now`
    on a real systemd, on x64 and arm64, is proven only by
    `.github/workflows/linux-bootstrap.yml`. Unsigned development builds only
-   (`-dev`); release signing keys are #341. PR
+   (`-dev`); release signing keys: `documentation/release.md` (#341). PR
    [#367](https://github.com/nervous-rob/goobster/pull/367) (stacked on #366,
    merging the B1 loader #364): SQLite full suite 284 suites / 5751 passed;
    Postgres `core` 2377 and `portal` 1124 passed in isolated schemas; Playwright
@@ -345,7 +345,7 @@ Work, in order:
    journey, graceful stop and crash restart are proven only by
    `.github/workflows/windows-bootstrap.yml` on `windows-2022`
    (`scripts/windows-bootstrap-proof.ps1`). Unsigned development builds only
-   (`-dev`); the Authenticode hook is wired and off, signing keys are #341.
+   (`-dev`); the Authenticode hook is wired and off, signing is `documentation/release.md` (#341).
 
    **Status (P3.6, #332): the macOS bootstrapper is built and its journey is
    written; it has not run on a Mac.** `documentation/macos_install.md` is the
@@ -540,6 +540,30 @@ before this phase), auto-update through the manager, the GitHub Actions
 release matrix, docs. Deferred items picked up here if wanted: native
 Windows and macOS Postgres provisioning; major-version upgrades for
 Postgres instances the manager owns, as a separate labelled workflow.
+
+**Status (P5.1, #341): the signed release pipeline and the artifact
+verification contract are built; nothing has been signed.**
+`documentation/release.md` is the reference. `.github/workflows/release.yml`
+runs for `v*` tags and manual dispatch (never a pull request): a `plan` job
+derives the channel (`v1.4.0` stable, `-rc.N`/`-beta.N`/`-alpha.N` and every
+dispatch prerelease) and the signing mode, stopping a stable tag with no active
+key at `RELEASE_BLOCKED_UNSIGNED`; a five-target build matrix builds, signs and
+scans each target; a `publish` job assembles and signs `release-index.json`
+(`scripts/release-index.js`, `scripts/lib/releaseIndex.js`), verifies it under a
+production and a development policy, and publishes a GitHub Release, leaving a
+failed target out of the index and the notes. The index adds a second signed
+layer over the per-payload manifest of #328 without changing it;
+`scripts/release-verify-artifacts.js` refuses a release artifact carrying
+config, keys, databases or a binary for the wrong platform; the manager's
+install record reports `signed`, `keyId` and `channel`. `scripts/release-keys.json`
+ships with **no active key** and the Windows, Apple and key secrets are the
+owner's to supply, so every stable build is blocked today and every other build
+is an `UNSIGNED DEVELOPMENT BUILD`. Proven on Linux x64 by Jest
+(`tests/releaseIndex.test.js`, `releaseArtifacts.test.js`,
+`releaseManagerTrust.test.js`, `releaseWorkflow.test.js`) and a local run
+against a real payload; the Windows and macOS signing steps and the arm64,
+macOS and Windows jobs are written and structurally tested but have not run.
+Downloading and applying an update is #342.
 
 ## Audits before implementation
 
