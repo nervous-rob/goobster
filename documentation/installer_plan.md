@@ -389,6 +389,11 @@ Work:
    storage edits for a server the manager owns, cluster tuning and
    PostgreSQL major upgrades. See
    [database_connection.md](database_connection.md).
+   PR [#365](https://github.com/nervous-rob/goobster/pull/365) (stacked on
+   #363, merging #362): SQLite full suite 276 suites / 5551 passed; Postgres
+   `core` 2186 and `portal` 1116 passed in isolated schemas, the real-server
+   blocks 122 passed as a superuser; Playwright 239 passed; lint, smoke,
+   docs and group inventory green.
 
 Acceptance: every operation refuses to start while another holds the
 lock; an interrupted restore or migration recovers to a stated state;
