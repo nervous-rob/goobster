@@ -62,6 +62,13 @@ const CONTRACTS = Object.freeze([
 /** The longest bound any in-process contract declares: the drain window of a restart. */
 const DRAIN_BOUND_SECONDS = Math.max(...CONTRACTS.map(entry => entry.boundSeconds));
 
+/** A contract's own bound, never longer than the drain window this shutdown has. */
+function contractBoundMs(kind, drainMs) {
+    const entry = CONTRACTS.find(item => item.kind === kind);
+    if (!entry) throw new Error(`lifecycle: unknown work kind "${kind}"`);
+    return Math.max(0, Math.min(entry.boundSeconds * 1000, drainMs));
+}
+
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -296,6 +303,16 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         return Boolean(state.paused);
     }
 
+    /**
+     * How long this shutdown may wait for in-flight work: what the stop
+     * request said, else GOOBSTER_LIFECYCLE_DRAIN_SECONDS, else the
+     * longest contract bound.
+     */
+    function drainBoundMs({ env = process.env } = {}) {
+        if (state.paused) return state.paused.drainSeconds * 1000;
+        return (revisionAck.parseRevision(env.GOOBSTER_LIFECYCLE_DRAIN_SECONDS) ?? DRAIN_BOUND_SECONDS) * 1000;
+    }
+
     /** `{ secondsLeft }` while a manager-announced restart is draining this process, else null. */
     function restartNotice() {
         if (!state.paused || !state.paused.announced) return null;
@@ -396,6 +413,7 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         pauseNewWork,
         onPauseNewWork,
         newWorkPaused,
+        drainBoundMs,
         restartNotice,
         requestRestart,
         acknowledgeReady,
@@ -413,6 +431,7 @@ Object.assign(module.exports, {
     SUPERVISORS,
     CONTRACTS,
     DRAIN_BOUND_SECONDS,
+    contractBoundMs,
     createWorkerLifecycle,
     detectSupervisor,
     lifecycleDir,

@@ -155,8 +155,7 @@ function workersFor({ settings, config = {}, env = settings.env || {}, sandboxAc
             script: path.join(root, 'apps', 'sandbox', 'index.js'),
             env: { ...sharedEnv('sandbox'), GOOBSTER_SANDBOX_URL: '', GOOBSTER_SANDBOX_PORT: String(sandbox.port) },
             healthUrl: `${sandbox.url}/health`,
-            ackFile: 'sandbox',
-            optionalAck: true
+            ackFile: 'sandbox'
         });
         for (const worker of workers) {
             if (worker.name !== 'sandbox' && !env.GOOBSTER_SANDBOX_URL) worker.env.GOOBSTER_SANDBOX_URL = sandbox.url;

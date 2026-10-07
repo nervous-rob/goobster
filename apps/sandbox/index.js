@@ -5,7 +5,7 @@
  */
 
 const logger = require('@goobster/core/utils/logger');
-const { createSandboxApp, DEFAULT_SANDBOX_PORT } = require('./server');
+const { startSandboxRunner } = require('./server');
 
 if (process.env.GOOBSTER_SANDBOX_URL) {
     logger.error('GOOBSTER_SANDBOX_URL must not be set on the sandbox-runner (it would proxy to itself).');
@@ -17,14 +17,4 @@ if (!process.env.GOOBSTER_INTERNAL_TOKEN) {
     process.exit(1);
 }
 
-const app = createSandboxApp({ logger });
-const port = Number(process.env.GOOBSTER_SANDBOX_PORT) || DEFAULT_SANDBOX_PORT;
-const server = app.listen(port, () => {
-    logger.info(`Goobster sandbox-runner listening on port ${port}`);
-});
-
-const shutdown = () => {
-    server.close(() => process.exit(0));
-};
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+startSandboxRunner({ logger });
