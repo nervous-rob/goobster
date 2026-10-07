@@ -138,7 +138,7 @@ async function set(changes) {
     if (!checked.ok) throw new InstanceDefaultsError('INVALID_DEFAULTS', 'The defaults change is not valid.', checked.errors);
     return db.transaction(async () => {
         const before = await get();
-        const after = applyChanges(before, checked.normalized);
+        const after = sanitize(applyChanges(before, checked.normalized));
         if (Object.keys(after).length === 0) await instanceState.remove(KEY);
         else await instanceState.set(KEY, after);
         const changed = checked.normalized

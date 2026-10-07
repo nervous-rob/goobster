@@ -32,7 +32,7 @@ beforeAll(async () => {
 });
 
 beforeEach(clear);
-afterAll(clear);
+afterEach(clear);
 
 describe('the defaults document', () => {
     test('starts empty and round-trips set, change and remove', async () => {
