@@ -133,8 +133,9 @@ function startLauncher(launcher, args, { env }) {
  * or killed by the process id this object owns.
  */
 class Daemon {
-    constructor({ launcher, env, logFile, onEvent = () => {}, restartOnHandoff = true }) {
+    constructor({ launcher, env, logFile, onEvent = () => {}, restartOnHandoff = true, args = ['--supervise'] }) {
         this.launcher = launcher;
+        this.args = args;
         this.env = env;
         this.logFile = logFile;
         this.onEvent = onEvent;
@@ -149,7 +150,7 @@ class Daemon {
 
     _spawn() {
         const out = fs.openSync(this.logFile, 'a');
-        const child = childProcess.spawn(this.launcher, ['--supervise'], {
+        const child = childProcess.spawn(this.launcher, this.args, {
             env: this.env,
             stdio: ['ignore', 'pipe', 'pipe'],
             shell: IS_WINDOWS && /\.cmd$/i.test(this.launcher),

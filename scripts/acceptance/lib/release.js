@@ -89,7 +89,7 @@ class ReleaseWorkshop {
     /**
      * A release source directory offering `version`: the derived payload's archive and a signed index.
      * @param {string} version
-     * @returns {Promise<{dir:string, version:string, releaseId:string}>}
+     * @returns {Promise<{dir:string, payloadDir:string, version:string, releaseId:string}>} `payloadDir` is the unpacked payload the archive was made from (what `repair --answers {source}` wants)
      */
     async publish(version) {
         if (!this.base || !this.key || !this.key.privatePem) throw new Error('prepareBase() first');
@@ -140,8 +140,7 @@ class ReleaseWorkshop {
         });
         const index = releaseIndex.signIndex(built, this.key.privatePem);
         releaseIndex.writeIndex(source, index.index, index.signature);
-        fs.rmSync(derived, { recursive: true, force: true });
-        return { dir: source, version, releaseId: stage.releaseIdOf(signed.manifest) };
+        return { dir: source, payloadDir: derived, version, releaseId: stage.releaseIdOf(signed.manifest) };
     }
 }
 
