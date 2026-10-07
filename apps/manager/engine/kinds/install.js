@@ -38,17 +38,31 @@ const databaseInput = require('../../database/input');
 const registry = require('../../lifecycle/registry');
 const { runPreflight, portsFor } = require('../../install/preflight');
 const parse = require('../../install/engine');
+const dockerService = require('../../docker/service');
+const dockerPasswords = require('../../docker/passwords');
+const dockerState = require('../../docker/state');
 
 const { createInstallCore, exactKeys, textField, absolutePath, parseLabel, parseFeatures, parseRootsInput, parseLayout, parseRelease, parseRuntimeUser, parseBoolean, parseConfigChanges, parseDatabase } = parse;
 
 const SESSION_VIA = ['local', 'bridge', 'setup', 'recovery'];
-const NEW_STEPS = ['preflight', 'stage', 'verify', 'ownership', 'init-db', 'write-config', 'write-features', 'activate', 'register-service', 'finalize'];
+const NEW_STEPS = ['preflight', 'stage', 'verify', 'ownership', 'docker-postgres', 'init-db', 'write-config', 'write-features', 'activate', 'register-service', 'finalize'];
 const RECONFIGURE_STEPS = ['preflight', 'stage', 'verify', 'write-config', 'activate', 'record', 'retire-old', 'register-service'];
 const REPAIR_STEPS = ['preflight', 'stage', 'verify', 'init-db', 'write-features', 'activate', 'register-service'];
-const UNINSTALL_STEPS = ['preflight', 'unregister-service', 'tombstone', 'remove-code', 'remove-data', 'remove-ownership'];
+const UNINSTALL_STEPS = ['preflight', 'unregister-service', 'tombstone', 'docker-postgres', 'remove-code', 'remove-data', 'remove-ownership'];
 const PRIVILEGED_BY_STEP = Object.freeze({ 'register-service': 'service.register', 'unregister-service': 'service.unregister' });
 
 const sameList = (a, b) => JSON.stringify([...(a || [])]) === JSON.stringify([...(b || [])]);
+
+/** What the preflight shows of the Docker database: facts and findings, never an environment value or a secret. */
+function dockerPlanView(view) {
+    return { names: view.names, mode: view.mode, request: view.request, port: view.port, storage: view.storage, image: view.image, backupTools: view.backupTools ? { ok: view.backupTools.ok, code: view.backupTools.code, version: view.backupTools.version } : null, findings: view.findings };
+}
+
+function dockerFindings(view) {
+    return view.findings
+        .filter(item => item.severity === 'block' || item.severity === 'warn')
+        .map(item => ({ code: item.code.startsWith('DOCKER_') ? item.code : `DOCKER_${item.code}`, severity: item.severity, detail: item.remedy ? `${item.detail} ${item.remedy}` : item.detail }));
+}
 
 function stepList(names) {
     return names.map(name => (PRIVILEGED_BY_STEP[name] ? { name, privileged: PRIVILEGED_BY_STEP[name] } : { name }));
@@ -163,6 +177,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             roots: parseRootsInput(input.roots),
             database: databaseAnswer.database,
             connection: databaseAnswer.connection,
+            docker: databaseAnswer.docker,
             release: parseRelease(input.release),
             runtimeUser: parseRuntimeUser(input.runtimeUser),
             changes: config.changes,
@@ -206,11 +221,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         const extraFindings = [];
         if (parsed.database.engine === 'sqlite' && settings.dbUrl) extraFindings.push({ code: 'DATABASE_MISMATCH', severity: 'block', detail: 'sqlite was chosen while GOOBSTER_DB_URL names a Postgres database' });
         const connection = parsed.connection ? await databaseInstall.probeForInstall({ settings, connection: parsed.connection }) : null;
+        const dockerView = parsed.docker ? await dockerService.createDockerService({ settings, fs, now, logger }).assess({ installationId: existing ? existing.installationId : null, request: parsed.docker }) : null;
         const pre = await runPreflight({
             kind: resumedRecord ? 'install.repair' : 'install.new',
             roots,
             layout: parsed.layout,
-            settings: connection ? { ...settings, dbUrl: 'postgres://configured-in-the-answers' } : settings,
+            settings: connection || dockerView ? { ...settings, dbUrl: 'postgres://configured-in-the-answers' } : settings,
             manifest: info.manifest,
             features: asked,
             database: parsed.database,
@@ -222,7 +238,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             includeManagerPort: false,
             via: ctx.auth ? ctx.auth.via : 'local'
         });
-        pre.findings.push(...extraFindings, ...(connection ? connection.findings : []));
+        pre.findings.push(...extraFindings, ...(connection ? connection.findings : []), ...(dockerView ? dockerFindings(dockerView) : []));
         pre.ok = !pre.findings.some(item => item.severity === 'block');
 
         const dependencies = dependenciesFor(info.manifest, selected);
@@ -236,7 +252,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             dependencies,
             runtimeUser: parsed.runtimeUser
         };
-        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService });
+        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, dockerDatabase: parsed.docker ? dockerService.publicRequest(parsed.docker) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService });
         const plan = {
             action: 'install-new',
             signature,
@@ -248,6 +264,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             downloadHook: release.DOWNLOAD_HOOK,
             config: { settings: parsed.changes.map(item => item.id), secretCount: Object.keys(parsed.secrets).length },
             ...(parsed.connection ? { databaseTarget: databaseInput.publicView(parsed.connection) } : {}),
+            ...(dockerView ? { dockerDatabase: dockerPlanView(dockerView) } : {}),
             services: parsed.registerService ? [{ kind: core.serviceKindForHost(), name: 'goobster', action: 'register', privileged: 'service.register' }] : [],
             registerService: parsed.registerService,
             updater: { kind: 'manager' },
@@ -308,9 +325,22 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     if (!created && !cleared) return { status: 'skipped', code: 'ALREADY_DONE' };
                     return { detail: { created, tombstoneCleared: cleared } };
                 }),
+                core.step('docker-postgres', async (record, ctx) => {
+                    const answered = needInput(ctx).parsed;
+                    if (!answered.docker) return { status: 'skipped', code: 'NOT_REQUESTED' };
+                    const svc = dockerService.createDockerService({ settings, fs, now, logger });
+                    const secret = dockerPasswords.generatePair();
+                    const view = await svc.assess({ installationId: ctx.scratch.installationId, request: answered.docker });
+                    svc.assertAssessed(view);
+                    const created = await svc.createResources({ installationId: ctx.scratch.installationId, request: answered.docker, superuserPassword: secret.superuser, operationId: record.id, view });
+                    await svc.waitHealthy({ installationId: ctx.scratch.installationId });
+                    const out = await svc.provisionRole({ request: answered.docker, passwords: secret });
+                    ctx.scratch.dockerConnection = out.application;
+                    return { detail: { container: view.names.container, volume: view.names.volume, network: view.names.network, cleaned: created.cleaned.length, done: out.results.filter(item => item.status === 'done').length } };
+                }),
                 core.step('init-db', async (record, ctx) => {
                     const t = record.plan.target;
-                    const answered = needInput(ctx).parsed.connection;
+                    const answered = needInput(ctx).parsed.connection || ctx.scratch.dockerConnection;
                     if (!answered) {
                         const out = await deps.initDatabase({ roots: t.roots, settings, database: t.database });
                         return { detail: { engine: out.engine, tables: out.tables } };
@@ -320,6 +350,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     if (blocked.length > 0) throw new ManagerError(409, 'PREFLIGHT_FAILED', `The database cannot be used: ${blocked.map(item => item.code).join(', ')}.`, { findings: blocked.map(item => ({ code: item.code, detail: item.detail })) });
                     const out = await deps.initDatabase({ roots: t.roots, settings, database: t.database, url: probed.url });
                     databaseInstall.persistOverlay({ settings, fs, now, url: probed.url });
+                    if (ctx.scratch.dockerConnection) {
+                        const svc = dockerService.createDockerService({ settings, fs, now, logger });
+                        svc.advance('schema');
+                        await svc.verify({ application: ctx.scratch.dockerConnection });
+                        svc.removeStaged();
+                    }
                     return { detail: { engine: out.engine, tables: out.tables, overlay: true } };
                 }),
                 core.step('write-config', (record, ctx) => {
@@ -647,10 +683,32 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
     }
 
     // --------------------------------------------------- install.uninstall
+    /**
+     * The Docker database this manager owns, as an uninstall sees it. By default it is
+     * left exactly as it is (the data outlives the installation); `removeDockerData`
+     * names the resources it would delete, each re-checked against its labels.
+     */
+    async function dockerUninstallView(doc, removeDockerData) {
+        const recorded = dockerState.read(settings.storeDir, fs);
+        if (!recorded.present) return { view: null, findings: [] };
+        const names = dockerService.createDockerService({ settings, fs, now, logger }).resourceNames(doc.installationId);
+        if (!removeDockerData) {
+            return { view: { action: 'kept', note: 'The container, its data and its network are left as they are. Remove them with removeDockerData.', names }, findings: [] };
+        }
+        try {
+            const removal = await dockerService.createDockerService({ settings, fs, now, logger }).removalPlan({ installationId: doc.installationId });
+            const findings = removal.foreign.map(item => ({ code: 'DOCKER_RESOURCE_FOREIGN', severity: 'block', detail: `a ${item.kind} named "${item.name}" has no label of this installation and would not be touched; resolve it first` }));
+            return { view: { action: 'remove', names, resources: removal.resources, hostPath: removal.hostPath, hostPathNote: removal.hostPath ? 'a directory you chose is never deleted by the installer' : null }, findings };
+        } catch (error) {
+            return { view: { action: 'remove', names, resources: [], unavailable: true }, findings: [{ code: 'DOCKER_UNAVAILABLE', severity: 'block', detail: 'Docker cannot be reached, so the database cannot be removed. Start Docker, or uninstall without removeDockerData.' }] };
+        }
+    }
+
     async function buildUninstall(input, ctx) {
         const raw = input === undefined ? {} : input;
-        exactKeys(raw, new Set(['keepData', 'confirm', 'acknowledgeUnknownServices']));
+        exactKeys(raw, new Set(['keepData', 'confirm', 'acknowledgeUnknownServices', 'removeDockerData']));
         const keepData = parseBoolean(raw.keepData, 'keepData', true);
+        const removeDockerData = parseBoolean(raw.removeDockerData, 'removeDockerData', false);
         const acknowledged = parseBoolean(raw.acknowledgeUnknownServices, 'acknowledgeUnknownServices', false);
         if (raw.confirm !== undefined) textField(raw.confirm, 'confirm', { max: 64 });
         const doc = ownedRecord(ctx);
@@ -673,8 +731,9 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         const database = doc.database.external
             ? { engine: doc.database.engine, action: 'not deleted: external' }
             : { engine: doc.database.engine, action: keepData ? 'kept' : (sqliteInside ? 'removed with the data root' : 'not deleted: outside the owned roots') };
-        const confirmation = { required: !keepData, satisfied: keepData || raw.confirm === doc.installationId };
-        const pre = { ok: true, findings: [] };
+        const confirmation = { required: !keepData || removeDockerData, satisfied: (keepData && !removeDockerData) || raw.confirm === doc.installationId };
+        const dockerDatabase = await dockerUninstallView(doc, removeDockerData);
+        const pre = { ok: true, findings: [...dockerDatabase.findings] };
         if (roots.managerStore !== settings.storeDir) pre.findings.push({ code: 'ROOTS_MISMATCH', severity: 'block', detail: 'the recorded manager store is not where this manager keeps it' });
         if (registry.get(settings.storeDir)) pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: 'the manager is supervising the application workers' });
         // The registry only sees this process; the CLI runs in another one, so the
@@ -687,7 +746,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         pre.ok = pre.findings.length === 0;
         const steps = stepList(UNINSTALL_STEPS);
-        const signature = core.signatureOf({ kind: 'install.uninstall', id: doc.installationId, keepData });
+        const signature = core.signatureOf({ kind: 'install.uninstall', id: doc.installationId, keepData, removeDockerData });
         const plan = {
             action: 'uninstall',
             signature,
@@ -695,6 +754,8 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             noop: false,
             installationId: doc.installationId,
             keepData,
+            removeDockerData,
+            ...(dockerDatabase.view ? { dockerDatabase: dockerDatabase.view } : {}),
             target: { layout: doc.layout, roots, database: doc.database, features: doc.release ? doc.release.features : [], release: doc.release },
             removes,
             retainedData: { roots: retained.map(item => item.role), paths: retained.map(item => item.path) },
@@ -710,7 +771,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             steps
         };
         ledgerMatch(plan, 'install.uninstall', ctx, signature);
-        return finish(plan, pre, { revision: doc.revision, unknownServices: acknowledged ? [] : unknown, privateInput: { raw, parsed: { keepData, acknowledged } } });
+        return finish(plan, pre, { revision: doc.revision, unknownServices: acknowledged ? [] : unknown, privateInput: { raw, parsed: { keepData, acknowledged, removeDockerData } } });
     }
 
     function removeTree(target, keep, roots) {
@@ -756,6 +817,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                 core.step('tombstone', (record) => {
                     tombstone.writeTombstone(settings.storeDir, { installationId: record.plan.installationId, operationId: record.id, dataRemoved: !record.plan.keepData, now }, fs);
                     return { detail: { dataRemoved: !record.plan.keepData } };
+                }),
+                core.step('docker-postgres', async (record) => {
+                    if (!record.plan.removeDockerData) return { status: 'skipped', code: 'KEEP_DOCKER_DATA' };
+                    if (!record.plan.dockerDatabase) return { status: 'skipped', code: 'NOT_OWNED' };
+                    const out = await dockerService.createDockerService({ settings, fs, now, logger }).retire({ installationId: record.plan.installationId, remove: true });
+                    return { detail: { removed: out.removed.length, container: out.removed.includes('container'), volume: out.removed.includes('volume'), network: out.removed.includes('network') } };
                 }),
                 core.step('remove-code', (record) => {
                     const roots = record.plan.target.roots;

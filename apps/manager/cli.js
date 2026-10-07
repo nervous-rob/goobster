@@ -15,7 +15,7 @@
  *                                                 replace the database, files and config.json from an archive
  *   goobster-manager status | discover | schema
  *   goobster-manager migrate preflight|run|rollback|status [options]   SQLite -> Postgres (documentation/db_migration.md)
- *   goobster-manager database test|provision|schema|connect|status [options]   an existing Postgres server (documentation/database_connection.md)
+ *   goobster-manager database test|provision|schema|connect|status|docker [options]   an existing Postgres server (documentation/database_connection.md), or the one the installer owns in Docker
  *
  *   --answers <file>   the operation's input as JSON (apps/manager/install/answers.schema.json);
  *                      the file may hold secrets and must be mode 0600
@@ -157,7 +157,12 @@ function parseArgs(argv) {
         require('./cliBackup').checkArgs(command, flags, positional, CliError);
     } else if (command === 'database') {
         flags.sub = positional.shift() || '';
-        if (!databaseCli.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'database needs a command: test, provision, schema, connect or status.');
+        if (!databaseCli.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'database needs a command: test, provision, schema, connect, status or docker.');
+        if (flags.sub === 'docker') {
+            flags.dockerSub = positional.shift() || '';
+            if (!require('./docker/cli').SUBCOMMANDS.includes(flags.dockerSub)) throw new CliError('USAGE', 'database docker needs a command: status, provision, start, stop, repair or reconfigure.');
+            if (flags.answers && (flags.dockerSub === 'status')) throw new CliError('USAGE', 'database docker status takes no answers.');
+        }
         if (flags.dryRun) throw new CliError('USAGE', 'database has no --dry-run: "database test" is the read-only check.');
         if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'database status takes no answers.');
     } else if (flags.release) {
@@ -799,6 +804,7 @@ function usage() {
         '  database schema     apply Goobster\'s schema to an empty (or older Goobster) schema',
         '  database connect    point this installation at the server (--release also releases the barrier); SQLite with data is `migrate`',
         '  database status     the connection in effect and the engine (read only)',
+        '  database docker status|provision|start|stop|repair|reconfigure   the PostgreSQL the installer owns in Docker (documentation/docker_postgres.md)',
         '',
         'Options',
         '  --answers <file>   JSON answers (mode 0600; may hold secrets); without it the CLI asks',

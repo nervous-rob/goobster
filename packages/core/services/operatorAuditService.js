@@ -38,6 +38,7 @@ const ACTIONS = new Set([
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
     'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
+    'manager.database.docker.provision', 'manager.database.docker.start', 'manager.database.docker.stop', 'manager.database.docker.repair', 'manager.database.docker.reconfigure',
     'manager.data.reset',
     'manager.backup.create', 'manager.backup.restore',
     // Written by the portal's Host routes once the manager answered success

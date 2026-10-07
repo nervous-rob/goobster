@@ -70,7 +70,40 @@
             "additionalProperties": false,
             "properties": {
                 "engine": { "enum": ["sqlite", "postgres"] },
-                "connection": { "$ref": "#/definitions/dbConnection" }
+                "connection": { "$ref": "#/definitions/dbConnection" },
+                "docker": { "$ref": "#/definitions/dockerRequest" }
+            }
+        },
+        "dockerRequest": {
+            "type": "object",
+            "description": "A PostgreSQL instance the installer creates and owns in Docker (documentation/docker_postgres.md). Give `connection` or `docker`, not both. No password is asked: they are generated.",
+            "additionalProperties": false,
+            "properties": {
+                "port": { "type": "integer" },
+                "bind": { "type": "string", "minLength": 7, "maxLength": 15, "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$" },
+                "acknowledgeLanBind": { "type": "boolean" },
+                "storage": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": { "enum": ["volume", "path"] },
+                        "path": { "$ref": "#/definitions/absolutePath" }
+                    }
+                },
+                "role": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "database": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "memoryMb": { "type": "integer" },
+                "pull": { "type": "boolean" },
+                "acknowledgeBackupTools": { "type": "boolean" }
+            }
+        },
+        "ownedDockerRef": {
+            "type": "object",
+            "description": "The Docker database this manager provisioned and has not connected yet, instead of a connection: its generated password is read from the manager overlay and never shown.",
+            "additionalProperties": false,
+            "required": ["owned"],
+            "properties": {
+                "owned": { "const": "docker" }
             }
         },
         "config": {
@@ -152,7 +185,8 @@
                 "command": { "const": "uninstall" },
                 "keepData": { "type": "boolean" },
                 "confirm": { "type": "string", "minLength": 1, "maxLength": 64 },
-                "acknowledgeUnknownServices": { "type": "boolean" }
+                "acknowledgeUnknownServices": { "type": "boolean" },
+                "removeDockerData": { "type": "boolean", "description": "Also remove the Docker database this manager owns: its container, data volume and network (a host directory you chose is never deleted). Needs confirm." }
             }
         },
         "reset": {
@@ -178,12 +212,17 @@
             }
         },
         "migrateTarget": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["url"],
-            "properties": {
-                "url": { "type": "string", "minLength": 12, "maxLength": 2048, "pattern": "^postgres(ql)?://" }
-            }
+            "oneOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["url"],
+                    "properties": {
+                        "url": { "type": "string", "minLength": 12, "maxLength": 2048, "pattern": "^postgres(ql)?://" }
+                    }
+                },
+                { "$ref": "#/definitions/ownedDockerRef" }
+            ]
         },
         "migrate-preflight": {
             "type": "object",
@@ -329,8 +368,80 @@
             "properties": {
                 "$schema": { "type": "string" },
                 "command": { "const": "database" },
-                "connection": { "$ref": "#/definitions/dbConnection" },
+                "connection": { "oneOf": [{ "$ref": "#/definitions/dbConnection" }, { "$ref": "#/definitions/ownedDockerRef" }] },
                 "release": { "type": "boolean" }
+            }
+        },
+        "database-docker-status": {
+            "type": "object",
+            "description": "`goobster-manager database docker status`: the daemon check and what this manager owns. Read only; takes no answers.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" }
+            }
+        },
+        "database-docker-provision": {
+            "type": "object",
+            "description": "`goobster-manager database docker provision`: create the container, volume and network, the application role and the schema. The installation is connected afterwards with `database connect` and `connection: { owned: docker }`.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "port": { "type": "integer" },
+                "bind": { "type": "string", "minLength": 7, "maxLength": 15, "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$" },
+                "acknowledgeLanBind": { "type": "boolean" },
+                "storage": { "$ref": "#/definitions/dockerRequest/properties/storage" },
+                "role": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "database": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "memoryMb": { "type": "integer" },
+                "pull": { "type": "boolean" },
+                "acknowledgeBackupTools": { "type": "boolean" }
+            }
+        },
+        "database-docker-start": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "$schema": { "type": "string" }, "command": { "const": "database" } }
+        },
+        "database-docker-stop": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "$schema": { "type": "string" }, "command": { "const": "database" }, "acknowledgeInUse": { "type": "boolean" } }
+        },
+        "database-docker-repair": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "$schema": { "type": "string" }, "command": { "const": "database" } }
+        },
+        "database-docker-reconfigure": {
+            "type": "object",
+            "description": "`goobster-manager database docker reconfigure`: change the port, bind address or memory limit. Needs the maintenance barrier held and a verified backup first.",
+            "additionalProperties": false,
+            "required": ["backup", "maintenance"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "port": { "type": "integer" },
+                "bind": { "type": "string", "minLength": 7, "maxLength": 15, "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$" },
+                "acknowledgeLanBind": { "type": "boolean" },
+                "memoryMb": { "type": "integer" },
+                "maintenance": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["operationId", "fence"],
+                    "properties": { "operationId": { "type": "string", "minLength": 1, "maxLength": 64 }, "fence": { "type": "integer" } }
+                },
+                "backup": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["dir"],
+                    "properties": {
+                        "dir": { "$ref": "#/definitions/absolutePath" },
+                        "passphrase": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                        "skipConfig": { "type": "boolean" }
+                    }
+                }
             }
         }
     }

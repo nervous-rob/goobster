@@ -225,9 +225,8 @@ function createContainers({ docker, installationId, deps = {} }) {
     /** Poll the health check; fail early on an exited or unhealthy container. */
     async function waitHealthy({ timeoutMs = WAIT_HEALTHY_MS, pollMs = POLL_MS } = {}) {
         const deadline = Date.now() + timeoutMs;
-        let last = null;
         for (;;) {
-            last = await container();
+            const last = await container();
             if (!last.exists) throw new DockerError('CONTAINER_MISSING', 'The container disappeared while it was starting.');
             if (last.health === 'healthy' && last.running) return last;
             if (!last.running && ['exited', 'dead'].includes(last.status)) throw new DockerError('CONTAINER_EXITED', 'The container stopped while it was starting. Read its log with "docker logs" (the name is in the plan).', { name: resources.container.name });

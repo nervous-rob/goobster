@@ -9,6 +9,8 @@
 module.exports = {
     image: require('./image'),
     names: require('./names'),
+    ...require('./image'),
+    ...require('./names'),
     ...require('./daemon'),
     ...require('./containers'),
     ...require('./runner'),
