@@ -62,7 +62,7 @@ const { startWebServers, closeWebServers } = require('@goobster/bot/web/server')
 const { createApiApp } = require('@goobster/api/server');
 
 const PORTAL_OWNERS = {
-    observatory: 1, projects: 1, expeditions: 1, knowledge: 1, exchange: 1, voice: 1, music: 1, push: 1, mcp: 1, discord: 1
+    observatory: 1, projects: 1, expeditions: 1, knowledge: 1, exchange: 1, voice: 1, music: 1, push: 1, discord: 1
 };
 const MANAGEABLE = FEATURE_IDS.filter(id => id !== 'core');
 const FILE = '/virtual/data/features.json';
@@ -281,7 +281,7 @@ describe('portal: one feature turned off at a time', () => {
     test('the walker sees the real route table and the owners that matter here', () => {
         expect(table.length).toBeGreaterThan(300);
         const owners = new Set(table.map(route => inventory.ownerOf('route', route.path, route.method)?.owner));
-        for (const id of ['core', 'observatory', 'projects', 'expeditions', 'knowledge', 'exchange', 'voice', 'music', 'push', 'mcp', 'discord']) {
+        for (const id of ['core', 'observatory', 'projects', 'expeditions', 'knowledge', 'exchange', 'voice', 'music', 'push', 'discord']) {
             expect(owners.has(id)).toBe(true);
         }
     });
