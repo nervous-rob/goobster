@@ -15,7 +15,7 @@
  *                                                 replace the database, files and config.json from an archive
  *   goobster-manager status | discover | schema
  *   goobster-manager migrate preflight|run|rollback|status [options]   SQLite -> Postgres (documentation/db_migration.md)
- *   goobster-manager database test|provision|schema|connect|status|docker [options]   an existing Postgres server (documentation/database_connection.md), or the one the installer owns in Docker
+ *   goobster-manager database test|provision|schema|connect|status|docker|native [options]   an existing Postgres server (documentation/database_connection.md), or the one the installer owns in Docker or natively
  *
  *   --answers <file>   the operation's input as JSON (apps/manager/install/answers.schema.json);
  *                      the file may hold secrets and must be mode 0600
@@ -164,11 +164,16 @@ function parseArgs(argv) {
         require('./cliUpdate').checkArgs(flags, positional, CliError);
     } else if (command === 'database') {
         flags.sub = positional.shift() || '';
-        if (!databaseCli.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'database needs a command: test, provision, schema, connect, status or docker.');
+        if (!databaseCli.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'database needs a command: test, provision, schema, connect, status, docker or native.');
         if (flags.sub === 'docker') {
             flags.dockerSub = positional.shift() || '';
             if (!require('./docker/cli').SUBCOMMANDS.includes(flags.dockerSub)) throw new CliError('USAGE', 'database docker needs a command: status, provision, start, stop, repair or reconfigure.');
             if (flags.answers && (flags.dockerSub === 'status')) throw new CliError('USAGE', 'database docker status takes no answers.');
+        }
+        if (flags.sub === 'native') {
+            flags.nativeSub = positional.shift() || '';
+            if (!require('./native/cli').SUBCOMMANDS.includes(flags.nativeSub)) throw new CliError('USAGE', 'database native needs a command: status, provision, start, stop, repair or relocate.');
+            if (flags.answers && (flags.nativeSub === 'status')) throw new CliError('USAGE', 'database native status takes no answers.');
         }
         if (flags.dryRun) throw new CliError('USAGE', 'database has no --dry-run: "database test" is the read-only check.');
         if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'database status takes no answers.');
@@ -864,6 +869,7 @@ function usage() {
         '  database connect    point this installation at the server (--release also releases the barrier); SQLite with data is `migrate`',
         '  database status     the connection in effect and the engine (read only)',
         '  database docker status|provision|start|stop|repair|reconfigure   the PostgreSQL the installer owns in Docker (documentation/docker_postgres.md)',
+        '  database native status|provision|start|stop|repair|relocate      the PostgreSQL the installer owns as a native cluster (documentation/native_postgres.md)',
         '',
         'Options',
         '  --answers <file>   JSON answers (mode 0600; may hold secrets); without it the CLI asks',

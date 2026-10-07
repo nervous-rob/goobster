@@ -34,7 +34,9 @@ const READS = Object.freeze({
     crontab: ['crontab', ['-l']],
     'pm2-jlist': ['pm2', ['jlist']],
     'docker-compose-ls': ['docker', ['compose', 'ls', '--all', '--format', 'json']],
-    'docker-owned-databases': ['docker', ['ps', '--all', '--filter', 'label=io.goobster.manager=1', '--filter', 'label=io.goobster.role=postgres', '--format', '{{json .}}']]
+    'docker-owned-databases': ['docker', ['ps', '--all', '--filter', 'label=io.goobster.manager=1', '--filter', 'label=io.goobster.role=postgres', '--format', '{{json .}}']],
+    'native-clusters': ['pg_lsclusters', ['--no-header']],
+    'native-units': ['systemctl', ['list-unit-files', 'postgresql17-goobster*', '--no-legend', '--no-pager']]
 });
 
 /** @returns {(name: keyof typeof READS) => string|null} stdout, or null when the command is absent or fails */
@@ -223,6 +225,29 @@ function ownedDatabases(exec) {
     return out;
 }
 
+/**
+ * Native PostgreSQL clusters this installer created (documentation/native_postgres.md),
+ * recognised by the fixed names it gives them (`goobster`, `goobster-<id8>`): a report,
+ * not a candidate. Debian family: `pg_lsclusters`; RPM family: the unit files. A cluster
+ * that merely has such a name is only ever listed here; nothing acts on it from this list.
+ */
+function nativeDatabases(exec) {
+    const out = [];
+    const safe = (name) => {
+        try { return exec(name); } catch { return null; }
+    };
+    for (const line of String(safe('native-clusters') || '').split('\n')) {
+        const fields = line.trim().split(/\s+/);
+        if (fields.length < 6 || !/^\d{1,2}$/.test(fields[0]) || !/^goobster(-[0-9a-f]{8})?$/.test(fields[1])) continue;
+        out.push({ cluster: fields[1], version: Number(fields[0]), port: Number(fields[2]) || null, state: fields[3].startsWith('online') ? 'online' : 'down', source: 'pg_lsclusters' });
+    }
+    for (const line of String(safe('native-units') || '').split('\n')) {
+        const match = /^postgresql(\d{1,2})-(goobster(?:-[0-9a-f]{8})?)\.service\b/.exec(line.trim());
+        if (match) out.push({ cluster: match[2], version: Number(match[1]), port: null, state: 'registered', source: 'systemd' });
+    }
+    return out;
+}
+
 function addEvidence(candidate, ...codes) {
     for (const code of codes) if (!candidate.evidence.includes(code)) candidate.evidence.push(code);
 }
@@ -234,7 +259,7 @@ function addEvidence(candidate, ...codes) {
  * @param {Object} [options.env]
  * @param {string[]} [options.searchRoots] directories to look in besides the defaults
  * @param {(name: string) => string|null} [options.exec] read-only command runner (tests)
- * @returns {{ candidates: Array<Object>, searched: number, dockerDatabases: Array<{ container: string, installationId: string|null, state: string }> }}
+ * @returns {{ candidates: Array<Object>, searched: number, dockerDatabases: Array<{ container: string, installationId: string|null, state: string }>, nativeDatabases: Array<{ cluster: string, version: number, port: number|null, state: string, source: string }> }}
  */
 function discover({ fs = nodeFs, home = os.homedir(), env = process.env, searchRoots = [], exec = defaultExec } = {}) {
     const byRoot = new Map();
@@ -349,7 +374,7 @@ function discover({ fs = nodeFs, home = os.homedir(), env = process.env, searchR
         });
     }
     candidates.sort((a, b) => (a.roots.code < b.roots.code ? -1 : 1));
-    return { candidates, searched: seen.size, dockerDatabases: ownedDatabases(exec) };
+    return { candidates, searched: seen.size, dockerDatabases: ownedDatabases(exec), nativeDatabases: nativeDatabases(exec) };
 }
 
 module.exports = { discover, candidateId, defaultExec, READS, MARKER_FILE, SERVICE_UNIT, UPDATE_TIMER };

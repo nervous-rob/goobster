@@ -231,7 +231,7 @@ function createSupervisor({
         return readDoc().current;
     }
 
-    /** A Docker database this manager owns must answer before a worker starts into it (documentation/docker_postgres.md); any other installation passes at once. */
+    /** A Docker or native Postgres database this manager owns must answer before a worker starts into it (documentation/docker_postgres.md, documentation/native_postgres.md); any other installation passes at once. */
     async function databaseGate() {
         if (policy.databaseGate) return policy.databaseGate();
         try {
@@ -288,7 +288,7 @@ function createSupervisor({
         if (!database.ready) {
             slot.state = 'conflict';
             slot.lastCode = database.code;
-            logger.warn?.(`[manager] the Docker database is not ready (${database.reason}); not starting ${worker.name} until it answers`);
+            logger.warn?.(`[manager] the managed database is not ready (${database.reason}); not starting ${worker.name} until it answers`);
             if (!slot.hold) slot.timer = later(() => launch(slot, { revision: currentRevision() }), policy.conflictRetryMs);
             return generation;
         }

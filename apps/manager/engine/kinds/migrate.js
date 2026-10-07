@@ -35,6 +35,7 @@ const { createMigrationState } = require('../../migration/state');
 const { validateOnTarget } = require('../../migration/validation');
 const { lazy } = require('../../lazy');
 const dockerOwned = require('../../docker/owned');
+const nativeOwned = require('../../native/owned');
 
 // The manager boots with no database code loaded (tests/managerBoot.test.js): these load on first use.
 const targetLib = lazy('@goobster/core/db/migration/target');
@@ -61,6 +62,7 @@ function invalid(message) {
 
 function parseTarget(value, context = null) {
     if (context && dockerOwned.isRef(value)) value = { url: dockerOwned.stagedUrl(context.settings, context.fs) };
+    else if (context && nativeOwned.isRef(value)) value = { url: nativeOwned.stagedUrl(context.settings, context.fs) };
     exactKeys(value, new Set(['url']), '"target"');
     const url = textField(value.url, 'target.url', { max: 2048 });
     let description;

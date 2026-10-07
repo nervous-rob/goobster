@@ -3,7 +3,8 @@ import type { HostLifecycle, InstallOperation, InstallOperationKind } from '../l
 import type { FirstRun, WizardTransport } from './transport';
 
 const INSTALL_KINDS: string[] = ['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall', 'backup.create', 'backup.restore', 'data.reset', 'database.provision', 'database.schema.apply', 'database.connect',
-    'database.docker.provision', 'database.docker.start', 'database.docker.stop', 'database.docker.repair', 'database.docker.reconfigure'];
+    'database.docker.provision', 'database.docker.start', 'database.docker.stop', 'database.docker.repair', 'database.docker.reconfigure',
+    'database.native.provision', 'database.native.start', 'database.native.stop', 'database.native.repair', 'database.native.relocate'];
 
 /**
  * The maintenance journeys inside the portal: the same transport interface

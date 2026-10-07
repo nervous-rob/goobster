@@ -85,6 +85,7 @@ const sink = { write() {}, isTTY: false };
  * @param {Object} [options]
  * @param {boolean} [options.claim]   claim with the bootstrap credential before returning (the installation is "claimed" and empty)
  * @param {Object}  [options.installDeps] overrides for the install engine seams (a preflight probe, a failing database init, ...)
+ * @param {Object}  [options.nativeDeps] overrides for the native Postgres seams (distribution facts, a transient data folder, ...)
  */
 async function createSetupInstallation(options = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-setup-e2e-'));
@@ -144,7 +145,7 @@ async function createSetupInstallation(options = {}) {
     const credentialFile = path.join(data, 'manager', 'bootstrap-credential');
 
     async function start() {
-        running = await main([], { env, stdout: sink, logger: recording, installDeps });
+        running = await main([], { env, stdout: sink, logger: recording, installDeps, ...(options.nativeDeps ? { nativeDeps: options.nativeDeps } : {}) });
         if (!running.server) throw new Error(`the manager did not start (code ${running.code})`);
         await waitFor(async () => (await fetch(`${url}/manager/api/status`)).status === 200, { what: 'the manager to listen' });
         return running;

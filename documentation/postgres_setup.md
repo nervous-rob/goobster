@@ -11,6 +11,17 @@ and the database.** For the four-service compose path (postgres + bot + api +
 nginx) see `deploy/docker-compose.yml` and `documentation/docker_deployment.md`
 — that profile injects `GOOBSTER_DB_URL` for you.
 
+**Prefer not to do it by hand?** The installation manager can install the
+PostgreSQL 17 packages and create a cluster of its own, with the role, database
+and extensions, on Debian 12 / Raspberry Pi OS Bookworm, Ubuntu 22.04+ and
+AlmaLinux or Rocky 9 (`goobster-manager database native provision`, or the
+**PostgreSQL on this machine** choice in the setup wizard). It is opt-in, needs
+`sudo -n` or root, uses the PostgreSQL project's apt or dnf repository pinned by
+key fingerprint, never touches a cluster that already exists, and leaves the
+connection to one deliberate step. See
+[native_postgres.md](native_postgres.md). The rest of this guide is the manual
+route and stays correct for a server you run yourself.
+
 ## 1. Storage first
 
 Postgres commits are fsync-heavy. Run the database from a **USB 3 SSD**, not
@@ -81,7 +92,10 @@ sudo apt install -y postgresql-17 postgresql-17-pgvector
 ```
 
 Postgres starts automatically and listens on localhost only — exactly right
-for a single-Pi setup.
+for a single-Pi setup. (The installer's own option does this same package
+install, adds the repository only after checking its signing key's fingerprint,
+and creates a separate `goobster` cluster on the next free port instead of using
+`main`: [native_postgres.md](native_postgres.md).)
 
 ## 3. Create the role, database, and extensions
 
