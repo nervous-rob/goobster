@@ -332,6 +332,15 @@ describe('install.new registers the service through the privileged helper', () =
         expect(runner.calls).toEqual([]);
         expect(fs.existsSync(path.join(harness.settings.storeDir, 'goobster.service'))).toBe(false);
     });
+
+    test('without a service the launcher still finds the roots: the env file is written', async () => {
+        const runner = recordingRunner();
+        const { harness, input } = await installWith(runner, { extraInput: { registerService: false } });
+        await drive(harness, 'install.new', input);
+        const env = rootsEnv.readRootsEnv(harness.code);
+        expect(env.GOOBSTER_DATA_DIR).toBe(harness.settings.dataDir);
+        expect(env.GOOBSTER_MANAGER_STATE_DIR).toBe(harness.settings.storeDir);
+    });
 });
 
 describe('uninstall removes only what the record names', () => {

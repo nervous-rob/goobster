@@ -144,8 +144,16 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
      * @param {boolean} options.enabled
      */
     async function register(record, ctx, { enabled }) {
-        if (!enabled) return { status: 'skipped', code: 'NOT_REQUESTED' };
         const t = record.plan.target;
+        if (!enabled) {
+            // No service, but the launcher still has to find this installation's roots.
+            if (modeOf(t.roots.code, fs) === 'payload') {
+                try {
+                    rootsEnv.writeRootsEnv({ roots: rootsOf(t.roots), layout: t.layout, mode: 'payload' }, fs);
+                } catch { }
+            }
+            return { status: 'skipped', code: 'NOT_REQUESTED' };
+        }
         if (core.serviceKindForHost() !== 'systemd' || !available('service.register')) {
             return core.privilegedStep('service.register', { enabled: true, input: null, record, ctx });
         }
