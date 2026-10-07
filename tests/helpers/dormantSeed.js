@@ -60,8 +60,10 @@ const TABLES = [
     { feature: 'expeditions', table: 'research_sources', column: 'userId' }
 ];
 
-/** Strings that must never surface in a report, an audit or another person's export. */
-const SECRETS = ['hash-secret', 'ghp-secret', 'mcp-hash', 'p256dh-secret', 'auth-secret', 'refactor the parser'];
+/** Credentials the seed stores: never in a report, an audit or an export. */
+const SECRETS = ['hash-secret', 'ghp-secret', 'mcp-hash', 'p256dh-secret', 'auth-secret'];
+/** The person's own content: in their export, never in the report. */
+const CONTENT = ['refactor the parser'];
 
 function utc(offsetMs = 0) {
     return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ');
@@ -201,4 +203,4 @@ async function unpackTarGz(file) {
     return files;
 }
 
-module.exports = { A, B, GUILD, CHANNEL, TABLES, SECRETS, utc, expectedRows, createDormantSeed, unpackTarGz };
+module.exports = { A, B, GUILD, CHANNEL, TABLES, SECRETS, CONTENT, utc, expectedRows, createDormantSeed, unpackTarGz };

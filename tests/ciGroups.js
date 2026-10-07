@@ -43,6 +43,7 @@ const GROUPS = [
             'nativeAuth',
             'packagePayloadRules',
             'payloadManifest',
+            'payloadReduced',
             'emailAuth',
             'integrationActions',
             'integrationsWebhooks',
