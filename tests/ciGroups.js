@@ -45,6 +45,7 @@ const GROUPS = [
             'payloadManifest',
             'payloadReduced',
             'payloadStage',
+            'payloadApply',
             'emailAuth',
             'integrationActions',
             'integrationsWebhooks',
