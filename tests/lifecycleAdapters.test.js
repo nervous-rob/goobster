@@ -270,6 +270,36 @@ describe('the worker side', () => {
     });
 });
 
+describe('the restarting notice (the Phase 1 refusal path)', () => {
+    const { refuseUnavailableCommand } = require('../apps/bot/events/interactionCreate');
+    const { commandNameIndex } = require('@goobster/core/utils/commandDeployment');
+    const names = commandNameIndex(path.join(REPO, 'apps', 'bot', 'commands'));
+    const interaction = (commandName, autocomplete = false) => ({
+        commandName,
+        isAutocomplete: () => autocomplete,
+        reply: jest.fn(async () => {}),
+        respond: jest.fn(async () => {}),
+        followUp: jest.fn(async () => {}),
+        deferred: false,
+        replied: false
+    });
+    const restarting = { restartNotice: () => ({ secondsLeft: 12 }) };
+    const steady = { restartNotice: () => null };
+
+    test('only while an announced restart drains: feature commands get "restarting in N s", core commands keep working', async () => {
+        const feature = interaction('adventure');
+        expect(await refuseUnavailableCommand(feature, names, steady)).toBe(false);
+        expect(await refuseUnavailableCommand(feature, names, restarting)).toBe(true);
+        expect(feature.reply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Goobster is restarting in 12 s. Try that again in a minute.', ephemeral: true }));
+        const core = interaction('help');
+        expect(await refuseUnavailableCommand(core, names, restarting)).toBe(false);
+        expect(core.reply).not.toHaveBeenCalled();
+        const autocomplete = interaction('adventure', true);
+        expect(await refuseUnavailableCommand(autocomplete, names, restarting)).toBe(true);
+        expect(autocomplete.respond).toHaveBeenCalledWith([]);
+    });
+});
+
 describe('revision acks', () => {
     test('the file record carries version, worker, revision, pid and time only; bad names and revisions are refused', () => {
         const env = { GOOBSTER_MANAGER_STATE_DIR: dir('ack') };
