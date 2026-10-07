@@ -33,7 +33,7 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
         headers: body ? { 'Content-Type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : null
     });
-    let json: { error?: string | { code?: string; message?: string; details?: unknown }; feature?: string } | null = null;
+    let json: { error?: string | { code?: string; message?: string; details?: unknown }; feature?: string; operation?: unknown } | null = null;
     try { json = await res.json(); } catch { /* non-JSON */ }
     if (!res.ok) {
         // A route owned by an unavailable feature answers `{ error: 'FEATURE_UNAVAILABLE', feature }`
@@ -44,8 +44,12 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
                 json.feature ? { feature: json.feature } : null);
         }
         const error = json?.error || {};
+        // A refused Host operation still carries the plan it was refused with: its findings are what the page shows.
+        const details = json?.operation
+            ? { ...(error.details && typeof error.details === 'object' ? error.details as object : {}), operation: json.operation }
+            : (error.details || null);
         throw new ApiError(res.status, error.code || 'INTERNAL',
-            error.message || `Request failed (${res.status})`, error.details || null);
+            error.message || `Request failed (${res.status})`, details);
     }
     if (path === '/api/app/auth/logout' || path === '/api/app/auth/dev-session'
         || path === '/api/app/auth/native-login' || path === '/api/app/auth/register'

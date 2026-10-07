@@ -827,9 +827,13 @@ describe('the installation journeys (#330)', () => {
         const { h, cookie } = await installed();
         const elsewhere = path.join(os.tmpdir(), `elsewhere-${crypto.randomBytes(3).toString('hex')}`, 'goobster');
         const preview = await h.api(cookie, 'POST', '/operations', { kind: 'install.reconfigure', input: { roots: { cache: elsewhere } } });
-        const findings = ((preview.json.operation || preview.json.operation || {}).plan || {}).preflight;
+        const findings = ((preview.json.operation || {}).plan || {}).preflight;
         const codes = preview.status === 200 ? findings.findings.map(item => item.code) : [preview.json.error.code];
         expect(codes.some(code => ['ROOT_OUTSIDE_ALLOWED_BASES', 'PREFLIGHT_FAILED'].includes(code))).toBe(true);
+        if (preview.status !== 200) {
+            // The refusal carries the validated plan, so the page can list the findings that stopped it.
+            expect(findings.findings.map(item => item.code)).toContain('ROOT_OUTSIDE_ALLOWED_BASES');
+        }
         expect(fs.existsSync(elsewhere)).toBe(false);
     });
 

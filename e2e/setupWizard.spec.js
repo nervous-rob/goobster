@@ -448,3 +448,96 @@ test.describe('maintaining an installation', () => {
         expect(fs.existsSync(path.join(h.data, 'goobster.sqlite'))).toBe(false);
     });
 });
+
+const { freePort } = require('../tests/helpers/installFixture');
+const OPERATOR = '99000000000000390';
+const HOST_API = '/api/app/admin/host';
+
+/** A real portal (e2e/server.js) in front of the harness's manager, behind the authenticated bridge. */
+async function startPortal(h) {
+    const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'goobster-setup-portal-'));
+    const port = await freePort();
+    const server = createSecondServer({ port, dataDir: dir });
+    await server.start({
+        env: {
+            GOOBSTER_MANAGER_URL: h.url,
+            GOOBSTER_MANAGER_BRIDGE_KEY_FILE: path.join(h.data, 'manager', 'bridge-key')
+        }
+    });
+    return { url: server.url, stop: async () => { await server.stop(); fs.rmSync(dir, { recursive: true, force: true }); } };
+}
+
+async function devSession(page, portal, userId, name) {
+    const response = await page.request.post(`${portal.url}/api/app/auth/dev-session`, { data: { userId, name } });
+    expect(response.ok()).toBe(true);
+    const seeded = await page.request.post(`${portal.url}/e2e/fixtures/tutorial-progress`, { data: { userId, autoStart: false, rows: [] } });
+    expect(seeded.ok()).toBe(true);
+}
+
+test.describe('the same journeys from the portal Host room', () => {
+    let portal = null;
+    test.afterEach(async () => { if (portal) await portal.stop(); portal = null; });
+
+    test('a member is refused: the room says so and the routes answer 403', async ({ page }) => {
+        const h = await installation();
+        await h.provision({ features: [] });
+        portal = await startPortal(h);
+        await devSession(page, portal, C.MEMBER, C.MEMBER_NAME);
+
+        await page.goto(`${portal.url}/app/host/installation`);
+        await expect(page.getByText('Only the host of this installation can open this room.')).toBeVisible();
+        await expect(page.getByTestId('installation-card')).toHaveCount(0);
+        await expect(page.getByTestId('host-reconfigure')).toHaveCount(0);
+
+        for (const route of ['/install/record', '/install/suggest', '/lifecycle']) {
+            const response = await page.request.get(`${portal.url}${HOST_API}${route}`);
+            expect(response.status(), route).toBe(403);
+        }
+        const planned = await page.request.post(`${portal.url}${HOST_API}/operations`, { data: { kind: 'install.repair', input: {} } });
+        expect(planned.status()).toBe(403);
+    });
+
+    test('the host repairs from the Installation card without the browser holding a manager credential, and it is audited', async ({ page }) => {
+        const h = await installation();
+        await h.provision({ features: [] });
+        portal = await startPortal(h);
+        await devSession(page, portal, OPERATOR, 'Host operator');
+
+        await page.goto(`${portal.url}/app/host`);
+        await expect(page.getByTestId('installation-card')).toBeVisible();
+        await screenshot(page, 'portal-installation-card');
+        await page.getByTestId('host-repair').click();
+        await expect(page.getByTestId('repair-scope')).toBeVisible();
+        await page.getByRole('button', { name: 'Review the repair' }).click();
+        await expect(page.getByTestId('plan-repair')).toBeVisible();
+        await page.getByRole('button', { name: 'Repair', exact: true }).click();
+        await expect(page.getByTestId('repair-done')).toBeVisible({ timeout: 90_000 });
+
+        const cookies = await page.context().cookies();
+        expect(cookies.some((cookie) => cookie.name === 'goobster-manager-session')).toBe(false);
+        const storage = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]));
+        expect(storage).not.toContain('goobster-manager');
+
+        const audit = await page.request.get(`${portal.url}/api/app/admin/audit`);
+        expect(audit.status()).toBe(200);
+        const entries = (await audit.json()).entries;
+        const applied = entries.filter((entry) => entry.action === 'host.install.apply');
+        expect(applied.length).toBeGreaterThan(0);
+        expect(applied[0].actor).toBe(OPERATOR);
+        expect(JSON.stringify(applied)).not.toContain(h.dir);
+    });
+
+    test('uninstalling from the portal explains that the running portal cannot remove itself', async ({ page }) => {
+        const h = await installation();
+        await h.provision({ features: [], start: true });
+        portal = await startPortal(h);
+        await devSession(page, portal, OPERATOR, 'Host operator');
+
+        await page.goto(`${portal.url}/app/host`);
+        await page.getByTestId('host-uninstall').click();
+        await expect(page.getByTestId('keep-data')).toBeChecked();
+        await page.getByRole('button', { name: 'Review', exact: true }).click();
+        await expect(page.getByTestId('portal-uninstall-note')).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId('stop-workers')).toHaveCount(0);
+    });
+});

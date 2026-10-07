@@ -447,7 +447,7 @@ function mountHost(app, ctx, h) {
         }
         const planView = viewOf(planned.operation);
         const validated = await client.call({ actor: actorOf(req), method: 'POST', path: `/manager/api/operations/${operationId}/validate` });
-        const failure = failureOf(validated, { operation: planView });
+        const failure = failureOf(validated, { operation: (validated.body && viewOf(validated.body.operation)) || planView });
         if (failure) throw failure;
 
         const operation = viewOf(validated.body.operation) || planView;
