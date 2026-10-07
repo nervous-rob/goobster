@@ -13,8 +13,9 @@
  *   { "v": 1, "ok": true,  "operation": "...", "outcome": "done"|"noop", "detail": { ... }, "log": [ ... ] }
  *   { "v": 1, "ok": false, "operation": "...", "code": "SERVICE_FOREIGN", "message": "...", "log": [ ... ] }
  *
- * Values never travel in argv or the environment; a secret never travels at
- * all (no operation takes one). Validation here is strict and closed: an
+ * Values never travel in argv or the environment. A secret never travels at
+ * all: the one operation that sets a database password (`postgres.cluster.create`)
+ * takes its SCRAM-SHA-256 verifier, which the manager computes, never the password. Validation here is strict and closed: an
  * unknown field, a path outside the shape rules, an identifier that is not
  * `^[a-z][a-z0-9-]{0,31}$` is a refusal before anything runs. This module and
  * the files beside it are the helper's whole code: Node built-ins only.

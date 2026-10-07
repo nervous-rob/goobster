@@ -1108,8 +1108,8 @@ function nativeOperations(kit) {
             resumed = true;
             log.push('the cluster exists and is this installation\'s; continuing with it');
         } else {
-            if (input.mode === 'converge') throw refuse('CLUSTER_MISSING', 'There is no cluster of this installation to repair.');
             const ours = fs.existsSync(path.join(input.dataDirectory, NATIVE.marker)) && markerText(input.dataDirectory) === input.installationId && fs.existsSync(path.join(input.dataDirectory, 'PG_VERSION'));
+            if (input.mode === 'converge' && !(ours && d.family === 'rhel')) throw refuse('CLUSTER_MISSING', 'There is no cluster of this installation to repair.');
             if (ours && d.family === 'rhel') {
                 resumed = true;
             } else {

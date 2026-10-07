@@ -3,6 +3,8 @@
  * manager owns AND the installation is connected to is checked (documentation/
  * docker_postgres.md); with no `docker-postgres.json` this answers "ready"
  * without a single command, so every other installation behaves as before.
+ * The native cluster's own check (native/readiness.js) is asked whenever no
+ * Docker database is the one in use, so this is the supervisor's one gate.
  *
  * The check asks Docker for the container's own health (`pg_isready` runs inside
  * it) and, as the fallback when the daemon is not answering, a TCP connection to
@@ -39,9 +41,9 @@ function createReadiness({ settings, fs = nodeFs, now = () => new Date(), logger
     /** @returns {Promise<{ owned: boolean, ready: boolean, code: string|null, reason: string|null }>} never throws */
     async function check() {
         const doc = state.read(settings.storeDir, fs).doc;
-        if (!doc) return { owned: false, ready: true, code: null, reason: null };
+        if (!doc) return require('../native/readiness').createReadiness({ settings, fs, now, logger }).check();
         const dockerService = service();
-        if (!dockerService.connectedToOwned(doc)) return { owned: false, ready: true, code: null, reason: null };
+        if (!dockerService.connectedToOwned(doc)) return require('../native/readiness').createReadiness({ settings, fs, now, logger }).check();
         const host = doc.request.bind === '0.0.0.0' ? '127.0.0.1' : doc.request.bind;
         let container;
         try {

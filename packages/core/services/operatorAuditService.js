@@ -39,10 +39,12 @@ const ACTIONS = new Set([
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
     'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
     'manager.database.docker.provision', 'manager.database.docker.start', 'manager.database.docker.stop', 'manager.database.docker.repair', 'manager.database.docker.reconfigure',
+    'manager.database.native.provision', 'manager.database.native.start', 'manager.database.native.stop', 'manager.database.native.repair', 'manager.database.native.relocate',
     'manager.data.reset',
     'manager.backup.create', 'manager.backup.restore',
     'manager.privileged.service.register', 'manager.privileged.service.unregister', 'manager.privileged.user.create',
     'manager.privileged.updater.disable', 'manager.privileged.package.install',
+    'manager.privileged.postgres.cluster.create', 'manager.privileged.postgres.cluster.control', 'manager.privileged.postgres.cluster.remove', 'manager.privileged.postgres.cluster.relocate',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.

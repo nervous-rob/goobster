@@ -132,8 +132,9 @@ function roleState(family, installed, candidates = {}) {
  * @param {Function} [params.probePort]       `(port, bind) => Promise<boolean>` is it free
  * @param {string} [params.platform]
  * @param {string} [params.arch]
+ * @param {string|null} [params.passwd]       the text of /etc/passwd (tests; read from the machine when absent)
  */
-async function inspectHost({ fs = nodeFs, runner = null, env = process.env, distro = null, record = null, candidatePath = null, requiredBytes = MIN_FREE_BYTES, probePort = probeListen, platform = process.platform, arch } = {}) {
+async function inspectHost({ fs = nodeFs, runner = null, env = process.env, distro = null, record = null, candidatePath = null, requiredBytes = MIN_FREE_BYTES, probePort = probeListen, platform = process.platform, arch, passwd: passwdText = null } = {}) {
     const run = (runner || createRunner({ env })).run;
     const facts = distro || detectDistro.detect({ fs, platform, ...(arch ? { arch } : {}) });
     const report = {
@@ -200,8 +201,10 @@ async function inspectHost({ fs = nodeFs, runner = null, env = process.env, dist
     report.selinux = getenforce.missing ? { present: false, mode: null } : { present: true, mode: getenforce.stdout.trim() || null };
 
     // the postgres account
-    let passwd = '';
-    try { passwd = fs.readFileSync('/etc/passwd', 'utf8'); } catch { /* unreadable */ }
+    let passwd = typeof passwdText === 'string' ? passwdText : '';
+    if (typeof passwdText !== 'string') {
+        try { passwd = fs.readFileSync('/etc/passwd', 'utf8'); } catch { /* unreadable */ }
+    }
     report.postgresAccount = passwdEntry(passwd, 'postgres');
 
     // backup client

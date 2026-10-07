@@ -48,6 +48,7 @@ function release(text) {
  */
 function create({ distro = 'debian', installed = [], clusters = [], flags = {}, mounts = null, selinux = null, omit = [], available = null, ...extra } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-native-'));
+    fs.chmodSync(dir, 0o755);
     const bin = path.join(dir, 'bin');
     const statePath = path.join(dir, 'state.json');
     fs.mkdirSync(bin, { recursive: true });
@@ -165,6 +166,23 @@ function create({ distro = 'debian', installed = [], clusters = [], flags = {}, 
         /** `options` for `privileged.run` that route every operation through that spawn, with no elevation. */
         privilegedOptions(extra = {}) {
             return { platform: 'linux', elevation: { kind: 'root', prefix: [] }, spawn: api.spawn, helperPath: HELPER, ...extra };
+        },
+        /** What `settings.nativeDeps` needs so the manager reads THIS machine, not the host running the tests. */
+        nativeDeps(extra = {}) {
+            const distroLib = require('@goobster/core/db/native/distro');
+            const parsed = distroLib.parseOsRelease(fs.readFileSync(path.join(dir, 'etc', 'os-release'), 'utf8'));
+            const facts = distroLib.classify({ release: parsed, arch: 'x64' });
+            const account = state.accounts.postgres;
+            return {
+                distro: { ...facts, remedy: facts.reason ? distroLib.REASONS[facts.reason] : null },
+                passwd: `postgres:x:${account.uid}:${account.gid}::${account.home}:${account.shell}\n`,
+                allowTransient: true,
+                probePort: async (port) => !api.state().listening.includes(port),
+                sleep: async () => {},
+                pollMs: 1,
+                waitMs: 2000,
+                ...extra
+            };
         },
         helperDeps(extra = {}) {
             return { sandbox: true, unitDir: path.join(dir, 'etc', 'systemd', 'system'), cronDir: path.join(dir, 'etc', 'cron.d'), updateConf: path.join(dir, 'etc', 'goobster-update.conf'), commandDirs: [bin], sysroot: dir, sleep: () => {}, ...extra };
