@@ -48,7 +48,7 @@
 
 const { toGateway } = require('../gateway');
 const { requireSurface, surfaceActive } = require('../features/gate');
-const { settle } = require('./lifecycle');
+const { settle, contractBoundMs } = require('./lifecycle');
 
 const FOLLOWUP_INTERVAL_MS = 60 * 1000;
 const IN_FLIGHT_POLL_MS = 100;
@@ -369,6 +369,7 @@ async function startCoreRuntime({
             if (typeof runner.waitForCheckpoint === 'function') {
                 settleTasks.push({
                     name: 'expedition',
+                    contract: 'expedition',
                     drain: () => runner.waitForCheckpoint(),
                     interrupt: () => runner.interruptLive?.()
                 });
@@ -387,7 +388,7 @@ async function startCoreRuntime({
             stoppers.push(async () => reflection.stop?.());
             let reflectionStopped = null;
             onPause(() => { reflectionStopped = Promise.resolve(reflection.stop?.()).catch(() => {}); });
-            settleTasks.push({ name: 'knowledgeReflection', drain: () => reflectionStopped });
+            settleTasks.push({ name: 'knowledgeReflection', contract: 'runtimeStep', drain: () => reflectionStopped });
         });
         await step('ledgerRetention', () => {
             // work_failures / resource_events / operator_audit retention
@@ -480,9 +481,10 @@ async function startCoreRuntime({
                 return newWorkPaused;
             },
             /**
-             * Wait, at most `boundMs`, for the passes already running and the
-             * expedition checkpoint; whatever is still going then is
-             * interrupted. Calls pauseNewWork() first. Never throws.
+             * Wait for the passes already running and the expedition
+             * checkpoint, each at most its contract's bound and never past
+             * `boundMs`; whatever is still going then is interrupted. Calls
+             * pauseNewWork() first. Never throws.
              */
             async settleInFlight(boundMs) {
                 this.pauseNewWork();
@@ -490,6 +492,7 @@ async function startCoreRuntime({
                 if (inFlight.length > 0) {
                     tasks.push({
                         name: 'runtimeSteps',
+                        contract: 'runtimeStep',
                         drain: () => new Promise((resolve) => {
                             const check = () => {
                                 if (!inFlight.some(busy => { try { return busy(); } catch { return false; } })) return resolve();
@@ -499,7 +502,8 @@ async function startCoreRuntime({
                         })
                     });
                 }
-                return settle(tasks, boundMs);
+                const settled = await Promise.all(tasks.map(task => settle([task], contractBoundMs(task.contract, boundMs))));
+                return settled.flat();
             },
             async stop() {
                 if (stopped) return;

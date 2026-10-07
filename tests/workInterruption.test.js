@@ -380,6 +380,45 @@ describe('core runtime: stop new work, drain inside the bound', () => {
         await second.stop();
     });
 
+    test('each in-flight kind gets its own contract bound inside the drain window: passes 15 s, the expedition checkpoint 45 s', async () => {
+        const log = [];
+        const { deps, FakePersonal, runner } = fakeDeps(log);
+        const runtime = await startCoreRuntime({ gateway: null, logger: quiet, deps });
+        FakePersonal.last.ticking = true;
+        jest.useFakeTimers();
+        try {
+            let results = null;
+            runtime.settleInFlight(60_000).then((value) => { results = value; });
+            await jest.advanceTimersByTimeAsync(14_900);
+            expect(results).toBeNull();
+            expect(log).not.toContain('interrupt:expeditions');
+            await jest.advanceTimersByTimeAsync(30_000);
+            expect(results).toBeNull();
+            await jest.advanceTimersByTimeAsync(200);
+            expect(Object.fromEntries(results.map(item => [item.name, item.outcome]))).toEqual({
+                expedition: 'interrupted', knowledgeReflection: 'settled', runtimeSteps: 'interrupted'
+            });
+            expect(log).toContain('interrupt:expeditions');
+
+            const quick = fakeDeps([]);
+            const third = await startCoreRuntime({ gateway: null, logger: quiet, deps: quick.deps });
+            quick.FakePersonal.last.ticking = true;
+            quick.runner.live.resolve();
+            let quickResults = null;
+            third.settleInFlight(60_000).then((value) => { quickResults = value; });
+            await jest.advanceTimersByTimeAsync(15_100);
+            expect(Object.fromEntries(quickResults.map(item => [item.name, item.outcome]))).toEqual({
+                expedition: 'settled', knowledgeReflection: 'settled', runtimeSteps: 'interrupted'
+            });
+            quick.FakePersonal.last.ticking = false;
+            await third.stop();
+        } finally {
+            jest.useRealTimers();
+        }
+        FakePersonal.last.ticking = false;
+        await runtime.stop();
+    });
+
     test('a paused instance that stops new work never starts its workers on resume', async () => {
         const log = [];
         const { deps } = fakeDeps(log);
