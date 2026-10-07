@@ -350,12 +350,11 @@ operation-kind family is one module under `apps/manager/engine/kinds/`
 exporting `({ settings, fs, now, logger }) => OperationKind[]`. A kind name
 registered twice is a startup error, and the privileged names stay refused.
 
-- **#324 (config, providers, defaults):** new kinds in `apps/manager/engine/kinds/`
-  following `features.set`; secret values go in the kind's `privateInput`,
-  never the plan (the journal scrubs any value under a key-shaped name to
-  `"sk-…[redacted]"` as a backstop). A fresh-install preset
-  (`featureState.freshPreset()`) is a defaults decision for #324; today the
-  first `features.set` builds on the legacy seed.
+- **#324 (config, providers, defaults):** done: `config.set`, `defaults.set`,
+  `GET /manager/api/config` and `POST /manager/api/config/probe`, described in
+  `documentation/manager_configuration.md`. A fresh-install feature preset
+  (`featureState.freshPreset()`) is still undecided; today the first
+  `features.set` builds on the legacy seed.
 - **#325 (supervisor, restart):** promoting `pendingActive` to `active` at
   restart, the restart operation itself, and `GOOBSTER_MANAGER_ALLOWED_HOSTS`
   style Host entries for container deployments.

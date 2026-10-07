@@ -11,9 +11,14 @@
  */
 
 /** @type {Array<(api: import('express').Router, helpers: import('./server').RouteHelpers) => void>} */
-const routes = [];
+const routes = [
+    require('./routes/config').createConfigMount()
+];
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
-const kinds = [];
+const kinds = [
+    require('./engine/kinds/config').createKinds,
+    require('./engine/kinds/defaults').createKinds
+];
 
 module.exports = { routes, kinds };
