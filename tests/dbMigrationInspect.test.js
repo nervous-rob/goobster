@@ -26,6 +26,7 @@ const { expectedSchema, isCopyable, topologicalOrder, quoteIdent } = require('@g
 const { ROLLBACK_LIMIT } = require('@goobster/core/db/migration');
 
 const BASE_URL = process.env.GOOBSTER_DB_URL ? process.env.GOOBSTER_DB_URL.split('?')[0] : null;
+const THROWAWAY_SCHEMA = /^[a-z0-9]+_\d+_[0-9a-f]+$/;
 const withPostgres = BASE_URL ? describe : describe.skip;
 const PASSWORD = 'pw-inspect-never-printed-41d2';
 const cleanups = [];
@@ -285,7 +286,8 @@ withPostgres('the Postgres target', () => {
         const catalog = async () => JSON.stringify({
             relations: await rows('SELECT n.nspname, c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 ORDER BY 1, 2', [name]),
             extensions: await rows('SELECT extname, extversion FROM pg_extension ORDER BY 1'),
-            schemas: (await rows('SELECT nspname FROM pg_namespace ORDER BY 1')).map(row => row.nspname).filter(item => !/^(mig336|test_)/.test(item) || item === name),
+            // Other suites create and drop their own per-process schemas in this database while this runs; only this target's is ours to watch.
+            schemas: (await rows('SELECT nspname FROM pg_namespace ORDER BY 1')).map(row => row.nspname).filter(item => item === name || !THROWAWAY_SCHEMA.test(item)),
             types: await rows('SELECT COUNT(*) AS n FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = $1', [name])
         });
         return { name, url, rows, catalog, admin };
