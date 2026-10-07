@@ -94,6 +94,7 @@ module.exports = [
             'logs/**',
             'coverage/**',
             'apps/web/dist/**',
+            'dist/**',
             'test-results/**',
             'playwright-report/**',
             'blob-report/**'
