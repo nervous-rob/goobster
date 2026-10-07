@@ -1,5 +1,11 @@
 # Raspberry Pi Setup Guide
 
+> A Raspberry Pi running 64-bit Raspberry Pi OS Bookworm can also use the
+> self-extracting installer, which registers a systemd service and manages updates
+> itself: see [linux_install.md](linux_install.md). This guide is the
+> source-checkout install (`scripts/install-rpi.sh`); an installation made this
+> way is adopted by the manager without reinstalling.
+
 Goobster runs comfortably on a **Raspberry Pi 4B** (2GB minimum, 4GB recommended if you run Ollama on the same device). This guide covers a fresh setup on Raspberry Pi OS.
 
 ## Requirements

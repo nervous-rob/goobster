@@ -1,7 +1,7 @@
 ---
 title: Manager install, adoption, repair and uninstall (installer P3.3)
 kind: reference
-summary: How the manager installs a verified release payload, adopts an existing installation, reconfigures, repairs and uninstalls - the installation record (version 2) and what the manager owns, discovery and preflight, the install.new, install.reconfigure, install.repair, install.uninstall and adopt kinds with their steps, resume after a crash, updater reconcile, the tombstone and what an uninstall keeps, and the headless CLI (flags, answers-file schema, exit codes). Also what is not done yet - OS service registration and the privileged helper.
+summary: How the manager installs a verified release payload, adopts an existing installation, reconfigures, repairs and uninstalls - the installation record (version 2) and what the manager owns, discovery and preflight, the install.new, install.reconfigure, install.repair, install.uninstall and adopt kinds with their steps, resume after a crash, updater reconcile, the tombstone and what an uninstall keeps, and the headless CLI (flags, answers-file schema, exit codes). Also the privileged steps (Linux service registration through the helper, deferred on other platforms) and what is not done yet.
 when: Installing, repairing, moving or removing a Goobster installation from a terminal or a script; adopting a Raspberry Pi, PM2, Docker or manual checkout under the manager; understanding what an uninstall deletes and what it never touches; scripting the manager CLI; building a bootstrapper that must call the install engine.
 tags: [installer, manager, install, adopt, repair, uninstall, reconfigure, cli, preflight, tombstone, updater]
 ---
@@ -15,11 +15,13 @@ headless command line for them. The release payload comes from
 `documentation/packaging.md` (verification, staging, atomic activation); this
 document is about the manager around it.
 
-Nothing here registers an operating-system service. The privileged operations
-are named and shaped (see "Privileged steps") and answer `501`; the
-bootstrappers (#331-#333) implement them. A fresh install therefore finishes
-with exit code 5: everything is on disk and the one step that needs privilege
-is recorded as deferred.
+The one step that needs administrator rights, `register-service`, goes through
+the privileged helper (see "Privileged steps"). On Linux the helper is built
+(#333, [linux_install.md](linux_install.md)): the install registers a systemd
+service, or finishes in a documented manual-manager fallback when it cannot. On
+a platform whose helper does not exist yet (Windows #331, macOS #332) the
+operations answer `501 NOT_IMPLEMENTED`, a fresh install finishes with exit code
+5, and everything is on disk with that one step recorded as deferred.
 
 ## The installation record
 
@@ -127,7 +129,13 @@ credential), or claimed and asked locally/over a session. Steps:
   catalog (secrets by value, from the answers file or the prompt, never from
   argv); `write-features` writes `data/features.json` for the selection.
 - `activate` is the atomic switch of `current/` with `previous/` kept.
-- `register-service` records a privileged step (deferred).
+- `register-service` registers the installation's service (Linux: creates the
+  `goobster` account when `createRuntimeUser` is set, writes
+  `<code root>/goobster.env`, registers a marker-bearing systemd unit and records it
+  in `<manager store>/services.json`). Without systemd or rights it is
+  `skipped` with `MANUAL_FALLBACK` and prints the commands to run the manager by
+  hand; with `registerService: false` it is `NOT_REQUESTED` (the roots env file is
+  still written). Other platforms: deferred.
 
 ### `install.reconfigure`
 
@@ -186,7 +194,7 @@ updater found:
 | Updater | Result |
 | --- | --- |
 | cron line for this code | Commented in place as `#goobster-manager-disabled: <line>` (reversible); the user crontab only. |
-| systemd timer | Needs the privileged `updater.disable` (deferred), and the checkout's `scripts/auto-update.sh` must carry the `goobster-manager-guard` marker, else the plan is `UPDATER_CONFLICT`. |
+| systemd timer | Needs the privileged `updater.disable` (Linux: `systemctl disable --now` of a timer that updates this code root; deferred elsewhere), and the checkout's `scripts/auto-update.sh` must carry the `goobster-manager-guard` marker, else the plan is `UPDATER_CONFLICT`. |
 | PM2 watch | `UPDATER_CONFLICT`: stop the watch yourself, then adopt. |
 | `keepUpdater: true` | The record says `updater.kind: 'script'` and nothing is changed. |
 
@@ -234,10 +242,16 @@ payload directories behind; `repair` or a later reconfigure removes them.
 
 `apps/manager/privileged.js` declares `service.register`,
 `service.unregister`, `package.install`, `updater.disable` and `user.create`
-with the input each will take (`INPUT_SHAPES`). All answer `501
-NOT_IMPLEMENTED`. When an install step needs one, the step is recorded
-`deferred` with the operation name, never run, and the CLI exits 5. The
-manager never executes a shell command for these.
+with the input each takes (`INPUT_SHAPES`) and dispatches them to the platform's
+helper (`apps/manager/privileged/`). On Linux the helper implements all but
+`package.install`: it reads one JSON document on stdin, runs as root through
+`sudo -n` or `pkexec`, and validates every field against a closed shape before it
+acts. What it does, how it is started and what it never does are in
+[linux_install.md](linux_install.md), "What runs as root". Where no helper exists
+for the platform, or for `package.install` on Linux, the operation answers `501
+NOT_IMPLEMENTED`; the step is then recorded `deferred` with the operation name,
+never run, and the CLI exits 5. The manager never executes a shell command for
+these. Each operation writes a `manager.privileged.<operation>` audit row.
 
 ## The CLI
 
@@ -308,7 +322,7 @@ Other fields: `database.engine`, `runtimeUser`, `registerService` (install);
 | 2 | Invalid input, bad answers file, or a preflight block. |
 | 3 | Refused: another operation holds the lock, tampered ownership, wrong state, existing installation, unknown service owner. |
 | 4 | Interrupted after at least one step; run the same command again to resume. |
-| 5 | Applied, but a step is deferred for the privileged helper (not used by `migrate`). |
+| 5 | Applied, but a step is deferred because no privileged helper exists for it on this platform (not used by `migrate`). A Linux install that falls back to the manual manager exits 0. |
 
 The CLI runs with `via: 'local'`: whoever can write the manager store can
 run it, which is the same guarantee the recovery credential gives the
@@ -361,8 +375,9 @@ accepted on the command line. The audit action is `manager.data.reset`.
 
 ## Not done here
 
-- OS service registration, package installation, user creation and the
-  systemd timer disable: privileged helper, #331-#333.
+- Windows service and macOS launchd registration (#331, #332), and
+  package installation on every platform (system dependencies are reported,
+  never installed).
 - Network download and archive sources: only a local payload directory.
   Production signing keys: #341.
 - Lifecycle workers for a payload `current/app` layout (the lifecycle layer
