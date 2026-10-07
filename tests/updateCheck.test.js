@@ -166,7 +166,7 @@ describe('update.policy', () => {
         const { planned } = await drive(harness, 'update.policy', { mode: 'apply' }, { apply: false });
         expect(planned.plan.effectiveMode).toBe('apply');
         const doc = harness.manager.store.readInstallation().doc;
-        expect(policy.effectiveMode({ ...doc.update, mode: 'apply' }, { kind: 'auto-update-timer' })).toMatchObject({ mode: 'download', capped: true });
+        expect(policy.effectiveMode({ ...doc.update, mode: 'apply' }, { kind: 'auto-update.sh' })).toMatchObject({ mode: 'download', capped: true });
         expect(TARGET).toMatch(/-/);
     });
 });
