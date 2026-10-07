@@ -13,6 +13,7 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
 const { legalizeObservatoryGrants } = require('../utils/appletCapabilities');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const FENCE_RE = /```(html|svg)[^\n]*\n([\s\S]*?)```/gi;
 const MAX_SOURCE = 200_000;
@@ -347,7 +348,9 @@ class WebAppletService {
      * Defaults to the workshop inbox project, creating it if needed.
      */
     async promote(params) {
-        return require('./workshopPinMigration').promoteToProject(params);
+        const migration = requireOptional('./workshopPinMigration', { feature: 'projects' });
+        if (!migration) throw new WebAppletError(404, 'FEATURE_UNAVAILABLE', 'Projects are not installed on this server.');
+        return migration.promoteToProject(params);
     }
 
     async countUser(userId) {

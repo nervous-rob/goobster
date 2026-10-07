@@ -4,7 +4,7 @@
  * `automationService` never has to reach into an app's command modules.
  */
 
-const { EmbedBuilder } = require('discord.js');
+const { discord } = require('../../utils/optionalModule');
 
 /** promptText marker for the scheduled daily dedication automation row. */
 const WHEEL_MARKER = '__GOBLIN_WHEEL__';
@@ -40,7 +40,7 @@ function buildWheelEmbed(result, currencyName, names) {
         if (skipped.length > 5) lines.push(`💤 ...and ${skipped.length - 5} more who could not ride`);
     }
 
-    return new EmbedBuilder()
+    return new discord.EmbedBuilder()
         .setTitle('🎡 THE WHEEL HAS SPOKEN 🎡')
         .setColor(result.zeroDte ? 0xed4245 : 0xfaa61a)
         .setDescription(

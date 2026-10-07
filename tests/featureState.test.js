@@ -1420,10 +1420,12 @@ describe('gate.js', () => {
 });
 
 describe('module boundaries', () => {
-    test('the catalog requires only the inventory and descriptor modules', () => {
+    test('the catalog requires only the inventory, descriptor and payload-glob modules', () => {
         const source = fs.readFileSync(path.join(ROOT, 'packages/core/features/catalog.js'), 'utf8');
         const required = [...source.matchAll(/require\('([^']+)'\)/g)].map(match => match[1]).sort();
-        expect(required).toEqual(['./descriptors/adapters', './descriptors/integrations', './descriptors/media', './descriptors/workspace', './inventory']);
+        expect(required).toEqual(['./descriptors/adapters', './descriptors/integrations', './descriptors/media', './descriptors/workspace', './inventory', './payloadGlob']);
+        const glob = fs.readFileSync(path.join(ROOT, 'packages/core/features/payloadGlob.js'), 'utf8');
+        expect([...glob.matchAll(/require\(/g)]).toEqual([]);
     });
 
     test('the resolver does not import an app and loads no config module until asked', () => {

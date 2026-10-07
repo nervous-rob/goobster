@@ -1,6 +1,7 @@
 const aiService = require('../aiService');
 const toolsRegistry = require('../../utils/toolsRegistry');
 const { getPromptWithGuildPersonality } = require('../../utils/memeMode');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 const { getBotPreferredName, getPreferredUserName } = require('../../utils/guildContext');
 const { buildConversationalPrompt } = require('../../utils/chat/promptContext');
 const { FALLBACK_PERSONALITY } = require('../../utils/chat/promptFragments');
@@ -152,8 +153,8 @@ const MAX_SCREEN_FRAMES_PER_TURN = 2;
  * Never throws - screen context is always best-effort.
  */
 async function buildScreenTurnContext(session, segments) {
-    const screenVisionService = require('../screenVisionService');
-    if (!screenVisionService.isEnabled()) return null;
+    const screenVisionService = requireOptional('../screenVisionService', { feature: 'screenVision' });
+    if (!screenVisionService?.isEnabled()) return null;
 
     const images = [];
     const lines = [];
@@ -208,7 +209,8 @@ function formatScreenContextBlock(screenContext) {
  */
 function recordScreenMemories(session, screenContext, turnText) {
     if (!screenContext || screenContext.captures.length === 0) return;
-    const screenVisionService = require('../screenVisionService');
+    const screenVisionService = requireOptional('../screenVisionService', { feature: 'screenVision' });
+    if (!screenVisionService) return;
     for (const capture of screenContext.captures) {
         screenVisionService.recordSessionMemory({
             guildId: session.guildId,

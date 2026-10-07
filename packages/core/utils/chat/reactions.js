@@ -2,7 +2,8 @@
  * Message-reaction controls on bot replies: regenerate (🔄), pin (📌),
  * branch (🌱), mark helpful (💡), deep dive (🔍), and summarize (📝).
  */
-const { ThreadAutoArchiveDuration } = require('discord.js');
+const { discord, forModule } = require('../optionalModule');
+const requireOptional = forModule(module);
 const db = require('../../db');
 const aiService = require('../../services/aiService');
 const { chunkMessage } = require('../index');
@@ -28,8 +29,8 @@ async function handleReactionAdd(reaction, user) {
     try {
         if (reaction.emoji.name === '📋') {
             // Capture a message (e.g. a bug report) as a GitHub issue proposal
-            const { handleIssueCaptureReaction } = require('../issueCapture');
-            await handleIssueCaptureReaction(reaction, user);
+            const issueCapture = requireOptional('../issueCapture', { feature: 'github' });
+            if (issueCapture) await issueCapture.handleIssueCaptureReaction(reaction, user);
         } else if (reaction.emoji.name === '🔄') {
             console.log('Handling regenerate reaction');
             await msg.channel.sendTyping();
@@ -110,7 +111,7 @@ async function handleReactionAdd(reaction, user) {
             const newThread = await msg.channel.threads.create({
                 name: branchName,
                 startMessage: msg,
-                autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek
+                autoArchiveDuration: discord.ThreadAutoArchiveDuration.OneWeek
             });
             await newThread.send("🌱 New conversation branch created! Previous context will be maintained.");
         } else if (reaction.emoji.name === '💡') {

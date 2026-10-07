@@ -15,6 +15,7 @@
 const axios = require('axios');
 const mailConfig = require('../config/mailConfig');
 const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const RESEND_API = 'https://api.resend.com/emails';
 
@@ -45,7 +46,8 @@ function normalizeEmail(raw) {
 }
 
 function smtpTransport(config) {
-    const nodemailer = require('nodemailer');
+    const nodemailer = requireOptional('nodemailer', { feature: 'mail' });
+    if (!nodemailer) throw new Error('SMTP delivery is not installed on this instance.');
     if (config.smtp.url) {
         return nodemailer.createTransport(config.smtp.url, { connectionTimeout: config.timeoutMs });
     }
