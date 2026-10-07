@@ -170,7 +170,8 @@ async function setup({ docker = {}, dockerDeps = {}, server = scriptedServer(), 
     }
 
     settings.databaseDeps = real ? {} : { ...server.deps };
-    settings.dockerDeps = real ? { waitMs: 180000, pollMs: 1000, ...dockerDeps } : { sleep: async () => {}, probeListen: async () => true, pgDump: PG17, waitMs: 2000, pollMs: 5, platform: 'linux', hostArch: 'x64', ...dockerDeps };
+    // `tcpProbe` is the readiness gate's own port check: scripted runs must never depend on what listens on this host.
+    settings.dockerDeps = real ? { waitMs: 180000, pollMs: 1000, ...dockerDeps } : { sleep: async () => {}, probeListen: async () => true, tcpProbe: async () => true, pgDump: PG17, waitMs: 2000, pollMs: 5, platform: 'linux', hostArch: 'x64', ...dockerDeps };
     const installation = () => harness.manager.store.readInstallation().doc;
     const overlay = () => environment.read(settings.storeDir);
     const names = () => createDockerService({ settings }).resourceNames(installation().installationId);
@@ -1008,6 +1009,11 @@ realDocker('a real Docker daemon and a real pgvector container (GOOBSTER_DOCKER_
         }
     }, 120000);
 
+    /** Whatever the body leaves behind on the daemon goes, even when an expectation fails half way. */
+    const retireAfter = env => cleanups.push(async () => {
+        try { await createDockerService({ settings: env.settings }).retire({ installationId: env.installation().installationId, remove: true }); } catch { /* already gone */ }
+    });
+
     const query = async (env, text) => {
         const client = new Client({ connectionString: env.overlay().values.GOOBSTER_DOCKER_DB_URL || env.overlay().values.GOOBSTER_DB_URL });
         await client.connect();
@@ -1017,6 +1023,7 @@ realDocker('a real Docker daemon and a real pgvector container (GOOBSTER_DOCKER_
     test('provision, restart persistence, a custom host path, a port conflict, an unavailable daemon, an interrupted setup and repair; the unrelated postgres:16 container and its volume survive everything', async () => {
         const port = await freePort();
         const env = await setup({ real: true, workers: false });
+        retireAfter(env);
         const { applied } = await provision(env, { port });
         expect(applied.operation.status).toBe('applied');
         const names = env.names();
@@ -1059,6 +1066,7 @@ realDocker('a real Docker daemon and a real pgvector container (GOOBSTER_DOCKER_
     test('a custom host directory holds the data', async () => {
         const port = await freePort();
         const env = await setup({ real: true, workers: false });
+        retireAfter(env);
         const dir = path.join(scratch('real-path'), 'pg');
         const { applied } = await provision(env, { port, storage: { kind: 'path', path: dir } });
         expect(applied.operation.status).toBe('applied');
@@ -1072,6 +1080,7 @@ realDocker('a real Docker daemon and a real pgvector container (GOOBSTER_DOCKER_
     test('an interrupted setup over a volume is resumed: the half-made container and volume are ours and are replaced', async () => {
         const port = await freePort();
         const env = await setup({ real: true, workers: false });
+        retireAfter(env);
         const svc = createDockerService({ settings: env.settings });
         const request = require('@goobster/manager/docker/service').parseRequest({ port, pull: true });
         const id = env.installation().installationId;

@@ -127,6 +127,9 @@ jobs:
             --report "$REPORTS/package-smoke-$TARGET.json" 2>&1 | tee "$REPORTS/package-smoke-$TARGET.log"
           exit "${PIPESTATUS[0]}"
 
+      - name: appimagetool's host prerequisite (desktop-file-validate)
+        run: sudo apt-get install -y --no-install-recommends desktop-file-utils
+
       - name: Build the .run and the AppImage (a skipped AppImage fails the job)
         run: |
           node scripts/package-bootstrap.js --target "$TARGET" --payload "$PAYLOAD" --out "$ARTIFACTS" \

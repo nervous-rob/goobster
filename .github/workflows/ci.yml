@@ -388,7 +388,14 @@ jobs:
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client-17 || echo "::warning::postgresql-client-17 not installed; BACKUP_TOOLS_* is exercised as missing"
-          pg_dump --version || true
+          # Ubuntu's pg_wrapper keeps answering with the image's default client (16); point the manager
+          # at the 17 binaries the way an operator would (documentation/backup_and_restore.md).
+          if [ -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            echo "GOOBSTER_PG_BIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+            /usr/lib/postgresql/17/bin/pg_dump --version
+          else
+            pg_dump --version || true
+          fi
 
       - name: Docker Postgres specs against the real daemon
         env:
