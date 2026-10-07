@@ -554,6 +554,30 @@ describe('stale buttons, modals and selects', () => {
         expect(mockHandlers.project).toHaveBeenCalledTimes(1);
     });
 
+    test('Deny on a sandbox request still resolves with sandbox off; Approve is refused', async () => {
+        useState({ config: EVERYTHING_ON, inactive: ['sandbox'] });
+        const deny = button('deny_sbxreq_7');
+        await interactionCreate.execute(deny);
+        expect(mockHandlers.sandbox).toHaveBeenCalledWith('deny', 7, deny);
+        expect(deny.reply).not.toHaveBeenCalled();
+
+        mockHandlers.sandbox.mockClear();
+        const approve = button('approve_sbxreq_7');
+        await interactionCreate.execute(approve);
+        expect(mockHandlers.sandbox).not.toHaveBeenCalled();
+        expect(approve.reply).toHaveBeenCalledWith(UNAVAILABLE);
+        expect(approve.deferUpdate).not.toHaveBeenCalled();
+    });
+
+    test('only the decline action of a resolve-only token is let through; other tokens and actions keep refusing', async () => {
+        useState({ config: EVERYTHING_ON, inactive: ['tavern', 'projects', 'sandbox'] });
+        for (const customId of ['deny_tavern_1', 'decline_projectinvite_1', 'confirm_sbxreq_1', 'cancel_sbxreq_1']) {
+            const interaction = button(customId);
+            await interactionCreate.execute(interaction);
+            expect({ customId, replied: interaction.reply.mock.calls.length }).toEqual({ customId, replied: 1 });
+        }
+    });
+
     test('core routed tokens are never refused, even with every optional feature off', async () => {
         useState({ config: EVERYTHING_ON, inactive: MANAGEABLE });
         for (const [customId, key] of [
@@ -589,6 +613,48 @@ describe('stale buttons, modals and selects', () => {
             expect(runSpy).not.toHaveBeenCalled();
             const row = await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id });
             expect(row.status).toBe('PENDING');
+        });
+
+        test('Cancel still clears a pending action of a feature that is off; Confirm is refused', async () => {
+            const launch = await pending('agent-launch');
+            const issue = await pending('github-issue');
+            useState({ config: EVERYTHING_ON, inactive: ['github', 'cursor'] });
+            for (const id of [launch, issue]) {
+                mockHandlers.integration.mockClear();
+                const cancel = button(`deny_intaction_${id}`);
+                await interactionCreate.execute(cancel);
+                expect(mockHandlers.integration).toHaveBeenCalledWith('deny', id, cancel);
+                expect(cancel.reply).not.toHaveBeenCalled();
+
+                mockHandlers.integration.mockClear();
+                const confirm = button(`approve_intaction_${id}`);
+                await interactionCreate.execute(confirm);
+                expect(mockHandlers.integration).not.toHaveBeenCalled();
+                expect(confirm.reply).toHaveBeenCalledWith(UNAVAILABLE);
+            }
+        });
+
+        test('nothing enforced off: no pending_integration_actions read is added; with an owner off the row is read', async () => {
+            const id = await pending('github-issue');
+            const getSpy = jest.spyOn(db, 'get');
+            try {
+                useState({ config: EVERYTHING_ON });
+                getSpy.mockClear();
+                await interactionCreate.execute(button(`approve_intaction_${id}`));
+                expect(getSpy.mock.calls.filter(([sql]) => /pending_integration_actions/.test(sql))).toEqual([]);
+
+                useState({ config: EVERYTHING_ON, inactive: ['tavern'] });
+                getSpy.mockClear();
+                await interactionCreate.execute(button(`approve_intaction_${id}`));
+                expect(getSpy.mock.calls.filter(([sql]) => /pending_integration_actions/.test(sql))).toEqual([]);
+
+                useState({ config: EVERYTHING_ON, inactive: ['github'] });
+                getSpy.mockClear();
+                await interactionCreate.execute(button(`approve_intaction_${id}`));
+                expect(getSpy.mock.calls.filter(([sql]) => /pending_integration_actions/.test(sql))).toHaveLength(1);
+            } finally {
+                getSpy.mockRestore();
+            }
         });
 
         test('a GitHub issue is refused when github is off, but a Cursor launch is not (cursor needs github, so both are off)', async () => {

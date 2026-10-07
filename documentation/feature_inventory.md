@@ -344,7 +344,13 @@ the command set change on restart, interactions are refused live.
   paginator's own collector and never parsed as the `search` router token),
   then the second `_` token - and refuses an off owner before any handler
   or write. `intaction` buttons resolve their owner from the pending
-  action's `type` (`github-issue` → github, `agent-launch` → cursor).
+  action's `type` (`github-issue` → github, `agent-launch` → cursor), and
+  that read is skipped when neither owner is enforced off. Deny / Cancel on
+  a sandbox request (`sbxreq`) or an integration action (`intaction`) is
+  let through whatever is off, because it only resolves the pending row and
+  executes nothing, so those rows can always be cleared (a table of
+  resolve-only actions in `interactionCreate.js`, one mechanism for both
+  tokens); Approve / Confirm is refused.
 - Runtime steps: `coreRuntime.step(name, fn, { feature })` never invokes
   the callback of an enforced-off owner and records
   `{ status: 'skipped', reason: 'feature', feature }` in `runtime.report`
