@@ -468,6 +468,14 @@ Work:
    `GOOBSTER_DOCKER_TESTS=1` in a CI job that has a daemon. Not built here:
    native PostgreSQL (#340), moving a data directory, a remote Docker host and
    Windows containers. See [docker_postgres.md](docker_postgres.md).
+   PR [#368](https://github.com/nervous-rob/goobster/pull/368) (stacked on
+   #367): SQLite full suite 287 suites / 5853 passed; Postgres `core` 2466 and
+   `portal` 1137 passed in isolated schemas; Playwright 254 passed; lint, smoke,
+   docs and group inventory green; the `test (docker postgres)` CI job runs the
+   gated real-daemon blocks. A delete-data uninstall that leaves the volume
+   warns `DOCKER_DATA_RETAINED`.
+
+   The P4.5 chooser below:
    PR [#365](https://github.com/nervous-rob/goobster/pull/365) (stacked on
    #363, merging #362): SQLite full suite 276 suites / 5551 passed; Postgres
    `core` 2186 and `portal` 1116 passed in isolated schemas, the real-server
