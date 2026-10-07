@@ -71,7 +71,33 @@
             "properties": {
                 "engine": { "enum": ["sqlite", "postgres"] },
                 "connection": { "$ref": "#/definitions/dbConnection" },
-                "docker": { "$ref": "#/definitions/dockerRequest" }
+                "docker": { "$ref": "#/definitions/dockerRequest" },
+                "native": { "$ref": "#/definitions/nativeRequest" }
+            }
+        },
+        "nativeRequest": {
+            "type": "object",
+            "description": "A PostgreSQL cluster the installer creates and owns on this machine, with the distribution's packages (documentation/native_postgres.md). Give one of `connection`, `docker` or `native`. No password is asked: it is generated, and only its SCRAM-SHA-256 verifier reaches the privileged helper.",
+            "additionalProperties": false,
+            "properties": {
+                "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+                "bind": { "type": "string", "minLength": 7, "maxLength": 15, "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$" },
+                "acknowledgeLanBind": { "type": "boolean" },
+                "dataDirectory": { "type": "string", "minLength": 2, "maxLength": 200, "pattern": "^/[A-Za-z0-9._+/-]+$", "description": "Where the cluster's data lives. Default: the distribution's data parent directory plus the cluster name." },
+                "role": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "database": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "installPackages": { "type": "boolean", "description": "Approve installing the PostgreSQL 17 packages (and the PostgreSQL project's signed repository when the distribution has none) if they are missing." },
+                "acknowledgeBackupTools": { "type": "boolean" },
+                "acknowledgeMount": { "type": "boolean", "description": "Accept a data directory on a mount that is not listed in /etc/fstab." }
+            }
+        },
+        "ownedNativeRef": {
+            "type": "object",
+            "description": "The native database this manager provisioned and has not connected yet, instead of a connection: its generated password is read from the manager overlay and never shown.",
+            "additionalProperties": false,
+            "required": ["owned"],
+            "properties": {
+                "owned": { "const": "native" }
             }
         },
         "dockerRequest": {
@@ -187,7 +213,8 @@
                 "keepData": { "type": "boolean" },
                 "confirm": { "type": "string", "minLength": 1, "maxLength": 64 },
                 "acknowledgeUnknownServices": { "type": "boolean" },
-                "removeDockerData": { "type": "boolean", "description": "Also remove the Docker database this manager owns: its container, data volume and network (a host directory you chose is never deleted). Needs confirm." }
+                "removeDockerData": { "type": "boolean", "description": "Also remove the Docker database this manager owns: its container, data volume and network (a host directory you chose is never deleted). Needs confirm." },
+                "removeNativeData": { "type": "boolean", "description": "Also remove the native PostgreSQL cluster this manager owns, with its data directory (the PostgreSQL packages stay installed). Needs confirm with the installation id." }
             }
         },
         "reset": {
@@ -214,11 +241,11 @@
         },
         "migrateTarget": {
             "type": "object",
-            "description": "`url` (a postgres:// URL), or `owned: docker` for the Docker database this manager provisioned and has not connected yet. Exactly one of them; the manager refuses both or neither.",
+            "description": "`url` (a postgres:// URL), or `owned: docker` / `owned: native` for the Docker database or native cluster this manager provisioned and has not connected yet. Exactly one of them; the manager refuses both or neither.",
             "additionalProperties": false,
             "properties": {
                 "url": { "type": "string", "minLength": 12, "maxLength": 2048, "pattern": "^postgres(ql)?://" },
-                "owned": { "const": "docker" }
+                "owned": { "enum": ["docker", "native"] }
             }
         },
         "migrate-preflight": {
@@ -365,7 +392,7 @@
             "properties": {
                 "$schema": { "type": "string" },
                 "command": { "const": "database" },
-                "connection": { "oneOf": [{ "$ref": "#/definitions/dbConnection" }, { "$ref": "#/definitions/ownedDockerRef" }] },
+                "connection": { "oneOf": [{ "$ref": "#/definitions/dbConnection" }, { "$ref": "#/definitions/ownedDockerRef" }, { "$ref": "#/definitions/ownedNativeRef" }] },
                 "release": { "type": "boolean" }
             }
         },
@@ -410,6 +437,76 @@
             "type": "object",
             "additionalProperties": false,
             "properties": { "$schema": { "type": "string" }, "command": { "const": "database" } }
+        },
+        "database-native-status": {
+            "type": "object",
+            "description": "`goobster-manager database native status`: the host check and what this manager owns. Read only; takes no answers.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" }
+            }
+        },
+        "database-native-provision": {
+            "type": "object",
+            "description": "`goobster-manager database native provision`: install the packages when approved, create the cluster, the application role and the schema. The installation is connected afterwards with `database connect` and `connection: { owned: native }`.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+                "bind": { "type": "string", "minLength": 7, "maxLength": 15, "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$" },
+                "acknowledgeLanBind": { "type": "boolean" },
+                "dataDirectory": { "$ref": "#/definitions/nativeRequest/properties/dataDirectory" },
+                "role": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "database": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "installPackages": { "type": "boolean" },
+                "acknowledgeBackupTools": { "type": "boolean" },
+                "acknowledgeMount": { "type": "boolean" }
+            }
+        },
+        "database-native-start": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "$schema": { "type": "string" }, "command": { "const": "database" } }
+        },
+        "database-native-stop": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "$schema": { "type": "string" }, "command": { "const": "database" }, "acknowledgeInUse": { "type": "boolean" } }
+        },
+        "database-native-repair": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "$schema": { "type": "string" }, "command": { "const": "database" } }
+        },
+        "database-native-relocate": {
+            "type": "object",
+            "description": "`goobster-manager database native relocate`: move the cluster's data directory. Needs the maintenance barrier held and a verified backup first; the original directory is kept.",
+            "additionalProperties": false,
+            "required": ["target", "backup", "maintenance"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "database" },
+                "target": { "$ref": "#/definitions/nativeRequest/properties/dataDirectory" },
+                "acknowledgeMount": { "type": "boolean" },
+                "maintenance": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["operationId", "fence"],
+                    "properties": { "operationId": { "type": "string", "minLength": 1, "maxLength": 64 }, "fence": { "type": "integer" } }
+                },
+                "backup": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["dir"],
+                    "properties": {
+                        "dir": { "$ref": "#/definitions/absolutePath" },
+                        "passphrase": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                        "skipConfig": { "type": "boolean" }
+                    }
+                }
+            }
         },
         "database-docker-reconfigure": {
             "type": "object",

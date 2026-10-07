@@ -449,16 +449,16 @@ describe('updater.disable', () => {
 });
 
 describe('what Linux does not do', () => {
-    test('package.install is not implemented: system packages are the operator\'s', () => {
+    test('package.install installs only the fixed PostgreSQL table: any other package is refused before a command runs (tests/nativePostgresHelper.test.js covers the rest)', () => {
         const sandbox = makeSandbox();
         const { reply, code } = call(sandbox, 'package.install', { names: ['ffmpeg'] });
-        expect(code).toBe(1);
-        expect(reply).toMatchObject({ ok: false, code: 'NOT_IMPLEMENTED' });
+        expect(code).toBe(2);
+        expect(reply).toMatchObject({ ok: false, code: 'PACKAGE_NOT_ALLOWED' });
         expect(sandbox.commands()).toEqual([]);
     });
 
     test('another platform has no helper yet', () => {
-        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: [] }), { platform: 'win32' });
+        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: ['postgresql-17'] }), { platform: 'win32' });
         expect(reply).toMatchObject({ ok: false, code: 'PLATFORM_UNSUPPORTED' });
     });
 
@@ -744,13 +744,14 @@ describe('the dispatcher', () => {
     });
 
     test('run() reports the implemented set per platform', () => {
-        expect(privileged.describe('linux')).toMatchObject({ implemented: true, implementedOperations: ['service.register', 'service.unregister', 'updater.disable', 'user.create'] });
+        expect(privileged.describe('linux')).toMatchObject({ implemented: true, implementedOperations: ['service.register', 'service.unregister', 'updater.disable', 'user.create', 'package.install', 'postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate'] });
         expect(privileged.describe('win32')).toMatchObject({ implemented: false });
-        expect(privileged.isImplemented('package.install', 'linux')).toBe(false);
+        expect(privileged.isImplemented('package.install', 'linux')).toBe(true);
+        expect(privileged.isImplemented('package.install', 'win32')).toBe(false);
     });
 
     test('run() throws 501 for an operation or a platform with no helper, 404 for an unknown name, 400 for a refused input', async () => {
-        await expect(privileged.run('package.install', { names: [] }, { platform: 'linux' })).rejects.toMatchObject({ status: 501 });
+        await expect(privileged.run('package.install', { names: ['postgresql-17'] }, { platform: 'win32' })).rejects.toMatchObject({ status: 501 });
         await expect(privileged.run('service.register', {}, { platform: 'darwin' })).rejects.toMatchObject({ status: 501 });
         await expect(privileged.run('shell.exec', {}, {})).rejects.toMatchObject({ status: 404 });
         await expect(privileged.run('user.create', { name: 'root' }, { platform: 'linux' })).rejects.toMatchObject({ status: 400 });
