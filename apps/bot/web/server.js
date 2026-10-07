@@ -33,7 +33,7 @@ const DEFAULT_PANEL_PORT = 3400;
  * Paths this server serves on behalf of a feature (the portal gates its own
  * `/api/app` and `/app`). Anything else keeps the server's own 404.
  */
-const FEATURE_PATHS = /^\/(?:api\/(?:activity|webhooks|screen|gba-run)|activity|companion|internal\/gateway)(?:\/|\.js$|$)/i;
+const FEATURE_PATHS = /^(?:\/$|\/(?:api\/(?:activity|webhooks|screen|gba-run)|activity|companion|internal\/gateway)(?:\/|\.js$|$))/i;
 
 /**
  * Local-only guard: the Host header must be a loopback name, and any Origin
@@ -189,6 +189,8 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     const healthServer = healthApp.listen(healthPort, () => {
         logger.info?.(`Express server is running on port ${healthPort}`);
     });
+
+    featureGate.rejectBlockedUpgrades(healthServer);
 
     if (tableManager) {
         attachActivityWebSocket(healthServer, healthApp.locals.activityContext);

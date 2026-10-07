@@ -56,10 +56,18 @@ function normalizeRoute(pathname, method) {
     return { path, method: verb === 'HEAD' ? 'GET' : verb };
 }
 
-/** The feature blocking `METHOD path`, or null (unclaimed paths are never gated; the routers answer them). */
+/**
+ * The feature blocking `METHOD path`, or null. Routes are claimed by the
+ * ordered `routeRules`; a GET or HEAD that no rule claims may still be a
+ * feature's static file (the Activity client, the companion page), claimed by
+ * `staticAssets`. Unclaimed paths are never gated; the routers answer them.
+ */
 function routeBlock(pathname, method, state = defaultFeatures) {
     const route = normalizeRoute(pathname, method);
-    return blockingFeature(inventory.ownerOf('route', route.path, route.method), state);
+    const claim = inventory.ownerOf('route', route.path, route.method);
+    if (claim) return blockingFeature(claim, state);
+    if (route.method !== 'GET') return null;
+    return blockingFeature(inventory.ownerOf('staticAsset', route.path), state);
 }
 
 function wsBlock(pathname, state = defaultFeatures) {
@@ -139,12 +147,31 @@ function guardOpenSocket(socket, pathname, { state = defaultFeatures } = {}) {
     };
 }
 
-/** Refuse a WebSocket upgrade with a plain 404 before it completes. */
+/** Refuse a WebSocket upgrade with a plain 404 before it completes. Safe to call twice for one socket. */
 function rejectUpgrade(socket) {
+    if (socket.destroyed) return;
     try {
         socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     } catch { /* already gone */ }
     socket.destroy();
+}
+
+/**
+ * Answer upgrades for feature sockets that are not served (their owner was
+ * off at startup, so no handler is attached) the way a served-but-off one is
+ * answered, instead of leaving the connection hanging. Register before the
+ * feature handlers; they re-check on their own.
+ */
+function rejectBlockedUpgrades(server, { state = defaultFeatures } = {}) {
+    server.on('upgrade', (request, socket) => {
+        let pathname;
+        try {
+            pathname = new URL(request.url, 'http://localhost').pathname;
+        } catch {
+            return;
+        }
+        if (wsBlock(pathname, state)) rejectUpgrade(socket);
+    });
 }
 
 /**
@@ -195,5 +222,6 @@ module.exports = {
     mountable,
     guardOpenSocket,
     rejectUpgrade,
+    rejectBlockedUpgrades,
     sanitizeStatus
 };

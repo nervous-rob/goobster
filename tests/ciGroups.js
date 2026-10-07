@@ -93,6 +93,8 @@ const GROUPS = [
             'appletCapabilityApi',
             'appStream',
             'directMessageService',
+            'featureGatingRoutes',
+            'featureGatingWebsocket',
             'friendService',
             'markdownRenderer',
             'documentationWiki',
