@@ -300,6 +300,21 @@ describe('uninstall', () => {
         expect(harness.manager.currentState()).toMatchObject({ state: 'recovery', reason: 'MANAGER_TOMBSTONED' });
     });
 
+    test('a running application (its port in use) blocks the uninstall, which another process cannot see in the registry', async () => {
+        const { harness } = await freshInstall();
+        const holder = net.createServer();
+        await new Promise(resolve => holder.listen(harness.botPort, '127.0.0.1', resolve));
+        try {
+            const failure = await drive(harness, 'install.uninstall', {}).catch(error => error);
+            expect(failure.code).toBe('PREFLIGHT_FAILED');
+            expect(failure.details.findings.map(item => item.code)).toContain('WORKERS_RUNNING');
+            expect(fs.existsSync(path.join(harness.code, 'current'))).toBe(true);
+            expect(harness.manager.store.readInstallation().status).toBe('ok');
+        } finally {
+            holder.close();
+        }
+    });
+
     test('keep-data uninstall can be followed by a new install over the kept data (local only)', async () => {
         const { harness, input, release } = await freshInstall();
         fs.writeFileSync(path.join(harness.settings.dataDir, 'keep.txt'), 'user data');

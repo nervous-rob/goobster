@@ -30,7 +30,7 @@ const paths = require('../../install/paths');
 const release = require('../../install/release');
 const tombstone = require('../../install/tombstone');
 const registry = require('../../lifecycle/registry');
-const { runPreflight } = require('../../install/preflight');
+const { runPreflight, portsFor } = require('../../install/preflight');
 const parse = require('../../install/engine');
 
 const { createInstallCore, exactKeys, textField, absolutePath, parseLabel, parseFeatures, parseRootsInput, parseLayout, parseRelease, parseRuntimeUser, parseBoolean, parseConfigChanges, parseDatabase } = parse;
@@ -657,6 +657,14 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         const pre = { ok: true, findings: [] };
         if (roots.managerStore !== settings.storeDir) pre.findings.push({ code: 'ROOTS_MISMATCH', severity: 'block', detail: 'the recorded manager store is not where this manager keeps it' });
         if (registry.get(settings.storeDir)) pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: 'the manager is supervising the application workers' });
+        // The registry only sees this process; the CLI runs in another one, so the
+        // layout's worker ports are the cross-process signal that something is still running.
+        const { list: workerPorts } = portsFor({ layout: doc.layout, features: doc.release ? doc.release.features : [], env: settings.env || process.env, settings });
+        for (const entry of workerPorts) {
+            if (await deps.probePort(entry.port) === 'busy') {
+                pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: `the ${entry.name} port ${entry.port} is in use: an application process is still running; stop it first` });
+            }
+        }
         pre.ok = pre.findings.length === 0;
         const steps = stepList(UNINSTALL_STEPS);
         const signature = core.signatureOf({ kind: 'install.uninstall', id: doc.installationId, keepData });

@@ -23,6 +23,7 @@
     "mcp": "node apps/mcp/index.js",
     "mcp:token": "node scripts/mcp-token.js",
     "manager": "node apps/manager/index.js",
+    "manager:cli": "node apps/manager/cli.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "docs:seed": "node scripts/seed-self-docs.js",

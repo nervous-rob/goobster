@@ -65,6 +65,8 @@ const GROUPS = [
             'lifecycleAdapters',
             'commandDeployHash',
             'workInterruption',
+            'installEngine',
+            'installCli',
             'presenceService',
             'reportIntegrations',
             'safeFetch',

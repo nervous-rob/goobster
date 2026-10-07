@@ -83,8 +83,11 @@ manager audits them, it does not install them); Postgres settings for
 also refuses an install over existing evidence (`EXISTING_INSTALLATION`)
 unless a tombstone says a previous uninstall left it. Uninstall also
 refuses `WORKERS_RUNNING` while the manager's lifecycle layer is supervising
-the application workers (stop them first), and `ROOTS_MISMATCH` when the
-recorded store is not the one this manager runs on.
+the application workers, or while any of the layout's worker ports (bot,
+api, sandbox) is in use - the CLI runs in its own process and cannot see a
+manager daemon's supervisor, so a busy port is the cross-process signal that
+the application is still running (stop it first). `ROOTS_MISMATCH` blocks
+when the recorded store is not the one this manager runs on.
 
 ## The kinds
 
