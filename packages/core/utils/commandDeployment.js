@@ -8,8 +8,12 @@
  * never appears in a DM. A command must never be in both sets or it would
  * show up twice in guilds.
  */
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const inventory = require('../features/inventory');
+const { surfaceActive } = require('../features/gate');
+const { features } = require('../features/featureState');
 
 // Interaction contexts (raw API values): 0 = GUILD, 1 = BOT_DM,
 // 2 = PRIVATE_CHANNEL. [0, 1, 2] is Discord's documented default for
@@ -24,15 +28,55 @@ const GUILD_INSTALL = [0];
 const ENTRY_POINT_TYPE = 4;
 
 /**
- * Load every command module and split the deployment payloads into the
- * guild-registered set and the global (DM-enabled) set.
- * @param {string} foldersPath - Absolute path to the commands/ directory
- * @param {Object} [options] - { log } optional logger (console.log-style)
- * @returns {{ guildCommands: Object[], globalCommands: Object[] }}
+ * Inventory key of a command file: its path relative to apps/bot/commands/,
+ * always with forward slashes ("economy/wheel.js").
  */
-function collectCommandPayloads(foldersPath, { log = () => {} } = {}) {
-    const guildCommands = [];
-    const globalCommands = [];
+function commandKey(folder, file) {
+    return `${folder}/${file}`;
+}
+
+/** 'contextMenu' for the files the inventory lists as context menus, else 'command'. */
+function commandKind(key) {
+    return inventory.ownerOf('contextMenu', key) ? 'contextMenu' : 'command';
+}
+
+/**
+ * The one feature filter for Discord commands. `deploy-commands.js` and the
+ * bot's command loader both pass this to the same file lister, so what is
+ * deployed and what is loaded cannot disagree. A file the inventory does not
+ * claim throws GateError('UNCLAIMED_SURFACE'); the lister treats that as
+ * unavailable (fail closed) and the inventory spec fails in CI.
+ * @param {'command'|'contextMenu'} kind
+ * @param {string} key
+ * @returns {boolean}
+ */
+function featureCommandFilter(kind, key) {
+    return surfaceActive(kind, key);
+}
+
+/** The command (or context menu) name a file declares: its first literal `.setName('...')`. Static, never requires the file. */
+function declaredName(filePath) {
+    try {
+        const match = /\.setName\(\s*(['"])((?:(?!\1).)+)\1/.exec(fs.readFileSync(filePath, 'utf8'));
+        return match ? match[2] : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Walk apps/bot/commands and split the files into those whose owning feature
+ * is active and those that are not. Nothing is required here, so a disabled
+ * command's top-level imports (voice stack, SpotDL, ...) never run.
+ * @param {string} foldersPath
+ * @param {Object} [options]
+ * @param {(kind: string, key: string) => boolean} [options.filter] omitted = everything is active
+ * @param {Function} [options.log]
+ * @returns {{ active: Object[], inactive: Object[] }} entries `{ folder, file, key, kind, filePath, name, reason? }`
+ */
+function listCommandFiles(foldersPath, { filter = null, log = () => {} } = {}) {
+    const active = [];
+    const inactive = [];
     const commandFolders = fs.readdirSync(foldersPath);
     log('Found command folders:', commandFolders);
 
@@ -44,31 +88,96 @@ function collectCommandPayloads(foldersPath, { log = () => {} } = {}) {
         log(`Found ${commandFiles.length} commands in folder ${folder}:`, commandFiles);
 
         for (const file of commandFiles) {
+            const key = commandKey(folder, file);
             // resolve() so a relative foldersPath can't be mistaken for a
             // node_modules specifier by require()
             const filePath = path.resolve(commandsPath, file);
-            const command = require(filePath);
-            if ('data' in command && 'execute' in command) {
-                if (command.dmAllowed) {
-                    const json = {
-                        ...command.data.toJSON(),
-                        contexts: ALL_CONTEXTS,
-                        integration_types: GUILD_INSTALL
-                    };
-                    // dm_permission is deprecated and superseded by
-                    // contexts - never send both on the same command.
-                    delete json.dm_permission;
-                    globalCommands.push(json);
-                } else {
-                    guildCommands.push(command.data.toJSON());
+            const entry = { folder, file, key, kind: commandKind(key), filePath, name: declaredName(filePath) };
+            let allowed = true;
+            if (filter) {
+                try {
+                    allowed = Boolean(filter(entry.kind, key));
+                } catch (error) {
+                    allowed = false;
+                    entry.reason = error && error.code ? error.code : 'FILTER_ERROR';
                 }
-            } else {
-                log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
             }
+            (allowed ? active : inactive).push(entry);
         }
     }
 
-    return { guildCommands, globalCommands };
+    return { active, inactive };
+}
+
+/**
+ * Map of every declared command name (active or not) to its file entry, so a
+ * stale interaction for a command that was never loaded can still be
+ * attributed to its owning feature. Static: reads source text only.
+ * @returns {Map<string, Object>}
+ */
+function commandNameIndex(foldersPath) {
+    const { active, inactive } = listCommandFiles(foldersPath);
+    const index = new Map();
+    for (const entry of [...active, ...inactive]) {
+        if (entry.name) index.set(entry.name, entry);
+    }
+    return index;
+}
+
+/**
+ * Load every command module and split the deployment payloads into the
+ * guild-registered set and the global (DM-enabled) set.
+ * @param {string} foldersPath - Absolute path to the commands/ directory
+ * @param {Object} [options] - { log, filter } optional logger (console.log-style)
+ *   and the feature filter (see featureCommandFilter); omitted = no filtering
+ * @returns {{ guildCommands: Object[], globalCommands: Object[], skipped: Object[] }}
+ */
+function collectCommandPayloads(foldersPath, { log = () => {}, filter = null } = {}) {
+    const guildCommands = [];
+    const globalCommands = [];
+    const { active, inactive } = listCommandFiles(foldersPath, { filter, log });
+
+    for (const entry of inactive) {
+        log(`Skipping ${entry.key}: its feature is not available on this installation.`);
+    }
+
+    for (const { filePath } of active) {
+        const command = require(filePath);
+        if ('data' in command && 'execute' in command) {
+            if (command.dmAllowed) {
+                const json = {
+                    ...command.data.toJSON(),
+                    contexts: ALL_CONTEXTS,
+                    integration_types: GUILD_INSTALL
+                };
+                // dm_permission is deprecated and superseded by
+                // contexts - never send both on the same command.
+                delete json.dm_permission;
+                globalCommands.push(json);
+            } else {
+                guildCommands.push(command.data.toJSON());
+            }
+        } else {
+            log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        }
+    }
+
+    return { guildCommands, globalCommands, skipped: inactive };
+}
+
+/** Ids of every active feature, in catalog order (the part of the feature state a deployment depends on). */
+function activeFeatureIds() {
+    return inventory.FEATURE_IDS.filter(id => features.isActive(id));
+}
+
+/**
+ * Stable hash of the full command payload, the deployment targets and the
+ * active feature set, so a change in which features run re-syncs Discord even
+ * when the payload happens to be unchanged.
+ */
+function computeDeployHash({ clientId, guildIds, guildCommands, globalCommands, activeFeatures = activeFeatureIds() }) {
+    const payload = JSON.stringify({ clientId, guildIds, guildCommands, globalCommands, activeFeatures });
+    return crypto.createHash('sha256').update(payload).digest('hex');
 }
 
 /**
@@ -146,6 +255,13 @@ module.exports = {
     ALL_CONTEXTS,
     GUILD_INSTALL,
     ENTRY_POINT_TYPE,
+    commandKey,
+    commandKind,
+    featureCommandFilter,
+    listCommandFiles,
+    commandNameIndex,
+    activeFeatureIds,
+    computeDeployHash,
     collectCommandPayloads,
     mergeEntryPointCommands,
     validateGlobalCommandPayload
