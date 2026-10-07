@@ -212,6 +212,10 @@ describe('the crash matrix', () => {
         expect(barrierOf(w.harness).active).toBe(true);
         expect(update(w.harness, 'recovery')).toMatchObject({ backup: { name: expect.any(String) } });
         expect(await w.applier.resume()).toMatchObject({ resumed: true, outcome: 'recovery' });
+        const entries = fs.readFileSync(path.join(w.harness.settings.storeDir, 'operations', 'audit.jsonl'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
+        const recorded = entries.filter(entry => entry.action === 'manager.update.handoff' && entry.outcome === 'recovery');
+        expect(recorded.length).toBeGreaterThan(0);
+        for (const entry of recorded) expect(entry.detail).not.toHaveProperty('downtimeMs');
     });
 
     test('an expired watchdog on a schema-changing update that nothing ever ran is still a safe rollback', async () => {

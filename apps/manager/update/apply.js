@@ -143,7 +143,7 @@ function createApplier({ core, store, journal, logger = console }) {
             actor: h.actor || null,
             via: 'local',
             outcome,
-            detail: { operationRef: h.operationId, ...(code ? { code } : {}), downtimeMs: h.downtimeMs ?? 0, schemaChanging: Boolean(h.schemaChanging) }
+            detail: { operationRef: h.operationId, ...(code ? { code } : {}), ...(Number.isFinite(h.downtimeMs) ? { downtimeMs: h.downtimeMs } : {}), schemaChanging: Boolean(h.schemaChanging) }
         });
     }
 

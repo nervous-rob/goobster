@@ -309,7 +309,10 @@ goobster-manager update recovery --decision restore --yes
 goobster-manager update recovery --decision retry
 ```
 
-The decision is made on this machine (the command line) or with a recovery
+The installation record keeps naming the previous release until cutover, so
+`installed` in the status is still the old version while a decision is pending;
+the `handoff` line names the release that failed and `update status` shows the
+phase. The decision is made on this machine (the command line) or with a recovery
 credential; the portal shows the state but cannot decide. A decision that
 does not verify leaves the update in `recovery` (`UPDATE_RECOVERY_REQUIRED`)
 and the barrier held; it can be decided again. Everything written during
