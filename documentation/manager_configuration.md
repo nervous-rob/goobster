@@ -235,11 +235,14 @@ How a default applies, precisely:
   the instance default; clearing a stored value is not a feature today.
 - The settings view reports `instance-default` as the source of an inherited
   value, and `user-preference` / `user-override` for a person's own.
-- `defaults.chat.provider` and `.model` are applied by `getSettings` and exposed
-  as `instanceDefaultsService.resolveChat()` / `resolveAI()`. The chat turn path
-  (`chatHandler`, `webChatService`) reads the stored choice directly and has not
-  adopted the seam yet; until it does, the default shapes what the settings
-  screen shows, not which model answers.
+- `defaults.chat.provider` and `.model` are applied by `getSettings` (the
+  settings view) and by `guildSettings.getEffectiveAI()`, which the chat turn
+  (`chatHandler`) and the web `effective` view (`webChatService.getAiSettings`)
+  use: a scope with no choice of its own answers with the default provider and
+  model, while `getGuildAI()` keeps returning the raw override so a settings
+  screen can tell "chosen" from "inherited". The defaults document is read
+  through a 15-second cache (`getCached()`), so a change made in the manager
+  reaches the next chat turn within that window without a read per message.
 - A retention default is **destructive**: everyone without their own window has
   Study conversations older than the window purged at their next retention
   sweep. `defaults.set` therefore refuses a retention default without

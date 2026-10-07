@@ -156,6 +156,36 @@ describe('inheritance', () => {
             .toMatchObject({ provider: 'anthropic', model: 'claude-default-test' });
     });
 
+    test('the chat turn and the web effective view use the default; the raw override stays unset; an explicit scope choice wins', async () => {
+        const { getGuildAI, getEffectiveAI, setGuildAI } = require('@goobster/core/utils/guildSettings');
+        const webChat = require('@goobster/core/services/webChatService');
+        const inheritingScope = `dm:${INHERITING}`;
+        const explicitScope = `dm:${EXPLICIT}`;
+        await setGuildAI(explicitScope, { provider: 'openai', model: 'my-model' });
+
+        await defaults.set([
+            { id: 'defaults.chat.provider', action: 'set', value: 'anthropic' },
+            { id: 'defaults.chat.model', action: 'set', value: 'claude-default-test' }
+        ]);
+        defaults.clearCache();
+
+        expect(await getGuildAI(inheritingScope)).toMatchObject({ provider: null, model: null });
+        expect(await getEffectiveAI(inheritingScope)).toMatchObject({
+            provider: 'anthropic', model: 'claude-default-test', providerSource: 'instance-default', modelSource: 'instance-default'
+        });
+        expect(await getEffectiveAI(explicitScope)).toMatchObject({
+            provider: 'openai', model: 'my-model', providerSource: 'user-override', modelSource: 'user-override'
+        });
+
+        const web = await webChat.getAiSettings(INHERITING);
+        expect(web.provider).toBeNull();
+        expect(web.effective).toMatchObject({ provider: 'anthropic', model: 'claude-default-test', providerSource: 'instance-default' });
+
+        await defaults.set([{ id: 'defaults.chat.provider', action: 'remove' }, { id: 'defaults.chat.model', action: 'remove' }]);
+        expect((await getEffectiveAI(inheritingScope)).providerSource).toBe('host-default');
+        expect(await getEffectiveAI(explicitScope)).toMatchObject({ provider: 'openai', model: 'my-model' });
+    });
+
     test('a default retention window is what the purge sees for a person without their own', async () => {
         await defaults.set([{ id: 'defaults.memory.chatHistoryRetentionDays', action: 'set', value: 30 }]);
         expect(await pref(INHERITING, 'chatHistoryRetentionDays')).toBe(30);

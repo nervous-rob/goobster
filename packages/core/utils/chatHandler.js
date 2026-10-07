@@ -14,7 +14,7 @@
  * keep working.
  */
 const db = require('../db');
-const { getPersonalityDirective, getGuildAI, getMonologueMode, MONOLOGUE_MODE } = require('./guildSettings');
+const { getPersonalityDirective, getEffectiveAI, getMonologueMode, MONOLOGUE_MODE } = require('./guildSettings');
 const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
@@ -197,8 +197,9 @@ async function runChatInteraction(interaction, thread = null) {
         // the caller's transient channel.messages.fetch implementation.
         const skipHistory = interaction.skipHistory === true;
 
-        // Per-scope AI overrides (provider/model/reasoning); null = global defaults
-        const guildAI = await getGuildAI(conversationScopeId);
+        // Per-scope AI overrides, then the instance defaults for what is unset;
+        // null = the host's global default
+        const guildAI = await getEffectiveAI(conversationScopeId);
 
         // Legacy search detection + approval workflow. Only needed for
         // providers without native web search (Ollama); OpenAI, Anthropic,

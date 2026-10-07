@@ -996,9 +996,10 @@ class WebChatService {
      */
     async getAiSettings(userId) {
         const aiService = require('./aiService');
-        const { getGuildAI } = require('../utils/guildSettings');
+        const { getGuildAI, getEffectiveAI } = require('../utils/guildSettings');
         const scope = dmScopeId(userId);
         const current = await getGuildAI(scope);
+        const resolved = await getEffectiveAI(scope);
         const providers = aiService.listProviders();
 
         const preset = aiService.getThoughtfulPreset(current.provider || undefined);
@@ -1006,7 +1007,7 @@ class WebChatService {
             && current.model === preset.model
             && current.reasoningEffort === 'high';
 
-        const effectiveProviderKey = current.provider || aiService.getProvider();
+        const effectiveProviderKey = resolved.provider || aiService.getProvider();
         const effectiveProvider = providers.find(p => p.key === effectiveProviderKey) || null;
         const { getUserInstructions, MAX_INSTRUCTIONS_LENGTH } = require('../utils/userInstructions');
         return {
@@ -1020,8 +1021,10 @@ class WebChatService {
             effective: {
                 provider: effectiveProviderKey,
                 providerName: effectiveProvider?.name || effectiveProviderKey,
-                model: current.model || effectiveProvider?.chatModel || aiService.getDefaultModel(),
-                reasoningEffort: current.reasoningEffort || null
+                model: resolved.model || effectiveProvider?.chatModel || aiService.getDefaultModel(),
+                reasoningEffort: current.reasoningEffort || null,
+                providerSource: resolved.providerSource,
+                modelSource: resolved.modelSource
             },
             providers
         };

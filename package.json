@@ -26,7 +26,7 @@
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "docs:seed": "node scripts/seed-self-docs.js",
-    "docs:check": "node scripts/seed-self-docs.js --check",
+    "docs:check": "node scripts/seed-self-docs.js --check && node scripts/generate-config-reference.js --check",
     "icons:berry": "node scripts/generate-berry-icons.js",
     "icons:berry:check": "node scripts/generate-berry-icons.js --check",
     "identity:report": "node scripts/identity-report.js",

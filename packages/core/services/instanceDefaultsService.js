@@ -66,6 +66,25 @@ async function get() {
     return sanitize(await instanceState.get(KEY));
 }
 
+// The chat turn asks for the defaults on every message; the manager writes
+// them from another process, so a short TTL (not an invalidation hook) is
+// what keeps a change visible within seconds without a read per turn.
+const CACHE_TTL_MS = 15_000;
+let cached = null;
+
+/** `get()` with a short-lived cache for hot paths; `set()` and tests clear it. */
+async function getCached({ now = Date.now } = {}) {
+    const t = now();
+    if (cached && t - cached.at < CACHE_TTL_MS) return cached.doc;
+    const doc = await get();
+    cached = { at: t, doc };
+    return doc;
+}
+
+function clearCache() {
+    cached = null;
+}
+
 /** @returns {Promise<Object>} { id: value } for every set default, keyed by catalog id */
 async function getFlat() {
     const doc = await get();
@@ -146,6 +165,9 @@ async function set(changes) {
                 !== JSON.stringify(catalog.getPath(after, fieldPath(change.id)) ?? null))
             .map(change => change.id);
         return { before, after, changed };
+    }).then((result) => {
+        clearCache();
+        return result;
     });
 }
 
@@ -189,7 +211,8 @@ function overlayPreferences(prefs, explicit, defaults) {
  * The chat provider/model a person without an explicit choice gets.
  * The default provider applies only if it is configured on this host; the
  * default model applies only when it belongs to the provider that wins.
- * Used by getSettings today; the chat turn path adopts it through this seam.
+ * Consumed by userSettingsService.getSettings (the settings view) and by
+ * guildSettings.getEffectiveAI (the chat turn and the web effective view).
  *
  * @param {{ provider?: string|null, model?: string|null }} user the person's own stored choice
  * @param {Object} defaults the defaults document
@@ -229,6 +252,8 @@ module.exports = {
     PREFERENCE_DEFAULT_PATHS,
     InstanceDefaultsError,
     get,
+    getCached,
+    clearCache,
     getFlat,
     set,
     validateChanges,
