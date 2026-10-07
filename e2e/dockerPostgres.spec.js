@@ -31,8 +31,9 @@ const installations = [];
 const fakes = [];
 
 async function installation(mode) {
-    // The manager runs in this process, so the fake docker has to be on this process's own PATH.
-    const fake = fakeDocker.create({ mode }).install();
+    // The manager runs in this process, so the fake docker has to be on this process's own PATH. The fake
+    // pg_dump beside it keeps the backup-tools check independent of the client this host happens to have.
+    const fake = fakeDocker.create({ mode, pgDump: '17.4' }).install();
     fakes.push(fake);
     const h = await createSetupInstallation();
     installations.push(h);
@@ -161,7 +162,7 @@ test.describe('the Docker choice in the database step', () => {
 test.describe('the Database page of the Host room, with Docker', () => {
     test.describe.configure({ mode: 'serial' });
     const dir = tempDir('goobster-e2e-docker-host-');
-    const fake = fakeDocker.create({ mode: 'ok' });
+    const fake = fakeDocker.create({ mode: 'ok', pgDump: '17.4' });
     const manager = createManagerProcess({ dir, port: MANAGER_PORT, env: fake.env() });
     const { createSecondServer } = require('./helpers');
     const portal = createSecondServer({ port: PORTAL_PORT, dataDir: dir });

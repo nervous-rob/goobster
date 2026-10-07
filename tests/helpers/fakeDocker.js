@@ -13,14 +13,18 @@ const path = require('node:path');
 
 const CLI = path.join(__dirname, 'fakeDockerCli.js');
 
-function create({ mode = 'ok', imagePulled = true, healthAfter = 2, ...extra } = {}) {
+function create({ mode = 'ok', imagePulled = true, healthAfter = 2, pgDump = null, ...extra } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-docker-'));
     const bin = path.join(dir, 'docker');
     fs.writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`, { mode: 0o755 });
+    // `pgDump: '17.4'` also puts a pg_dump that answers that version first on PATH, so the backup-tools
+    // check sees a compatible client whatever the host has (or lacks). Unit specs inject `pgDump` through
+    // dockerDeps instead; this is for the in-process manager the Playwright journeys drive.
+    if (pgDump) fs.writeFileSync(path.join(dir, 'pg_dump'), `#!/bin/sh\necho "pg_dump (PostgreSQL) ${pgDump}"\n`, { mode: 0o755 });
     const statePath = path.join(dir, 'state.json');
     const write = (state) => fs.writeFileSync(statePath, JSON.stringify(state));
     write({ mode, imagePulled, healthAfter, containers: {}, volumes: {}, networks: {}, ...extra });
-    const saved = { PATH: process.env.PATH, FAKE_DOCKER_STATE: process.env.FAKE_DOCKER_STATE, GOOBSTER_DOCKER_BIN: process.env.GOOBSTER_DOCKER_BIN };
+    const saved = { PATH: process.env.PATH, FAKE_DOCKER_STATE: process.env.FAKE_DOCKER_STATE, GOOBSTER_DOCKER_BIN: process.env.GOOBSTER_DOCKER_BIN, ...(pgDump ? { GOOBSTER_PG_BIN: process.env.GOOBSTER_PG_BIN } : {}) };
 
     const api = {
         dir,
@@ -33,6 +37,7 @@ function create({ mode = 'ok', imagePulled = true, healthAfter = 2, ...extra } =
             process.env.PATH = `${dir}${path.delimiter}${saved.PATH}`;
             process.env.FAKE_DOCKER_STATE = statePath;
             delete process.env.GOOBSTER_DOCKER_BIN;
+            if (pgDump) delete process.env.GOOBSTER_PG_BIN;
             return api;
         },
         restore() {

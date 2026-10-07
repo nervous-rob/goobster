@@ -122,7 +122,12 @@ instead give an absolute folder: it is created if missing, its free space is
 checked, and on Docker Desktop the check notes that the folder must be shared.
 The installer **never deletes** a folder you chose. A folder that already holds
 a PostgreSQL data directory is refused (`STORAGE_HAS_DATA`) at provision: the
-installer will not adopt data whose password it does not know.
+installer will not adopt data whose password it does not know. Inside the
+container the database runs as the image's `postgres` account, not as the
+manager's user, so the folder must be enterable by others (the installer
+creates it `0755`; a folder you made `0700` is refused with
+`STORAGE_NOT_ENTERABLE` and the `chmod o+x` to run). The `pgdata` directory
+the container creates inside it is `0700` and belongs to that account.
 
 ## The operation kinds
 
