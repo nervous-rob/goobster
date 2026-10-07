@@ -358,6 +358,50 @@ jobs:
       - name: Portal journeys
         run: npm run test:e2e
 
+  # Installer #339: the Docker-managed Postgres option against a real daemon
+  # and the pinned pgvector image (documentation/docker_postgres.md). The fake
+  # docker proves what the manager asks for in the unit groups; this job proves
+  # Docker does it: pull by digest, create, health, provision, repair, remove.
+  # The tests clean up their own labelled resources. Extra coverage, not part
+  # of the both-engines aggregator.
+  test-docker-postgres:
+    name: test (docker postgres)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Docker daemon
+        run: docker info
+
+      - name: PostgreSQL 17 client tools (backup-tools check; best effort)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client-17 || echo "::warning::postgresql-client-17 not installed; BACKUP_TOOLS_* is exercised as missing"
+          pg_dump --version || true
+
+      - name: Docker Postgres specs against the real daemon
+        env:
+          GOOBSTER_DOCKER_TESTS: '1'
+        run: npx jest tests/dockerDaemon.test.js tests/dockerPostgresKinds.test.js tests/dockerPostgresRoutes.test.js
+
+      - name: Nothing of ours is left behind
+        if: always()
+        run: |
+          docker ps -a --filter label=io.goobster.installation --format '{{.Names}}' | tee /tmp/left-containers
+          docker volume ls --filter label=io.goobster.installation --format '{{.Name}}' | tee /tmp/left-volumes
+          test ! -s /tmp/left-containers && test ! -s /tmp/left-volumes
+
   # Single required check so main cannot advance when one engine is still
   # running or the sandbox image isolation smoke has not passed. PR #201
   # merged while test (postgres) was unfinished; requiring this job closes
