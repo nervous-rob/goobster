@@ -1,0 +1,127 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://goobster.local/schemas/manager-install-answers.json",
+    "title": "Goobster manager CLI answers file",
+    "description": "Input of `goobster-manager <command> --answers <file>`. One document per command; `command` is optional when the CLI command names it. The file may hold secrets (config values of secret fields) and must be readable by its owner only (mode 0600).",
+    "oneOf": [
+        { "$ref": "#/definitions/install" },
+        { "$ref": "#/definitions/adopt" },
+        { "$ref": "#/definitions/reconfigure" },
+        { "$ref": "#/definitions/repair" },
+        { "$ref": "#/definitions/uninstall" }
+    ],
+    "definitions": {
+        "absolutePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "layout": { "enum": ["lite", "standalone", "paired"] },
+        "ownerLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "featureList": { "type": "array", "maxItems": 80, "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]{0,40}$" } },
+        "roots": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "code": { "$ref": "#/definitions/absolutePath" },
+                "data": { "$ref": "#/definitions/absolutePath" },
+                "config": { "$ref": "#/definitions/absolutePath" },
+                "cache": { "$ref": "#/definitions/absolutePath" },
+                "logs": { "$ref": "#/definitions/absolutePath" },
+                "uploads": { "$ref": "#/definitions/absolutePath" },
+                "managerStore": { "$ref": "#/definitions/absolutePath" }
+            }
+        },
+        "release": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "publicKeyFiles": { "type": "array", "maxItems": 8, "items": { "$ref": "#/definitions/absolutePath" } },
+                "allowUnsigned": { "type": "boolean" }
+            }
+        },
+        "database": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "engine": { "enum": ["sqlite", "postgres"] } }
+        },
+        "config": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "value"],
+                "properties": {
+                    "id": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "value": {}
+                }
+            }
+        },
+        "install": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "install" },
+                "source": { "$ref": "#/definitions/absolutePath" },
+                "ownerLabel": { "$ref": "#/definitions/ownerLabel" },
+                "features": { "$ref": "#/definitions/featureList" },
+                "layout": { "$ref": "#/definitions/layout" },
+                "roots": { "$ref": "#/definitions/roots" },
+                "database": { "$ref": "#/definitions/database" },
+                "release": { "$ref": "#/definitions/release" },
+                "runtimeUser": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" },
+                "config": { "$ref": "#/definitions/config" },
+                "registerService": { "type": "boolean" }
+            }
+        },
+        "adopt": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "adopt" },
+                "label": { "$ref": "#/definitions/ownerLabel" },
+                "candidateId": { "type": "string", "pattern": "^[0-9a-f]{12}$" },
+                "roots": { "$ref": "#/definitions/roots" },
+                "layout": { "$ref": "#/definitions/layout" },
+                "database": { "$ref": "#/definitions/database" },
+                "keepUpdater": { "type": "boolean" },
+                "replaceUnreadable": { "type": "boolean" }
+            }
+        },
+        "reconfigure": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "reconfigure" },
+                "layout": { "$ref": "#/definitions/layout" },
+                "roots": { "$ref": "#/definitions/roots" },
+                "source": { "$ref": "#/definitions/absolutePath" },
+                "release": { "$ref": "#/definitions/release" },
+                "config": { "$ref": "#/definitions/config" }
+            }
+        },
+        "repair": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "repair" },
+                "source": { "$ref": "#/definitions/absolutePath" },
+                "release": { "$ref": "#/definitions/release" }
+            }
+        },
+        "uninstall": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "uninstall" },
+                "keepData": { "type": "boolean" },
+                "confirm": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "acknowledgeUnknownServices": { "type": "boolean" }
+            }
+        }
+    }
+}

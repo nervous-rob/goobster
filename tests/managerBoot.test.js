@@ -275,7 +275,7 @@ describe('boot matrix', () => {
     });
 
     test('a corrupt or future-version store is recovery even with no app database, and is left as it is', async () => {
-        for (const [content, reason] of [['\u0000\u0001garbage', 'MANAGER_STORE_CORRUPT'], [JSON.stringify({ version: 2, installationId: 'x' }), 'MANAGER_STORE_UNSUPPORTED']]) {
+        for (const [content, reason] of [['\u0000\u0001garbage', 'MANAGER_STORE_CORRUPT'], [JSON.stringify({ version: 99, installationId: 'x' }), 'MANAGER_STORE_UNSUPPORTED']]) {
             const root = newRoot('store-corrupt');
             const settings = resolveSettings(envFor(root));
             fs.mkdirSync(settings.storeDir, { recursive: true });
