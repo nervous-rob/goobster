@@ -104,6 +104,18 @@ Create a `config.json` file in the root directory with the following structure. 
   - **voiceReleaseThreshold**: Voice release threshold
   - **silenceDuration**: Required silence duration (ms)
 
+## Turning a feature off for one process: `GOOBSTER_FEATURE_<ID>`
+
+Every optional feature has an id (see `documentation/feature_inventory.md`).
+Setting `GOOBSTER_FEATURE_<ID>` to `0`, `false`, `no` or `off` (the id in upper
+snake case: `GOOBSTER_FEATURE_MUSIC`, `GOOBSTER_FEATURE_SCREEN_VISION`,
+`GOOBSTER_FEATURE_DISCORD_ACTIVITY`) deactivates that feature, and everything that
+depends on it, in that process. It can only deactivate: any other value is ignored
+with a warning, and it never installs a feature or supplies a missing key. It does not
+touch `data/features.json` or `config.json`. The rules and the state file are in
+`documentation/feature_state.md`. Nothing consults these variables until the gating
+issues (#318 to #320) land.
+
 ## Environment Setup
 
 1. **Development Environment**
