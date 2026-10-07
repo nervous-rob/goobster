@@ -26,6 +26,7 @@ const { createClaimKind, createAdoptKind, createRecoveryUnlockKind } = require('
 const { existingInstallEvidence, probeAppDatabase, DEFAULT_PROBE_TIMEOUT_MS } = require('./appDatabase');
 const { reconcileAudit, pendingAuditCount } = require('./audit');
 const privileged = require('./privileged');
+const { readTombstone } = require('./install/tombstone');
 const files = require('./store/files');
 
 const MANAGER_VERSION = 1;
@@ -90,6 +91,9 @@ function createManager({
         }
         const installation = store.readInstallation();
         if (installation.status === 'ok') return { state: 'claimed', reason: null, installation: installation.doc, evidence };
+        if (installation.status === 'missing' && readTombstone(settings.storeDir, fs).present) {
+            return { state: 'recovery', reason: 'MANAGER_TOMBSTONED', installation: null, evidence: [...evidence, 'tombstone'] };
+        }
         if (installation.status === 'missing' && evidence.length === 0) {
             return { state: 'unclaimed', reason: null, installation: null, evidence };
         }
@@ -126,7 +130,7 @@ function createManager({
     }
 
     const kinds = {};
-    const builtIn = [createFeaturesSetKind(), createAdoptKind(), createClaimKind(), createRecoveryUnlockKind()];
+    const builtIn = [createFeaturesSetKind(), createAdoptKind({ settings, fs, now, logger }), createClaimKind(), createRecoveryUnlockKind()];
     for (const kind of [...builtIn, ...extraKinds.flatMap(make => make({ settings, fs, now, logger }))]) {
         if (kinds[kind.kind]) throw new Error(`operation kind ${kind.kind} is registered twice`);
         kinds[kind.kind] = kind;

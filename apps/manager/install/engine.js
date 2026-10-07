@@ -351,6 +351,7 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
     function writeConfigStep({ configPath, changes, secrets, layout }) {
         const built = buildConfigDoc({ configPath, changes, secrets, layout });
         const before = built.revision;
+        if (!built.existed && Object.keys(built.doc).length === 0) return { status: 'skipped', code: 'NOTHING_TO_WRITE' };
         const target = JSON.stringify(built.doc);
         if (built.existed && JSON.stringify(configFile.read(configPath, { fs }).doc) === target) {
             return { status: 'skipped', code: 'ALREADY_DONE', detail: { revision: before } };

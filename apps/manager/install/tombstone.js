@@ -25,13 +25,13 @@ function readTombstone(storeDir, fs = nodeFs) {
     if (read.problem || !files.isPlainObject(value) || value.version !== TOMBSTONE_VERSION || typeof value.installationId !== 'string') {
         return { present: true, doc: null };
     }
-    return { present: true, doc: { installationId: value.installationId, removedAt: value.removedAt, operationId: value.operationId || null } };
+    return { present: true, doc: { installationId: value.installationId, removedAt: value.removedAt, operationId: value.operationId || null, dataRemoved: value.dataRemoved === true } };
 }
 
-function writeTombstone(storeDir, { installationId, operationId = null, now = () => new Date() }, fs = nodeFs) {
+function writeTombstone(storeDir, { installationId, operationId = null, dataRemoved = false, now = () => new Date() }, fs = nodeFs) {
     const file = tombstonePath(storeDir);
     files.ensureDir(path.dirname(file), fs);
-    files.writeJsonAtomic(file, { version: TOMBSTONE_VERSION, installationId, removedAt: now().toISOString(), operationId }, fs);
+    files.writeJsonAtomic(file, { version: TOMBSTONE_VERSION, installationId, removedAt: now().toISOString(), operationId, dataRemoved }, fs);
     return file;
 }
 
