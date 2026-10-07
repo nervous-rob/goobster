@@ -176,6 +176,94 @@ and the knowledge rows inside the Spitball router are claimed without
 splitting the router files. The test asserts every mounted route matches a
 rule and every rule matches a route.
 
+#### How the rules are enforced (#320)
+
+`packages/core/web/featureGate.js` is the one enforcement point; it reads
+`routeRules` (and `wsPaths`, and `staticAssets` for a GET no rule claims),
+never a list of its own.
+
+- Portal: one middleware, first in `createWebAppApp`, before the body parser
+  and every router. A request whose owner (or an `alsoRequires` feature) is
+  off answers 404 before any handler body runs. A signed-in caller gets
+  `{ "error": { "code": "FEATURE_UNAVAILABLE", ... }, "feature": "<id>" }`
+  (the portal's own error shape); everyone else gets the answer a missing
+  `/api/app` route gives, so availability cannot be probed without a session.
+  Matching mirrors Express: HEAD answers as GET, case and a trailing slash
+  do not matter.
+- Bot public server and api app (`/api/activity`, `/activity`, `/`,
+  `/api/webhooks/*`, `/api/screen/*`, `/companion*`, `/api/gba-run/*`,
+  `/internal/gateway/*`, the MCP path): the same rules in front of every
+  mount, answering `404 { "error": "FEATURE_UNAVAILABLE", "feature": "<id>" }`
+  with no reasons. A feature that is off at startup is also not built at all:
+  no `TableManager`/`BotPlayer`, no screen-vision or GBA session manager
+  enabled, no MCP app, no webhook, internal-gateway or Activity router.
+- WebSockets: an upgrade on an off owner's path is a plain 404 before the
+  Origin rule, session lookup or connection lease, for everyone. An open
+  socket whose owner goes off after `refresh()` gets one
+  `{ "type": "error", "code": "FEATURE_UNAVAILABLE", "feature": "<id>" }`
+  frame and a 1008 close on its next message (the portal sockets also on
+  their next idle recheck); the message never reaches the feature.
+- `GET /api/app/features` (signed-in, core) returns `features.status()`
+  with reason and warning codes only, for the portal UI.
+
+Enforcement follows the state file. With no usable `data/features.json`
+(or an unusable one) the installation behaves as before the catalog: a
+feature whose legacy switch is off is inactive in the resolver, but its
+routes keep the answer the existing code gives (an unmounted router, the
+MCP token routes that stay open so a token can be revoked, Discord login's
+`LOGIN_UNAVAILABLE`). A refusal is enforced when the state file is in force,
+when `GOOBSTER_FEATURE_<ID>` forces the owner off, or when a dependency is
+enforced off. The rule is `featureState.enforcedOff`, shared with the tool,
+MCP, command and step gates through `features/gate.js` (see
+`documentation/feature_state.md`, "Reported versus enforced").
+
+Ownership change made while wiring this: the portal's MCP token management
+(`GET /api/app/mcp`, `POST /api/app/mcp/tokens`, `DELETE
+/api/app/mcp/tokens/:id`) is `core`, not `mcp`. Revoking a token is a
+management action that must stay reachable when the MCP transport is off;
+the transport itself (`/mcp` on the bot and api servers, stdio) is `mcp`.
+
+#### Routes reachable with everything off
+
+With every optional feature off the following still answer, because their
+rules are owned by `core` (or they are not claimed because they are not
+routes of a feature):
+
+- The portal shell and its files: `/app`, `/app/assets/*`,
+  `/app/vendor/katex/*`, `/app/sw.js`, `/app/manifest.webmanifest`,
+  `/app/offline.html`, `/app/liveAudioWorklet.js`, `/app/icons/*`,
+  `/app/screenshots/*`, `/app/share-target`. The client bundle is not split
+  per feature in this phase (physical exclusion is P3.2): feature rooms are
+  hidden by the UI from `/api/app/features`, and their static files are only
+  gated where a mount is feature-owned (`/activity/*`, `/` as the Activity
+  client, `/companion*`).
+- `/api/app/config`, `/me`, `/features`, `/auth/*` except the three Discord
+  OAuth routes (`login`, `link/discord`, `callback`, owned by `discord`),
+  `/account/*`, `/admin/*` (limits, invites, accounts, installation, audit,
+  instance state), `/settings/*` including account export and erasure,
+  `/privacy/*`, `/memory/*`, `/inbox/*`, `/usage`, `/home`, `/graph`, `/chat`,
+  `/share`, `/files`, `/tasks`, `/integrations/*` (credential routes),
+  `/attention`, `/applets`, `/mtga`, `/parlor/*` (and its WebSocket
+  `/api/app/parlor/live`), `/conversation-context`, `/people`, `/friends`,
+  `/dm`, `/followed-sources`, `/tutorials`, `/tutorial-preferences` and the
+  `/api/app/events` stream.
+- `GET /health` (bot and api) and the panel's `/api/status`, `/system`,
+  `/ai/models`, `/api/guilds/:id/memory/*`. The panel runs on its own
+  loopback server and is not gated by this layer.
+
+Everything else is refused while its owner is off: `/api/app/projects*` and
+`/observatory*` (projects, with the run/render/job routes owned by
+observatory), `/spitball/*` (knowledge; lenses, expeditions, briefs and
+note evidence are expeditions), `/note-attachments*` (knowledge),
+`/exchange/*`, `/voice/*`, `/studio/*` (music), `/push*` (except
+`DELETE /push/subscriptions`, which is core so a subscription can always be
+removed), `/mcp*`, the
+Discord OAuth routes, public Observatory share links
+(`/app/observatory/share/*`), `/api/activity/*`, `/api/webhooks/github`,
+`/api/webhooks/cursor`, `/api/screen/*`, `/companion*`, `/api/gba-run/*`,
+`/internal/gateway/*` and `/mcp`. The sandbox runner (`POST /run`,
+`/cancel`) is a separate process and is not gated here.
+
 ### S1 - runtime steps, startup side effects, events and interactions
 
 `packages/core/runtime/coreRuntime.js` has twenty `step()` calls. Thirteen
@@ -209,7 +297,9 @@ diagnostic ones - `error`, `warn`, `debug`, `invalidated`, `rateLimit`,
 subscribers). The `messageCreate` gates keep their order, which the spec
 asserts; owners are core except `#06 agent mission-control threads`
 (cursor) and `#10 GBA advice inbox` (gba). `voiceStateUpdate` is voice;
-`musicTrackStarted`/`musicTrackEnded` are music; the 📋 issue-capture
+`musicTrackStarted`/`musicTrackEnded` are music with
+`alsoRequires: ['voice']` (they are registered only where the shared voice
+stack is served); the 📋 issue-capture
 reaction is github.
 
 Seventeen interaction families in `apps/bot/events/interactionCreate.js`,
@@ -221,6 +311,133 @@ music, everything else (`parlorinvite`, `accessreq`, `friendreq`,
 `search`, `forgetme`) core. Defect for #318: the music library's
 `clear_search_button` collides with the `search` approval family under
 that router.
+
+#### How the gates are enforced (#318)
+
+Every gate below asks `features/gate.js` (`surfaceActive` /
+`requireSurface`), which applies the enforcement rule from
+`documentation/feature_state.md` ("Reported versus enforced"): with no
+usable `data/features.json` and no `GOOBSTER_FEATURE_<ID>` override nothing
+is refused, so a default install loads, deploys, starts and answers exactly
+as before. The state is read once when the bot process starts; listeners and
+the command set change on restart, interactions are refused live.
+
+- Commands and context menus: `commandDeployment.listCommandFiles` is the
+  one lister, `featureCommandFilter` the one filter. `apps/bot/index.js`
+  (load) and `apps/bot/deploy-commands.js` (deploy) both use it, so what
+  Discord shows and what the process answers cannot disagree. A filtered
+  file is never `require()`d (its top-level imports do not run). A command
+  file the inventory does not claim (a self-hoster's own command) keeps
+  loading and deploying while no usable `data/features.json` is in force,
+  with a log warning that names the file and says it is **not claimed by the
+  feature inventory**; once a state file is in force it fails closed and the
+  log gives that same accurate reason. The inventory spec still fails CI for
+  an unclaimed command file inside the repository. The
+  deploy hash (`data/.command-deploy-hash`) covers the payload, the targets
+  and the served feature set (`activeFeatureIds`, enforcement view), so
+  turning a feature on or off re-syncs Discord even when the payload is
+  unchanged; because the served feature set is part of the hash, every
+  installation redeploys its slash commands once after upgrading to the
+  release that introduces it (accepted). The Activity's Entry Point
+  ("Launch") command is deliberately *not* removed when `discordActivity`
+  is off: Discord only accepts that as a separate delete the deploy script
+  cannot undo on re-enable (the operator would have to recreate it in the
+  developer portal), and disabling is non-destructive. The button stays and
+  the Activity it opens answers with the gated 404. A slash command, autocomplete or context menu Discord still
+  holds for a filtered file is answered ephemerally with "That feature is
+  not available on this installation." (autocomplete gets an empty list)
+  before any handler runs.
+- Components and modals: `interactionCreate.gateComponentInteraction`
+  resolves the customId to its inventory row - the full id first through
+  the `collector:<id>` keys (so `clear_search_button` is left to the music
+  paginator's own collector and never parsed as the `search` router token),
+  then the second `_` token - and refuses an off owner before any handler
+  or write. `intaction` buttons resolve their owner from the pending
+  action's `type` (`github-issue` → github, `agent-launch` → cursor), and
+  that read is skipped when neither owner is enforced off. Deny / Cancel on
+  a sandbox request (`sbxreq`) or an integration action (`intaction`) is
+  let through whatever is off, because it only resolves the pending row and
+  executes nothing, so those rows can always be cleared (a table of
+  resolve-only actions in `interactionCreate.js`, one mechanism for both
+  tokens); Approve / Confirm is refused.
+- Runtime steps: `coreRuntime.step(name, fn, { feature })` never invokes
+  the callback of an enforced-off owner and records
+  `{ status: 'skipped', reason: 'feature', feature }` in `runtime.report`
+  (also `runtime.featureSkipped`), distinct from `paused`, `declined` and
+  `failed`. The bundled core steps always start; `applyBundledFeatureGates`
+  switches off their feature branches on the instance (automation's project
+  trigger poll, heartbeat's agent proposals, the attention generators that
+  read `observatory_jobs`, `spitball_expeditions` and `project_missions`).
+  `automationService.executeWheel` refuses at the top when the wheel command
+  is off. An unclaimed step fails closed without taking the process down.
+- Startup side effects: `serviceManager.voiceService` is a lazy getter; with
+  voice enforced off it returns an inert `InactiveVoiceService` and the
+  voice stack (MusicService, ffmpeg probe, memory monitor, SpotDL,
+  ElevenLabs) is never built. In `apps/bot/index.js` voice initialisation,
+  the `voiceStateUpdate` listener, the `musicTrackStarted`/`musicTrackEnded`
+  presence listeners, the 📋 issue-capture reaction and the
+  `playTrack`/`nickname`/`speak` tool adapters follow the same snapshot.
+- The `discord` adapter (Phase 1 behaviour): `apps/bot` is the Discord
+  client, so with `discord` off in `features.json` it still logs in and
+  builds `LocalGateway`; only the internal gateway API (`/internal/gateway/*`,
+  not mounted) and the surfaces that list `discord` as an owner or
+  `alsoRequires` honour it. What stops Discord outright is the adapter
+  switch (`discord.enabled` / `GOOBSTER_DISCORD_ENABLED`, read by
+  `config/discordConfig.js`), which selects the standalone `apps/api`
+  runtime with `DisabledGateway` instead of the bot. Making the bot
+  process refuse to log in is not a one-line change that keeps legacy
+  parity, so it is not done in Phase 1.
+- `messageCreate`: gates `#06` (cursor) and `#10` (gba) are skipped when
+  their owner is off; the other ten and their order are untouched
+  (`// messageCreate#NN` markers, asserted by the spec).
+- The Activity casino: the Activity transport is `discordActivity`, but
+  everything it carries over its socket is the table-game protocol
+  (`join`, `sit`, `action`, the bot invite, balances) and its one content
+  route is the casino lounge music, so those two claims carry
+  `alsoRequires: ['gambling']` (`/api/activity/ws` in `wsPaths`, `GET
+  /api/activity/music/casino` in `routeRules`; `economy` off blocks them
+  through `gambling`'s hard dependency). The auth and client-file routes
+  stay `discordActivity` alone. `apps/bot/web/server.js` builds
+  `TableManager` and `BotPlayer` and replays the escrow journal
+  (`recoverFromJournal`) only when the `table_games` table claim is
+  available (owner `gambling`, also `discordActivity`); otherwise no wager
+  can move points, the socket is never attached (its upgrade is a plain
+  404) and the handler refuses any table message with the standard
+  `FEATURE_UNAVAILABLE` frame.
+
+- Service seams: a door can be bypassed by a caller that reaches a service
+  through a route or loop owned by another feature, so the work itself
+  refuses with `features.enforcedOff` (a no-op without a state file or
+  override). `observatoryService` (`executionEnabled` and `_requireEnabled`,
+  so run, resume, render and fetch data) refuses with `FEATURE_UNAVAILABLE`
+  and inherits a sandbox or projects that is off through the dependency
+  rule; `sandboxService.enabled` and `run` follow `sandbox`;
+  `spitballExpeditionService` (`enabled`, `createExpedition`, so no orphan
+  row) and `spitballExpeditionRunner` (`kick`, `_runLoop`) follow
+  `expeditions`. Mission `job` and `expedition` steps refuse before they are
+  claimed (the step stays `READY`) and project trigger `run_script`, `render`
+  and `fetch_data` fail with `FEATURE_UNAVAILABLE`; both write one
+  `work_failures` row carrying the code and the step or trigger id, never the
+  script. A refused cron trigger fire or wheel automation is claimed so it
+  waits for its next time, but `lastRun` and `automation-ran` are not
+  written; the wheel claim order is decided before `markRan`. The personal
+  heartbeat reconciles mission steps only while `missionReconcile` is
+  available, and a reconcile never re-queues or kicks an expedition while
+  `expeditions` is off. The exchange risk sweep skips prediction settlement
+  while `gambling` is off (`marketsSkipped: 'gambling'`). `pushService`
+  and `mailService` read `enabled` as legacy AND not enforced off; nothing is
+  pushed or mailed while off, stored subscriptions stay and
+  `pushService.unsubscribe` keeps working. `VoiceService.initialize` builds
+  `MusicService` (which probes ffmpeg) and `AmbientService` only while
+  `music` is available. `followedSourceService.prepareResearch` refuses
+  before it creates an expedition.
+
+Specs: `tests/featureGatingCommands.test.js`,
+`tests/featureGatingRuntime.test.js` and `tests/featureGatingServices.test.js`
+(the service seams, on the live config modules; no-file baseline equals the
+unfiltered walk, env-override-only filtering, one-feature-off loops over
+every manageable feature, standalone/paired/paused→resume shapes, a boot
+harness that spies on listeners, the loader and the adapters).
 
 ### M1 - Mail
 
@@ -326,29 +543,191 @@ They read dormant tables of disabled features by design.
 | `GET /api/app/projects/:slug/parlor` | projects / core | projects |
 | Run/render/job routes inside `routes/projects.js` | projects / observatory | observatory |
 | `/api/app/mtga/*`, `/api/app/applets/*`, `/api/app/followed-sources/*` | core / projects / expeditions | core |
-| `GET /api/activity/music/casino` | activity / music / gambling | discordActivity (transport asset) |
+| `GET /api/activity/music/casino` | activity / music / gambling | discordActivity, `alsoRequires: gambling` (the lounge music is casino content) |
 | `/app/liveAudioWorklet.js` | core / voice | core (shared) |
 | Table games (`TableManager`, `BotPlayer`, `table_games`, `activity/games/*`) | activity / gambling | gambling, `alsoRequires: discordActivity` |
 | `sharp` | core / exchange | core |
 | `ffmpeg` | voice / music / observatory | voice owns it; observatory render is a soft consumer (`FFMPEG_MISSING`) |
 | GBA fresh default | #261 on / legacy off | #261 preset recorded; flagged for the owner |
 
+## Conformance and dormant data (#322)
+
+Two specs are the Phase 1 merge gate. Both run on SQLite and Postgres (the
+conformance spec is in the `core` CI group, the dormant-data spec in
+`privacy`); fixtures shared with the per-surface specs live in
+`tests/helpers/featureFixtures.js`.
+
+### `tests/featureConformance.test.js`
+
+Per-surface specs prove one gate with one feature at a time. This spec proves
+the gates agree. For every profile the expected set is derived from the
+inventory graph, never a hand list, and independently of `featureState.js`:
+
+`served(claim) = claim.owner and every claim.alsoRequires are served`, where
+a feature is served unless it is enforced off or one of its hard
+dependencies is (the enforcement rule in `feature_state.md`).
+
+| Profile | What it is | What it proves |
+|---|---|---|
+| `legacy-no-file` | No `features.json`, default config | Nothing is refused anywhere, even where a legacy switch reports a feature off. The loader set equals the unfiltered walk; every route is served. |
+| `fresh-install` | `features.freshPreset()` written to the state file | The preset turns off `economy`, `exchange` and `gambling` only, and every other surface follows. |
+| `core-only` | Every manageable feature `active: false` | Zero optional commands, steps, tools, MCP tools, routes and sockets; core chat, Inbox, privacy, export, settings, admin and MCP token revocation stay reachable. |
+| `one-feature-off` x 20 | One profile per manageable id | The same invariant, one feature at a time, including the dependents the graph takes down with it. |
+| Dependency combinations | `sandbox` off takes `observatory`; `knowledge` takes `expeditions`; `economy` takes `exchange` and `gambling`; `discord` takes `discordActivity` and every Discord-bound `alsoRequires` claim; `github` takes `cursor`; `economy` + `knowledge` together | Hard dependents and `alsoRequires` surfaces go off together. |
+| `env-override-only` | `GOOBSTER_FEATURE_<ID>=0`, no file (sandbox, knowledge, economy, discord, github, gba + screenVision) | An override alone enforces, with the same results as the file. |
+
+Each profile is checked at every surface kind the gates implement:
+
+| Surface | Assertion |
+|---|---|
+| Central rule | `gate.requireSurface(kind, id)` agrees with the derived set for every claimed command, context menu, runtime step, event gate, interaction type, AI tool, MCP tool and socket path (blocker named). |
+| Commands and context menus | `listCommandFiles` with `featureCommandFilter` returns exactly the served keys; unclaimed files are failed closed. |
+| Runtime steps | `startCoreRuntime` reports exactly the served steps; a skipped step's marker never appears; no `fetch` and no model call. |
+| Bot boot | `apps/bot/index.js` booted with fakes: `client.commands`, voice/music/issue-capture listeners, command-backed adapters and `startCoreRuntime` follow the profile. |
+| AI tools | Discovery offers only served tools; `toolsRegistry.execute` refuses the rest with `FEATURE_UNAVAILABLE` and no database write, `fetch` or model call. |
+| MCP | Tool and resource listings, `tools/call` and `resources/read` follow the claims; the `/mcp` mount answers 404 `FEATURE_UNAVAILABLE` for an enforced-off `mcp`; revoking a token works in every profile. |
+| HTTP routes | `routeBlock` agrees with every mounted portal route (walked from the Express router stack); a real request to each refused route is 404 `FEATURE_UNAVAILABLE` with no handler, write or outbound call. Core operator, privacy, Inbox, export, settings and status routes answer 200 in every profile. |
+| WebSocket upgrades | A real upgrade is 404 exactly for the unserved paths and never reaches a handler. |
+
+Inventory negative checks, in the same spec:
+
+- `requireSurface` throws `UNCLAIMED_SURFACE` for an unclaimed id of every gated kind.
+- An unclaimed command file added to a copy of the commands directory is neither loaded nor deployed (the lister fails it closed) and is found by the claim check.
+- With a claim removed (by replacing `inventory.ownerOf` inside the test; the real inventory is never touched) a runtime step, AI tool, MCP tool, interaction type, event gate and WebSocket path is found unclaimed and refused.
+- An unclaimed route is found by the inventory check. The network edge deliberately never gates a path it does not recognise, so for routes this check, not the edge, is the safety net.
+- `catalog.validateCatalog` rejects an unknown dependency, a cycle, `core` with dependencies, `core` as a dependency, a self dependency, a duplicate id and an unlisted descriptor; `features.write` rejects an unknown id, a `core` entry and a dependent without its dependency.
+- Core ownership is explicit: every mounted core route is matched by a `core` entry in `routeRules`, and every core step, tool, command, MCP tool, socket path and static prefix is listed by name.
+
+Mutation check: with the `toolsRegistry` refusal removed, or the `routeGate`
+mount removed from `appApi.js`, the spec fails (AI tools in every refusing
+profile; HTTP routes in every refusing profile).
+
+### `tests/featureDormantData.test.js`
+
+Two accounts (A and B) are seeded across 39 tables owned by economy,
+exchange, gambling, Tavern, music (Song Studio), push, sandbox, Cursor,
+GitHub, integrations, Screen Vision, MCP, projects, Observatory and
+expeditions, plus memories with vectors and old and new ledger rows. Every
+manageable feature is then turned off through a state file, and the real
+services run:
+
+- the state really refuses every optional feature, the runtime starts with none of their steps, and no feature worker, tool, `fetch`, model call, sandbox run, expedition start or Web Push send happens;
+- `privacyService.auditUser` and `buildUserReport` list both accounts' dormant rows;
+- `AccountExportService` builds a real archive that carries A's rows only;
+- retention sweeps still prune what retention owns (old `resource_events`) and leave the dormant rows byte-identical;
+- an off then on round trip with no privacy or retention action leaves every row unchanged;
+- `forgetUser(A)` with the features off erases A everywhere, anonymises (keeps) guild-wide rows, leaves no vector orphan, keeps the ledger rows with the actor nulled, and leaves B byte-identical, before and after the features come back on.
+
+A seeded-table consistency test fails when a feature-owned table with a
+person-shaped column is neither seeded nor explained in the spec's
+`NOT_SEEDED` map.
+
+### Reach gaps closed
+
+| Table | Service | How |
+|---|---|---|
+| `agent_runs` | `privacyService`, export | Deleted on erasure (they hold the person's prompt); counted in `auditUser` and the report; exported. |
+| `pending_integration_actions` | `privacyService`, export | Rows the person requested are deleted; `resolvedBy` is cleared where they resolved someone else's; counted; exported. |
+| `integration_audit` | `privacyService`, export | Guild audit record: the row stays and `userId` is nulled; counted; exported. |
+| `repo_watches` | `privacyService`, export | Guild record: `createdBy` nulled; counted; exported. |
+| `screen_vision_clients` | `privacyService`, export | Pairing deleted (a bearer credential) and the live session and pairing codes dropped; exported without the token hash. |
+| `kg_reflection_runs.requestedBy` | `privacyService` | Nulled on erasure (found by the dormant-data table check); counted. |
+| `prediction_markets.createdBy`, `tavern_adventures.createdBy` | `auditUser` | Attribution was already nulled on erasure; it is now counted too. |
+| Economy, exchange, Tavern, Song Studio, push, friends and DMs, `user_integrations`, sandbox | account export (`accountExportData.js`) | The person's own rows are exported whether or not the feature is on; secrets (push keys, integration tokens, token hashes) never are. See `user_settings.md`. |
+| Push delivery | `pushService.notify` | With `push` enforced off nothing is sent (an Inbox delivery used to attempt Web Push and bump `failCount`); stored devices stay. |
+
+Left open, with the reason:
+
+- GBA has no per-person table. `gba_run_clients` is one pairing per guild channel and `gba_run_milestones` is guild-level text, reached only by the `/forget-me` name-mention review pass. There is nothing person-keyed to export or erase.
+- The MTGA deck library is core (not feature-gated) and is erased by `/forget-me`; the export keeps excluding it (the existing archive policy: decks copy out verbatim from the Decks room).
+- `sandbox_packages` is shared host state (a hash-pinned overlay every user's runs rely on). The export lists only rows the person requested, and erasure nulls `requestedBy`/`approvedBy` attribution; deleting the package would change other people's sandbox.
+- `prediction_markets`, `tavern_adventures` and `tavern_adventure_log` are guild-wide game state: erasure nulls the person and keeps the row. They are not exported as the person's data, apart from their own adventure-log lines.
+- `observatory_share_links` tokens are a bearer credential and are never exported (the project they open is).
+
+### Loaded but not executed when off
+
+"Code may still load" is the Phase 1 rule: the gates stop execution, not
+`require()`. The spec records, per feature module, the first entry point that
+still requires it, once with every optional feature off and once in the legacy
+(nothing off) walk, by running `tests/helpers/loadProbe.js` in a child process
+so Jest's module registry does not hide anything. It reports and does not
+fail, except that with everything off nothing may be reached through the
+command loader or the runtime. The table is printed in the test output:
+
+```
+Loaded but not executed when off (entry point that first required the module; "-" = not loaded)
+feature       module                                  all off         legacy (nothing off)
+economy       services/economyService.js              portal          toolsRegistry
+exchange      services/exchange/index.js              -               -
+exchange      services/exchange/riskEngine.js         -               commands
+exchange      services/stockPortfolioService.js       portal          commands
+gambling      services/exchange/wheelService.js       -               commands
+gambling      services/exchange/predictionService.js  portal          commands
+tavern        services/tavern/tavernService.js        -               commands
+tavern        services/tavern/interactionHandler.js   -               commands
+music         services/voice/musicService.js          -               commands
+music         services/studioSongService.js           portal          portal
+voice         services/voice/index.js                 -               commands
+voice         services/voice/elevenLabsTTSService.js  -               commands
+sandbox       services/sandboxService.js              toolsRegistry   toolsRegistry
+observatory   services/observatoryService.js          toolsRegistry   toolsRegistry
+projects      services/projectService.js              toolsRegistry   toolsRegistry
+projects      services/projectTriggerService.js       toolsRegistry   toolsRegistry
+expeditions   services/spitballExpeditionRunner.js    portal          portal
+knowledge     services/knowledgeGraphService.js       toolsRegistry   toolsRegistry
+github        services/githubService.js               -               commands
+cursor        services/cursorAgentService.js          -               commands
+screenVision  services/screenVisionService.js         -               commands
+gba           services/gbaRunService.js               -               commands
+push          services/pushService.js                 portal          portal
+mcp           mcp/http.js                             -               -
+```
+
+Reading it: with every feature off the command loader and the runtime load
+none of these modules (the point of #318). What is still loaded is the
+module graph the AI tool registry (`toolsRegistry` requires sandbox,
+observatory, project and knowledge services) and the portal context
+(`createWebAppContext` requires economy, stock portfolio, prediction, Song
+Studio, expedition runner and push services) import at the top. Those are
+what reduced-payload packaging (Phase 3) must make lazy before an excluded
+feature's files can be absent; `scripts/smoke-require.js` stays a full-source
+smoke.
+
+### Rooms, tutorials and self-docs (#321)
+
+The same 35 profiles check the portal surfaces, which act on the *reported*
+state (`features.isActive`) and so show with no state file exactly what the
+legacy flags showed: a room or nested view is available in `rooms.cjs` (and a
+deep link is explained by `routeUnavailability`) exactly when every feature
+it requires is reported active, and its `requires` names the same features
+as the inventory claim; a tour is listed available by
+`tutorialService.tutorialAvailability` on the same rule, while
+`gate.requireSurface('tutorial', id)` refuses exactly the tours whose claim
+is not served (the enforcement rule, like every other surface); and the
+self-docs corpus is never hidden - every seeded doc is listed in every
+profile, and a doc tagged `feature:<id>` carries an availability note
+exactly when that feature is reported inactive.
+
 ## Known gaps carried to later issues
 
 Recorded as `knownGaps` in `inventory.js` so they are not lost:
 
-- #318: `toolsRegistry`-independent command gating does not exist; the
-  command loader (`apps/bot/index.js`) and `collectCommandPayloads`
-  filter nothing but `config*`; `serviceManager.js` constructs
-  `VoiceService` at require time; `clear_search_button` router collision.
-- #319: `toolsRegistry.execute()` has no feature gate; MCP enablement is
-  boot-time only and the briefs tools/resource are unguarded by
-  Expeditions.
-- #321: tutorial `knowledge.research` has no `requires`; `projects.runs`
-  needs observatory and `trading.basics` needs exchange; unmet tutorials
-  are omitted instead of reported unavailable.
-- #322: `screen_vision_clients`, `agent_runs`, `repo_watches`,
-  `integration_audit` and `pending_integration_actions` are not reached by
-  `privacyService.forgetUser`; account export omits economy, exchange,
-  tavern, studio, gba, push, friends DMs, `user_integrations` and sandbox
-  data.
+- #318: the `intaction` router token serves both github and cursor
+  actions, so its owner is resolved from `pending.type` at runtime.
+  (Fixed since the first audit: command gating, lazy `VoiceService`, the
+  `step()` feature parameter and the `clear_search_button` collision.)
+- #319: MCP enablement is boot-time only and the `observatory` tool needs
+  an action-aware reduced definition. (`toolsRegistry.execute()` and the
+  MCP brief tools and resource are gated.)
+- #321 (closed): the tutorial catalog now declares `knowledge.research`
+  (expeditions), `projects.runs` (projects and observatory) and
+  `trading.basics` (exchange and discord), and an unmet tutorial is
+  reported unavailable instead of omitted. See
+  [portal_navigation.md](portal_navigation.md#feature-availability).
+- #322: closed. The reach gaps (`screen_vision_clients`, `agent_runs`,
+  `repo_watches`, `integration_audit`, `pending_integration_actions` for
+  erasure; economy, exchange, tavern, studio, push, friends and DMs,
+  `user_integrations` and sandbox for export) are fixed and pinned by
+  `tests/featureDormantData.test.js`; what is deliberately not per-person
+  (GBA, the MTGA deck library, `sandbox_packages`) is explained under
+  "Conformance and dormant data (#322)".

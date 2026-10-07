@@ -24,10 +24,24 @@ const {
 } = require('@goobster/core/utils/guildSettings');
 const { getBotPreferredName } = require('@goobster/core/utils/guildContext');
 const activityService = require('@goobster/core/services/activityService');
+const { surfaceActive } = require('@goobster/core/features/gate');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
+
+/*
+ * The guild message gates run in the order of the `// messageCreate#NN` marker
+ * comments below (the same names and order as `eventGates` in
+ * packages/core/features/inventory.js; tests/featureGatingCommands.test.js
+ * keeps the two in step). Feature gates are decided per message against the
+ * startup feature snapshot, so a disabled feature's gate is skipped without
+ * touching the order of the others.
+ */
+const GATE_MISSION_CONTROL = 'messageCreate#06 agent mission-control threads';
+const GATE_GBA_ADVICE = 'messageCreate#10 GBA advice inbox';
 
 module.exports = {
     name: Events.MessageCreate,
     async execute(message) {
+        // messageCreate#01 reply-tail record
         // Every message in a guild channel joins that channel's short tail,
         // Goobster's own included: reply detection keys off whose message came
         // last, so his outgoing chatter has to be recorded too.
@@ -35,9 +49,10 @@ module.exports = {
             replyDetection.recordMessage(message);
         }
 
-        // Ignore bot messages
+        // messageCreate#02 ignore bots
         if (message.author.bot) return;
 
+        // messageCreate#03 partial resolve
         // DM messages/channels can arrive as partials - resolve before use
         if (message.partial) {
             try {
@@ -48,12 +63,14 @@ module.exports = {
             }
         }
 
+        // messageCreate#04 DM direct chat
         // One-on-one DMs: every message is an implicit prompt (no mention needed)
         if (!message.guild) {
             await handleDirectMessage(message);
             return;
         }
 
+        // messageCreate#05 activity counters
         // Counts-only activity tracking (feeds /wrapped); never throws
         await activityService.recordMessage({
             guildId: message.guild.id,
@@ -61,15 +78,20 @@ module.exports = {
             userId: message.author.id
         });
 
-        // Agent mission-control threads: a reply in one becomes a follow-up
-        // to the Cursor agent instead of a chat prompt.
+        // messageCreate#06 agent mission-control threads
+        // A reply in one becomes a follow-up to the Cursor agent instead of a
+        // chat prompt. Owned by the Cursor feature: when it is off the thread
+        // lookup (an agent_runs read) never happens.
         try {
-            const agentTracker = message.client.agentTrackerService;
+            const agentTracker = surfaceActive('eventGate', GATE_MISSION_CONTROL)
+                ? message.client.agentTrackerService
+                : null;
             if (agentTracker && await agentTracker.handleThreadMessage(message)) return;
         } catch (error) {
             console.error('Agent thread follow-up handling failed:', error);
         }
 
+        // messageCreate#07 address detection
         // Get the bot's nickname for this guild
         const botNickname = await getBotPreferredName(message.guild.id, message.guild.members.me);
 
@@ -91,27 +113,33 @@ module.exports = {
         const repliedTo = await fetchRepliedToMessage(message);
         const isReplyToBot = repliedTo?.author?.id === message.client.user.id;
 
+        // messageCreate#08 reply-to-edit
         // Reply-to-edit: replying to a bot message that contains an image
         // (e.g. a generated one) with text edits that image.
         if (await maybeHandleImageEditReply(message, repliedTo)) return;
 
+        // messageCreate#09 explicit address
         // If explicitly addressed, handle the message as before
         if (isMentioned || roleStyleBotMention || isReplyToBot) {
             await handleExplicitMention(message, roleStyleBotMention);
             return;
         }
 
-        // GBA run advice inbox: chatter in a channel bound to a CONNECTED
-        // run harness becomes advice for the playing agent (📨 ack) instead
-        // of a chat prompt. Explicit addresses were already handled, so
-        // asking Goobster something directly in the run channel still works.
+        // messageCreate#10 GBA advice inbox
+        // Chatter in a channel bound to a CONNECTED run harness becomes advice
+        // for the playing agent (📨 ack) instead of a chat prompt. Explicit
+        // addresses were already handled, so asking Goobster something
+        // directly in the run channel still works. Owned by the GBA feature.
         try {
-            const gbaRunService = require('@goobster/core/services/gbaRunService');
-            if (await gbaRunService.maybeCaptureAdvice(message)) return;
+            if (surfaceActive('eventGate', GATE_GBA_ADVICE)) {
+                const gbaRunService = requireOptional('@goobster/core/services/gbaRunService', { feature: 'gba' });
+                if (gbaRunService && await gbaRunService.maybeCaptureAdvice(message)) return;
+            }
         } catch (error) {
             console.error('GBA run advice capture failed:', error);
         }
 
+        // messageCreate#11 reply detection
         // Reply detection: this message directly follows one of Goobster's, so
         // it may well be an answer to him even though it never says his name.
         try {
@@ -127,6 +155,7 @@ module.exports = {
             console.error('Error in reply detection handling:', error);
         }
 
+        // messageCreate#12 dynamic response
         // If not explicitly mentioned, check if dynamic response detection is enabled for this guild
         try {
             const dynamicResponseSetting = await getDynamicResponse(message.guild.id);

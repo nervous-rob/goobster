@@ -1530,9 +1530,14 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
 .tools-card-secondary { font-size: 12.5px; }
 .tools-card-blurb { margin: 0; color: var(--text-dim); font-size: 14px; flex: 1; }
 .tools-card-unavailable {
+  display: flex; flex-direction: column; gap: 2px;
   font-size: 13px; color: var(--text-dim); padding: 8px 10px; border-radius: 8px;
   background: var(--bg-raise-2); border: 1px dashed var(--border);
 }
+.tools-card-unavailable-label { color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.tools-card .feature-doc-link, .tools-card .feature-doc-path { align-self: flex-start; margin-top: 8px; font-size: 13px; }
+.feature-unavailable { max-width: 560px; margin: 0 auto; }
+.feature-unavailable p { margin: 8px 0; }
 
 @media (max-width: 720px) {
   .activity-tabs { padding: 6px 12px 0; }

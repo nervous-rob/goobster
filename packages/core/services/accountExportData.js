@@ -14,6 +14,15 @@ const PARLORS = `SELECT id FROM parlor_conversations WHERE ownerId = @userId
 const MISSIONS = `SELECT id FROM project_missions WHERE projectId IN (${PROJECTS})`;
 const ASSETS = `SELECT id FROM project_assets WHERE projectId IN (${PROJECTS})`;
 const PRIVATE_CHATS = `SELECT gc.id FROM guild_conversations gc WHERE gc.guildId = @scope`;
+const OWNED_SONGS = 'SELECT id FROM studio_songs WHERE ownerId = @userId';
+const DM_THREADS = 'SELECT id FROM dm_threads WHERE lowId = @userId OR highId = @userId';
+
+/**
+ * [table, where, columns = '*', order = '1, 2']. Credentials never appear:
+ * the secret columns of push_subscriptions, user_integrations,
+ * screen_vision_clients and mcp_tokens are left out of `columns` (TRANSIENT
+ * below is only the second line of defence).
+ */
 const INVENTORY = [
     ['principals', 'id = @userId'],
     ['users', 'discordId = @userId'],
@@ -58,7 +67,44 @@ const INVENTORY = [
     ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
     // The secret hash stays out of the archive. The label and prefix are
     // enough to see which clients were connected (documentation/mcp.md).
-    ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt']
+    ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt'],
+
+    // Optional-feature stores (#322). Disabling a feature never hides its
+    // rows from the person who owns them, so these are exported whatever
+    // `data/features.json` says.
+    ['economy_wallets', 'userId = @userId', '*', 'guildId'],
+    ['economy_transactions', 'userId = @userId', '*', 'id'],
+    ['stock_holdings', 'userId = @userId', '*', 'guildId, symbol'],
+    ['stock_trades', 'userId = @userId', '*', 'id'],
+    ['exchange_accounts', 'userId = @userId', '*', 'guildId'],
+    ['short_positions', 'userId = @userId', '*', 'guildId, symbol'],
+    ['option_positions', 'userId = @userId', '*', 'id'],
+    ['option_trades', 'userId = @userId', '*', 'id'],
+    ['exchange_orders', 'userId = @userId', '*', 'id'],
+    ['prediction_positions', 'userId = @userId', '*', 'id'],
+    ['exchange_events', 'userId = @userId', '*', 'id'],
+    ['perp_positions', 'userId = @userId', '*', 'id'],
+    ['exchange_optins', 'userId = @userId', '*', 'guildId'],
+    ['tavern_characters', 'userId = @userId'],
+    ['tavern_party_members', 'userId = @userId', '*', 'adventureId'],
+    ['tavern_npc_relationships', 'userId = @userId', '*', 'guildId, npcKey'],
+    ['tavern_rooms', 'userId = @userId', '*', 'guildId'],
+    ['tavern_adventure_log', 'userId = @userId', '*', 'id'],
+    ['studio_songs', 'ownerId = @userId', '*', 'id'],
+    ['studio_song_members', `userId = @userId OR songId IN (${OWNED_SONGS})`, '*', 'songId, userId'],
+    ['push_subscriptions', 'userId = @userId', 'id, userId, userAgent, createdAt, lastSeenAt, lastSentAt, failCount', 'id'],
+    ['friendships', 'lowId = @userId OR highId = @userId', '*', 'id'],
+    ['dm_threads', 'lowId = @userId OR highId = @userId', '*', 'id'],
+    ['dm_participants', `threadId IN (${DM_THREADS})`, '*', 'threadId, userId'],
+    ['dm_messages', `threadId IN (${DM_THREADS})`, '*', 'id'],
+    ['user_integrations', 'userId = @userId', 'userId, provider, accountLabel, createdAt, updatedAt, lastUsedAt', 'provider'],
+    ['sandbox_requests', 'userId = @userId', 'id, type, userId, payload, status, createdAt, resolvedAt, resolvedBy, error, resultJson', 'id'],
+    ['sandbox_packages', 'requestedBy = @userId', 'id, pip, module, version, requirement, requestedBy, approvedBy, installedAt', 'id'],
+    ['agent_runs', 'userId = @userId', '*', 'id'],
+    ['pending_integration_actions', 'requestedBy = @userId', 'id, type, guildId, channelId, requestedBy, payload, status, createdAt, resolvedAt, resolvedBy, resultJson', 'id'],
+    ['integration_audit', 'userId = @userId', '*', 'id'],
+    ['repo_watches', 'createdBy = @userId', '*', 'id'],
+    ['screen_vision_clients', 'userId = @userId', 'userId, label, createdAt, lastConnectedAt', 'userId']
 ];
 const TRANSIENT = new Set(['claimToken', 'leaseToken', 'runnerId', 'executionAttemptId', 'claimUntil', 'tokenHash']);
 function cleanRow(table, row, userId) {
@@ -76,10 +122,10 @@ async function snapshot(userId, { maxRows = 100000, maxTextBytes = 64 * 1024 * 1
         if (db.engine === 'postgres') await db.run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         const data = {};
         let rows = 0, bytes = 0;
-        for (const [table, where, columns = '*'] of INVENTORY) {
+        for (const [table, where, columns = '*', fixedOrder] of INVENTORY) {
             data[table] = [];
             for (let offset = 0; ; offset += 250) {
-                const order = table === 'tutorial_progress' ? 'accountId, tutorialId, version' : '1, 2';
+                const order = fixedOrder || (table === 'tutorial_progress' ? 'accountId, tutorialId, version' : '1, 2');
                 const page = await db.all(`SELECT ${columns} FROM ${table} WHERE ${where} ORDER BY ${order} LIMIT 250 OFFSET @offset`, { ...params, offset });
                 for (const row of page) {
                     const clean = cleanRow(table, row, userId);

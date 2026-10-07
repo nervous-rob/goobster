@@ -18,9 +18,13 @@
 
 const crypto = require('node:crypto');
 const db = require('../db');
+const dormantData = require('./dormantDataService');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const { dmScopeId } = require('../utils/dmScope');
 const domainEventBus = require('./domainEventBus');
 const logger = require('../utils/logger');
+const { features } = require('../features/featureState');
+const { blockingAmong, unavailableResult, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const OPEN_STATUSES = ['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW'];
 const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED'];
@@ -73,6 +77,9 @@ class ProjectMissionError extends Error {
         this.code = code;
     }
 }
+
+/** The feature whose execution a mission step of this kind needs (null: none). */
+const STEP_KIND_FEATURE = { job: 'observatory', expedition: 'expeditions' };
 
 function parseJson(raw, fallback) {
     if (raw && typeof raw === 'object') return raw;
@@ -261,7 +268,11 @@ class ProjectMissionService {
     }
 
     _expeditions() {
-        return this._spitball || require('./spitballExpeditionService');
+        const expeditions = this._spitball || requireOptional('./spitballExpeditionService', { feature: 'expeditions' });
+        if (!expeditions) {
+            throw new ProjectMissionError(404, 'FEATURE_UNAVAILABLE', 'Research expeditions are not installed on this server.');
+        }
+        return expeditions;
     }
 
     _watchService() {
@@ -1184,6 +1195,7 @@ class ProjectMissionService {
 
         const budget = legalizeBudget(row.budgetJson);
         await this._enforceBudget(row.id, step.kind, budget);
+        await this._requireStepFeature({ userId, step });
 
         if (step.kind === 'human') {
             await db.run(
@@ -1279,6 +1291,32 @@ class ProjectMissionService {
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
     }
 
+    /**
+     * Refuse to start a step whose work belongs to a feature that is enforced
+     * off, before the step is claimed or any child (job, expedition) exists.
+     * The step stays READY, so it can start once the feature is back. The
+     * ledger row carries the code and the step id only.
+     */
+    async _requireStepFeature({ userId, step }) {
+        const needed = STEP_KIND_FEATURE[step.kind];
+        const blocking = needed ? blockingAmong([needed]) : null;
+        if (!blocking) return;
+        try {
+            await require('./workFailureService').note({
+                kind: 'mission_step',
+                workId: step.id,
+                phase: 'start',
+                code: FEATURE_UNAVAILABLE,
+                reason: `feature ${blocking} is not available on this installation`,
+                actor: userId
+            });
+        } catch { /* the ledger is best-effort */ }
+        const refusal = unavailableResult(blocking);
+        const error = new ProjectMissionError(404, refusal.code, 'That kind of step is not available on this installation.');
+        error.feature = refusal.feature;
+        throw error;
+    }
+
     async _enforceBudget(missionId, kind, budget) {
         if (kind === 'human') return;
         const key = kind === 'expedition' ? 'maxExpeditions'
@@ -1299,7 +1337,7 @@ class ProjectMissionService {
 
     _ignoreChildCancel(error) {
         const code = error?.code || '';
-        if (code === 'NOT_FOUND' || code === 'BAD_STATE' || code === 'NOT_RUNNING') return true;
+        if (code === 'NOT_FOUND' || code === 'BAD_STATE' || code === 'NOT_RUNNING' || code === 'FEATURE_UNAVAILABLE') return true;
         return /not running|not found|not (a )?paused|already/i.test(error?.message || '');
     }
 
@@ -1464,6 +1502,7 @@ class ProjectMissionService {
 
     async _ensureExpeditionDispatched(step) {
         if (step.kind !== 'expedition' || !step.expeditionId) return;
+        if (features.enforcedOff('expeditions')) return;
         const row = await db.get(
             'SELECT id, status, userId FROM spitball_expeditions WHERE id = @id',
             { id: step.expeditionId }
@@ -1476,7 +1515,7 @@ class ProjectMissionService {
             }
         }
         try {
-            require('./spitballExpeditionRunner').kick(row.id);
+            requireOptional('./spitballExpeditionRunner', { feature: 'expeditions' })?.kick(row.id);
         } catch { /* runner is optional in tests */ }
     }
 
@@ -1580,7 +1619,7 @@ class ProjectMissionService {
                         await expeditions.continueExpedition(out.expeditionId, { userId });
                     }
                     try {
-                        require('./spitballExpeditionRunner').kick(out.expeditionId);
+                        requireOptional('./spitballExpeditionRunner', { feature: 'expeditions' })?.kick(out.expeditionId);
                     } catch { /* runner is optional in tests */ }
                 }
             } else if (step.kind === 'job' && (params.asset || params.assetSlug || params.slug)) {
@@ -2230,14 +2269,7 @@ class ProjectMissionService {
     }
 
     async forgetUser(userId) {
-        if (!userId) return { missions: 0, decisions: 0 };
-        const decisions = (await db.run(
-            'DELETE FROM project_decisions WHERE userId = @userId', { userId }
-        )).changes;
-        const missions = (await db.run(
-            'DELETE FROM project_missions WHERE userId = @userId', { userId }
-        )).changes;
-        return { missions, decisions };
+        return dormantData.forgetProjectMissions(userId);
     }
 
     async countUser(userId) {

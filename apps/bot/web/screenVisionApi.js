@@ -22,6 +22,7 @@ const path = require('node:path');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const screenVisionService = require('@goobster/core/services/screenVisionService');
+const featureGate = require('@goobster/core/web/featureGate');
 
 const COMPANION_SCRIPT = path.join(require('@goobster/core/runtimePaths').clientsDir, 'screen-companion', 'companion.js');
 const COMPANION_PAGE = path.join(__dirname, 'screen-companion.html');
@@ -82,12 +83,17 @@ function attachScreenVisionWebSocket(server, { logger = console } = {}) {
             return;
         }
         if (pathname !== '/api/screen/ws') return; // another handler's upgrade
+        if (featureGate.wsBlock(pathname)) {
+            featureGate.rejectUpgrade(socket);
+            return;
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
             wss.emit('connection', ws, request);
         });
     });
 
     wss.on('connection', (socket) => {
+        featureGate.guardOpenSocket(socket, '/api/screen/ws');
         socket.isAlive = true;
         socket.on('pong', () => { socket.isAlive = true; });
         screenVisionService.handleConnection(socket);

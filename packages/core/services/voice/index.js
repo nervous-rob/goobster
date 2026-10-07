@@ -1,7 +1,7 @@
 const { EventEmitter } = require('events');
 const ElevenLabsTTSService = require('./elevenLabsTTSService');
-const MusicService = require('./musicService');
-const AmbientService = require('./ambientService');
+const { features } = require('../../features/featureState');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
 
 class VoiceService extends EventEmitter {
@@ -25,15 +25,25 @@ class VoiceService extends EventEmitter {
                 this.tts = new ElevenLabsTTSService(this.config);
             }
             
-            // Initialize music service for SpotDL playback (required)
-            this.musicService = new MusicService(this.config);
-            this.musicService.on('stateUpdate', (state) => {
-                this.emit('musicStateUpdate', state);
-            });
-            
-            // Ambient sound generation also requires ElevenLabs (optional)
-            if (hasElevenLabs) {
-                this.ambientService = new AmbientService(this.config);
+            // Music playback and ambience belong to the music feature: while it is
+            // enforced off neither is built (MusicService probes ffmpeg and
+            // creates the SpotDL wrapper in its constructor) and both stay null,
+            // which every consumer already treats as "not available". A
+            // payload without the music modules leaves them null the same way.
+            const MusicService = features.enforcedOff('music')
+                ? null
+                : requireOptional('./musicService', { feature: 'music' });
+            if (MusicService) {
+                this.musicService = new MusicService(this.config);
+                this.musicService.on('stateUpdate', (state) => {
+                    this.emit('musicStateUpdate', state);
+                });
+
+                // Ambient sound generation also requires ElevenLabs (optional)
+                const AmbientService = hasElevenLabs
+                    ? requireOptional('./ambientService', { feature: 'music' })
+                    : null;
+                if (AmbientService) this.ambientService = new AmbientService(this.config);
             }
             
             this._isInitialized = true;
@@ -87,7 +97,7 @@ class VoiceService extends EventEmitter {
     }
 
     getCurrentMusicState() {
-        return this.musicService.getState();
+        return this.musicService ? this.musicService.getState() : null;
     }
 }
 

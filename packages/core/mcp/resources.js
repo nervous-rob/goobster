@@ -13,10 +13,27 @@
 
 const mcpConfig = require('../config/mcpConfig');
 const { callTool, clip, includeOperatorDocs } = require('./tools');
+const { surfaceActive, GateError } = require('../features/gate');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const DOC_PREFIX = 'goobster://docs/';
 const BRIEF_PREFIX = 'goobster://briefs/';
 const RESOURCE_NOT_FOUND = -32002;
+const DOC_TEMPLATE = 'goobster://docs/{slug}';
+const BRIEF_TEMPLATE = 'goobster://briefs/{id}';
+
+/**
+ * Whether the feature that owns a resource family is active. Evaluated per
+ * listing and per read; a family nobody owns fails closed.
+ */
+function resourceAvailable(template) {
+    try {
+        return surfaceActive('mcpResource', template);
+    } catch (error) {
+        if (error instanceof GateError) return false;
+        throw error;
+    }
+}
 
 function fail(code, message) {
     const error = new Error(message);
@@ -49,7 +66,7 @@ function decodeCursor(cursor) {
 }
 
 function docsAvailable() {
-    return require('../config/selfDocsConfig').enabled;
+    return resourceAvailable(DOC_TEMPLATE) && require('../config/selfDocsConfig').enabled;
 }
 
 async function docEntries(userId) {
@@ -67,7 +84,9 @@ async function docEntries(userId) {
 }
 
 async function briefEntries(userId) {
-    const rows = await require('../services/expeditionBriefService').listForUser({ userId, limit: 50 });
+    const briefs = requireOptional('../services/expeditionBriefService', { feature: 'expeditions' });
+    if (!briefs) return [];
+    const rows = await briefs.listForUser({ userId, limit: 50 });
     return rows.map(row => ({
         uri: `${BRIEF_PREFIX}${row.id}`,
         name: `brief-${row.id}`,
@@ -86,7 +105,7 @@ async function listResources(userId, scope, cursor) {
     const start = decodeCursor(cursor);
     const all = [
         ...(await docEntries(userId)),
-        ...(scope === 'read' ? await briefEntries(userId) : [])
+        ...(scope === 'read' && resourceAvailable(BRIEF_TEMPLATE) ? await briefEntries(userId) : [])
     ];
     const size = mcpConfig.resourcePageSize;
     const page = all.slice(start, start + size);
@@ -97,14 +116,14 @@ async function listResources(userId, scope, cursor) {
 }
 
 function listResourceTemplates(scope) {
-    const templates = [{
+    const templates = !resourceAvailable(DOC_TEMPLATE) ? [] : [{
         uriTemplate: `${DOC_PREFIX}{slug}`,
         name: 'goobster-doc',
         title: 'Goobster documentation page',
         description: 'A page of Goobster\'s manual, by slug from list_docs.',
         mimeType: 'text/markdown'
     }];
-    if (scope === 'read') {
+    if (scope === 'read' && resourceAvailable(BRIEF_TEMPLATE)) {
         templates.push({
             uriTemplate: `${BRIEF_PREFIX}{id}`,
             name: 'goobster-brief',
@@ -151,7 +170,10 @@ async function readBriefResource(userId, uri) {
 async function readResource(userId, scope, uri) {
     if (typeof uri !== 'string' || !uri) throw fail(-32602, 'resources/read needs a uri.');
     if (uri.startsWith(DOC_PREFIX)) return readDocResource(userId, uri);
-    if (uri.startsWith(BRIEF_PREFIX) && scope === 'read') return readBriefResource(userId, uri);
+    if (uri.startsWith(BRIEF_PREFIX) && scope === 'read') {
+        if (!resourceAvailable(BRIEF_TEMPLATE)) throw notFound();
+        return readBriefResource(userId, uri);
+    }
     throw notFound();
 }
 

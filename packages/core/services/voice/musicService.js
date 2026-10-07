@@ -23,10 +23,9 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const config = require('../../../../config.json');
+const config = require('../../config/configJson').load();
 const SpotDLService = require('../spotdl/spotdlService');
 const { parseTrackName } = require('../../utils/musicUtils');
-const { EmbedBuilder } = require('discord.js');
 const { generateMusic, resolveApiKey } = require('./elevenLabsAudioService');
 
 // Length of generated mood-music tracks; also drives loop crossfade timing.

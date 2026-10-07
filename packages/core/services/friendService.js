@@ -24,6 +24,7 @@ const db = require('../db');
 const logger = require('../utils/logger');
 const { toGateway } = require('../gateway');
 const identityConfig = require('../config/identityConfig');
+const { discord } = require('../utils/optionalModule');
 
 const SOURCE_TYPE = 'friend_request';
 const BUTTON_TYPE = 'friendreq';
@@ -833,7 +834,7 @@ class FriendService {
 
     _portalUrl(path) {
         try {
-            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            const publicUrl = require('../config/configJson').load().webapp?.publicUrl;
             if (typeof publicUrl === 'string' && publicUrl) {
                 return `${publicUrl.replace(/\/+$/, '')}/app${path}`;
             }
@@ -843,7 +844,7 @@ class FriendService {
 
     /** The request DM: an embed plus Accept / Decline buttons. */
     _requestMessage({ requestId, requesterName }) {
-        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = discord;
         const url = this._portalUrl('/people/friends');
         const embed = new EmbedBuilder()
             .setColor(0x7c8cff)

@@ -6,7 +6,8 @@
 const path = require('node:path');
 const perplexityService = require('../../services/perplexityService');
 const imageDetectionHandler = require('../imageDetectionHandler');
-const { PermissionFlagsBits } = require('discord.js');
+const { discord, forModule } = require('../optionalModule');
+const requireOptional = forModule(module);
 const { windowLines, formatTextWindow, fenceLanguage } = require('../toolResultWindow');
 const {
     getCommandAdapter,
@@ -145,7 +146,7 @@ module.exports = {
 
                 // Check bot permissions
                 const permissions = voiceChannel.permissionsFor(interactionContext.client.user);
-                if (!permissions.has(PermissionFlagsBits.Connect) || !permissions.has(PermissionFlagsBits.Speak)) {
+                if (!permissions.has(discord.PermissionFlagsBits.Connect) || !permissions.has(discord.PermissionFlagsBits.Speak)) {
                     return '❌ I need permissions to join and speak in your voice channel.';
                 }
             }
@@ -282,7 +283,8 @@ module.exports = {
             }
             const userId = interactionContext?.user?.id;
             if (!userId) return '❌ I could not tell whose voice settings to change.';
-            const webVoiceService = require('../../services/webVoiceService');
+            const webVoiceService = requireOptional('../../services/webVoiceService', { feature: 'voice' });
+            if (!webVoiceService) return '❌ Voice is not installed on this server.';
             try {
                 const saved = await webVoiceService.setVoiceSettings({ userId, accent });
                 if (!saved.accent) {
@@ -323,7 +325,8 @@ module.exports = {
             }
         },
         execute: async ({ repo, query, interactionContext }) => {
-            const githubService = require('../../services/githubService');
+            const githubService = requireOptional('../../services/githubService', { feature: 'github' });
+            if (!githubService) return '❌ GitHub support is not installed on this server.';
             try {
                 const { service, parsed, error } = await resolveGithubAccess(interactionContext, githubService, repo);
                 if (error) return error;
@@ -352,7 +355,8 @@ module.exports = {
             }
         },
         execute: async ({ repo, path: filePath, ref, offset, limit, interactionContext }) => {
-            const githubService = require('../../services/githubService');
+            const githubService = requireOptional('../../services/githubService', { feature: 'github' });
+            if (!githubService) return '❌ GitHub support is not installed on this server.';
             try {
                 const { service, parsed, error } = await resolveGithubAccess(interactionContext, githubService, repo);
                 if (error) return error;
@@ -462,9 +466,11 @@ module.exports = {
             }
         },
         execute: async ({ repo, prompt, branch, interactionContext }) => {
-            const githubService = require('../../services/githubService');
-            const repoWatchService = require('../../services/repoWatchService');
-            const cursorAgentService = require('../../services/cursorAgentService');
+            const githubService = requireOptional('../../services/githubService', { feature: 'github' });
+            const repoWatchService = requireOptional('../../services/repoWatchService', { feature: 'github' });
+            const cursorAgentService = requireOptional('../../services/cursorAgentService', { feature: 'cursor' });
+            if (!githubService || !repoWatchService) return '❌ GitHub support is not installed on this server.';
+            if (!cursorAgentService) return '❌ Cursor agents are not installed on this server.';
             const integrationActionService = require('../../services/integrationActionService');
 
             const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
@@ -506,8 +512,9 @@ module.exports = {
             }
         },
         execute: async ({ repo, title, body, interactionContext }) => {
-            const githubService = require('../../services/githubService');
-            const repoWatchService = require('../../services/repoWatchService');
+            const githubService = requireOptional('../../services/githubService', { feature: 'github' });
+            const repoWatchService = requireOptional('../../services/repoWatchService', { feature: 'github' });
+            if (!githubService || !repoWatchService) return '❌ GitHub support is not installed on this server.';
             const integrationActionService = require('../../services/integrationActionService');
 
             const guildId = interactionContext?.guildId || interactionContext?.guild?.id;
@@ -782,6 +789,11 @@ module.exports = {
                             interactionContext
                         });
                         
+                        // A switched-off tool is a failed step, never "completed".
+                        if (result && typeof result === 'object' && result.code === require('../../features/gate').FEATURE_UNAVAILABLE) {
+                            throw new Error('that tool is not available on this installation');
+                        }
+
                         // Store result for future steps
                         stepResults[`step${stepNum}`] = result;
                         totalStepsExecuted++;

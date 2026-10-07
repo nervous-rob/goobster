@@ -25,9 +25,12 @@ const crypto = require('node:crypto');
 const express = require('express');
 const axios = require('axios');
 const { WebSocketServer } = require('ws');
-const economyService = require('@goobster/core/services/economyService');
-const { generateMusic, resolveApiKey } = require('@goobster/core/services/voice/elevenLabsAudioService');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
+const economyService = requireOptional('@goobster/core/services/economyService', { feature: 'economy' });
+const elevenLabsAudio = requireOptional('@goobster/core/services/voice/elevenLabsAudioService', { feature: 'music' });
 const { toGateway, isGatewayUnavailable } = require('@goobster/core/gateway');
+const featureGate = require('@goobster/core/web/featureGate');
+const gateSurface = require('@goobster/core/features/gate');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -51,12 +54,12 @@ let casinoMusicPromise = null;
  */
 async function ensureCasinoMusic(ctx) {
     if (fs.existsSync(CASINO_MUSIC_FILE)) return CASINO_MUSIC_FILE;
-    if (!resolveApiKey(ctx.config)) return null;
+    if (!elevenLabsAudio?.resolveApiKey(ctx.config)) return null;
 
     if (!casinoMusicPromise) {
         casinoMusicPromise = (async () => {
             ctx.logger.info?.('Generating casino lounge music via ElevenLabs (one-time)...');
-            const buffer = await generateMusic(CASINO_MUSIC_PROMPT, ctx.config, CASINO_MUSIC_LENGTH_MS);
+            const buffer = await elevenLabsAudio.generateMusic(CASINO_MUSIC_PROMPT, ctx.config, CASINO_MUSIC_LENGTH_MS);
             await fsp.mkdir(path.dirname(CASINO_MUSIC_FILE), { recursive: true });
             await fsp.writeFile(CASINO_MUSIC_FILE, buffer);
             ctx.logger.info?.(`Casino music cached at ${CASINO_MUSIC_FILE} (${buffer.length} bytes)`);
@@ -95,6 +98,17 @@ async function assertActivityGuildAccess({ gateway, guildId, userId, devMode = f
         }
         throw error;
     }
+}
+
+/**
+ * The feature blocking the casino (the `table_games` surface: gambling, the
+ * economy it needs, and the Activity), or null when tables may be served.
+ * Checked per request so a refresh() that turns gambling off also stops an
+ * already-attached socket and the casino music route.
+ */
+function tableGamesBlock() {
+    const refusal = gateSurface.requireSurface('table', 'table_games');
+    return refusal ? refusal.feature : null;
 }
 
 /** Everything the activity backend needs, wired once at startup. */
@@ -215,6 +229,11 @@ function createActivityApp(ctx) {
     // Looping background music for the casino (generated + cached on first
     // request). 404 = no music available; the client degrades silently.
     app.get('/api/activity/music/casino', async (req, res) => {
+        const blocking = tableGamesBlock();
+        if (blocking) {
+            featureGate.sendUnavailable(res, blocking);
+            return;
+        }
         try {
             const file = await ensureCasinoMusic(ctx);
             if (!file) {
@@ -274,12 +293,17 @@ function attachActivityWebSocket(server, ctx) {
             return;
         }
         if (pathname !== '/api/activity/ws') return; // another handler's upgrade
+        if (featureGate.wsBlock(pathname)) {
+            featureGate.rejectUpgrade(socket);
+            return;
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
             wss.emit('connection', ws, request);
         });
     });
 
     wss.on('connection', (socket) => {
+        featureGate.guardOpenSocket(socket, '/api/activity/ws');
         let joined = null; // { session, table, unsubscribe }
 
         const send = (message) => {
@@ -293,6 +317,12 @@ function attachActivityWebSocket(server, ctx) {
                 message = JSON.parse(raw.toString());
             } catch {
                 sendError('BAD_JSON', 'Messages must be JSON.');
+                return;
+            }
+
+            const blocking = tableGamesBlock();
+            if (blocking) {
+                send(featureGate.unavailableFrame(blocking));
                 return;
             }
 
@@ -390,7 +420,7 @@ function attachActivityWebSocket(server, ctx) {
             joined = { session, table, guildId, unsubscribe: () => {} };
             joined.unsubscribe = ctx.tableManager.subscribe(table, subscriber);
 
-            const { currencyName } = await economyService.getSettings(guildId);
+            const { currencyName } = economyService ? await economyService.getSettings(guildId) : { currencyName: 'points' };
             send(await decorate({
                 type: 'joined',
                 user: { id: session.userId, name: session.name },
@@ -457,7 +487,7 @@ function attachActivityWebSocket(server, ctx) {
 
         // Attach the viewer's live balance to every outgoing table message
         async function decorate(message) {
-            if (!joined) return message;
+            if (!joined || !economyService) return message;
             try {
                 return {
                     ...message,

@@ -29,20 +29,12 @@ import { HostRoom } from './rooms/HostRoom';
 import { SharePage } from './rooms/SharePage';
 import { HomeRoom } from './rooms/HomeRoom';
 import { StudyRoom } from './rooms/StudyRoom';
-import { KnowledgeRoom } from './rooms/knowledge/KnowledgeRoom';
-import { NotesView } from './rooms/knowledge/NotesView';
-import { MapView } from './rooms/knowledge/MapView';
-import { ResearchView } from './rooms/knowledge/ResearchView';
 import { TasksRoom } from './rooms/TasksRoom';
 import { NoticedRoom } from './rooms/NoticedRoom';
 import { InboxRoom } from './rooms/InboxRoom';
 import { UsageRoom } from './rooms/UsageRoom';
 import { DecksRoom } from './rooms/DecksRoom';
-import { ExchangeRoom } from './rooms/ExchangeRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
-import { ProjectListView } from './rooms/projects/ProjectListView';
-import { ProjectResolver } from './rooms/projects/ProjectResolver';
-import { ProjectShell } from './rooms/projects/ProjectShell';
 import { ActivityRoom } from './rooms/ActivityRoom';
 import { FriendsView, MessagesView, PeopleRoom } from './rooms/PeopleRoom';
 import { ToolsRoom } from './rooms/ToolsRoom';
@@ -50,6 +42,7 @@ import { SettingsRoom } from './rooms/settings/SettingsRoom';
 import { canonicalPath } from './lib/rooms';
 import { captureInstallPrompt, installChunkRecovery, registerServiceWorker } from './lib/pwa';
 import { ChunkErrorBoundary } from './components/ChunkErrorBoundary';
+import { featureRoute, installFeatureChunkGuard, lazyFeature } from './shell/FeatureChunk';
 import './styles.css';
 
 const Documentation = lazy(() => import('./docs/Documentation').then((m) => ({ default: m.Documentation })));
@@ -60,16 +53,27 @@ function DocumentationGate() {
     </Suspense>;
 }
 
-const ConservatoryLayout = lazy(() => import('./music-lab/ConservatoryLayout').then((m) => ({ default: m.ConservatoryLayout })));
-const ConservatoryHome = lazy(() => import('./music-lab/ConservatoryHome').then((m) => ({ default: m.ConservatoryHome })));
-const IntervalExplorer = lazy(() => import('./music-lab/components/intervals/IntervalExplorer').then((m) => ({ default: m.IntervalExplorer })));
-const ChordWorkbench = lazy(() => import('./music-lab/components/chords/ChordWorkbench').then((m) => ({ default: m.ChordWorkbench })));
-const RhythmEngineLoader = lazy(() => import('./music-lab/components/rhythm/RhythmEngineLoader').then((m) => ({ default: m.RhythmEngineLoader })));
-const HarmonyEngineLoader = lazy(() => import('./music-lab/components/harmony/HarmonyEngineLoader').then((m) => ({ default: m.HarmonyEngineLoader })));
-const SpaceEngineLoader = lazy(() => import('./music-lab/components/space/SpaceEngineLoader').then((m) => ({ default: m.SpaceEngineLoader })));
-const MelodyEngineLoader = lazy(() => import('./music-lab/components/melody/MelodyEngineLoader').then((m) => ({ default: m.MelodyEngineLoader })));
-const StageEngineLoader = lazy(() => import('./music-lab/components/stage/StageEngineLoader').then((m) => ({ default: m.StageEngineLoader })));
-const StudioEngineLoader = lazy(() => import('./music-lab/components/studio/StudioEngineLoader').then((m) => ({ default: m.StudioEngineLoader })));
+// Feature rooms load on demand from their own chunks (lib/rooms.cjs `chunk`),
+// so a payload without the feature can leave them out (documentation/packaging.md).
+const KnowledgeRoom = featureRoute('knowledge', () => import('./rooms/knowledge/KnowledgeRoom').then((m) => ({ default: m.KnowledgeRoom })));
+const NotesView = featureRoute('knowledge', () => import('./rooms/knowledge/NotesView').then((m) => ({ default: m.NotesView })));
+const MapView = featureRoute('knowledge', () => import('./rooms/knowledge/MapView').then((m) => ({ default: m.MapView })));
+const ResearchView = featureRoute('expeditions', () => import('./rooms/knowledge/ResearchView').then((m) => ({ default: m.ResearchView })));
+const ProjectListView = featureRoute('projects', () => import('./rooms/projects/ProjectListView').then((m) => ({ default: m.ProjectListView })));
+const ProjectResolver = featureRoute('projects', () => import('./rooms/projects/ProjectResolver').then((m) => ({ default: m.ProjectResolver })));
+const ProjectShell = featureRoute('projects', () => import('./rooms/projects/ProjectShell').then((m) => ({ default: m.ProjectShell })));
+const ExchangeRoom = featureRoute('exchange', () => import('./rooms/ExchangeRoom').then((m) => ({ default: m.ExchangeRoom })));
+
+const ConservatoryLayout = lazyFeature('music', () => import('./music-lab/ConservatoryLayout').then((m) => ({ default: m.ConservatoryLayout })));
+const ConservatoryHome = lazyFeature('music', () => import('./music-lab/ConservatoryHome').then((m) => ({ default: m.ConservatoryHome })));
+const IntervalExplorer = lazyFeature('music', () => import('./music-lab/components/intervals/IntervalExplorer').then((m) => ({ default: m.IntervalExplorer })));
+const ChordWorkbench = lazyFeature('music', () => import('./music-lab/components/chords/ChordWorkbench').then((m) => ({ default: m.ChordWorkbench })));
+const RhythmEngineLoader = lazyFeature('music', () => import('./music-lab/components/rhythm/RhythmEngineLoader').then((m) => ({ default: m.RhythmEngineLoader })));
+const HarmonyEngineLoader = lazyFeature('music', () => import('./music-lab/components/harmony/HarmonyEngineLoader').then((m) => ({ default: m.HarmonyEngineLoader })));
+const SpaceEngineLoader = lazyFeature('music', () => import('./music-lab/components/space/SpaceEngineLoader').then((m) => ({ default: m.SpaceEngineLoader })));
+const MelodyEngineLoader = lazyFeature('music', () => import('./music-lab/components/melody/MelodyEngineLoader').then((m) => ({ default: m.MelodyEngineLoader })));
+const StageEngineLoader = lazyFeature('music', () => import('./music-lab/components/stage/StageEngineLoader').then((m) => ({ default: m.StageEngineLoader })));
+const StudioEngineLoader = lazyFeature('music', () => import('./music-lab/components/studio/StudioEngineLoader').then((m) => ({ default: m.StudioEngineLoader })));
 
 function ConservatoryGate() {
     return (
@@ -563,6 +567,7 @@ declare module '@tanstack/react-router' {
 // prompt for Settings, recover from a chunk that vanished with a deploy,
 // and register the worker that makes the portal installable.
 captureInstallPrompt();
+installFeatureChunkGuard();
 installChunkRecovery();
 registerServiceWorker();
 

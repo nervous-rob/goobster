@@ -26,7 +26,9 @@ process.env.GOOBSTER_DB_PATH = DB_PATH;
 process.env.GOOBSTER_OBSERVATORY_ENABLED = process.env.GOOBSTER_OBSERVATORY_ENABLED || '1';
 process.env.GOOBSTER_SANDBOX_ENABLED = process.env.GOOBSTER_SANDBOX_ENABLED || '1';
 
-const distIndex = path.join(ROOT, 'apps/web/dist/index.html');
+// GOOBSTER_E2E_WEB_DIST serves another built client, such as a payload's pruned copy.
+const WEB_DIST = process.env.GOOBSTER_E2E_WEB_DIST || path.join(ROOT, 'apps/web/dist');
+const distIndex = path.join(WEB_DIST, 'index.html');
 if (!fs.existsSync(distIndex)) {
     console.error('The web client is not built. Run npm run build:web.');
     process.exit(1);
@@ -565,9 +567,29 @@ async function seed() {
     return observatory;
 }
 
+/**
+ * The fixtures stand for data that existed before a host turned a feature
+ * off (featureAvailability.spec.js boots a second instance with a
+ * `features.json` that disables projects, expeditions and music, then
+ * expects the dormant rows to survive and come back). The services refuse
+ * to *create* while enforced off, so the seed runs under a state with no
+ * file and no override; the real state is restored before serving.
+ */
+async function seedBeforeDisabling() {
+    const { features } = require('@goobster/core/features/featureState');
+    features._resetForTests({ filePath: path.join(os.tmpdir(), 'goobster-e2e-no-features.json'), env: {} });
+    try {
+        return await seed();
+    } finally {
+        features._resetForTests({});
+    }
+}
+
 async function main() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    const observatory = await seed();
+    // GOOBSTER_E2E_KEEP_DB=1 restarts on an existing data dir without
+    // re-seeding (featureAvailability.spec.js restarts a second instance).
+    const observatory = process.env.GOOBSTER_E2E_KEEP_DB === '1' ? makeObservatory() : await seedBeforeDisabling();
     // Dedicated operator identities for safe Host tutorial journeys only.
     for (let mode = 0; mode < 3; mode++) {
         const principalId = `9900000000000039${mode}`;
@@ -589,7 +611,7 @@ async function main() {
             webapp: { enabled: true, devMode: true }
         },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { observatory, followedSources, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }) }
+        deps: { observatory, followedSources, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }), webDistDir: WEB_DIST }
     });
 
     const app = express();

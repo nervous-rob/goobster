@@ -1,6 +1,7 @@
 const aiServiceSingleton = require('../aiService');
 const economyService = require('../economyService');
 const { GameError } = require('./gameError');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 
 // How long Goobster "thinks" before acting (feels human, batches updates)
 const ACT_DELAY_MS = 1500;
@@ -1253,8 +1254,8 @@ class BotPlayer {
     _speak(guildId, text) {
         try {
             const voiceSessions = this._voiceSessions
-                || (this._voiceSessions = require('../voice/voiceSessionService'));
-            const session = voiceSessions.getSession?.(guildId);
+                || (this._voiceSessions = requireOptional('../voice/voiceSessionService', { feature: 'voice' }));
+            const session = voiceSessions?.getSession?.(guildId);
             if (session?.ttsService?.textToSpeech) {
                 Promise.resolve(
                     session.ttsService.textToSpeech(text, session.voiceChannel, session.connection,

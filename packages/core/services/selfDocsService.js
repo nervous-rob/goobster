@@ -27,6 +27,8 @@ const YAML = require('yaml');
 const db = require('../db');
 const config = require('../config/selfDocsConfig');
 const { windowLines } = require('../utils/toolResultWindow');
+const catalog = require('../features/catalog');
+const { features } = require('../features/featureState');
 
 const KINDS = ['guide', 'reference', 'standards', 'decision', 'skill'];
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -148,6 +150,71 @@ function splitFrontMatter(text) {
     } catch (error) {
         return { meta: {}, body: source.slice(match[0].length), error: `front matter: ${error.message}` };
     }
+}
+
+/**
+ * The feature a doc belongs to rides in the existing `tags` column as one
+ * `feature:<id>` entry (no schema change). It is stripped back out when the
+ * corpus loads, so it never becomes a search term or a visible tag.
+ */
+const FEATURE_TAG_PREFIX = 'feature:';
+
+function featureTag(featureId) {
+    return `${FEATURE_TAG_PREFIX}${featureId}`;
+}
+
+/** Split a stored tag list into plain tags and the owning feature id (or null). */
+function splitFeatureTag(tags) {
+    const plain = [];
+    let feature = null;
+    for (const tag of tags) {
+        if (typeof tag === 'string' && tag.startsWith(FEATURE_TAG_PREFIX)) feature = tag.slice(FEATURE_TAG_PREFIX.length) || null;
+        else plain.push(tag);
+    }
+    return { tags: plain, feature };
+}
+
+const REASON_TEXT = {
+    NOT_INSTALLED: () => 'not installed on this installation',
+    DISABLED: () => 'turned off by the host',
+    ENV_OFF: () => 'turned off by a host environment setting',
+    STATE_ERROR: () => 'unavailable because the host\'s feature state could not be read',
+    UNKNOWN_FEATURE: () => 'not a feature this installation knows about'
+};
+
+/**
+ * Why a feature is unavailable here, in one phrase, from the first reason
+ * code (`NOT_INSTALLED`, `DISABLED`, `ENV_OFF`, `DEPENDENCY_INACTIVE`, ...).
+ */
+function reasonPhrase(reason) {
+    if (!reason) return 'not available';
+    if (reason.code === 'DEPENDENCY_INACTIVE') {
+        const dependency = reason.dependency ? catalog.get(reason.dependency) : null;
+        return `unavailable because ${dependency ? dependency.title : 'a feature it needs'} is not active`;
+    }
+    return (REASON_TEXT[reason.code] || (() => 'not available'))();
+}
+
+/**
+ * Availability of the feature a doc describes, computed now from the
+ * feature predicate (never stored, never written into chunk text). Null
+ * for a doc with no feature, an unknown id, or an active feature.
+ * @param {string|null|undefined} featureId
+ * @returns {{ feature: string, title: string, reason: string, note: string }|null}
+ */
+function describeAvailability(featureId) {
+    if (!featureId) return null;
+    const descriptor = catalog.get(featureId);
+    if (!descriptor) return null;
+    const state = features.availability(featureId);
+    if (state.active) return null;
+    const reason = reasonPhrase(state.reasons[0]);
+    return {
+        feature: featureId,
+        title: descriptor.title,
+        reason,
+        note: `Not available on this installation: ${descriptor.title} is ${reason}. The doc still explains how to enable it.`
+    };
 }
 
 function inferKind(relPath) {
@@ -333,7 +400,7 @@ function extractSection(text, needle) {
  * Parse one Markdown document into its seedable form.
  * @param {string} text - raw file contents
  * @param {{ relPath: string, chunkChars?: number }} opts
- * @returns {{ slug, relPath, title, kind, summary, useWhen, tags, chunks, warnings }}
+ * @returns {{ slug, relPath, title, kind, summary, useWhen, tags, feature, chunks, warnings }}
  */
 function parseDoc(text, { relPath, chunkChars }) {
     const { meta, body, error } = splitFrontMatter(text);
@@ -357,6 +424,13 @@ function parseDoc(text, { relPath, chunkChars }) {
     const rawTags = Array.isArray(meta.tags) ? meta.tags : String(meta.tags || '').split(/[,\s]+/);
     const tags = [...new Set(rawTags.map(t => String(t).toLowerCase().trim()).filter(Boolean))];
 
+    let feature = null;
+    if (meta.feature != null && meta.feature !== '') {
+        const wanted = String(meta.feature).trim();
+        if (catalog.get(wanted)) feature = wanted;
+        else warnings.push(`unknown feature "${wanted}" (see packages/core/features/catalog.js)`);
+    }
+
     const chunks = chunkMarkdown(body, { title, chunkChars }).map(chunk => ({
         ...chunk,
         hash: sha1(`${chunk.headingPath}\n${chunk.content}`)
@@ -364,7 +438,7 @@ function parseDoc(text, { relPath, chunkChars }) {
     if (chunks.length === 0) warnings.push('document has no content');
     if (kind === 'skill' && !meta.summary) warnings.push('skill docs need a front-matter summary');
 
-    return { slug: slugFor(relPath), relPath: toPosix(relPath), title, kind, summary, useWhen, tags, chunks, warnings };
+    return { slug: slugFor(relPath), relPath: toPosix(relPath), title, kind, summary, useWhen, tags, feature, chunks, warnings };
 }
 
 class SelfDocsService {
@@ -489,7 +563,7 @@ class SelfDocsService {
                         kind: doc.kind,
                         summary: doc.summary,
                         useWhen: doc.useWhen,
-                        tags: JSON.stringify(doc.tags)
+                        tags: JSON.stringify(doc.feature ? [...doc.tags, featureTag(doc.feature)] : doc.tags)
                     };
                     for (let i = 0; i < doc.chunks.length; i++) {
                         const chunk = doc.chunks[i];
@@ -661,7 +735,8 @@ class SelfDocsService {
             };
             push(tokenize(row.title), 3);
             push(tokenize(row.headingPath), 2);
-            push(tokenize(safeTags(row.tags).join(' ')), 2);
+            const { tags, feature } = splitFeatureTag(safeTags(row.tags));
+            push(tokenize(tags.join(' ')), 2);
             push(tokenize(row.content), 1);
             let length = 0;
             for (const n of counts.values()) length += n;
@@ -673,7 +748,8 @@ class SelfDocsService {
                 kind: row.kind,
                 summary: row.summary,
                 useWhen: row.useWhen,
-                tags: safeTags(row.tags),
+                tags,
+                feature,
                 chunkIndex: row.chunkIndex,
                 headingPath: row.headingPath,
                 content: row.content,
@@ -774,6 +850,8 @@ class SelfDocsService {
                 relPath: entry.doc.relPath,
                 title: entry.doc.title,
                 kind: entry.doc.kind,
+                feature: entry.doc.feature,
+                unavailable: describeAvailability(entry.doc.feature),
                 headingPath: entry.doc.headingPath,
                 chunkIndex: entry.doc.chunkIndex,
                 content: entry.doc.content,
@@ -804,6 +882,8 @@ class SelfDocsService {
                 summary: chunk.summary,
                 useWhen: chunk.useWhen,
                 tags: chunk.tags,
+                feature: chunk.feature,
+                unavailable: describeAvailability(chunk.feature),
                 chunks: 0,
                 chars: 0
             };
@@ -916,3 +996,5 @@ module.exports.chunkMarkdown = chunkMarkdown;
 module.exports.tokenize = tokenize;
 module.exports.splitFrontMatter = splitFrontMatter;
 module.exports.slugFor = slugFor;
+module.exports.describeAvailability = describeAvailability;
+module.exports.featureTag = featureTag;

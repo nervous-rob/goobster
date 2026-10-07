@@ -1295,7 +1295,8 @@ describe('gate.js', () => {
     const gate = require('@goobster/core/features/gate');
 
     function configure(options = {}) {
-        features._resetForTests({ config: { token: 'x', ...(options.config || {}) }, env: options.env || {}, fs: memoryFs(), filePath: FILE });
+        const fs = options.file ? memoryFs({ [FILE]: options.file }) : memoryFs();
+        features._resetForTests({ config: { token: 'x', ...(options.config || {}) }, env: options.env || {}, fs, filePath: FILE });
     }
 
     afterEach(() => features._resetForTests({ config: {}, env: {}, fs: memoryFs(), filePath: FILE }));
@@ -1340,8 +1341,41 @@ describe('gate.js', () => {
             feature: 'voice',
             reasons: [{ code: 'ENV_OFF', detail: 'GOOBSTER_FEATURE_VOICE' }]
         });
+        // Legacy mode: a legacy-off Discord adapter is reported inactive but
+        // not enforced, so the surface keeps today's own degradation.
         configure({ config: { discord: { enabled: false } } });
+        expect(features.isActive('discord')).toBe(false);
+        expect(features.enforcedOff('discord')).toBe(false);
+        expect(gate.requireSurface('command', 'music/play.js')).toBeNull();
+        // Once a state file is in force the same switch is enforced.
+        configure({ config: { discord: { enabled: false } }, file: docText({ discord: { active: false } }) });
         expect(gate.requireSurface('command', 'music/play.js').feature).toBe('discord');
+    });
+
+    test('enforcement: no features.json refuses nothing new; a file, an env override or an enforced dependency does', () => {
+        configure({ config: { mcp: { enabled: false }, sandbox: { enabled: false } } });
+        expect(features.isActive('mcp')).toBe(false);
+        expect(features.enforcedOff('mcp')).toBe(false);
+        expect(features.enforcedOff('observatory')).toBe(false);
+        expect(features.enforcedUnavailable()).toEqual([]);
+        expect(features.unavailable().map(e => e.id)).toEqual(expect.arrayContaining(['mcp', 'sandbox', 'observatory']));
+        expect(gate.surfaceActive('route', '/mcp', 'POST')).toBe(true);
+        expect(gate.surfaceActive('aiTool', 'runCode')).toBe(true);
+
+        configure({ config: { sandbox: { enabled: true } }, env: { GOOBSTER_FEATURE_SANDBOX: '0' } });
+        expect(features.enforcedOff('sandbox')).toBe(true);
+        expect(features.enforcedOff('observatory')).toBe(true);
+        expect(features.enforcedUnavailable().map(e => e.id)).toEqual(expect.arrayContaining(['sandbox', 'observatory']));
+        expect(features.enforcedUnavailable().map(e => e.id)).not.toContain('mcp');
+        expect(gate.surfaceActive('aiTool', 'runCode')).toBe(false);
+
+        configure({ file: docText({ mcp: { active: false } }) });
+        expect(features.enforcedOff('mcp')).toBe(true);
+        expect(gate.surfaceActive('route', '/mcp', 'POST')).toBe(false);
+        expect(gate.surfaceActive('mcpTool', 'list_docs')).toBe(true);
+        expect(gate.surfaceActive('aiTool', 'runCode')).toBe(true);
+        expect(features.enforcedOff('core')).toBe(false);
+        expect(features.enforcedOff('nope')).toBe(true);
     });
 
     test('the wheel needs gambling and exchange; a route is resolved through the ordered rules', () => {
@@ -1386,10 +1420,12 @@ describe('gate.js', () => {
 });
 
 describe('module boundaries', () => {
-    test('the catalog requires only the inventory and descriptor modules', () => {
+    test('the catalog requires only the inventory, descriptor and payload-glob modules', () => {
         const source = fs.readFileSync(path.join(ROOT, 'packages/core/features/catalog.js'), 'utf8');
         const required = [...source.matchAll(/require\('([^']+)'\)/g)].map(match => match[1]).sort();
-        expect(required).toEqual(['./descriptors/adapters', './descriptors/integrations', './descriptors/media', './descriptors/workspace', './inventory']);
+        expect(required).toEqual(['./descriptors/adapters', './descriptors/integrations', './descriptors/media', './descriptors/workspace', './inventory', './payloadGlob']);
+        const glob = fs.readFileSync(path.join(ROOT, 'packages/core/features/payloadGlob.js'), 'utf8');
+        expect([...glob.matchAll(/require\(/g)]).toEqual([]);
     });
 
     test('the resolver does not import an app and loads no config module until asked', () => {

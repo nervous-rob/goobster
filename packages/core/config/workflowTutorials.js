@@ -3,7 +3,7 @@
 const step = (id, title, body, path, before, action, after, extra = {}) => ({
     id, title, body, path, demo: 'workflow', preview: { before, action, after }, ...extra
 });
-const project = (id, title, steps) => ({ id, title, roomId: 'projects', version: 2, requires: { feature: 'projects' }, steps });
+const project = (id, title, steps, feature = 'projects') => ({ id, title, roomId: 'projects', version: 2, requires: { feature }, steps });
 const activity = (id, title, steps) => ({ id, title, roomId: 'activity', version: id === 'activity.inbox' ? 3 : 2, steps });
 const P = '/projects';
 const I = '/activity/inbox';
@@ -33,8 +33,8 @@ module.exports = [
         step('logs', 'Read logs and outputs', 'Logs describe an attempt. Verify the promised files separately.', P, 'Sample log: writing report.', 'Inspect sample output', 'Sample output: report.md, with a source citation and a limitations section. A log saying “done” alone would not establish this.'),
         step('cancel', 'Cancel a second sample run', 'Cancellation stops further work where possible. An external action already taken may not be reversible.', P, 'Second sample run: RUNNING.', 'Simulate cancellation', 'Second sample run: cancelled. No actual run was started or cancelled.'),
         step('retry', 'Choose between resume and retry', 'Resume requires a valid checkpoint; retry starts another attempt and can incur cost. Check uncertain external outcomes before either.', P, 'Sample failed attempt: no usable checkpoint; external delivery outcome unknown.', 'Inspect recovery choices', 'Check whether delivery occurred before retrying. Do not blindly repeat an action that might already have succeeded.'),
-        step('verify', 'Verify the required output', 'Accept a result only after inspecting the required output and its limitations. Execution disabled on the host does not prevent this safe tour.', P, 'Sample report.md: present, not yet accepted.', 'Verify sample contract', 'File, citation and limits are present. This preview records no real acceptance; review the actual artifact in a live run.')
-    ]),
+        step('verify', 'Verify the required output', 'Accept a result only after inspecting the required output and its limitations. This tour is offered only where the host has project execution turned on, and it still runs nothing.', P, 'Sample report.md: present, not yet accepted.', 'Verify sample contract', 'File, citation and limits are present. This preview records no real acceptance; review the actual artifact in a live run.')
+    ], ['projects', 'observatory']),
     activity('activity.inbox', 'Inbox', [
         step('result', 'Open a result and its source', 'Inbox is the delivery record for results, reminders and invitations. Follow the source to inspect the underlying work.', I, 'Sample Inbox item: field report ready.', 'Open sample result', 'Source: Weekend field notebook → sample run → report.md. No real item is opened or marked read.'),
         step('ask', 'Ask about an Inbox item', 'Ask Goobster opens private Chat with a removable context chip and an editable question. Nothing is sent until you send. Ask in the project uses its shared Conversation; members can see the reply.', I, 'Sample failed run: a required input is missing.', 'Preview Ask Goobster', 'Private Chat draft: “Why did this fail, and what should I do next?” Context chip: sample failed run. Remove the chip to ask without it. No real conversation, item or provider request is created.'),

@@ -7,6 +7,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { whenLabel } from '../observatory/format';
 import { STATUS_ICONS, type Job } from './types';
 import type { Trigger } from './AutomationsTab';
+import { featureActive } from '../../lib/rooms';
 
 const CONTRACT_REASONS: Record<string, string> = {
     missing: 'missing',
@@ -35,7 +36,7 @@ export function RunsList({
     const me = useMe();
     const toast = useToast();
     const confirm = useConfirm();
-    const executionOn = Boolean(me.features?.observatory);
+    const executionOn = featureActive(me, 'observatory');
     // Trigger names for run provenance ("started by trigger X"); shares the
     // Automations view's cache entry.
     const triggersQ = useQuery({

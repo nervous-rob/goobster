@@ -42,6 +42,7 @@ const knowledgeGraphService = require('./knowledgeGraphService');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const { withTagLinks } = require('../utils/graphFilter');
 const { richRenderingContract, spokenReplyContract } = require('../utils/chat/promptFragments');
+const { discord } = require('../utils/optionalModule');
 
 const MAX_PERSONAS_PER_USER = 12;
 const MAX_PERSONA_NAME_LENGTH = 48;
@@ -1375,10 +1376,10 @@ class ParlorService {
 
     /** The invitation DM: an embed plus accept/decline buttons. */
     _inviteMessage({ inviteId, inviterName, title }) {
-        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = discord;
         let appUrl = null;
         try {
-            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            const publicUrl = require('../config/configJson').load().webapp?.publicUrl;
             if (typeof publicUrl === 'string' && publicUrl) {
                 appUrl = `${publicUrl.replace(/\/+$/, '')}/app/`;
             }
@@ -2342,10 +2343,10 @@ class ParlorService {
 
     /** The mention DM: who mentioned you, where, and a link to the chat. */
     _mentionMessage({ fromName, title, conversationId }) {
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder } = discord;
         let chatUrl = null;
         try {
-            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            const publicUrl = require('../config/configJson').load().webapp?.publicUrl;
             if (typeof publicUrl === 'string' && publicUrl) {
                 chatUrl = `${publicUrl.replace(/\/+$/, '')}/app/parlor/${conversationId}`;
             }

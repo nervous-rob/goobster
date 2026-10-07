@@ -22,12 +22,13 @@ import { TopBar } from './TopBar';
 import { useQuery } from '@tanstack/react-query';
 import {
     ACCOUNT_ROOMS, PRIMARY_ROOMS, atmosphereFor, isRoomAvailable, legacyHashTarget,
-    parentRoom, resolveRoom, roomBadgeCount, startPageTarget, type Room
+    parentRoom, resolveRoom, roomBadgeCount, routeUnavailability, startPageTarget, type Room
 } from '../lib/rooms';
 import { BerryMark } from '../components/BerryMark';
 import { setAppBadge, useInstallPrompt, useOnline, useServiceWorkerUpdate, useWorkerNavigation } from '../lib/pwa';
 import { showLocalNotification } from '../lib/notifications';
 import { InstallBanner, InstallEntry } from '../components/InstallEntry';
+import { UnavailableRoom } from './UnavailableState';
 
 function inboxNoticeTitle(kind?: string): string {
     if (kind === 'reminder') return 'A reminder came due';
@@ -97,6 +98,9 @@ export function AppShell() {
     // specialist rooms).
     const room = resolveRoom(pathname);
     const activeNav = parentRoom(room);
+    // A stale bookmark or typed address to a room this installation cannot
+    // offer says so inside the shell instead of rendering a broken room.
+    const roomBlocked = routeUnavailability(pathname, me);
 
     useEffect(() => { applyAtmosphere(atmosphereFor(room)); }, [room]);
     useEffect(() => {
@@ -373,7 +377,7 @@ export function AppShell() {
                         )}
                     </div>
                 )}
-                <Outlet />
+                {roomBlocked?.level === 'room' ? <UnavailableRoom info={roomBlocked} /> : <Outlet />}
             </div>
             {forgetOpen && <ForgetModal onClose={() => setForgetOpen(false)} toast={toast} />}
             {mention && (

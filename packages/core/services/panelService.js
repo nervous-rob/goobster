@@ -9,9 +9,10 @@
  */
 
 const fs = require('node:fs');
-const { ChannelType, PermissionFlagsBits } = require('discord.js');
-const SpotDLService = require('./spotdl/spotdlService');
-const { parseTrackName, filterTracks } = require('../utils/musicUtils');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
+const SpotDLService = requireOptional('./spotdl/spotdlService', { feature: 'music' });
+const musicUtils = requireOptional('../utils/musicUtils', { feature: 'music' });
 const { collectHostHealth } = require('../utils/hostHealth');
 
 const SNOWFLAKE_RE = /^\d{5,25}$/;
@@ -68,7 +69,7 @@ function assertText(value, name, maxLength) {
 
 function trackSummary(track) {
     if (!track) return null;
-    const { artist, title } = parseTrackName(track.name);
+    const { artist, title } = musicUtils ? musicUtils.parseTrackName(track.name) : { artist: null, title: track.name };
     return { name: track.name, artist, title };
 }
 
@@ -117,13 +118,13 @@ function modelSummary(model, defaultModelId) {
  * @param {Object} [params.deps] - collaborator overrides for tests
  */
 function createPanelService({ client, voiceService, logger = console, deps = {} }) {
-    const spotdlService = deps.spotdlService || new SpotDLService();
-    const voiceSessionService = deps.voiceSessionService || require('./voice/voiceSessionService');
+    const spotdlService = deps.spotdlService || (SpotDLService ? new SpotDLService() : null);
+    const voiceSessionService = deps.voiceSessionService || requireOptional('./voice/voiceSessionService', { feature: 'voice' });
     const aiService = deps.aiService || require('./aiService');
     const memoryService = deps.memoryService || require('./memoryService');
     const memeMode = deps.memeMode || require('../utils/memeMode');
     const guildSettings = deps.guildSettings || require('../utils/guildSettings');
-    const transcriptionService = deps.transcriptionService || require('./transcriptionService');
+    const transcriptionService = deps.transcriptionService || requireOptional('./transcriptionService', { feature: 'voice' });
     const factsService = deps.factsService || require('./factsService');
     const followupService = deps.followupService || require('./followupService');
     const activityService = deps.activityService || require('./activityService');
@@ -193,12 +194,12 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
     function requireTextChannel(guild, channelId) {
         assertSnowflake(channelId, 'channelId');
         const channel = guild.channels.cache.get(channelId);
-        const isText = channel && (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement);
+        const isText = channel && (channel.type === discord.ChannelType.GuildText || channel.type === discord.ChannelType.GuildAnnouncement);
         if (!isText) {
             throw new PanelError(404, 'CHANNEL_NOT_FOUND', 'Text channel not found in that server.');
         }
         const me = botMember(guild);
-        if (!hasChannelPerms(channel, me, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+        if (!hasChannelPerms(channel, me, [discord.PermissionFlagsBits.ViewChannel, discord.PermissionFlagsBits.SendMessages])) {
             throw new PanelError(403, 'MISSING_PERMISSIONS', 'Goobster cannot send messages in that channel.');
         }
         return channel;
@@ -207,11 +208,11 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
     function requireVoiceChannel(guild, channelId) {
         assertSnowflake(channelId, 'channelId');
         const channel = guild.channels.cache.get(channelId);
-        if (!channel || channel.type !== ChannelType.GuildVoice) {
+        if (!channel || channel.type !== discord.ChannelType.GuildVoice) {
             throw new PanelError(404, 'CHANNEL_NOT_FOUND', 'Voice channel not found in that server.');
         }
         const me = botMember(guild);
-        if (!hasChannelPerms(channel, me, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak])) {
+        if (!hasChannelPerms(channel, me, [discord.PermissionFlagsBits.ViewChannel, discord.PermissionFlagsBits.Connect, discord.PermissionFlagsBits.Speak])) {
             throw new PanelError(403, 'MISSING_PERMISSIONS', 'Goobster cannot connect and speak in that voice channel.');
         }
         return channel;
@@ -223,7 +224,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
      * a live voice-chat session in the target guild always blocks music.
      */
     function checkMusicTarget(guildId, confirmMove) {
-        if (voiceSessionService.hasSession(guildId)) {
+        if (voiceSessionService?.hasSession(guildId)) {
             throw new PanelError(409, 'VOICECHAT_ACTIVE', 'A live voice conversation is active in this server. Stop it before playing music.');
         }
         const ms = music();
@@ -263,12 +264,12 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 capabilities: {
                     music: Boolean(ms),
                     tts: Boolean(tts()),
-                    stt: transcriptionService.isConfigured(),
+                    stt: Boolean(transcriptionService?.isConfigured()),
                     // The realtime voice engine is ElevenLabs end to end
                     // (Scribe STT + streaming TTS); classic adds OpenAI STT.
                     voiceEngines: {
                         realtime: Boolean(tts()),
-                        classic: Boolean(tts()) && transcriptionService.isConfigured()
+                        classic: Boolean(tts()) && Boolean(transcriptionService?.isConfigured())
                     }
                 }
             };
@@ -325,7 +326,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                     iconUrl: guild.iconURL?.({ size: 128 }) ?? null,
                     memberCount: guild.memberCount ?? null,
                     musicActive: Boolean(ms?.connection) && ms.guildId === guild.id,
-                    voiceChatActive: voiceSessionService.hasSession(guild.id)
+                    voiceChatActive: voiceSessionService?.hasSession(guild.id)
                 }))
                 .sort((a, b) => a.name.localeCompare(b.name));
         },
@@ -337,12 +338,12 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             const text = [];
             const voice = [];
             for (const channel of guild.channels.cache.values()) {
-                if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement) {
-                    if (hasChannelPerms(channel, me, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+                if (channel.type === discord.ChannelType.GuildText || channel.type === discord.ChannelType.GuildAnnouncement) {
+                    if (hasChannelPerms(channel, me, [discord.PermissionFlagsBits.ViewChannel, discord.PermissionFlagsBits.SendMessages])) {
                         text.push({ id: channel.id, name: channel.name, position: channel.rawPosition ?? channel.position ?? 0 });
                     }
-                } else if (channel.type === ChannelType.GuildVoice) {
-                    if (hasChannelPerms(channel, me, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak])) {
+                } else if (channel.type === discord.ChannelType.GuildVoice) {
+                    if (hasChannelPerms(channel, me, [discord.PermissionFlagsBits.ViewChannel, discord.PermissionFlagsBits.Connect, discord.PermissionFlagsBits.Speak])) {
                         voice.push({
                             id: channel.id,
                             name: channel.name,
@@ -442,7 +443,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
         /** Live voice-conversation status for a guild. */
         getVoiceChat(guildId) {
             requireGuild(guildId);
-            const session = voiceSessionService.getSession(guildId);
+            const session = voiceSessionService?.getSession(guildId);
             if (!session) return { active: false };
             return {
                 active: true,
@@ -466,13 +467,13 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             if (!VOICE_ENGINES.includes(engine)) {
                 throw new PanelError(400, 'BAD_REQUEST', "engine must be 'realtime' or 'classic'.");
             }
-            if (voiceSessionService.hasSession(guildId)) {
+            if (voiceSessionService?.hasSession(guildId)) {
                 throw new PanelError(409, 'SESSION_EXISTS', 'A voice conversation is already active in this server.');
             }
             if (!tts()) {
                 throw new PanelError(503, 'TTS_UNAVAILABLE', 'Voice conversations require ElevenLabs TTS (set ELEVENLABS_API_KEY).');
             }
-            if (engine === 'classic' && !transcriptionService.isConfigured()) {
+            if (engine === 'classic' && !transcriptionService?.isConfigured()) {
                 throw new PanelError(503, 'STT_UNAVAILABLE', 'The classic voice engine requires an OpenAI API key for speech-to-text.');
             }
 
@@ -494,6 +495,9 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
                 }
             }
 
+            if (!voiceSessionService) {
+                throw new PanelError(503, 'VOICE_UNAVAILABLE', 'Voice is not installed on this instance.');
+            }
             try {
                 const session = await voiceSessionService.startSession({
                     voiceChannel,
@@ -518,7 +522,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
         /** Stop the live voice conversation in a guild. */
         stopVoiceChat(guildId) {
             requireGuild(guildId);
-            const stopped = voiceSessionService.stopSession(guildId);
+            const stopped = voiceSessionService ? voiceSessionService.stopSession(guildId) : false;
             return { stopped };
         },
 
@@ -550,11 +554,12 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
 
         /** Local track library, optionally filtered by a search query. */
         async listTracks(search) {
+            if (!spotdlService) return [];
             const tracks = await spotdlService.listTracks();
             let filtered = tracks;
             if (search !== undefined && search !== null && String(search).trim() !== '') {
                 const query = assertText(String(search), 'search', SEARCH_MAX_LENGTH);
-                filtered = filterTracks(tracks, query);
+                filtered = musicUtils.filterTracks(tracks, query);
             }
             return filtered
                 .map(trackSummary)
@@ -580,7 +585,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             checkMusicTarget(guildId, confirmMove);
 
             const tracks = await spotdlService.listTracks();
-            const matches = filterTracks(tracks, search);
+            const matches = musicUtils.filterTracks(tracks, search);
             if (matches.length === 0) {
                 throw new PanelError(404, 'TRACK_NOT_FOUND', `No local track matches "${search}".`);
             }
@@ -939,7 +944,7 @@ function createPanelService({ client, voiceService, logger = console, deps = {} 
             const guild = requireGuild(guildId);
             assertSnowflake(channelId, 'channelId');
             const channel = guild.channels.cache.get(channelId);
-            const isText = channel && (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement);
+            const isText = channel && (channel.type === discord.ChannelType.GuildText || channel.type === discord.ChannelType.GuildAnnouncement);
             if (!isText) {
                 throw new PanelError(404, 'CHANNEL_NOT_FOUND', 'Text channel not found in that server.');
             }

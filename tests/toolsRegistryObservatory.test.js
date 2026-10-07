@@ -17,6 +17,7 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-obs-tool-test-${
 
 const fs = require('node:fs');
 const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const { features } = require('@goobster/core/features/featureState');
 const sandboxConfig = require('@goobster/core/config/sandboxConfig');
 const observatoryConfig = require('@goobster/core/config/observatoryConfig');
 const { PROJECTS_ROOT } = require('@goobster/core/services/observatoryService');
@@ -37,9 +38,11 @@ beforeEach(() => {
 
 afterEach(() => {
     sandboxConfig.enabled = original.sandboxEnabled;
+    features.refresh();
     sandboxConfig.scope = original.sandboxScope;
     sandboxConfig.requireStrongIsolation = original.sandboxIsolation;
     observatoryConfig.enabled = original.obsEnabled;
+    features.refresh();
     observatoryConfig.scope = original.obsScope;
 });
 
@@ -51,21 +54,27 @@ afterAll(() => {
 describe('getDefinitions gating', () => {
     test('observatory is absent when the feature is disabled', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = false;
+        features.refresh();
         expect(names(await toolsRegistry.getDefinitions())).not.toContain('observatory');
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('observatory');
     });
 
     test('observatory is absent when the sandbox it rides on is disabled', async () => {
         sandboxConfig.enabled = false;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'everywhere';
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('observatory');
     });
 
     test('scope "everywhere" offers observatory in any text-chat context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'everywhere';
         expect(names(await toolsRegistry.getDefinitions())).toContain('observatory');
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('observatory');
@@ -73,7 +82,9 @@ describe('getDefinitions gating', () => {
 
     test('scope "web" offers observatory only in the web app', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'web';
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false }))).not.toContain('observatory');
         expect(names(await toolsRegistry.getDefinitions())).not.toContain('observatory');
@@ -82,7 +93,9 @@ describe('getDefinitions gating', () => {
 
     test('scope "web" also trusts unattended automation turns', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'web';
         expect(names(await toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('observatory');
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
@@ -91,7 +104,9 @@ describe('getDefinitions gating', () => {
 
     test('a name allowlist (e.g. the voice subset) never smuggles observatory in', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'everywhere';
         const defs = await toolsRegistry.getDefinitions(['performSearch', 'checkPoints']);
         expect(names(defs)).not.toContain('observatory');
@@ -99,7 +114,9 @@ describe('getDefinitions gating', () => {
 
     test('the observatory definition is well-formed when offered', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'everywhere';
         const def = (await toolsRegistry.getDefinitions()).find(d => d.name === 'observatory');
         expect(def).toBeTruthy();
@@ -129,22 +146,45 @@ describe('getDefinitions gating', () => {
 });
 
 describe('execute gating (defense in depth)', () => {
-    test('refuses when disabled', async () => {
+    test('with no features.json the legacy switch keeps its own refusal (behaviour unchanged)', async () => {
         observatoryConfig.enabled = false;
+        features.refresh();
         const out = await toolsRegistry.execute('observatory', { action: 'list' });
         expect(out).toMatch(/disabled/i);
     });
 
-    test('refuses when only the sandbox is disabled', async () => {
-        sandboxConfig.enabled = false;
+    test('refuses with the stable feature-unavailable result when the feature is enforced off', async () => {
+        sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
+        features._resetForTests({ env: { GOOBSTER_FEATURE_OBSERVATORY: 'off' }, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
+        const out = await toolsRegistry.execute('observatory', { action: 'list' });
+        expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'observatory' });
+        features._resetForTests();
+    });
+
+    test('refuses when only the sandbox dependency is enforced off', async () => {
+        sandboxConfig.enabled = true;
+        observatoryConfig.enabled = true;
+        features._resetForTests({ env: { GOOBSTER_FEATURE_SANDBOX: '0' }, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
+        const out = await toolsRegistry.execute('observatory', { action: 'list' });
+        expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'observatory' });
+        features._resetForTests();
+    });
+
+    test('the tool still refuses on its own when the feature state says active but the switch is off', async () => {
+        sandboxConfig.enabled = false;
+        observatoryConfig.enabled = false;
+        features._resetForTests({ env: {}, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
         const out = await toolsRegistry.execute('observatory', { action: 'list' });
         expect(out).toMatch(/disabled/i);
+        features._resetForTests();
     });
 
     test('web-scoped tool refuses a non-web context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'web';
         const out = await toolsRegistry.execute('observatory', {
             action: 'list',
@@ -155,7 +195,9 @@ describe('execute gating (defense in depth)', () => {
 
     test('refuses without a user context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'everywhere';
         const out = await toolsRegistry.execute('observatory', { action: 'list' });
         expect(out).toMatch(/who you are/i);
@@ -163,7 +205,9 @@ describe('execute gating (defense in depth)', () => {
 
     test('web-scoped tool accepts an unattended automation context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'web';
         const out = await toolsRegistry.execute('observatory', {
             action: 'list',
@@ -187,7 +231,9 @@ describe('execute happy path (through the registry)', () => {
 
     beforeEach(() => {
         sandboxConfig.enabled = true;
+        features.refresh();
         observatoryConfig.enabled = true;
+        features.refresh();
         observatoryConfig.scope = 'web';
     });
 

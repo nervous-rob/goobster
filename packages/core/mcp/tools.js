@@ -15,6 +15,9 @@
 const { dmScopeId } = require('../utils/dmScope');
 const mcpConfig = require('../config/mcpConfig');
 const { KINDS } = require('../services/selfDocsService');
+const { surfaceActive, GateError } = require('../features/gate');
+const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const READ_ONLY = {
     readOnlyHint: true,
@@ -22,6 +25,19 @@ const READ_ONLY = {
     idempotentHint: true,
     openWorldHint: false
 };
+
+/** A feature service this tool reads, or a 404 the caller shows as text when its module is not in the payload. */
+function installed(service, what) {
+    if (service) return service;
+    const error = new Error(`${what} are not installed on this server.`);
+    error.status = 404;
+    error.code = 'FEATURE_UNAVAILABLE';
+    throw error;
+}
+
+const projectModule = () => installed(requireOptional('../services/projectService', { feature: 'projects' }), 'Projects');
+const expeditionModule = () => installed(requireOptional('../services/spitballExpeditionService', { feature: 'expeditions' }), 'Research expeditions');
+const briefModule = () => installed(requireOptional('../services/expeditionBriefService', { feature: 'expeditions' }), 'Research briefs');
 
 function clip(text, max = mcpConfig.maxResultChars) {
     const value = String(text ?? '');
@@ -162,6 +178,21 @@ const TOOLS = [
  */
 const DOC_TOOLS = Object.freeze(['list_docs', 'search_docs', 'read_doc']);
 
+/**
+ * Whether the installation's feature state offers this MCP tool: its owning
+ * feature, and any feature it also requires, must be active. Evaluated on
+ * every listing and every call, never cached. A tool nobody owns fails
+ * closed rather than being served.
+ */
+function toolAvailable(name) {
+    try {
+        return surfaceActive('mcpTool', name);
+    } catch (error) {
+        if (error instanceof GateError) return false;
+        throw error;
+    }
+}
+
 function allowedToolNames(scope = 'read') {
     if (scope === 'read') return TOOLS.map(entry => entry.name);
     if (scope === 'docs') return [...DOC_TOOLS];
@@ -171,12 +202,12 @@ function allowedToolNames(scope = 'read') {
 function toolDescriptors({ scope = 'read' } = {}) {
     const allowed = new Set(allowedToolNames(scope));
     return TOOLS
-        .filter(entry => allowed.has(entry.name))
+        .filter(entry => allowed.has(entry.name) && toolAvailable(entry.name))
         .map(entry => ({ ...entry, annotations: { ...entry.annotations } }));
 }
 
 function toolNames() {
-    return TOOLS.map(entry => entry.name);
+    return TOOLS.filter(entry => toolAvailable(entry.name)).map(entry => entry.name);
 }
 
 function asText(text, isError = false) {
@@ -282,7 +313,7 @@ async function knowledgeScope(userId, project) {
     if (!project) {
         return { guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, label: 'personal notes' };
     }
-    const projectService = require('../services/projectService');
+    const projectService = projectModule();
     const row = await projectService.resolveProject({ userId, project });
     const coords = projectService.knowledgeCoords(row);
     return { guildId: coords.guildId, scopeKey: coords.scopeKey, label: `project ${row.slug}` };
@@ -315,7 +346,7 @@ function formatProject(project) {
 }
 
 async function listProjects(userId) {
-    const projects = await require('../services/projectService').listProjects(userId);
+    const projects = await projectModule().listProjects(userId);
     if (!projects.length) return asText('No projects.');
     return asText(projects.map(formatProject).join('\n'));
 }
@@ -329,7 +360,7 @@ async function findProject(userId, args) {
         error.message = 'Name the project by slug or name.';
         throw error;
     }
-    const projects = await require('../services/projectService').listProjects(userId);
+    const projects = await projectModule().listProjects(userId);
     const owner = textArg(args.owner, 80);
     const matches = projects.filter(row => row.slug === project || row.name === project);
     const picked = owner ? matches.filter(row => row.ownerId === owner) : matches;
@@ -354,7 +385,7 @@ async function getProject(userId, args) {
 
 async function listProjectFiles(userId, args) {
     const project = await findProject(userId, args);
-    const listing = await require('../services/projectService').listFiles({
+    const listing = await projectModule().listFiles({
         userId,
         project: project.slug,
         owner: project.ownerId
@@ -406,7 +437,7 @@ function formatExpedition(row) {
 }
 
 async function listExpeditions(userId, args) {
-    const rows = await require('../services/spitballExpeditionService').listExpeditions({
+    const rows = await expeditionModule().listExpeditions({
         userId,
         limit: boundedInt(args.limit, 10, 1, 30)
     });
@@ -415,7 +446,7 @@ async function listExpeditions(userId, args) {
 }
 
 async function getExpedition(userId, args) {
-    const service = require('../services/spitballExpeditionService');
+    const service = expeditionModule();
     const id = boundedInt(args.id, 0, 0, Number.MAX_SAFE_INTEGER);
     const row = await service.getExpedition(id, { userId });
     const sources = await service.listSources(id, { userId, acceptedOnly: true });
@@ -433,7 +464,7 @@ async function getExpedition(userId, args) {
 }
 
 async function listBriefs(userId, args) {
-    const rows = await require('../services/expeditionBriefService').listForUser({
+    const rows = await briefModule().listForUser({
         userId,
         limit: boundedInt(args.limit, 10, 1, 30)
     });
@@ -451,7 +482,7 @@ function blockText(block) {
 }
 
 async function getBrief(userId, args) {
-    const detail = await require('../services/expeditionBriefService').get(
+    const detail = await briefModule().get(
         boundedInt(args.id, 0, 0, Number.MAX_SAFE_INTEGER),
         { userId }
     );
@@ -544,6 +575,13 @@ async function callTool(userId, name, args, { scope = 'read' } = {}) {
         error.publicMessage = `This token's "${scope}" scope does not include ${name}.`;
         throw error;
     }
+    // After the token's own scope, before any handler (and so any read) runs.
+    if (!toolAvailable(name)) {
+        const error = new Error('tool unavailable');
+        error.rpcCode = -32602;
+        error.publicMessage = `${name} is not available on this installation.`;
+        throw error;
+    }
     try {
         return await handler(userId, args || {});
     } catch (error) {
@@ -557,7 +595,7 @@ async function callTool(userId, name, args, { scope = 'read' } = {}) {
 
 function describeServer() {
     return {
-        enabled: mcpConfig.enabled,
+        enabled: features.isActive('mcp'),
         endpoint: mcpConfig.path,
         readOnly: true,
         tools: toolNames(),
@@ -571,6 +609,7 @@ module.exports = {
     toolDescriptors,
     toolNames,
     allowedToolNames,
+    toolAvailable,
     callTool,
     clip,
     includeOperatorDocs,

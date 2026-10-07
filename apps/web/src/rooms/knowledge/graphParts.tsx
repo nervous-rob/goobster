@@ -6,6 +6,7 @@ import { keys } from '../../lib/query';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import type { Curation, CurationCounts, NoteEvidence, UserNote } from '../../lib/types';
+import { featureActive } from '../../lib/rooms';
 
 /** A node as the Map and the Server graph payloads shape it. */
 export type GraphNode = {
@@ -103,7 +104,7 @@ export function NoteEvidenceView({ nodeId }: { nodeId: number }) {
     const evidence = useQuery({
         queryKey: keys.spitballNoteEvidence(nodeId),
         queryFn: () => api.spitballNoteEvidence(nodeId) as Promise<NoteEvidence>,
-        enabled: Boolean(me.features?.spitball),
+        enabled: featureActive(me, 'expeditions'),
         retry: false,
         staleTime: 60_000
     });

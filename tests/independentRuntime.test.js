@@ -611,6 +611,16 @@ describe('portal API with the Discord adapter off', () => {
 // ---------------------------------------------------------------------------
 
 describe('core runtime lifecycle', () => {
+    // Steps are gated by feature ownership; these cases exercise the worker
+    // wiring itself, so every feature the runtime owns is switched on.
+    const { features } = require('@goobster/core/features/featureState');
+    beforeAll(() => {
+        features._resetForTests({ env: {}, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
+    });
+    afterAll(() => {
+        features._resetForTests({});
+    });
+
     function fakeDeps(log) {
         const worker = (name) => ({ start: () => log.push(`start:${name}`), stop: () => log.push(`stop:${name}`), close: () => log.push(`stop:${name}`) });
         class FakeAutomation { constructor(client, opts) { log.push(`new:automation:${client ? 'client' : 'none'}:${opts?.gateway?.kind}`); } start() { log.push('start:automation'); } stop() { log.push('stop:automation'); } }

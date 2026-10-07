@@ -5,6 +5,9 @@ const { isDmScopeId } = require('../utils/dmScope');
 const workContext = require('../utils/workContext');
 const { toGateway } = require('../gateway');
 const { isInboxChannelId } = require('./inboxService');
+const { surfaceActive } = require('../features/gate');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 
 class AutomationService {
     /**
@@ -99,7 +102,8 @@ class AutomationService {
      */
     async _pollProjectTriggers() {
         try {
-            const projectTriggerService = require('./projectTriggerService');
+            const projectTriggerService = requireOptional('./projectTriggerService', { feature: 'projects' });
+            if (!projectTriggerService) return;
             await projectTriggerService.fireDueCronTriggers({ client: this.client });
             await projectTriggerService.catchUpEventTriggers({ client: this.client });
             // Event deliveries a busy sandbox/project deferred get re-dispatched
@@ -338,6 +342,14 @@ class AutomationService {
                 return;
             }
 
+            // The Wheel is gambling's: a refused fire was claimed (so it waits
+            // for its next scheduled time) but it never ran, so it is not
+            // recorded as a run and publishes no event.
+            if (automation.promptText === '__GOBLIN_WHEEL__' && !surfaceActive('command', 'economy/wheel.js')) {
+                console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
+                return;
+            }
+
             // Get the channel
             const channel = await this.client.channels.fetch(automation.channelId);
             if (!channel) {
@@ -545,7 +557,7 @@ class AutomationService {
 
     async executeDigest(automation, channel) {
         const { generateDigest } = require('../utils/channelDigest');
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder } = discord;
 
         let hours = 24;
         try {
@@ -584,9 +596,20 @@ class AutomationService {
     }
 
     async executeWheel(automation, channel) {
-        const wheelService = require('./exchange/wheelService');
-        const economyService = require('./economyService');
-        const { buildWheelEmbed, resolveNames } = require('./exchange/wheelPresenter');
+        // The Wheel needs gambling and the exchange; a disabled installation
+        // spins nothing, posts nothing and records no failure.
+        if (!surfaceActive('command', 'economy/wheel.js')) {
+            console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
+            return;
+        }
+        const wheelService = requireOptional('./exchange/wheelService', { feature: 'exchange' });
+        const economyService = requireOptional('./economyService', { feature: 'economy' });
+        const wheelPresenter = requireOptional('./exchange/wheelPresenter', { feature: 'exchange' });
+        if (!wheelService || !economyService || !wheelPresenter) {
+            console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not installed`);
+            return;
+        }
+        const { buildWheelEmbed, resolveNames } = wheelPresenter;
 
         try {
             const result = await wheelService.spin({ guildId: automation.guildId });

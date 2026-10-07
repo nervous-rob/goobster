@@ -15,9 +15,22 @@
  * up the Tools entry. Internal ids such as `observatory`, `spitball`,
  * `parlor`, API paths, and database names are deliberately unchanged.
  *
+ * Feature availability is declared here as data: a room or view names the
+ * catalog feature ids it needs (`requires.feature`, one id or a list; ids
+ * from packages/core/features/catalog.js, checked against the inventory by
+ * tests/featureGatingPortal.test.js) and ./featureStatus.cjs answers them
+ * from the installation's reported state.
+ *
+ * `chunk` names the lazy route modules (paths under apps/web/src) that open
+ * a feature's code: the build writes everything only they reach into
+ * `assets/feature-<id>-*` files that a payload without the feature leaves
+ * out (scripts/lib/frontendChunks.js, documentation/packaging.md).
+ *
  * CommonJS so Jest can require() it; Vite interops the same file.
  * Contract: documentation/portal_navigation.md.
  */
+
+const featureStatus = require('./featureStatus.cjs');
 
 const ROOMS = [
     {
@@ -48,6 +61,8 @@ const ROOMS = [
         path: '/knowledge',
         group: 'primary',
         atmosphere: 'room-library',
+        requires: { feature: 'knowledge' },
+        chunk: { feature: 'knowledge', modules: ['rooms/knowledge/KnowledgeRoom.tsx', 'rooms/knowledge/NotesView.tsx', 'rooms/knowledge/MapView.tsx'] },
         legacyIds: ['spitball', 'library', 'memory'],
         tutorials: ['knowledge.basics', 'knowledge.research'],
         // Knowledge opens on Notes; Map is the same projection drawn as a
@@ -57,7 +72,7 @@ const ROOMS = [
         views: [
             { id: 'notes', name: 'Notes', icon: '📝', path: '/knowledge/notes' },
             { id: 'map', name: 'Map', icon: '🕸️', path: '/knowledge/map' },
-            { id: 'research', name: 'Research', secondaryName: 'Expeditions', icon: '🧭', path: '/knowledge/research', legacyIds: ['expeditions'] }
+            { id: 'research', name: 'Research', secondaryName: 'Expeditions', icon: '🧭', path: '/knowledge/research', legacyIds: ['expeditions'], requires: { feature: 'expeditions' }, chunk: { feature: 'expeditions', modules: ['rooms/knowledge/ResearchView.tsx'] } }
         ]
     },
     {
@@ -69,8 +84,9 @@ const ROOMS = [
         group: 'primary',
         atmosphere: 'room-observatory',
         // Organizing projects is its own capability; running code in them
-        // (`features.observatory`) is gated per control - ADR 0009.
+        // (the `observatory` feature) is gated per control - ADR 0009.
         requires: { feature: 'projects' },
+        chunk: { feature: 'projects', modules: ['rooms/projects/ProjectListView.tsx', 'rooms/projects/ProjectResolver.tsx', 'rooms/projects/ProjectShell.tsx'] },
         legacyIds: ['observatory', 'workshop'],
         tutorials: ['projects.basics', 'projects.plans', 'projects.runs', 'projects.apps'],
         // Views live under a per-project path: /projects/:owner/:slug/<view>.
@@ -155,6 +171,17 @@ const ROOMS = [
         group: 'tools',
         parent: 'tools',
         atmosphere: 'room-conservatory',
+        requires: { feature: 'music' },
+        chunk: {
+            feature: 'music',
+            modules: [
+                'music-lab/ConservatoryLayout.tsx', 'music-lab/ConservatoryHome.tsx',
+                'music-lab/components/intervals/IntervalExplorer.tsx', 'music-lab/components/chords/ChordWorkbench.tsx',
+                'music-lab/components/rhythm/RhythmEngineLoader.tsx', 'music-lab/components/harmony/HarmonyEngineLoader.tsx',
+                'music-lab/components/space/SpaceEngineLoader.tsx', 'music-lab/components/melody/MelodyEngineLoader.tsx',
+                'music-lab/components/stage/StageEngineLoader.tsx', 'music-lab/components/studio/StudioEngineLoader.tsx'
+            ]
+        },
         legacyIds: ['conservatory'],
         blurb: 'Intervals, chords, rhythm, harmony, space, melody, stage, and a studio. Everything you make stays on this device unless you export it.',
         tutorials: ['music.overview', 'music.intervals', 'music.chords', 'music.rhythm', 'music.harmony', 'music.space', 'music.melody', 'music.stage', 'music.studio']
@@ -168,7 +195,8 @@ const ROOMS = [
         group: 'tools',
         parent: 'tools',
         atmosphere: 'room-exchange',
-        requires: { discord: true },
+        requires: { feature: ['exchange', 'discord'] },
+        chunk: { feature: 'exchange', modules: ['rooms/ExchangeRoom.tsx'] },
         legacyIds: ['exchange'],
         blurb: 'A simulated market in a Discord server\u2019s game currency: quotes, positions, options, and the leaderboard. No real money.',
         unavailable: 'Needs a connected Discord server. This installation is not connected to Discord.',
@@ -407,29 +435,116 @@ function roomDisplayName(pathname) {
 }
 
 /**
- * Whether the signed-in person can see a room right now: a feature flag
- * (Projects), the Discord adapter (Trading game), or the operator role
- * (Host). Availability is about *this installation and account*; a hidden
- * room is not a forbidden one - direct URLs still resolve and explain
- * themselves.
+ * The catalog feature ids a requirement names. `feature` is one id or a
+ * list; the older `discord: true` flag means the `discord` feature.
+ */
+function requiredFeatures(requires) {
+    if (!requires) return [];
+    const raw = requires.feature;
+    const ids = raw ? (Array.isArray(raw) ? raw.map(String) : [String(raw)]) : [];
+    if (requires.discord && !ids.includes('discord')) ids.push('discord');
+    return ids;
+}
+
+/**
+ * Whether the viewer can reach a destination that declares `requires`. An
+ * anonymous viewer (public share and docs pages) cannot reach the operator
+ * role or anything backed by a per-account host switch; features with no
+ * such switch stay offered, as they always were.
+ */
+function requirementsMet(requires, me) {
+    if (!requires) return true;
+    const features = requiredFeatures(requires);
+    if (!me) {
+        return !requires.operator && features.every((id) => !featureStatus.LEGACY_FLAGS[id]);
+    }
+    if (requires.operator && !me.identity?.operator) return false;
+    return featureStatus.blockingFeatures(me, features).length === 0;
+}
+
+/**
+ * Whether the signed-in person can see a room right now: the features it
+ * needs are active on this installation (reported state; see
+ * ./featureStatus.cjs), or the operator role (Host). Availability is about
+ * *this installation and account*; a hidden room is not a forbidden one -
+ * direct URLs still resolve and explain themselves
+ * (`routeUnavailability`). It is also not the person's own hide-a-tool
+ * preference (`catalogTools`).
  */
 function isRoomAvailable(room, me) {
-    const req = room.requires;
-    if (!req) return true;
-    if (!me) return false;
-    if (req.feature && !me.features?.[req.feature]) return false;
-    if (req.operator && !me.identity?.operator) return false;
-    if (req.discord && me.discord?.enabled === false) return false;
-    return true;
+    return requirementsMet(room.requires, me);
+}
+
+/**
+ * Why a destination with `requires` is unavailable, or null when it is
+ * available: `{ kind: 'operator' }` for the host-only role, or
+ * `{ kind: 'feature', feature, title, reasons, sentence, docSlug, docPath }`
+ * for the first inactive feature. `fallback` is the destination's own
+ * sentence for a missing Discord connection.
+ */
+function describeUnavailable(requires, me, fallback) {
+    if (!requires || requirementsMet(requires, me)) return null;
+    if (requires.operator && !me?.identity?.operator) {
+        return { kind: 'operator', sentence: 'Only the host can open this.' };
+    }
+    const id = featureStatus.blockingFeatures(me, requiredFeatures(requires))[0];
+    if (!id) return null;
+    const { reasons } = featureStatus.featureAvailability(me, id);
+    const sentence = id === 'discord' && fallback ? fallback : featureStatus.reasonSentence(id, reasons);
+    return {
+        kind: 'feature',
+        feature: id,
+        title: featureStatus.featureTitle(id),
+        reasons,
+        sentence,
+        docSlug: featureStatus.featureDocSlug(id),
+        docPath: featureStatus.featureDocPath(id)
+    };
+}
+
+/** The structured reason a room is unavailable, or null. */
+function roomUnavailability(room, me) {
+    return describeUnavailable(room.requires, me, room.unavailable);
 }
 
 /** Why a room is unavailable, in words a person can act on. */
 function unavailableReason(room, me) {
-    if (isRoomAvailable(room, me)) return null;
-    if (room.unavailable) return room.unavailable;
-    if (room.requires?.operator) return 'Only the host can open this.';
-    if (room.requires?.feature) return 'This is not enabled on this installation.';
-    return 'Not available right now.';
+    return roomUnavailability(room, me)?.sentence || null;
+}
+
+/** Whether a nested view (Knowledge → Research) is available to this viewer. */
+function isViewAvailable(room, view, me) {
+    return requirementsMet(view?.requires, me);
+}
+
+/** The structured reason one view is unavailable, or null. */
+function viewUnavailability(room, view, me) {
+    return describeUnavailable(view?.requires, me, null);
+}
+
+/** A room's views that are available to this viewer, in tab order. */
+function availableViews(room, me) {
+    return (room?.views || []).filter((view) => isViewAvailable(room, view, me));
+}
+
+/**
+ * What stops a deep link or stale bookmark from rendering its destination,
+ * or null when it can render. `level` says whether the room or one of its
+ * views is unavailable. Operator-only rooms are not reported here: Host
+ * explains itself. An anonymous viewer is never blocked here; the sign-in
+ * gate answers first.
+ */
+function routeUnavailability(pathname, me) {
+    if (!me) return null;
+    const room = ROOM_BY_ID[resolveRoom(pathname)];
+    if (!room) return null;
+    const roomReason = roomUnavailability(room, me);
+    if (roomReason && roomReason.kind === 'feature') return { level: 'room', room, view: null, ...roomReason };
+    const viewId = resolveRoomView(room.id, pathname);
+    const view = viewId ? (room.views || []).find((entry) => entry.id === viewId) : null;
+    const viewReason = view ? viewUnavailability(room, view, me) : null;
+    if (viewReason && viewReason.kind === 'feature') return { level: 'view', room, view, ...viewReason };
+    return null;
 }
 
 const PRIMARY_ROOMS = ROOMS.filter((room) => room.group === 'primary');
@@ -445,6 +560,19 @@ const TOOL_ROOMS = ROOMS.filter((room) => room.group === 'tools');
 function catalogTools(hiddenIds) {
     const hidden = new Set(Array.isArray(hiddenIds) ? hiddenIds.map((id) => String(id)) : []);
     return TOOL_ROOMS.filter((room) => !hidden.has(room.id));
+}
+
+/**
+ * The cards the Tools page draws: every tool the person has not hidden,
+ * each with its host availability. An unavailable card carries the
+ * structured reason (`unavailable`) and stays out of the hidden list; a
+ * hidden tool is a preference and says nothing about availability.
+ */
+function toolCards(hiddenIds, me) {
+    return catalogTools(hiddenIds).map((room) => {
+        const unavailable = roomUnavailability(room, me);
+        return { room, available: !unavailable, unavailable };
+    });
 }
 
 /**
@@ -544,8 +672,15 @@ module.exports = {
     resolveKnowledgeView,
     atmosphereFor,
     roomDisplayName,
+    requiredFeatures,
     isRoomAvailable,
+    roomUnavailability,
     unavailableReason,
+    isViewAvailable,
+    viewUnavailability,
+    availableViews,
+    routeUnavailability,
+    toolCards,
     startPageTarget,
     startPageOptionFor,
     legacyHashTarget

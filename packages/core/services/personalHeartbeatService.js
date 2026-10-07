@@ -24,6 +24,7 @@
  */
 
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const attentionService = require('./attentionService');
 const attentionPolicyService = require('./attentionPolicyService');
 const attentionWatchService = require('./attentionWatchService');
@@ -31,6 +32,7 @@ const domainEventBus = require('./domainEventBus');
 const config = require('../config/attentionConfig');
 const { toGateway } = require('../gateway');
 const logger = require('../utils/logger');
+const { surfaceActive } = require('../features/gate');
 
 const { HEARTBEAT } = config;
 
@@ -114,15 +116,20 @@ class PersonalHeartbeatService {
         } catch (error) {
             logger.warn?.(`[attention] Watch expiry failed: ${error.message}`);
         }
-        try {
-            const missions = require('./projectMissionService');
-            const starting = await missions.reconcileStartingSteps();
-            const running = await missions.reconcileRunningSteps();
-            if (starting > 0 || running > 0) {
-                logger.info?.(`[mission] Reconciled ${starting} STARTING and ${running} RUNNING step(s)`);
+        // The startup step of the same name runs once; this is the periodic
+        // pass, so it follows the same gate (projects owns it).
+        if (surfaceActive('runtimeStep', 'missionReconcile')) {
+            try {
+                const missions = requireOptional('./projectMissionService', { feature: 'projects' });
+                if (!missions) throw new Error('the projects module is not installed');
+                const starting = await missions.reconcileStartingSteps();
+                const running = await missions.reconcileRunningSteps();
+                if (starting > 0 || running > 0) {
+                    logger.info?.(`[mission] Reconciled ${starting} STARTING and ${running} RUNNING step(s)`);
+                }
+            } catch (error) {
+                logger.warn?.(`[mission] STARTING reconcile failed: ${error.message}`);
             }
-        } catch (error) {
-            logger.warn?.(`[mission] STARTING reconcile failed: ${error.message}`);
         }
         try {
             const db = require('../db');

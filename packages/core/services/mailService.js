@@ -14,6 +14,8 @@
 
 const axios = require('axios');
 const mailConfig = require('../config/mailConfig');
+const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const RESEND_API = 'https://api.resend.com/emails';
 
@@ -44,7 +46,8 @@ function normalizeEmail(raw) {
 }
 
 function smtpTransport(config) {
-    const nodemailer = require('nodemailer');
+    const nodemailer = requireOptional('nodemailer', { feature: 'mail' });
+    if (!nodemailer) throw new Error('SMTP delivery is not installed on this instance.');
     if (config.smtp.url) {
         return nodemailer.createTransport(config.smtp.url, { connectionTimeout: config.timeoutMs });
     }
@@ -69,12 +72,18 @@ class MailService {
         this._override = null;
     }
 
+    /**
+     * The legacy answer AND not enforced off by feature state (a no-op without
+     * a state file or GOOBSTER_FEATURE_MAIL). Stored mail data is untouched;
+     * nothing is sent while mail is off.
+     */
     get enabled() {
-        return this._override ? true : this.config.enabled;
+        return (this._override ? true : this.config.enabled) && !features.enforcedOff('mail');
     }
 
     /** The provider in use, or null when mail is off. */
     get provider() {
+        if (features.enforcedOff('mail')) return null;
         if (this._override) return 'custom';
         return this.config.enabled ? this.config.resolvedProvider : null;
     }
@@ -85,7 +94,7 @@ class MailService {
             enabled: this.enabled,
             provider: this.provider,
             from: this.enabled ? (this._override ? 'custom transport' : this.config.from) : null,
-            reason: this.enabled ? null : this.config.disabledReason
+            reason: this.enabled ? null : (features.enforcedOff('mail') ? 'feature-off' : this.config.disabledReason)
         };
     }
 
@@ -107,6 +116,11 @@ class MailService {
     async send({ to, subject, text }) {
         const recipient = normalizeEmail(to) ? String(to).trim() : null;
         if (!recipient) throw new MailError(400, 'BAD_EMAIL', 'That does not look like an email address.');
+        if (features.enforcedOff('mail')) {
+            const unavailable = new MailError(503, 'FEATURE_UNAVAILABLE', 'Outbound mail is not available on this installation.');
+            unavailable.feature = 'mail';
+            throw unavailable;
+        }
         if (!this.enabled) throw new MailError(503, 'MAIL_DISABLED', 'Outbound mail is not configured on this installation.');
         const message = {
             to: recipient,

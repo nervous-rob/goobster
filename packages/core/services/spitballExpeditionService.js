@@ -27,6 +27,8 @@
 const db = require('../db');
 const logger = require('../utils/logger');
 const spitballConfig = require('../config/spitballConfig');
+const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const lensConfig = require('../config/spitballLensConfig');
 const domainEventBus = require('./domainEventBus');
 const { dmScopeId } = require('../utils/dmScope');
@@ -107,11 +109,17 @@ class SpitballExpeditionService {
         this.config = config;
     }
 
+    /** The legacy switch AND not enforced off by feature state (a no-op without a state file or override). */
     get enabled() {
-        return this.config.enabled === true;
+        return this.config.enabled === true && !features.enforcedOff('expeditions');
     }
 
     _requireEnabled() {
+        if (features.enforcedOff('expeditions')) {
+            const error = new SpitballError(404, 'FEATURE_UNAVAILABLE', 'Spitball Expeditions are not available on this installation.');
+            error.feature = 'expeditions';
+            throw error;
+        }
         if (!this.enabled) {
             throw new SpitballError(403, 'DISABLED', 'Spitball Expeditions are disabled on this server.');
         }
@@ -133,7 +141,8 @@ class SpitballExpeditionService {
             { id }
         );
         if (!row) throw new SpitballError(404, 'NOT_FOUND', 'No such project.');
-        const projectService = require('./projectService');
+        const projectService = requireOptional('./projectService', { feature: 'projects' });
+        if (!projectService) throw new SpitballError(404, 'NOT_FOUND', 'No such project.');
         try {
             return await projectService.resolveProjectForActor({
                 userId,
@@ -879,7 +888,7 @@ class SpitballExpeditionService {
                 edgesCreated: expedition.edgesCreated
             });
             try {
-                await require('./projectMissionService').onExpeditionSettled({
+                await requireOptional('./projectMissionService', { feature: 'projects' })?.onExpeditionSettled({
                     expeditionId: expedition.id,
                     status: 'COMPLETED'
                 });
@@ -924,7 +933,7 @@ class SpitballExpeditionService {
                 dedupeKey: `expedition:${expedition.id}:failed`
             });
             try {
-                await require('./projectMissionService').onExpeditionSettled({
+                await requireOptional('./projectMissionService', { feature: 'projects' })?.onExpeditionSettled({
                     expeditionId: expedition.id,
                     status: 'FAILED'
                 });

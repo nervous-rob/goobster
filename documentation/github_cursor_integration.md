@@ -1,3 +1,7 @@
+---
+feature: github
+---
+
 # GitHub & Cursor Agent Integration
 
 Goobster can watch GitHub repositories (events posted into Discord channels, plus
@@ -165,4 +169,9 @@ still decides.
 - `Manage Server` required for watches and anything that spends compute or changes state — including confirming tool-proposed actions and sending thread follow-ups.
 - Chat/voice tools never write directly: every write goes through an explicit confirmation button.
 - Every write-side action is recorded in the `integration_audit` table.
+- Privacy: `/forget-me` deletes the person's `agent_runs` (the prompt they wrote) and the
+  `pending_integration_actions` they requested, and clears them as the resolver of someone
+  else's. `integration_audit` rows and `repo_watches` are guild records: the row stays and
+  `userId` / `createdBy` becomes NULL. The account export includes all of these (never a token).
+  This holds whether or not the `github` / `cursor` features are on.
 - Webhook receivers verify HMAC signatures and reject unsigned deliveries.

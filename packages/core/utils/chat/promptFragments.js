@@ -59,6 +59,20 @@ function spokenReplyContract({ captioned = false } = {}) {
 }
 
 /**
+ * One line telling the model which capabilities this installation has
+ * switched off, so it does not offer them. Titles only: no setting names,
+ * paths or reasons. Null when nothing is off.
+ * @param {string[]} titles
+ * @returns {string|null}
+ */
+function featureAvailabilityLine(titles) {
+    const unique = [...new Set((titles || []).map(title => String(title || '').trim()).filter(Boolean))];
+    if (unique.length === 0) return null;
+    return `UNAVAILABLE HERE: ${unique.join(', ')} ${unique.length === 1 ? 'is' : 'are'} switched off on this installation. `
+        + 'Do not offer or promise what depends on them; if asked, say so plainly.';
+}
+
+/**
  * Operator/user personality overlay. Chat, voice, and leftover command
  * paths must use the same SERVER vs DM label (DM scope is not a guild).
  * @param {{ isGuild?: boolean, directive?: string|null }} opts
@@ -129,6 +143,7 @@ module.exports = {
     CRON_FROM_NL_SYSTEM,
     richRenderingContract,
     spokenReplyContract,
+    featureAvailabilityLine,
     personalityDirectiveBlock,
     groundedRecallPrompt
 };

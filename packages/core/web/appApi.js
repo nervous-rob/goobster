@@ -21,15 +21,14 @@
 
 const express = require('express');
 const { createWebAppContext } = require('./appContext');
-const { createAppHelpers, originGuard } = require('./appHelpers');
+const { createAppHelpers, originGuard, parseCookies, sendError, SESSION_COOKIE } = require('./appHelpers');
+const featureGate = require('./featureGate');
 const { attachWebAppWebSocket } = require('./appWebsocket');
 const { mountAuth } = require('./routes/auth');
 const { mountAccount } = require('./routes/account');
 const { mountAdmin } = require('./routes/admin');
 const { mountChat } = require('./routes/chat');
 const { mountVoiceTasks } = require('./routes/voiceTasks');
-const { mountProjects } = require('./routes/projects');
-const { mountSpitball } = require('./routes/spitball');
 const { mountWorkspace } = require('./routes/workspace');
 const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
@@ -38,10 +37,61 @@ const { mountInbox } = require('./routes/inbox');
 const { mountPeople } = require('./routes/people');
 const { mountFollowedSources } = require('./routes/followedSources');
 const { mountTutorials } = require('./routes/tutorials');
-const { mountStudio } = require('./routes/studio');
-const { mountPush } = require('./routes/push');
 const { mountMcp } = require('./routes/mcp');
-const { mountNoteAttachments } = require('./routes/noteAttachments');
+const { mountFeatures } = require('./routes/features');
+const requireOptional = require('../utils/optionalModule').forModule(module);
+
+const PORTAL_PATH = /^\/(?:api\/app|app)(?:\/|$)/i;
+
+/**
+ * Route modules that belong to an optional feature. A payload without the
+ * feature does not carry the file; its URLs then fall through to the 404
+ * the feature gate gives a disabled feature.
+ */
+const OPTIONAL_ROUTES = {
+    projects: () => requireOptional('./routes/projects', { feature: 'projects' })?.mountProjects,
+    spitball: () => requireOptional('./routes/spitball', { feature: 'knowledge' })?.mountSpitball,
+    noteAttachments: () => requireOptional('./routes/noteAttachments', { feature: 'knowledge' })?.mountNoteAttachments,
+    studio: () => requireOptional('./routes/studio', { feature: 'music' })?.mountStudio,
+    push: () => requireOptional('./routes/push', { feature: 'push' })?.mountPush
+};
+
+function mountOptional(name, app, ctx, helpers) {
+    const mount = OPTIONAL_ROUTES[name]();
+    if (mount) mount(app, ctx, helpers);
+}
+
+/**
+ * The portal's one feature gate, driven by the inventory's ordered
+ * `routeRules` and installed before every router (and before the body
+ * parser, so a refused request is never read). A signed-in caller is told
+ * which feature is unavailable; everyone else gets exactly the answer a
+ * missing route gives, so availability is not observable without a session.
+ * Core routes (operator, privacy, Inbox, export, settings) have core owners
+ * and never reach the refusal.
+ */
+function featureGateMiddleware(ctx) {
+    return featureGate.routeGate({
+        state: ctx.features,
+        only: PORTAL_PATH,
+        respond: async (req, res, blocking) => {
+            let session = null;
+            const token = parseCookies(req)[SESSION_COOKIE];
+            if (token) {
+                try { session = await ctx.sessions.get(token, { touch: false }); } catch { session = null; }
+            }
+            res.set('Cache-Control', 'no-store');
+            if (session) {
+                res.status(404).json({
+                    error: { code: featureGate.FEATURE_UNAVAILABLE, message: featureGate.UNAVAILABLE_MESSAGE },
+                    feature: blocking
+                });
+                return;
+            }
+            sendError(res, 404, 'NOT_FOUND', 'No such API route.');
+        }
+    });
+}
 
 /**
  * Express router serving the web app client + API. Mounted at the root of
@@ -50,6 +100,7 @@ const { mountNoteAttachments } = require('./routes/noteAttachments');
 function createWebAppApp(ctx) {
     const app = express.Router();
     const helpers = createAppHelpers(ctx);
+    app.use(featureGateMiddleware(ctx));
     // Scoped parser (activityApi pattern): a router-wide parser would eat
     // request bodies destined for the raw-body webhook receivers. The limit
     // covers vision attachments (up to 4 base64 data URLs per message) and
@@ -60,14 +111,15 @@ function createWebAppApp(ctx) {
     // any Origin present on a non-GET request must match the request host.
     app.use('/api/app', originGuard(ctx));
 
+    mountFeatures(app, ctx, helpers);
     mountAuth(app, ctx, helpers);
     mountAccount(app, ctx, helpers);
     mountAdmin(app, ctx, helpers);
     mountChat(app, ctx, helpers);
     mountVoiceTasks(app, ctx, helpers);
-    mountProjects(app, ctx, helpers);
-    mountSpitball(app, ctx, helpers);
-    mountNoteAttachments(app, ctx, helpers);
+    mountOptional('projects', app, ctx, helpers);
+    mountOptional('spitball', app, ctx, helpers);
+    mountOptional('noteAttachments', app, ctx, helpers);
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
@@ -75,8 +127,8 @@ function createWebAppApp(ctx) {
     mountPeople(app, ctx, helpers);
     mountFollowedSources(app, ctx, helpers);
     mountTutorials(app, ctx, helpers);
-    mountStudio(app, ctx, helpers);
-    mountPush(app, ctx, helpers);
+    mountOptional('studio', app, ctx, helpers);
+    mountOptional('push', app, ctx, helpers);
     mountMcp(app, ctx, helpers);
     // Last: the static client + API 404 fallback
     mountEventsStatic(app, ctx, helpers);

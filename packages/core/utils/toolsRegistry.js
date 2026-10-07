@@ -2,15 +2,25 @@
 // Each entry includes an OpenAI-style definition and a runtime execute() helper.
 // Implementations live under utils/tools/ by capability; this file is the facade.
 
-const sandboxService = require('../services/sandboxService');
 const sandboxConfig = require('../config/sandboxConfig');
-const observatoryService = require('../services/observatoryService');
 const observatoryConfig = require('../config/observatoryConfig');
 const { registerCommandAdapters } = require('./tools/helpers');
+const requireOptional = require('./optionalModule').forModule(module);
+const { inventory } = require('../features/catalog');
 
-const observatoryTools = require('./tools/observatory');
-const exchangeTools = require('./tools/exchange');
-const tavernTools = require('./tools/tavern');
+/**
+ * Tool modules owned by one optional feature. A payload without the feature
+ * does not carry the module; its tools are then neither offered nor run.
+ */
+const optionalTools = {
+    sandbox: requireOptional('./tools/sandbox', { feature: 'sandbox' }),
+    observatory: requireOptional('./tools/observatory', { feature: 'observatory' }),
+    economy: requireOptional('./tools/economy', { feature: 'economy' }),
+    gambling: requireOptional('./tools/gambling', { feature: 'gambling' }),
+    exchange: requireOptional('./tools/exchange', { feature: 'exchange' }),
+    tavern: requireOptional('./tools/tavern', { feature: 'tavern' })
+};
+const absentToolFeatures = new Set(Object.keys(optionalTools).filter(feature => !optionalTools[feature]));
 const parlorTools = require('./tools/parlor');
 const attentionTools = require('./tools/attention');
 const integrationTools = require('./tools/integrations');
@@ -18,11 +28,15 @@ const fileTools = require('./tools/files');
 const selfDocsTools = require('./tools/selfDocs');
 const selfDocsConfig = require('../config/selfDocsConfig');
 const { isIncognitoToolBlocked } = require('./toolPrivacy');
+const { surfaceActive, requireSurface, GateError, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const catalog = {
-    ...observatoryTools,
-    ...exchangeTools,
-    ...tavernTools,
+    ...optionalTools.sandbox,
+    ...optionalTools.observatory,
+    ...optionalTools.economy,
+    ...optionalTools.gambling,
+    ...optionalTools.exchange,
+    ...optionalTools.tavern,
     ...parlorTools,
     ...attentionTools,
     ...integrationTools,
@@ -86,10 +100,51 @@ const TOOL_ORDER = [
     'executePlan'
 ];
 
+/** The feature whose absent tool module explains a missing implementation, or null. */
+function absentOwner(name) {
+    const claim = inventory.ownerOf('aiTool', name);
+    if (!claim) return null;
+    return [claim.owner, ...claim.alsoRequires].find(feature => absentToolFeatures.has(feature)) || null;
+}
+
 const tools = {};
 for (const name of TOOL_ORDER) {
-    if (!catalog[name]) throw new Error(`toolsRegistry: missing implementation for ${name}`);
+    if (!catalog[name]) {
+        if (absentOwner(name)) continue;
+        throw new Error(`toolsRegistry: missing implementation for ${name}`);
+    }
     tools[name] = catalog[name];
+}
+
+const warnedUnclaimed = new Set();
+
+/**
+ * Whether the installation's feature state lets the model see (and call)
+ * this tool. A tool with no inventory claim fails closed with one warning
+ * instead of taking every chat turn down with it; the inventory spec is
+ * what normally catches the missing claim.
+ */
+function featureAllows(name) {
+    try {
+        return surfaceActive('aiTool', name);
+    } catch (error) {
+        if (!(error instanceof GateError)) throw error;
+        if (!warnedUnclaimed.has(name)) {
+            warnedUnclaimed.add(name);
+            console.warn(`[tools] ${name} is hidden: no feature owns it (packages/core/features/inventory.js).`);
+        }
+        return false;
+    }
+}
+
+/** The unavailable result for a tool, or null when its feature state allows it. Never throws for a claimed tool. */
+function featureRefusal(name) {
+    try {
+        return requireSurface('aiTool', name);
+    } catch (error) {
+        if (!(error instanceof GateError)) throw error;
+        return { ok: false, code: FEATURE_UNAVAILABLE, feature: null, reasons: [{ code: 'UNCLAIMED_SURFACE' }] };
+    }
 }
 
 module.exports = {
@@ -109,9 +164,15 @@ module.exports = {
      *   to drive an Observatory project could never touch it at run time.
      */
     async getDefinitions(names, { isWeb = false, isAutomation = false } = {}) {
-        let definitions = TOOL_ORDER.map(name => tools[name].definition);
+        // Feature state first: a tool whose owning feature (or a feature it
+        // also requires) is off is never offered. The filters below are the
+        // operational checks that still apply to an active feature (the
+        // sandbox/observatory enable switch and the web-only scope).
+        let definitions = TOOL_ORDER.filter(name => tools[name] && featureAllows(name)).map(name => tools[name].definition);
         const trustedSurface = isWeb || isAutomation;
-        const sandboxOffered = sandboxService.enabled
+        const sandboxService = optionalTools.sandbox && requireOptional('../services/sandboxService', { feature: 'sandbox' });
+        const observatoryService = optionalTools.observatory && requireOptional('../services/observatoryService', { feature: 'projects' });
+        const sandboxOffered = Boolean(sandboxService?.enabled)
             && (sandboxConfig.scope === 'everywhere' || trustedSurface);
         if (!sandboxOffered) {
             definitions = definitions.filter(def => def.name !== 'runCode');
@@ -119,7 +180,7 @@ module.exports = {
         if (!sandboxOffered || sandboxConfig.approverUserIds.length === 0) {
             definitions = definitions.filter(def => def.name !== 'requestPythonPackages');
         }
-        const observatoryOffered = observatoryService.enabled
+        const observatoryOffered = Boolean(observatoryService?.enabled)
             && (observatoryConfig.scope === 'everywhere' || trustedSurface);
         if (!observatoryOffered) {
             definitions = definitions.filter(def => def.name !== 'observatory');
@@ -129,7 +190,7 @@ module.exports = {
         if (!selfDocsConfig.enabled) {
             definitions = definitions.filter(def => def.name !== 'consultDocs');
         }
-        if (sandboxOffered || observatoryOffered) {
+        if (sandboxService && (sandboxOffered || observatoryOffered)) {
             const note = ` ${await sandboxService.pythonEnvironmentNote()}`;
             definitions = definitions.map(def =>
                 (def.name === 'runCode' || def.name === 'observatory')
@@ -155,7 +216,16 @@ module.exports = {
     },
 
     async execute(name, args) {
-        if (!tools[name]) throw new Error(`Unknown tool: ${name}`);
+        if (!tools[name]) {
+            const feature = TOOL_ORDER.includes(name) ? absentOwner(name) : null;
+            if (feature) return { ok: false, code: FEATURE_UNAVAILABLE, feature, reasons: [{ code: 'NOT_INSTALLED' }] };
+            throw new Error(`Unknown tool: ${name}`);
+        }
+        // Independent of discovery: a stale name from a model response, a
+        // saved plan or a direct caller is refused before any side effect,
+        // approval or admission.
+        const refusal = featureRefusal(name);
+        if (refusal) return refusal;
         if (isIncognitoToolBlocked(name, args?.interactionContext)) {
             return '❌ Saving memories and files is disabled in incognito. Use a regular chat to save this content.';
         }

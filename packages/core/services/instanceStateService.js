@@ -18,6 +18,7 @@
 const db = require('../db');
 const { CronExpressionParser } = require('cron-parser');
 const logger = require('../utils/logger');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const KEY_PAUSED = 'paused';
 const KEY_LAST_RESTORE = 'lastRestore';
@@ -229,7 +230,9 @@ class InstanceStateService {
 
     /** SKIPPED deliveries for settled jobs an enabled event trigger never fired on. */
     async _skipMissedEventFires(nowText) {
-        const { matchesEventTrigger } = require('./projectTriggerService');
+        const projectTriggers = requireOptional('./projectTriggerService', { feature: 'projects' });
+        if (!projectTriggers) return 0;
+        const { matchesEventTrigger } = projectTriggers;
         let skipped = 0;
         const triggers = await db.all(
             `SELECT * FROM project_triggers WHERE kind = 'event' AND isEnabled = 1 ORDER BY id ASC`

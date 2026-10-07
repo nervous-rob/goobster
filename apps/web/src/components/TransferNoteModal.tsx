@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
-import { projectPath } from '../lib/rooms';
+import { projectPath, featureActive } from '../lib/rooms';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { Modal } from './Modal';
@@ -74,7 +74,7 @@ export function TransferNoteModal({
     const toast = useToast();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const projectsOn = me.features?.projects !== false;
+    const projectsOn = featureActive(me, 'projects');
     const [target, setTarget] = useState<TransferTarget>(projectsOn ? initialTarget : 'discussion');
     const [projectKey, setProjectKey] = useState('');
     const [mode, setMode] = useState<TransferMode>('copy');

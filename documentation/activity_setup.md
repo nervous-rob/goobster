@@ -1,3 +1,7 @@
+---
+feature: discordActivity
+---
+
 # Goobster Casino - Discord Activity Setup
 
 The table-games Activity ("Goobster Casino") is a multiplayer web app that runs

@@ -1,5 +1,5 @@
 import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, PushStatus } from './types';
-import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -33,9 +33,16 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
         headers: body ? { 'Content-Type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : null
     });
-    let json: { error?: { code?: string; message?: string; details?: unknown } } | null = null;
+    let json: { error?: string | { code?: string; message?: string; details?: unknown }; feature?: string } | null = null;
     try { json = await res.json(); } catch { /* non-JSON */ }
     if (!res.ok) {
+        // A route owned by an unavailable feature answers `{ error: 'FEATURE_UNAVAILABLE', feature }`
+        // (a plain string, not the usual `{ code, message }` object).
+        if (typeof json?.error === 'string') {
+            throw new ApiError(res.status, json.error,
+                json.error === 'FEATURE_UNAVAILABLE' ? 'That feature is not available on this installation.' : `Request failed (${res.status})`,
+                json.feature ? { feature: json.feature } : null);
+        }
         const error = json?.error || {};
         throw new ApiError(res.status, error.code || 'INTERNAL',
             error.message || `Request failed (${res.status})`, error.details || null);
@@ -61,6 +68,7 @@ export const api = {
     deleteNoteAttachment: (url: string) => request(url, { method: 'DELETE' }),
     config: () => request<AppConfig>('/api/app/config'),
     me: () => request<Me>('/api/app/me'),
+    features: () => request<FeatureStatus>('/api/app/features'),
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),
     // Asking the host to let a kept-out (403 NO_ACCOUNT) session in
     accessRequestStatus: () => request<AccessRequestStatusView>('/api/app/auth/access-request'),

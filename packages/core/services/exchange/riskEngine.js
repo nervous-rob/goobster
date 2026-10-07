@@ -1,6 +1,7 @@
 const db = require('../../db');
 const economyService = require('../economyService');
 const stockPortfolioService = require('../stockPortfolioService');
+const { features } = require('../../features/featureState');
 const exchangeConfig = require('./exchangeConfig');
 const accountService = require('./accountService');
 const shortService = require('./shortService');
@@ -163,7 +164,13 @@ class RiskEngine {
                 `${liquidated.payout > 0 ? `${liquidated.payout.toLocaleString()} points of margin came back.` : 'The margin is gone.'}`);
         }
 
-        summary.marketsSettled = await predictionService.settleDue({ guildId, now });
+        // Prediction markets belong to gambling; the exchange step only
+        // hosts the sweep. Skipped (not failed) while gambling is enforced off.
+        if (features.enforcedOff('gambling')) {
+            summary.marketsSkipped = 'gambling';
+        } else {
+            summary.marketsSettled = await predictionService.settleDue({ guildId, now });
+        }
         summary.orders = await orderService.evaluate({ guildId, now });
         for (const { order, fill, price } of summary.orders.filled) {
             await this._notify(order.userId,

@@ -3,7 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
-import { projectPath } from '../../lib/rooms';
+import { projectPath, featureActive } from '../../lib/rooms';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import { MenuButton } from '../../shell/MenuButton';
@@ -26,7 +26,7 @@ export function ProjectListView() {
     const me = useMe();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const executionOn = Boolean(me.features?.observatory);
+    const executionOn = featureActive(me, 'observatory');
     const [inboxPreview, setInboxPreview] = useState(false);
     const [creating, setCreating] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);

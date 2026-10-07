@@ -16,7 +16,13 @@ module.exports = {
         apiKeys: [],
         configKeys: ['token', 'clientId', 'guildIds', 'discord.enabled'],
         docs: ['documentation/discord_setup.md', 'documentation/independent_runtime.md'],
-        helpUrl: 'https://discord.com/developers/applications'
+        helpUrl: 'https://discord.com/developers/applications',
+        payload: {
+            files: [
+                'apps/bot/**',
+                'packages/core/utils/commandDeployment.js'
+            ]
+        }
     },
     push: {
         title: 'Web Push',
@@ -47,7 +53,12 @@ module.exports = {
             }
         ],
         configKeys: ['webapp.push.enabled', 'webapp.publicUrl'],
-        docs: ['documentation/pwa.md']
+        docs: ['documentation/pwa.md'],
+        payload: {
+            files: [
+                'packages/core/web/routes/push.js'
+            ]
+        }
     },
     mail: {
         title: 'Mail',
@@ -102,6 +113,9 @@ module.exports = {
             }
         ],
         configKeys: ['mail.provider', 'mail.from', 'mail.replyTo', 'mail.smtp.port', 'mail.smtp.secure'],
-        docs: ['documentation/identity.md']
+        docs: ['documentation/identity.md'],
+        payload: {
+            files: []
+        }
     }
 };

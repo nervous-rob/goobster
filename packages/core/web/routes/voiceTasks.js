@@ -3,12 +3,15 @@
  * Mounted by packages/core/web/appApi.js — do not require this file from apps.
  */
 
+const { sendUnavailable } = require('../featureGate');
 
 function mountVoiceTasks(app, ctx, h) {
     const { requireAuth, chatRoute, sendError } = h;
 
 
     // --- Voice (mic input + read-aloud) --------------------------------------
+
+    app.use('/api/app/voice', (req, res, next) => (ctx.voice ? next() : sendUnavailable(res, 'voice')));
 
     // What the client may offer (missing keys hide the buttons - never error)
     app.get('/api/app/voice/capabilities', requireAuth, chatRoute(async () =>

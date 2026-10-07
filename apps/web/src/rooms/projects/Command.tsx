@@ -7,6 +7,7 @@ import { useToast } from '../../hooks/useToast';
 import { Markdown } from '../../components/Markdown';
 import { Modal } from '../../components/Modal';
 import { ToolChip } from '../../components/ToolChip';
+import { featureActive } from '../../lib/rooms';
 
 type CommandChip = { name: string; phase: string; isError?: boolean; argsPreview?: string };
 
@@ -143,7 +144,7 @@ export function CommandStrip({ command, onDismiss }: { command: CommandState | n
 export function CommandButton({ onOpen, big = false, label = '✨ Command' }: { onOpen: () => void; big?: boolean; label?: string }) {
     const me = useMe();
     const toast = useToast();
-    const executionOn = Boolean(me.features?.observatory);
+    const executionOn = featureActive(me, 'observatory');
     return (
         <button
             type="button"
