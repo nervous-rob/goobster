@@ -80,6 +80,8 @@ const FEATURES = {
 const PLAYBACK = { owner: 'music', alsoRequires: ['voice', 'discord'] };
 const WHEEL_OR_PREDICTIONS = { owner: 'gambling', alsoRequires: ['exchange'] };
 const VOICE_IN_DISCORD = { owner: 'voice', alsoRequires: ['discord'] };
+/** The presence listeners are registered only where the shared voice stack is served. */
+const MUSIC_PRESENCE = { owner: 'music', alsoRequires: ['voice'] };
 
 /** Keyed by path relative to apps/bot/commands/. */
 const commands = {
@@ -212,8 +214,8 @@ const eventGates = {
     'messageReactionAdd:issue-capture': 'github',
     messageReactionRemove: 'core',
     voiceStateUpdate: 'voice',
-    musicTrackStarted: 'music',
-    musicTrackEnded: 'music',
+    musicTrackStarted: MUSIC_PRESENCE,
+    musicTrackEnded: MUSIC_PRESENCE,
     error: 'core',
     warn: 'core',
     debug: 'core',

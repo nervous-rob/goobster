@@ -95,6 +95,8 @@ describe('feature inventory module', () => {
         expect(ownerOf('route', 'POST /api/app/projects/:slug/chat').owner).toBe('observatory');
         expect(ownerOf('route', '/api/app/projects/:slug/chat', 'GET')).toEqual({ owner: 'projects', alsoRequires: [] });
         expect(ownerOf('route', 'GET /api/app/not-a-router')).toBeNull();
+        expect(ownerOf('eventGate', 'musicTrackStarted')).toEqual({ owner: 'music', alsoRequires: ['voice'] });
+        expect(ownerOf('eventGate', 'musicTrackEnded')).toEqual({ owner: 'music', alsoRequires: ['voice'] });
         expect(ownerOf('wsPath', '/api/activity/ws')).toEqual({ owner: 'discordActivity', alsoRequires: ['gambling'] });
         expect(ownerOf('route', 'GET /api/activity/music/casino')).toEqual({ owner: 'discordActivity', alsoRequires: ['gambling'] });
         expect(ownerOf('route', 'GET /api/activity/config')).toEqual({ owner: 'discordActivity', alsoRequires: [] });

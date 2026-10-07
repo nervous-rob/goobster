@@ -297,7 +297,9 @@ diagnostic ones - `error`, `warn`, `debug`, `invalidated`, `rateLimit`,
 subscribers). The `messageCreate` gates keep their order, which the spec
 asserts; owners are core except `#06 agent mission-control threads`
 (cursor) and `#10 GBA advice inbox` (gba). `voiceStateUpdate` is voice;
-`musicTrackStarted`/`musicTrackEnded` are music; the 📋 issue-capture
+`musicTrackStarted`/`musicTrackEnded` are music with
+`alsoRequires: ['voice']` (they are registered only where the shared voice
+stack is served); the 📋 issue-capture
 reaction is github.
 
 Seventeen interaction families in `apps/bot/events/interactionCreate.js`,
