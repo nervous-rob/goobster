@@ -165,9 +165,15 @@ function collectCommandPayloads(foldersPath, { log = () => {}, filter = null } =
     return { guildCommands, globalCommands, skipped: inactive };
 }
 
-/** Ids of every active feature, in catalog order (the part of the feature state a deployment depends on). */
+/**
+ * Ids of every feature whose surfaces this installation serves, in catalog
+ * order: the part of the feature state a deployment depends on. This is the
+ * enforcement view (`features.enforcedOff`), the same rule the command filter
+ * applies, so a legacy flag that only changes the *reported* value does not
+ * re-sync Discord.
+ */
 function activeFeatureIds() {
-    return inventory.FEATURE_IDS.filter(id => features.isActive(id));
+    return inventory.FEATURE_IDS.filter(id => !features.enforcedOff(id));
 }
 
 /**

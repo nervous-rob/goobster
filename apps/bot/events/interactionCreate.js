@@ -59,7 +59,7 @@ async function integrationActionRefusal(customId) {
         const db = require('@goobster/core/db');
         const row = await db.get('SELECT type FROM pending_integration_actions WHERE id = @id', { id: requestId });
         const owner = row && INTEGRATION_ACTION_OWNERS[row.type];
-        if (owner && !features.isActive(owner)) return unavailableResult(owner);
+        if (owner && features.enforcedOff(owner)) return unavailableResult(owner);
     } catch {
         // The service reports its own database problems.
     }

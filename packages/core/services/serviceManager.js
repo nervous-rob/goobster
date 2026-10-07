@@ -6,8 +6,9 @@ const { features } = require('../features/featureState');
  *
  * `voiceService` is a lazy export: the VoiceService is constructed and
  * initialised the first time something reads it, never when this module is
- * required. When the `voice` feature is not active the read returns an inert
- * stand-in instead, so a disabled installation never builds the voice stack
+ * required. When the `voice` feature is enforced off (`features.enforcedOff`,
+ * documentation/feature_state.md "Reported versus enforced") the read returns
+ * an inert stand-in instead, so a disabled installation never builds the voice stack
  * (no MusicService, no ffmpeg probe, no memory-monitor timer, no SpotDL
  * wrapper, no ElevenLabs client) and every `voiceService?.tts` /
  * `voiceService?.musicService` consumer simply sees "not available".
@@ -34,7 +35,7 @@ let instance = null;
 
 function getVoiceService() {
     if (instance) return instance;
-    if (!features.isActive('voice')) {
+    if (features.enforcedOff('voice')) {
         instance = new InactiveVoiceService();
         return instance;
     }

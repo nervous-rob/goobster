@@ -190,6 +190,24 @@ const quiet = () => {
 const FAKE_CLIENT = { user: { id: '900000000000000001', username: 'Goobster' }, isReady: () => true };
 
 /** The report the derived feature state predicts for a full run (client present, schedulers on). */
+/**
+ * The served set with no state file: everything except features an env
+ * override forces off and their hard dependents (the enforcement rule;
+ * legacy switches only change the reported value). Independent of featureState.js.
+ */
+function deriveServed({ env = {} } = {}) {
+    const memo = {};
+    const served = (id) => {
+        if (memo[id] === undefined) {
+            const override = env[`GOOBSTER_FEATURE_${id.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`];
+            const forcedOff = override !== undefined && ['0', 'false', 'off', 'no'].includes(String(override).trim().toLowerCase());
+            memo[id] = id === 'core' || (!forcedOff && FEATURES[id].dependsOn.every(served));
+        }
+        return memo[id];
+    };
+    return new Set(FEATURE_IDS.filter(served));
+}
+
 function expectedReport(activeSet, { withClient = true } = {}) {
     const rows = [];
     for (const name of STEP_NAMES) {
@@ -215,21 +233,33 @@ afterAll(() => {
 /* ------------------------------------------------------------------ */
 
 describe('coreRuntime step gating', () => {
-    test('with no features.json the report equals the inventory + legacy baseline and disabled workers are never touched', async () => {
+    test('with no features.json every step starts as before, even where a legacy switch is off (reported, not enforced)', async () => {
         useState();
-        const active = deriveActive();
+        // The shipped defaults leave observatory off in the *reported* view
+        // (it needs sandbox); without a state file or env override that is
+        // not a refusal, so the runtime is identical to the pre-gating one.
+        expect(deriveActive().has('observatory')).toBe(false);
+        expect(features.isActive('observatory')).toBe(false);
+        expect(features.enforcedOff('observatory')).toBe(false);
+        const log = [];
+        const runtime = await startCoreRuntime({ client: FAKE_CLIENT, logger: quiet(), deps: fakeDeps(log) });
+        expect(sortedByName(runtime.report)).toEqual(sortedByName(expectedReport(new Set(FEATURE_IDS))));
+        expect(runtime.featureSkipped).toEqual([]);
+        expect(runtime.started).toContain('observatoryResume');
+        expect(log).toContain(MARKERS.observatoryResume);
+        await runtime.stop();
+    });
+
+    test('an env override alone (no features.json) skips the overridden steps with reason feature and nothing else', async () => {
+        useState({ env: { GOOBSTER_FEATURE_SANDBOX: '0' } });
+        const active = deriveServed({ env: { GOOBSTER_FEATURE_SANDBOX: '0' } });
+        expect(active.has('sandbox')).toBe(false);
+        expect(active.has('observatory')).toBe(false);
         const log = [];
         const runtime = await startCoreRuntime({ client: FAKE_CLIENT, logger: quiet(), deps: fakeDeps(log) });
         expect(sortedByName(runtime.report)).toEqual(sortedByName(expectedReport(active)));
-        expect(runtime.featureSkipped.sort()).toEqual(expectedReport(active).filter(row => row.reason === 'feature').map(row => row.name).sort());
-        // The shipped defaults leave observatory off (needs sandbox), everything else on.
         expect(runtime.featureSkipped).toEqual(['observatoryResume']);
-        for (const row of runtime.report.filter(item => item.reason === 'feature')) {
-            expect(log).not.toContain(MARKERS[row.name]);
-        }
-        for (const row of runtime.report.filter(item => item.status === 'started')) {
-            expect(log).toContain(MARKERS[row.name] === 'timer:followup' ? 'start:automation' : MARKERS[row.name]);
-        }
+        expect(log).not.toContain(MARKERS.observatoryResume);
         // not in `skipped` (that list is failures/declines/paused), not in `started`
         expect(runtime.skipped).not.toContain('observatoryResume');
         expect(runtime.started).not.toContain('observatoryResume');
@@ -721,7 +751,7 @@ describe('bot process boot (listener and loader spies)', () => {
                 for (const id of MANAGEABLE) entries[id] = { installed: true, active: !(state.inactive || []).includes(id) };
                 isolatedFeatures._resetForTests({
                     fs: memoryFs(state.inactive ? { [FILE]: JSON.stringify({ version: 1, revision: 1, updatedAt: null, origin: 'operator', features: entries }) } : {}),
-                    filePath: FILE, env: {}, config: state.config || EVERYTHING_ON
+                    filePath: FILE, env: state.env || {}, config: state.config || EVERYTHING_ON
                 });
                 try {
                     require('../apps/bot/index.js');
@@ -823,9 +853,17 @@ describe('bot process boot (listener and loader spies)', () => {
         }));
     });
 
-    test('with no features.json the loader set equals the inventory + legacy baseline', async () => {
+    test('with no features.json every command loads, including those whose legacy switch is off', async () => {
         const { client } = await boot({ config: DEFAULT_CONFIG });
-        const active = deriveActive({ config: DEFAULT_CONFIG });
+        const everyKey = [...Object.keys(inventory.commands), ...Object.keys(inventory.contextMenus)];
+        expect(client.commands.size).toBe(everyKey.length);
+        expect(client.commands.has('gbarun')).toBe(true);
+        expect(client.commands.has('screenvision')).toBe(true);
+    });
+
+    test('an env override alone (no features.json) leaves the overridden commands out of the loader', async () => {
+        const { client } = await boot({ config: DEFAULT_CONFIG, env: { GOOBSTER_FEATURE_GBA: '0', GOOBSTER_FEATURE_SCREEN_VISION: '0' } });
+        const active = deriveServed({ env: { GOOBSTER_FEATURE_GBA: '0', GOOBSTER_FEATURE_SCREEN_VISION: '0' } });
         const expectedKeys = [];
         for (const [kind, table] of [['command', inventory.commands], ['contextMenu', inventory.contextMenus]]) {
             for (const key of Object.keys(table)) {

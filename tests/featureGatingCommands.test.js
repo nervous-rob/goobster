@@ -133,6 +133,24 @@ function deriveActive({ config = DEFAULT_CONFIG, env = {}, inactiveRequested = n
     return new Set(FEATURE_IDS.filter(active));
 }
 
+/**
+ * The served set with no state file: everything except features an env
+ * override forces off and their hard dependents (the enforcement rule;
+ * legacy switches only change the reported value). Independent of featureState.js.
+ */
+function deriveServed({ env = {} } = {}) {
+    const memo = {};
+    const served = (id) => {
+        if (memo[id] === undefined) {
+            const override = env[`GOOBSTER_FEATURE_${id.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`];
+            const forcedOff = override !== undefined && ['0', 'false', 'off', 'no'].includes(String(override).trim().toLowerCase());
+            memo[id] = id === 'core' || (!forcedOff && FEATURES[id].dependsOn.every(served));
+        }
+        return memo[id];
+    };
+    return new Set(FEATURE_IDS.filter(served));
+}
+
 /** inventory command/context-menu keys whose owner and every alsoRequires are in `activeSet`. */
 function expectedKeys(activeSet) {
     const keys = [];
@@ -168,22 +186,38 @@ afterAll(() => {
 /* ------------------------------------------------------------------ */
 
 describe('command deployment and loading share one filter', () => {
-    test('with no features.json the payload, the loader set and the context menus equal the inventory + legacy baseline', () => {
+    test('with no features.json nothing is filtered: the loader set and the payload equal the unfiltered walk, even where a legacy switch is off', () => {
         useState();
-        const active = deriveActive();
+        // The shipped defaults really do leave some features off in the
+        // *reported* view; a refusal needs a state file or an env override
+        // (documentation/feature_state.md, "Reported versus enforced").
+        expect(deriveActive().has('gba')).toBe(false);
+        expect(features.isActive('gba')).toBe(false);
+        expect(features.enforcedOff('gba')).toBe(false);
+
+        const everyKey = [...Object.keys(inventory.commands), ...Object.keys(inventory.contextMenus)].sort();
+        const listed = listCommandFiles(COMMANDS_DIR, { filter: featureCommandFilter });
+        expect(listed.active.map(entry => entry.key).sort()).toEqual(everyKey);
+        expect(listed.inactive).toEqual([]);
+
+        const everything = collectCommandPayloads(COMMANDS_DIR);
+        const gated = collectCommandPayloads(COMMANDS_DIR, { filter: featureCommandFilter });
+        expect(gated.skipped).toEqual([]);
+        expect(payloadNames(gated)).toEqual(payloadNames(everything));
+    });
+
+    test('an env override alone (no features.json) does filter, and only the overridden feature and its dependents', () => {
+        useState({ env: { GOOBSTER_FEATURE_GBA: '0' } });
+        const active = deriveServed({ env: { GOOBSTER_FEATURE_GBA: '0' } });
         const expected = expectedKeys(active);
+        expect(active.has('gba')).toBe(false);
+        expect(expected.length).toBeLessThan(Object.keys(inventory.commands).length + Object.keys(inventory.contextMenus).length);
 
         const listed = listCommandFiles(COMMANDS_DIR, { filter: featureCommandFilter });
         expect(listed.active.map(entry => entry.key).sort()).toEqual(expected);
-        expect(listed.inactive.map(entry => entry.key).sort())
-            .toEqual([...Object.keys(inventory.commands), ...Object.keys(inventory.contextMenus)].filter(key => !expected.includes(key)).sort());
-
-        const payload = collectCommandPayloads(COMMANDS_DIR, { filter: featureCommandFilter });
-        expect(payloadNames(payload)).toEqual(namesFor(expected));
-        // The shipped defaults really do leave some features off (this is
-        // what makes the baseline meaningful rather than "everything").
-        expect(active.has('gba')).toBe(false);
-        expect(active.has('music')).toBe(true);
+        for (const entry of listed.inactive) {
+            expect(inventory.ownerOf(entry.kind, entry.key).owner).toBe('gba');
+        }
     });
 
     test('with every legacy switch on, nothing is filtered: payload equals the unfiltered walk', () => {
@@ -789,11 +823,20 @@ describe('messageCreate gates', () => {
             expect(calls).toEqual(['chat']);
         });
 
-        test('with no features.json (legacy defaults) the message path is the same as everything on for cursor, and gba follows its legacy switch', async () => {
+        test('with no features.json (legacy defaults) every gate runs, including gba whose legacy switch is off', async () => {
             useState();
+            expect(features.isActive('gba')).toBe(false);
             const tracker = { handleThreadMessage: jest.fn(async () => { calls.push('thread'); return false; }) };
             await messageCreate.execute(guildMessage({ tracker }));
-            // cursor is active by default (presence switch); gba defaults off
+            // Nothing is refused without a state file or an env override: the
+            // path is the same as before gating existed.
+            expect(calls).toEqual(['tail', 'activity', 'thread', 'gba']);
+        });
+
+        test('an env override alone skips the gba gate and leaves the order of the others', async () => {
+            useState({ env: { GOOBSTER_FEATURE_GBA: '0' } });
+            const tracker = { handleThreadMessage: jest.fn(async () => { calls.push('thread'); return false; }) };
+            await messageCreate.execute(guildMessage({ tracker }));
             expect(calls).toEqual(['tail', 'activity', 'thread']);
         });
     });
