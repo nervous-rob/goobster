@@ -310,8 +310,10 @@ function createDockerService({ settings, fs = nodeFs, now = () => new Date(), lo
                 findings.push(finding('ALREADY_PROVISIONED', 'block', 'This installation already has a Docker database.', 'Use "database docker start", "stop" or "repair". To start over, remove it first (uninstall with removeDockerData).'));
             } else if (doc && rankOf(doc.step) >= rankOf('container')) {
                 view.mode = 'recreate';
-                if (doc.request.storage.kind === 'path') {
+                if (doc.request.storage.kind === 'path' && fs.existsSync(nodePath.join(doc.request.storage.path, 'pgdata'))) {
                     findings.push(finding('STORAGE_INITIALISED', 'block', 'An earlier setup stopped after the database initialised the chosen directory, and the password it was started with was never saved.', 'Empty the "pgdata" folder inside it yourself (the installer never deletes a folder you chose), or choose another path. Then provision again.'));
+                } else if (doc.request.storage.kind === 'path') {
+                    findings.push(finding('RESUME_RECREATE', 'note', 'An earlier setup stopped while the container was being created. The chosen directory holds no database yet, so the installer removes this installation\'s own container (by name, after checking its labels) and creates it again.', ''));
                 } else {
                     findings.push(finding('RESUME_RECREATE', 'note', 'An earlier setup stopped after the container started. Its data volume holds a database whose password was never saved, so the installer removes this installation\'s own container and volume (by name, after checking their labels) and creates them again.', ''));
                 }
@@ -411,6 +413,7 @@ function createDockerService({ settings, fs = nodeFs, now = () => new Date(), lo
             if (!request.pull) throw new ManagerError(409, 'IMAGE_PULL_NOT_APPROVED', 'The database image is not on this machine and pulling it was not approved.');
             await mapped(() => containers.pull());
         }
+        advance('container', { dataInitialised: false });
         await mapped(() => containers.createContainer({ port: request.port, bind: request.bind, storage: request.storage, memoryMb: request.memoryMb, superuserPassword }));
         done.container = true;
         advance('container', { created: { container: true }, dataInitialised: true });
@@ -530,7 +533,7 @@ function createDockerService({ settings, fs = nodeFs, now = () => new Date(), lo
         } else {
             if (!summary.imagePinned) reasons.push('IMAGE_DRIFT');
             if (summary.restartPolicy !== 'unless-stopped') reasons.push('RESTART_POLICY');
-            if (summary.health === 'none') reasons.push('NO_HEALTH_CHECK');
+            if (summary.hasHealthCheck === false) reasons.push('NO_HEALTH_CHECK');
             if (summary.port !== doc.request.port || summary.bind !== doc.request.bind) reasons.push('PORT_DRIFT');
             if (reasons.length > 0) action = 'recreate';
             else if (!summary.running) action = 'start';

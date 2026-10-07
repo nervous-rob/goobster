@@ -122,7 +122,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                         installationId
                     },
                     revision: null,
-                    privateInput: { request, passwords: passwords.generatePair() }
+                    privateInput: { raw, request, passwords: passwords.generatePair() }
                 };
             },
             async validate(record, ctx) {
@@ -481,7 +481,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
             result: scratch => ({ reconfigured: true, ready: scratch.ready === true, barrier: 'held', next: 'maintenance.release' }),
             auditDetail: (record, scratch) => ({
                 container: record.plan.names.container,
-                changed: Object.keys(record.plan.to),
+                changed: Object.keys(record.plan.to).join('-'),
                 backupVerified: scratch.backupVerified === true
             })
         };

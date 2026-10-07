@@ -61,7 +61,7 @@ function daemon() {
 function containerView(name, c) {
     return {
         Name: `/${name}`,
-        Config: { Image: c.image, Labels: c.labels },
+        Config: { Image: c.image, Labels: c.labels, ...(c.healthcheck === false ? {} : { Healthcheck: { Test: ['CMD-SHELL', 'pg_isready'] } }) },
         State: { Running: c.running, Status: c.status, StartedAt: '2026-10-07T10:00:00Z', ...(c.health ? { Health: { Status: c.health } } : {}) },
         HostConfig: { RestartPolicy: { Name: c.restart || 'no' }, Memory: c.memory || 0 },
         NetworkSettings: { Ports: c.port ? { '5432/tcp': [{ HostIp: c.bind, HostPort: String(c.port) }] } : {} },
@@ -147,8 +147,8 @@ if (verb === 'version') {
         };
         if (state.interruptAfterRun) {
             save(state);
-            process.stderr.write('interrupted\n');
-            process.exit(0);
+            process.stderr.write('docker: the client was interrupted after the container was created\n');
+            process.exit(130);
         }
         save(state);
         out('0123456789abcdef0123456789abcdef');
@@ -177,9 +177,13 @@ if (verb === 'version') {
         save(state);
         out(name);
     } else if (verb === 'ps') {
+        const wanted = flagValues('--filter').filter(item => item.startsWith('label=')).map(item => item.slice(6));
+        const everything = args.includes('--all') || args.includes('-a');
         for (const [name, c] of Object.entries(state.containers)) {
-            if (!c.running || !c.port) continue;
-            out(JSON.stringify({ Names: name, Ports: `${c.bind}:${c.port}->5432/tcp`, State: 'running', Labels: Object.entries(c.labels).map(([k, v]) => `${k}=${v}`).join(',') }));
+            if (!everything && !c.running) continue;
+            const labels = Object.entries(c.labels).map(([k, v]) => `${k}=${v}`);
+            if (!wanted.every(item => labels.includes(item))) continue;
+            out(JSON.stringify({ Names: name, Ports: c.port ? `${c.bind}:${c.port}->5432/tcp` : '', State: c.running ? 'running' : 'exited', Labels: labels.join(',') }));
         }
     } else if (verb === 'logs') {
         out('LOG: database system is ready to accept connections');

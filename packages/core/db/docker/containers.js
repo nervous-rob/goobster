@@ -110,6 +110,7 @@ function createContainers({ docker, installationId, deps = {} }) {
             running: state.Running === true,
             status: String(state.Status || 'unknown'),
             health,
+            hasHealthCheck: Boolean(entry.Config && entry.Config.Healthcheck && Array.isArray(entry.Config.Healthcheck.Test) && entry.Config.Healthcheck.Test[0] !== 'NONE'),
             restartPolicy: entry.HostConfig && entry.HostConfig.RestartPolicy ? entry.HostConfig.RestartPolicy.Name : null,
             port: binding ? Number(binding.HostPort) : null,
             bind: binding ? String(binding.HostIp || '') : null,

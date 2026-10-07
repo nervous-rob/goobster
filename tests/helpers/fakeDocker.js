@@ -62,6 +62,7 @@ function create({ mode = 'ok', imagePulled = true, healthAfter = 2, ...extra } =
                     bind: '0.0.0.0',
                     port,
                     restart: 'always',
+                    healthcheck: false,
                     memory: 0,
                     mount: { Type: 'volume', Name: volume || 'foreign-data', Destination: '/var/lib/postgresql/data' },
                     network: network || 'foreign-net'
