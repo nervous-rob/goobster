@@ -13,6 +13,7 @@ const path = require('node:path');
 
 const serviceKinds = require('@goobster/manager/platform/serviceKinds');
 const systemdService = require('@goobster/manager/platform/systemdService');
+const launchdService = require('@goobster/manager/platform/launchdService');
 const serviceRecord = require('@goobster/manager/platform/serviceRecord');
 const unitText = require('@goobster/manager/platform/systemdUnit');
 const lifecycle = require('@goobster/manager/platform/serviceLifecycle');
@@ -83,15 +84,15 @@ async function installOn(platform, runner, { kinds, extraInput = {} } = {}) {
 }
 
 describe('the registry', () => {
-    test('names a kind per platform whether or not this version defines it, and defines systemd only', () => {
+    test('names a kind per platform whether or not this version defines it, and defines systemd and launchd', () => {
         expect(serviceKinds.kindForPlatform('linux')).toBe('systemd');
         expect(serviceKinds.kindForPlatform('win32')).toBe('windows-service');
         expect(serviceKinds.kindForPlatform('darwin')).toBe('launchd');
         expect(serviceKinds.forKind('systemd')).toBe(systemdService);
         expect(serviceKinds.forKind('windows-service')).toBeNull();
-        expect(serviceKinds.forKind('launchd')).toBeNull();
+        expect(serviceKinds.forKind('launchd')).toBe(launchdService);
         expect(serviceKinds.forPlatform('linux')).toBe(systemdService);
-        expect(Object.keys(serviceKinds.DEFINITIONS)).toEqual(['systemd']);
+        expect(Object.keys(serviceKinds.DEFINITIONS)).toEqual(['systemd', 'launchd']);
     });
 
     test('every kind the record knows is a kind the registry may hold, and a definition must be complete', () => {

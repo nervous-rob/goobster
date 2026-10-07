@@ -713,9 +713,10 @@ describe('helper integrity', () => {
 
     test('the helper\'s code is node built-ins plus its own files and nothing else', () => {
         const dir = path.join(__dirname, '..', 'apps', 'manager');
-        const own = new Set(elevate.HELPER_FILES.map(rel => path.join(dir, '..', '..', rel.replace(/^app\//, ''))).map(file => path.normalize(file)));
+        const darwin = require('../apps/manager/privileged/darwin');
+        const own = new Set([...elevate.HELPER_FILES, ...darwin.HELPER_FILES].map(rel => path.join(dir, '..', '..', rel.replace(/^app\//, ''))).map(file => path.normalize(file)));
         const seen = new Set();
-        const queue = [path.join(dir, 'privileged', 'helper.js'), path.join(dir, 'privileged', 'linux.js')];
+        const queue = [path.join(dir, 'privileged', 'helper.js'), path.join(dir, 'privileged', 'linux.js'), path.join(dir, 'privileged', 'darwin.js')];
         while (queue.length > 0) {
             const file = queue.pop();
             if (seen.has(file)) continue;
@@ -725,13 +726,15 @@ describe('helper integrity', () => {
             for (const match of text.matchAll(/require\((['"])([^'"]+)\1\)/g)) {
                 const target = match[2];
                 if (target.startsWith('node:')) continue;
+                // darwin.js's manager half (transport) loads elevate lazily; the helper process never calls it.
+                if (target === './elevate' && path.basename(file) === 'darwin.js') continue;
                 expect(target.startsWith('.')).toBe(true);
                 let resolved = path.resolve(path.dirname(file), target);
                 if (!resolved.endsWith('.js')) resolved += '.js';
                 queue.push(resolved);
             }
         }
-        expect(seen.size).toBe(4);
+        expect(seen.size).toBe(6);
     });
 });
 
@@ -751,7 +754,7 @@ describe('the dispatcher', () => {
 
     test('run() throws 501 for an operation or a platform with no helper, 404 for an unknown name, 400 for a refused input', async () => {
         await expect(privileged.run('package.install', { names: [] }, { platform: 'linux' })).rejects.toMatchObject({ status: 501 });
-        await expect(privileged.run('service.register', {}, { platform: 'darwin' })).rejects.toMatchObject({ status: 501 });
+        await expect(privileged.run('service.register', {}, { platform: 'win32' })).rejects.toMatchObject({ status: 501 });
         await expect(privileged.run('shell.exec', {}, {})).rejects.toMatchObject({ status: 404 });
         await expect(privileged.run('user.create', { name: 'root' }, { platform: 'linux' })).rejects.toMatchObject({ status: 400 });
     });

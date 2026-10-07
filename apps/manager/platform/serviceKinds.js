@@ -37,7 +37,8 @@
 const serviceRecord = require('./serviceRecord');
 
 const DEFINITIONS = Object.freeze({
-    systemd: require('./systemdService')
+    systemd: require('./systemdService'),
+    launchd: require('./launchdService')
 });
 
 const REQUIRED = Object.freeze(['kind', 'platforms', 'serviceName', 'fallbackFileName', 'installedFileName', 'installedPath', 'render', 'manualInstructions', 'statusCommand', 'removeByHand', 'account', 'registerInput', 'unregisterInput']);
