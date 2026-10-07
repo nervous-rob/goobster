@@ -155,7 +155,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                         database: input.publicView(parsed.connection),
                         elevated: { user: parsed.elevated.user, database: parsed.elevated.database || 'postgres', persisted: false },
                         boundary: 'the selected database, the selected schema and the application role, by name; nothing else',
-                        actions: shown.map(entry => ({ action: entry.action, permitted: checked.permitted[entry.action] === true, statements: entry.statements })),
+                        actions: shown.map(entry => ({ action: entry.action, permitted: checked.permitted[entry.action] === true, statements: entry.statements.map(statement => `[${statement.scope}] ${statement.sql}`) })),
                         blocked: checked.blocked,
                         dba: checked.dba,
                         existing: {

@@ -125,7 +125,7 @@ function describePlan(kind, plan) {
         lines.push(`  elevated   ${plan.elevated.user} (used for this operation only; not saved)`);
         for (const item of plan.actions) {
             lines.push(`  ${item.permitted ? 'will do' : 'BLOCKED'} ${item.action}`);
-            for (const statement of item.statements) lines.push(`      [${statement.scope}] ${statement.sql}`);
+            for (const statement of item.statements) lines.push(`      ${statement}`);
         }
         if (plan.blocked.length > 0) {
             lines.push('  The elevated role may not do the blocked actions. A database administrator must run:');
