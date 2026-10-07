@@ -1,0 +1,445 @@
+name: Packaging proof
+
+# Issue #327 (installer epic #315, ADR 0013 decision 13). Builds the standalone
+# no-Discord runtime payload (scripts/package-runtime.js) on each promised
+# target and runs scripts/package-smoke.js inside it with ONLY the bundled
+# Node. The full recipe, the evidence it produces and what it cannot prove are
+# in documentation/packaging_proof.md.
+#
+# The `reduced` job (issue #328, linux-x64 only) builds feature-selected
+# payloads and proves exclusive code and dependencies are absent, the API
+# still answers, dormant data stays exportable and erasable, and a tampered
+# payload is refused (documentation/packaging.md).
+#
+# Not a release pipeline: nothing here is signed with a release key, notarized
+# or published. The minimal payload carries a throwaway development signature.
+# Artifacts are JSON reports and logs, never the payload itself (~320 MiB).
+
+on:
+  workflow_dispatch:
+    inputs:
+      linux_arm64:
+        description: 'Include linux-arm64 (ubuntu-24.04-arm). Untick if the repository has no access to GitHub-hosted arm64 runners; the job would otherwise queue forever.'
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - 'scripts/package-*'
+      - 'scripts/lib/package*'
+      - 'scripts/lib/payload*'
+      - 'scripts/lib/requireGraph.js'
+      - 'scripts/lib/frontendChunks.js'
+      - 'scripts/lib/nativeBinaryInfo.js'
+      - 'packages/core/features/**'
+      - 'tests/helpers/reducedPayloadProbe.js'
+      - 'tests/helpers/dormantSeed.js'
+      - 'tests/helpers/loadRecorder.js'
+      - 'apps/web/vite.config.ts'
+      - '.github/workflows/packaging-proof.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/*/package.json'
+      - 'apps/*/package.json'
+      - 'packages/core/db/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaging-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: plan matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        env:
+          INCLUDE_ARM64: ${{ github.event_name != 'workflow_dispatch' && vars.PACKAGING_PROOF_LINUX_ARM64 != 'false' || inputs.linux_arm64 == true }}
+        run: |
+          # Runner labels were checked against actions/runner-images' README.
+          # macos-13 no longer exists there; the Intel macOS runner is macos-15-intel.
+          entries='{"target":"linux-x64","runner":"ubuntu-24.04"},{"target":"win32-x64","runner":"windows-2022"},{"target":"darwin-x64","runner":"macos-15-intel"},{"target":"darwin-arm64","runner":"macos-15"}'
+          if [ "$INCLUDE_ARM64" = "true" ]; then
+            entries="$entries"',{"target":"linux-arm64","runner":"ubuntu-24.04-arm"}'
+          else
+            echo "::notice::linux-arm64 is NOT part of this run; that target stays unverified."
+          fi
+          echo "matrix={\"include\":[$entries]}" >> "$GITHUB_OUTPUT"
+
+  proof:
+    name: ${{ matrix.target }} (${{ matrix.runner }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Output locations (outside the checkout)
+        shell: bash
+        run: |
+          # The runner context is not available in job-level env, and Windows
+          # RUNNER_TEMP uses backslashes that bash and Node would each read differently.
+          temp="${RUNNER_TEMP//\\//}"
+          echo "PAYLOAD=$temp/goobster-payload" >> "$GITHUB_ENV"
+          echo "REPORTS=$temp/goobster-reports" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      # The repo's Node builds the payload; it never runs the smoke check. Any
+      # Node 22.x has module ABI 127, which package-runtime.js asserts.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      - name: Build the payload
+        shell: bash
+        run: |
+          node scripts/package-runtime.js --out "$PAYLOAD" --report-dir "$REPORTS" --force
+          # Independent re-check of the acceptance rules, outside the build script.
+          test -z "$(find "$PAYLOAD" -type l)" || { echo "::error::symlinks in the payload"; find "$PAYLOAD" -type l | head; exit 1; }
+          test -z "$(find "$PAYLOAD" -name config.json -o -name '.env*' -o -name '*.sqlite' | head -1)" || { echo "::error::config/env/database file in the payload"; exit 1; }
+          echo "payload files: $(find "$PAYLOAD" -type f | wc -l)"
+
+      - name: Smoke check in place, bundled runtime only (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "$REPORTS"
+          # The repo's Node lives under the hosted tool cache; Homebrew's lives in
+          # /usr/local/bin or /opt/homebrew/bin. Neither is on this PATH.
+          if PATH=/usr/bin:/bin command -v node >/dev/null 2>&1; then echo "::error::a system node is visible"; exit 1; fi
+          env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+            "$PAYLOAD/runtime/bin/node" "$PAYLOAD/app/scripts/package-smoke.js" \
+            --report "$REPORTS/package-smoke-$TARGET.json" 2>&1 | tee "$REPORTS/package-smoke-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Smoke check in place, bundled runtime only (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:REPORTS | Out-Null
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          if (Get-Command node -ErrorAction SilentlyContinue) { throw "a system node is still visible on PATH" }
+          & "$env:PAYLOAD\runtime\node.exe" "$env:PAYLOAD\app\scripts\package-smoke.js" --report "$env:REPORTS\package-smoke-$env:TARGET.json" 2>&1 | Tee-Object -FilePath "$env:REPORTS\package-smoke-$env:TARGET.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke check from a relocated path with spaces and non-ASCII (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # UTF-8 bytes spelled in octal: macOS ships bash 3.2, which has no \u escapes.
+          NAME="Goobster d$(printf '\303\244')ta $(printf '\303\251')"
+          DEST="$RUNNER_TEMP/$NAME/payload copy"
+          mkdir -p "$DEST"
+          cp -a "$PAYLOAD/." "$DEST/"
+          test -z "$(find "$DEST" -type l)"
+          env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+            "$DEST/runtime/bin/node" "$DEST/app/scripts/package-smoke.js" \
+            --report "$REPORTS/package-smoke-$TARGET-relocated.json" 2>&1 | tee "$REPORTS/package-smoke-$TARGET-relocated.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Smoke check from a relocated path with spaces and non-ASCII (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "Goobster d$([char]0xE4)ta $([char]0xE9)"
+          $dest = Join-Path $env:RUNNER_TEMP "$name\payload copy"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Path "$env:PAYLOAD\*" -Destination $dest -Recurse -Force
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          & "$dest\runtime\node.exe" "$dest\app\scripts\package-smoke.js" --report "$env:REPORTS\package-smoke-$env:TARGET-relocated.json" 2>&1 | Tee-Object -FilePath "$env:REPORTS\package-smoke-$env:TARGET-relocated.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Negative control: with the data directory read-only the smoke check must
+      # FAIL and say which directory and what to do. A pass here is a defect.
+      # Windows ignores directory mode bits; restricted-permission behaviour
+      # there needs an ACL test and is recorded as unverified.
+      - name: Restricted permissions are reported, not hidden (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set +e
+          env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+            "$PAYLOAD/runtime/bin/node" "$PAYLOAD/app/scripts/package-smoke.js" --no-launcher --read-only-data \
+            --instance-dir "$RUNNER_TEMP/read only instance" \
+            --report "$REPORTS/package-smoke-$TARGET-read-only-data.json" > "$REPORTS/package-smoke-$TARGET-read-only-data.log" 2>&1
+          status=$?
+          if [ "$status" -eq 0 ]; then echo "::error::the smoke check passed with a read-only data directory"; exit 1; fi
+          grep -q 'is not writable by this account' "$REPORTS/package-smoke-$TARGET-read-only-data.json" || { echo "::error::the failure carried no actionable advice"; exit 1; }
+          echo "read-only data directory: failed as expected (exit $status) with advice"
+
+      # Clean-OS evidence for Linux: the payload runs in stock distro images that
+      # have no Node, npm, git or compiler. `required` images are the supported
+      # baseline; `expected-fail` images document where the floor is (glibc 2.29
+      # on x64 from better-sqlite3's prebuilt binary, 2.33 on arm64 from
+      # sodium-native's; musl is not a target).
+      - name: Run in stock distro containers (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$REPORTS/distro"
+          failures=0
+          probe() {
+            image="$1"; expectation="$2"; name="$(echo "$image" | tr '/:' '__')"
+            if docker run --rm -v "$PAYLOAD:/payload:ro" -v "$REPORTS/distro:/out" "$image" \
+                 /payload/runtime/bin/node /payload/app/scripts/package-smoke.js --report "/out/$name.json" > "$REPORTS/distro/$name.log" 2>&1; then
+              result=pass; else result=fail; fi
+            glibc="$(docker run --rm "$image" sh -c 'ldd --version 2>&1 | head -1' 2>/dev/null || true)"
+            printf '%s\t%s\t%s\t%s\n' "$image" "$expectation" "$result" "$glibc" | tee -a "$REPORTS/distro/summary.tsv"
+            if [ "$expectation" = required ] && [ "$result" != pass ]; then failures=$((failures + 1)); fi
+          }
+          # glibc 2.31 images are the baseline on x64 (floor 2.29, better-sqlite3)
+          # but below the arm64 floor (2.33, sodium-native's arm64 prebuild) -
+          # see documentation/packaging_proof.md, "glibc baselines" and B2.
+          if [ "$TARGET" = linux-arm64 ]; then glibc231=expected-fail; else glibc231=required; fi
+          probe debian:bullseye-slim "$glibc231"
+          probe debian:bookworm-slim required
+          probe ubuntu:20.04 "$glibc231"
+          probe ubuntu:24.04 required
+          probe almalinux:9 required
+          probe almalinux:8 expected-fail
+          probe alpine:3.20 expected-fail
+          if [ "$failures" -ne 0 ]; then echo "::error::$failures required distro image(s) failed"; exit 1; fi
+
+      - name: Signing and runtime-library facts (informational)
+        if: always() && runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$REPORTS"
+          {
+            echo "## runtime/bin/node"; codesign -dv --verbose=2 "$PAYLOAD/runtime/bin/node" 2>&1 || true
+            spctl -a -vv -t exec "$PAYLOAD/runtime/bin/node" 2>&1 || true
+            echo "## native addons"
+            find "$PAYLOAD/app/node_modules" \( -name '*.node' -o -name '*.dylib' \) -print0 | while IFS= read -r -d '' f; do
+              echo "-- ${f#"$PAYLOAD/"}"; codesign -dv "$f" 2>&1 || true
+            done
+          } > "$REPORTS/signing-$TARGET.txt"
+
+      - name: Signing and runtime-library facts (informational)
+        if: always() && runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:REPORTS | Out-Null
+          $files = @("$env:PAYLOAD\runtime\node.exe") + (Get-ChildItem -Path "$env:PAYLOAD\app\node_modules" -Recurse -Include *.node,*.dll | ForEach-Object FullName)
+          $files | ForEach-Object {
+            $s = Get-AuthenticodeSignature $_
+            [pscustomobject]@{ File = $_.Replace($env:PAYLOAD, ''); Status = $s.Status; Signer = $s.SignerCertificate.Subject }
+          } | Format-Table -AutoSize -Wrap | Out-String -Width 300 | Set-Content "$env:REPORTS\signing-$env:TARGET.txt"
+          "VC++ runtime DLLs present on this runner (hosted images ship them; a clean machine may not):" | Add-Content "$env:REPORTS\signing-$env:TARGET.txt"
+          Get-ChildItem "$env:SystemRoot\System32\vcruntime140*.dll","$env:SystemRoot\System32\msvcp140*.dll" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Add-Content "$env:REPORTS\signing-$env:TARGET.txt"
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const dir = process.env.REPORTS, target = process.env.TARGET;
+            const rows = [];
+            for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).sort() : []) {
+              if (!/^package-smoke-.*\.json$/.test(file)) continue;
+              const r = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+              rows.push(`| ${file} | ${r.verdict} | ${r.summary.passed}/${r.summary.failed}/${r.summary.skipped}/${r.summary.knownGaps} |`);
+            }
+            let out = `### ${target}\n\n| report | verdict | pass/fail/skip/known-gap |\n|---|---|---|\n${rows.join("\n") || "| (no smoke report: the build or the first smoke run failed) | - | - |"}\n`;
+            const build = path.join(dir, `package-build-${target}.json`);
+            if (fs.existsSync(build)) {
+              const b = JSON.parse(fs.readFileSync(build, "utf8"));
+              out += `\nPayload ${(b.sizeBytes.total / 1048576).toFixed(0)} MiB, ${b.fileCount} files, symlinks ${b.symlinks}, compiler output lines ${b.compilerOutputLines}, prebuilt binaries fetched ${b.prebuiltBinariesFetched.length}, bundled Node ${b.bundledNode}\n`;
+              out += `\nglibc floor ${b.baselines.glibcMin ? b.baselines.glibcMin.value + " (" + b.baselines.glibcMin.requiredBy + ")" : "n/a"}; macOS floor ${b.baselines.minMacos ? b.baselines.minMacos.value : "n/a"}; Windows imports ${b.baselines.windowsImports.join(", ") || "n/a"}\n`;
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out);
+          '
+
+      - name: Upload reports and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-proof-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/goobster-reports
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload payload manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-proof-${{ matrix.target }}-manifest
+          path: ${{ runner.temp }}/goobster-payload/payload-manifest.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+  reduced:
+    name: reduced payloads (linux-x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TARGET: linux-x64
+      PROFILES: minimal voice projects-sandbox
+    steps:
+      - name: Output locations (outside the checkout)
+        shell: bash
+        run: |
+          echo "WORK=$RUNNER_TEMP/goobster-reduced" >> "$GITHUB_ENV"
+          echo "REPORTS=$RUNNER_TEMP/goobster-reduced-reports" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      # minimal carries a throwaway development signature (the private key is
+      # generated in a temp dir and deleted; only the public key is kept in the
+      # reports); the other two are unsigned and verified in labelled dev mode.
+      - name: Build minimal, voice and projects+sandbox payloads
+        shell: bash
+        run: |
+          node scripts/package-runtime.js --profile minimal --dev-sign --out "$WORK/minimal" --report-dir "$REPORTS/minimal" --force
+          node scripts/package-runtime.js --features voice --out "$WORK/voice" --report-dir "$REPORTS/voice" --force
+          node scripts/package-runtime.js --features projects,sandbox --out "$WORK/projects-sandbox" --report-dir "$REPORTS/projects-sandbox" --force
+          for name in $PROFILES; do
+            test -z "$(find "$WORK/$name" -type l)" || { echo "::error::symlinks in the $name payload"; exit 1; }
+            test ! -e "$WORK/$name/app/node_modules/discord.js" || { echo "::error::discord.js shipped in the $name payload"; exit 1; }
+          done
+          test ! -e "$WORK/minimal/app/node_modules/@discordjs/voice" || { echo "::error::the voice stack shipped in the minimal payload"; exit 1; }
+          test -e "$WORK/voice/app/node_modules/@discordjs/voice" || { echo "::error::the voice payload lacks @discordjs/voice"; exit 1; }
+          test -d "$WORK/projects-sandbox/app/apps/sandbox" || { echo "::error::the projects+sandbox payload lacks the sandbox runner"; exit 1; }
+
+      # The dormant-data probe is a test helper, not payload code; it runs from
+      # outside the payload against the payload's own node_modules.
+      - name: Stage the dormant-data probe
+        shell: bash
+        run: |
+          mkdir -p "$WORK/probe"
+          cp tests/helpers/reducedPayloadProbe.js tests/helpers/dormantSeed.js tests/helpers/loadRecorder.js "$WORK/probe/"
+
+      - name: Smoke each payload in place and relocated, bundled runtime only
+        shell: bash
+        run: |
+          if PATH=/usr/bin:/bin command -v node >/dev/null 2>&1; then echo "::error::a system node is visible"; exit 1; fi
+          NAME="Goobster d$(printf '\303\244')ta $(printf '\303\251')"
+          failures=0
+          for name in $PROFILES; do
+            key=()
+            if [ "$name" = minimal ]; then key=(--public-key "$REPORTS/minimal/payload-dev-key-$TARGET.pub.pem"); fi
+            env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+              "$WORK/$name/runtime/bin/node" "$WORK/$name/app/scripts/package-smoke.js" "${key[@]}" \
+              --routes --dormant-probe "$WORK/probe" \
+              --report "$REPORTS/package-smoke-$name.json" > "$REPORTS/package-smoke-$name.log" 2>&1 || failures=$((failures + 1))
+            DEST="$RUNNER_TEMP/$NAME/$name copy"
+            mkdir -p "$DEST" && cp -a "$WORK/$name/." "$DEST/" && chmod -R a-w "$DEST"
+            env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+              "$DEST/runtime/bin/node" "$DEST/app/scripts/package-smoke.js" "${key[@]}" \
+              --routes --dormant-probe "$WORK/probe" --instance-dir "$RUNNER_TEMP/$NAME/$name instance" \
+              --report "$REPORTS/package-smoke-$name-relocated.json" > "$REPORTS/package-smoke-$name-relocated.log" 2>&1 || failures=$((failures + 1))
+            chmod -R u+w "$DEST"
+          done
+          if [ "$failures" -ne 0 ]; then echo "::error::$failures reduced smoke run(s) failed; see the reports artifact"; exit 1; fi
+
+      # Every probe runs the verifier shipped inside the pristine minimal
+      # payload against a damaged copy and must get the named refusal code.
+      - name: Tampered payloads are refused
+        shell: bash
+        run: |
+          NODE="$WORK/minimal/runtime/bin/node"
+          VERIFY="$WORK/minimal/app/scripts/lib/payloadStage.js"
+          KEY="$REPORTS/minimal/payload-dev-key-$TARGET.pub.pem"
+          T="$RUNNER_TEMP/goobster-tamper"
+          mkdir -p "$T"
+          failures=0
+          expect() {
+            label="$1"; want="$2"; shift 2
+            out="$("$NODE" "$VERIFY" verify "$@")" || true
+            got="$(printf '%s' "$out" | "$NODE" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(r.ok?"OK":r.code)})')"
+            printf '%s\t%s\t%s\n' "$label" "$want" "$got" | tee -a "$REPORTS/tamper.tsv"
+            [ "$got" = "$want" ] || { echo "::error::$label: wanted $want, got $got"; failures=$((failures + 1)); }
+          }
+          retarget='const fs=require("fs");const p=process.argv[1];const m=JSON.parse(fs.readFileSync(p));m.target={id:"win32-x64",platform:"win32",arch:"x64"};fs.writeFileSync(p,JSON.stringify(m))'
+
+          expect "pristine (signed)" OK "$WORK/minimal" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          cp -a "$WORK/minimal" "$T/flip"
+          "$NODE" -e 'const fs=require("fs");const p=process.argv[1];const b=fs.readFileSync(p);b[100]^=1;fs.writeFileSync(p,b)' "$T/flip/app/node_modules/@goobster/core/services/aiService.js"
+          expect "one byte flipped" INCOMPLETE "$T/flip" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          (cd "$WORK/minimal" && tar -cf "$T/payload.tar" payload-manifest.json payload-manifest.sig payload-selection.json runtime app bin)
+          truncate -s $(( $(stat -c %s "$T/payload.tar") / 2 )) "$T/payload.tar"
+          mkdir -p "$T/truncated" && { tar -xf "$T/payload.tar" -C "$T/truncated" 2>/dev/null || true; }
+          expect "truncated archive" INCOMPLETE "$T/truncated" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          cp -a "$WORK/voice" "$T/retarget"
+          "$NODE" -e "$retarget" "$T/retarget/payload-manifest.json"
+          expect "wrong target (unsigned, dev mode)" TARGET_MISMATCH "$T/retarget" --target "$TARGET" --abi 127 --dev
+
+          cp -a "$WORK/minimal" "$T/retarget-signed"
+          "$NODE" -e "$retarget" "$T/retarget-signed/payload-manifest.json"
+          expect "wrong target (signed)" SIGNATURE_INVALID "$T/retarget-signed" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          cp -a "$WORK/minimal" "$T/extra"
+          mkdir -p "$T/extra/app/node_modules/discord.js" && echo '{}' > "$T/extra/app/node_modules/discord.js/package.json"
+          expect "excluded dependency put back" EXTRA_FILE "$T/extra" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          expect "unsigned outside dev mode" UNSIGNED_DEV_ONLY "$WORK/voice" --target "$TARGET"
+          if [ "$failures" -ne 0 ]; then exit 1; fi
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const dir = process.env.REPORTS;
+            const rows = [];
+            for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).sort() : []) {
+              if (!/^package-smoke-.*\.json$/.test(file)) continue;
+              const r = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+              const check = name => (r.checks.find(c => c.name === name) || {}).status || "-";
+              rows.push(`| ${file} | ${r.verdict} | ${(r.features || []).join(", ")} | ${check("payload.verify")} | ${check("payload.exclusive-absence")} | ${check("payload.routes")} | ${check("payload.dormantData")} |`);
+            }
+            let out = "### reduced payloads (linux-x64)\n\n| report | verdict | features | verify | exclusive-absence | routes | dormant data |\n|---|---|---|---|---|---|---|\n" + (rows.join("\n") || "| (no smoke report) | - | - | - | - | - | - |") + "\n";
+            const tamper = path.join(dir, "tamper.tsv");
+            if (fs.existsSync(tamper)) out += "\n| tamper probe | expected | got |\n|---|---|---|\n" + fs.readFileSync(tamper, "utf8").trim().split("\n").map(line => `| ${line.split("\t").join(" | ")} |`).join("\n") + "\n";
+            for (const name of (process.env.PROFILES || "").split(" ")) {
+              const build = path.join(dir, name, `package-build-${process.env.TARGET}.json`);
+              if (!fs.existsSync(build)) continue;
+              const b = JSON.parse(fs.readFileSync(build, "utf8"));
+              out += `\n${name}: ${(b.sizeBytes.total / 1048576).toFixed(0)} MiB, ${b.fileCount} files; excluded ${b.excluded.files} files, ${b.excluded.dependencies} dependency dirs (${b.excluded.exclusiveDependencies.length} exclusive), ${b.excluded.chunks} chunks; signed ${b.signed}\n`;
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out);
+          '
+
+      - name: Upload reports and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-proof-reduced-linux-x64
+          path: ${{ runner.temp }}/goobster-reduced-reports
+          retention-days: 14
+          if-no-files-found: warn

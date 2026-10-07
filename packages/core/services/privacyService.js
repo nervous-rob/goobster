@@ -1,5 +1,7 @@
 const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
+const dormantData = require('./dormantDataService');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 /**
  * Privacy controls as product features: the data transparency report behind
@@ -750,7 +752,7 @@ class PrivacyService {
             // Research briefs (#254) cascade with the expedition; they are
             // deleted first so the count is exact, and briefs someone else
             // owns that this person paid for keep the row with payer nulled.
-            const briefs = await require('./expeditionBriefService').forgetUser(userId);
+            const briefs = await dormantData.forgetExpeditionBriefs(userId);
             counts.expeditionBriefs = briefs.deleted;
             counts.expeditionBriefsPayerAnonymized = briefs.anonymized;
             counts.spitballExpeditions = (await db.run(
@@ -971,12 +973,12 @@ class PrivacyService {
             // Project triggers, then assets: delete by userId directly
             // (not only via CASCADE from observatory_projects) so a
             // broken FK cannot leave rows behind after /forget-me.
-            const forgottenTriggers = await require('./projectTriggerService').forgetUser(userId);
+            const forgottenTriggers = await dormantData.forgetProjectTriggers(userId);
             counts.projectTriggers = forgottenTriggers.triggers;
-            const forgottenAssets = await require('./projectAssetService').forgetUser(userId);
+            const forgottenAssets = await dormantData.forgetProjectAssets(userId);
             counts.projectAssets = forgottenAssets.assets;
             counts.projectAssetVersions = forgottenAssets.versions;
-            const forgottenMissions = await require('./projectMissionService').forgetUser(userId);
+            const forgottenMissions = await dormantData.forgetProjectMissions(userId);
             counts.projectMissions = forgottenMissions.missions;
             counts.projectDecisions = forgottenMissions.decisions;
 
@@ -1200,10 +1202,12 @@ class PrivacyService {
 
         // A companion that is still connected would keep a live session on a
         // pairing that no longer exists; dropping it touches memory only.
-        const screenVision = require('./screenVisionService');
-        await screenVision.unlink(userId);
-        for (const [code, entry] of [...screenVision.pairCodes]) {
-            if (String(entry.userId) === String(userId)) screenVision.pairCodes.delete(code);
+        const screenVision = requireOptional('./screenVisionService', { feature: 'screenVision' });
+        if (screenVision) {
+            await screenVision.unlink(userId);
+            for (const [code, entry] of [...screenVision.pairCodes]) {
+                if (String(entry.userId) === String(userId)) screenVision.pairCodes.delete(code);
+            }
         }
 
         // Derived vectors must not outlive the memories they were computed
@@ -1215,25 +1219,27 @@ class PrivacyService {
         counts.uploadedFiles = require('../utils/webUploads').deleteUserUploads(userId);
 
         // Observatory projects, jobs, and the on-disk workspace tree (live
-        // jobs are cancelled first). Outside the transaction because it also
-        // touches the filesystem, same as the uploads above.
-        const observatory = await require('./observatoryService').forgetUser(userId);
-        counts.observatoryProjects = observatory.projects;
-        counts.observatoryJobs = observatory.jobs;
-        counts.observatoryShareLinks = observatory.shareLinks;
-        counts.projectMemberships = observatory.memberships || 0;
-        counts.projectInvites = observatory.invites || 0;
-        counts.notifyMembers = observatory.notifyMembers || [];
+        // jobs are cancelled first when the projects module is loaded).
+        // Outside the transaction because it also touches the filesystem,
+        // same as the uploads above.
+        const observatory = requireOptional('./projectService', { feature: 'projects' });
+        const forgottenProjects = observatory
+            ? await observatory.forgetUser(userId)
+            : await dormantData.forgetProjects(userId);
+        counts.observatoryProjects = forgottenProjects.projects;
+        counts.observatoryJobs = forgottenProjects.jobs;
+        counts.observatoryShareLinks = forgottenProjects.shareLinks;
+        counts.projectMemberships = forgottenProjects.memberships || 0;
+        counts.projectInvites = forgottenProjects.invites || 0;
+        counts.notifyMembers = forgottenProjects.notifyMembers || [];
         try {
-            await require('./observatoryService').notifyProjectsGone(
-                counts.notifyMembers, gateway || client
-            );
+            await dormantData.notifyProjectsGone(counts.notifyMembers, gateway || client);
         } catch { /* DMs are best-effort */ }
 
         // Sandbox requests (they carry reasons/URLs the user wrote) go;
         // installed packages stay - they are shared host state - with the
         // requester/approver attribution nulled.
-        const sandboxRequests = await require('./sandboxRequestService').forgetUser(userId);
+        const sandboxRequests = await dormantData.forgetSandboxRequests(userId);
         counts.sandboxRequests = sandboxRequests.requests;
         counts.anonymizedSandboxPackages = sandboxRequests.packagesAnonymized;
 
@@ -1595,7 +1601,7 @@ class PrivacyService {
                 'SELECT COUNT(*) AS c FROM tavern_adventures WHERE createdBy = @userId', { userId }
             )).c,
             // Not tables: files still on disk keyed by the user
-            observatory_workspaces: (await require('./observatoryService').countUserData(userId)).workspaceDirs,
+            observatory_workspaces: dormantData.countWorkspaceDirs(userId),
             web_upload_files: require('../utils/webUploads').countUserUploads(userId)
         };
 

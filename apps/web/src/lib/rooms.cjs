@@ -21,6 +21,11 @@
  * tests/featureGatingPortal.test.js) and ./featureStatus.cjs answers them
  * from the installation's reported state.
  *
+ * `chunk` names the lazy route modules (paths under apps/web/src) that open
+ * a feature's code: the build writes everything only they reach into
+ * `assets/feature-<id>-*` files that a payload without the feature leaves
+ * out (scripts/lib/frontendChunks.js, documentation/packaging.md).
+ *
  * CommonJS so Jest can require() it; Vite interops the same file.
  * Contract: documentation/portal_navigation.md.
  */
@@ -57,6 +62,7 @@ const ROOMS = [
         group: 'primary',
         atmosphere: 'room-library',
         requires: { feature: 'knowledge' },
+        chunk: { feature: 'knowledge', modules: ['rooms/knowledge/KnowledgeRoom.tsx', 'rooms/knowledge/NotesView.tsx', 'rooms/knowledge/MapView.tsx'] },
         legacyIds: ['spitball', 'library', 'memory'],
         tutorials: ['knowledge.basics', 'knowledge.research'],
         // Knowledge opens on Notes; Map is the same projection drawn as a
@@ -66,7 +72,7 @@ const ROOMS = [
         views: [
             { id: 'notes', name: 'Notes', icon: '📝', path: '/knowledge/notes' },
             { id: 'map', name: 'Map', icon: '🕸️', path: '/knowledge/map' },
-            { id: 'research', name: 'Research', secondaryName: 'Expeditions', icon: '🧭', path: '/knowledge/research', legacyIds: ['expeditions'], requires: { feature: 'expeditions' } }
+            { id: 'research', name: 'Research', secondaryName: 'Expeditions', icon: '🧭', path: '/knowledge/research', legacyIds: ['expeditions'], requires: { feature: 'expeditions' }, chunk: { feature: 'expeditions', modules: ['rooms/knowledge/ResearchView.tsx'] } }
         ]
     },
     {
@@ -80,6 +86,7 @@ const ROOMS = [
         // Organizing projects is its own capability; running code in them
         // (the `observatory` feature) is gated per control - ADR 0009.
         requires: { feature: 'projects' },
+        chunk: { feature: 'projects', modules: ['rooms/projects/ProjectListView.tsx', 'rooms/projects/ProjectResolver.tsx', 'rooms/projects/ProjectShell.tsx'] },
         legacyIds: ['observatory', 'workshop'],
         tutorials: ['projects.basics', 'projects.plans', 'projects.runs', 'projects.apps'],
         // Views live under a per-project path: /projects/:owner/:slug/<view>.
@@ -165,6 +172,16 @@ const ROOMS = [
         parent: 'tools',
         atmosphere: 'room-conservatory',
         requires: { feature: 'music' },
+        chunk: {
+            feature: 'music',
+            modules: [
+                'music-lab/ConservatoryLayout.tsx', 'music-lab/ConservatoryHome.tsx',
+                'music-lab/components/intervals/IntervalExplorer.tsx', 'music-lab/components/chords/ChordWorkbench.tsx',
+                'music-lab/components/rhythm/RhythmEngineLoader.tsx', 'music-lab/components/harmony/HarmonyEngineLoader.tsx',
+                'music-lab/components/space/SpaceEngineLoader.tsx', 'music-lab/components/melody/MelodyEngineLoader.tsx',
+                'music-lab/components/stage/StageEngineLoader.tsx', 'music-lab/components/studio/StudioEngineLoader.tsx'
+            ]
+        },
         legacyIds: ['conservatory'],
         blurb: 'Intervals, chords, rhythm, harmony, space, melody, stage, and a studio. Everything you make stays on this device unless you export it.',
         tutorials: ['music.overview', 'music.intervals', 'music.chords', 'music.rhythm', 'music.harmony', 'music.space', 'music.melody', 'music.stage', 'music.studio']
@@ -179,6 +196,7 @@ const ROOMS = [
         parent: 'tools',
         atmosphere: 'room-exchange',
         requires: { feature: ['exchange', 'discord'] },
+        chunk: { feature: 'exchange', modules: ['rooms/ExchangeRoom.tsx'] },
         legacyIds: ['exchange'],
         blurb: 'A simulated market in a Discord server\u2019s game currency: quotes, positions, options, and the leaderboard. No real money.',
         unavailable: 'Needs a connected Discord server. This installation is not connected to Discord.',

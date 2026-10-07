@@ -13,6 +13,7 @@
  */
 
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const TOKEN_MIN_LENGTH = 8;
 const TOKEN_MAX_LENGTH = 300;
@@ -39,7 +40,8 @@ const PROVIDERS = {
         tokenHint: 'Fine-grained personal access token (github.com → Settings → Developer settings). Read-only Contents access is enough.',
         docsUrl: 'https://github.com/settings/personal-access-tokens',
         async verify(token) {
-            const githubService = require('./githubService');
+            const githubService = requireOptional('./githubService', { feature: 'github' });
+            if (!githubService) throw new Error('GitHub support is not installed on this server.');
             const viewer = await githubService.withToken(token).getViewer();
             return viewer?.login ? `@${viewer.login}` : 'GitHub account';
         }

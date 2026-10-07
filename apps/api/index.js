@@ -32,6 +32,7 @@
 
 // Before anything reads feature state (documentation/manager_lifecycle.md).
 const lifecycle = require('@goobster/core/runtime/lifecycle');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 lifecycle.boot({ worker: 'api' });
 
 const fs = require('node:fs');
@@ -103,10 +104,10 @@ async function main() {
         schedulers: schedulersEnabled()
     });
 
-    const sandboxService = require('@goobster/core/services/sandboxService');
+    const sandboxService = requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' });
     lifecycle.onPauseNewWork(() => {
         runtime.pauseNewWork();
-        sandboxService.pauseNewWork();
+        sandboxService?.pauseNewWork();
     });
 
     const port = Number(process.env.GOOBSTER_API_PORT) || DEFAULT_API_PORT;

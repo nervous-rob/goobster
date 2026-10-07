@@ -6,6 +6,8 @@ const workContext = require('../utils/workContext');
 const { toGateway } = require('../gateway');
 const { isInboxChannelId } = require('./inboxService');
 const { surfaceActive } = require('../features/gate');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 
 class AutomationService {
     /**
@@ -100,7 +102,8 @@ class AutomationService {
      */
     async _pollProjectTriggers() {
         try {
-            const projectTriggerService = require('./projectTriggerService');
+            const projectTriggerService = requireOptional('./projectTriggerService', { feature: 'projects' });
+            if (!projectTriggerService) return;
             await projectTriggerService.fireDueCronTriggers({ client: this.client });
             await projectTriggerService.catchUpEventTriggers({ client: this.client });
             // Event deliveries a busy sandbox/project deferred get re-dispatched
@@ -554,7 +557,7 @@ class AutomationService {
 
     async executeDigest(automation, channel) {
         const { generateDigest } = require('../utils/channelDigest');
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder } = discord;
 
         let hours = 24;
         try {
@@ -599,9 +602,14 @@ class AutomationService {
             console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
             return;
         }
-        const wheelService = require('./exchange/wheelService');
-        const economyService = require('./economyService');
-        const { buildWheelEmbed, resolveNames } = require('./exchange/wheelPresenter');
+        const wheelService = requireOptional('./exchange/wheelService', { feature: 'exchange' });
+        const economyService = requireOptional('./economyService', { feature: 'economy' });
+        const wheelPresenter = requireOptional('./exchange/wheelPresenter', { feature: 'exchange' });
+        if (!wheelService || !economyService || !wheelPresenter) {
+            console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not installed`);
+            return;
+        }
+        const { buildWheelEmbed, resolveNames } = wheelPresenter;
 
         try {
             const result = await wheelService.spin({ guildId: automation.guildId });

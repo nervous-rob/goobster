@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { discord } = require('./optionalModule');
 const wrappedService = require('../services/wrappedService');
 const openaiService = require('../services/openaiService');
 
@@ -60,7 +60,7 @@ async function buildWrappedMessage({ guild, period, usageContext }) {
         endDate: period.endDate
     });
 
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor('#EB459E')
         .setTitle(`🎁 ${guild.name} Wrapped - ${period.label}`)
         .setTimestamp();

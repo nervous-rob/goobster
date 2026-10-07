@@ -19,6 +19,7 @@ const { features } = require('@goobster/core/features/featureState');
 const { requireSurface, unavailableResult } = require('@goobster/core/features/gate');
 const { featureCommandFilter } = require('@goobster/core/utils/commandDeployment');
 const lifecycle = require('@goobster/core/runtime/lifecycle');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 
 const UNAVAILABLE_TEXT = 'That feature is not available on this installation.';
 const restartingText = seconds => `Goobster is restarting in ${seconds} s. Try that again in a minute.`;
@@ -179,7 +180,8 @@ module.exports = {
                 // Tavern adventure buttons (join / begin / scene options / Spark reroll).
                 // State lives in SQLite, so these survive restarts.
                 if (type === 'tavern') {
-                    const tavernHandler = require('@goobster/core/services/tavern/interactionHandler');
+                    const tavernHandler = requireOptional('@goobster/core/services/tavern/interactionHandler', { feature: 'tavern' });
+                    if (!tavernHandler) return replyUnavailable(interaction);
                     await tavernHandler.handleButton(action, requestId, interaction);
                     return;
                 }
@@ -195,7 +197,8 @@ module.exports = {
 
                 // Project collaboration invitations (accept/decline from the DM).
                 if (type === 'projectinvite') {
-                    const projectService = require('@goobster/core/services/projectService');
+                    const projectService = requireOptional('@goobster/core/services/projectService', { feature: 'projects' });
+                    if (!projectService) return replyUnavailable(interaction);
                     await projectService.handleInviteButton(action, requestId, interaction);
                     return;
                 }
@@ -203,7 +206,8 @@ module.exports = {
                 // Operator-approved sandbox requests (package installs /
                 // data fetches) - resolved from the approver's DM buttons.
                 if (type === 'sbxreq') {
-                    const sandboxRequestService = require('@goobster/core/services/sandboxRequestService');
+                    const sandboxRequestService = requireOptional('@goobster/core/services/sandboxRequestService', { feature: 'sandbox' });
+                    if (!sandboxRequestService) return replyUnavailable(interaction);
                     await interaction.deferUpdate();
                     interactionState.deferred = true;
                     const edit = await sandboxRequestService.handleButton(action, Number(requestId), interaction);

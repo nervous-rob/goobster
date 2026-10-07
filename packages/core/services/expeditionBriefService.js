@@ -35,6 +35,7 @@
 'use strict';
 
 const db = require('../db');
+const dormantData = require('./dormantDataService');
 const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const { editConflict } = require('../utils/editConflict');
@@ -446,11 +447,7 @@ class ExpeditionBriefService {
      * @param {Object} [handle] - transaction handle when called inside one
      */
     async forgetUser(userId, handle = db) {
-        const deleted = (await handle.run('DELETE FROM expedition_briefs WHERE userId = @userId', { userId: String(userId) })).changes;
-        const anonymized = (await handle.run(
-            'UPDATE expedition_briefs SET payer = NULL WHERE payer = @userId', { userId: String(userId) }
-        )).changes;
-        return { deleted, anonymized };
+        return dormantData.forgetExpeditionBriefs(userId, handle);
     }
 
     // --- Shaping ---------------------------------------------------------------------

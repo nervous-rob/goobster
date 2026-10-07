@@ -24,6 +24,7 @@
  */
 
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const domainEventBus = require('./domainEventBus');
 const config = require('../config/attentionConfig');
 const { isDmScopeId, dmScopeId } = require('../utils/dmScope');
@@ -369,7 +370,7 @@ class AttentionWatchService {
             );
             if (row?.status === 'FIRED') {
                 try {
-                    await require('./projectMissionService').onWatchFired({ watchId: watch.id });
+                    await requireOptional('./projectMissionService', { feature: 'projects' })?.onWatchFired({ watchId: watch.id });
                 } catch (hookError) {
                     logger.warn?.(`[watches] Mission hook for #${watch.id} failed: ${hookError.message}`);
                 }
@@ -392,7 +393,7 @@ class AttentionWatchService {
                 reason: error.message
             });
             try {
-                await require('./projectMissionService').onWatchFired({ watchId: watch.id, failed: true });
+                await requireOptional('./projectMissionService', { feature: 'projects' })?.onWatchFired({ watchId: watch.id, failed: true });
             } catch { /* mission hook is best-effort */ }
         } finally {
             this._running--;

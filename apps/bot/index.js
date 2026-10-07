@@ -10,7 +10,7 @@ const { startWebServers, closeWebServers } = require('./web/server');
 const { validateConfig } = require('@goobster/core/utils/configValidator');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 const { getConnection, closeConnection } = require('@goobster/core/db');
-const { parseTrackName } = require('@goobster/core/utils/musicUtils');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 const { surfaceActive } = require('@goobster/core/features/gate');
 const {
 	commandNameIndex,
@@ -286,7 +286,8 @@ async function updateGlobalPresence(client) {
 	}
 
         if (latestGuild && latestGuild.track) {
-                const trackInfo = parseTrackName(latestGuild.track.name);
+                const musicUtils = requireOptional('@goobster/core/utils/musicUtils', { feature: 'music' });
+                const trackInfo = musicUtils ? musicUtils.parseTrackName(latestGuild.track.name) : { artist: '', title: latestGuild.track.name };
                 // Stop rotating idle status while music is playing
                 if (idleStatusInterval) {
                         clearInterval(idleStatusInterval);
@@ -630,21 +631,24 @@ client.ws.on('close', (event) => {
 async function drainWork() {
         lifecycle.pauseNewWork({ reason: 'shutdown' });
         const boundMs = lifecycle.drainBoundMs();
-        const sandboxService = require('@goobster/core/services/sandboxService');
-        const pending = [
-                lifecycle.settle([{
+        const sandboxService = requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' });
+        const pending = [];
+        if (sandboxService) {
+                pending.push(lifecycle.settle([{
                         name: 'sandboxRun',
                         drain: () => sandboxService.drainRuns(),
                         interrupt: () => sandboxService.interruptRunning()
-                }], lifecycle.contractBoundMs('sandboxRun', boundMs))
-        ];
+                }], lifecycle.contractBoundMs('sandboxRun', boundMs)));
+        }
         pending.push(lifecycle.settle([{
                 name: 'integrationAction',
                 drain: () => Promise.allSettled([...interactionsInFlight])
         }], lifecycle.contractBoundMs('integrationAction', boundMs)));
         if (client.coreRuntime?.settleInFlight) pending.push(client.coreRuntime.settleInFlight(boundMs));
-        if (VOICE_ACTIVE) {
-                const voiceSessionService = require('@goobster/core/services/voice/voiceSessionService');
+        const voiceSessionService = VOICE_ACTIVE
+                ? requireOptional('@goobster/core/services/voice/voiceSessionService', { feature: 'voice' })
+                : null;
+        if (voiceSessionService) {
                 const gateway = client.coreRuntime?.gateway || require('@goobster/core/gateway').toGateway(client);
                 pending.push(lifecycle.settle([{
                         name: 'voiceSession',
@@ -657,7 +661,7 @@ async function drainWork() {
 
 lifecycle.onPauseNewWork(() => {
         client.coreRuntime?.pauseNewWork?.();
-        require('@goobster/core/services/sandboxService').pauseNewWork();
+        requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' })?.pauseNewWork();
 });
 
 // Graceful shutdown handling; one run whatever asks (signal, restart request, orphan watch)

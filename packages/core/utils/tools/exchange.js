@@ -1,79 +1,12 @@
 /**
- * Chat tools: point economy and the exchange.
+ * Chat tools: the exchange (stocks, options, margin, orders, perps, the wheel and event contracts).
  * Required by packages/core/utils/toolsRegistry.js — apps keep requiring the facade.
  */
 
-const { PermissionFlagsBits } = require('discord.js');
+const { discord } = require('../optionalModule');
 const { resolveEconomyAccount, resolveGuildMember } = require('./helpers');
 
 module.exports = {
-    checkPoints: {
-        definition: {
-            name: 'checkPoints',
-            description: 'Check a point-currency balance in this server (the currency may have a custom name like "Jimmy points"). Defaults to the requesting user\'s wallet; pass owner="bot" for your own (Goobster\'s) wallet, e.g. when someone asks about YOUR points.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    owner: {
-                        type: 'string',
-                        enum: ['user', 'bot'],
-                        description: 'Whose wallet: "user" (default) = the human you are talking to, "bot" = Goobster\'s own account.'
-                    }
-                }
-            }
-        },
-        execute: async ({ owner = 'user', interactionContext }) => {
-            const economyService = require('../../services/economyService');
-            const account = resolveEconomyAccount(interactionContext, owner);
-            if (account.error) return account.error;
-            const balance = await economyService.getBalance(account.guildId, account.userId);
-            const { currencyName } = await economyService.getSettings(account.guildId);
-            return `💰 Balance (${account.whose} wallet): ${balance.toLocaleString()} ${currencyName}.`;
-        }
-    },
-    gamblePoints: {
-        definition: {
-            name: 'gamblePoints',
-            description: 'Gamble points on a game: a coin flip (call heads or tails), a d20 roll against the bot, or a five-card poker showdown. All games pay even money. Always plays with the requesting user\'s wallet - you cannot gamble your own (bot) points.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    game: { type: 'string', enum: ['coinflip', 'd20', 'poker'], description: 'Which game to play' },
-                    bet: { type: 'integer', description: 'Points to wager (whole number, at least 1)' },
-                    call: { type: 'string', enum: ['heads', 'tails'], description: 'Coin-flip call (required for coinflip)' }
-                },
-                required: ['game', 'bet']
-            }
-        },
-        execute: async ({ game, bet, call, interactionContext }) => {
-            const gamblingService = require('../../services/gamblingService');
-            const { formatHand } = require('../pokerHands');
-            // Deliberately user-only: the games are framed as player-vs-bot,
-            // so wagering Goobster's own wallet would be self-play.
-            const account = resolveEconomyAccount(interactionContext, 'user');
-            if (account.error) return account.error;
-            const { guildId, userId } = account;
-
-            try {
-                const base = { guildId, userId, bet: Number(bet) };
-                if (game === 'coinflip') {
-                    const r = await gamblingService.coinflip({ ...base, choice: call });
-                    return `🪙 The coin landed ${r.result} - you ${r.won ? 'won' : 'lost'} ${bet.toLocaleString()} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
-                }
-                if (game === 'd20') {
-                    const r = await gamblingService.d20(base);
-                    return `🎲 You rolled ${r.playerRoll}, Goobster rolled ${r.botRoll} - ${r.outcome === 'push' ? 'a tie, bet returned' : r.outcome === 'win' ? `you won ${bet.toLocaleString()}` : `you lost ${bet.toLocaleString()}`} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
-                }
-                if (game === 'poker') {
-                    const r = await gamblingService.poker(base);
-                    return `🃏 Your hand: ${formatHand(r.playerHand)} (${r.playerHandName}) vs dealer: ${formatHand(r.dealerHand)} (${r.dealerHandName}) - ${r.outcome === 'push' ? 'a tie, bet returned' : r.outcome === 'win' ? `you won ${bet.toLocaleString()}` : `you lost ${bet.toLocaleString()}`} ${r.currencyName}. New balance: ${r.balance.toLocaleString()}.`;
-                }
-                return `❌ Unknown game "${game}". Choose coinflip, d20, or poker.`;
-            } catch (error) {
-                return `❌ ${error.message}`;
-            }
-        }
-    },
     stockQuote: {
         definition: {
             name: 'stockQuote',
@@ -654,8 +587,8 @@ module.exports = {
                 }
 
                 // Spinning deploys other people's wallets: permission + confirm
-                const hasManage = interactionContext?.memberPermissions?.has?.(PermissionFlagsBits.ManageGuild)
-                    || interactionContext?.member?.permissions?.has?.(PermissionFlagsBits.ManageGuild);
+                const hasManage = interactionContext?.memberPermissions?.has?.(discord.PermissionFlagsBits.ManageGuild)
+                    || interactionContext?.member?.permissions?.has?.(discord.PermissionFlagsBits.ManageGuild);
                 if (!hasManage) return '❌ Spinning the Wheel deploys every participant\'s wallet - it needs the Manage Server permission (use /wheel spin).';
                 if (!confirm) {
                     return '❌ Spinning deploys a wheel-chosen percentage of EVERY participant\'s wallet into wheel-chosen calls. Explain that, get an explicit yes, then call again with confirm=true.';

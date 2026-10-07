@@ -25,8 +25,9 @@ const crypto = require('node:crypto');
 const express = require('express');
 const axios = require('axios');
 const { WebSocketServer } = require('ws');
-const economyService = require('@goobster/core/services/economyService');
-const { generateMusic, resolveApiKey } = require('@goobster/core/services/voice/elevenLabsAudioService');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
+const economyService = requireOptional('@goobster/core/services/economyService', { feature: 'economy' });
+const elevenLabsAudio = requireOptional('@goobster/core/services/voice/elevenLabsAudioService', { feature: 'music' });
 const { toGateway, isGatewayUnavailable } = require('@goobster/core/gateway');
 const featureGate = require('@goobster/core/web/featureGate');
 const gateSurface = require('@goobster/core/features/gate');
@@ -53,12 +54,12 @@ let casinoMusicPromise = null;
  */
 async function ensureCasinoMusic(ctx) {
     if (fs.existsSync(CASINO_MUSIC_FILE)) return CASINO_MUSIC_FILE;
-    if (!resolveApiKey(ctx.config)) return null;
+    if (!elevenLabsAudio?.resolveApiKey(ctx.config)) return null;
 
     if (!casinoMusicPromise) {
         casinoMusicPromise = (async () => {
             ctx.logger.info?.('Generating casino lounge music via ElevenLabs (one-time)...');
-            const buffer = await generateMusic(CASINO_MUSIC_PROMPT, ctx.config, CASINO_MUSIC_LENGTH_MS);
+            const buffer = await elevenLabsAudio.generateMusic(CASINO_MUSIC_PROMPT, ctx.config, CASINO_MUSIC_LENGTH_MS);
             await fsp.mkdir(path.dirname(CASINO_MUSIC_FILE), { recursive: true });
             await fsp.writeFile(CASINO_MUSIC_FILE, buffer);
             ctx.logger.info?.(`Casino music cached at ${CASINO_MUSIC_FILE} (${buffer.length} bytes)`);
@@ -419,7 +420,7 @@ function attachActivityWebSocket(server, ctx) {
             joined = { session, table, guildId, unsubscribe: () => {} };
             joined.unsubscribe = ctx.tableManager.subscribe(table, subscriber);
 
-            const { currencyName } = await economyService.getSettings(guildId);
+            const { currencyName } = economyService ? await economyService.getSettings(guildId) : { currencyName: 'points' };
             send(await decorate({
                 type: 'joined',
                 user: { id: session.userId, name: session.name },
@@ -486,7 +487,7 @@ function attachActivityWebSocket(server, ctx) {
 
         // Attach the viewer's live balance to every outgoing table message
         async function decorate(message) {
-            if (!joined) return message;
+            if (!joined || !economyService) return message;
             try {
                 return {
                     ...message,

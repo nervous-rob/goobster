@@ -31,9 +31,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 
 const db = require('../db');
+const dormantData = require('./dormantDataService');
 const logger = require('../utils/logger');
 const { toGateway } = require('../gateway');
 const sandboxConfig = require('../config/sandboxConfig');
@@ -105,7 +107,9 @@ class SandboxRequestService {
 
     /** Lazy to avoid a require cycle (observatory -> sandbox -> here). */
     _getObservatory() {
-        return this._observatory || require('./observatoryService');
+        const observatory = this._observatory || requireOptional('./observatoryService', { feature: 'projects' });
+        if (!observatory) throw new SandboxRequestError(404, 'FEATURE_UNAVAILABLE', 'Projects are not installed on this server.');
+        return observatory;
     }
 
     /** Approvers for host-level mutations (operator-configured user ids). */
@@ -571,9 +575,9 @@ class SandboxRequestService {
     // --- Approver interaction -------------------------------------------------------
 
     _buttons(id) {
-        return new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`approve_sbxreq_${id}`).setLabel('Approve').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`deny_sbxreq_${id}`).setLabel('Deny').setStyle(ButtonStyle.Danger)
+        return new discord.ActionRowBuilder().addComponents(
+            new discord.ButtonBuilder().setCustomId(`approve_sbxreq_${id}`).setLabel('Approve').setStyle(discord.ButtonStyle.Success),
+            new discord.ButtonBuilder().setCustomId(`deny_sbxreq_${id}`).setLabel('Deny').setStyle(discord.ButtonStyle.Danger)
         );
     }
 
@@ -581,7 +585,7 @@ class SandboxRequestService {
         const lines = payload.resolved.map(pkg =>
             `${pkg.requested ? '**' : ''}${pkg.name}==${pkg.version}${pkg.requested ? '**' : ' (dependency)'}`
             + `${Number.isFinite(pkg.sizeBytes) ? ` · ${(pkg.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : ''}`);
-        return new EmbedBuilder()
+        return new discord.EmbedBuilder()
             .setColor(0xf0b429)
             .setTitle('📦 Install Python packages into the sandbox overlay?')
             .setDescription(
@@ -593,7 +597,7 @@ class SandboxRequestService {
     }
 
     _fetchEmbed(id, userId, payload) {
-        return new EmbedBuilder()
+        return new discord.EmbedBuilder()
             .setColor(0xf0b429)
             .setTitle('🌐 Fetch a file into an Observatory workspace?')
             .setDescription(
@@ -741,9 +745,7 @@ class SandboxRequestService {
 
     /** /forget-me: the user's request rows go; package attribution is nulled. */
     async forgetUser(userId) {
-        const requests = (await db.run('DELETE FROM sandbox_requests WHERE userId = @userId', { userId })).changes;
-        const packagesAnonymized = await store.anonymizeUser(userId);
-        return { requests, packagesAnonymized };
+        return dormantData.forgetSandboxRequests(userId);
     }
 }
 
