@@ -65,7 +65,7 @@ const childProcess = require('node:child_process');
 
 const rules = require('./lib/packageRules');
 const stage = require('./lib/payloadStage');
-const { computeOwnership, buildReleaseManifest } = require('./lib/payloadManifest');
+const { computeOwnership, buildReleaseManifest, payloadDirOfLockKey } = require('./lib/payloadManifest');
 const { readFeatureChunks, pruneDist, INSTALLED_FILE } = require('./lib/frontendChunks');
 const catalog = require('../packages/core/features/catalog');
 const { download } = require('./lib/download');
@@ -695,6 +695,12 @@ async function main() {
     }, null, 2)}\n`);
     const pruned = pruneForTarget(nodeModules, target);
     log(`pruned ${pruned.length} entries (other platforms' binaries, compile-only sources)`);
+    const ownership = computeOwnership({ root: REPO_ROOT, catalog, target, withSandbox });
+    const unreferencedDirs = ownership.unreferenced
+        .map(entry => payloadDirOfLockKey(entry.path))
+        .filter(dir => dir && fs.existsSync(path.join(outDir, dir)));
+    for (const dir of unreferencedDirs) removeTree(path.join(outDir, dir));
+    if (ownership.unreferenced.length) log(`left out ${ownership.unreferenced.length} unreferenced production dependencies: ${ownership.unreferenced.map(entry => entry.name).join(', ')}`);
     writeLaunchers(outDir, target);
     removeTree(path.join(stagingDir, 'node_modules'));
     if (!options.keepStaging) removeTree(stagingDir);
@@ -723,7 +729,6 @@ async function main() {
     const lockfileSha256 = sha256File(path.join(REPO_ROOT, 'package-lock.json'));
 
     // 5. The release catalogue: every file of the whole tree with its owner.
-    const ownership = computeOwnership({ root: REPO_ROOT, catalog, target, withSandbox });
     for (const conflict of ownership.conflicts) violations.push({ rule: 'ownership-conflict', rel: `${conflict.file} (${conflict.owners.join(', ')})` });
     for (const missing of ownership.missingPackages) violations.push({ rule: 'import-not-in-lockfile', rel: `${missing.from} -> ${missing.package}` });
     const corePackage = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'packages', 'core', 'package.json'), 'utf8'));
@@ -838,6 +843,7 @@ async function main() {
             chunks: selected.excluded.chunks.length
         },
         unreferencedDependencies: manifest.unreferenced,
+        unreferencedRemoved: unreferencedDirs,
         signed: Boolean(signature),
         keyId: manifest.signing ? manifest.signing.keyId : null,
         devPublicKey: publicKeyPath,

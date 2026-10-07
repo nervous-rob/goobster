@@ -478,7 +478,8 @@ function selectionAbsence(manifest, resolved) {
         present: {
             files: resolved.excluded.files.filter(payloadPathExists),
             dependencies: resolved.excluded.dependencies.filter(dir => dir && !holdsKept(dir) && payloadPathExists(dir)),
-            chunks: resolved.excluded.chunks.filter(chunk => payloadPathExists(`${dist}${chunk}`))
+            chunks: resolved.excluded.chunks.filter(chunk => payloadPathExists(`${dist}${chunk}`)),
+            unreferenced: (manifest.unreferenced || []).map(entry => `app/node_modules/${entry.name}`).filter(payloadPathExists)
         },
         missing: {
             files: resolved.files.filter(file => !payloadPathExists(file)),
@@ -636,6 +637,7 @@ async function main() {
         const found = selectionAbsence(manifest, resolved);
         const leftovers = [...found.present.files, ...found.present.dependencies, ...found.present.chunks];
         assert(leftovers.length === 0, `${leftovers.length} file(s), dependency directories or chunks of excluded features are still in the payload, e.g. ${leftovers[0]}`);
+        assert(found.present.unreferenced.length === 0, `unreferenced production dependencies ship in the payload: ${found.present.unreferenced.join(', ')}`);
         const gaps = [...found.missing.files, ...found.missing.dependencies, ...found.missing.chunks];
         assert(gaps.length === 0, `${gaps.length} selected file(s), dependency directories or chunks are missing, e.g. ${gaps[0]}`);
         return {
@@ -646,7 +648,8 @@ async function main() {
                 files: resolved.excluded.files.length,
                 dependencies: resolved.excluded.dependencies.length,
                 exclusiveDependencies: found.exclusive,
-                chunks: resolved.excluded.chunks.length
+                chunks: resolved.excluded.chunks.length,
+                unreferenced: (manifest.unreferenced || []).map(entry => entry.name)
             },
             present: { files: resolved.files.length, dependencies: resolved.dependencies.length, chunks: resolved.chunks.length }
         };
