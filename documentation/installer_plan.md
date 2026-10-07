@@ -157,7 +157,9 @@ Work, in order:
    each. Open findings that gate the release phase (B1 config roots,
    B2 glibc floors, B3 sqlite-vec macOS floor, B4 VC++ redistributable,
    B5 GPL declarations, B6 discord.js in the no-Discord path) are in
-   `documentation/packaging_proof.md`.
+   `documentation/packaging_proof.md`. B1 has a fix open against `main`
+   as PR [#364](https://github.com/nervous-rob/goobster/pull/364)
+   (shared `config/configJson.js` loader).
 2. Payload builder: resolves the selected features to files and exclusive
    dependencies (ffmpeg for Voice, the python venv for Music, the sandbox
    runner), builds the frontend with only the selected rooms.
