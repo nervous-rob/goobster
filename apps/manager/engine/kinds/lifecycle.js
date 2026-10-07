@@ -14,6 +14,14 @@
  *                      restarts the workers at the current revision (out of
  *                      CRASH_LOOP). The supervisor also journals its own
  *                      staged restarts under this kind, one record each.
+ *   lifecycle.start    public. No input. Starts supervising the workers of the
+ *                      layout in a manager that was not started with
+ *                      --supervise (the setup wizard, once an install finished).
+ *                      Refused while the layout cannot run (LAYOUT_NOT_READY)
+ *                      and while it already runs (ALREADY_SUPERVISING).
+ *   lifecycle.stop     public. No input. Stops the workers and supervision
+ *                      (what an uninstall needs: it refuses to run beside
+ *                      running workers). The manager keeps serving.
  */
 
 const nodeFs = require('node:fs');
@@ -315,7 +323,86 @@ function createLifecycleKinds({ settings, fs = nodeFs, now = () => new Date() })
         result: (scratch) => scratch.out || null
     };
 
-    return [applyKind, cancelKind, restartKind];
+    const LAYOUT_TEXT = {
+        DISCORD_TOKEN_MISSING: 'This layout runs the Discord bot and no bot token is configured.',
+        WEBAPP_DISABLED: 'This layout serves the web app and it is not turned on (webapp.enabled).',
+        PAIRED_REQUIRES_POSTGRES: 'The paired layout needs a Postgres database (GOOBSTER_DB_URL).',
+        PAIRED_REQUIRES_INTERNAL_TOKEN: 'The paired layout needs GOOBSTER_INTERNAL_TOKEN.'
+    };
+
+    function starter() {
+        const found = registry.getStarter(settings.storeDir);
+        if (!found) {
+            throw new ManagerError(409, 'NOT_AVAILABLE', 'This manager cannot start or stop the workers (it was not started as a long-running server).');
+        }
+        return found;
+    }
+
+    function workerLayout() {
+        const { readConfigJson } = require('../../manager');
+        const layouts = require('../../lifecycle/layouts');
+        const config = readConfigJson(settings.configPath, fs).config;
+        return layouts.workersFor({ settings, config, env: settings.env || {}, sandboxActive: false });
+    }
+
+    const startKind = {
+        kind: 'lifecycle.start',
+        public: true,
+        allowed,
+        plan(input) {
+            emptyInput(input, 'lifecycle.start');
+            starter();
+            if (registry.get(settings.storeDir)) {
+                throw new ManagerError(409, 'ALREADY_SUPERVISING', 'The workers are already supervised by this manager.');
+            }
+            const view = workerLayout();
+            if (view.error) {
+                throw new ManagerError(409, 'LAYOUT_NOT_READY', LAYOUT_TEXT[view.error] || 'The layout cannot start yet.', { code: view.error, layout: view.layout });
+            }
+            return { plan: { target: 'workers', effect: 'start', layout: view.layout, workers: view.workers.map(worker => worker.name) }, revision: null };
+        },
+        validate() {
+            starter();
+            if (registry.get(settings.storeDir)) throw new ManagerError(409, 'ALREADY_SUPERVISING', 'The workers are already supervised by this manager.');
+        },
+        steps: [{
+            name: 'start',
+            async run(record, ctx) {
+                const summary = await starter().start();
+                ctx.scratch.out = { layout: summary.layout, workers: summary.workers.map(worker => worker.name) };
+                return ctx.scratch.out;
+            }
+        }],
+        result: (scratch) => scratch.out || null
+    };
+
+    const stopKind = {
+        kind: 'lifecycle.stop',
+        public: true,
+        allowed,
+        plan(input) {
+            emptyInput(input, 'lifecycle.stop');
+            starter();
+            const running = registry.get(settings.storeDir);
+            if (!running) throw new ManagerError(409, 'NOT_SUPERVISING', 'This manager is not running the workers.');
+            return { plan: { target: 'workers', effect: 'stop', workers: running.summary().workers.map(worker => worker.name) }, revision: null };
+        },
+        validate() {
+            starter();
+            if (!registry.get(settings.storeDir)) throw new ManagerError(409, 'NOT_SUPERVISING', 'This manager is not running the workers.');
+        },
+        steps: [{
+            name: 'stop',
+            async run(record, ctx) {
+                const outcome = await starter().stop();
+                ctx.scratch.out = { stopped: true, forced: (outcome && outcome.workers ? outcome.workers : []).filter(worker => worker.forced).map(worker => worker.name) };
+                return ctx.scratch.out;
+            }
+        }],
+        result: (scratch) => scratch.out || null
+    };
+
+    return [applyKind, cancelKind, restartKind, startKind, stopKind];
 }
 
 module.exports = { createLifecycleKinds, parseApplyInput, DEFAULT_GRACE_SECONDS, MIN_GRACE_SECONDS, MAX_GRACE_SECONDS };

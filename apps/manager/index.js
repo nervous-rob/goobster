@@ -155,6 +155,22 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         const view = supervision.supervisor.summary();
         logger.info(`[manager] supervising the ${view.layout || 'unknown'} layout: ${view.workers.map(w => w.name).join(', ') || 'no workers'}`);
     };
+    const registry = require('./lifecycle/registry');
+    const clearStarter = registry.setStarter(settings.storeDir, {
+        async start() {
+            if (stopping) throw new Error('the manager is stopping');
+            if (supervision) return supervision.supervisor.summary();
+            if (supervisionStarting) await supervisionStarting;
+            await beginSupervision();
+            return supervision.supervisor.summary();
+        },
+        async stop() {
+            if (!supervision) return { workers: [] };
+            const current = supervision;
+            supervision = null;
+            return current.stop();
+        }
+    });
     if ((flags.has('--supervise') || settings.supervise) && manager.storeReady) {
         if (manager.currentState().state === 'unclaimed') {
             // A worker would create the application database, and an
@@ -181,6 +197,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         stopping = (async () => {
             if (timer) clearInterval(timer);
             if (claimWatch) clearInterval(claimWatch);
+            clearStarter();
             if (supervisionStarting) await supervisionStarting;
             if (supervision) {
                 const result = await supervision.stop();

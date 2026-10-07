@@ -31,13 +31,16 @@ const ACTIONS = new Set([
     // `target` is the manager operation id.
     'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock',
     'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
+    'manager.lifecycle.start', 'manager.lifecycle.stop',
+    'manager.owner.create',
     'manager.config.set', 'manager.defaults.set',
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.
     'host.features.apply', 'host.config.apply', 'host.defaults.apply',
-    'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart'
+    'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart',
+    'host.install.apply'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */

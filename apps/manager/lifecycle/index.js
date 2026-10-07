@@ -38,7 +38,12 @@ async function startSupervision({ manager, logger = console, adapter = null, pol
     const external = createExternalAdapter({ storeDir: settings.storeDir });
     const supervisor = createSupervisor({ manager, adapter: child, external, logger, policy, ...rest });
     const unregister = registry.register(settings.storeDir, supervisor);
-    await supervisor.start();
+    try {
+        await supervisor.start();
+    } catch (error) {
+        unregister();
+        throw error;
+    }
     return {
         supervisor,
         async stop() {

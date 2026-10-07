@@ -7,6 +7,7 @@
  */
 
 const supervisors = new Map();
+const starters = new Map();
 
 function register(storeDir, supervisor) {
     supervisors.set(storeDir, supervisor);
@@ -19,4 +20,23 @@ function get(storeDir) {
     return supervisors.get(storeDir) || null;
 }
 
-module.exports = { register, get };
+/**
+ * The running manager's way to start and stop supervision after boot (the
+ * setup wizard starts the workers once an install finished, and stops them
+ * before an uninstall). `{ start(): Promise<Object>, stop(): Promise<Object> }`,
+ * registered by apps/manager/index.js `main()`; a manager built any other way
+ * (tests, the CLI) has none and the `lifecycle.start` and `lifecycle.stop`
+ * kinds answer `409 NOT_AVAILABLE`.
+ */
+function setStarter(storeDir, starter) {
+    starters.set(storeDir, starter);
+    return () => {
+        if (starters.get(storeDir) === starter) starters.delete(storeDir);
+    };
+}
+
+function getStarter(storeDir) {
+    return starters.get(storeDir) || null;
+}
+
+module.exports = { register, get, setStarter, getStarter };
