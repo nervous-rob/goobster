@@ -186,6 +186,27 @@ updater found:
 the manager store says `updater.kind` is `manager`, so a timer that survives
 an adoption does no harm.
 
+## Over HTTP
+
+The browser wizard and the Host room run these kinds over the manager's
+HTTP API (`POST /operations`, `/validate`, `/apply`). `install.new`,
+`install.reconfigure`, `install.repair` and `install.uninstall` are
+`public: true`: a setup or recovery session or a portal assertion may plan
+them, and an anonymous caller is refused. A caller that is not the local
+CLI (`via` other than `local`) must give roots under the allowed bases
+(`GET /install/suggest` lists them with free space); anything else is the
+preflight finding `ROOT_OUTSIDE_ALLOWED_BASES`. Read-only routes feed the
+screens: `GET /install/suggest` (suggested roots, bases, detected layout,
+release sources, ports), `GET /install/source?dir=` (the features, sizes
+and system prerequisites a release directory carries, from its manifest
+only), `GET /install/record` (the sanitised record) and
+`GET /install/first-run` (the checklist). Three small kinds finish a setup:
+`owner.create` (the first operator account, with no Discord; the password
+travels only in private input), `lifecycle.start` (start supervising the
+workers in a manager that was not started with `--supervise`) and
+`lifecycle.stop` (what an uninstall needs, since it refuses to run beside
+running workers).
+
 ## Resume
 
 The engine does not re-apply a failed operation. Run the same command again:
@@ -303,7 +324,8 @@ accepted on the command line. The audit action is `manager.data.reset`.
   Production signing keys: #341.
 - Lifecycle workers for a payload `current/app` layout (the lifecycle layer
   assumes `<root>/apps/...`).
-- Wizard UI; the CLI is the only front end so far.
+- The browser wizard exists (`documentation/setup_wizard.md`, #330); what it
+  does not do yet is listed there.
 
 ## Tests
 

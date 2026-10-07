@@ -108,6 +108,31 @@ describe('labelModules', () => {
     });
 });
 
+describe('checkSetupClient', () => {
+    let dist;
+    beforeEach(() => {
+        dist = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-setup-dist-'));
+        fs.mkdirSync(path.join(dist, 'setup', 'assets'), { recursive: true });
+    });
+    afterEach(() => fs.rmSync(dist, { recursive: true, force: true }));
+
+    const page = (assets) => `<html><head>${assets.map(file => `<script type="module" src="/manager/${file}"></script>`).join('')}</head></html>`;
+
+    test('a page whose assets exist and are not feature chunks is sound', () => {
+        fs.writeFileSync(path.join(dist, 'setup', 'assets', 'setup-abc.js'), '');
+        fs.writeFileSync(path.join(dist, 'setup', 'index.html'), page(['assets/setup-abc.js']));
+        expect(frontendChunks.checkSetupClient(dist)).toEqual([]);
+    });
+
+    test('reports a missing page, a missing asset and a file named like a feature chunk', () => {
+        expect(frontendChunks.checkSetupClient(dist)).toEqual(['setup/index.html is missing']);
+        fs.writeFileSync(path.join(dist, 'setup', 'index.html'), page(['assets/gone.js']));
+        fs.writeFileSync(path.join(dist, 'setup', 'assets', 'feature-music-x.js'), '');
+        const problems = frontendChunks.checkSetupClient(dist);
+        expect(problems).toEqual(expect.arrayContaining(['assets/gone.js is referenced but missing', 'assets/feature-music-x.js is named like a feature chunk']));
+    });
+});
+
 describe('the built portal', () => {
     let analysis;
 

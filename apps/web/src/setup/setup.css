@@ -1,0 +1,108 @@
+/* The setup wizard (documentation/setup_wizard.md). Everything here is prefixed
+   `wizard-` and builds on the shared tokens and controls in legacy.css. The
+   same classes style the maintenance journeys inside the portal's Host room. */
+
+.wizard-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  min-height: 100%;
+}
+.wizard-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.wizard-header h1 { margin: 0; font-size: 22px; }
+
+.wizard-stepper { margin: 8px 0 20px; }
+.wizard-stepper ol { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.wizard-stepper li { font-size: 12.5px; color: var(--text-dim); }
+.wizard-stepper li > a, .wizard-stepper li > span {
+  display: inline-block; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+  color: inherit; text-decoration: none;
+}
+.wizard-stepper li[data-state='current'] > span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.wizard-stepper li[data-state='done'] > a, .wizard-stepper li[data-state='done'] > span { color: var(--text); }
+
+.wizard-step { display: flex; flex-direction: column; gap: 16px; }
+.wizard-step > h2 { margin: 0; font-size: 20px; }
+.wizard-step > h2:focus { outline: none; }
+.wizard-step > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.wizard-lead { margin: 0; color: var(--text-dim); }
+
+.wizard-page :focus-visible,
+.wizard-journey :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.wizard-form { display: flex; flex-direction: column; gap: 16px; }
+.wizard-field { display: flex; flex-direction: column; gap: 6px; }
+.wizard-field > label { font-weight: 600; }
+.wizard-field .input, .wizard-field .select { width: 100%; }
+.wizard-fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.wizard-fieldset > legend { padding: 0 6px; font-weight: 600; }
+.wizard-choice { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.wizard-choice[aria-disabled='true'] { opacity: 0.6; cursor: default; }
+.wizard-choice input { margin-top: 4px; }
+
+.wizard-nav { display: flex; gap: 10px; justify-content: space-between; flex-wrap: wrap; margin-top: 8px; }
+.wizard-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.wizard-errors {
+  border: 1px solid var(--danger); border-radius: var(--radius); padding: 12px 14px;
+  background: rgba(255, 107, 122, 0.08);
+}
+.wizard-errors h3 { margin: 0 0 6px; font-size: 15px; color: var(--danger); }
+.wizard-errors ul { margin: 0; padding-left: 20px; }
+.wizard-errors a { color: var(--text); }
+
+.wizard-callout {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px;
+  padding: 10px 14px; background: var(--bg-raise);
+}
+.wizard-callout > :first-child { margin-top: 0; }
+.wizard-callout > :last-child { margin-bottom: 0; }
+.wizard-callout pre, .wizard-tunnel pre, .wizard-step pre {
+  margin: 6px 0; padding: 8px 10px; overflow-x: auto; background: var(--bg-raise-2);
+  border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 13px;
+}
+.wizard-again, .wizard-pending {
+  border-left: 3px solid var(--warn); padding: 6px 10px; margin: 4px 0; background: var(--bg-raise); border-radius: 6px; list-style: none;
+}
+.wizard-success { color: var(--ok); font-weight: 600; }
+
+.wizard-details { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; }
+.wizard-details > summary { cursor: pointer; padding: 4px 0; }
+.wizard-tunnel { margin: 6px 0; }
+
+.wizard-outline { padding-left: 22px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.wizard-list { margin: 0; padding-left: 20px; }
+
+.wizard-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.wizard-facts dt { color: var(--text-dim); }
+.wizard-facts dd { margin: 0; overflow-wrap: anywhere; }
+.wizard-fact { display: contents; }
+
+.wizard-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+.wizard-features, .wizard-fields, .wizard-workers, .wizard-checks, .wizard-diff { display: flex; flex-direction: column; }
+.wizard-features > li, .wizard-checks > li, .wizard-diff > li { padding: 10px 12px; }
+
+.wizard-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wizard-findings li { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg-raise); }
+.wizard-findings li[data-severity='block'] { border-color: var(--danger); }
+.wizard-findings li[data-severity='warn'] { border-color: var(--warn); }
+
+.wizard-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wizard-steps li { display: flex; gap: 10px; align-items: baseline; }
+.wizard-steps li[data-state='failed'] { color: var(--danger); }
+.wizard-steps li[data-state='done'] .wizard-step-mark { color: var(--ok); }
+.wizard-step-mark { width: 1.2em; text-align: center; }
+
+.wizard-journey { display: flex; flex-direction: column; gap: 12px; }
+.wizard-crumbs { margin: 0; color: var(--text-dim); font-size: 13px; }
+
+@media (max-width: 480px) {
+  .wizard-page { padding: 16px 14px 48px; }
+  .wizard-facts { grid-template-columns: 1fr; }
+  .wizard-facts dt { margin-top: 6px; }
+  .wizard-nav, .wizard-actions { flex-direction: column-reverse; }
+  .wizard-actions { flex-direction: column; }
+  .wizard-nav .btn, .wizard-actions .btn { width: 100%; }
+  .wizard-stepper li { font-size: 12px; }
+  .wizard-stepper li > a, .wizard-stepper li > span { padding: 2px 8px; }
+}

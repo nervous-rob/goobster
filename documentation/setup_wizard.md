@@ -1,0 +1,204 @@
+---
+title: The setup and maintenance wizard (installer P3.4)
+kind: reference
+summary: The browser journey for first-time setup and for later reconfigure, repair and uninstall of a SQLite installation - the eleven setup steps (welcome, where, features, connections, database location, defaults, access, review, progress, first-run check, open Goobster), how the manager serves it at /manager/ and how the portal Host room reaches the same screens through the bridge, local-only versus network access, the HttpOnly cookie session and what a manager restart does to it, how secrets are typed once and never echoed, kept or stored by the page, the first-run check, the recovery page, the headless alternative, and what is not here yet (Postgres, service registration, maintenance, reset and migration).
+when: Installing Goobster from a browser; reconfiguring, repairing or removing an installation without a terminal; explaining why a secret field came back empty; reaching the wizard on a headless machine; understanding what the wizard does when the manager restarts or the database is broken; building another front end on the manager's install routes.
+tags: [installer, wizard, setup, manager, reconfigure, repair, uninstall, recovery, secrets, first-run, sqlite, headless]
+---
+
+# The setup and maintenance wizard
+
+Installer Phase 3 item 3 (issue #330). The wizard is a static React client
+that drives the installation manager (`documentation/manager.md`). It adds no
+rules of its own: every screen builds the input of an operation kind the
+manager already has (`install.new`, `install.reconfigure`, `install.repair`,
+`install.uninstall`, plus `owner.create`, `lifecycle.start` and
+`lifecycle.stop`), shows the manager's own plan, and applies it. The
+command line (`documentation/manager_install.md`) runs the same engine;
+the Host pages (`documentation/host_operations.md`) share the same field
+catalog, field controls and plan components.
+
+## Where it lives
+
+| Entry | What you get |
+|---|---|
+| `http://127.0.0.1:3400/manager/` (also `/manager/setup` and `/manager/recovery`) | The wizard, served by the manager itself from `apps/web/dist/setup/` (built by `npm run build:web`). One page for all three paths; the page decides what to show from the manager's state. |
+| Portal, Host room, **Installation** (`/host/installation`), and the Installation card on the Host overview | Reconfigure, Repair and Uninstall for an operator, through the portal's Host routes and the authenticated bridge. The browser holds no manager credential. |
+
+If the client is not built the manager answers a plain page that says so
+and names the command; the manager's API and the command line keep working.
+The pages carry their own headers: `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and a policy
+that allows this origin only (no inline script, no frames, no outside
+forms).
+
+## What the page shows in each state
+
+| State of the manager | The page |
+|---|---|
+| `unclaimed`, no files | Welcome: ask for the setup credential and a name for the installation, then the setup steps. |
+| `claimed`, no installation recorded yet | The setup steps, from where you left off (the answers are kept in this tab). |
+| `claimed`, installed | The maintenance page: what is installed, the first-run checks, and **Reconfigure**, **Repair**, **Uninstall**. |
+| `claimed`, installed, database cannot be opened | The same page, with **Repair** recommended and the reason. |
+| `recovery`, files exist but no record | A plain explanation and the one command that fixes it (`node apps/manager/cli.js adopt`). The wizard never installs over files it did not install. |
+| Opened at `/manager/recovery` with a recovery credential | "Recover this installation": the maintenance page with Repair first. |
+
+## The setup journey
+
+The stepper names the eleven steps; Back and Forward in the browser walk
+them and each step keeps its answers. Everything before Install is local to
+the page; nothing on the machine changes until the review.
+
+1. **Welcome**: the setup credential (see Credentials below).
+2. **Where**: the release to install (one found on the machine, or a
+   folder you type) and the program, cache, logs and uploads folders. The
+   suggested place for this platform is preselected; any other folder must be
+   under an allowed base (`ROOT_OUTSIDE_ALLOWED_BASES`), listed with free
+   space.
+3. **Features**: the optional parts of the release with size, what each
+   needs and what it costs. Choosing one chooses what it requires.
+4. **Connections**: the owner account (login name and password, no Discord
+   needed), then every integration key and the optional local Ollama, with
+   its own **Test connection**. Every one is optional.
+5. **Database**: where the SQLite file lives (the data folder, the settings
+   file and the manager records belong to the running manager and are shown,
+   not edited). Postgres is listed and disabled with the sentence "Available
+   in a later version of this installer".
+6. **Defaults**: the installation's and the assistant's names, and what a
+   new person inherits. The defaults are saved right after the database is
+   created.
+7. **Access**: the addresses - this machine only or the network - and the
+   public address people will use.
+8. **Review**: every answer in words. Secrets appear as "will be set",
+   never as a value.
+9. **Install**: the plan applied step by step with per-step state. A reload
+   returns to the same operation and keeps polling it.
+10. **Check**: the first-run check (below).
+11. **Open Goobster**: enabled only when every worker is healthy and the
+    portal's `/health` answers. It shows each worker's state and the address
+    of the portal.
+
+The layout is chosen for you: `standalone` when no Discord token is given,
+`lite` when there is one.
+
+## Reconfigure, repair and uninstall
+
+- **Reconfigure** edits connections, names, the layout and the movable
+  folders (cache, logs, uploads). The review shows the exact difference per
+  setting and what waits for a restart; **Restart now** appears after
+  Apply and the page waits for every worker to acknowledge the new revision.
+  The program and data folders cannot be moved here.
+- **Repair** verifies the program files against the release they came from,
+  restores damaged ones, opens the database again and rewrites the feature
+  choice. Data and settings are never touched. When the files are too
+  damaged to repair in place the page asks for a copy of the same release
+  (found on the machine or typed) - `REPAIR_SOURCE_REQUIRED`.
+- **Uninstall** keeps your data by default. Deleting it needs the
+  installation id typed exactly as shown. The manager refuses to remove
+  files while its workers run, so from the manager's own page there is a
+  **Stop Goobster** button first. From the portal the page explains that the
+  portal is one of those programs and cannot remove itself; finish from the
+  manager with a recovery credential.
+
+Every journey shows the plan before anything changes and a per-step
+progress afterwards. A failure says which step stopped, what was kept, and
+that running it again picks up where it stopped.
+
+## Credentials, sessions and restarts
+
+- The setup credential is printed by the manager on its first start
+  (`data/manager/bootstrap-credential`) and expires in 15 minutes. A stale
+  one is refused and the page shows the command that mints another:
+  `node apps/manager/index.js --mint-bootstrap`.
+- Claiming or unlocking sets an **HttpOnly, SameSite=Strict cookie**
+  (`goobster-manager-session`, path `/manager`, `Secure` over HTTPS). Script
+  in the page cannot read it, and it is accepted only when the request has no
+  `Authorization` header. Each change carries a fresh single-use nonce the
+  page generates. **End this setup session** on the last step
+  (`POST /manager/api/session/logout`) clears it and the page's answers.
+- A session lasts 15 minutes and lives in the manager's memory. **A manager
+  restart ends it.** The page shows "The manager is not answering. It may be
+  restarting", keeps trying, and when the manager is back asks for a recovery
+  credential with the exact command
+  (`node apps/manager/index.js --mint-recovery`). Unlocking returns to the
+  step you were on; non-secret answers are still there.
+- Recovery credentials work only from the machine itself. A **network**
+  visitor can claim with the setup credential, then use the session cookie;
+  the manager listens on loopback unless LAN mode with TLS is configured
+  (`documentation/manager.md`, Transport). On a machine with no screen,
+  forward the port (`ssh -L 3400:127.0.0.1:3400 <host>`) and open
+  `http://127.0.0.1:3400/manager/` locally; the Welcome step has this under
+  "This machine has no screen".
+
+## Secrets
+
+- A secret (an API key, the Discord token, the owner's password) is typed
+  once into a field that never shows it again. It is sent once, to the same
+  origin, in the operation's private input, and the manager writes it to the
+  settings file with restricted permissions.
+- It is never in the URL, the browser's history state, `localStorage`,
+  `sessionStorage` or a cookie (the non-secret answers are kept in the
+  tab's `sessionStorage` so Back, Forward and a reload keep them), never in a plan, a journal line or an audit
+  row, and never echoed back: after a key is saved the page shows only that it
+  is set and, for keys that have one, the last characters.
+- When a plan fails validation the non-secret answers stay filled and the
+  secret fields are empty with a visible "enter it again" note, because the
+  page drops a secret as soon as it has been sent.
+- In the portal the same fields call the Host routes; the password of the
+  owner account is created only by the manager, in a child process, from its
+  own input.
+
+## The first-run check
+
+Starting a program is not the same as it working. The check lists, with a
+pass or fail and a hint for each: the settings file, the feature
+selection, the database (it opens), the owner account (an operator exists),
+the application processes (each healthy and running the current revision),
+and the web portal (its health check answers). **Open Goobster** stays
+disabled until the last two pass.
+
+## Headless alternative
+
+Everything the wizard does is available without a browser:
+`node apps/manager/cli.js install --answers <file>`
+(`documentation/manager_install.md`, The CLI), plus `reconfigure`, `repair`
+and `uninstall`. The wizard's answers map one for one to that file.
+
+## Audit
+
+Applying an installation operation from the portal writes one
+`operator_audit` row, `host.install.apply`, with the operation, layout,
+feature ids and whether data was kept - never a path, a value or a secret.
+From the manager's own page the manager's operation journal is the record;
+starting, stopping and creating the owner are journaled as
+`manager.lifecycle.start`, `manager.lifecycle.stop` and
+`manager.owner.create` and reconciled into `operator_audit` like any other
+manager operation.
+
+## What is not here yet
+
+- **Postgres.** Shown, disabled, with "Available in a later version of this
+  installer". The phase 4 database section adds it.
+- **Registering Goobster as a service** at boot (#331-#333). The plan says
+  "Starts at boot: No" and the first-run page starts the workers from the
+  manager; after a reboot start the manager again.
+- **Maintenance windows, reset and migration** (#334-#336): none of the
+  screens exist yet.
+- Moving the program or data folder, network download and archive
+  sources, and production signing keys (#341).
+- The wizard reads provider and identity settings the way each service does
+  today; a payload layout in which the application reads its settings from a
+  different folder than the manager is a packaging decision for #331 onward.
+
+## Tests
+
+`tests/managerStatic.test.js`, `tests/installRoutes.test.js`,
+`tests/managerServer.test.js`, `tests/hostRoutes.test.js` and
+`tests/frontendChunks.test.js` cover the server side and the bundle's labels.
+`e2e/setupWizard.spec.js` (harness `e2e/setupHarness.js`) drives a real
+manager, the real standalone worker and a fake Ollama through every journey
+in a browser: a new install through a first chat, stale credentials, a
+manager restart, reload and Back/Forward during an install, failed probes
+and plans that keep non-secret answers, reconfigure, repair, both uninstall
+choices, the portal entry points (a member is refused), a 360 px screen, and
+each starting state above.

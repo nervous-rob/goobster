@@ -1,5 +1,6 @@
 import { LimitsPanel } from '../components/TokenLimits';
 import { FormEvent, useState } from 'react';
+import { Link, useParams } from '@tanstack/react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
@@ -10,6 +11,11 @@ import { useToast } from '../hooks/useToast';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import { FailureList, ResourceTotals, failureKindLabel } from '../components/WorkLedger';
+import { FeaturesPage } from './host/FeaturesPage';
+import { ConnectionsPage, DefaultsPage } from './host/ConfigPages';
+import { LifecyclePanel } from './host/LifecyclePanel';
+import { ManagerNotice, useManagerStatus } from './host/ManagerCard';
+import { InstallationCard, InstallationPage } from './host/InstallationPage';
 
 const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
@@ -492,7 +498,14 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
     'instance.resume': 'resumed the instance',
     'instance.restore': 'restored the instance',
     'instance.pause': 'paused the instance',
-    'limits.change': 'changed a limit'
+    'limits.change': 'changed a limit',
+    'host.features.apply': 'applied a feature change',
+    'host.config.apply': 'applied a connection or setting change',
+    'host.defaults.apply': 'applied an instance default change',
+    'host.lifecycle.apply': 'scheduled a restart',
+    'host.lifecycle.restart_now': 'skipped the restart countdown',
+    'host.lifecycle.cancel': 'cancelled a scheduled restart',
+    'host.lifecycle.restart': 'restarted the workers'
 };
 
 function describeDetail(detail: Record<string, unknown> | null): string {
@@ -511,6 +524,7 @@ function actorLabel(entry: OperatorAuditEntry, nameFor: (id: string) => string):
 }
 
 function targetLabel(entry: OperatorAuditEntry, nameFor: (id: string) => string): string | null {
+    if (entry.action.startsWith('host.')) return entry.target ? `operation ${entry.target}` : null;
     if (!entry.target) return entry.action.startsWith('invite.') ? null : (entry.action.startsWith('account.') ? 'someone erased' : null);
     return entry.action.startsWith('invite.') ? `invitation #${entry.target}` : nameFor(entry.target);
 }
@@ -663,10 +677,39 @@ function ReportPanel() {
     );
 }
 
+const HOST_PAGES = [
+    { id: 'overview', name: 'Overview' },
+    { id: 'features', name: 'Features' },
+    { id: 'connections', name: 'Connections' },
+    { id: 'defaults', name: 'Instance Defaults' },
+    { id: 'installation', name: 'Installation' }
+] as const;
+type HostPageId = typeof HOST_PAGES[number]['id'];
+
+function OverviewPage() {
+    const { status, usable } = useManagerStatus();
+    return (
+        <>
+            {status && !usable && <ManagerNotice status={status} />}
+            <InstancePanel />
+            <LimitsPanel />
+            <LifecyclePanel enabled={usable} />
+            <InstallationCard />
+            <SignupPanel />
+            <InvitesPanel />
+            <AccountsPanel />
+            <AuditPanel />
+            <ReportPanel />
+        </>
+    );
+}
+
 /** /host - the operator's installation panel. Hidden from the nav for members; the API refuses them anyway. */
 export function HostRoom() {
     const me = useSession();
     const operator = me?.identity?.operator === true;
+    const params = useParams({ strict: false }) as { page?: string };
+    const page: HostPageId = HOST_PAGES.some((entry) => entry.id === params.page) ? params.page as HostPageId : 'overview';
     return (
         <main className="pane next-pane is-in" id="pane-host">
             <header className="pane-header">
@@ -675,19 +718,22 @@ export function HostRoom() {
                     <h1>Host</h1>
                 </div>
             </header>
+            {operator && (
+                <nav className="view-tabs" aria-label="Host pages" data-testid="host-tabs">
+                    {HOST_PAGES.map((entry) => (
+                        entry.id === 'overview'
+                            ? <Link key={entry.id} to="/host" activeOptions={{ exact: true }} className={`view-tab${page === entry.id ? ' active' : ''}`} aria-current={page === entry.id ? 'page' : undefined} data-testid="host-tab-overview">{entry.name}</Link>
+                            : <Link key={entry.id} to="/host/$page" params={{ page: entry.id }} className={`view-tab${page === entry.id ? ' active' : ''}`} aria-current={page === entry.id ? 'page' : undefined} data-testid={`host-tab-${entry.id}`}>{entry.name}</Link>
+                    ))}
+                </nav>
+            )}
             <div className="pane-body host-body">
                 {!operator && <div className="empty">Only the host of this installation can open this room.</div>}
-                {operator && (
-                    <>
-                        <InstancePanel />
-            <LimitsPanel />
-                        <SignupPanel />
-                        <InvitesPanel />
-                        <AccountsPanel />
-                        <AuditPanel />
-                        <ReportPanel />
-                    </>
-                )}
+                {operator && page === 'overview' && <OverviewPage />}
+                {operator && page === 'features' && <FeaturesPage />}
+                {operator && page === 'connections' && <ConnectionsPage />}
+                {operator && page === 'defaults' && <DefaultsPage />}
+                {operator && page === 'installation' && <InstallationPage />}
             </div>
         </main>
     );

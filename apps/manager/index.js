@@ -23,6 +23,7 @@ const { createManager } = require('./manager');
 const { createManagerApp } = require('./server');
 const extensions = require('./extensions');
 
+const STOP_CONNECTION_GRACE_MS = 1500;
 const RECONCILE_INTERVAL_MS = 60_000;
 const CLAIM_POLL_MS = 1000;
 
@@ -58,7 +59,7 @@ function printCredential(out, label, minted, { reveal }) {
  * @param {Object} [options.supervisorOptions] adapter/policy overrides for --supervise (tests)
  * @returns {Promise<{ code: number, server?: import('node:http').Server, manager?: Object, stop?: () => Promise<void> }>}
  */
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {} } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null } = {}) {
     const flags = new Set(argv);
     if (flags.has('--help') || flags.has('-h')) {
         stdout.write(`${HELP}\n`);
@@ -69,6 +70,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         // The overlay's connection must also select the facade the manager's own audit reconciliation opens.
         env.GOOBSTER_DB_URL = settings.dbUrl;
     }
+    if (installDeps) settings.installDeps = installDeps;
 
     if (flags.has('--mint-bootstrap') || flags.has('--mint-recovery') || flags.has('--status')) {
         const manager = createManager({ settings, logger, extraKinds: extensions.kinds });
@@ -162,6 +164,22 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         const view = supervision.supervisor.summary();
         logger.info(`[manager] supervising the ${view.layout || 'unknown'} layout: ${view.workers.map(w => w.name).join(', ') || 'no workers'}`);
     };
+    const registry = require('./lifecycle/registry');
+    const clearStarter = registry.setStarter(settings.storeDir, {
+        async start() {
+            if (stopping) throw new Error('the manager is stopping');
+            if (supervision) return supervision.supervisor.summary();
+            if (supervisionStarting) await supervisionStarting;
+            await beginSupervision();
+            return supervision.supervisor.summary();
+        },
+        async stop() {
+            if (!supervision) return { workers: [] };
+            const current = supervision;
+            supervision = null;
+            return current.stop();
+        }
+    });
     if ((flags.has('--supervise') || settings.supervise) && manager.storeReady) {
         if (manager.currentState().state === 'unclaimed') {
             // A worker would create the application database, and an
@@ -188,13 +206,20 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         stopping = (async () => {
             if (timer) clearInterval(timer);
             if (claimWatch) clearInterval(claimWatch);
+            clearStarter();
             if (supervisionStarting) await supervisionStarting;
             if (supervision) {
                 const result = await supervision.stop();
                 const forced = result.workers.filter(w => w.forced).map(w => w.name);
                 if (forced.length) logger.warn(`[manager] killed after the stop bound: ${forced.join(', ')}`);
             }
-            await new Promise(resolve => server.close(() => resolve()));
+            await new Promise(resolve => {
+                // A browser tab polling over a kept-alive connection would hold close() open indefinitely.
+                const force = setTimeout(() => server.closeAllConnections(), STOP_CONNECTION_GRACE_MS);
+                force.unref();
+                server.close(() => { clearTimeout(force); resolve(); });
+                server.closeIdleConnections();
+            });
         })();
         return stopping;
     };

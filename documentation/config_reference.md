@@ -248,6 +248,12 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `spitball.enabled` | boolean | env `GOOBSTER_SPITBALL_ENABLED`<br>config.json `spitball.enabled` | `true` | restart | expeditions | Spitball expeditions. |
 | `spitball.maxActiveExpeditionsPerUser` | integer | config.json `spitball.maxActiveExpeditionsPerUser` | `2` | restart | expeditions | Expeditions one person may have queued or running. |
 
+## Installation manager
+
+| Setting | Type | Where | Default | Applies | Needed by | What it does |
+| --- | --- | --- | --- | --- | --- | --- |
+| `manager.baseUrl` | url | env `GOOBSTER_MANAGER_URL`<br>config.json `manager.baseUrl` | `"http://127.0.0.1:3400"` | restart | core | Where the portal reaches the installation manager for the Host pages (server side only, never the browser). Loopback by default; anything else must be https. |
+
 ## Host usage limits (enforced policy)
 
 | Setting | Type | Where | Default | Applies | Needed by | What it does |

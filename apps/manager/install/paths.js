@@ -140,7 +140,47 @@ function nestingProblems(roots) {
     return out;
 }
 
+/**
+ * The folders the setup pages (every caller that is not the local command
+ * line) may install into, per platform. Anything else needs the CLI.
+ * @param {{ home?: string, platform?: NodeJS.Platform, env?: Object }} [params]
+ * @returns {string[]}
+ */
+function allowedBases({ home = os.homedir(), platform = process.platform, env = process.env } = {}) {
+    if (platform === 'win32') {
+        const lib = path.win32;
+        const out = [];
+        if (env.LOCALAPPDATA) out.push(lib.join(env.LOCALAPPDATA, 'Goobster'));
+        if (env.ProgramData) out.push(lib.join(env.ProgramData, 'Goobster'));
+        out.push(lib.join(`${/^[A-Za-z]:$/.test(env.SystemDrive || '') ? env.SystemDrive : 'C:'}\\`, 'Goobster'));
+        return out;
+    }
+    if (platform === 'darwin') return [path.posix.join(home, 'Library', 'Application Support', 'Goobster'), '/opt/goobster'];
+    return [home, '/opt/goobster', '/srv/goobster', '/var/lib/goobster', '/usr/local/goobster'];
+}
+
+/** A Windows drive-root `Goobster` folder on any drive. */
+const WINDOWS_DRIVE_BASE = /^[A-Za-z]:\\Goobster(\\|$)/i;
+
+/**
+ * Whether `target` is one of `bases` or inside one, after resolving the part
+ * of it that exists (a symlink out of a base does not count as inside it).
+ */
+function isUnderAllowedBase(target, bases, { platform = process.platform, fs = nodeFs } = {}) {
+    if (platform === 'win32') {
+        const lib = path.win32;
+        const resolved = lib.resolve(String(target));
+        if (WINDOWS_DRIVE_BASE.test(resolved)) return true;
+        const key = (value) => lib.resolve(value).toLowerCase();
+        return bases.some(base => key(resolved) === key(base) || key(resolved).startsWith(`${key(base)}\\`));
+    }
+    const resolved = realish(target, fs);
+    return bases.some(base => isSameOrInside(realish(base, fs), resolved));
+}
+
 module.exports = {
+    allowedBases,
+    isUnderAllowedBase,
     isInside,
     isSameOrInside,
     rawProblem,

@@ -1,5 +1,5 @@
 import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, PushStatus } from './types';
-import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -33,7 +33,7 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
         headers: body ? { 'Content-Type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : null
     });
-    let json: { error?: string | { code?: string; message?: string; details?: unknown }; feature?: string } | null = null;
+    let json: { error?: string | { code?: string; message?: string; details?: unknown }; feature?: string; operation?: unknown } | null = null;
     try { json = await res.json(); } catch { /* non-JSON */ }
     if (!res.ok) {
         // A route owned by an unavailable feature answers `{ error: 'FEATURE_UNAVAILABLE', feature }`
@@ -44,8 +44,12 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
                 json.feature ? { feature: json.feature } : null);
         }
         const error = json?.error || {};
+        // A refused Host operation still carries the plan it was refused with: its findings are what the page shows.
+        const details = json?.operation
+            ? { ...(error.details && typeof error.details === 'object' ? error.details as object : {}), operation: json.operation }
+            : (error.details || null);
         throw new ApiError(res.status, error.code || 'INTERNAL',
-            error.message || `Request failed (${res.status})`, error.details || null);
+            error.message || `Request failed (${res.status})`, details);
     }
     if (path === '/api/app/auth/logout' || path === '/api/app/auth/dev-session'
         || path === '/api/app/auth/native-login' || path === '/api/app/auth/register'
@@ -137,6 +141,24 @@ export const api = {
     adminInstance: () => request<InstanceStateView>('/api/app/admin/instance'),
     adminInstanceResume: () =>
         request<{ paused: null; skipped: SkippedSchedules; state: InstanceStateView }>('/api/app/admin/instance/resume', { method: 'POST' }),
+    // Host operations through the installation manager (documentation/host_operations.md). The secret in a
+    // config.set preview travels once, in this body, and is never part of a URL or a response.
+    hostManager: () => request<HostManagerStatus>('/api/app/admin/host/manager'),
+    hostFeatures: () => request<HostFeatures>('/api/app/admin/host/features'),
+    hostConfig: () => request<HostConfigReport>('/api/app/admin/host/config'),
+    hostProbe: (body: { target: string; useSaved?: boolean; credential?: string }) =>
+        request<HostProbeOutcome>('/api/app/admin/host/config/probe', { method: 'POST', body }),
+    hostPreview: (kind: HostOperationKind, input: unknown) =>
+        request<HostPreview>('/api/app/admin/host/operations', { method: 'POST', body: { kind, input } }),
+    hostApply: (id: string) =>
+        request<HostApplied>(`/api/app/admin/host/operations/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
+    hostLifecycle: () => request<HostLifecycle>('/api/app/admin/host/lifecycle'),
+    hostInstallSuggest: () => request<InstallSuggest>('/api/app/admin/host/install/suggest'),
+    hostInstallRecord: () => request<InstallRecord>('/api/app/admin/host/install/record'),
+    hostInstallSource: (dir: string) => request<InstallSource>(`/api/app/admin/host/install/source?dir=${encodeURIComponent(dir)}`),
+    hostOperation: (id: string) => request<{ operation: InstallOperation }>(`/api/app/admin/host/operations/${encodeURIComponent(id)}`),
+    hostLifecycleAction: (action: 'restart-now' | 'cancel' | 'restart') =>
+        request<{ operation: unknown; result: unknown }>(`/api/app/admin/host/lifecycle/${action}`, { method: 'POST' }),
     adminTestMail: (to: string) => request<{ ok: true; provider: string }>('/api/app/admin/mail/test', { method: 'POST', body: { to } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),

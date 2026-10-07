@@ -129,7 +129,7 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
         }
     }
 
-    const ctxFor = (record) => ({ ...context, input: record ? privateInputs.get(record.id) : undefined });
+    const ctxFor = (record, auth) => ({ ...context, auth, input: record ? privateInputs.get(record.id) : undefined });
 
     async function plan(kind, input, auth, { internal = false } = {}) {
         const spec = Object.prototype.hasOwnProperty.call(kinds, kind) ? kinds[kind] : null;
@@ -137,7 +137,7 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
             throw new ManagerError(400, 'UNKNOWN_KIND', 'Unknown operation kind.');
         }
         assertAllowed(spec, auth);
-        const planned = await spec.plan(input, ctxFor(null));
+        const planned = await spec.plan(input, ctxFor(null, auth));
         const record = journal.create({
             kind,
             actor: auth.principal ?? null,
@@ -159,7 +159,7 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
         const spec = kindOf(record);
         assertAllowed(spec, auth);
         try {
-            if (spec.validate) await spec.validate(record, ctxFor(record));
+            if (spec.validate) await spec.validate(record, ctxFor(record, auth));
         } catch (error) {
             journal.step(id, 'validate', 'failed', { code: publicError(error).code });
             throw publicError(error);
@@ -211,7 +211,7 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
         const spec = kindOf(record);
         const held = lock.acquire(id);
         const scratch = {};
-        const ctx = { ...ctxFor(record), scratch };
+        const ctx = { ...ctxFor(record, auth), scratch };
         let current = record;
         let failure = null;
         try {

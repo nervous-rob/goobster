@@ -11,6 +11,10 @@
  *   POST /operations/:id/validate      assertion or session      per kind
  *   POST /operations/:id/apply         assertion or session      per kind
  *   POST /privileged/:name             assertion or session      501 for the declared names
+ *   POST /session/logout               session (cookie or bearer) any
+ *
+ * `GET /manager/` (and /manager/setup, /manager/recovery, /manager/assets/*)
+ * serve the setup client; ./static.js. Everything under /manager/api stays JSON.
  *
  * Every request must be addressed to the manager (Host); a mutation with an
  * Origin must come from the manager's own origin. Bodies are at most 64 KB.
@@ -24,6 +28,8 @@ const { createTransportGuards } = require('./auth/transport');
 const coreBridge = require('@goobster/core/web/managerBridge');
 const privileged = require('./privileged');
 const { LABEL_SHAPE } = require('./engine/kinds/installation');
+const { readSessionCookie, sessionCookie, clearedSessionCookie } = require('./auth/sessions');
+const { mountStaticClient } = require('./static');
 
 const BODY_LIMIT = '64kb';
 const ACTOR_FIELDS = ['actor', 'principalId', 'actorId'];
@@ -113,8 +119,12 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
         const state = manager.currentState();
         const assertion = req.headers[coreBridge.ASSERTION_HEADER];
         const authorization = req.headers.authorization;
-        if (assertion !== undefined && authorization !== undefined) {
+        const cookieToken = readSessionCookie(req.headers.cookie);
+        if (assertion !== undefined && (authorization !== undefined || cookieToken)) {
             throw new ManagerError(400, 'AMBIGUOUS_AUTH', 'Send either a manager assertion or a session, not both.');
+        }
+        if (authorization !== undefined && cookieToken) {
+            throw new ManagerError(400, 'AMBIGUOUS_AUTH', 'Send the session in the Authorization header or the cookie, not both.');
         }
         if (assertion !== undefined) {
             if (state.state !== 'claimed') {
@@ -127,9 +137,15 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
             });
             return { principal: verified.principalId, via: 'bridge' };
         }
-        const match = /^Bearer ([A-Za-z0-9_-]{20,128})$/.exec(String(authorization || ''));
-        if (!match) throw new ManagerError(401, 'UNAUTHENTICATED', 'Authenticate with a manager assertion or a local session.');
-        const session = manager.sessions.authenticate(match[1]);
+        let token = cookieToken;
+        if (!token) {
+            const match = /^Bearer ([A-Za-z0-9_-]{20,128})$/.exec(String(authorization || ''));
+            if (!match) throw new ManagerError(401, 'UNAUTHENTICATED', 'Authenticate with a manager assertion or a local session.');
+            token = match[1];
+        } else if (!sameSiteRequest(req)) {
+            throw new ManagerError(403, 'BAD_ORIGIN', 'Cross-origin requests are not allowed.');
+        }
+        const session = manager.sessions.authenticate(token);
         if (!session) throw new ManagerError(401, 'SESSION_INVALID', 'The session is not valid or has expired.');
         if (!guards.isLocalRequest(req)) {
             throw new ManagerError(403, 'LOCAL_ONLY', 'Local sessions work only from this machine (use an SSH tunnel).');
@@ -143,6 +159,29 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
         }
         return { principal: session.principal, via: session.kind };
     }
+
+    /**
+     * A request that carries its session in a cookie must come from the
+     * manager's own page: the browser's fetch metadata may not say
+     * cross-site, and an Origin, when sent, must be the manager's origin.
+     * (SameSite=Strict already keeps the cookie off cross-site requests;
+     * this is the server's own check, on reads as well as mutations.)
+     */
+    function sameSiteRequest(req) {
+        if (String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'cross-site') return false;
+        const origin = req.headers.origin;
+        if (origin === undefined) return true;
+        try {
+            const parsed = new URL(origin);
+            const expected = manager.settings.lan ? 'https:' : 'http:';
+            return parsed.protocol === expected && guards.classifyHost(parsed.host, req.socket.localPort) === req.managerHostKind;
+        } catch {
+            return false;
+        }
+    }
+
+    const secureCookie = Boolean(manager.settings.lan);
+    const setSessionCookie = (res, session) => res.append('Set-Cookie', sessionCookie(session.token, { expiresAt: session.expiresAt, secure: secureCookie, now: now() }));
 
     function requireJson(req, _res, next) {
         if (req.method === 'GET' || req.method === 'HEAD') return next();
@@ -175,7 +214,7 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
 
     api.get('/status', route(() => manager.status()));
 
-    api.post('/claim', route(async (req) => {
+    api.post('/claim', route(async (req, res) => {
         throttle('bootstrap');
         const { credential, label, ...rest } = req.body;
         checkActor({ body: rest }, null);
@@ -194,6 +233,7 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
             throw new ManagerError(409, 'ALREADY_CLAIMED', 'This installation already exists; first-time setup is closed. Use local recovery.');
         }
         const { operation, result } = await manager.engine.run('claim', { label }, { principal: null, via: 'bootstrap' });
+        setSessionCookie(res, result.session);
         return {
             installationId: result.installationId,
             operationId: operation.id,
@@ -201,7 +241,7 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
         };
     }));
 
-    api.post('/recovery/unlock', route(async (req) => {
+    api.post('/recovery/unlock', route(async (req, res) => {
         if (!guards.isLocalRequest(req)) {
             throw new ManagerError(403, 'LOCAL_ONLY', 'Recovery works only from this machine (use an SSH tunnel).');
         }
@@ -220,10 +260,25 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
             throw error;
         }
         const { operation, result } = await manager.engine.run('recovery.unlock', undefined, { principal: null, via: 'recovery-credential' });
+        setSessionCookie(res, result.session);
         return {
             operationId: operation.id,
             session: { token: result.session.token, expiresAt: result.session.expiresAt, kind: 'recovery' }
         };
+    }));
+
+    /**
+     * Ends the session the request carries (cookie or bearer) and clears the
+     * cookie. Idempotent and safe to call with no or a stale session; it
+     * needs no nonce because it can only remove access (the Origin check
+     * already refuses a cross-site caller).
+     */
+    api.post('/session/logout', route((req, res) => {
+        const authorization = /^Bearer ([A-Za-z0-9_-]{20,128})$/.exec(String(req.headers.authorization || ''));
+        const token = readSessionCookie(req.headers.cookie) || (authorization ? authorization[1] : null);
+        const ended = token ? manager.sessions.revoke(token) : false;
+        res.append('Set-Cookie', clearedSessionCookie({ secure: secureCookie }));
+        return { loggedOut: true, ended };
     }));
 
     function readAuth(req) {
@@ -318,6 +373,7 @@ function createManagerApp(manager, { logger = console, now = () => new Date(), m
     });
 
     app.use('/manager/api', api);
+    mountStaticClient(app, { manager, guards, logger });
     app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'No such manager route.' } }));
     return app;
 }
