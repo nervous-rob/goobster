@@ -5,6 +5,7 @@
  *   goobster-manager install|adopt|reconfigure|repair|uninstall [options]
  *   goobster-manager plan <command> [options]      same as --dry-run
  *   goobster-manager status | discover | schema
+ *   goobster-manager migrate preflight|run|rollback|status [options]   SQLite -> Postgres (documentation/db_migration.md)
  *
  *   --answers <file>   the operation's input as JSON (apps/manager/install/answers.schema.json);
  *                      the file may hold secrets and must be mode 0600
@@ -12,6 +13,9 @@
  *   --yes              answer "yes" to the non-destructive confirmation (never to a deletion)
  *   --delete-data --confirm <installationId>   uninstall: also remove the owned data roots
  *   --json             one JSON document on stdout instead of text
+ *   --confirm <installationId>   migrate run|rollback: the deliberate confirmation
+ *   --release          migrate run: release the maintenance barrier after the cutover;
+ *                      migrate rollback: release it after the rollback
  *
  * Without --answers the CLI asks the questions it needs on stdin (secret
  * values are read without echo). A secret is never accepted on the command
@@ -41,12 +45,16 @@ const { validate: validateSchema } = require('./install/schema');
 const { readTombstone } = require('./install/tombstone');
 const { discover } = require('./install/discover');
 const { lazy } = require('./lazy');
+const cliView = require('./migration/cliView');
+const { migrationStatus } = require('./migration/status');
+const environmentOverlay = require('./environment');
 
 const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
-const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'plan', 'status', 'discover', 'schema', 'help']);
+const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'plan', 'status', 'discover', 'schema', 'migrate', 'help']);
+const MIGRATE_KIND = Object.freeze({ preflight: 'db.migrate.preflight', run: 'db.migrate', rollback: 'db.migrate.rollback' });
 const LOCAL_AUTH = Object.freeze({ principal: 'local:cli', via: 'local' });
 const MAX_ANSWERS_BYTES = 256 * 1024;
 const SCHEMA_FILE = path.join(__dirname, 'install', 'answers.schema.json');
@@ -56,12 +64,14 @@ const INVALID_CODES = new Set([
     'PUBLIC_KEY_UNREADABLE', 'ROOT_NOT_MOVABLE', 'REPAIR_SOURCE_REQUIRED', 'NOT_AN_INSTALLATION', 'CANDIDATE_NOT_FOUND', 'RELEASE_MISMATCH',
     'MANIFEST_MISSING', 'MANIFEST_INVALID', 'SIGNATURE_MISSING', 'SIGNATURE_INVALID', 'UNSIGNED_DEV_ONLY', 'PATH_TRAVERSAL', 'LINK_ESCAPES_ROOT',
     'TARGET_MISMATCH', 'ABI_MISMATCH', 'INCOMPLETE', 'EXTRA_FILE', 'VERSION_INCOMPATIBLE', 'SELECTION_UNAVAILABLE', 'NOTHING_TO_ADOPT',
-    'ANSWERS_INVALID', 'ANSWERS_PERMISSIONS', 'ANSWERS_UNREADABLE', 'SECRET_ON_ARGV', 'USAGE', 'INPUT_ENDED'
+    'ANSWERS_INVALID', 'ANSWERS_PERMISSIONS', 'ANSWERS_UNREADABLE', 'SECRET_ON_ARGV', 'USAGE', 'INPUT_ENDED', 'PROVISIONING_NOT_ALLOWED'
 ]);
 const REFUSED_CODES = new Set([
     'OPERATION_IN_PROGRESS', 'OWNERSHIP_TAMPERED', 'UNKNOWN_SERVICE_OWNER', 'UPDATER_CONFLICT', 'STATE_NOT_ALLOWED', 'ALREADY_INSTALLED',
     'EXISTING_INSTALLATION', 'NOT_INSTALLED', 'NOT_MANAGED', 'PATH_ESCAPE', 'WORKERS_RUNNING', 'REVISION_CONFLICT', 'STORE_UNUSABLE',
-    'ADOPT_NEEDS_CONFIRMATION', 'CONFIG_UNREADABLE', 'PLAN_EXPIRED'
+    'ADOPT_NEEDS_CONFIRMATION', 'CONFIG_UNREADABLE', 'PLAN_EXPIRED',
+    'ALREADY_POSTGRES', 'ALREADY_MIGRATED', 'MIGRATION_IN_PROGRESS', 'MIGRATION_STATE_UNREADABLE', 'MAINTENANCE_NOT_HELD', 'WRITER_UNACKNOWLEDGED',
+    'STALE_MAINTENANCE', 'PHASE_NOT_ALLOWED', 'NOTHING_TO_ROLL_BACK', 'POSTGRES_HAS_WRITES', 'ROLLBACK_FOREIGN_OBJECTS', 'PLAN_INPUT_LOST'
 ]);
 
 class CliError extends Error {
@@ -75,10 +85,10 @@ class CliError extends Error {
 
 // ---------------------------------------------------------------- arguments
 const VALUE_FLAGS = new Set(['--answers', '--confirm']);
-const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--help', '-h']);
+const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h']);
 
 function parseArgs(argv) {
-    const flags = { answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, help: false };
+    const flags = { answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, release: false, sub: null, help: false };
     const positional = [];
     for (let index = 0; index < argv.length; index++) {
         const arg = String(argv[index]);
@@ -99,6 +109,7 @@ function parseArgs(argv) {
             else if (name === '--yes' || name === '-y') flags.yes = true;
             else if (name === '--delete-data') flags.deleteData = true;
             else if (name === '--json') flags.json = true;
+            else if (name === '--release') flags.release = true;
             else flags.help = true;
         } else {
             throw new CliError('USAGE', `Unknown option ${name}. Try "help".`);
@@ -111,8 +122,18 @@ function parseArgs(argv) {
         if (!KIND_OF[command]) throw new CliError('USAGE', 'plan needs a command: install, adopt, reconfigure, repair or uninstall.');
     }
     if (!COMMANDS.includes(command)) throw new CliError('USAGE', `Unknown command "${command}". Try "help".`);
+    if (command === 'migrate') {
+        flags.sub = positional.shift() || '';
+        if (!cliView.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'migrate needs a command: preflight, run, rollback or status.');
+        if (flags.dryRun) throw new CliError('USAGE', 'migrate has no --dry-run: "migrate preflight" is the read-only check.');
+        if (flags.confirm && (flags.sub === 'preflight' || flags.sub === 'status')) throw new CliError('USAGE', `--confirm does not apply to migrate ${flags.sub}.`);
+        if (flags.release && (flags.sub === 'preflight' || flags.sub === 'status')) throw new CliError('USAGE', `--release does not apply to migrate ${flags.sub}.`);
+        if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'migrate status takes no answers.');
+    } else if (flags.release) {
+        throw new CliError('USAGE', '--release only applies to migrate.');
+    }
     if (positional.length) throw new CliError('USAGE', 'Unexpected argument; values go in --answers or at the prompt.');
-    if (flags.confirm && !flags.deleteData) throw new CliError('USAGE', '--confirm belongs to --delete-data.');
+    if (flags.confirm && !flags.deleteData && command !== 'migrate') throw new CliError('USAGE', '--confirm belongs to --delete-data.');
     if (flags.deleteData && command !== 'uninstall') throw new CliError('USAGE', '--delete-data only applies to uninstall.');
     return { command, flags };
 }
@@ -149,10 +170,10 @@ function shipSchema(fs) {
 }
 
 /** The kind's input from a validated answers document; `command` and `$schema` are metadata. */
-function answersInput(doc, command, fs) {
+function answersInput(doc, command, fs, definition = command) {
     if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) throw new CliError('ANSWERS_INVALID', 'The answers file must hold one JSON object.');
     if (doc.command !== undefined && doc.command !== command) throw new CliError('ANSWERS_INVALID', `The answers file is for "${String(doc.command).slice(0, 20)}", not "${command}".`);
-    const problems = validateSchema(shipSchema(fs), doc, { definition: command });
+    const problems = validateSchema(shipSchema(fs), doc, { definition });
     if (problems.length) {
         const listed = problems.slice(0, 8).map(item => `${item.pointer || '/'} (${item.rule})`).join(', ');
         throw new CliError('ANSWERS_INVALID', `The answers file does not match the schema: ${listed}${problems.length > 8 ? ', ...' : ''}.`);
@@ -365,6 +386,12 @@ async function run(argv, io = {}) {
             out(JSON.stringify(shipSchema(fs), null, 2));
             return EXIT.OK;
         }
+        if (command === 'migrate') {
+            return await runMigrate({
+                sub: flags.sub, flags, fs, io, baseEnv, out, progress, secrets, finish, json,
+                makePrompter: () => { prompter = createPrompter({ input: stdin, output: stderr }); return prompter; }
+            });
+        }
 
         // ---------- input
         let input = null;
@@ -475,10 +502,114 @@ async function run(argv, io = {}) {
             for (const finding of view.findings || []) progress(`  ${finding.code}: ${finding.detail}`);
         }
         if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
+        if (code === EXIT.INTERRUPTED && report.command === 'migrate') {
+            progress('Or undo it with "migrate rollback --confirm <installationId>" while the rollback is still possible. "migrate status" shows where it stands.');
+        }
         return finish(code, { error: view });
     } finally {
         if (prompter) prompter.close();
     }
+}
+
+/**
+ * `migrate preflight|run|rollback|status` (documentation/db_migration.md).
+ * The target URL and the backup passphrase come from the answers file or a
+ * hidden prompt, never argv; both (and the manager overlay's values) are
+ * registered for redaction before anything is printed.
+ */
+async function runMigrate(c) {
+    const { sub, flags, fs, io, baseEnv, out, progress, secrets, finish, json, makePrompter } = c;
+
+    if (sub === 'status') {
+        const settings = resolveSettings(baseEnv, { fs });
+        const view = migrationStatus({ settings, fs });
+        if (!json) for (const line of cliView.describeStatus(view)) out(line);
+        return finish(EXIT.OK, { migration: view });
+    }
+
+    const prompter = flags.answers ? null : makePrompter();
+    let input = flags.answers
+        ? answersInput(loadAnswers(flags.answers, fs), 'migrate', fs, cliView.MIGRATE_DEFINITIONS[sub])
+        : await cliView.promptMigrate(prompter, sub);
+    if (flags.confirm) input = { ...input, confirm: flags.confirm };
+    if (flags.release) input = sub === 'run' ? { ...input, release: true } : { ...input, releaseMaintenance: true };
+    secrets.push(...cliView.secretsOfMigrate(input));
+
+    const env = (input.roots && input.roots.data) ? { ...baseEnv, GOOBSTER_DATA_DIR: input.roots.data } : baseEnv;
+    const settings = resolveSettings(env, { fs });
+    const overlay = environmentOverlay.read(settings.storeDir, fs).values;
+    secrets.push(...cliView.secretsOfMigrate({}, [...Object.values(overlay), settings.dbUrl].filter(Boolean)));
+    settings.installDeps = io.installDeps || {};
+    settings.migrationDeps = {
+        ...(io.migrationDeps || {}),
+        onProgress: (event) => {
+            if (event && event.event === 'table' && event.table) {
+                progress(`  copy ${event.table} ${event.state}${typeof event.rows === 'number' ? ` (${event.rows} rows)` : ''}${event.progress && event.total ? ` [${Object.values(event.progress.tables || {}).filter(item => item.state === 'done').length}/${event.total}]` : ''}`);
+            } else if (event && event.event === 'table') {
+                progress(`  copy ${event.state}${typeof event.rows === 'number' ? ` (${event.rows})` : ''}`);
+            }
+        }
+    };
+
+    const kindName = MIGRATE_KIND[sub];
+    const manager = createManager({
+        settings,
+        fs,
+        logger: { info() {}, warn() {}, error() {} },
+        extraKinds: require('./extensions').kinds,
+        ...(io.now ? { now: io.now } : {}),
+        hooks: { beforeStep: ({ kind, step }) => progress(`[${kind}] ${step} ...`) }
+    });
+    if (!manager.storeReady) throw new CliError('STORE_UNUSABLE', 'The manager store cannot be created or written here.', EXIT.REFUSED);
+    await manager.engine.recoverInterrupted();
+
+    if (sub !== 'preflight' && !input.confirm) {
+        const installed = manager.store.readInstallation().doc;
+        if (prompter && installed) {
+            progress(`This is deliberate: type the installation id (${installed.installationId}) to confirm.`);
+            input = { ...input, confirm: await prompter.ask('Installation id: ') };
+        } else {
+            throw new CliError('CONFIRMATION_REQUIRED', `migrate ${sub} needs --confirm <installationId> (or "confirm" in the answers file); nothing was changed.`);
+        }
+    }
+
+    const planned = await manager.engine.plan(kindName, input, LOCAL_AUTH, { internal: true });
+    if (!json && sub !== 'preflight') {
+        const lines = sub === 'run' ? cliView.describeMigratePlan(planned.plan) : cliView.describeRollbackPlan(planned.plan);
+        for (const line of lines) progress(line);
+    }
+    if (sub !== 'preflight' && !flags.yes && prompter) {
+        if (!yes(await prompter.ask('Proceed? [y/N]: '))) {
+            progress('Cancelled; nothing was changed.');
+            return finish(EXIT.OK, { cancelled: true });
+        }
+    }
+    const validated = await manager.engine.validate(planned.id, LOCAL_AUTH);
+    const applied = await manager.engine.apply(validated.id, { revision: validated.revision }, LOCAL_AUTH);
+    const result = applied.result ? scrub(applied.result) : null;
+
+    if (sub === 'preflight') {
+        if (!json && result) for (const line of cliView.describePreflight(result)) out(line);
+        return finish(result && result.ready ? EXIT.OK : EXIT.INVALID, { operation: { id: applied.operation.id, kind: kindName, status: applied.operation.status }, preflight: result });
+    }
+
+    const record = manager.journal.read(applied.operation.id).record;
+    const ledger = Array.isArray(record && record.progress) ? record.progress : [];
+    const steps = ledger.map(item => ({ name: item.name, status: item.status, ...(item.code ? { code: item.code } : {}) }));
+    const limit = (result && result.rollbackLimit) || planned.plan.rollbackLimit;
+    if (!json) {
+        out(`${kindName}: ${applied.operation.status}`);
+        for (const item of steps) out(`  ${item.status.padEnd(8)} ${item.name}${item.code ? ` (${item.code})` : ''}`);
+        if (result && sub === 'run') {
+            out(`Copied ${result.tables ?? '?'} tables, ${result.rows ?? '?'} rows; ${result.vectors ?? 0} vectors rebuilt; the backup was verified before anything was written.`);
+            if (!input.release) out('The maintenance barrier is still held and the application stays fenced; release it (maintenance.release in the portal, or run this command with --release next time) when you are ready to accept writes.');
+            if (result.workersRestarted === false) out('The manager does not supervise the workers: restart them with GOOBSTER_DB_URL set (or from the manager environment overlay) so they use Postgres.');
+        }
+        if (result && sub === 'rollback') out(result.switchReverted ? 'The installation is back on SQLite.' : 'The migration was undone; the installation never left SQLite.');
+        out('');
+        out(limit);
+    }
+    return finish(EXIT.OK, { operation: { id: applied.operation.id, kind: kindName, status: applied.operation.status }, steps, result, rollbackLimit: limit });
 }
 
 async function previewPlan(kindName, input, settings, fs, now = () => new Date()) {
@@ -545,6 +676,10 @@ function usage() {
         '  status       what the manager store says (read only)',
         '  discover     list existing installations on this host (read only)',
         '  schema       print the answers-file JSON schema',
+        '  migrate preflight   read-only check of a Postgres target (blocks, provisioning, warnings)',
+        '  migrate run         back up, copy SQLite to Postgres, verify, switch (--confirm <installationId>, --release)',
+        '  migrate rollback    undo a migration before the first write reaches Postgres (--confirm <installationId>)',
+        '  migrate status      the migration\'s progress and the rollback boundary (read only)',
         '',
         'Options',
         '  --answers <file>   JSON answers (mode 0600; may hold secrets); without it the CLI asks',
@@ -552,6 +687,8 @@ function usage() {
         '  --yes              skip the "Proceed?" question (never a deletion)',
         '  --delete-data --confirm <id>   uninstall: also remove the owned data roots',
         '  --json             machine-readable output',
+        '  --confirm <id>     migrate run|rollback: the installation id',
+        '  --release          migrate run|rollback: also release the maintenance barrier',
         '',
         'Secrets are never accepted on the command line.',
         'Exit codes: 0 ok, 2 invalid input or preflight block, 3 refused, 4 interrupted (run again to resume),',

@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://goobster.local/schemas/manager-install-answers.json",
     "title": "Goobster manager CLI answers file",
-    "description": "Input of `goobster-manager <command> --answers <file>`. One document per command; `command` is optional when the CLI command names it. The file may hold secrets (config values of secret fields) and must be readable by its owner only (mode 0600).",
+    "description": "Input of `goobster-manager <command> --answers <file>`. One document per command; `command` is optional when the CLI command names it. The `migrate` commands use the definitions `migrate-preflight` (preflight), `migrate` (run) and `migrate-rollback`; their `command` is `migrate`. The file may hold secrets (config values of secret fields) and must be readable by its owner only (mode 0600).",
     "oneOf": [
         { "$ref": "#/definitions/install" },
         { "$ref": "#/definitions/adopt" },
@@ -121,6 +121,74 @@
                 "keepData": { "type": "boolean" },
                 "confirm": { "type": "string", "minLength": 1, "maxLength": 64 },
                 "acknowledgeUnknownServices": { "type": "boolean" }
+            }
+        },
+        "migrateTarget": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url"],
+            "properties": {
+                "url": { "type": "string", "minLength": 12, "maxLength": 2048, "pattern": "^postgres(ql)?://" }
+            }
+        },
+        "migrate-preflight": {
+            "type": "object",
+            "description": "`goobster-manager migrate preflight`: the read-only inspection of the target. The URL may carry a password; the file must be mode 0600.",
+            "additionalProperties": false,
+            "required": ["target"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "migrate" },
+                "target": { "$ref": "#/definitions/migrateTarget" }
+            }
+        },
+        "migrate": {
+            "type": "object",
+            "description": "`goobster-manager migrate run`: copy the SQLite database to the Postgres target and switch the installation to it. `confirm` (or --confirm) is the installation id.",
+            "additionalProperties": false,
+            "required": ["target", "backup"],
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "migrate" },
+                "target": { "$ref": "#/definitions/migrateTarget" },
+                "backup": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["dir"],
+                    "properties": {
+                        "dir": { "$ref": "#/definitions/absolutePath" },
+                        "passphrase": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                        "skipConfig": { "type": "boolean" }
+                    }
+                },
+                "provision": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "extensions": { "type": "boolean" }
+                    }
+                },
+                "confirm": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "roots": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "data": { "$ref": "#/definitions/absolutePath" }
+                    }
+                },
+                "release": { "type": "boolean" }
+            }
+        },
+        "migrate-rollback": {
+            "type": "object",
+            "description": "`goobster-manager migrate rollback`: undo a migration before the first write reaches Postgres. `target` is needed when the migration created objects on it.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "migrate" },
+                "target": { "$ref": "#/definitions/migrateTarget" },
+                "confirm": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "releaseMaintenance": { "type": "boolean" }
             }
         }
     }
