@@ -39,10 +39,23 @@ function sendError(res, error) {
 }
 
 /**
- * @param {ReturnType<import('./manager').createManager>} manager
- * @param {{ logger?: Object, now?: () => Date }} [options]
+ * @typedef {Object} RouteHelpers
+ * @property {(handler: Function) => Function} route JSON wrapper with error mapping
+ * @property {(req: Object) => import('./engine').EngineAuth} authenticate assertion or session, nonce-checked for mutations
+ * @property {(req: Object) => import('./engine').EngineAuth} readAuth `authenticate` plus the state rule for reads
+ * @property {(req: Object, principal: string|null) => void} checkActor refuse a body naming another actor
+ * @property {(kind: string) => void} throttle
+ * @property {(kind: string) => void} noteFailure
+ * @property {ReturnType<import('./auth/transport').createTransportGuards>} guards
  */
-function createManagerApp(manager, { logger = console, now = () => new Date() } = {}) {
+
+/**
+ * @param {ReturnType<import('./manager').createManager>} manager
+ * @param {{ logger?: Object, now?: () => Date, mounts?: Array<(api: import('express').Router, helpers: RouteHelpers) => void> }} [options]
+ *   `mounts` add route families (one module each under ./routes/) after the
+ *   core routes and before the 404; they share the guards and auth helpers.
+ */
+function createManagerApp(manager, { logger = console, now = () => new Date(), mounts = [] } = {}) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', false);
@@ -283,6 +296,9 @@ function createManagerApp(manager, { logger = console, now = () => new Date() } 
         checkActor(req, auth.principal);
         return privileged.request(req.params.name);
     }));
+
+    const helpers = { route, authenticate, readAuth, checkActor, throttle, noteFailure, guards, manager, logger, now };
+    for (const mount of mounts) mount(api, helpers);
 
     api.use((_req, _res, next) => next(new ManagerError(404, 'NOT_FOUND', 'No such manager route.')));
 

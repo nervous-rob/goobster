@@ -56,6 +56,9 @@ function readConfigJson(configPath, fs) {
  * @param {number} [params.probeTimeoutMs]
  * @param {Object} [params.logger]
  * @param {Object} [params.reconcileDeps] { loadDb, loadAudit } overrides for reconcileAudit
+ * @param {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} [params.extraKinds]
+ *   operation-kind families beyond the built-in four (one module each under
+ *   ./engine/kinds/); a kind name registered twice is a startup error.
  */
 function createManager({
     settings,
@@ -65,7 +68,8 @@ function createManager({
     isProcessAlive,
     probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
     logger = console,
-    reconcileDeps = {}
+    reconcileDeps = {},
+    extraKinds = []
 }) {
     const store = createStore({ root: settings.storeDir, fs, now });
     const initResult = store.init();
@@ -122,7 +126,9 @@ function createManager({
     }
 
     const kinds = {};
-    for (const kind of [createFeaturesSetKind(), createAdoptKind(), createClaimKind(), createRecoveryUnlockKind()]) {
+    const builtIn = [createFeaturesSetKind(), createAdoptKind(), createClaimKind(), createRecoveryUnlockKind()];
+    for (const kind of [...builtIn, ...extraKinds.flatMap(make => make({ settings, fs, now, logger }))]) {
+        if (kinds[kind.kind]) throw new Error(`operation kind ${kind.kind} is registered twice`);
         kinds[kind.kind] = kind;
     }
 

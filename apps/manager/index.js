@@ -19,6 +19,7 @@ const http = require('node:http');
 const { resolveSettings, validateTransport, StartupError } = require('./settings');
 const { createManager } = require('./manager');
 const { createManagerApp } = require('./server');
+const extensions = require('./extensions');
 
 const RECONCILE_INTERVAL_MS = 60_000;
 
@@ -60,7 +61,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     const settings = resolveSettings(env);
 
     if (flags.has('--mint-bootstrap') || flags.has('--mint-recovery') || flags.has('--status')) {
-        const manager = createManager({ settings, logger });
+        const manager = createManager({ settings, logger, extraKinds: extensions.kinds });
         const state = manager.currentState();
         if (flags.has('--status')) {
             stdout.write(`${JSON.stringify(await manager.status(), null, 2)}\n`);
@@ -97,7 +98,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         throw error;
     }
 
-    const manager = createManager({ settings, logger });
+    const manager = createManager({ settings, logger, extraKinds: extensions.kinds });
     const booted = await manager.init();
     if (!manager.storeReady) {
         logger.error('[manager] the manager store cannot be written; serving status in recovery.');
@@ -110,7 +111,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         printCredential(stdout, 'First-time setup credential', booted.bootstrap, { reveal: Boolean(stdout.isTTY) });
     }
 
-    const app = createManagerApp(manager, { logger });
+    const app = createManagerApp(manager, { logger, mounts: extensions.routes });
     const server = transport.tls
         ? https.createServer({ cert: transport.tls.cert, key: transport.tls.key }, app)
         : http.createServer(app);

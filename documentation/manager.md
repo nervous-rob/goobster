@@ -342,6 +342,14 @@ reaches the reconciled rows like any other `operator_audit` row.
 
 ## Seams for later work
 
+Extensions register in `apps/manager/extensions.js`: a route family is one
+module under `apps/manager/routes/` exporting `(api, helpers) => void`
+(the helpers are the server's `route`, `authenticate`, `readAuth`,
+`checkActor`, `throttle`, `noteFailure` and transport `guards`); an
+operation-kind family is one module under `apps/manager/engine/kinds/`
+exporting `({ settings, fs, now, logger }) => OperationKind[]`. A kind name
+registered twice is a startup error, and the privileged names stay refused.
+
 - **#324 (config, providers, defaults):** new kinds in `apps/manager/engine/kinds/`
   following `features.set`; secret values go in the kind's `privateInput`,
   never the plan (the journal scrubs any value under a key-shaped name to
