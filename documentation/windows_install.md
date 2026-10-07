@@ -478,7 +478,14 @@ standard account, antivirus and SmartScreen behaviour, and the wizard's browser
 journey from the `.exe` (the manager's Playwright journeys cover the wizard
 itself).
 
-Known limits: the virtual account's grants on a data root stay when the service
+Known limits: in a per-user install the code root under `%LOCALAPPDATA%` belongs
+to the person, so the person can change the code the machine service runs as
+`NT SERVICE\goobster` (unlike the `service\` folder, which Administrators own).
+The virtual account holds nothing the person does not already hold except the
+right to run without a login, so this is a persistence concern rather than an
+escalation; an installation whose operator is not trusted with that belongs
+under `%ProgramData%` from an administrator session, where Administrators own
+the code root. The virtual account's grants on a data root stay when the service
 is removed with the data kept (the unregister request carries no roots), harmless
 because only that service can use the account; machine-wide roots under
 `%ProgramData%` get no extra hardening beyond the grants above; a crash between
