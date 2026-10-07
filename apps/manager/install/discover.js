@@ -18,6 +18,8 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const model = require('./model');
 const { discordAdapterEnabled } = require('../lifecycle/layouts');
+const serviceRecord = require('../platform/serviceRecord');
+const rootsEnv = require('../platform/rootsEnv');
 
 const MARKER_FILE = '.install-origin';
 const EXEC_TIMEOUT_MS = 4000;
@@ -123,6 +125,29 @@ function timerUpdaters(exec, fs, codeRoot, env) {
     if (!active) return [];
     if (repo && path.resolve(repo) !== path.resolve(codeRoot)) return [];
     return [{ kind: 'auto-update.sh', mechanism: 'systemd-timer', unit: UPDATE_TIMER }];
+}
+
+/** A system cron file (/etc/cron.d) with a line that runs auto-update.sh for this code root. */
+function systemCronUpdaters(fs, codeRoot, env) {
+    const dir = env.GOOBSTER_CRON_DIR || '/etc/cron.d';
+    let names;
+    try {
+        names = fs.readdirSync(dir);
+    } catch {
+        return [];
+    }
+    const out = [];
+    for (const name of names.sort()) {
+        if (!/^[a-z][a-z0-9._-]{0,63}$/.test(name)) continue;
+        const text = readText(fs, path.join(dir, name));
+        if (!text) continue;
+        const live = text.split('\n').some((line) => {
+            const trimmed = line.trim();
+            return trimmed && !trimmed.startsWith('#') && trimmed.includes('auto-update.sh') && trimmed.includes(codeRoot);
+        });
+        if (live) out.push({ kind: 'auto-update.sh', mechanism: 'cron-system', unit: name });
+    }
+    return out;
 }
 
 function systemdService(exec) {
@@ -267,7 +292,19 @@ function discover({ fs = nodeFs, home = os.homedir(), env = process.env, searchR
             candidate.updaters.push(entry);
             addEvidence(candidate, 'AUTO_UPDATE_TIMER');
         }
+        for (const entry of systemCronUpdaters(fs, candidate.root, env)) {
+            candidate.updaters.push(entry);
+            addEvidence(candidate, 'CRON_SYSTEM_AUTO_UPDATE');
+        }
         const roots = model.defaultRoots(candidate.root);
+        const stated = rootsEnv.readRootsEnv(candidate.root, fs);
+        const registered = serviceRecord.readRecord(stated.GOOBSTER_MANAGER_STATE_DIR || roots.managerStore, fs);
+        for (const entry of registered.services) {
+            const seenUnit = candidate.services.find(item => item.name === `${entry.name}.service` || item.name === entry.name);
+            if (seenUnit) seenUnit.registeredBy = 'installer';
+            else candidate.services.push({ kind: entry.kind, name: entry.name, registeredBy: 'installer' });
+            addEvidence(candidate, 'INSTALLER_SERVICE_RECORD');
+        }
         const updater = candidate.updaters.length ? { kind: candidate.updaters[0].kind, ...(candidate.updaters[0].unit ? { unit: candidate.updaters[0].unit } : {}) } : { kind: 'none' };
         candidates.push({
             id: candidate.id,

@@ -38,11 +38,12 @@ const databaseInput = require('../../database/input');
 const registry = require('../../lifecycle/registry');
 const { runPreflight, portsFor } = require('../../install/preflight');
 const parse = require('../../install/engine');
+const { createServiceLifecycle } = require('../../platform/serviceLifecycle');
 
 const { createInstallCore, exactKeys, textField, absolutePath, parseLabel, parseFeatures, parseRootsInput, parseLayout, parseRelease, parseRuntimeUser, parseBoolean, parseConfigChanges, parseDatabase } = parse;
 
 const SESSION_VIA = ['local', 'bridge', 'setup', 'recovery'];
-const NEW_STEPS = ['preflight', 'stage', 'verify', 'ownership', 'init-db', 'write-config', 'write-features', 'activate', 'register-service', 'finalize'];
+const NEW_STEPS = ['preflight', 'stage', 'verify', 'ownership', 'init-db', 'write-config', 'write-features', 'activate', 'finalize', 'register-service'];
 const RECONFIGURE_STEPS = ['preflight', 'stage', 'verify', 'write-config', 'activate', 'record', 'retire-old', 'register-service'];
 const REPAIR_STEPS = ['preflight', 'stage', 'verify', 'init-db', 'write-features', 'activate', 'register-service'];
 const UNINSTALL_STEPS = ['preflight', 'unregister-service', 'tombstone', 'remove-code', 'remove-data', 'remove-ownership'];
@@ -57,6 +58,8 @@ function stepList(names) {
 function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), logger = console }) {
     const core = createInstallCore({ settings, fs, now, logger });
     const { deps } = core;
+    const serviceSteps = createServiceLifecycle({ core, settings, fs, now });
+    const isRoot = () => typeof process.geteuid === 'function' && process.geteuid() === 0;
     const stageLib = () => core.stage();
 
     // ------------------------------------------------------------- helpers
@@ -102,8 +105,20 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         return [...core.systemDependencies(manifest, selected), ...core.exclusiveDependencies(manifest, selected)].slice(0, 96);
     }
 
-    function privilegedPlan(steps) {
-        return steps.filter(item => item.privileged).map(item => ({ step: item.name, operation: item.privileged, status: 'deferred', reason: 'NOT_IMPLEMENTED' }));
+    /** What the plan says will need elevation: honest about a platform with no helper yet. */
+    function privilegedPlan(steps, { createUser = false } = {}) {
+        const out = [];
+        for (const item of steps.filter(entry => entry.privileged)) {
+            if (item.name === 'register-service' && createUser) out.push(planned('register-service', 'user.create'));
+            out.push(planned(item.name, item.privileged));
+        }
+        return out;
+    }
+
+    function planned(step, operation) {
+        return core.privilegedAvailable(operation)
+            ? { step, operation, status: 'needs-elevation', reason: 'ELEVATION_REQUIRED' }
+            : { step, operation, status: 'deferred', reason: 'NOT_IMPLEMENTED' };
     }
 
     function describeServices(doc, { unregister }) {
@@ -152,7 +167,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
 
     // ------------------------------------------------------ install.new
     function parseNew(input) {
-        exactKeys(input, new Set(['ownerLabel', 'source', 'features', 'layout', 'roots', 'database', 'release', 'runtimeUser', 'config', 'registerService']));
+        exactKeys(input, new Set(['ownerLabel', 'source', 'features', 'layout', 'roots', 'database', 'release', 'runtimeUser', 'createRuntimeUser', 'config', 'registerService']));
         const config = parseConfigChanges(input.config);
         const databaseAnswer = databaseInstall.parseNewDatabase(input.database, settings, parseDatabase);
         return {
@@ -165,6 +180,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             connection: databaseAnswer.connection,
             release: parseRelease(input.release),
             runtimeUser: parseRuntimeUser(input.runtimeUser),
+            createRuntimeUser: parseBoolean(input.createRuntimeUser, 'createRuntimeUser', false),
             changes: config.changes,
             secrets: config.secrets,
             registerService: parseBoolean(input.registerService, 'registerService', true)
@@ -218,6 +234,9 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             fs,
             probePort: deps.probePort,
             runtimeUser: parsed.runtimeUser,
+            createRuntimeUser: parsed.createRuntimeUser,
+            registerService: parsed.registerService,
+            unitNames: parsed.registerService && !resumedRecord ? core.unitNames() : [],
             home: deps.home,
             includeManagerPort: false,
             via: ctx.auth ? ctx.auth.via : 'local'
@@ -234,9 +253,10 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             features: selected,
             release: core.releaseSection(info.manifest, selected),
             dependencies,
-            runtimeUser: parsed.runtimeUser
+            runtimeUser: parsed.runtimeUser,
+            createRuntimeUser: parsed.createRuntimeUser
         };
-        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService });
+        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService, runtimeUser: parsed.runtimeUser, createUser: parsed.createRuntimeUser });
         const plan = {
             action: 'install-new',
             signature,
@@ -253,7 +273,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             updater: { kind: 'manager' },
             retainedData: { existing: Boolean(tomb.present && !tomb.doc?.dataRemoved), roots: [] },
             reusesTombstone: tomb.present,
-            privilegedSteps: privilegedPlan(parsed.registerService ? steps : steps.filter(item => item.name !== 'register-service')),
+            privilegedSteps: privilegedPlan(parsed.registerService ? steps : steps.filter(item => item.name !== 'register-service'), { createUser: parsed.createRuntimeUser && Boolean(parsed.runtimeUser) }),
             steps
         };
         ledgerMatch(plan, 'install.new', ctx, signature);
@@ -329,7 +349,6 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                 }),
                 core.step('write-features', (record) => core.writeFeaturesStep({ dataDir: record.plan.target.roots.data, selected: record.plan.target.features })),
                 activateStep('activate'),
-                core.step('register-service', (record) => core.privilegedStep('service.register', { enabled: record.plan.registerService })),
                 core.step('finalize', (record, ctx) => {
                     const t = record.plan.target;
                     const doc = ctx.store.readInstallation().doc;
@@ -337,9 +356,10 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     if (done) return { status: 'skipped', code: 'ALREADY_DONE' };
                     ctx.store.updateInstallation(draft => ({ ...draft, release: t.release, updater: { kind: 'manager' }, owned: { ...draft.owned, dependencies: t.dependencies } }));
                     return { detail: { releaseId: t.release.releaseId } };
-                })
+                }),
+                core.step('register-service', (record, ctx) => serviceSteps.register(record, ctx, { enabled: record.plan.registerService }))
             ],
-            result: (scratch) => ({ installationId: scratch.installationId, restartRequired: false })
+            result: (scratch) => ({ installationId: scratch.installationId, restartRequired: false, ...(scratch.service ? { service: scratch.service } : {}) })
         };
     }
 
@@ -445,10 +465,10 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         const pre = await runPreflight({
             kind: 'install.reconfigure', roots, layout, settings, manifest, features: selected.filter(id => id !== 'core'), database: doc.database, env: core.env, fs,
-            probePort: deps.probePort, runtimeUser: doc.runtimeUser, home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
+            probePort: deps.probePort, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
         });
         const steps = stepList(RECONFIGURE_STEPS);
-        const target = { layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser, previousRoots: doc.roots };
+        const target = { layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), previousRoots: doc.roots };
         const signature = core.signatureOf({ kind: 'install.reconfigure', id: doc.installationId, roots, layout, configIds: config.changes.map(item => item.id) });
         const plan = {
             action: 'reconfigure',
@@ -519,12 +539,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     paths.removeIfEmpty(t.previousRoots.code, fs);
                     return { detail: { removed } };
                 }),
-                core.step('register-service', (record) => {
+                core.step('register-service', (record, ctx) => {
                     const changed = record.plan.changes.roots || record.plan.changes.layout;
-                    return core.privilegedStep('service.register', { enabled: changed && record.plan.services.some(item => item.action === 'register') });
+                    return serviceSteps.register(record, ctx, { enabled: changed && record.plan.services.some(item => item.action === 'register') });
                 })
             ],
-            result: (scratch) => ({ restartRequired: true, installationId: scratch.installationId })
+            result: (scratch) => ({ restartRequired: true, installationId: scratch.installationId, ...(scratch.service ? { service: scratch.service } : {}) })
         };
     }
 
@@ -585,10 +605,10 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         const pre = await runPreflight({
             kind: 'install.repair', roots, layout: doc.layout, settings, manifest, features: selected.filter(id => id !== 'core'), database: doc.database, env: core.env, fs,
-            probePort: deps.probePort, runtimeUser: doc.runtimeUser, home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
+            probePort: deps.probePort, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
         });
         const steps = stepList(REPAIR_STEPS);
-        const target = { layout: doc.layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser };
+        const target = { layout: doc.layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot() };
         const signature = core.signatureOf({ kind: 'install.repair', id: doc.installationId, release: doc.release && doc.release.releaseId });
         const plan = {
             action: 'repair',
@@ -640,9 +660,9 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     return core.writeFeaturesStep({ dataDir: t.roots.data, selected: t.features });
                 }),
                 activateStep('activate'),
-                core.step('register-service', (record) => core.privilegedStep('service.register', { enabled: record.plan.services.some(item => item.action === 'register') }))
+                core.step('register-service', (record, ctx) => serviceSteps.register(record, ctx, { enabled: record.plan.services.some(item => item.action === 'register') }))
             ],
-            result: (scratch) => ({ restartRequired: Boolean(scratch.stagingDir) })
+            result: (scratch) => ({ restartRequired: Boolean(scratch.stagingDir), ...(scratch.service ? { service: scratch.service } : {}) })
         };
     }
 
@@ -679,10 +699,15 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         if (registry.get(settings.storeDir)) pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: 'the manager is supervising the application workers' });
         // The registry only sees this process; the CLI runs in another one, so the
         // layout's worker ports are the cross-process signal that something is still running.
+        // A service the installer registered is stopped by the unregister step itself, so
+        // its ports are checked after that step instead (assertStopped).
+        const stopsItself = services.some(item => item.action === 'unregister') && core.privilegedAvailable('service.unregister');
         const { list: workerPorts } = portsFor({ layout: doc.layout, features: doc.release ? doc.release.features : [], env: settings.env || process.env, settings });
-        for (const entry of workerPorts) {
-            if (await deps.probePort(entry.port) === 'busy') {
-                pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: `the ${entry.name} port ${entry.port} is in use: an application process is still running; stop it first` });
+        if (!stopsItself) {
+            for (const entry of workerPorts) {
+                if (await deps.probePort(entry.port) === 'busy') {
+                    pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: `the ${entry.name} port ${entry.port} is in use: an application process is still running; stop it first` });
+                }
             }
         }
         pre.ok = pre.findings.length === 0;
@@ -711,6 +736,21 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         };
         ledgerMatch(plan, 'install.uninstall', ctx, signature);
         return finish(plan, pre, { revision: doc.revision, unknownServices: acknowledged ? [] : unknown, privateInput: { raw, parsed: { keepData, acknowledged } } });
+    }
+
+    /** After the service is unregistered nothing of the application may still hold its ports. */
+    async function assertStopped(record) {
+        const t = record.plan.target;
+        const { list } = portsFor({ layout: t.layout, features: t.features, env: settings.env || process.env, settings });
+        for (let attempt = 0; attempt < 20; attempt++) {
+            let busy = null;
+            for (const entry of list) {
+                if (await deps.probePort(entry.port) === 'busy') busy = entry;
+            }
+            if (!busy) return;
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        throw new ManagerError(409, 'WORKERS_RUNNING', 'An application process still holds its port after the service was removed; stop it, then run the uninstall again.');
     }
 
     function removeTree(target, keep, roots) {
@@ -749,9 +789,11 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     if (!again.pre.ok) throw failedPreflight(again.pre);
                     return {};
                 }),
-                core.step('unregister-service', (record) => {
+                core.step('unregister-service', async (record, ctx) => {
                     const wanted = record.plan.services.some(item => item.action === 'unregister');
-                    return core.privilegedStep('service.unregister', { enabled: wanted });
+                    const outcome = await serviceSteps.unregister(record, ctx, { enabled: wanted });
+                    if (outcome.status === 'done') await assertStopped(record);
+                    return outcome;
                 }),
                 core.step('tombstone', (record) => {
                     tombstone.writeTombstone(settings.storeDir, { installationId: record.plan.installationId, operationId: record.id, dataRemoved: !record.plan.keepData, now }, fs);

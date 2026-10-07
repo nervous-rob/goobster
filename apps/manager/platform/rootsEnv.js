@@ -38,8 +38,24 @@ function writeRootsEnv({ roots, layout, mode }, fs = nodeFs) {
     return { file, written: true };
 }
 
+/** The `GOOBSTER_*` lines of the file as an object (empty when it is absent). Parsed as text, never run. */
+function readRootsEnv(codeRoot, fs = nodeFs) {
+    const out = {};
+    let text;
+    try {
+        text = fs.readFileSync(envFilePath(codeRoot), 'utf8');
+    } catch {
+        return out;
+    }
+    for (const line of text.split('\n')) {
+        const match = /^(GOOBSTER_[A-Z0-9_]*)=(.*)$/.exec(line);
+        if (match) out[match[1]] = match[2];
+    }
+    return out;
+}
+
 function removeRootsEnv(codeRoot, fs = nodeFs) {
     return files.removeIfPresent(envFilePath(codeRoot), fs);
 }
 
-module.exports = { FILE_NAME, envFilePath, renderRootsEnv, writeRootsEnv, removeRootsEnv };
+module.exports = { FILE_NAME, envFilePath, renderRootsEnv, writeRootsEnv, readRootsEnv, removeRootsEnv };

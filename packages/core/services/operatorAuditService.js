@@ -40,6 +40,8 @@ const ACTIONS = new Set([
     'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
     'manager.data.reset',
     'manager.backup.create', 'manager.backup.restore',
+    'manager.privileged.service.register', 'manager.privileged.service.unregister', 'manager.privileged.user.create',
+    'manager.privileged.updater.disable', 'manager.privileged.package.install',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.

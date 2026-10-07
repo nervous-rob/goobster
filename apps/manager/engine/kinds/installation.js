@@ -166,7 +166,9 @@ function createAdoptKind({ settings = null, fs = nodeFs, now = () => new Date(),
             keepUpdater,
             downloads: [],
             retainedData: { roots: ['data', 'config', 'managerStore'] },
-            privilegedSteps: steps.filter(item => item.privileged).map(item => ({ step: item.name, operation: item.privileged, status: 'deferred', reason: 'NOT_IMPLEMENTED' })),
+            privilegedSteps: steps.filter(item => item.privileged).map(item => (core.privilegedAvailable(item.privileged)
+                ? { step: item.name, operation: item.privileged, status: 'needs-elevation', reason: 'ELEVATION_REQUIRED' }
+                : { step: item.name, operation: item.privileged, status: 'deferred', reason: 'NOT_IMPLEMENTED' })),
             moves: [],
             stateDigest: core.signatureOf({ status: current.status, revision: existing ? existing.revision : null, candidate: candidate.id }),
             steps,
@@ -186,12 +188,15 @@ function createAdoptKind({ settings = null, fs = nodeFs, now = () => new Date(),
 
     function managedReconcile(record, ctx) {
         const { parse, core } = install();
-        return core.step('reconcile-updater', () => {
+        return core.step('reconcile-updater', async () => {
             const items = ctx.input.reconcileItems;
             if (!items.length) return { status: 'skipped', code: 'NO_UPDATER' };
-            const outcomes = parse.updaters.reconcile({ items, codeRoot: record.plan.target.roots.code, readCrontab: core.deps.readCrontab, writeCrontab: core.deps.writeCrontab });
-            const deferred = outcomes.some(item => item.status === 'deferred');
-            return { status: deferred ? 'deferred' : 'done', code: deferred ? 'NOT_IMPLEMENTED' : undefined, detail: { outcomes: outcomes.map(item => ({ mechanism: item.mechanism, status: item.status })) } };
+            const runPrivileged = core.privilegedAvailable('updater.disable')
+                ? (operation, input) => core.runPrivileged(operation, input, { record, ctx })
+                : null;
+            const outcomes = await parse.updaters.reconcile({ items, codeRoot: record.plan.target.roots.code, readCrontab: core.deps.readCrontab, writeCrontab: core.deps.writeCrontab, runPrivileged });
+            const deferred = outcomes.find(item => item.status === 'deferred');
+            return { status: deferred ? 'deferred' : 'done', code: deferred ? deferred.code : undefined, detail: { outcomes: outcomes.map(item => ({ mechanism: item.mechanism, status: item.status })) } };
         }).run(record, ctx);
     }
 
