@@ -5,7 +5,7 @@ Goobster requires proper configuration of Discord bot credentials, database conn
 
 ## Configuration File
 
-Create a `config.json` file in the root directory with the following structure:
+Create a `config.json` file in the root directory with the following structure. To keep it somewhere else (an installed layout, a container volume), set `GOOBSTER_CONFIG_PATH` to the file; every part of Goobster reads it through one shared loader (`packages/core/config/configJson.js`) that honours that variable. A missing file reads as an empty configuration; a file that exists but is not valid JSON is an error (`CONFIG_INVALID_JSON`) rather than being ignored.
 
 ```json
 {
