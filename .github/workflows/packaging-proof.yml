@@ -173,7 +173,8 @@ jobs:
       # Clean-OS evidence for Linux: the payload runs in stock distro images that
       # have no Node, npm, git or compiler. `required` images are the supported
       # baseline; `expected-fail` images document where the floor is (glibc 2.29
-      # from better-sqlite3's prebuilt binary; musl is not a target).
+      # on x64 from better-sqlite3's prebuilt binary, 2.33 on arm64 from
+      # sodium-native's; musl is not a target).
       - name: Run in stock distro containers (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -189,9 +190,13 @@ jobs:
             printf '%s\t%s\t%s\t%s\n' "$image" "$expectation" "$result" "$glibc" | tee -a "$REPORTS/distro/summary.tsv"
             if [ "$expectation" = required ] && [ "$result" != pass ]; then failures=$((failures + 1)); fi
           }
-          probe debian:bullseye-slim required
+          # glibc 2.31 images are the baseline on x64 (floor 2.29, better-sqlite3)
+          # but below the arm64 floor (2.33, sodium-native's arm64 prebuild) -
+          # see documentation/packaging_proof.md, "glibc baselines" and B2.
+          if [ "$TARGET" = linux-arm64 ]; then glibc231=expected-fail; else glibc231=required; fi
+          probe debian:bullseye-slim "$glibc231"
           probe debian:bookworm-slim required
-          probe ubuntu:20.04 required
+          probe ubuntu:20.04 "$glibc231"
           probe ubuntu:24.04 required
           probe almalinux:9 required
           probe almalinux:8 expected-fail

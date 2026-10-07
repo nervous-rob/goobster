@@ -23,11 +23,11 @@ labelled **unverified**.
 
 | Target | Runner label | Executed smoke run | Status |
 |---|---|---|---|
-| linux-x64 | `ubuntu-24.04` | yes, local VM (Ubuntu 24.04, glibc 2.39) | **passed with known gap B1** |
-| linux-arm64 | `ubuntu-24.04-arm` | no | **unverified** (needs CI; arm64 runner availability for this repository is unknown) |
-| win32-x64 | `windows-2022` | no | **unverified** (needs CI) |
-| darwin-x64 | `macos-15-intel` | no | **unverified** (needs CI) |
-| darwin-arm64 | `macos-15` | no | **unverified** (needs CI) |
+| linux-x64 | `ubuntu-24.04` | yes: local VM (Ubuntu 24.04, glibc 2.39) and CI run 37549366723 (in place, relocated, read-only data, all five `required` distro containers) | **passed with known gap B1** |
+| linux-arm64 | `ubuntu-24.04-arm` | yes: CI run 37549366723 (in place, relocated, read-only data; Bookworm, Ubuntu 24.04 and AlmaLinux 9 containers pass) | **passed with known gaps B1, B2**: Debian 11 and Ubuntu 20.04 containers fail to load `sodium-native` (`GLIBC_2.33` not found), confirming the arm64 floor; the workflow now expects those two to fail on arm64 |
+| win32-x64 | `windows-2022` | CI run 37549366723: payload built; the first smoke run stopped at `paths.separateRoots` | **unverified at the smoke level**: the check compared drives with `path.relative` (`D:\a\_temp` payload vs `C:\Users\...\Temp` data root) and reported a false "inside the payload"; fixed in `package-smoke.js`, needs the next CI run |
+| darwin-x64 | `macos-15-intel` | yes: CI run 37549366723 (in place, relocated, read-only data) | **passed with known gap B1** |
+| darwin-arm64 | `macos-15` | yes: CI run 37549366723 (in place, relocated, read-only data) | **passed with known gap B1** |
 
 For all five targets the upstream prebuilt asset of every native module
 exists for the pinned ABI; that was read (headers only, never executed) by
@@ -339,12 +339,14 @@ the read-only-data negative control. Reports, the build log and the payload
 manifest are uploaded as artifacts. Nothing echoes `secrets.*`; the
 workflow uses no secrets.
 
-Additional jobs on linux-x64 run the payload's smoke inside distro
+Additional steps on the two Linux jobs run the payload's smoke inside distro
 containers with no Node installed, to check the glibc baselines
 empirically:
 
-- required: Debian 11 (bullseye-slim), Debian 12 (bookworm-slim), Ubuntu
-  20.04, Ubuntu 24.04, AlmaLinux 9;
+- required on linux-x64: Debian 11 (bullseye-slim), Debian 12
+  (bookworm-slim), Ubuntu 20.04, Ubuntu 24.04, AlmaLinux 9; on linux-arm64
+  the two glibc 2.31 images (Debian 11, Ubuntu 20.04) are expected to fail
+  instead, because the arm64 floor is 2.33 (B2);
 - expected to fail and **allowed** to: AlmaLinux 8 (glibc 2.28) and Alpine
   3.20 (musl). These document the floor; a surprise pass would be a
   finding too.

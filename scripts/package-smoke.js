@@ -89,9 +89,16 @@ function scrub(text) {
     return out.replace(/(token|secret|password|api[_-]?key)(["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, '$1$2[redacted]');
 }
 
+// `path.relative` across Windows drives returns an absolute path rather than
+// a `..` prefix, so "inside" must also reject absolute results.
+function insidePayload(file) {
+    const relative = path.relative(PAYLOAD_ROOT, file);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 function rel(file) {
     const relative = path.relative(PAYLOAD_ROOT, file);
-    return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative.split(path.sep).join('/') : scrub(file);
+    return relative && insidePayload(file) ? relative.split(path.sep).join('/') : scrub(file);
 }
 
 async function check(name, fn) {
@@ -485,7 +492,7 @@ async function main() {
     let dbOpened = false;
     await check('paths.separateRoots', () => {
         for (const [name, dir] of Object.entries({ data: roots.data, cache: roots.cache, logs: roots.logs, config: roots.config })) {
-            assert(path.relative(PAYLOAD_ROOT, dir).startsWith('..'), `${name} root is inside the payload`);
+            assert(!insidePayload(dir), `${name} root is inside the payload`);
         }
         assert([...roots.home].some(ch => ch.charCodeAt(0) > 127) && roots.home.includes(' '), 'instance root lacks a space or a non-ASCII character');
         return { instanceRoot: scrub(roots.home), spaces: true, nonAscii: true, readOnlyData: Boolean(options.readOnlyData) };
