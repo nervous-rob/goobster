@@ -8,12 +8,17 @@
  * ./descriptors/*.js. This module merges the two into one frozen descriptor
  * per feature id.
  *
- * It requires nothing but ./inventory and the descriptor modules: no
+ * Each descriptor also carries `payload` (issue #328, documentation/packaging.md):
+ * the repository globs of the source files the feature owns exclusively, its
+ * portal chunk id and the system dependencies it would audit on removal.
+ *
+ * It requires nothing but ./inventory, ./payloadGlob and the descriptor modules: no
  * database, no config.json, no services. Secret VALUES never appear here,
  * only env var and config key NAMES.
  */
 
 const inventory = require('./inventory');
+const { compileGlob } = require('./payloadGlob');
 
 const CORE_ID = 'core';
 const KINDS = ['feature', 'adapter', 'pseudo-owner'];
@@ -33,8 +38,19 @@ const CORE_TEXT = {
     summary: 'Chat, the portal shell and operator pages, settings, privacy, export, retention, the Inbox and the feature-state read path. Always available; never installable or disableable.',
     apiKeys: [],
     configKeys: [],
-    docs: ['documentation/architecture.md', 'documentation/feature_inventory.md']
+    docs: ['documentation/architecture.md', 'documentation/feature_inventory.md'],
+    payload: {
+        // Inside a feature's directory but used by core: the shell's Forget
+        // everything clears Music Lab storage; the Parlor's live audio uses
+        // the PCM helpers.
+        files: [
+            'apps/web/src/music-lab/lib/{forget,storage,sampleStore}.ts',
+            'packages/core/services/voice/pcmUtils.js'
+        ],
+        system: [{ name: 'ollama', kind: 'binary' }]
+    }
 };
+const PAYLOAD_SYSTEM_KINDS = ['binary', 'python', 'os-package'];
 
 const TEXT = Object.assign(
     { [CORE_ID]: CORE_TEXT },
@@ -79,8 +95,52 @@ function buildDescriptor(id) {
         systemDependencies: systemDependenciesOf(id),
         requiredSystemDependencies: [...(text.requiredSystemDependencies || [])],
         docs: [...(text.docs || [])],
+        payload: {
+            files: [...(text.payload?.files || [])],
+            frontend: [...(text.payload?.frontend || [])],
+            system: (text.payload?.system || []).map(entry => ({ ...entry }))
+        },
         ...(text.helpUrl ? { helpUrl: text.helpUrl } : {})
     };
+}
+
+/** Names a feature may audit: system dependencies it owns or softly consumes in the inventory. */
+function auditableSystemDependencies(id) {
+    return Object.keys(inventory.systemDependencies).filter((name) => {
+        const entry = inventory.systemDependencies[name];
+        const owner = inventory.ownerOf('systemDependency', name).owner;
+        return owner === id || (typeof entry === 'object' && (entry.softConsumers || []).includes(id));
+    });
+}
+
+function validatePayload(id, payload, ids) {
+    if (!payload || !Array.isArray(payload.files) || !Array.isArray(payload.frontend) || !Array.isArray(payload.system)) {
+        throw new CatalogError('BAD_PAYLOAD', `Feature "${id}" needs payload.files, payload.frontend and payload.system arrays.`);
+    }
+    const globs = new Set();
+    for (const glob of payload.files) {
+        try {
+            compileGlob(glob);
+        } catch (error) {
+            throw new CatalogError('BAD_PAYLOAD_GLOB', `Feature "${id}": ${error.message}`);
+        }
+        if (globs.has(glob)) throw new CatalogError('DUPLICATE_PAYLOAD_GLOB', `Feature "${id}" lists payload glob "${glob}" twice.`);
+        globs.add(glob);
+    }
+    for (const chunk of payload.frontend) {
+        if (chunk !== id || !ids.has(chunk)) {
+            throw new CatalogError('BAD_PAYLOAD_CHUNK', `Feature "${id}" can only name its own frontend chunk id, not "${chunk}".`);
+        }
+    }
+    const auditable = auditableSystemDependencies(id);
+    for (const entry of payload.system) {
+        if (!entry || typeof entry.name !== 'string' || !PAYLOAD_SYSTEM_KINDS.includes(entry.kind)) {
+            throw new CatalogError('BAD_PAYLOAD_SYSTEM', `Feature "${id}" has a payload.system entry without a name or with an unknown kind.`);
+        }
+        if (!auditable.includes(entry.name)) {
+            throw new CatalogError('UNKNOWN_PAYLOAD_SYSTEM', `Feature "${id}" lists system dependency "${entry.name}" that the inventory does not give it.`);
+        }
+    }
 }
 
 function deepFreeze(value) {
@@ -133,6 +193,7 @@ function validateCatalog(candidate = { FEATURE_IDS, FEATURES }) {
         if (typeof descriptor.title !== 'string' || !descriptor.title || typeof descriptor.summary !== 'string' || !descriptor.summary) {
             throw new CatalogError('MISSING_TEXT', `Feature "${id}" needs a title and a summary.`);
         }
+        if (descriptor.payload !== undefined) validatePayload(id, descriptor.payload, seen);
         if (id === CORE_ID && descriptor.dependsOn.length > 0) {
             throw new CatalogError('CORE_HAS_DEPENDENCIES', '"core" cannot depend on anything.');
         }

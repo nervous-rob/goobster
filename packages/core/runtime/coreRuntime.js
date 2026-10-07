@@ -30,7 +30,9 @@
  * `runtime.report`, distinct from a failure and from `paused`. Bundled core
  * steps (automation, heartbeat, personal heartbeat) always start; the
  * branches that belong to a feature are switched off inside them
- * (`applyBundledFeatureGates`).
+ * (`applyBundledFeatureGates`). A feature step whose module is not in a
+ * reduced payload (documentation/packaging.md) reports
+ * `{ status: 'skipped', reason: 'absent', feature }` the same way.
  *
  * A **paused** instance (the state a restore leaves behind, see
  * documentation/backup_and_restore.md) starts only the event bus and
@@ -49,6 +51,7 @@
 const { toGateway } = require('../gateway');
 const { requireSurface, surfaceActive } = require('../features/gate');
 const { settle, contractBoundMs } = require('./lifecycle');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const FOLLOWUP_INTERVAL_MS = 60 * 1000;
 const IN_FLIGHT_POLL_MS = 100;
@@ -63,6 +66,8 @@ const ATTENTION_GENERATOR_TABLES = {
 };
 /** How often a paused process re-reads the instance pause flag. */
 const PAUSE_POLL_MS = 10 * 1000;
+/** A step returns this when its feature's module is not in the payload. */
+const ABSENT = Symbol('absent');
 
 /**
  * @typedef {Object} CoreRuntimeOptions
@@ -157,7 +162,11 @@ async function startCoreRuntime({
         }
         try {
             const outcome = await fn();
-            if (outcome === false) {
+            if (outcome === ABSENT) {
+                featureSkipped.push(name);
+                report.push({ name, status: 'skipped', reason: 'absent', feature });
+                logger.info?.(`[runtime] ${name} not started: feature ${feature} is not installed`);
+            } else if (outcome === false) {
                 skipped.push(name);
                 report.push({ name, status: 'skipped', reason: 'declined' });
             } else {
@@ -286,7 +295,8 @@ async function startCoreRuntime({
             }
         });
         await step('workshopPinMigration', async () => {
-            const migration = load('workshopPinMigration', () => require('../services/workshopPinMigration'));
+            const migration = load('workshopPinMigration', () => requireOptional('../services/workshopPinMigration', { feature: 'projects' }));
+            if (!migration) return ABSENT;
             const migrated = await migration.runOnStartup();
             if (migrated?.acquired && (migrated.migrated > 0 || migrated.linked > 0)) {
                 logger.info?.(`[runtime] Workshop: migrated ${migrated.migrated} pin(s) `
@@ -294,14 +304,16 @@ async function startCoreRuntime({
             }
         }, { feature: 'projects' });
         await step('observatoryResume', async () => {
-            const observatoryService = load('observatoryService', () => require('../services/observatoryService'));
+            const observatoryService = load('observatoryService', () => requireOptional('../services/observatoryService', { feature: 'projects' }));
+            if (!observatoryService) return ABSENT;
             const resumed = await observatoryService.autoResumeInterrupted({ client: clientOrGateway });
             if (resumed?.length > 0) {
                 logger.info?.(`[runtime] Observatory: auto-resumed ${resumed.length} interrupted job(s): ${resumed.join(', ')}`);
             }
         }, { feature: 'observatory' });
         await step('missionReconcile', async () => {
-            const missions = load('projectMissionService', () => require('../services/projectMissionService'));
+            const missions = load('projectMissionService', () => requireOptional('../services/projectMissionService', { feature: 'projects' }));
+            if (!missions) return ABSENT;
             // Another process may still be launching a child. Starting this
             // process is not evidence that every STARTING claim was abandoned;
             // use the same stale threshold as periodic reconciliation.
@@ -312,7 +324,8 @@ async function startCoreRuntime({
             }
         }, { feature: 'projects' });
         await step('projectTriggerCatchUp', async () => {
-            const triggers = load('projectTriggerService', () => require('../services/projectTriggerService'));
+            const triggers = load('projectTriggerService', () => requireOptional('../services/projectTriggerService', { feature: 'projects' }));
+            if (!triggers) return ABSENT;
             const caughtUp = await triggers.catchUpEventTriggers({ client: clientOrGateway });
             if (caughtUp > 0) {
                 logger.info?.(`[runtime] Observatory: caught up ${caughtUp} project trigger fire(s) missed during downtime`);
@@ -359,7 +372,8 @@ async function startCoreRuntime({
             inFlight.push(() => personal.ticking === true);
         });
         await step('spitballExpeditions', async () => {
-            const runner = load('spitballExpeditionRunner', () => require('../services/spitballExpeditionRunner'));
+            const runner = load('spitballExpeditionRunner', () => requireOptional('../services/spitballExpeditionRunner', { feature: 'expeditions' }));
+            if (!runner) return ABSENT;
             const kicked = await runner.start();
             if (kicked?.length > 0) {
                 logger.info?.(`[runtime] Spitball: picked up ${kicked.length} queued expedition(s): ${kicked.join(', ')}`);
@@ -412,7 +426,8 @@ async function startCoreRuntime({
                 inFlight.push(() => heartbeat.ticking === true);
             });
             await step('agentTracker', () => {
-                const AgentTrackerService = load('AgentTrackerService', () => require('../services/agentTrackerService'));
+                const AgentTrackerService = load('AgentTrackerService', () => requireOptional('../services/agentTrackerService', { feature: 'cursor' }));
+                if (!AgentTrackerService) return ABSENT;
                 const tracker = new AgentTrackerService(client);
                 tracker.start();
                 services.agentTracker = tracker;
@@ -429,7 +444,8 @@ async function startCoreRuntime({
                 inFlight.push(() => monologue.ticking === true);
             });
             await step('exchangeRiskEngine', () => {
-                const RiskEngine = load('RiskEngine', () => require('../services/exchange/riskEngine'));
+                const RiskEngine = load('RiskEngine', () => requireOptional('../services/exchange/riskEngine', { feature: 'exchange' }));
+                if (!RiskEngine) return ABSENT;
                 const engine = new RiskEngine(client);
                 engine.start();
                 services.exchangeRiskEngine = engine;

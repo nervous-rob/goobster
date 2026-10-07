@@ -10,7 +10,7 @@ const { startWebServers, closeWebServers } = require('./web/server');
 const { validateConfig } = require('@goobster/core/utils/configValidator');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 const { getConnection, closeConnection } = require('@goobster/core/db');
-const { parseTrackName } = require('@goobster/core/utils/musicUtils');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 const { surfaceActive } = require('@goobster/core/features/gate');
 const {
 	commandNameIndex,
@@ -286,7 +286,8 @@ async function updateGlobalPresence(client) {
 	}
 
         if (latestGuild && latestGuild.track) {
-                const trackInfo = parseTrackName(latestGuild.track.name);
+                const musicUtils = requireOptional('@goobster/core/utils/musicUtils', { feature: 'music' });
+                const trackInfo = musicUtils ? musicUtils.parseTrackName(latestGuild.track.name) : { artist: '', title: latestGuild.track.name };
                 // Stop rotating idle status while music is playing
                 if (idleStatusInterval) {
                         clearInterval(idleStatusInterval);

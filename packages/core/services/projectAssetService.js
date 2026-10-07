@@ -12,6 +12,7 @@
 
 const crypto = require('node:crypto');
 const db = require('../db');
+const dormantData = require('./dormantDataService');
 const observatoryConfig = require('../config/observatoryConfig');
 const { legalizeObservatoryGrants } = require('../utils/appletCapabilities');
 
@@ -683,51 +684,7 @@ class ProjectAssetService {
      * leftover owned asset rows.
      */
     async forgetUser(userId) {
-        const affected = await db.all(
-            `SELECT DISTINCT assetId FROM project_asset_versions WHERE userId = @userId`,
-            { userId }
-        );
-        const versions = (await db.run(
-            'DELETE FROM project_asset_versions WHERE userId = @userId',
-            { userId }
-        )).changes;
-        let emptied = 0;
-        for (const { assetId } of affected) {
-            const asset = await db.get(
-                'SELECT id, currentVersionId FROM project_assets WHERE id = @id',
-                { id: assetId }
-            );
-            if (!asset) continue;
-            const headStill = asset.currentVersionId
-                ? await db.get(
-                    'SELECT id FROM project_asset_versions WHERE id = @id',
-                    { id: asset.currentVersionId }
-                )
-                : null;
-            if (headStill) continue;
-            const latest = await db.get(
-                `SELECT id FROM project_asset_versions
-                 WHERE assetId = @assetId
-                 ORDER BY version DESC, id DESC LIMIT 1`,
-                { assetId }
-            );
-            if (latest) {
-                await db.run(
-                    `UPDATE project_assets
-                     SET currentVersionId = @versionId, revision = revision + 1, updatedAt = datetime('now')
-                     WHERE id = @id`,
-                    { versionId: latest.id, id: assetId }
-                );
-            } else {
-                await db.run('DELETE FROM project_assets WHERE id = @id', { id: assetId });
-                emptied += 1;
-            }
-        }
-        const leftover = (await db.run(
-            'DELETE FROM project_assets WHERE userId = @userId',
-            { userId }
-        )).changes;
-        return { assets: leftover + emptied, versions };
+        return dormantData.forgetProjectAssets(userId);
     }
 
     async countUser(userId) {

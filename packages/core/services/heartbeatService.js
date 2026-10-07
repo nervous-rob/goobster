@@ -5,7 +5,8 @@ const knowledgeGraphService = require('./knowledgeGraphService');
 const followupService = require('./followupService');
 const { resolveDisplayNames } = require('../utils/channelDigest');
 const { getProactiveMode, PROACTIVE_MODE } = require('../utils/guildSettings');
-const { ActivityType } = require('discord.js');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 
 // How often the heartbeat considers acting (per process tick)
 const TICK_INTERVAL_MS = 20 * 60 * 1000;
@@ -286,9 +287,10 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
      */
     async _agentProposalRepos(guildId) {
         try {
-            const cursorAgentService = require('./cursorAgentService');
-            if (!cursorAgentService.isConfigured()) return [];
-            const repoWatchService = require('./repoWatchService');
+            const cursorAgentService = requireOptional('./cursorAgentService', { feature: 'cursor' });
+            if (!cursorAgentService?.isConfigured()) return [];
+            const repoWatchService = requireOptional('./repoWatchService', { feature: 'github' });
+            if (!repoWatchService) return [];
             return (await repoWatchService.listWatches(guildId)).map(watch => watch.repo);
         } catch {
             return [];
@@ -304,7 +306,8 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
      */
     async _proposeAgent(guild, channel, decision) {
         try {
-            const repoWatchService = require('./repoWatchService');
+            const repoWatchService = requireOptional('./repoWatchService', { feature: 'github' });
+            if (!repoWatchService) return false;
             const integrationActionService = require('./integrationActionService');
             const integrationAudit = require('./integrationAudit');
 
@@ -363,7 +366,7 @@ Optionally include "mood": "<2-5 word mood reflecting the server vibe right now>
 
     _setPresence(text) {
         this.client.user.setPresence({
-            activities: [{ type: ActivityType.Custom, name: text, state: text }],
+            activities: [{ type: discord.ActivityType.Custom, name: text, state: text }],
             status: 'online'
         }).catch?.(() => {});
     }

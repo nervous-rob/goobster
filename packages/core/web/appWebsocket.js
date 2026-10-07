@@ -127,12 +127,14 @@ function attachWebAppWebSocket(server, ctx) {
         socket.on('close', () => { input.stop(); output.stop(); });
         socket.isAlive = true;
         socket.on('pong', () => { socket.isAlive = true; });
-        if (pathname === '/api/app/voice/live') {
-            ctx.voiceLive.handleConnection(socket, { userId: session.userId });
-            return;
-        }
-        if (pathname === '/api/app/studio/live') {
-            ctx.studioLive.handleConnection(socket, { userId: session.userId, userName: session.userName });
+        if (pathname === '/api/app/voice/live' || pathname === '/api/app/studio/live') {
+            const live = pathname === '/api/app/voice/live' ? ctx.voiceLive : ctx.studioLive;
+            if (!live) {
+                // This payload does not carry the feature's live service.
+                closeSocket(featureGate.CLOSE_POLICY, featureGate.FEATURE_UNAVAILABLE);
+                return;
+            }
+            live.handleConnection(socket, { userId: session.userId, userName: session.userName });
             return;
         }
         ctx.parlorLive.handleConnection(socket, {

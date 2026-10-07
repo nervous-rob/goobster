@@ -12,7 +12,14 @@
 
 const mcpConfig = require('../../config/mcpConfig');
 const mcpTokenService = require('../../services/mcpTokenService');
-const { describeServer } = require('../../mcp/tools');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
+
+/** The endpoint's own description, or the same shape off when the MCP server is not installed. */
+function describeServer() {
+    const tools = requireOptional('../../mcp/tools', { feature: 'mcp' });
+    if (tools) return tools.describeServer();
+    return { enabled: false, endpoint: mcpConfig.path, readOnly: true, tools: [], resources: true, installed: false };
+}
 
 function mountMcp(app, ctx, h) {
     const { requireAuth, mcpRoute } = h;

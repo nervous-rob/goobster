@@ -3,6 +3,8 @@
  * tool implementations call these so account identity stays consistent.
  */
 
+const requireOptional = require('../optionalModule').forModule(module);
+
 /**
  * Discord command modules wrapped as tools (playTrack, setNickname,
  * speakMessage). Core never imports app code, so the host app registers the
@@ -208,7 +210,8 @@ async function resolveGithubAccess(interactionContext, githubService, repo) {
     }
 
     if (guildId) {
-        const repoWatchService = require('../../services/repoWatchService');
+        const repoWatchService = requireOptional('../../services/repoWatchService', { feature: 'github' });
+        if (!repoWatchService) return { error: '❌ GitHub support is not installed on this server.' };
         if (!await repoWatchService.isRepoAllowed(guildId, parsed)) {
             return { error: `❌ ${parsed} isn't allowlisted in this server. An admin must run /github watch first.` };
         }

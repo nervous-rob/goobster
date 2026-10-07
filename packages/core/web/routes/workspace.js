@@ -4,6 +4,7 @@
  */
 
 const { LOOKUP_BATCH_DEFAULT } = require('../../services/mtgaCardService');
+const { sendUnavailable } = require('../featureGate');
 
 function mountWorkspace(app, ctx, h) {
     const {
@@ -11,6 +12,7 @@ function mountWorkspace(app, ctx, h) {
         appletRoute, integrationRoute
     } = h;
 
+    app.use('/api/app/exchange', (req, res, next) => (ctx.exchange ? next() : sendUnavailable(res, 'exchange')));
 
     app.get('/api/app/mtga/library', requireAuth, chatRoute(async (req) => ({
         folders: await ctx.mtga.listFolders(req.webUser.userId),

@@ -4,6 +4,7 @@
  * speaker, never to everyone who can read the shared transcript.
  */
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const correlation = require('./activityCorrelation');
 
 class ContextError extends Error {
@@ -156,7 +157,9 @@ async function ask({ userId, itemId, inProject = false }) {
     let conversation, kind = 'chat';
     if (inProject) {
         if (!project) throw new ContextError(404, 'NO_SUCH_PROJECT', 'This project is not available to your account.');
-        ({ conversation } = await require('./projectService').getProjectParlor({ userId, project: project.slug, owner: project.ownerId }));
+        const projects = requireOptional('./projectService', { feature: 'projects' });
+        if (!projects) throw new ContextError(404, 'NO_SUCH_PROJECT', 'This project is not available to your account.');
+        ({ conversation } = await projects.getProjectParlor({ userId, project: project.slug, owner: project.ownerId }));
         kind = 'project';
     } else {
         const existing = await db.get(

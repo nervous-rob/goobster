@@ -202,9 +202,49 @@ Work, in order:
    `sharp`) starts on Windows x64, macOS (arm64 and x64), Linux x64 and
    Linux arm64 in CI. Tests run against the reduced payload, not only the
    checkout.
+
+   **Status (P3.1, #327): proof in progress.** The recipe
+   (`scripts/package-runtime.js`), the in-payload smoke check
+   (`scripts/package-smoke.js`) and the CI matrix
+   (`.github/workflows/packaging-proof.yml`) exist. Proven locally on
+   Linux x64 only: the payload builds with no compiler, every prebuilt
+   binary loads (including `sqlite-vec`, with no fallback), and the
+   standalone API starts and stops cleanly from a relocated path with
+   spaces and non-ASCII characters. Linux arm64, Windows x64, macOS x64 and
+   macOS arm64 are **unverified** until the matrix has run on a runner of
+   each. Open findings that gate the release phase (B1 config roots,
+   B2 glibc floors, B3 sqlite-vec macOS floor, B4 VC++ redistributable,
+   B5 GPL declarations, B6 discord.js in the no-Discord path) are in
+   `documentation/packaging_proof.md`.
 2. Payload builder: resolves the selected features to files and exclusive
    dependencies (ffmpeg for Voice, the python venv for Music, the sandbox
    runner), builds the frontend with only the selected rooms.
+
+   **Status (P3.2, #328): built; reduced payloads proven on Linux x64
+   only.** These parts are done; `documentation/packaging.md` is the
+   reference:
+   - the signed release manifest (version 1) with an owner for every file
+     and dependency;
+   - `selectPayload` and the `--profile` / `--features` flags of
+     `scripts/package-runtime.js`;
+   - lazy seams (`requireOptional`, the `discord` accessor) so reduced
+     trees load;
+   - per-feature portal chunks with an unavailable state when one is
+     missing;
+   - `verifyPayload`, staging and atomic activation with rollback;
+   - Ed25519 signing with a labelled development mode;
+   - feature add/remove that never touches `data/`, `config.json`, logs,
+     cache or the manager store, and only audits system dependencies.
+
+   Finding B5 is closed at the source (`play-dl` is no longer declared, so
+   neither GPL package is installed anywhere; the manifest still reports and
+   excludes any unreferenced dependency) and B6 (`discord.js` is exclusive
+   to the Discord adapter) is closed for the payload. The `reduced` job in `.github/workflows/packaging-proof.yml`
+   builds minimal, voice and projects+sandbox payloads on `ubuntu-24.04`,
+   and runs routes, dormant-data and tamper probes against them. Reduced
+   payloads on the other four targets are unverified. Production signing
+   keys are #341. The wizard (#329) and the bootstrappers (#331) consume
+   the seams listed in `documentation/packaging.md`, "The manager seam".
 3. Wizard screens, each with an "about this" panel: mode (install,
    reconfigure, repair, uninstall); features with size, dependencies and
    cost; keys with links, live probes and restricted-permission writes to
@@ -267,7 +307,7 @@ Postgres instances the manager owns, as a separate labelled workflow.
 | S1 | Every `coreRuntime` step and every `index.js` startup side effect mapped to a feature. | Phase 1 | Done (#316). 20 steps (13 core, 7 single-owner), startup side effects, 26 listeners and 17 interaction families claimed; bundled core steps gate feature branches inside (#318). § S1. |
 | M1 | Mail's registration and account-recovery dependencies. | Phase 1 | Done (#316). Refuse disabling while `identity.nativeLogin && registration === 'open'`; warn when verified addresses exist otherwise; operator recovery link never needs mail. § M1. |
 | L1 | Long-running work (expeditions, sandbox, voice sessions) and its current interruption behaviour. | Phase 2 | Done (#325). Ten kinds of work, what SIGTERM did to each, where its durable state lives and the declared contract (`checkpoint`/`cancel`/`drain`/`none`) with its bound: `documentation/manager_lifecycle.md` § L1. |
-| N1 | Prebuild availability for each native module on each target, pinned to the bundled Node ABI. | Phase 3 | Open |
+| N1 | Prebuild availability for each native module on each target, pinned to the bundled Node ABI. | Phase 3 | Done (#327). Result in `documentation/packaging_proof.md`: Node 22.23.3 (ABI 127); every module has an upstream prebuild for all five targets, executed in CI on each; arm64 glibc 2.33 (B2) and macOS `sqlite-vec` minimum (B3) narrow the supported OS range. |
 
 ## Compatibility rules
 

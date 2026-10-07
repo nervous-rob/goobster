@@ -1,4 +1,5 @@
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const aiService = require('./aiService');
 const factsService = require('./factsService');
 const knowledgeGraphService = require('./knowledgeGraphService');
@@ -109,12 +110,12 @@ class MemoryConsolidationService {
             )).map(r => [r.authorName.toLowerCase(), r.authorId])
         );
 
-        const projectService = require('./projectService');
+        const projectService = requireOptional('./projectService', { feature: 'projects' });
         const destCache = new Map();
         const buckets = new Map();
         for (const mem of memories) {
             let dest = null;
-            if (mem.channelId) {
+            if (mem.channelId && projectService) {
                 if (destCache.has(mem.channelId)) {
                     dest = destCache.get(mem.channelId);
                 } else {

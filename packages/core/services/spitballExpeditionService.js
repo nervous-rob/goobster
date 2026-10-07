@@ -28,6 +28,7 @@ const db = require('../db');
 const logger = require('../utils/logger');
 const spitballConfig = require('../config/spitballConfig');
 const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const lensConfig = require('../config/spitballLensConfig');
 const domainEventBus = require('./domainEventBus');
 const { dmScopeId } = require('../utils/dmScope');
@@ -140,7 +141,8 @@ class SpitballExpeditionService {
             { id }
         );
         if (!row) throw new SpitballError(404, 'NOT_FOUND', 'No such project.');
-        const projectService = require('./projectService');
+        const projectService = requireOptional('./projectService', { feature: 'projects' });
+        if (!projectService) throw new SpitballError(404, 'NOT_FOUND', 'No such project.');
         try {
             return await projectService.resolveProjectForActor({
                 userId,
@@ -886,7 +888,7 @@ class SpitballExpeditionService {
                 edgesCreated: expedition.edgesCreated
             });
             try {
-                await require('./projectMissionService').onExpeditionSettled({
+                await requireOptional('./projectMissionService', { feature: 'projects' })?.onExpeditionSettled({
                     expeditionId: expedition.id,
                     status: 'COMPLETED'
                 });
@@ -931,7 +933,7 @@ class SpitballExpeditionService {
                 dedupeKey: `expedition:${expedition.id}:failed`
             });
             try {
-                await require('./projectMissionService').onExpeditionSettled({
+                await requireOptional('./projectMissionService', { feature: 'projects' })?.onExpeditionSettled({
                     expeditionId: expedition.id,
                     status: 'FAILED'
                 });
