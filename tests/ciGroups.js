@@ -82,7 +82,7 @@ const GROUPS = [
             'databaseRoutes',
             'backupOperations',
             'maintenanceCli',
-            'privilegedHelper', 'linuxService', 'bootstrapStage', 'bootstrapCli',
+            'privilegedHelper', 'linuxService', 'serviceKinds', 'bootstrapStage', 'bootstrapCli',
             'dockerDaemon', 'dockerPostgresKinds',
             'presenceService',
             'reportIntegrations',

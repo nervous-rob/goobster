@@ -72,7 +72,7 @@ function stepList(names) {
 function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), logger = console }) {
     const core = createInstallCore({ settings, fs, now, logger });
     const { deps } = core;
-    const serviceSteps = createServiceLifecycle({ core, settings, fs, now });
+    const serviceSteps = createServiceLifecycle({ core, settings, fs, now, kinds: core.serviceKinds });
     const isRoot = () => typeof process.geteuid === 'function' && process.geteuid() === 0;
     const stageLib = () => core.stage();
 
@@ -251,6 +251,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             probePort: deps.probePort,
             runtimeUser: parsed.runtimeUser,
             createRuntimeUser: parsed.createRuntimeUser,
+            accountCreatable: core.serviceAccountCreatable(),
             registerService: parsed.registerService,
             unitNames: parsed.registerService && !resumedRecord ? core.unitNames() : [],
             home: deps.home,
@@ -501,7 +502,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         const pre = await runPreflight({
             kind: 'install.reconfigure', roots, layout, settings, manifest, features: selected.filter(id => id !== 'core'), database: doc.database, env: core.env, fs,
-            probePort: deps.probePort, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
+            probePort: deps.probePort, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), accountCreatable: core.serviceAccountCreatable(), home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
         });
         const steps = stepList(RECONFIGURE_STEPS);
         const target = { layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), previousRoots: doc.roots };
@@ -641,7 +642,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         const pre = await runPreflight({
             kind: 'install.repair', roots, layout: doc.layout, settings, manifest, features: selected.filter(id => id !== 'core'), database: doc.database, env: core.env, fs,
-            probePort: deps.probePort, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
+            probePort: deps.probePort, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot(), accountCreatable: core.serviceAccountCreatable(), home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
         });
         const steps = stepList(REPAIR_STEPS);
         const target = { layout: doc.layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser, createRuntimeUser: Boolean(doc.runtimeUser) && isRoot() };

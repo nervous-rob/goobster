@@ -123,6 +123,7 @@ function portsFor({ layout, features, env, settings }) {
  * @param {Object|null} [params.manifest]  release manifest (install, reconfigure, repair)
  * @param {string[]} [params.features]     requested features
  * @param {{ engine: string, external: boolean }} [params.database]
+ * @param {boolean} [params.accountCreatable] the service kind creates POSIX accounts (`user.create`); false for a service manager that assigns the identity itself
  * @param {boolean} [params.managerListening] the manager's own port is in use by the caller
  * @param {string} [params.via] how the caller authenticated; every root of anyone but `local` (the command line) must sit under an allowed base
  */
@@ -142,6 +143,7 @@ async function runPreflight({
     abi = process.versions.modules,
     runtimeUser = null,
     createRuntimeUser = false,
+    accountCreatable = true,
     registerService = false,
     unitNames = [],
     euid = typeof process.geteuid === 'function' ? process.geteuid() : null,
@@ -211,9 +213,10 @@ async function runPreflight({
             } catch { }
         }
         const current = (() => { try { return os.userInfo().username; } catch { return null; } })();
-        if (runtimeUser && createRuntimeUser && current && runtimeUser !== current && euid !== 0) {
+        // The account rules of a service manager that creates POSIX accounts; one that assigns the identity itself has none to check here.
+        if (accountCreatable && runtimeUser && createRuntimeUser && current && runtimeUser !== current && euid !== 0) {
             push(block('CREATE_USER_NEEDS_ROOT', 'creating the runtime account needs the installer to run as root (for example with sudo); run it that way, or leave the dedicated account out'));
-        } else if (runtimeUser && current && runtimeUser !== current && euid !== 0 && !createRuntimeUser) {
+        } else if (accountCreatable && runtimeUser && current && runtimeUser !== current && euid !== 0 && !createRuntimeUser) {
             push(block('RUNTIME_USER_MISMATCH', 'the installer runs as another user than the runtime user; run it as that user, or as root (creating the account is the privileged user.create step)'));
         }
         if (POSIX && typeof process.getuid === 'function' && process.getuid() === 0 && !runtimeUser) {

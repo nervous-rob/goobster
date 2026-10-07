@@ -5,15 +5,21 @@
  *
  * Results (never thrown, except for an input the shape rules refuse):
  *   { status: 'done', outcome, detail, log }
- *   { status: 'fallback', reason, manual? }   systemd is absent or offline, no elevation is
- *                                             available, or the operator declined it:
- *                                             the install completes, the step is skipped
+ *   { status: 'fallback', reason, manual? }   the service manager is absent or offline, no
+ *                                             elevation is available, or the operator declined
+ *                                             it: the install completes, the step is skipped
  *   { status: 'failed', code, message, log }  the helper refused or failed; the step fails
  *
  * Before an elevated start the manager hashes the helper's own files and the
  * bundled Node against the payload's release manifest, so a root process
  * never runs code the manifest does not vouch for. From a source checkout
  * (no manifest beside the code) that check does not apply and is reported.
+ *
+ * The platform module (`./linux.js`, and its siblings for the other platforms)
+ * supplies what differs per platform: `elevation()` (how to start the helper
+ * with rights), `manualCommand()`, `serviceFacts()` (is the service manager
+ * there and running) and `HELPER_FILES` (the files the elevated process runs,
+ * for the manifest check). The defaults below are the Linux ones.
  */
 
 const nodeFs = require('node:fs');
@@ -28,6 +34,13 @@ const HELPER_FILES = Object.freeze([
     'app/apps/manager/privileged/linux.js',
     'app/apps/manager/platform/systemdUnit.js'
 ]);
+
+/** The service-manager facts a platform module reports before `service.register` is attempted. */
+function serviceFactsOf(implementation, { fs, env }) {
+    if (typeof implementation.serviceFacts === 'function') return implementation.serviceFacts({ fs, env });
+    if (typeof implementation.systemdFacts === 'function') return implementation.systemdFacts({ fs, env });
+    return { available: true };
+}
 const HELPER_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT = 256 * 1024;
 
@@ -48,9 +61,11 @@ function sha256File(file, fs = nodeFs) {
 }
 
 /**
+ * @param {Object} params
+ * @param {string[]} [params.files]  the helper's files, payload-relative (the platform module's HELPER_FILES)
  * @returns {{ checked: boolean, ok: boolean, reason?: string, files?: number }}
  */
-function verifyHelperFiles({ payloadRoot, nodePath, fs = nodeFs }) {
+function verifyHelperFiles({ payloadRoot, nodePath, fs = nodeFs, files = HELPER_FILES }) {
     const manifestFile = path.join(payloadRoot, 'payload-manifest.json');
     let manifest;
     try {
@@ -59,7 +74,7 @@ function verifyHelperFiles({ payloadRoot, nodePath, fs = nodeFs }) {
         return { checked: false, ok: true, reason: 'NO_MANIFEST' };
     }
     const byPath = new Map((manifest.files || []).map(entry => [entry.path, entry.sha256]));
-    const wanted = [...HELPER_FILES];
+    const wanted = [...files];
     const runtimeRel = path.relative(payloadRoot, nodePath).split(path.sep).join('/');
     if (!runtimeRel.startsWith('..') && byPath.has(runtimeRel)) wanted.push(runtimeRel);
     for (const rel of wanted) {
@@ -143,10 +158,9 @@ function allowedPathsOf(input) {
  */
 async function runHelper({ operation, input, implementation, env = process.env, fs = nodeFs, nodePath = process.execPath, helperPath = path.join(__dirname, 'helper.js'), requestDir = null, spawn, elevation = null, facts = null, timeoutMs }) {
     const checked = protocol.validateInput(operation, input);
-    const servicePlatform = operation.startsWith('service.');
-    if (servicePlatform && operation === 'service.register') {
-        const state = facts || (implementation.systemdFacts ? implementation.systemdFacts({ fs, env }) : { available: true });
-        if (!state.available) return { status: 'fallback', reason: state.reason || 'SYSTEMD_UNAVAILABLE', detail: { systemd: state.state || null } };
+    if (operation === 'service.register') {
+        const state = facts || serviceFactsOf(implementation, { fs, env });
+        if (!state.available) return { status: 'fallback', reason: state.reason || 'SERVICE_MANAGER_UNAVAILABLE', detail: { serviceManager: state.state || null, systemd: state.state || null } };
     }
     const plan = elevation || implementation.elevation({ env, fs });
     const request = protocol.buildRequest(operation, checked);
@@ -164,7 +178,7 @@ async function runHelper({ operation, input, implementation, env = process.env, 
     }
     if (plan.kind !== 'root') {
         const payloadRoot = path.resolve(__dirname, '..', '..', '..', '..');
-        const verdict = verifyHelperFiles({ payloadRoot, nodePath, fs });
+        const verdict = verifyHelperFiles({ payloadRoot, nodePath, fs, files: Array.isArray(implementation.HELPER_FILES) ? implementation.HELPER_FILES : HELPER_FILES });
         if (!verdict.ok) return { status: 'failed', code: 'HELPER_UNVERIFIED', message: 'The helper or the runtime does not match the release manifest; it was not started.', log: [] };
     }
     const argv = [...plan.prefix, nodePath, helperPath];
@@ -185,4 +199,4 @@ async function runHelper({ operation, input, implementation, env = process.env, 
     return { status: 'failed', code: 'HELPER_PROTOCOL', message: `The helper ended with status ${result.status === null ? 'signal' : result.status} and no reply.`, log: [], via: plan.kind };
 }
 
-module.exports = { HELPER_FILES, verifyHelperFiles, scrubLines, spawnHelper, runHelper, sha256File };
+module.exports = { HELPER_FILES, verifyHelperFiles, serviceFactsOf, scrubLines, spawnHelper, runHelper, sha256File };

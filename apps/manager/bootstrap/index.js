@@ -226,12 +226,13 @@ function describeOutcome(record, doc, { stdout, fs }) {
     const steps = Array.isArray(record.progress) ? record.progress : [];
     const step = steps.find(item => item.name === 'register-service');
     const roots = doc && doc.roots;
+    const serviceKinds = require('../platform/serviceKinds');
+    const kind = serviceKinds.forPlatform() || serviceKinds.forKind('systemd');
     if (step && step.status === 'done') {
-        stdout.write('The service "goobster" is registered and enabled. Check it with: systemctl status goobster\n');
+        stdout.write(`The service "${kind.serviceName}" is registered and enabled. Check it with: ${kind.statusCommand}\n`);
         stdout.write('It takes over the manager address within about ten seconds of this wizard closing.\n');
     } else if (roots) {
-        const { manualInstructions } = require('../platform/serviceLifecycle');
-        const manual = manualInstructions({ codeRoot: roots.code, mode: 'payload', nodePath: process.execPath, unitFile: path.join(roots.managerStore, 'goobster.service') });
+        const manual = kind.manualInstructions({ codeRoot: roots.code, mode: 'payload', nodePath: process.execPath, unitFile: path.join(roots.managerStore, kind.fallbackFileName) });
         stdout.write(`The installation is complete, but no service was registered${step && step.code ? ` (${step.code})` : ''}. Run it by hand:\n`);
         stdout.write(`  ${manual.foreground}\n`);
         stdout.write('To start it at boot, as an administrator:\n');
