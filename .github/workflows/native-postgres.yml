@@ -131,7 +131,8 @@ jobs:
       - name: Node 22 and the tools the helper and the journey need
         run: |
           if [ "${{ matrix.family }}" = rhel ]; then
-            docker exec proof bash -c 'dnf -y install curl tar gzip xz which iproute procps-ng sudo && curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - && dnf -y install nodejs'
+            # The image ships curl-minimal, which provides the curl binary; asking dnf for `curl` conflicts with it.
+            docker exec proof bash -c 'dnf -y install tar gzip xz which iproute procps-ng sudo && curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - && dnf -y install nodejs'
           else
             docker exec proof bash -c 'apt-get update -q && apt-get install -y -q curl ca-certificates gnupg iproute2 procps sudo postgresql-common && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y -q nodejs'
           fi
