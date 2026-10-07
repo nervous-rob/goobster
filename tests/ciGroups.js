@@ -51,6 +51,7 @@ const GROUPS = [
             'managerEngine',
             'managerSupervisor',
             'managerLifecycle',
+            'lifecycleAdapters',
             'commandDeployHash',
             'workInterruption',
             'presenceService',
