@@ -719,7 +719,7 @@ export function HostRoom() {
                 <nav className="view-tabs" aria-label="Host pages" data-testid="host-tabs">
                     {HOST_PAGES.map((entry) => (
                         entry.id === 'overview'
-                            ? <Link key={entry.id} to="/host" className={`view-tab${page === entry.id ? ' active' : ''}`} aria-current={page === entry.id ? 'page' : undefined} data-testid="host-tab-overview">{entry.name}</Link>
+                            ? <Link key={entry.id} to="/host" activeOptions={{ exact: true }} className={`view-tab${page === entry.id ? ' active' : ''}`} aria-current={page === entry.id ? 'page' : undefined} data-testid="host-tab-overview">{entry.name}</Link>
                             : <Link key={entry.id} to="/host/$page" params={{ page: entry.id }} className={`view-tab${page === entry.id ? ' active' : ''}`} aria-current={page === entry.id ? 'page' : undefined} data-testid={`host-tab-${entry.id}`}>{entry.name}</Link>
                     ))}
                 </nav>

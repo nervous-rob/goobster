@@ -90,10 +90,10 @@ export function FieldControl({ field, draft, setDraft, readOnly, probe }: {
     readOnly: string | null;
     probe?: ProbeTarget;
 }) {
-    const [replacing, setReplacing] = useState(false);
     const inputId = `host-field-${field.id}`;
     const typed = draft && draft.action === 'set' && typeof draft.value === 'string' && field.secret ? draft.value : '';
     const removing = draft?.action === 'remove';
+    const replacing = Boolean(field.secret) && draft?.action === 'set';
 
     return (
         <li className="list-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
@@ -118,7 +118,7 @@ export function FieldControl({ field, draft, setDraft, readOnly, probe }: {
                     </span>
                     {!readOnly && !replacing && !removing && (
                         <button type="button" className="btn small" data-testid="secret-replace"
-                            onClick={() => { setReplacing(true); setDraft({ action: 'set', value: '' }); }}>
+                            onClick={() => setDraft({ action: 'set', value: '' })}>
                             {field.present ? 'Replace' : 'Set'}
                         </button>
                     )}
@@ -136,7 +136,7 @@ export function FieldControl({ field, draft, setDraft, readOnly, probe }: {
                             <input id={inputId} className="input" type="password" autoComplete="off" spellCheck={false}
                                 aria-label={`New value for ${field.id}`} value={typed}
                                 onChange={(event) => setDraft({ action: 'set', value: event.target.value })} data-testid="secret-input" style={{ flex: 1, minWidth: 220 }} />
-                            <button type="button" className="btn small subtle" onClick={() => { setReplacing(false); setDraft(null); }}>Cancel</button>
+                            <button type="button" className="btn small subtle" onClick={() => setDraft(null)}>Cancel</button>
                         </>
                     )}
                 </div>
