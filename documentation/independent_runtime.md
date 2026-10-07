@@ -310,6 +310,19 @@ feature changes on `127.0.0.1:3400`. The portal reaches it through a short,
 signed operator assertion (`packages/core/web/managerBridge.js`). See
 [manager.md](manager.md).
 
+Started with `--supervise` (what `deploy/goobster.service` and
+`ecosystem.config.js` do), the manager also runs the mode's workers as its
+children: `lite` runs `apps/bot` (after `deploy-commands.js`), `standalone`
+runs `apps/api` in `standalone` mode, and `paired` runs `apps/bot` and
+`apps/api` in `paired` mode, plus `apps/sandbox` when the `sandbox` feature
+is active and its runner is local. It picks the layout with the same rule
+as above (`GOOBSTER_RUNTIME_MODE`, else the adapter switch), restarts a
+worker that exits `75` at once and a crashed one with backoff, and applies
+a feature change by a staged restart that promotes it only after every
+worker acknowledged the new revision. Under Docker the compose services are
+external workers instead: Docker restarts them, the manager only asks and
+verifies. See [manager_lifecycle.md](manager_lifecycle.md).
+
 ## Native people discovery
 
 An installation with no Discord has no shared servers to list people from,

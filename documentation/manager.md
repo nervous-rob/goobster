@@ -356,9 +356,12 @@ registered twice is a startup error, and the privileged names stay refused.
   `"sk-…[redacted]"` as a backstop). A fresh-install preset
   (`featureState.freshPreset()`) is a defaults decision for #324; today the
   first `features.set` builds on the legacy seed.
-- **#325 (supervisor, restart):** promoting `pendingActive` to `active` at
-  restart, the restart operation itself, and `GOOBSTER_MANAGER_ALLOWED_HOSTS`
-  style Host entries for container deployments.
+- **#325 (supervisor, restart):** done in `documentation/manager_lifecycle.md`:
+  `--supervise` runs the layout's workers, `lifecycle.apply` stages a
+  `features.set` (or a restart-requiring `config.set`) behind a countdown and
+  promotes `pendingActive` only after every worker acknowledged the new
+  revision; `GET /manager/api/status` gains `lifecycle`. Still open:
+  `GOOBSTER_MANAGER_ALLOWED_HOSTS` style Host entries for container deployments.
 - **#326 (operator pages):** call the manager from portal routes with
   `managerBridge.headers()` after `requireOperator`; the browser only talks
   to the core API.
