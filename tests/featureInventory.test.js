@@ -562,12 +562,9 @@ describe('data model and portal catalogs', () => {
         assertSameSet('tutorials', TUTORIALS.map((tutorial) => tutorial.id), Object.keys(tutorials), 'tutorials');
         for (const tutorial of TUTORIALS) {
             const claim = ownerOf('tutorial', tutorial.id);
-            if (tutorial.requires?.discord) {
-                expect({ tutorial: tutorial.id, discord: claim.alsoRequires.includes('discord') }).toEqual({ tutorial: tutorial.id, discord: true });
-            }
-            if (tutorial.requires?.feature === 'projects') {
-                expect({ tutorial: tutorial.id, owner: claim.owner }).toEqual({ tutorial: tutorial.id, owner: 'projects' });
-            }
+            const declared = [].concat(tutorial.requires?.feature || []).filter((id) => id !== 'core').sort();
+            const claimed = [claim.owner, ...claim.alsoRequires].filter((id) => id !== 'core').sort();
+            expect({ tutorial: tutorial.id, features: declared }).toEqual({ tutorial: tutorial.id, features: claimed });
         }
     });
 });

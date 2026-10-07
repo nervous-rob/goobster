@@ -22,6 +22,8 @@ const tutorials = require('@goobster/core/services/tutorialService');
 const privacy = require('@goobster/core/services/privacyService');
 const userSettings = require('@goobster/core/services/userSettingsService');
 const rooms = require('../apps/web/src/lib/rooms.cjs');
+const { features } = require('@goobster/core/features/featureState');
+const { FEATURE_IDS } = require('@goobster/core/features/catalog');
 
 const ACCOUNT = '700000000000000010';
 const OTHER = '700000000000000011';
@@ -56,6 +58,21 @@ const TEST_STEPS_CATALOG = {
 TEST_STEPS_CATALOG.TUTORIAL_BY_ID = Object.fromEntries(
     TEST_STEPS_CATALOG.TUTORIALS.map((t) => [t.id, t])
 );
+
+const STATE_FILE = '/virtual/data/features.json';
+function useAllFeaturesActive() {
+    const entries = {};
+    for (const id of FEATURE_IDS.filter((feature) => feature !== 'core')) entries[id] = { installed: true, active: true };
+    const files = new Map([[STATE_FILE, JSON.stringify({
+        version: 1, revision: 1, updatedAt: '2026-10-06 21:14:02', origin: 'operator', features: entries
+    })]]);
+    features._resetForTests({
+        fs: { existsSync: (p) => files.has(p), readFileSync: (p) => files.get(p), writeFileSync() {}, renameSync() {}, mkdirSync() {}, unlinkSync() {} },
+        filePath: STATE_FILE,
+        env: {},
+        config: {}
+    });
+}
 
 function versionOf(tutorialId) {
     return TEST_STEPS_CATALOG.TUTORIAL_BY_ID[tutorialId].version;
@@ -619,33 +636,40 @@ describe('research tutorial controls (#272)', () => {
 
 describe('Projects and Activity authored tours (#272)', () => {
     const workflows = require('@goobster/core/config/workflowTutorials');
+    // Project runs need the observatory feature; every feature is active here.
+    const on = caps({ features: { observatory: true } });
+    beforeAll(() => useAllFeaturesActive());
+    afterAll(() => features._resetForTests());
     test.each(workflows.map(t => [t.id, t]))('%s has safe previews and completes without domain writes', async (id, def) => {
         expect(def.version).toBe(id === 'activity.inbox' ? 3 : 2);
         expect(def.steps.length).toBeGreaterThanOrEqual(5);
         expect(new Set(def.steps.map(s => s.id)).size).toBe(def.steps.length);
         const tables = ['kg_nodes', 'observatory_projects', 'spitball_expeditions', 'usage_reservations', 'resource_events'];
         const before = await Promise.all(tables.map(t => db.get(`SELECT COUNT(*) AS n FROM ${t}`)));
-        const listed = await tutorials.listForAccount({ accountId: ACCOUNT, caps: caps() });
+        const listed = await tutorials.listForAccount({ accountId: ACCOUNT, caps: on });
         const entry = listed.catalog.find(t => t.id === id);
         expect(entry.launchable).toBe(true);
-        await event(id, 'start');
+        await event(id, 'start', { caps: on });
         for (const step of entry.steps) {
             expect(step.demo).toBe('workflow');
             expect(step.preview).toEqual({ before: expect.any(String), action: expect.any(String), after: expect.any(String) });
-            await event(id, 'complete_step', { stepId: step.id });
+            await event(id, 'complete_step', { stepId: step.id, caps: on });
         }
         expect((await tutorials.loadProgress(ACCOUNT, id, def.version)).status).toBe('completed');
         expect((await tutorials.loadProgress(OTHER, id, def.version)).status).toBe('not_started');
-        await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: id, caps: caps() });
+        await tutorials.resetOne({ accountId: ACCOUNT, tutorialId: id, caps: on });
         const after = await Promise.all(tables.map(t => db.get(`SELECT COUNT(*) AS n FROM ${t}`)));
         expect(after).toEqual(before);
     });
-    test('project tours respect organization capability while activity samples remain available', async () => {
+    test('project tours stay listed but unavailable when the capability snapshot switches the feature off', async () => {
         const disabled = caps({ features: { projects: false, observatory: false } });
         const list = await tutorials.listForAccount({ accountId: ACCOUNT, caps: disabled });
-        expect(list.catalog.some(t => t.id === 'projects.runs')).toBe(false);
-        expect(list.catalog.find(t => t.id === 'activity.scheduled').launchable).toBe(true);
-        await expect(event('projects.runs', 'start', { caps: disabled })).rejects.toMatchObject({ code: 'TUTORIAL_FORBIDDEN' });
+        const runs = list.catalog.find(t => t.id === 'projects.runs');
+        expect(runs).toMatchObject({ available: false, launchable: false, unavailable: { feature: 'projects', reasons: [{ code: 'DISABLED' }] } });
+        expect(list.catalog.find(t => t.id === 'activity.scheduled')).toMatchObject({ available: true, launchable: true });
+        await expect(event('projects.runs', 'start', { caps: disabled }))
+            .rejects.toMatchObject({ code: 'FEATURE_UNAVAILABLE', status: 404, details: { feature: 'projects' } });
+        expect((await tutorials.loadProgress(ACCOUNT, 'projects.runs', 2)).status).toBe('not_started');
     });
 });
 
