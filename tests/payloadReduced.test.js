@@ -111,6 +111,13 @@ function childEnv(dir, extra) {
     if (process.env.GOOBSTER_DB_URL) {
         env.GOOBSTER_DB_URL = process.env.GOOBSTER_DB_URL;
         env.GOOBSTER_PG_TEST_ISOLATE = '1';
+        // The child is a whole standalone runtime, not a suite worker. The
+        // isolation default of 3 pooled clients deadlocks it: each
+        // withSingletonLock holder pins one client while its body queries
+        // through the same pool, and the boot takes three such locks at
+        // once (self-docs seed, retention, exports). Give it the production
+        // size; the profiles boot one child at a time.
+        env.GOOBSTER_PG_POOL_SIZE = process.env.GOOBSTER_PG_POOL_SIZE || '10';
     } else {
         env.GOOBSTER_DB_PATH = path.join(dir, 'data', `${extra.GOOBSTER_PROBE_OUT ? 'probe' : 'api'}.sqlite`);
     }
@@ -127,7 +134,17 @@ function run(dir, script, env) {
     child.stdout.on('data', chunk => { output.text += chunk; });
     child.stderr.on('data', chunk => { output.text += chunk; });
     const exited = new Promise(resolve => child.on('exit', (code, signal) => resolve({ code, signal })));
-    return { child, output, exited };
+    /** SIGTERM, then SIGKILL if the graceful path hangs; always resolves to the exit record. */
+    const stop = async (graceMs = 10_000) => {
+        child.kill('SIGTERM');
+        const forced = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, graceMs);
+        try {
+            return await exited;
+        } finally {
+            clearTimeout(forced);
+        }
+    };
+    return { child, output, exited, stop };
 }
 
 async function waitForHealth(port, exited) {
@@ -306,9 +323,11 @@ describeLinux.each(PROFILES)('reduced payload: $name', (profile) => {
             boot.mcpDescription = await (await fetch(`http://127.0.0.1:${port}/api/app/mcp`, { headers: { cookie: boot.cookie } })).json();
             boot.statuses = {};
             for (const id of [...profile.selected, ...profile.excluded]) boot.statuses[id] = await call(port, boot.cookie, ROUTES[id]);
+        } catch (error) {
+            error.message += `\n--- api output (tail) ---\n${proc.output.text.slice(-4000)}`;
+            throw error;
         } finally {
-            proc.child.kill('SIGTERM');
-            boot.exit = await proc.exited;
+            boot.exit = await proc.stop();
         }
         boot.load = JSON.parse(fs.readFileSync(loadLog, 'utf8'));
     }, 90_000);

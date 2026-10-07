@@ -492,3 +492,14 @@ packages out.
 Not verified: reduced payloads on the other four targets (the #327 matrix
 there still builds the full payload only), and signing with a production
 key (#341).
+
+A note for anyone booting a whole runtime under `GOOBSTER_PG_TEST_ISOLATE=1`
+(as `tests/payloadReduced.test.js` does on the Postgres job; the smoke
+check's `--routes` mode boots on SQLite): the isolation default of three pooled Postgres clients is sized for a
+Jest worker, not a runtime. `db.withSingletonLock` pins one client for the
+life of the lock while its body queries through the same pool, and a
+standalone boot takes three such locks at once (self-docs seed, retention,
+account exports), so with a pool of three the boot can deadlock before it
+listens and then hang on SIGTERM. The spawned children set
+`GOOBSTER_PG_POOL_SIZE=10` (the production default); the same variable is
+the knob for any other harness.
