@@ -163,9 +163,14 @@ function create({ distro = 'debian', installed = [], clusters = [], flags = {}, 
         spawn(file, args, options) {
             return childProcess.spawn(file, args, { ...options, env: { ...options.env, GOOBSTER_HELPER_SANDBOX: dir } });
         },
-        /** `options` for `privileged.run` that route every operation through that spawn, with no elevation. */
+        /**
+         * `options` for `privileged.run` that route every operation through that spawn, with no elevation.
+         * The fake machine has no init system of its own, so `service.register` is told so (`facts`) rather
+         * than probing the host: on a runner where systemd is PID 1 the helper would otherwise be asked to
+         * register a service for the synthetic payload, which carries no runtime.
+         */
         privilegedOptions(extra = {}) {
-            return { platform: 'linux', elevation: { kind: 'root', prefix: [] }, spawn: api.spawn, helperPath: HELPER, ...extra };
+            return { platform: 'linux', elevation: { kind: 'root', prefix: [] }, spawn: api.spawn, helperPath: HELPER, facts: { available: false, state: null, reason: 'SYSTEMD_NOT_INIT' }, ...extra };
         },
         /** What `settings.nativeDeps` needs so the manager reads THIS machine, not the host running the tests. */
         nativeDeps(extra = {}) {
