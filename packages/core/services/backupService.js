@@ -332,6 +332,43 @@ function inspectBackup(dir) {
     return manifest;
 }
 
+/**
+ * Check that an archive is complete and describes the data it is supposed
+ * to: the manifest is valid, the database snapshot exists and is not empty,
+ * every file set the manifest lists is present with the recorded file
+ * count, the schema fingerprint is this code's, and (when `expectCounts`
+ * is given) every table count equals the live count. Reads the archive
+ * only; never writes. A backup that fails this is not a safety net.
+ * @param {string} dir
+ * @param {Object} [options]
+ * @param {Object<string, number>} [options.expectCounts] live table counts to compare with
+ * @param {string} [options.expectFingerprint] defaults to schemaFingerprint()
+ * @returns {{ manifest: Object, tables: number, files: number }}
+ * @throws {BackupError} code UNVERIFIED with `problems` (codes only, no paths or rows)
+ */
+function verifyBackup(dir, { expectCounts = null, expectFingerprint = schemaFingerprint() } = {}) {
+    const manifest = inspectBackup(dir);
+    const problems = [];
+    const snapshot = path.join(dir, manifest.database.file);
+    if (countFiles(snapshot).bytes === 0) problems.push('SNAPSHOT_EMPTY');
+    if (manifest.schemaFingerprint !== expectFingerprint) problems.push('FINGERPRINT_MISMATCH');
+    for (const entry of manifest.files || []) {
+        const target = path.join(dir, entry.archivePath);
+        if (!fs.existsSync(target)) problems.push(`FILES_MISSING:${entry.id}`);
+        else if (countFiles(target).files !== entry.files) problems.push(`FILES_COUNT:${entry.id}`);
+    }
+    if (expectCounts) {
+        for (const [table, actual] of Object.entries(expectCounts)) {
+            if (COUNT_EXEMPT.has(table)) continue;
+            if (manifest.tables?.[table] !== actual) problems.push(`COUNT_MISMATCH:${table}`);
+        }
+    }
+    if (problems.length > 0) {
+        throw new BackupError('UNVERIFIED', `The backup could not be verified (${problems.join(', ')}).`, { problems });
+    }
+    return { manifest, tables: Object.keys(manifest.tables || {}).length, files: (manifest.files || []).length };
+}
+
 // --- Restore --------------------------------------------------------------
 
 /**
@@ -670,6 +707,7 @@ async function restoreBackup({
 module.exports = {
     createBackup,
     inspectBackup,
+    verifyBackup,
     restoreBackup,
     interruptInFlightWork,
     schemaFingerprint,

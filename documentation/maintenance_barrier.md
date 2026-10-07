@@ -305,10 +305,18 @@ and a worker the manager did not start is matched by the pid in the file
   implies the other, and `maintenance.release` leaves the paused flag
   exactly as it was.
 - **Not restore.** The barrier supplies the state in which a restore may
-  run; it restores nothing. `backup`, `mutate` and `cutover` are hooks. See
+  run; it restores nothing. `backup`, `mutate` and `cutover` are phases an
+  operation advances through. See
   [backup_and_restore.md](backup_and_restore.md).
-- **Not reset or migration.** Phase 4.2 and the migration path use the same
-  barrier; this change only supplies the barrier and its tests.
+- **Not migration.** The migration path (Phase 4.3) uses the same barrier;
+  this change only supplies the barrier and its tests.
+- **Reset is the first operation built on it.** `data.reset`
+  ([data_reset.md](data_reset.md)) runs inside a barrier left at `quiesced`:
+  it drives `backup`, `mutate`, `verify` and `cutover` itself, never releases
+  the barrier, and is refused unless the barrier is held with its fence and
+  every writer acknowledged. `maintenance.release` with `via: 'local'` is the
+  CLI's `goobster-manager release`, including the forced release a reset that
+  stopped after `mutate` began needs (`--force --acknowledge-mutation`).
 - **Not a lock on the manager.** The manager keeps operating (status,
   journal, lifecycle reads, `maintenance.release`); only application
   writers are fenced.

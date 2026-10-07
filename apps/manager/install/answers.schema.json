@@ -8,7 +8,8 @@
         { "$ref": "#/definitions/adopt" },
         { "$ref": "#/definitions/reconfigure" },
         { "$ref": "#/definitions/repair" },
-        { "$ref": "#/definitions/uninstall" }
+        { "$ref": "#/definitions/uninstall" },
+        { "$ref": "#/definitions/reset" }
     ],
     "definitions": {
         "absolutePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
@@ -121,6 +122,28 @@
                 "keepData": { "type": "boolean" },
                 "confirm": { "type": "string", "minLength": 1, "maxLength": 64 },
                 "acknowledgeUnknownServices": { "type": "boolean" }
+            }
+        },
+        "reset": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "goobster-manager reset: empty the installation's data (documentation/data_reset.md). backup.passphrase is read from this file or the hidden prompt, never the command line. confirm is the installation id (<installationId>:<feature> for a purge); --confirm on the command line does the same.",
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "reset" },
+                "scope": { "enum": ["instance", "feature"] },
+                "feature": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]{0,31}$" },
+                "backup": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "dir": { "$ref": "#/definitions/absolutePath" },
+                        "passphrase": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                        "skipConfig": { "type": "boolean" }
+                    }
+                },
+                "confirm": { "type": "string", "minLength": 1, "maxLength": 96 },
+                "timeoutSeconds": { "type": "integer" }
             }
         }
     }

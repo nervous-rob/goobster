@@ -318,6 +318,8 @@ const GROUPS = [
             'memoryPrivacy',
             'privacyService',
             'accountExport',
+            'dataReset',
+            'resetInventory',
             'sandboxConfig',
             'sandboxPackages',
             'sandboxPython',

@@ -33,7 +33,8 @@ const ACTIONS = new Set([
     'manager.config.set', 'manager.defaults.set',
     'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
-    'manager.maintenance.enter', 'manager.maintenance.release'
+    'manager.maintenance.enter', 'manager.maintenance.release',
+    'manager.data.reset'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */
