@@ -218,6 +218,132 @@ function computeDeployHash({ clientId, guildIds, guildCommands, globalCommands, 
     return crypto.createHash('sha256').update(payload).digest('hex');
 }
 
+const DEPLOY_STATE_VERSION = 1;
+const DEPLOY_STATE_FILE = 'command-deploy.json';
+const LEGACY_DEPLOY_HASH_FILE = '.command-deploy-hash';
+
+/**
+ * One bulk overwrite per target: each guild, then the global set. The key is
+ * the actual scope (application id plus guild id, or global), so a guild
+ * list change deploys the new guild and nothing else.
+ */
+function deployTargets({ clientId, guildIds = [], guildCommands, globalCommands, activeFeatures = activeFeatureIds() }) {
+    const hash = (scope, commands) => crypto.createHash('sha256')
+        .update(JSON.stringify({ scope, commands, activeFeatures }))
+        .digest('hex');
+    const targets = [...new Set((guildIds || []).map(String))].map(guildId => ({
+        key: `guild:${clientId}:${guildId}`,
+        scope: 'guild',
+        guildId,
+        commands: guildCommands,
+        hash: hash(`guild:${clientId}:${guildId}`, guildCommands)
+    }));
+    targets.push({
+        key: `global:${clientId}`,
+        scope: 'global',
+        guildId: null,
+        commands: globalCommands,
+        hash: hash(`global:${clientId}`, globalCommands)
+    });
+    return targets;
+}
+
+function readDeployState(file, fsImpl = fs) {
+    try {
+        const doc = JSON.parse(fsImpl.readFileSync(file, 'utf8'));
+        if (doc && doc.version === DEPLOY_STATE_VERSION && doc.targets && typeof doc.targets === 'object' && !Array.isArray(doc.targets)) {
+            return { version: DEPLOY_STATE_VERSION, targets: { ...doc.targets } };
+        }
+    } catch { /* absent or unreadable: every target deploys */ }
+    return null;
+}
+
+function writeDeployState(file, state, fsImpl = fs) {
+    fsImpl.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fsImpl.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    fsImpl.renameSync(tmp, file);
+}
+
+/**
+ * Deploy the slash commands whose target hash differs from the
+ * acknowledged one in `<dataDir>/command-deploy.json`. A hash is stored only
+ * after Discord accepted that target's overwrite, so a failed or
+ * rate-limited target is retried on the next start while the others stay
+ * skipped. The legacy single-hash file (`.command-deploy-hash`) counts as
+ * an acknowledgement of every target when it matches `legacyHash`.
+ * Commands that no longer exist are answered by refuseUnavailableCommand.
+ * @param {Object} params
+ * @param {{ get: Function, put: Function }} params.rest
+ * @param {{ applicationGuildCommands: Function, applicationCommands: Function }} params.routes
+ * @returns {Promise<{ deployed: string[], skipped: string[], failed: Array<{ key: string, error: Error }> }>}
+ */
+async function deployCommandsIfChanged({
+    rest,
+    routes,
+    clientId,
+    guildIds,
+    guildCommands,
+    globalCommands,
+    activeFeatures = activeFeatureIds(),
+    dataDir,
+    legacyHash = null,
+    force = false,
+    fs: fsImpl = fs,
+    log = () => {}
+}) {
+    const file = path.join(dataDir, DEPLOY_STATE_FILE);
+    const legacyFile = path.join(dataDir, LEGACY_DEPLOY_HASH_FILE);
+    const targets = deployTargets({ clientId, guildIds, guildCommands, globalCommands, activeFeatures });
+    let state = readDeployState(file, fsImpl);
+    if (!state) {
+        state = { version: DEPLOY_STATE_VERSION, targets: {} };
+        let legacy = null;
+        try { legacy = fsImpl.readFileSync(legacyFile, 'utf8').trim(); } catch { }
+        if (legacy && legacyHash && legacy === legacyHash) {
+            for (const target of targets) state.targets[target.key] = { hash: target.hash };
+            writeDeployState(file, state, fsImpl);
+        }
+    }
+    const scoped = new Set(targets.map(target => target.key));
+    for (const key of Object.keys(state.targets)) {
+        if (!scoped.has(key) && key.split(':')[1] === String(clientId)) delete state.targets[key];
+    }
+
+    const result = { deployed: [], skipped: [], failed: [] };
+    const record = (target) => {
+        state.targets[target.key] = { hash: target.hash, at: new Date().toISOString() };
+        writeDeployState(file, state, fsImpl);
+    };
+    await Promise.all(targets.map(async (target) => {
+        if (!force && state.targets[target.key]?.hash === target.hash) {
+            result.skipped.push(target.key);
+            return;
+        }
+        try {
+            if (target.scope === 'guild') {
+                log(`Deploying commands to guild ${target.guildId}...`);
+                const data = await rest.put(routes.applicationGuildCommands(clientId, target.guildId), { body: target.commands });
+                log(`Successfully reloaded ${data?.length ?? 0} commands for guild ${target.guildId}`);
+            } else {
+                log('Deploying global (DM-enabled) commands...');
+                const existing = await rest.get(routes.applicationCommands(clientId));
+                const body = mergeEntryPointCommands(existing, target.commands);
+                if (body.length > target.commands.length) {
+                    log(`Preserving ${body.length - target.commands.length} Entry Point command(s)`);
+                }
+                const data = await rest.put(routes.applicationCommands(clientId), { body });
+                log(`Successfully reloaded ${data?.length ?? 0} global commands`);
+            }
+            record(target);
+            result.deployed.push(target.key);
+        } catch (error) {
+            result.failed.push({ key: target.key, error });
+        }
+    }));
+    return result;
+}
+
 /**
  * Bulk-overwriting global commands may not remove the app's Entry Point
  * command (API error 50240): carry any existing Entry Point commands
@@ -303,6 +429,11 @@ module.exports = {
     commandNameIndex,
     activeFeatureIds,
     computeDeployHash,
+    DEPLOY_STATE_FILE,
+    LEGACY_DEPLOY_HASH_FILE,
+    deployTargets,
+    readDeployState,
+    deployCommandsIfChanged,
     collectCommandPayloads,
     mergeEntryPointCommands,
     validateGlobalCommandPayload
