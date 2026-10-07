@@ -441,6 +441,16 @@ the smoke check `config.relocatable` turned from `known-gap` into `pass`.
 The smoke script reports this as `known-gap`, not as a pass, and the
 verdict stays `PASS_WITH_KNOWN_GAPS` until it is closed.
 
+*Status:* a fix is open as its own prerequisite PR against `main`
+([#364](https://github.com/nervous-rob/goobster/pull/364)): a shared
+loader `packages/core/config/configJson.js` (`load()`, `configJsonPath()`,
+`ConfigJsonError`) replaces every hard-coded `require` of `config.json`
+(39 sites by the time of the fix), the four affected tests mock the loader
+instead of the file, and `configuration.md` documents `GOOBSTER_CONFIG_PATH`.
+Once #364 merges, `config.relocatable` turns into `pass` on its own (the
+probe is empirical) and the matrix verdict becomes plain `PASS` for every
+target that has no other known gap.
+
 ### B2
 
 **glibc baselines: x64 2.29, arm64 2.33.** The `sodium-native` linux-arm64
