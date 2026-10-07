@@ -1,4 +1,5 @@
 ---
+feature: expeditions
 title: Research brief
 kind: guide
 summary: A private brief written once from an Expedition's stored evidence - immutable generated text, a separate edit overlay, the owner's four-part review, explicit acceptance and use, Markdown export, and measurement that never invents a cost per accepted brief.

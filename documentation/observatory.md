@@ -1,3 +1,7 @@
+---
+feature: projects
+---
+
 # The Observatory
 
 The Observatory **is** the [Projects](projects.md) feature: named per-user

@@ -1,3 +1,7 @@
+---
+feature: expeditions
+---
+
 # Spitball and Spitball Expeditions
 
 **Spitball** is the user-facing name for Goobster's knowledge system — what

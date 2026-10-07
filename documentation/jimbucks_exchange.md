@@ -1,3 +1,7 @@
+---
+feature: economy
+---
+
 # The Jimbucks Exchange
 
 Margin, short selling, options (long AND written, including same-day index

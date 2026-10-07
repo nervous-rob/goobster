@@ -1,3 +1,7 @@
+---
+feature: projects
+---
+
 # Projects
 
 A **Project** is the per-user aggregate for one piece of work: a durable
