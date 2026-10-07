@@ -441,3 +441,42 @@ last apply and its downtime, and the recovery state.
   were not executed on those systems for this issue.
 - The legacy `auto-update.sh` timer is not removed; it stays for installs
   the manager does not own.
+
+## How this was verified
+
+- **Automated, SQLite and Postgres where a database opens:**
+  `tests/updateCheck.test.js` (policy, the index and its codes, no update,
+  blocked, the install-question), `tests/updateStage.test.js` (a failed or
+  tampered download, disk shortage, what is staged and what is kept),
+  `tests/updateApply.test.js` (the barrier and the backup, a concurrent
+  maintenance, an interrupted activation, the window, a failed health check and
+  the rollback), `tests/updateHandoff.test.js` (the exit-76 handoff, the crash
+  matrix, the watchdog, recovery and its decisions),
+  `tests/updateRoutes.test.js` and `tests/updateHostRoutes.test.js` (the manager
+  routes, the portal proxy and its audit rows without a source address),
+  `tests/updateService.test.js` (the template hash and the registration), and the
+  install, adoption and CLI specs that carry the `update` answer. The portal
+  journey is `e2e/update.spec.js` (Playwright, a directory source, a real
+  manager and a real standalone worker).
+- **A real Linux x64 run** (`proof-342.log` in the issue): a real minimal
+  payload (`scripts/package-runtime.js --profile minimal`) installed with the
+  manager CLI into a custom layout with a secret in `config.json`, the manager
+  under `--supervise` in a loop that restarts it on exit 76, and four releases
+  derived from it and signed with a throwaway key. A healthy update completed
+  with a downtime (quiesce to release) of **3.7 s**, with a probe of
+  `/health` seeing a failure run of at most 0.4 s; the corrupted archive was
+  refused at stage with `ARTIFACT_DIGEST_MISMATCH` and nothing applied; a release
+  whose workers exit at start was rolled back automatically (6.2 s, two
+  restarts of the manager); a schema-changing release that passed `/health`
+  and then failed stayed in `recovery` with the barrier held and the previous
+  release not put back until `update recovery --decision restore --yes`, which
+  restored the pre-update backup (the schema the failed release had applied was
+  gone, the earlier rows were back) and the previous release. The secret,
+  `features.json`, `goobster.env` and the layout were byte-identical before and
+  after every one of them, and the secret appears in no log, state file or audit
+  row.
+- **Not executed:** the Windows (WinSW) and macOS (launchd) handoff; a
+  systemd-registered service (the test VM has no systemd, so the proof ran the
+  restart loop); a `github-release` source against github.com (the source is
+  tested through an injected fetch); an update with optional features
+  installed (the proof payload is the minimal profile).

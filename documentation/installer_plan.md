@@ -563,7 +563,48 @@ is an `UNSIGNED DEVELOPMENT BUILD`. Proven on Linux x64 by Jest
 `releaseManagerTrust.test.js`, `releaseWorkflow.test.js`) and a local run
 against a real payload; the Windows and macOS signing steps and the arm64,
 macOS and Windows jobs are written and structurally tested but have not run.
-Downloading and applying an update is #342.
+
+**Status (P5.2, #342): staged manager updates with a health-checked apply and a
+schema-gated rollback are built.** `documentation/manager_update.md` is the
+reference. The installation record carries an explicit `update` policy
+(`channel`, `mode` of `off`, `check`, `download` or `apply`, an optional
+window and a source); it is `off` until somebody chooses, the setup wizard and
+the adoption flow ask once, and `apply` is honoured only while the manager is
+the updater, so an adopted Pi keeps its `auto-update.sh` timer until the
+adoption turns it off through `updater.disable`. `update.check`,
+`update.stage`, `update.apply`, `update.policy` and `update.recover` run in the
+step ledger; the index is verified under the production policy with the
+verifier the payload now carries, the artifact against the size and SHA-256 it
+names, and a corrupted download is deleted and nothing is applied. Apply runs
+inside the maintenance barrier (preflight, a verified backup, quiesce,
+activate, verify with a restart, `/health`, the revision acknowledgement and
+the running release id, cutover, release), and the downtime is the span from
+quiesce to release. The manager's own code changes through an OS-supervised
+handoff: it leaves with exit code 76 after a durable `handoff.json` and a
+`watchdog.json`, the service manager restarts it from the new `current`, and
+the new manager finishes the update; the crash matrix is documented. The
+schema fingerprint (SHA-256 of `schema.sql` and the ordered
+`COLUMN_MIGRATIONS`) decides the rollback: a failed update that cannot have
+changed the database is put back automatically, and a schema-changing update
+that failed after a worker got past `/health` stays in `recovery` with the
+barrier held until the operator chooses to restore the pre-update backup or
+retry. `config.json`, `features.json` and the data roots are never touched,
+and the service registration is re-rendered only when its template hash
+changed. The portal Host card has an Updates panel and the CLI has
+`goobster-manager update`. Proven on Linux x64 by Jest
+(`tests/updateCheck.test.js`, `updateStage.test.js`, `updateApply.test.js`,
+`updateHandoff.test.js`, `updateRoutes.test.js`, `updateHostRoutes.test.js`,
+`updateService.test.js`), the provider-free Playwright journey
+`e2e/update.spec.js`, and a local proof with a real minimal payload, real
+workers and a restart loop standing in for the OS supervisor: a healthy
+1.0.0 to 1.1.0 update through the exit-76 handoff (downtime 3.7 s, secrets,
+layout, features and application data identical afterwards), a corrupted
+archive refused at stage, an automatic rollback when the new workers die at
+start, and a schema-changing release that failed after `/health` left in
+`recovery` and restored from the backup. The Windows (WinSW) and macOS
+(launchd) handoffs are written and unit-tested through the supervisor seam but
+have not run, and the proof ran with no registered service (no systemd in the
+test VM), so the service-registration refresh is proven by Jest only.
 
 ## Audits before implementation
 
