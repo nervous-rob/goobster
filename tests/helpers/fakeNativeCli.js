@@ -166,6 +166,16 @@ switch (program) {
             cluster.online = true;
         } else if (action === 'stop') {
             cluster.online = false;
+            // With `stopChangesTree`, behave like a real shutdown: the postmaster drops its pid
+            // file and the shutdown checkpoint flushes the statistics snapshot and WAL, by more
+            // than the relocation's size tolerance.
+            if (flag('stopChangesTree')) {
+                try {
+                    fs.rmSync(path.join(cluster.dataDirectory, 'postmaster.pid'), { force: true });
+                    fs.mkdirSync(path.join(cluster.dataDirectory, 'pg_stat'), { recursive: true });
+                    fs.writeFileSync(path.join(cluster.dataDirectory, 'pg_stat', 'pgstat.stat'), Buffer.alloc(96 * 1024, 1));
+                } catch { }
+            }
         } else if (action === 'restart') {
             cluster.online = true;
         }

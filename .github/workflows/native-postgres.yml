@@ -12,7 +12,7 @@ name: Native Postgres
 #
 # Hosts: ubuntu-24.04 (and ubuntu-24.04-arm when the repository has arm64
 # runners) are the systemd case. Containers: debian:12 is the Debian family
-# without systemd (pg_ctlcluster), rockylinux:9-init the Red Hat family with
+# without systemd (pg_ctlcluster), rockylinux/rockylinux:9-ubi-init the Red Hat family with
 # systemd as PID 1, which the helper requires there.
 # Documentation: documentation/native_postgres.md.
 
@@ -116,7 +116,7 @@ jobs:
       matrix:
         include:
           - { image: 'debian:12', family: debian }
-          - { image: 'rockylinux/rockylinux:9-init', family: rhel }
+          - { image: 'rockylinux/rockylinux:9-ubi-init', family: rhel }
     steps:
       - uses: actions/checkout@v5
       - name: Start the container (systemd is PID 1 for the Red Hat family)

@@ -1301,6 +1301,10 @@ function nativeOperations(kit) {
             if (wasOnline) stopCluster(d, log, input.clusterName, resources);
             const before = controlData(d, log, source);
             if (before.state && !/shut down/i.test(before.state)) throw refuse('CLUSTER_NOT_STOPPED', 'The cluster did not shut down cleanly; nothing was copied.');
+            // The shutdown checkpoint, the statistics flush and the dropped pid file change the
+            // tree, so the size the copy must match is the stopped cluster's, not the live one's
+            // measured above for the room check.
+            const stopped = wasOnline ? treeBytes(log, source) : bytes;
             if (partial) {
                 for (const entry of fs.readdirSync(input.target)) fs.rmSync(path.join(input.target, entry), { recursive: true, force: true });
                 log.push('an earlier partial copy of this relocation was cleared');
@@ -1309,7 +1313,7 @@ function nativeOperations(kit) {
             writeOwned(resumeMarker, `${input.installationId}\n`, 0o600, account);
             run(log, 'cp', ['-a', '--', `${source}/.`, `${input.target}/`], { timeoutMs: deps.copyTimeoutMs || NATIVE.installTimeoutMs });
             const copied = treeBytes(log, input.target);
-            const extra = copied - bytes;
+            const extra = copied - stopped;
             if (Math.abs(extra) > 64 * 1024) throw refuse('COPY_VERIFY_FAILED', 'The copy is not the size of the original; the original was not changed.');
             const after = controlData(d, log, input.target);
             if (!after.identifier || after.identifier !== before.identifier || after.checkpoint !== before.checkpoint) throw refuse('COPY_VERIFY_FAILED', 'The copy is not the same database cluster as the original; the original was not changed.');

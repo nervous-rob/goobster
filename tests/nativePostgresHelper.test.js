@@ -424,7 +424,11 @@ describe('postgres.cluster.relocate', () => {
 
     test('copies to the target, switches the cluster over and keeps the original directory', async () => {
         const { m, target } = await ready();
+        // The real shutdown rewrites the tree (checkpoint, stats flush, pid file); the copy is
+        // measured against the stopped cluster, not the live one.
+        m.fake.flag('stopChangesTree');
         const result = await m.run('postgres.cluster.relocate', { ...m.base, target });
+        m.fake.flag('stopChangesTree', false);
         expect(result.status).toBe('done');
         expect(result.detail).toEqual(expect.objectContaining({ switched: true, kept: true }));
         expect(m.fake.state().clusters.find(item => item.name === 'goobster')).toEqual(expect.objectContaining({ dataDirectory: target, online: true }));
