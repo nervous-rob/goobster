@@ -83,7 +83,27 @@ function getPool() {
         options: schemaName ? `-c search_path="${schemaName}",public` : undefined
     });
     pool.on('error', error => console.error('[DB] Postgres pool error:', error.message));
+    pool.on('acquire', applyReadOnly);
     return pool;
+}
+
+/** The maintenance fence (runtime/maintenance.js): sessions refuse writes at the engine level. */
+let readOnly = false;
+
+/**
+ * Runs for every client the pool hands out, before the caller's first
+ * query, so a pooled connection that was idle when the fence changed is
+ * switched on its next use.
+ */
+function applyReadOnly(client) {
+    if ((client.__goobsterReadOnly || false) === readOnly) return;
+    client.__goobsterReadOnly = readOnly;
+    client.query(`SET default_transaction_read_only = ${readOnly ? 'on' : 'off'}`)
+        .catch(() => { client.__goobsterReadOnly = undefined; });
+}
+
+function setReadOnly(on) {
+    readOnly = Boolean(on);
 }
 
 /**
@@ -321,6 +341,11 @@ function ensureReady() {
         const p = getPool();
         const client = await withConnectRetry(() => p.connect());
         try {
+            // The schema apply is idempotent bootstrap, not a write the fence is about.
+            if (readOnly) {
+                await client.query('SET default_transaction_read_only = off');
+                client.__goobsterReadOnly = false;
+            }
             if (schemaName) {
                 await client.query(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
                 await client.query(`SET search_path TO "${schemaName}", public`);
@@ -668,6 +693,15 @@ async function listTables({ includeDerived = false } = {}) {
     return result.rows.map(row => row.name);
 }
 
+/**
+ * Postgres reclaims deleted rows through autovacuum on the server's own
+ * schedule; reset never runs VACUUM against a server it shares.
+ * @returns {Promise<{ compacted: boolean }>}
+ */
+async function compactStorage() {
+    return { compacted: false };
+}
+
 module.exports = {
     engine: 'postgres',
     getDb,
@@ -678,8 +712,10 @@ module.exports = {
     insert,
     transaction,
     closeConnection,
+    setReadOnly,
     describeStorage,
     listTables,
+    compactStorage,
     rawQuery,
     listenNotifications,
     notificationChannel,

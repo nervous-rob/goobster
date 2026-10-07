@@ -308,11 +308,62 @@ Work:
 1. Maintenance state: operation lock honoured by every application
    process, durable progress, cancellation rules, recovery after
    interruption.
+
+   **Status (P4.1, #334): built.** The maintenance barrier is a
+   manager-owned state in `<store>/maintenance.json` with a persisted
+   monotonic fencing token, the phases `plan, preflight, backup, quiesce,
+   mutate, verify, cutover, release`, a cancel-safe boundary (through
+   `quiesce`) and an irreversible boundary (`mutate` begun). Kinds
+   `maintenance.enter` and `maintenance.release` (audit actions
+   `manager.maintenance.enter` and `manager.maintenance.release`) refuse
+   unless every registered writer acknowledged the fence; an unknown,
+   unacknowledging or unfenceable writer blocks entry. Each process closes
+   admission (503 `MAINTENANCE` on mutating routes and webhooks, Discord
+   refusals, refused WebSocket upgrades, a stopped runtime), drains, then
+   sets a database fence that the facade and both engines enforce. A barrier
+   that is up at manager start is honoured, never auto-resumed. Plan,
+   preflight, quiesce, verify-of-quiescence and release are implemented;
+   `backup`, `mutate` and `cutover` are hooks for P4.2 to P4.4. Maintenance
+   is not the paused flag. The writer inventory, state machine and recovery
+   rules are in [maintenance_barrier.md](maintenance_barrier.md).
 2. Reset rewritten for the whole current schema on both engines, with
    explicit scope (everything, or per feature's dormant data) and typed
    confirmation.
+
+   **Status (P4.2, #335): built.** The manager kind `data.reset` (audit
+   action `manager.data.reset`) empties either every application table, the
+   derived vector index and every owned file set (`instance`), or one
+   non-active feature's tables, shared-table rows and files (`feature`),
+   from an inventory derived from `schema.sql` and the feature inventory
+   (`packages/core/db/resetInventory.js`, `reset.js`). It runs inside the
+   maintenance barrier after a verified backup (`backupService.verifyBackup`)
+   and a typed confirmation, keeps `operator_audit` and `data_migrations`,
+   recreates `instance_state` (paused) and `self_docs`, and does not release
+   the barrier. `goobster-manager reset` and `release` are the CLI;
+   `GET /manager/api/reset/plan` is the preview. `scripts/initDb.js` no longer
+   has a drop list and `--reset` is refused. Portal pages are #337. See
+   [data_reset.md](data_reset.md).
 3. Migrator: true preflight, required verified backup, row-count
    verification, rollback point.
+
+   **Status (P4.3, #336): built.** `db.migrate.preflight` (read only: reads
+   the source and the target, writes nothing, bootstraps nothing),
+   `db.migrate` (inside the maintenance barrier: verified backup, source
+   snapshot hash, schema apply, per-table resumable copy, verification of
+   counts, foreign keys, identities, five relationship checks, sampled
+   content and attachment references, a start of the application on the
+   target under the fence, then the connection switch through the manager's
+   environment overlay) and `db.migrate.rollback` (possible until the first
+   write reaches Postgres). CLI: `migrate preflight|run|rollback|status`;
+   routes `GET /manager/api/migrate/status` and `POST
+   /manager/api/migrate/preflight`; audit actions `manager.db.migrate.preflight`,
+   `manager.db.migrate` and `manager.db.migrate.rollback`. Portal pages are
+   not built here. `scripts/migrate-to-postgres.js` stays as a developer
+   path with reduced guarantees. See [db_migration.md](db_migration.md).
+   PR [#362](https://github.com/nervous-rob/goobster/pull/362) (stacked on
+   #361): SQLite full suite 269 suites / 5353 passed; Postgres `core`
+   2018 passed and `privacy` 325 passed in isolated schemas; lint, smoke,
+   docs and group inventory green; CI green on both engines at `65ba14d`.
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container

@@ -34,6 +34,7 @@ const { createLifecycleStore } = require('./store');
 const layouts = require('./layouts');
 const stage = require('./stage');
 const { checkHealth: defaultCheckHealth } = require('./health');
+const { noteWorkerStart } = require('../migration/state');
 
 const DEFAULT_POLICY = Object.freeze({
     backoffMs: layouts.BACKOFF_MS,
@@ -243,6 +244,7 @@ function createSupervisor({
         slot.intentional = false;
         slot.startedAt = ms();
         slot.lastCode = null;
+        slot.fenceAck = null;
 
         if (worker.external) {
             const ext = external;
@@ -259,6 +261,8 @@ function createSupervisor({
             watch(slot, generation);
             return generation;
         }
+
+        noteWorkerStart({ storeDir: settings.storeDir, fs, now });
 
         if (await checkHealth(worker.healthUrl)) {
             slot.state = 'conflict';
@@ -929,6 +933,41 @@ function createSupervisor({
         };
     }
 
+    /**
+     * What the maintenance barrier fences (documentation/maintenance_barrier.md):
+     * names, health URLs, the pid this supervisor started and the last
+     * fence acknowledgement echoed over HTTP. Nothing else.
+     */
+    function fenceTargets() {
+        return {
+            started: started && !stopping && !abandoned,
+            layout: plan.layout,
+            error: plan.error,
+            workers: plan.workers.map((worker) => {
+                const slot = slotFor(worker);
+                const external = Boolean(worker.external || (slot.handle && slot.handle.external));
+                return {
+                    name: worker.name,
+                    healthUrl: worker.healthUrl,
+                    external,
+                    pid: !external && slot.handle && slot.handle.pid ? slot.handle.pid : null,
+                    running: external ? true : Boolean(slot.handle && slot.handle.running()),
+                    state: slot.state,
+                    fenceAck: slot.fenceAck || null
+                };
+            })
+        };
+    }
+
+    /** The HTTP echo of a worker's fence acknowledgement: the same token and pid checks as `ack`. */
+    function fenceAck({ worker, fence, state, pid, token }) {
+        const slot = slots.get(worker);
+        if (!slot || !slot.handle || slot.handle.external || !slot.token) return false;
+        if (!tokenEquals(token, slot.token) || pid !== slot.handle.pid) return false;
+        slot.fenceAck = { fence, state, pid, at: now().toISOString() };
+        return true;
+    }
+
     return {
         start,
         stop,
@@ -939,6 +978,9 @@ function createSupervisor({
         restartNow,
         operatorRestart,
         ack,
+        fenceTargets,
+        fenceAck,
+        checkHealth,
         store,
         get stateProblem() { return stateProblem; },
         get committing() { return Boolean(committing); },

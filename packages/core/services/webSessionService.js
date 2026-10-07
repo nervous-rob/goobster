@@ -12,6 +12,7 @@
 const crypto = require('node:crypto');
 const db = require('../db');
 const identityService = require('./identityService');
+const maintenance = require('../runtime/maintenance');
 
 const SESSION_TTL_DAYS = 30;
 
@@ -80,10 +81,18 @@ class WebSessionService {
             { tokenHash: hashToken(token) }
         );
         if (!row) return null;
-        if (touch) await db.run(
-            `UPDATE web_sessions SET lastSeenAt = datetime('now') WHERE id = @id`,
-            { id: row.id }
-        );
+        if (touch) {
+            try {
+                await db.run(
+                    `UPDATE web_sessions SET lastSeenAt = datetime('now') WHERE id = @id`,
+                    { id: row.id }
+                );
+            } catch (error) {
+                // Reading under the maintenance fence must still sign a person in;
+                // the last-seen stamp is the one write a read makes.
+                if (!(error instanceof maintenance.MaintenanceError)) throw error;
+            }
+        }
         return {
             id: row.id,
             userId: row.userId,

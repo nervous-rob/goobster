@@ -9,6 +9,8 @@ const { WebSocketServer } = require('ws');
 const { parseCookies, SESSION_COOKIE } = require('./appHelpers');
 const { authorizeSession, authorizedChannel, reserveConnection } = require('./liveAuthorization');
 const featureGate = require('./featureGate');
+const maintenanceGate = require('./maintenanceGate');
+const maintenance = require('../runtime/maintenance');
 
 const LIVE_WS_MAX_PAYLOAD = 2 * 1024 * 1024;
 const LIVE_WS_HEARTBEAT_MS = 30 * 1000;
@@ -24,6 +26,7 @@ const LIVE_WS_PATHS = new Set(['/api/app/parlor/live', '/api/app/voice/live', '/
  */
 function attachWebAppWebSocket(server, ctx) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: LIVE_WS_MAX_PAYLOAD });
+    maintenanceGate.closeSocketsOnMaintenance(wss);
     const features = ctx.features;
 
     server.on('upgrade', async (request, socket, head) => {
@@ -34,6 +37,12 @@ function attachWebAppWebSocket(server, ctx) {
             return;
         }
         if (!LIVE_WS_PATHS.has(pathname)) return; // another handler's upgrade
+
+        // Maintenance barrier: no live session opens while the process is fenced.
+        if (maintenance.isActive()) {
+            maintenanceGate.rejectUpgrade(socket);
+            return;
+        }
 
         const reject = (status, label) => {
             try {

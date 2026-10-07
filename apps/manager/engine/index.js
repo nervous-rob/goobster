@@ -44,6 +44,7 @@ const DEFAULT_PLAN_TTL_MS = 15 * 60 * 1000;
  * @property {(record: Object, ctx: Object) => (void|Promise<void>)} [validate] runs at validate and again inside the lock
  * @property {Array<{ name: string, run: (record: Object, ctx: Object) => any }>} steps a step returns its journal detail
  * @property {(scratch: Object) => any} [result] the caller's in-memory result (sessions, ids); never journaled
+ * @property {(record: Object, scratch: Object) => (Object|null)} [auditDetail] short scalars (counts, flags) for the audit entry; never a path or a row
  */
 
 function publicError(error) {
@@ -170,14 +171,23 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
         }));
     }
 
-    async function audit(record, outcome) {
+    async function audit(record, outcome, scratch = null) {
+        let detail;
+        try {
+            const spec = Object.prototype.hasOwnProperty.call(kinds, record.kind) ? kinds[record.kind] : null;
+            detail = spec && spec.auditDetail && scratch ? spec.auditDetail(record, scratch) : null;
+        } catch {
+            detail = null;
+        }
         try {
             const entry = await journal.appendAudit({
                 action: `manager.${record.kind}`,
                 actor: record.actor,
                 operationId: record.id,
                 outcome,
-                via: record.via
+                via: record.via,
+                forced: Boolean(record.plan && record.plan.force === true),
+                detail
             });
             if (onAudit) onAudit(entry);
         } catch (error) {
@@ -260,7 +270,7 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
             held.release();
             privateInputs.delete(id);
         }
-        await audit(current, current.status);
+        await audit(current, current.status, scratch);
         if (failure) {
             const error = new ManagerError(failure.status, failure.code, failure.message, { ...(failure.details || {}), operationId: id });
             error.operation = view(current);

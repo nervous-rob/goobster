@@ -25,6 +25,7 @@ const {
 const { getBotPreferredName } = require('@goobster/core/utils/guildContext');
 const activityService = require('@goobster/core/services/activityService');
 const { surfaceActive } = require('@goobster/core/features/gate');
+const maintenance = require('@goobster/core/runtime/maintenance');
 const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 
 /*
@@ -48,6 +49,10 @@ module.exports = {
         if (message.guild) {
             replyDetection.recordMessage(message);
         }
+
+        // Maintenance barrier (documentation/maintenance_barrier.md): no chat
+        // turn, tool call or counter write starts while the process is fenced.
+        if (maintenance.isActive()) return;
 
         // messageCreate#02 ignore bots
         if (message.author.bot) return;

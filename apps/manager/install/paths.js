@@ -69,7 +69,7 @@ function assertContained(parent, child, fs = nodeFs) {
 /**
  * Throw when removing `target` could take more than the installation:
  * a filesystem root, the home directory or a parent of it, a path of fewer
- * than two components, or a parent of the code root.
+ * than two components, the code root itself or a parent of it.
  */
 function assertRemovable(target, { codeRoot = null, home = os.homedir(), fs = nodeFs } = {}) {
     const resolved = path.resolve(target);
@@ -81,8 +81,8 @@ function assertRemovable(target, { codeRoot = null, home = os.homedir(), fs = no
     if (home && isSameOrInside(resolved, path.resolve(home))) {
         throw new ManagerError(409, 'PATH_ESCAPE', 'Refusing to remove the home directory or one of its parents.');
     }
-    if (codeRoot && isInside(resolved, path.resolve(codeRoot))) {
-        throw new ManagerError(409, 'PATH_ESCAPE', 'Refusing to remove a directory that contains the code root.');
+    if (codeRoot && isSameOrInside(resolved, path.resolve(codeRoot))) {
+        throw new ManagerError(409, 'PATH_ESCAPE', 'Refusing to remove the code root or a directory that contains it.');
     }
     if (isSymlink(resolved, fs)) {
         throw new ManagerError(409, 'PATH_ESCAPE', 'A recorded root is a symbolic link; the installer will not operate through it.');

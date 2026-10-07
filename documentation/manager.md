@@ -364,6 +364,47 @@ turns this off).
 `status.audit.pending` counts what is waiting. Erasure (`privacyService`)
 reaches the reconciled rows like any other `operator_audit` row.
 
+## Maintenance barrier
+
+The manager owns the maintenance barrier, a durable fenced state in which
+no application process writes (restore, reset and migration run inside it).
+It lives in the manager store (`maintenance.json`, so the application
+database is not needed to know about it), is entered and released by the
+`maintenance.enter` and `maintenance.release` operations, is read at
+`GET /manager/api/maintenance` and summarised in `GET /status`, and is
+honoured across a manager restart. While it is up the audit reconciliation
+is deferred. See [maintenance_barrier.md](maintenance_barrier.md).
+
+## The environment overlay
+
+Nothing persisted the one environment value that belongs to the manager's
+decisions: `GOOBSTER_DB_URL`. A migration to Postgres
+([db_migration.md](db_migration.md)) needs somewhere durable, manager-owned
+and secret to put it, and so will Postgres provisioning and service
+registration. That place is the **environment overlay**,
+`<managerStore>/environment.json` (`apps/manager/environment.js`).
+
+- It holds only keys on an allow-list (`GOOBSTER_DB_URL` today; the module
+  exports the list). Anything else is dropped on write.
+- It is written by atomic rename with mode `0600`. A failed write leaves the
+  previous file in place and no temporary file behind.
+- `resolveSettings` merges it **beneath** the process environment: a value in
+  a unit file or shell wins (ADR 0013's environment-override rule), and the
+  migration preflight warns `ENV_OVERRIDES_OVERLAY` when the two differ.
+  `settings.env` (which the supervisor spreads into every worker's
+  environment) carries the merged value; `settings.processEnv` is the
+  environment as given; `settings.environment` names the overlay keys and the
+  overridden ones, never a value.
+- It is a secret store. It is never printed, journaled, audited or put in
+  the installation record; the CLI masks its values verbatim; a backup
+  archive does not carry it (the manager store is not a backup file set).
+- A full uninstall (`install.uninstall` with `keepData: false`) removes it
+  with the data it points at; a keep-data uninstall leaves it, because it is
+  the only pointer to the retained database. The store directory itself stays
+  (it carries the tombstone).
+- Workers the manager does not supervise do not read it; set
+  `GOOBSTER_DB_URL` for them yourself.
+
 ## Seams for later work
 
 Extensions register in `apps/manager/extensions.js`: a route family is one
@@ -390,6 +431,11 @@ registered twice is a startup error, and the privileged names stay refused.
 - **#326 (operator pages):** call the manager from portal routes with
   `managerBridge.headers()` after `requireOperator`; the browser only talks
   to the core API.
+- **#336 (SQLite to Postgres migration):** done in
+  `documentation/db_migration.md`: `db.migrate.preflight`, `db.migrate`,
+  `db.migrate.rollback`, `GET /manager/api/migrate/status`,
+  `POST /manager/api/migrate/preflight`, the environment overlay above and
+  `migrate preflight|run|rollback|status` in the CLI.
 - **#255 (stronger auth):** `bridge.requireStrongAuth()`.
 
 ## Tests

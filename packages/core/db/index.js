@@ -32,11 +32,17 @@
  *
  * ¹ lastInsertRowid is SQLite-only and undefined on Postgres.
  *
+ * While the process is fenced for maintenance (runtime/maintenance.js,
+ * documentation/maintenance_barrier.md) `run`, `insert` and `transaction`
+ * throw MaintenanceError (code 'MAINTENANCE'); `get` and `all` keep working.
+ *
  * SQL is written natively for SQLite ('@name' params, datetime('now'),
  * ON CONFLICT, RETURNING); the Postgres adapter translates statements at
  * prepare time (db/dialect.js). Values are normalized automatically:
  * booleans -> 0/1, Date -> UTC text, plain objects/arrays -> JSON text.
  */
+
+const maintenance = require('../runtime/maintenance');
 
 const usePostgres = () => Boolean(process.env.GOOBSTER_DB_URL);
 
@@ -44,9 +50,17 @@ let adapter = null;
 function getAdapter() {
     if (!adapter) {
         adapter = usePostgres() ? require('./postgresAdapter') : require('./sqliteAdapter');
+        adapter.setReadOnly?.(maintenance.isFenced());
     }
     return adapter;
 }
+
+// The maintenance fence (documentation/maintenance_barrier.md): `run`,
+// `insert` and `transaction` refuse while the process is fenced, and the
+// adapter moves to its engine-level read-only mode as a second line.
+maintenance.onChange(() => {
+    if (adapter) adapter.setReadOnly?.(maintenance.isFenced());
+});
 
 /**
  * Normalize a JS value into something the engine can bind.
@@ -76,6 +90,7 @@ function normalizeParams(params = {}) {
 }
 
 async function run(sql, params = {}) {
+    maintenance.assertWritable();
     return getAdapter().run(sql, params, normalizeParams);
 }
 
@@ -88,10 +103,12 @@ async function all(sql, params = {}) {
 }
 
 async function insert(sql, params = {}) {
+    maintenance.assertWritable();
     return getAdapter().insert(sql, params, normalizeParams);
 }
 
 async function transaction(fn) {
+    maintenance.assertWritable();
     return getAdapter().transaction(fn, txApi);
 }
 
@@ -189,6 +206,16 @@ async function listTables(options = {}) {
 }
 
 /**
+ * Return deleted space to the storage (SQLite: checkpoint and VACUUM;
+ * Postgres: nothing, autovacuum owns it). Used after a data reset.
+ * @returns {Promise<{ compacted: boolean }>}
+ */
+async function compactStorage() {
+    maintenance.assertWritable();
+    return getAdapter().compactStorage();
+}
+
+/**
  * Async-compatible connection getter kept so existing call sites that do
  * `await getConnection()` keep working during and after the migration.
  */
@@ -225,4 +252,5 @@ module.exports = {
     vecAvailable,
     describeStorage,
     listTables,
+    compactStorage,
 };

@@ -1,7 +1,7 @@
 /**
  * The child adapter: the manager spawns and owns the worker process.
  *
- * - stdio is ['ignore', 'inherit', 'inherit']: a worker's own logger keeps
+ * - stdio is ['ignore', 'inherit', 'inherit'] by default (the migration's validation workers pass 'ignore'): a worker's own logger keeps
  *   writing where it always did (journald, PM2, a terminal).
  * - POSIX: the worker leads its own process group (`detached: true`), so
  *   ffmpeg, yt-dlp or a sandbox child die with it. Stop is graceful to the
@@ -41,6 +41,7 @@ function createChildAdapter({
     platform = process.platform,
     execPath = process.execPath,
     cwd = process.cwd(),
+    stdio = ['ignore', 'inherit', 'inherit'],
     writeControl = () => {},
     logger = console
 } = {}) {
@@ -84,7 +85,7 @@ function createChildAdapter({
         const child = spawn(execPath, [script, ...args], {
             cwd,
             env,
-            stdio: ['ignore', 'inherit', 'inherit'],
+            stdio,
             detached: posix,
             windowsHide: true
         });

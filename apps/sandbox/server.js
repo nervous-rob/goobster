@@ -16,6 +16,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const sandboxService = require('@goobster/core/services/sandboxService');
 const lifecycle = require('@goobster/core/runtime/lifecycle');
+const maintenance = require('@goobster/core/runtime/maintenance');
 
 const TOKEN_HEADER = 'x-goobster-internal-token';
 const DEFAULT_SANDBOX_PORT = 3200;
@@ -82,6 +83,11 @@ function createSandboxApp({ sandbox = sandboxService, logger = console, worker =
     app.post('/run', async (req, res) => {
         if (!tokenMatches(req.headers[TOKEN_HEADER], process.env.GOOBSTER_INTERNAL_TOKEN)) {
             res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing or bad internal token.' } });
+            return;
+        }
+        if (maintenance.isActive()) {
+            res.set('Retry-After', String(maintenance.RETRY_AFTER_SECONDS));
+            res.status(503).json({ error: { status: 503, code: 'MAINTENANCE', message: 'The sandbox runner is in maintenance; run the code again in a few minutes.' } });
             return;
         }
         if (worker.newWorkPaused()) {
@@ -208,6 +214,12 @@ function startSandboxRunner({
         worker.acknowledgeReady();
     });
     worker.onPauseNewWork(() => sandbox.pauseNewWork?.());
+    // Maintenance barrier: admission is closed (503 MAINTENANCE) before this
+    // runs; the runs in flight keep their own timeout inside the bound.
+    worker.onMaintenance?.({
+        name: 'sandbox',
+        drain: ({ boundMs }) => app.drainRuns(lifecycle.contractBoundMs('sandboxRun', boundMs))
+    });
 
     let shuttingDown = null;
     const runShutdown = async (exitCode) => {
