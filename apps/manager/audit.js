@@ -19,7 +19,9 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.adopt',
     'manager.features.set',
     'manager.recovery.unlock',
-    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel'
+    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
+    'manager.config.set',
+    'manager.defaults.set'
 ]);
 
 /**

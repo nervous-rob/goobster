@@ -13,19 +13,27 @@ function validateElevenLabsApiKey(key) {
  * Only the Discord credentials are required. Cloud integrations (ElevenLabs,
  * Perplexity, ...) are optional and merely produce warnings when absent, so
  * the bot can run fully self-hosted (e.g. on a Raspberry Pi).
+ *
+ * `requireDiscord: false` is for writers of config.json (the manager) on an
+ * installation that runs without a Discord adapter: a missing token is then
+ * not an error, a placeholder or a wrongly typed one still is.
  */
-function validateConfig(config) {
+function validateConfig(config, { requireDiscord = true } = {}) {
     const errors = [];
     const warnings = [];
 
     if (!config.token) {
-        errors.push('Discord bot token is missing');
+        if (requireDiscord) errors.push('Discord bot token is missing');
+    } else if (typeof config.token !== 'string') {
+        errors.push('Discord bot token must be text');
     } else if (config.token.startsWith('YOUR_')) {
         errors.push('Discord bot token is still the placeholder - edit config.json with your real token');
     }
 
     if (!config.clientId) {
-        warnings.push('Discord clientId is missing - command deployment will not work');
+        if (requireDiscord) warnings.push('Discord clientId is missing - command deployment will not work');
+    } else if (typeof config.clientId !== 'string') {
+        errors.push('Discord clientId must be text');
     } else if (config.clientId.startsWith('YOUR_')) {
         errors.push('Discord clientId is still the placeholder - edit config.json with your application ID');
     }

@@ -179,3 +179,7 @@ npm install
 npm run deploy-commands
 npm start
 ``` 
+
+## Changing settings with the manager
+
+`apps/manager` can show where every setting comes from (environment, `config.json` or the database), write `config.json` safely (validated, atomic, owner-only, with a revision check), try a provider key before it is saved, and set the defaults new people inherit - all without the application database. The complete setting list is the generated `documentation/config_reference.md`; how the manager reads and changes them is `documentation/manager_configuration.md`.
