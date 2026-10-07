@@ -21,6 +21,7 @@ const GROUPS = [
             'backupRestore',
             'ciGroups',
             'cliResolver',
+            'configFieldCatalog',
             'cursorAgentService',
             'dbSchemaUpgrade',
             'dialectForeignKeys',
