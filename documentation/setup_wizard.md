@@ -1,7 +1,7 @@
 ---
 title: The setup and maintenance wizard (installer P3.4)
 kind: reference
-summary: The browser journey for first-time setup and for later reconfigure, repair and uninstall of a SQLite installation - the eleven setup steps (welcome, where, features, connections, database location, defaults, access, review, progress, first-run check, open Goobster), how the manager serves it at /manager/ and how the portal Host room reaches the same screens through the bridge, local-only versus network access, the HttpOnly cookie session and what a manager restart does to it, how secrets are typed once and never echoed, kept or stored by the page, the first-run check, the recovery page, the headless alternative, and what is not here yet (Postgres, service registration, maintenance, reset and migration).
+summary: The browser journey for first-time setup and for later reconfigure, repair and uninstall of a SQLite installation - the eleven setup steps (welcome, where, features, connections, database location, defaults, access, review, progress, first-run check, open Goobster), how the manager serves it at /manager/ and how the portal Host room reaches the same screens through the bridge, local-only versus network access, the HttpOnly cookie session and what a manager restart does to it, how secrets are typed once and never echoed, kept or stored by the page, the first-run check, the recovery page, the headless alternative, and the Backup, Restore, Reset and Migration journeys and the maintenance-barrier panel, and what is not here yet (Postgres, service registration).
 when: Installing Goobster from a browser; reconfiguring, repairing or removing an installation without a terminal; explaining why a secret field came back empty; reaching the wizard on a headless machine; understanding what the wizard does when the manager restarts or the database is broken; building another front end on the manager's install routes.
 tags: [installer, wizard, setup, manager, reconfigure, repair, uninstall, recovery, secrets, first-run, sqlite, headless]
 ---
@@ -24,6 +24,7 @@ catalog, field controls and plan components.
 |---|---|
 | `http://127.0.0.1:3400/manager/` (also `/manager/setup` and `/manager/recovery`) | The wizard, served by the manager itself from `apps/web/dist/setup/` (built by `npm run build:web`). One page for all three paths; the page decides what to show from the manager's state. |
 | Portal, Host room, **Installation** (`/host/installation`), and the Installation card on the Host overview | Reconfigure, Repair and Uninstall for an operator, through the portal's Host routes and the authenticated bridge. The browser holds no manager credential. |
+| Portal, Host room, **Maintenance** (`/host/maintenance`), and the Maintenance card on the Host overview | Backup, Restore, Reset and Migration with the same journeys as the manager page, over the portal's Host proxies. See the limits in the section below. |
 
 If the client is not built the manager answers a plain page that says so
 and names the command; the manager's API and the command line keep working.
@@ -38,7 +39,7 @@ forms).
 |---|---|
 | `unclaimed`, no files | Welcome: ask for the setup credential and a name for the installation, then the setup steps. |
 | `claimed`, no installation recorded yet | The setup steps, from where you left off (the answers are kept in this tab). |
-| `claimed`, installed | The maintenance page: what is installed, the first-run checks, and **Reconfigure**, **Repair**, **Uninstall**. |
+| `claimed`, installed | The maintenance page: what is installed, the first-run checks, the maintenance-barrier panel when a barrier is held, and **Reconfigure**, **Repair**, **Backup...**, **Restore...**, **Reset...**, **Migration...**, **Uninstall**. |
 | `claimed`, installed, database cannot be opened | The same page, with **Repair** recommended and the reason. |
 | `recovery`, files exist but no record | A plain explanation and the one command that fixes it (`node apps/manager/cli.js adopt`). The wizard never installs over files it did not install. |
 | Opened at `/manager/recovery` with a recovery credential | "Recover this installation": the maintenance page with Repair first. |
@@ -103,6 +104,69 @@ The layout is chosen for you: `standalone` when no Discord token is given,
 Every journey shows the plan before anything changes and a per-step
 progress afterwards. A failure says which step stopped, what was kept, and
 that running it again picks up where it stopped.
+
+## Backup, restore, reset and migration
+
+Installer P4.4 (issue #337). Four more buttons on the maintenance page,
+each a journey over an operation kind that already exists
+(`backup.create`, `backup.restore`, `data.reset`) or over the migration
+status and preflight routes. The journeys add no rules: the manager plans,
+validates and applies, and the page shows the plan before anything changes.
+The full rules are in `documentation/backup_and_restore.md` (Through the
+manager).
+
+- **Backup...** (form, review, progress). Choose a destination folder (the
+  page suggests one; the backup goes in a new dated folder inside it, never
+  into the manager's own store), whether to include `config.json`, and, if
+  so, a passphrase typed twice. The review states which file sets are
+  copied and which are left out. Only `config.json` is encrypted - the
+  archive itself is not - and the review and the result both say so. The
+  result names the archive folder and the counts.
+- **Restore...** (source, options, review, progress). Type the backup folder
+  and **Inspect backup**: the page reads the manifest and shows what it
+  holds, what it would block (another engine or schema, an archive inside a
+  folder the restore replaces, no safety-backup destination) and warns
+  about. Options: the passphrase for the encrypted config or **Restore
+  without config**, accepting an older schema, and whether to release the
+  barrier at the end. The review needs the installation id typed exactly
+  before **Restore now** is enabled. A wrong passphrase fails during
+  planning and nothing has changed. The result lists the safety backup, the
+  set-aside folders, interrupted operations (marked, not resumed), the
+  secrets to enter again, and the three separate steps to come back
+  (release the barrier, check, resume).
+- **Reset...** (scope, backup, confirm, run). Scope is one feature, a
+  scope of data or the instance; the page shows the preview from
+  `GET /manager/api/reset/plan`. The run enters a maintenance window
+  (`maintenance.enter`), runs `data.reset` with the held barrier and, if it
+  fails, releases the barrier it took and says why. The instance scope needs
+  a local or recovery session (`INSTANCE_RESET_REQUIRES_LOCAL`); otherwise
+  the page prints `node apps/manager/cli.js reset --scope instance`.
+- **Migration...** shows the migration state and rollback limit, and on the
+  manager page a preflight form. The target URL is typed into a password
+  field, sent once to `POST /manager/api/migrate/preflight`, cleared from
+  the page and never kept in the manager's records. The copy and cutover are
+  the CLI commands the page prints.
+
+A **barrier panel** appears on the maintenance page whenever a maintenance
+barrier is held, and on the result of a restore or reset. It says plainly
+that **releasing the barrier does not resume the instance**: resuming is a
+separate, explicit step. If the barrier recorded that changes had begun
+(`mutateBegun`), the **Release** button stays disabled until the
+acknowledgement box is ticked. A stale barrier is never released by the page
+on its own; it prints the CLI commands (`node apps/manager/cli.js release`,
+or `release --force --acknowledge-mutation`).
+
+**From the portal.** The Host room's **Maintenance** page shows the same
+journeys, with limits: a restore ends the browser's connection (the portal
+refuses changes while a restore runs and is restarted at the end), so the
+page says where to continue - the manager page - before it starts; Reset
+and the Migration preflight are shown as command-line or manager-page only,
+because the maintenance barrier would stop the portal that is serving them.
+
+Secrets: a passphrase and a database URL live in the page's state only.
+They are never in the URL, `sessionStorage`, `localStorage`, a plan, a
+journal line, an audit row or an operation record, and the page clears them
+when you leave the step.
 
 ## Credentials, sessions and restarts
 
@@ -182,8 +246,9 @@ manager operation.
 - **Registering Goobster as a service** at boot (#331-#333). The plan says
   "Starts at boot: No" and the first-run page starts the workers from the
   manager; after a reboot start the manager again.
-- **Maintenance windows, reset and migration** (#334-#336): none of the
-  screens exist yet.
+- **A database chooser** (Postgres setup from the wizard) and a backup
+  scheduler. Migration shows its status and a read-only preflight; the
+  copy itself is the command line (`db migrate`).
 - Moving the program or data folder, network download and archive
   sources, and production signing keys (#341).
 - The wizard reads provider and identity settings the way each service does
@@ -201,4 +266,11 @@ in a browser: a new install through a first chat, stale credentials, a
 manager restart, reload and Back/Forward during an install, failed probes
 and plans that keep non-secret answers, reconfigure, repair, both uninstall
 choices, the portal entry points (a member is refused), a 360 px screen, and
-each starting state above.
+each starting state above. `e2e/maintenance.spec.js` covers the four
+journeys on the manager page and the Host Maintenance page: a backup whose
+archive and records never contain the passphrase, inspecting and restoring
+with a wrong passphrase, the confirmation, the barrier release with
+acknowledgement and a restore without config, a reset that is refused with
+the barrier released again, the instance scope pointing at the command line,
+the migration status and a preflight whose URL is not retained, and a member
+refused by the Host proxies.

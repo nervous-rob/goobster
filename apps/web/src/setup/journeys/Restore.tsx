@@ -127,7 +127,7 @@ export function Restore({ step, id, go }: { step: string; id: string | null; go:
                     lead="The application is stopped while the data is replaced. Do not stop the manager or restart the machine.">
                     {transport.mode === 'portal' && (
                         <p className="wizard-callout" data-testid="restore-disconnect-note">
-                            This browser will lose its connection to the portal while the restore runs: the portal is held down by maintenance. That is expected.
+                            The portal refuses changes while the restore runs and is restarted onto the restored data at the end, so this browser will lose its connection. That is expected.
                             Continue on the manager page, <code>http://127.0.0.1:{managerPort}/manager/</code> (open it from the machine, or through the SSH forward), which keeps answering.
                         </p>
                     )}

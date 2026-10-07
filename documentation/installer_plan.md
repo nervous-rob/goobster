@@ -341,7 +341,7 @@ Work:
    recreates `instance_state` (paused) and `self_docs`, and does not release
    the barrier. `goobster-manager reset` and `release` are the CLI;
    `GET /manager/api/reset/plan` is the preview. `scripts/initDb.js` no longer
-   has a drop list and `--reset` is refused. Portal pages are #337. See
+   has a drop list and `--reset` is refused. Portal pages are #337 (done, see P4.4). See
    [data_reset.md](data_reset.md).
 3. Migrator: true preflight, required verified backup, row-count
    verification, rollback point.
@@ -365,6 +365,24 @@ Work:
    2018 passed and `privacy` 325 passed in isolated schemas; lint, smoke,
    docs and group inventory green; CI green on both engines at `65ba14d`.
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.
+
+   **Status (P4.4, #337): built, PR pending.** The manager kinds
+   `backup.create` and `backup.restore` (audit actions
+   `manager.backup.create` and `manager.backup.restore`), `GET
+   /manager/api/backup/inspect?dir=` and `GET /manager/api/backup/status`,
+   the CLI commands `backup`, `backup inspect` and `restore`, a file-set
+   completeness audit (a table with a "since" column and a unit test that
+   fails on an unclassified data folder), the Wizard's Backup, Restore,
+   Reset and Migration journeys, and the Host room's Maintenance page with
+   the audit actions `host.backup.apply` and `host.reset.apply`. Barrier
+   release and instance resume stay separate controls. Only `config.json`
+   is encrypted; the archive is not. This adds management, UI and
+   regression evidence; it does **not** claim the owner's restore drill on
+   a real host (#249), which remains a human check. Not in scope: a backup
+   scheduler, a Postgres-to-SQLite conversion, a Postgres chooser (#338) and
+   service registration. See [backup_and_restore.md](backup_and_restore.md),
+   [setup_wizard.md](setup_wizard.md) and
+   [host_operations.md](host_operations.md).
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container
    (the compose pgvector image), managed native install on Linux (from

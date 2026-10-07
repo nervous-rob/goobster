@@ -256,6 +256,9 @@ failed apply also returns the `operation` record.
 | `POST /operations` | assertion or session | per kind |
 | `POST /operations/:id/validate` | assertion or session | per kind |
 | `POST /operations/:id/apply` | assertion or session | per kind |
+| `GET /maintenance` | assertion or session | claimed; recovery with a recovery session |
+| `GET /backup/inspect?dir=`, `GET /backup/status` | assertion or session | claimed; recovery with a recovery session |
+| `GET /reset/plan`, `GET /migrate/status`, `POST /migrate/preflight` | assertion or session | claimed; recovery with a recovery session |
 | `POST /privileged/:name` | assertion or session | `501 NOT_IMPLEMENTED` for a declared name, `404` otherwise |
 
 A body that names an actor (`actor`, `principalId`, `actorId`) different
@@ -374,6 +377,23 @@ database is not needed to know about it), is entered and released by the
 `GET /manager/api/maintenance` and summarised in `GET /status`, and is
 honoured across a manager restart. While it is up the audit reconciliation
 is deferred. See [maintenance_barrier.md](maintenance_barrier.md).
+
+## Backup and restore (#337)
+
+Two operation kinds run through the same plan, validate and apply engine:
+`backup.create` (input `{ dir, includeConfig?, passphrase? }`; `dir` is the
+parent, the archive lands in a dated folder inside it) and `backup.restore`
+(input `{ dir, confirm, passphrase?, withoutConfig?, acceptSchemaChange?,
+release? }`). Their audit actions are `manager.backup.create` and
+`manager.backup.restore`. `GET /backup/inspect?dir=` reads an archive and says
+what a restore would do or block; `GET /backup/status` returns the suggested
+destination and the last restore's state (`restore.json` in the manager
+store). The passphrase and the typed confirmation are private input: kept in
+memory, never in a plan, journal line, audit row or result (a restart between
+plan and apply is `PLAN_INPUT_LOST`). Only `config.json` is encrypted; the
+archive is not. A restore enters the maintenance barrier itself, leaves the
+instance paused and does not resume it. Details, the file-set table and the
+limits are in [backup_and_restore.md](backup_and_restore.md).
 
 ## The environment overlay
 
