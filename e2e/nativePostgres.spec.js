@@ -1,3 +1,4 @@
+/* global window */
 /**
  * PostgreSQL installed natively on this machine, managed by the installer
  * (documentation/native_postgres.md): the chooser in the setup wizard offers the
