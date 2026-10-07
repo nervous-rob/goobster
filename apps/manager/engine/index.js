@@ -223,10 +223,10 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
                 return r;
             });
             for (const step of spec.steps) {
-                if (hooks.beforeStep) await hooks.beforeStep({ operationId: id, kind: record.kind, step: step.name });
                 journal.step(id, step.name, 'started');
                 let detail;
                 try {
+                    if (hooks.beforeStep) await hooks.beforeStep({ operationId: id, kind: record.kind, step: step.name });
                     detail = await step.run(record, ctx);
                 } catch (error) {
                     if (!(error instanceof ManagerError)) {
