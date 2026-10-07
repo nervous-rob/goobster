@@ -24,6 +24,7 @@ const GROUPS = [
             'configFieldCatalog',
             'configFile',
             'providerProbes',
+            'instanceDefaults',
             'effectiveConfig',
             'cursorAgentService',
             'dbSchemaUpgrade',
