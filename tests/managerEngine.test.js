@@ -57,10 +57,10 @@ function seedClaimed(settings, label = 'Rob') {
     return store.createInstallation({ origin: 'claim', ownerLabel: label });
 }
 
-async function claimedManager({ root = newRoot('claimed'), env = {}, hooks, isProcessAlive } = {}) {
+async function claimedManager({ root = newRoot('claimed'), env = {}, hooks, isProcessAlive, reconcileDeps } = {}) {
     const settings = resolveSettings(envFor(root, env));
     const installation = seedClaimed(settings);
-    const manager = createManager({ settings, hooks, isProcessAlive, logger: silent });
+    const manager = createManager({ settings, hooks, isProcessAlive, reconcileDeps, logger: silent });
     await manager.init();
     return { root, settings, manager, installation };
 }
@@ -475,11 +475,28 @@ describe('audit reconciliation into operator_audit', () => {
         expect(fs.existsSync(settings.sqlitePath)).toBe(false);
     });
 
+    test('the manager does not hold the application database open after a pass', async () => {
+        const store = createStore({ root: newRoot('close') });
+        store.init();
+        const journal = createJournal({ store });
+        await journal.appendAudit({ action: 'manager.adopt', actor: null, operationId: crypto.randomUUID(), outcome: 'applied' });
+        const fakeDb = { get: jest.fn(async (sql) => (sql.startsWith('SELECT 1') ? { ok: 1 } : undefined)), closeConnection: jest.fn(async () => {}) };
+        const fakeAudit = { ACTIONS: new Set(), record: jest.fn(async () => 7) };
+        const result = await reconcileAudit({
+            journal, probe: async () => ({ reachable: true, reason: null }),
+            loadDb: () => fakeDb, loadAudit: () => fakeAudit, closeAfter: true
+        });
+        expect(result).toMatchObject({ inserted: 1, deferred: false });
+        expect(fakeAudit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'manager.adopt', actor: null }));
+        expect(fakeDb.closeConnection).toHaveBeenCalledTimes(1);
+    });
+
     test('records appended while the database is down are ingested exactly once', async () => {
         const dbEnv = process.env.GOOBSTER_DB_URL
             ? { GOOBSTER_DB_URL: process.env.GOOBSTER_DB_URL }
             : { GOOBSTER_DB_PATH: process.env.GOOBSTER_DB_PATH };
-        const { manager, settings } = await claimedManager({ env: dbEnv });
+        // Under GOOBSTER_PG_TEST_ISOLATE a new pool gets a new schema, so the suite keeps its connection.
+        const { manager, settings } = await claimedManager({ env: dbEnv, reconcileDeps: { closeAfter: false } });
         expect(db.engine).toBe(process.env.GOOBSTER_DB_URL ? 'postgres' : 'sqlite');
         const ops = [];
         ops.push((await applyFeatures(manager, { gba: true })).operation.id);

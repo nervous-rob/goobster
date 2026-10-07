@@ -112,7 +112,7 @@ function createManager({
 
     function reconcile() {
         if (reconciling) return reconciling;
-        reconciling = reconcileAudit({ journal, probe: () => probe({ fresh: true }), ...reconcileDeps })
+        reconciling = reconcileAudit({ journal, probe: () => probe({ fresh: true }), closeAfter: true, ...reconcileDeps })
             .catch((error) => {
                 logger.warn?.(`[manager] audit reconciliation deferred: ${error && (error.code || error.name)}`);
                 return { deferred: true, reason: 'RECONCILE_FAILED' };

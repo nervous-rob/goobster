@@ -27,13 +27,15 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
  * @param {() => Promise<{ reachable: boolean|null, reason: string|null }>} params.probe
  * @param {() => Object} [params.loadDb] the async facade; default `@goobster/core/db`, required lazily
  * @param {() => Object} [params.loadAudit] default `@goobster/core/services/operatorAuditService`
+ * @param {boolean} [params.closeAfter] close the facade's connection after the pass (the manager does not hold one)
  * @returns {Promise<{ pending: number, inserted: number, existing: number, deferred: boolean, reason: string|null }>}
  */
 async function reconcileAudit({
     journal,
     probe,
     loadDb = () => require('@goobster/core/db'),
-    loadAudit = () => require('@goobster/core/services/operatorAuditService')
+    loadAudit = () => require('@goobster/core/services/operatorAuditService'),
+    closeAfter = false
 }) {
     const { entries } = journal.readAudit();
     const pending = [];
@@ -52,7 +54,16 @@ async function reconcileAudit({
     }
 
     const db = loadDb();
-    const audit = loadAudit();
+    try {
+        return await ingest({ db, audit: loadAudit(), journal, pending, result });
+    } finally {
+        if (closeAfter && typeof db.closeConnection === 'function') {
+            try { await db.closeConnection(); } catch { }
+        }
+    }
+}
+
+async function ingest({ db, audit, journal, pending, result }) {
     try {
         await db.get('SELECT 1 AS ok');
     } catch {
