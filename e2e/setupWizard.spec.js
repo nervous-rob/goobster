@@ -197,7 +197,10 @@ test.describe('back, reload and reconnect during an install', () => {
         await expect(page.getByTestId('review-answers')).toBeVisible();
 
         // The server applies the install; the answer reaches the page late, and the page is reloaded before it does.
+        let held = false;
         await page.route('**/manager/api/operations/*/apply', async (route) => {
+            if (held) { await route.continue(); return; }
+            held = true;
             const response = await route.fetch();
             await new Promise((resolve) => setTimeout(resolve, 4000));
             await route.fulfill({ response }).catch(() => {});
@@ -207,7 +210,6 @@ test.describe('back, reload and reconnect during an install', () => {
         const hash = await page.evaluate(() => window.location.hash);
         expect(hash).toMatch(/^#\/setup\/progress\/[A-Za-z0-9-]+$/);
         await page.waitForTimeout(800);
-        await page.unroute('**/manager/api/operations/*/apply');
         await page.reload();
 
         await expect(page.getByTestId('step-progress')).toBeVisible();

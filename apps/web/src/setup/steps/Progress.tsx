@@ -15,6 +15,7 @@ type StageState = 'waiting' | 'running' | 'done' | 'skipped' | 'failed';
 type Stage = { id: 'owner' | 'defaults' | 'start'; label: string; state: StageState; note?: string; error?: { message: string; code: string } };
 
 const POST_KEY = 'goobster-setup-post';
+const OWNER_WAIT_SECONDS = 60;
 
 function readPost(): Record<string, string> {
     try { return JSON.parse(window.sessionStorage.getItem(POST_KEY) || '{}') as Record<string, string>; } catch { return {}; }
@@ -46,9 +47,14 @@ function PostInstall({ go }: StepProps) {
         if (readPost().owner) { patch('owner', { state: 'done' }); return true; }
         patch('owner', { state: 'running' });
         try {
-            const operation = await transport.operation(record.owner);
+            let operation = await transport.operation(record.owner);
+            // A reload while the account was being made: the manager is still applying it, so follow it.
+            for (let waited = 0; operation.status === 'applying' && waited < OWNER_WAIT_SECONDS; waited++) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                operation = await transport.operation(record.owner);
+            }
             if (operation.status === 'applied') { markPost('owner'); patch('owner', { state: 'done' }); return true; }
-            if (operation.status !== 'validated') throw new ApiError(409, 'OPERATION_STATE', 'The owner account step is not in a state that can run.');
+            if (operation.status !== 'validated') throw new ApiError(409, 'OPERATION_STATE', `The owner account step is not in a state that can run (it is ${String(operation.status)}).`);
             await transport.apply(record.owner);
             markPost('owner');
             patch('owner', { state: 'done' });
