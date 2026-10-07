@@ -29,7 +29,8 @@ const ACTIONS = new Set([
     'limits.change',
     // Written by the manager's audit reconciliation (documentation/manager.md);
     // `target` is the manager operation id.
-    'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock'
+    'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock',
+    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */

@@ -8,6 +8,8 @@
  *   node apps/manager/index.js --mint-bootstrap mint a new first-time setup credential (unclaimed only)
  *   node apps/manager/index.js --mint-recovery  mint a recovery credential (existing installations)
  *   node apps/manager/index.js --status         print the status document and exit
+ *   node apps/manager/index.js --supervise      serve, and run the workers of the layout
+ *                                               (documentation/manager_lifecycle.md)
  *
  * Loading this module starts nothing; `main()` runs only when it is the
  * entry script. Nothing here requires the application database, the web
@@ -25,15 +27,17 @@ const RECONCILE_INTERVAL_MS = 60_000;
 
 const HELP = `Goobster manager
 
-Usage: node apps/manager/index.js [--mint-bootstrap | --mint-recovery | --status | --help]
+Usage: node apps/manager/index.js [--supervise | --mint-bootstrap | --mint-recovery | --status | --help]
 
   (no flag)         serve the manager API on GOOBSTER_MANAGER_HOST:GOOBSTER_MANAGER_PORT (127.0.0.1:3400)
+  --supervise       serve, then start and supervise the workers of the layout (lite: bot, standalone: api,
+                    paired: bot + api); same as GOOBSTER_MANAGER_SUPERVISE=1
   --mint-bootstrap  replace the first-time setup credential (only while the installation is unclaimed)
   --mint-recovery   mint a one-time recovery credential for POST /manager/api/recovery/unlock
   --status          print the status document as JSON and exit
 
 Headless hosts: keep the loopback bind and tunnel, e.g. ssh -L 3400:127.0.0.1:3400 <host>.
-See documentation/manager.md.`;
+See documentation/manager.md and documentation/manager_lifecycle.md.`;
 
 function printCredential(out, label, minted, { reveal }) {
     if (reveal) {
@@ -50,9 +54,10 @@ function printCredential(out, label, minted, { reveal }) {
  * @param {Object} [options.env]
  * @param {NodeJS.WriteStream} [options.stdout]
  * @param {Object} [options.logger]
+ * @param {Object} [options.supervisorOptions] adapter/policy overrides for --supervise (tests)
  * @returns {Promise<{ code: number, server?: import('node:http').Server, manager?: Object, stop?: () => Promise<void> }>}
  */
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {} } = {}) {
     const flags = new Set(argv);
     if (flags.has('--help') || flags.has('-h')) {
         stdout.write(`${HELP}\n`);
@@ -134,11 +139,36 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         timer.unref();
     }
 
-    const stop = async () => {
-        if (timer) clearInterval(timer);
-        await new Promise(resolve => server.close(() => resolve()));
+    let supervision = null;
+    const baseStatus = manager.status;
+    manager.status = async () => ({
+        ...(await baseStatus()),
+        lifecycle: supervision ? supervision.supervisor.summary() : { supervising: false, layout: null, workers: [] }
+    });
+    if ((flags.has('--supervise') || settings.supervise) && manager.storeReady) {
+        const { startSupervision } = require('./lifecycle');
+        supervision = await startSupervision({ manager, logger, ...supervisorOptions });
+        const view = supervision.supervisor.summary();
+        logger.info(`[manager] supervising the ${view.layout || 'unknown'} layout: ${view.workers.map(w => w.name).join(', ') || 'no workers'}`);
+    } else if (flags.has('--supervise') || settings.supervise) {
+        logger.error('[manager] not supervising: the manager store cannot be written.');
+    }
+
+    let stopping = null;
+    const stop = () => {
+        if (stopping) return stopping;
+        stopping = (async () => {
+            if (timer) clearInterval(timer);
+            if (supervision) {
+                const result = await supervision.stop();
+                const forced = result.workers.filter(w => w.forced).map(w => w.name);
+                if (forced.length) logger.warn(`[manager] killed after the stop bound: ${forced.join(', ')}`);
+            }
+            await new Promise(resolve => server.close(() => resolve()));
+        })();
+        return stopping;
     };
-    return { code: 0, server, manager, stop };
+    return { code: 0, server, manager, supervisor: supervision ? supervision.supervisor : null, stop };
 }
 
 if (require.main === module) {
