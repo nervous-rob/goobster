@@ -4,6 +4,10 @@
  *
  *   goobster-manager install|adopt|reconfigure|repair|uninstall [options]
  *   goobster-manager plan <command> [options]      same as --dry-run
+ *   goobster-manager reset --scope instance|feature [--feature <id>] [--dry-run] [--confirm <text>]
+ *                                                 empty the installation's data (documentation/data_reset.md)
+ *   goobster-manager release [--force] [--acknowledge-mutation]
+ *                                                 lift a maintenance barrier a reset left up
  *   goobster-manager status | discover | schema
  *
  *   --answers <file>   the operation's input as JSON (apps/manager/install/answers.schema.json);
@@ -46,7 +50,7 @@ const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
-const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'plan', 'status', 'discover', 'schema', 'help']);
+const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'help']);
 const LOCAL_AUTH = Object.freeze({ principal: 'local:cli', via: 'local' });
 const MAX_ANSWERS_BYTES = 256 * 1024;
 const SCHEMA_FILE = path.join(__dirname, 'install', 'answers.schema.json');
@@ -56,12 +60,16 @@ const INVALID_CODES = new Set([
     'PUBLIC_KEY_UNREADABLE', 'ROOT_NOT_MOVABLE', 'REPAIR_SOURCE_REQUIRED', 'NOT_AN_INSTALLATION', 'CANDIDATE_NOT_FOUND', 'RELEASE_MISMATCH',
     'MANIFEST_MISSING', 'MANIFEST_INVALID', 'SIGNATURE_MISSING', 'SIGNATURE_INVALID', 'UNSIGNED_DEV_ONLY', 'PATH_TRAVERSAL', 'LINK_ESCAPES_ROOT',
     'TARGET_MISMATCH', 'ABI_MISMATCH', 'INCOMPLETE', 'EXTRA_FILE', 'VERSION_INCOMPATIBLE', 'SELECTION_UNAVAILABLE', 'NOTHING_TO_ADOPT',
-    'ANSWERS_INVALID', 'ANSWERS_PERMISSIONS', 'ANSWERS_UNREADABLE', 'SECRET_ON_ARGV', 'USAGE', 'INPUT_ENDED'
+    'ANSWERS_INVALID', 'ANSWERS_PERMISSIONS', 'ANSWERS_UNREADABLE', 'SECRET_ON_ARGV', 'USAGE', 'INPUT_ENDED',
+    'BACKUP_REQUIRED', 'PASSPHRASE_REQUIRED', 'CORE_NOT_PURGEABLE'
 ]);
 const REFUSED_CODES = new Set([
     'OPERATION_IN_PROGRESS', 'OWNERSHIP_TAMPERED', 'UNKNOWN_SERVICE_OWNER', 'UPDATER_CONFLICT', 'STATE_NOT_ALLOWED', 'ALREADY_INSTALLED',
     'EXISTING_INSTALLATION', 'NOT_INSTALLED', 'NOT_MANAGED', 'PATH_ESCAPE', 'WORKERS_RUNNING', 'REVISION_CONFLICT', 'STORE_UNUSABLE',
-    'ADOPT_NEEDS_CONFIRMATION', 'CONFIG_UNREADABLE', 'PLAN_EXPIRED'
+    'ADOPT_NEEDS_CONFIRMATION', 'CONFIG_UNREADABLE', 'PLAN_EXPIRED',
+    'MAINTENANCE_NOT_HELD', 'MAINTENANCE_ACTIVE', 'STALE_MAINTENANCE', 'RESTART_PENDING', 'WRITER_UNACKNOWLEDGED', 'WRITER_UNFENCEABLE',
+    'FOREIGN_TARGET', 'FEATURE_ACTIVE', 'BACKUP_UNVERIFIED', 'BACKUP_FAILED', 'BACKUP_DESTINATION_UNSAFE', 'FILE_SET_UNSAFE',
+    'INSTANCE_RESET_REQUIRES_LOCAL', 'MUTATION_NOT_COMPLETE', 'FENCE_MISMATCH', 'MAINTENANCE_NOT_ACTIVE'
 ]);
 
 class CliError extends Error {
@@ -74,11 +82,14 @@ class CliError extends Error {
 }
 
 // ---------------------------------------------------------------- arguments
-const VALUE_FLAGS = new Set(['--answers', '--confirm']);
-const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--help', '-h']);
+const VALUE_FLAGS = new Map([['--answers', 'answers'], ['--confirm', 'confirm'], ['--scope', 'scope'], ['--feature', 'feature'], ['--backup-dir', 'backupDir']]);
+const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--help', '-h', '--force', '--acknowledge-mutation']);
 
 function parseArgs(argv) {
-    const flags = { answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, help: false };
+    const flags = {
+        answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, help: false,
+        scope: null, feature: null, backupDir: null, force: false, acknowledgeMutation: false
+    };
     const positional = [];
     for (let index = 0; index < argv.length; index++) {
         const arg = String(argv[index]);
@@ -93,12 +104,14 @@ function parseArgs(argv) {
         if (VALUE_FLAGS.has(name)) {
             const value = inline !== undefined ? inline : argv[++index];
             if (value === undefined || String(value).startsWith('--')) throw new CliError('USAGE', `${name} needs a value.`);
-            flags[name === '--answers' ? 'answers' : 'confirm'] = String(value);
+            flags[VALUE_FLAGS.get(name)] = String(value);
         } else if (BOOLEAN_FLAGS.has(name) && inline === undefined) {
             if (name === '--dry-run') flags.dryRun = true;
             else if (name === '--yes' || name === '-y') flags.yes = true;
             else if (name === '--delete-data') flags.deleteData = true;
             else if (name === '--json') flags.json = true;
+            else if (name === '--force') flags.force = true;
+            else if (name === '--acknowledge-mutation') flags.acknowledgeMutation = true;
             else flags.help = true;
         } else {
             throw new CliError('USAGE', `Unknown option ${name}. Try "help".`);
@@ -108,11 +121,13 @@ function parseArgs(argv) {
     if (command === 'plan') {
         flags.dryRun = true;
         command = positional.shift() || '';
-        if (!KIND_OF[command]) throw new CliError('USAGE', 'plan needs a command: install, adopt, reconfigure, repair or uninstall.');
+        if (!KIND_OF[command] && command !== 'reset') throw new CliError('USAGE', 'plan needs a command: install, adopt, reconfigure, repair, uninstall or reset.');
     }
     if (!COMMANDS.includes(command)) throw new CliError('USAGE', `Unknown command "${command}". Try "help".`);
     if (positional.length) throw new CliError('USAGE', 'Unexpected argument; values go in --answers or at the prompt.');
-    if (flags.confirm && !flags.deleteData) throw new CliError('USAGE', '--confirm belongs to --delete-data.');
+    if (flags.confirm && !flags.deleteData && command !== 'reset') throw new CliError('USAGE', '--confirm belongs to --delete-data or reset.');
+    if ((flags.scope || flags.feature || flags.backupDir) && command !== 'reset') throw new CliError('USAGE', '--scope, --feature and --backup-dir belong to reset.');
+    if ((flags.force || flags.acknowledgeMutation) && command !== 'release') throw new CliError('USAGE', '--force and --acknowledge-mutation belong to release.');
     if (flags.deleteData && command !== 'uninstall') throw new CliError('USAGE', '--delete-data only applies to uninstall.');
     return { command, flags };
 }
@@ -366,6 +381,28 @@ async function run(argv, io = {}) {
             return EXIT.OK;
         }
 
+        if (command === 'reset' || command === 'release') {
+            return await require('./cliReset').run({
+                command,
+                flags,
+                io,
+                fs,
+                baseEnv,
+                stdin,
+                stderr,
+                stdinIsInteractive: Boolean(stdin && stdin.isTTY) || Boolean(io.stdin),
+                out,
+                progress,
+                finish,
+                report,
+                secrets,
+                json,
+                prompter: null,
+                setPrompter: (value) => { prompter = value; },
+                cli: { CliError, EXIT, LOCAL_AUTH, loadAnswers, answersInput, createPrompter }
+            });
+        }
+
         // ---------- input
         let input = null;
         if (KIND_OF[command]) {
@@ -474,7 +511,9 @@ async function run(argv, io = {}) {
             progress(`${view.code}: ${view.message}`);
             for (const finding of view.findings || []) progress(`  ${finding.code}: ${finding.detail}`);
         }
-        if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
+        const resetNotice = report.command === 'reset' ? require('./cliReset').failureNotice(error) : null;
+        if (resetNotice) progress(resetNotice);
+        else if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
         return finish(code, { error: view });
     } finally {
         if (prompter) prompter.close();
@@ -542,6 +581,10 @@ function usage() {
         '  repair       put the recorded release back at the recorded roots; data and config are kept',
         '  uninstall    remove the code; data is kept unless --delete-data --confirm <installationId>',
         '  plan <cmd>   the same as <cmd> --dry-run',
+        '  reset        empty the installation\'s data: --scope instance, or --scope feature --feature <id> (a dormant feature)',
+        '               --dry-run shows the exact scope; --confirm <installationId[:feature]>; --backup-dir <dir>; the backup passphrase',
+        '               comes from the answers file or a hidden prompt',
+        '  release      lift a maintenance barrier a reset left up: --force --acknowledge-mutation',
         '  status       what the manager store says (read only)',
         '  discover     list existing installations on this host (read only)',
         '  schema       print the answers-file JSON schema',
