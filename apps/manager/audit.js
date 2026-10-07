@@ -69,9 +69,6 @@ async function ingest({ db, audit, journal, pending, result }) {
     } catch {
         return { ...result, deferred: true, reason: 'APP_DB_OPEN_FAILED' };
     }
-    // operatorAuditService.record() refuses actions outside its ACTIONS set.
-    for (const action of MANAGER_AUDIT_ACTIONS) audit.ACTIONS.add(action);
-
     const done = [];
     for (const entry of pending) {
         if (!MANAGER_AUDIT_ACTIONS.includes(entry.action)) continue;
