@@ -59,7 +59,9 @@ without a `vector` extension.
 table list and counts, the columns against the expected schema); the target
 (reachability, server version, whether the named schema exists and is empty,
 `CREATE` privilege on the schema and database, which of `vector` and `citext`
-are installed or available and whether the role may create them, free space).
+are installed or available and whether the role may create them, and free space
+when the manager can `statfs` the server's data directory: a remote or unreadable
+data directory reports free space as unknown and the two space checks are not made).
 
 The report sorts findings into three groups:
 
