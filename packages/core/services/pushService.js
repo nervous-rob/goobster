@@ -16,6 +16,7 @@
 
 const db = require('../db');
 const pushConfig = require('../config/pushConfig');
+const { features } = require('../features/featureState');
 
 /** Devices per person; the oldest unseen row is pruned past this. */
 const MAX_DEVICES = 8;
@@ -170,6 +171,11 @@ class PushService {
     async notify({ userId, title, body = null, link = null, tag = null, kind = 'inbox', workId = null }) {
         const summary = { sent: 0, failed: 0, pruned: 0, skipped: false };
         try {
+            // Stored subscriptions stay (they are the person's data); nothing is sent while push is off.
+            if (features.enforcedOff('push')) {
+                summary.skipped = true;
+                return summary;
+            }
             const resolved = this._config.resolve();
             if (!resolved.enabled) {
                 summary.skipped = true;
