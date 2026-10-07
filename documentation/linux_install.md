@@ -237,6 +237,9 @@ checkout at the documented Raspberry Pi paths; a checkout unit keeps
 `ProtectSystem=full` (the account's home stays writable, as before the
 installer) and `tests/linuxService.test.js` keeps the file identical to the
 renderer's output.
+The installer and the manager CLI set their umask to at least `022`, so the
+directories they create are `0755` whatever the calling shell's umask was (a
+runner or cron job with umask `0` would otherwise leave the payload world-writable).
 
 ```bash
 systemctl status goobster
