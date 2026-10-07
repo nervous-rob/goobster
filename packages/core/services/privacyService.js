@@ -1588,6 +1588,12 @@ class PrivacyService {
                 `SELECT COUNT(*) AS c FROM sandbox_packages
                  WHERE requestedBy = @userId OR approvedBy = @userId`, { userId }
             )).c,
+            prediction_markets_attributed: (await db.get(
+                'SELECT COUNT(*) AS c FROM prediction_markets WHERE createdBy = @userId', { userId }
+            )).c,
+            tavern_adventures_attributed: (await db.get(
+                'SELECT COUNT(*) AS c FROM tavern_adventures WHERE createdBy = @userId', { userId }
+            )).c,
             // Not tables: files still on disk keyed by the user
             observatory_workspaces: (await require('./observatoryService').countUserData(userId)).workspaceDirs,
             web_upload_files: require('../utils/webUploads').countUserUploads(userId)
