@@ -37,11 +37,11 @@ const dbInput = require('../../database/input');
 const backupService = lazy('@goobster/core/services/backupService');
 
 const SESSION_VIA = ['local', 'bridge', 'setup', 'recovery'];
-const PROVISION_STEPS = ['preflight', 'packages', 'cluster', 'schema', 'verify'];
+const PROVISION_STEPS = ['preflight', 'packages', 'cluster', 'schema', 'verify-database'];
 const START_STEPS = ['preflight', 'start', 'wait-ready'];
 const STOP_STEPS = ['preflight', 'stop'];
 const REPAIR_STEPS = ['preflight', 'repair', 'wait-ready'];
-const RELOCATE_STEPS = ['preflight', 'backup', 'relocate', 'verify'];
+const RELOCATE_STEPS = ['preflight', 'backup', 'relocate', 'verify-database'];
 const allowedInstalled = (managerState, via) => managerState.state === 'claimed' && SESSION_VIA.includes(via);
 
 const NO_KEYS = new Set([]);
@@ -178,7 +178,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     }
                 },
                 {
-                    name: 'verify',
+                    name: 'verify-database',
                     async run(record, ctx) {
                         const out = await wrapped(() => service().verify({ application: ctx.scratch.application }));
                         ctx.scratch.schema = out.schema;
@@ -448,7 +448,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     }
                 },
                 {
-                    name: 'verify',
+                    name: 'verify-database',
                     async run(record, ctx) {
                         const out = await wrapped(() => service().waitReady({ timeoutMs: deps().waitMs || 60_000 }));
                         ctx.scratch.ready = out.ready;

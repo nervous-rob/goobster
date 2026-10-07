@@ -19,7 +19,6 @@ const fakeDocker = require('../tests/helpers/fakeDocker');
 const ARTIFACTS = process.env.GOOBSTER_E2E_ARTIFACTS || '/opt/cursor/artifacts';
 const PASSWORD = 'plain-walnut-ladder-kettle-7';
 const LOGIN = 'owner-one';
-const MANAGED_LATER = 'Available in a later version of this installer';
 
 test.setTimeout(180_000);
 
@@ -90,8 +89,8 @@ test.describe('the Docker choice in the database step', () => {
 
         await expect(page.getByTestId('engine-postgres-docker')).toBeDisabled();
         await expect(page.getByTestId('docker-availability')).toContainText('Not available');
-        await expect(page.getByTestId('engine-postgres-native')).toBeDisabled();
-        await expect(page.getByTestId('postgres-later')).toHaveText(MANAGED_LATER);
+        await expect(page.getByTestId('engine-postgres-native')).toHaveCount(1);
+        await expect(page.getByTestId('native-availability')).toBeVisible();
         await expect(page.getByTestId('engine-sqlite')).toBeChecked();
         await expect(page.getByTestId('docker-option')).toHaveCount(0);
         await screenshot(page, 'docker-unreachable');
@@ -105,8 +104,8 @@ test.describe('the Docker choice in the database step', () => {
         const radio = page.getByTestId('engine-postgres-docker');
         await expect(radio).toBeEnabled();
         await expect(page.getByTestId('docker-availability')).toContainText('Docker answered');
-        await expect(page.getByTestId('engine-postgres-native')).toBeDisabled();
-        await expect(page.getByTestId('postgres-later')).toHaveText(MANAGED_LATER);
+        await expect(page.getByTestId('engine-postgres-native')).toHaveCount(1);
+        await expect(page.getByTestId('native-availability')).toBeVisible();
 
         await radio.check();
         await expect(page.getByTestId('docker-daemon-card')).toHaveAttribute('data-state', 'ready');

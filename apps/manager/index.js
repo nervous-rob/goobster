@@ -59,7 +59,7 @@ function printCredential(out, label, minted, { reveal }) {
  * @param {Object} [options.supervisorOptions] adapter/policy overrides for --supervise (tests)
  * @returns {Promise<{ code: number, server?: import('node:http').Server, manager?: Object, stop?: () => Promise<void> }>}
  */
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null, nativeDeps = null } = {}) {
     const flags = new Set(argv);
     if (flags.has('--help') || flags.has('-h')) {
         stdout.write(`${HELP}\n`);
@@ -67,6 +67,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     }
     const settings = resolveSettings(env);
     if (installDeps) settings.installDeps = installDeps;
+    if (nativeDeps) settings.nativeDeps = nativeDeps;
     if (settings.dbUrl && !env.GOOBSTER_DB_URL) {
         // The overlay's connection must also select the facade the manager's own audit reconciliation opens.
         env.GOOBSTER_DB_URL = settings.dbUrl;

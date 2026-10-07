@@ -7,8 +7,10 @@ import { ConnectionForm, TestConnection } from '../database/ConnectionForm';
 import { ConnectPlan, SchemaPlan } from '../database/DatabasePlans';
 import { DockerOption, dockerReady, gateOf, useDockerStatus } from '../database/DockerOption';
 import { DockerInstanceCard } from '../database/DockerInstance';
+import { NativeInstanceCard } from '../database/NativeInstance';
+import { NativeOption, nativeGateOf, nativeReady, useNativeStatus } from '../database/NativeOption';
 import { EngineGuidance, FailureHelp, ServerStorageBlock, StorageOwnership, ThreeKinds } from '../database/Explain';
-import { connectionBody, connectionProblems, dockerBody, isLoopback, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
+import { connectionBody, connectionProblems, dockerBody, isLoopback, nativeBody, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
 import { Provision } from '../database/Provision';
 import { blocks } from '../plan';
 import { OperationProgress, useRun } from '../run';
@@ -79,6 +81,7 @@ function StatusView({ go }: { go: Go }) {
                             <button type="button" className="btn" onClick={() => go('schema')} disabled={!data.managed} data-testid="database-schema">Update the schema…</button>
                         </div>
                         <DockerInstanceCard go={go} managed={data.managed} />
+                        <NativeInstanceCard go={go} managed={data.managed} />
                         <ThreeKinds />
                         <FailureHelp status={data} />
                     </>
@@ -256,18 +259,95 @@ function ReviewDocker({ go }: { go: Go }) {
     );
 }
 
-function ReviewOwned({ go }: { go: Go }) {
+/** The form for setting up PostgreSQL natively on this machine, with the host check beside it. */
+function NativeSetup({ go }: { go: Go }) {
+    const { answers, update } = useAnswers();
+    const gate = nativeGateOf(useNativeStatus());
+    const [shown, setShown] = useState<FormProblem[]>([]);
+    const value = answers.database.native;
+    const check = nativeReady(value, gate);
+    return (
+        <JourneyFrame title="PostgreSQL on this machine">
+            <StepFrame id="database-native" title="Set up PostgreSQL on this machine"
+                lead="The installer creates one PostgreSQL cluster for Goobster, with its own data folder and service, and leaves every other cluster alone. Nothing is connected yet: that is a separate, reviewed step.">
+                <NativeOption value={value} onChange={(next) => update((previous) => ({ ...previous, database: { ...previous.database, native: next } }))} problems={shown} />
+                <StepNav onBack={() => go('status')}
+                    onNext={() => { if (!check.ok) { setShown(check.problems); return; } go('review-native'); }}
+                    nextLabel="Review" nextDisabled={gate.state !== 'ready'} />
+            </StepFrame>
+        </JourneyFrame>
+    );
+}
+
+type NativePlan = {
+    effect?: string; mode?: string; ok?: boolean; names?: { cluster: string; service?: string | null; dataDirectory?: string | null };
+    request?: { port: number; bind: string; dataDirectory?: string | null };
+    port?: { chosen?: number; suggestion?: number | null };
+    findings?: Array<{ code: string; severity: 'block' | 'warn' | 'note'; detail: string; remedy?: string }>;
+    packages?: Record<string, { names: string[]; installed: boolean }>;
+    connect?: string;
+};
+
+function NativeProvisionPlan({ plan }: { plan: NativePlan }) {
+    const findings = (plan.findings || []).filter((item) => item.severity !== 'note' || item.code.startsWith('RESUME') || item.code === 'CLUSTER_NAME_CHOSEN' || item.code === 'PACKAGES_WILL_INSTALL')
+        .map((item) => ({ code: item.code, severity: item.severity === 'note' ? 'warn' as const : item.severity, detail: `${item.detail}${item.remedy ? ` ${item.remedy}` : ''}` }));
+    const installing = Object.values(plan.packages || {}).filter((item) => !item.installed).flatMap((item) => item.names);
+    return (
+        <div data-testid="plan-native">
+            <dl className="wizard-facts">
+                <div className="wizard-fact"><dt>This will</dt><dd>{plan.mode === 'fresh' ? `${installing.length > 0 ? 'Install the PostgreSQL packages, then create' : 'Create'} a cluster of its own, its role, its database and Goobster's tables.` : "Continue an earlier setup of this installation's own cluster."}</dd></div>
+                <div className="wizard-fact"><dt>Cluster</dt><dd><code data-testid="plan-native-cluster">{plan.names?.cluster}</code></dd></div>
+                <div className="wizard-fact"><dt>Data</dt><dd><code data-testid="plan-native-data">{plan.names?.dataDirectory || plan.request?.dataDirectory}</code></dd></div>
+                <div className="wizard-fact"><dt>Listens on</dt><dd><code data-testid="plan-native-listen">{plan.request?.bind}:{plan.port?.chosen ?? plan.request?.port}</code></dd></div>
+                {installing.length > 0 && <div className="wizard-fact"><dt>Packages</dt><dd data-testid="plan-native-packages">{installing.join(', ')}</dd></div>}
+                <div className="wizard-fact"><dt>Passwords</dt><dd>Generated by the manager and never shown. The application&apos;s is kept only in the manager&apos;s private file; the helper that creates the role receives a salted hash, not the password.</dd></div>
+                <div className="wizard-fact"><dt>After it</dt><dd>The installation does not use it yet. Connecting it is the next, reviewed step (with a backup first when this installation has data).</dd></div>
+            </dl>
+            <Findings findings={findings} />
+        </div>
+    );
+}
+
+function ReviewNative({ go }: { go: Go }) {
+    const { answers } = useAnswers();
+    const planner = usePlanCheck('database.native.provision');
+    const phase = planner.phase;
+    const body = nativeBody(answers.database.native);
+
+    useEffect(() => {
+        if (phase.kind === 'idle') void planner.check(body);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [phase.kind]);
+
+    const plan = phase.kind === 'ready' ? (phase.operation.plan as unknown as NativePlan) : null;
+    const refused = plan?.ok === false;
+    return (
+        <JourneyFrame title="Review">
+            <StepFrame id="database-review-native" title="Review the native database" lead="This is what will be created. Nothing has changed yet.">
+                {(phase.kind === 'checking' || phase.kind === 'idle') && <p role="status" className="hint">Checking with the manager…</p>}
+                {phase.kind === 'failed' && <PlanFailure phase={phase} />}
+                {plan && <NativeProvisionPlan plan={plan} />}
+                {refused && <p role="alert" className="settings-danger" data-testid="plan-native-refused">The manager found something that blocks this.</p>}
+                <StepNav onBack={() => { planner.reset(); go('native'); }}
+                    onNext={phase.kind === 'ready' ? () => go('progress', phase.operation.id) : undefined}
+                    nextLabel="Create it" nextDisabled={phase.kind !== 'ready' || refused} />
+            </StepFrame>
+        </JourneyFrame>
+    );
+}
+
+function ReviewOwned({ go, owned = 'docker' }: { go: Go; owned?: 'docker' | 'native' }) {
     const [release, setRelease] = useState(true);
     const planner = usePlanCheck('database.connect');
     const phase = planner.phase;
     useEffect(() => {
-        if (phase.kind === 'idle') void planner.check({ connection: { owned: 'docker' }, ...(release ? { release: true } : {}) });
+        if (phase.kind === 'idle') void planner.check({ connection: { owned }, ...(release ? { release: true } : {}) });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [phase.kind]);
     const help = phase.kind === 'failed' ? HELP_BY_CODE[phase.code] : undefined;
     return (
         <JourneyFrame title="Review">
-            <StepFrame id="database-review-owned" title="Use the Docker database" lead="Connect this installation to the PostgreSQL the installer runs. This saves the connection; it moves no data.">
+            <StepFrame id={owned === 'native' ? 'database-review-owned-native' : 'database-review-owned'} title={owned === 'native' ? 'Use the native database' : 'Use the Docker database'} lead="Connect this installation to the PostgreSQL the installer runs. This saves the connection; it moves no data.">
                 {(phase.kind === 'checking' || phase.kind === 'idle') && <p role="status" className="hint">Checking with the manager…</p>}
                 {phase.kind === 'failed' && <PlanFailure phase={phase} help={help ? <p data-testid="plan-help">{help}</p> : undefined} />}
                 {phase.kind === 'ready' && (
@@ -293,16 +373,19 @@ function Progress({ id, go }: { id: string; go: Go }) {
     const kind = run.operation?.kind;
     const connecting = kind === 'database.connect';
     const dockerSetup = kind === 'database.docker.provision';
+    const nativeSetup = kind === 'database.native.provision';
+    const created = dockerSetup || nativeSetup;
+    const createdName = nativeSetup ? 'native database' : 'Docker database';
     const released = Boolean((run.operation?.plan as { release?: boolean } | undefined)?.release);
     return (
         <JourneyFrame title={TITLE}>
-            <StepFrame id="database-progress" title={connecting ? 'Connecting' : (dockerSetup ? 'Creating the Docker database' : 'Updating the schema')}>
-                <OperationProgress run={run} title={connecting ? 'Connect' : (dockerSetup ? 'Docker database' : 'Schema update')} autoStart
+            <StepFrame id="database-progress" title={connecting ? 'Connecting' : (created ? `Creating the ${createdName}` : 'Updating the schema')}>
+                <OperationProgress run={run} title={connecting ? 'Connect' : (created ? createdName.replace(/^./, (letter) => letter.toUpperCase()) : 'Schema update')} autoStart
                     kept="Nothing else was changed: the data in the old database and the server's other databases are untouched."
                     failureHelp={<p>Fix what the step says, then <a href="#/database/status">start again</a>. Each step is safe to repeat.</p>}>
                     {run.phase === 'applied' && (
                         <div data-testid="database-done">
-                            <p role="status" className="wizard-success">{connecting ? 'The connection is saved and the new database passed its checks.' : (dockerSetup ? 'The Docker database is running and ready. This installation does not use it yet: open the database page and choose "Use it for this installation".' : 'The schema is up to date.')}</p>
+                            <p role="status" className="wizard-success">{connecting ? 'The connection is saved and the new database passed its checks.' : (created ? `The ${createdName} is running and ready. This installation does not use it yet: open the database page and choose "Use it for this installation".` : 'The schema is up to date.')}</p>
                             {connecting && !released && (
                                 <p className="wizard-callout" data-testid="database-barrier-up">
                                     Maintenance is still on, so the application has not started on the new database. Release it when you are ready:
@@ -325,7 +408,10 @@ export function DatabaseJourney({ step, id, go }: { step: string; id: string | n
     if (step === 'connect' || step === 'schema') return <ConnectionStep mode={step} go={go} />;
     if (step === 'docker') return <DockerSetup go={go} />;
     if (step === 'review-docker') return <ReviewDocker go={go} />;
+    if (step === 'native') return <NativeSetup go={go} />;
+    if (step === 'review-native') return <ReviewNative go={go} />;
     if (step === 'review-owned') return <ReviewOwned go={go} />;
+    if (step === 'review-owned-native') return <ReviewOwned go={go} owned="native" />;
     if (step === 'review-connect') return <Review mode="connect" go={go} />;
     if (step === 'review-schema') return <Review mode="schema" go={go} />;
     return <StatusView go={go} />;

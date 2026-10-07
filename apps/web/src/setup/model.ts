@@ -1,7 +1,7 @@
 import type { HostConfigField, InstallSource, InstallSuggest } from '../lib/types';
 import { buildChanges } from '../rooms/host/drafts';
 import { OWNER_PASSWORD, typedSecret, type Answers } from './answers';
-import { connectionBody, connectionProblems, dockerBody, dockerProblems } from './database/model';
+import { connectionBody, connectionProblems, dockerBody, dockerProblems, nativeBody, nativeProblems } from './database/model';
 
 export const OWNER_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
 export const PASSWORD_MIN = 15;
@@ -111,15 +111,18 @@ export function installInput(params: {
 /** The `database` answer: SQLite, or the connection to an existing server (the password is in this object only until the plan is made). */
 export function databaseInput(answers: Answers): Record<string, unknown> {
     if (answers.database.engine !== 'postgres') return { engine: 'sqlite' };
-    return answers.database.source === 'docker'
-        ? { engine: 'postgres', docker: dockerBody(answers.database.docker) }
-        : { engine: 'postgres', connection: connectionBody(answers.database) };
+    if (answers.database.source === 'docker') return { engine: 'postgres', docker: dockerBody(answers.database.docker) };
+    if (answers.database.source === 'native') return { engine: 'postgres', native: nativeBody(answers.database.native) };
+    return { engine: 'postgres', connection: connectionBody(answers.database) };
 }
 
 export function databaseProblems(answers: Answers, layout: string): Problem[] {
     const href = '#/setup/database';
     if (answers.database.engine === 'postgres' && answers.database.source === 'docker') {
         return dockerProblems(answers.database.docker).map((problem) => ({ field: problem.field, message: problem.message, href }));
+    }
+    if (answers.database.engine === 'postgres' && answers.database.source === 'native') {
+        return nativeProblems(answers.database.native).map((problem) => ({ field: problem.field, message: problem.message, href }));
     }
     if (answers.database.engine === 'postgres') {
         return connectionProblems(answers.database).map((problem) => ({

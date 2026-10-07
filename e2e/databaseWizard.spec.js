@@ -27,7 +27,6 @@ const C = require('./constants');
 const ARTIFACTS = process.env.GOOBSTER_E2E_ARTIFACTS || '/opt/cursor/artifacts';
 const PASSWORD = 'plain-walnut-ladder-kettle-7';
 const LOGIN = 'owner-one';
-const MANAGED_LATER = 'Available in a later version of this installer';
 
 test.setTimeout(180_000);
 
@@ -197,8 +196,8 @@ test.describe('the database step of the setup wizard', () => {
 
         await expect(page.getByTestId('engine-sqlite')).toBeChecked();
         await expect(page.getByTestId('engine-postgres-docker')).toBeDisabled();
-        await expect(page.getByTestId('engine-postgres-native')).toBeDisabled();
-        await expect(page.getByTestId('postgres-later')).toHaveText(MANAGED_LATER);
+        await expect(page.getByTestId('engine-postgres-native')).toHaveCount(1);
+        await expect(page.getByTestId('native-availability')).toBeVisible();
         await expect(page.getByTestId('data-root')).toBeVisible();
         await expect(page.getByTestId('db-connection-form')).toHaveCount(0);
         await screenshot(page, 'chooser-sqlite');

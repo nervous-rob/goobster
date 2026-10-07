@@ -187,7 +187,7 @@ describe('database.native.provision', () => {
         expect(planned.plan.ok).toBe(true);
         expect(planned.plan.names.cluster).toBe('goobster');
         expect(applied.operation.status).toBe('applied');
-        expect(stepNames(applied.operation)).toEqual(['preflight', 'packages', 'cluster', 'schema', 'verify']);
+        expect(stepNames(applied.operation)).toEqual(['preflight', 'packages', 'cluster', 'schema', 'verify-database']);
         const machine = env.fake.state();
         expect(machine.installed).toEqual(expect.arrayContaining(['postgresql-17', 'postgresql-17-pgvector']));
         expect(machine.clusters.map(item => item.name)).toContain('goobster');
