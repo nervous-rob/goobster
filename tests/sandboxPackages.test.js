@@ -125,7 +125,7 @@ describe('config wiring (config/sandboxConfig.js)', () => {
         }
         try {
             jest.isolateModules(() => {
-                jest.doMock('../config.json', () => ({ sandbox }), { virtual: true });
+                jest.doMock('../packages/core/config/configJson', () => ({ load: () => ({ sandbox }) }));
                 mod = require('@goobster/core/config/sandboxConfig');
             });
         } finally {
