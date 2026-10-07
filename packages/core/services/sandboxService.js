@@ -133,6 +133,46 @@ class SandboxService {
         this._active = 0;
         this._isolation = null; // resolved lazily on first run
         this._pythonModules = null; // probed lazily (listPythonModules)
+        /** False once this process stops admitting runs for a restart (pauseNewWork). */
+        this._admitting = true;
+        /** @type {Set<{ promise: Promise, userId: string|null, work: Object|null, interrupted: boolean }>} */
+        this._running = new Set();
+    }
+
+    /**
+     * Restart contract `cancel` (documentation/manager_lifecycle.md): refuse
+     * new runs with RESTARTING; the running ones keep their own timeout.
+     */
+    pauseNewWork() {
+        this._admitting = false;
+    }
+
+    /** Settles once every run this process admitted has finished. */
+    async drainRuns() {
+        await Promise.allSettled([...this._running].map(entry => entry.promise));
+    }
+
+    /**
+     * The shutdown bound passed with runs still going: each is recorded
+     * INTERRUPTED (phase 'shutdown', no output) and never replayed; the
+     * process exit ends the child with its process group.
+     * @returns {Promise<number>} how many runs were cut
+     */
+    async interruptRunning() {
+        const cut = [...this._running].filter(entry => !entry.interrupted);
+        const workFailureService = require('./workFailureService');
+        for (const entry of cut) {
+            entry.interrupted = true;
+            await workFailureService.note({
+                kind: entry.work?.kind || 'sandbox',
+                workId: entry.work?.id ?? null,
+                actor: entry.work?.actor ?? entry.userId,
+                phase: 'shutdown',
+                code: 'INTERRUPTED',
+                reason: 'the process restarted before the run finished'
+            });
+        }
+        return cut.length;
     }
 
     /**
@@ -639,14 +679,29 @@ class SandboxService {
     async run({ record = true, ...params } = {}) {
         if (features.enforcedOff('sandbox')) throw this._featureUnavailable();
         const startedAt = Date.now();
-        let result;
-        try {
-            result = await this._run(params);
-        } catch (error) {
+        if (!this._admitting) {
+            const error = new SandboxError(503, 'RESTARTING', 'Goobster is restarting; run the code again in a minute.');
             if (record) await this._ledger(params, { error, startedAt });
             throw error;
         }
-        if (record) await this._ledger(params, { result, startedAt });
+        const entry = {
+            promise: null,
+            userId: params.userId == null ? null : String(params.userId),
+            work: require('../utils/workContext').current() || null,
+            interrupted: false
+        };
+        entry.promise = this._run(params);
+        this._running.add(entry);
+        let result;
+        try {
+            result = await entry.promise;
+        } catch (error) {
+            if (record && !entry.interrupted) await this._ledger(params, { error, startedAt });
+            throw error;
+        } finally {
+            this._running.delete(entry);
+        }
+        if (record && !entry.interrupted) await this._ledger(params, { result, startedAt });
         return result;
     }
 
@@ -684,7 +739,8 @@ class SandboxService {
             };
             if (error) {
                 if (error.code === 'ABORTED') return;
-                await workFailureService.note({ ...failure, code: error.code || error.name || 'RUN_ERROR', reason: error.message });
+                const phase = error.code === 'RESTARTING' || error.code === 'INTERRUPTED' ? 'shutdown' : failure.phase;
+                await workFailureService.note({ ...failure, phase, code: error.code || error.name || 'RUN_ERROR', reason: error.message });
             } else if (result && !result.ok) {
                 await workFailureService.note({
                     ...failure,
