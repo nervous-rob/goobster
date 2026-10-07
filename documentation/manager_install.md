@@ -306,7 +306,7 @@ The shipped schema is `apps/manager/install/answers.schema.json` (JSON Schema
 }
 ```
 
-Other fields: `database.engine`, `runtimeUser`, `registerService` (install);
+Other fields: `database.engine`, `runtimeUser`, `createRuntimeUser`, `registerService` (install);
 `candidateId`, `keepUpdater`, `replaceUnreadable` (adopt); `source`,
 `release`, `config` (reconfigure/repair); `keepData`, `confirm`,
 `acknowledgeUnknownServices` (uninstall); `target`, `backup`, `provision`,
