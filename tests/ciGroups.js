@@ -28,6 +28,8 @@ const GROUPS = [
             'postgresConnectRetry',
             'executionLease',
             'featureCatalog',
+            'featureGatingMcp',
+            'featureGatingTools',
             'featureInventory',
             'featureState',
             'gatewaySeam',
