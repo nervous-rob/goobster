@@ -774,7 +774,7 @@ describe('the dispatcher', () => {
 
     test('run() throws 501 for an operation or a platform with no helper, 404 for an unknown name, 400 for a refused input', async () => {
         await expect(privileged.run('package.install', { names: [] }, { platform: 'linux' })).rejects.toMatchObject({ status: 501 });
-        await expect(privileged.run('service.register', {}, { platform: 'win32' })).rejects.toMatchObject({ status: 501 });
+        await expect(privileged.run('service.register', {}, { platform: 'aix' })).rejects.toMatchObject({ status: 501 });
         await expect(privileged.run('shell.exec', {}, {})).rejects.toMatchObject({ status: 404 });
         await expect(privileged.run('user.create', { name: 'root' }, { platform: 'linux' })).rejects.toMatchObject({ status: 400 });
     });
