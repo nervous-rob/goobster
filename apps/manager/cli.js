@@ -269,6 +269,7 @@ function createPrompter({ input, output }) {
         while (waiting.length) waiting.shift()(null);
     });
     return {
+        interactive: Boolean(input && input.isTTY),
         async ask(question, { hidden = false, fallback = '' } = {}) {
             output.write(question);
             muted = hidden;
@@ -286,6 +287,22 @@ function createPrompter({ input, output }) {
 }
 
 const yes = (answer) => /^(y|yes)$/i.test(String(answer).trim());
+
+/**
+ * The one question about updates (documentation/manager_update.md): asked once, with `check` shown as
+ * the default. Only a person at a terminal is asked: a scripted run (piped answers) sets `update` in its
+ * answers file, and without it the policy stays off.
+ */
+async function askUpdateMode(prompter) {
+    if (!prompter.interactive) return null;
+    try {
+        const answer = (await prompter.ask('Updates: off, check (look for a newer release and say so), download, apply [check]: ', { fallback: 'check' })).toLowerCase();
+        return { mode: answer };
+    } catch (error) {
+        if (error && error.code === 'INPUT_ENDED') return null;
+        throw error;
+    }
+}
 
 async function promptInstall(prompter) {
     const input = { source: await prompter.ask('Release source (a verified payload directory): ') };
@@ -308,6 +325,8 @@ async function promptInstall(prompter) {
         config.push({ id, value });
     }
     if (config.length) input.config = config;
+    const update = await askUpdateMode(prompter);
+    if (update) input.update = update;
     return input;
 }
 
@@ -320,6 +339,10 @@ async function promptAdopt(prompter, candidates, output) {
     const label = await prompter.ask('Owner label [Goobster]: ', { fallback: 'Goobster' });
     const input = { label, candidateId: chosen.id };
     if (chosen.updaters.length && yes(await prompter.ask('Keep the existing auto-update running (the manager then does not update it)? [y/N]: '))) input.keepUpdater = true;
+    if (chosen.updaters.length && !input.keepUpdater) {
+        const update = await askUpdateMode(prompter);
+        if (update) input.update = update;
+    }
     return input;
 }
 

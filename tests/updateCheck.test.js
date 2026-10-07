@@ -161,6 +161,21 @@ describe('update.policy', () => {
         expect(await codeOf(drive(harness, 'update.policy', { sudo: true }))).toBe('INVALID_INPUT');
     });
 
+    test('the install question records the answer once; an install that was not asked stays off; a bad answer is refused', async () => {
+        const key = newKey(roots, 'trusted');
+        const base = makePayload(tempDir(roots, 'base'), key, { core: '2.4.0' });
+        const asked = await installBase({ roots, key, base, answer: { mode: 'check' } });
+        expect(asked.manager.store.readInstallation().doc.update).toEqual({ channel: 'stable', mode: 'check' });
+        const prerelease = await installBase({ roots, key, base, answer: { mode: 'download', channel: 'prerelease' } });
+        expect(prerelease.manager.store.readInstallation().doc.update).toMatchObject({ mode: 'download', channel: 'prerelease' });
+        const silent = await installBase({ roots, key, base });
+        expect(silent.manager.store.readInstallation().doc.update || null).toBeNull();
+        expect(policy.current(silent.manager.store.readInstallation().doc).mode).toBe('off');
+        for (const answer of [{ mode: 'always' }, { mode: 'check', source: { kind: 'directory', dir: '/tmp' } }, 'check']) {
+            await expect(installBase({ roots, key, base, answer })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+        }
+    });
+
     test('apply is honoured only while the manager is the updater', async () => {
         const { harness } = await world();
         const { planned } = await drive(harness, 'update.policy', { mode: 'apply' }, { apply: false });

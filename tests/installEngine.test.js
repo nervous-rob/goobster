@@ -565,6 +565,20 @@ describe('adoption of an existing instance', () => {
         expect(planned.plan.preflight.ok).toBe(true);
     });
 
+    test('an adoption records the update answer when it is given, and leaves the policy unset when it is not (#342)', async () => {
+        const harness = await newHarness({ root: scratch('adopt-update'), installDeps: { discover: (opts) => discover({ ...opts, exec: () => null }) } });
+        manualCheckout(harness);
+        const { applied } = await drive(harness, 'adopt', { label: 'Rob', roots: { code: harness.code }, update: { mode: 'check' } });
+        expect(applied.operation.status).toBe('applied');
+        expect(harness.manager.store.readInstallation().doc.update).toEqual({ channel: 'stable', mode: 'check' });
+
+        const other = await newHarness({ root: scratch('adopt-update2'), installDeps: { discover: (opts) => discover({ ...opts, exec: () => null }) } });
+        manualCheckout(other);
+        expect(await codeOf(drive(other, 'adopt', { label: 'Rob', roots: { code: other.code }, update: { mode: 'sometimes' } }))).toBe('INVALID_INPUT');
+        await drive(other, 'adopt', { label: 'Rob', roots: { code: other.code } });
+        expect(other.manager.store.readInstallation().doc.update || null).toBeNull();
+    });
+
     test('a systemd timer needs the privileged helper: deferred (501) when the script carries the guard, UPDATER_CONFLICT when it does not', async () => {
         const root = scratch('adopt-timer');
         const exec = (name) => (name === 'systemctl-timer' ? 'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n' : null);

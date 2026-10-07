@@ -31,6 +31,7 @@
     ["postgres", "PostgreSQL", "documentation/postgres_setup.md"],
     ["database-connection", "Connecting to an existing PostgreSQL server", "documentation/database_connection.md"],
     ["backups", "Backup and restore", "documentation/backup_and_restore.md"],
+    ["manager-update", "Manager updates", "documentation/manager_update.md"],
     ["shared-instances", "Shared-instance safety", "documentation/shared_instance_safety.md"],
     ["host-operations", "Host operations", "documentation/host_operations.md"],
     ["manager", "The installation manager", "documentation/manager.md"],

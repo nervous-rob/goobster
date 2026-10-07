@@ -104,6 +104,7 @@ export function installInput(params: {
         database: databaseInput(answers),
         ...(answers.allowUnsigned ? { release: { allowUnsigned: true } } : {}),
         config: configChanges(answers, fields, layout).entries,
+        update: { mode: answers.updateMode },
         registerService: false
     };
 }

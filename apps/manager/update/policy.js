@@ -161,6 +161,17 @@ function nextOpen(window, date) {
     return null;
 }
 
+/**
+ * The `update` answer of an install or an adoption: the mode and the channel, nothing else (the
+ * window and the source are set later with update.policy). Absent means the operator was not asked.
+ * @returns {object|null}
+ */
+function fromAnswer(value) {
+    if (value === undefined || value === null) return null;
+    exact(value, ['mode', 'channel'], '"update"', false);
+    return normalise({ channel: value.channel === undefined ? 'stable' : value.channel, mode: value.mode === undefined ? 'off' : value.mode });
+}
+
 /** A policy as an operation record, a response or an audit row may carry it: the source's kind (and a GitHub owner and repo), never a directory or a base address. */
 function publicPolicy(policy) {
     const { source, ...rest } = policy || {};
@@ -168,4 +179,4 @@ function publicPolicy(policy) {
     return { ...rest, source: { kind: source.kind, ...(source.kind === 'github-release' ? { owner: source.owner, repo: source.repo } : {}) } };
 }
 
-module.exports = { CHANNELS, MODES, DEFAULT_SOURCE, normalise, current, sourceOf, publicPolicy, effectiveMode, inWindow, nextOpen };
+module.exports = { CHANNELS, MODES, DEFAULT_SOURCE, normalise, fromAnswer, current, sourceOf, publicPolicy, effectiveMode, inWindow, nextOpen };

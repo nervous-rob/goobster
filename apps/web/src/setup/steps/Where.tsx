@@ -89,6 +89,20 @@ export function Where({ go }: StepProps) {
                             {' '}This release is not signed (advanced: only for a build you made yourself)
                         </label>
                     </fieldset>
+                    <fieldset className="wizard-fieldset" data-testid="where-updates">
+                        <legend>Updates</legend>
+                        <div className="wizard-field">
+                            <label htmlFor="where-update-mode">Should the manager look for newer releases?</label>
+                            <select id="where-update-mode" className="input" value={answers.updateMode} data-testid="where-update-mode"
+                                onChange={(event) => update((previous) => ({ ...previous, updateMode: event.target.value as typeof previous.updateMode }))}>
+                                <option value="off">Off</option>
+                                <option value="check">Check (say so when one is available)</option>
+                                <option value="download">Download (check, then fetch and verify it)</option>
+                                <option value="apply">Apply (install it inside an update window)</option>
+                            </select>
+                            <span className="hint">You can change this later in the Host room. An update never touches your settings or data.</span>
+                        </div>
+                    </fieldset>
                     <fieldset className="wizard-fieldset">
                         <legend>Folders</legend>
                         {EDITABLE.map(({ role, label, help }) => (

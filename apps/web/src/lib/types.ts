@@ -1380,7 +1380,8 @@ export type HostConfigReport = {
 export type HostProbeOutcome = {
     target: string; ok: boolean; code: string; latencyMs: number; detail: string; whatItDoes: string; usedSaved: boolean;
 };
-export type HostOperationKind = 'features.set' | 'config.set' | 'defaults.set' | 'lifecycle.apply' | InstallOperationKind;
+export type HostOperationKind = 'features.set' | 'config.set' | 'defaults.set' | 'lifecycle.apply' | UpdateOperationKind | InstallOperationKind;
+export type UpdateOperationKind = 'update.check' | 'update.stage' | 'update.apply' | 'update.policy';
 export type InstallOperationKind = 'install.new' | 'install.reconfigure' | 'install.repair' | 'install.uninstall' | MaintenanceOperationKind;
 export type MaintenanceOperationKind = 'backup.create' | 'backup.restore' | 'data.reset';
 export type HostPlanChange = {
@@ -1402,9 +1403,32 @@ export type HostPreview = {
     preview: { restartRequired: boolean; warnings: Array<{ code: string; count?: number; message: string }> };
     attestation: { by: string; at: string; text: string } | null;
 };
+export type UpdateVersionRef = { version: string; releaseId?: string };
+export type UpdateWindow = { days: number[]; startHour: number; endHour: number; tz: string };
+export type HostUpdateStatus = {
+    available: boolean;
+    code?: string;
+    installed?: { version: string; releaseId: string; target: string; features: string[] };
+    updater?: string | null;
+    policy?: {
+        channel: 'stable' | 'prerelease'; mode: 'off' | 'check' | 'download' | 'apply'; effectiveMode: string; capped?: string;
+        window?: UpdateWindow; source: { kind: string; owner?: string; repo?: string };
+    };
+    lastCheck?: { at: string; outcome: string; code?: string; latest?: { version: string; channel: string; tag: string } } | null;
+    staged?: { version: string; releaseId: string; schemaChanging: boolean; stagedAt: string; stale: boolean } | null;
+    handoff?: { phase: string; from: string; to: string; schemaChanging: boolean } | null;
+    watchdog?: { deadline: string; expired: boolean } | null;
+    recovery?: {
+        code: string; cause: string | null; at: string; from: UpdateVersionRef; to: UpdateVersionRef; schemaChanging: boolean;
+        backup: { verified: boolean; at: string; name: string } | null; restored: boolean; decisions: string[]; warning: string;
+    } | null;
+    scheduled?: { opensAt: string; requestedAt: string } | null;
+    lastApply?: { outcome: string; from?: UpdateVersionRef; to?: UpdateVersionRef; schemaChanging?: boolean; downtimeMs?: number; finishedAt?: string; code?: string } | null;
+    handoffAvailability?: { mode: string; selfReplacing: boolean; osSupervised: boolean; supervising: boolean; exitCode: number } | null;
+};
 export type HostApplied = {
     operation: HostOperation;
-    result: { revision?: number | string; pending?: string[]; restartRequired?: string[]; ineffective?: string[]; changed?: string[]; effect?: string } | null;
+    result: { outcome?: string; staged?: boolean; version?: string; latest?: { version: string }; from?: string; to?: string; downtimeMs?: number; code?: string; revision?: number | string; pending?: string[]; restartRequired?: string[]; ineffective?: string[]; changed?: string[]; effect?: string } | null;
 };
 
 // Setup wizard (documentation/setup_wizard.md): the installation journeys, shared by the manager-served client and the Host room
@@ -1442,7 +1466,7 @@ export type InstallOperation = {
     plan: {
         action?: string; noop?: boolean; installationId?: string;
         preflight?: { ok: boolean; findings: InstallFinding[] };
-        target?: { layout: string; roots: Record<string, string>; database: { engine: string }; features: string[]; previousRoots?: Record<string, string> };
+        target?: { layout: string; roots: Record<string, string>; database: { engine: string }; features: string[]; update?: { mode: string; channel: string } | null; previousRoots?: Record<string, string> };
         source?: { bytes?: number; files?: number } | null;
         steps?: Array<{ name: string; privileged?: string }>;
         changes?: { roots?: boolean; layout?: boolean; config?: string[] };
