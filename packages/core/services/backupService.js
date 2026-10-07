@@ -108,6 +108,8 @@ function isInside(root, candidate) {
  * @param {string} [params.dataDir] - defaults to runtimePaths.dataDir
  * @param {string} [params.configPath] - defaults to runtimePaths.configJsonPath
  * @param {Object} [params.env] - where file-set overrides and environment secrets are read; defaults to process.env
+ * @param {boolean|null} [params.quiesced] - whether nothing was writing while the archive was taken (recorded in the manifest;
+ *   a restore compares row counts strictly unless this is `false`)
  * @param {Object} [params.logger]
  * @returns {Promise<{dir: string, manifest: Object}>}
  */
@@ -118,6 +120,7 @@ async function createBackup({
     dataDir = runtimePaths.dataDir,
     configPath = runtimePaths.configJsonPath,
     env = process.env,
+    quiesced = null,
     logger = console
 } = {}) {
     if (!destDir) throw new BackupError('BAD_ARGS', 'A destination directory is required.');
@@ -151,6 +154,7 @@ async function createBackup({
         envSecrets: { present: envSecretsPresent(env), known: ENV_SECRETS.map(([name]) => name) },
         fileSetsKnown: FILE_SETS.map(set => set.id),
         excluded: DATA_CLASSIFICATION.filter(item => item.disposition === 'excluded').map(item => item.path),
+        ...(quiesced === null ? {} : { quiesced: quiesced === true }),
         notes: [
             'The database and the files are stored unencrypted. Keep this archive on protected storage.',
             'config.json (if present) is encrypted with the passphrase typed at backup time; the passphrase is not stored anywhere.',

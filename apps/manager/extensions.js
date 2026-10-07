@@ -17,7 +17,8 @@ const routes = [
     require('./routes/reset').mountResetRoutes,
     require('./routes/config').createConfigMount(),
     require('./routes/install').createInstallMount(),
-    require('./routes/migrate').mountMigrateRoutes
+    require('./routes/migrate').mountMigrateRoutes,
+    require('./routes/backup').mountBackupRoutes
 ];
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
@@ -29,7 +30,8 @@ const kinds = [
     require('./engine/kinds/install').createKinds,
     require('./engine/kinds/owner').createKinds,
     require('./engine/kinds/reset').createKinds,
-    require('./engine/kinds/migrate').createKinds
+    require('./engine/kinds/migrate').createKinds,
+    require('./engine/kinds/backup').createKinds
 ];
 
 module.exports = { routes, kinds };
