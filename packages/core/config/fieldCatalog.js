@@ -65,6 +65,7 @@ const SECTIONS = Object.freeze([
     { id: 'projects', title: 'Projects and Observatory' },
     { id: 'selfDocs', title: 'Self-knowledge' },
     { id: 'spitball', title: 'Spitball expeditions' },
+    { id: 'manager', title: 'Installation manager' },
     { id: 'limits', title: 'Host usage limits (enforced policy)' },
     { id: 'defaults', title: 'Instance defaults (fallbacks, not policy)' },
     { id: 'general', title: 'General' }
@@ -404,6 +405,10 @@ group({ section: 'defaults', apply: 'hot', sources: ['db'], help: 'documentation
         validate: { min: schema.LIMITS.USAGE_ALERT_MIN, max: schema.LIMITS.USAGE_ALERT_MAX },
         description: 'Personal usage-alert threshold for a person who has not set one. A notice only, never a cap.'
     }]
+]);
+
+group({ section: 'manager', help: 'documentation/host_operations.md#manager-unavailable' }, [
+    ['manager.baseUrl', 'url', { env: ['GOOBSTER_MANAGER_URL'], runtime: 'config/managerConfig#url', default: 'http://127.0.0.1:3400', validate: { custom: 'httpUrl' }, description: 'Where the portal reaches the installation manager for the Host pages (server side only, never the browser). Loopback by default; anything else must be https.' }]
 ]);
 
 group({ section: 'general', sources: ['config'] }, [

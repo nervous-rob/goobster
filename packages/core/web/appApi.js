@@ -27,6 +27,7 @@ const { attachWebAppWebSocket } = require('./appWebsocket');
 const { mountAuth } = require('./routes/auth');
 const { mountAccount } = require('./routes/account');
 const { mountAdmin } = require('./routes/admin');
+const { mountHost } = require('./routes/host');
 const { mountChat } = require('./routes/chat');
 const { mountVoiceTasks } = require('./routes/voiceTasks');
 const { mountWorkspace } = require('./routes/workspace');
@@ -115,6 +116,7 @@ function createWebAppApp(ctx) {
     mountAuth(app, ctx, helpers);
     mountAccount(app, ctx, helpers);
     mountAdmin(app, ctx, helpers);
+    mountHost(app, ctx, helpers);
     mountChat(app, ctx, helpers);
     mountVoiceTasks(app, ctx, helpers);
     mountOptional('projects', app, ctx, helpers);

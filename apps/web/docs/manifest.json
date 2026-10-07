@@ -30,7 +30,11 @@
     ["raspberry-pi", "Raspberry Pi", "documentation/raspberry_pi_guide.md"],
     ["postgres", "PostgreSQL", "documentation/postgres_setup.md"],
     ["backups", "Backup and restore", "documentation/backup_and_restore.md"],
-    ["shared-instances", "Shared-instance safety", "documentation/shared_instance_safety.md"]
+    ["shared-instances", "Shared-instance safety", "documentation/shared_instance_safety.md"],
+    ["host-operations", "Host operations", "documentation/host_operations.md"],
+    ["manager", "The installation manager", "documentation/manager.md"],
+    ["packaging", "Selective payloads", "documentation/packaging.md"],
+    ["features", "Features", "documentation/features.md"]
   ] },
   { "title": "Technical reference", "pages": [
     ["architecture", "Architecture", "documentation/architecture.md"],
