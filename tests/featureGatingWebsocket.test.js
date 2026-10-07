@@ -36,7 +36,6 @@ jest.mock('@goobster/core/services/tableGames/botPlayer', () => ({
 
 const db = require('@goobster/core/db');
 const inventory = require('@goobster/core/features/inventory');
-const { FEATURE_IDS } = require('@goobster/core/features/catalog');
 const { features } = require('@goobster/core/features/featureState');
 const screenVisionService = require('@goobster/core/services/screenVisionService');
 const gbaRunService = require('@goobster/core/services/gbaRunService');
@@ -49,32 +48,10 @@ const { attachScreenVisionWebSocket } = require('@goobster/bot/web/screenVisionA
 const { attachGbaRunWebSocket } = require('@goobster/bot/web/gbaRunApi');
 const { startWebServers, closeWebServers } = require('@goobster/bot/web/server');
 
-const MANAGEABLE = FEATURE_IDS.filter(id => id !== 'core');
-const FILE = '/virtual/data/features.json';
+const { MANAGEABLE, FILE, memoryFs, stateDoc } = require('./helpers/featureFixtures');
+
 const USER = '100000000000000021';
 const silentLogger = { info() {}, debug() {}, warn() {}, error() {} };
-
-function memoryFs(initial = {}) {
-    const files = new Map(Object.entries(initial));
-    const missing = (p) => Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
-    return {
-        files,
-        existsSync: (p) => files.has(p),
-        readFileSync: (p) => { if (!files.has(p)) throw missing(p); return files.get(p); },
-        writeFileSync: (p, data) => { files.set(p, String(data)); },
-        renameSync: (from, to) => { files.set(to, files.get(from)); files.delete(from); },
-        mkdirSync() {},
-        unlinkSync: (p) => { files.delete(p); }
-    };
-}
-
-function stateDoc(off = []) {
-    const entries = {};
-    for (const id of MANAGEABLE) entries[id] = { installed: true, active: !off.includes(id) };
-    return JSON.stringify({
-        version: 1, revision: 1, updatedAt: '2026-10-06 21:14:02', origin: 'operator', features: entries
-    });
-}
 
 let currentFs = null;
 function useState(off = null) {

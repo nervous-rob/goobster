@@ -45,7 +45,6 @@ jest.mock('@goobster/core/services/repoWatchService', () => ({
 
 const db = require('@goobster/core/db');
 const inventory = require('@goobster/core/features/inventory');
-const { FEATURE_IDS } = require('@goobster/core/features/catalog');
 const { features } = require('@goobster/core/features/featureState');
 const mcpConfig = require('@goobster/core/config/mcpConfig');
 const integrationsConfig = require('@goobster/core/config/integrationsConfig');
@@ -64,33 +63,20 @@ const { createApiApp } = require('@goobster/api/server');
 const PORTAL_OWNERS = {
     observatory: 1, projects: 1, expeditions: 1, knowledge: 1, exchange: 1, voice: 1, music: 1, push: 1, discord: 1
 };
-const MANAGEABLE = FEATURE_IDS.filter(id => id !== 'core');
-const FILE = '/virtual/data/features.json';
 const USER = '100000000000000011';
 const OTHER = '100000000000000012';
+const {
+    FEATURE_IDS,
+    MANAGEABLE,
+    FILE,
+    memoryFs,
+    stateDoc,
+    routeTable,
+    concrete,
+    keyOf
+} = require('./helpers/featureFixtures');
+
 const silentLogger = { info() {}, debug() {}, warn() {}, error() {} };
-
-function memoryFs(initial = {}) {
-    const files = new Map(Object.entries(initial));
-    const missing = (p) => Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
-    return {
-        files,
-        existsSync: (p) => files.has(p),
-        readFileSync: (p) => { if (!files.has(p)) throw missing(p); return files.get(p); },
-        writeFileSync: (p, data) => { files.set(p, String(data)); },
-        renameSync: (from, to) => { files.set(to, files.get(from)); files.delete(from); },
-        mkdirSync() {},
-        unlinkSync: (p) => { files.delete(p); }
-    };
-}
-
-function stateDoc(off = []) {
-    const entries = {};
-    for (const id of MANAGEABLE) entries[id] = { installed: true, active: !off.includes(id) };
-    return JSON.stringify({
-        version: 1, revision: 1, updatedAt: '2026-10-06 21:14:02', origin: 'operator', features: entries
-    });
-}
 
 let currentFs = null;
 function useState({ off = null, config = {}, env = {} } = {}) {
@@ -107,40 +93,6 @@ function flipTo(off) {
 // ---------------------------------------------------------------------------
 // Router walking (the route table the inventory spec claims, here used to
 // request every route a feature owns).
-
-function prefixOf(layer) {
-    if (layer.regexp.fast_slash) return '';
-    const keys = (layer.keys || []).map((key) => key.name);
-    let next = 0;
-    return layer.regexp.source
-        .replace(/^\^/, '')
-        .replace(/\\\/\?\(\?=\\\/\|\$\)$/, '')
-        .replace(/\$$/, '')
-        .replace(/\(\?:\(\[\^\\\/\]\+\?\)\)/g, () => `:${keys[next++] || 'param'}`)
-        .replace(/\\\//g, '/');
-}
-function walkStack(stack, prefix, out) {
-    for (const layer of stack) {
-        if (layer.route) {
-            for (const candidate of [].concat(layer.route.path)) {
-                if (typeof candidate !== 'string') continue;
-                for (const method of Object.keys(layer.route.methods)) {
-                    out.push({ method: method.toUpperCase(), path: `${prefix}${candidate}` });
-                }
-            }
-        } else if (layer.handle && layer.handle.stack) {
-            walkStack(layer.handle.stack, `${prefix}${prefixOf(layer)}`, out);
-        }
-    }
-}
-const stackOf = (app) => app.stack || app._router.stack;
-function routeTable(router) {
-    const out = [];
-    walkStack(stackOf(router), '', out);
-    return out;
-}
-const concrete = (template) => template.replace(/:[A-Za-z]+/g, 'x1');
-const keyOf = (route) => `${route.method} ${route.path}`;
 
 /** The first inactive feature among a route's owner and alsoRequires, by the one predicate. */
 function expectedBlocker(route) {
