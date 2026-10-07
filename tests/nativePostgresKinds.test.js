@@ -447,6 +447,26 @@ describe('an interrupted or failing provision', () => {
         expect(env.record().step).toBe('verified');
     }, 120000);
 
+    test('a distribution that creates its own default cluster while installing the packages takes the port first: the create is refused untouched and the retry uses the next port', async () => {
+        const env = await setup({ workers: false });
+        env.fake.flag('autoMainCluster');
+        const failure = await provision(env).catch(error => error);
+        expect(failure.code).toBeTruthy();
+        expect(JSON.stringify(failure)).toContain('PORT_IN_USE');
+        const main = () => env.fake.state().clusters.find(item => item.name === 'main');
+        expect(main()).toMatchObject({ port: 5432, online: true });
+        expect(env.fake.state().clusters.filter(item => item.name === 'goobster')).toEqual([]);
+        expect(env.overlay().values.GOOBSTER_NATIVE_DB_URL).toBeUndefined();
+        const dry = await provision(env, {}, { apply: false });
+        expect(dry.planned.plan.port).toMatchObject({ free: false, suggestion: 5433 });
+        env.fake.clearCalls();
+        const { applied } = await provision(env, { port: 5433 });
+        expect(applied.operation.status).toBe('applied');
+        expect(env.fake.calls().filter(call => call.program === 'apt-get' && call.args.includes('install'))).toEqual([]);
+        expect(main()).toMatchObject({ port: 5432, online: true });
+        expect(env.record().cluster.port).toBe(5433);
+    }, 120000);
+
     test('a failing package installation changes nothing else and is reported without the program output', async () => {
         const env = await setup({ workers: false });
         env.fake.flag('aptFails');

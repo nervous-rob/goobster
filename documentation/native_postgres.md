@@ -473,6 +473,11 @@ that the pre-existing cluster is unchanged byte for byte.
   manager's record and the directory's marker, and nothing is run through a shell.
 - A bind address other than loopback exposes the database on the network with a
   generated password and no TLS; that is why it needs an acknowledgement.
+- On a Debian family host the server package may create the distribution's own
+  `main` cluster while it installs, and that cluster can take port 5432 after
+  the plan checked it free. Creating the new cluster is then refused with
+  `PORT_IN_USE` before anything is written; the packages stay installed, the
+  `main` cluster is left as it is, and a new plan proposes the next port.
 - A Debian family cluster whose configuration directory was deleted cannot be
   re-adopted; restore from a backup.
 - A relocation keeps the original directory (a second copy of the data on disk)
