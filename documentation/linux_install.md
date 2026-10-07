@@ -257,6 +257,27 @@ launcher still finds the roots (`goobster.env` is written either way).
 If a unit named `goobster.service` exists that this installation did not write
 (no marker), the installer leaves it alone and falls back to the manual manager.
 
+The steps themselves are not systemd's: `apps/manager/platform/serviceLifecycle.js`
+registers and unregisters whatever **service kind** the platform names
+(`systemd`, `windows-service`, `launchd`; `serviceKinds.kindForPlatform()`), and
+takes everything specific to one from its definition in
+`apps/manager/platform/serviceKinds.js` - the definition text to render, where
+the service manager keeps it (the ownership record's `unitPath`), the fallback
+file written to the manager store, the by-hand commands, and the account rules
+(`account.creatable` says whether `user.create` applies; a service manager that
+assigns the identity itself, such as a Windows virtual account, says no and the
+preflight's POSIX account checks do not run). `systemdService.js` is the one
+definition in this version, built on `systemdUnit.js`; a platform without a
+definition registers nothing and the step answers `deferred` with
+`NOT_IMPLEMENTED`. On the helper's side the platform module (`privileged/linux.js`)
+supplies `elevation()`, `manualCommand()`, `serviceFacts()` (is the service
+manager there and running), `HELPER_FILES` (what the manifest check covers) and,
+for an elevation tool that cannot pass a pipe (a UAC or administrator prompt),
+`transport()` and `refusal()`: the request and the reply then travel in files
+under `<manager store>/requests/` and the helper is started as
+`helper.js --request <file> --reply <file>` (paths only on argv, values in the
+files). `privileged.js` lists which operations each platform implements.
+
 ## Manual manager
 
 Where the service cannot be registered (no systemd, no administrator rights,

@@ -211,6 +211,7 @@ function createHandler(deps = {}) {
     // ---- service.register -------------------------------------------------
     function serviceRegister(input, log) {
         if (input.kind !== 'systemd') throw refuse('NOT_IMPLEMENTED', 'This platform registers systemd services only.');
+        if (input.scope && input.scope !== 'machine') throw refuse('NOT_IMPLEMENTED', 'systemd services are registered for the machine; there is no per-account service here.');
         requireElevated();
         requireSystemd();
         verifyRecord(input);
@@ -492,14 +493,40 @@ function systemdFacts({ fs = nodeFs, env = process.env, exec = null } = {}) {
     return { available: usable, state: state || null, reason: usable ? null : (state === 'offline' ? 'SYSTEMD_OFFLINE' : 'SYSTEMD_NOT_RUNNING') };
 }
 
+/** The files the elevated helper runs on Linux, payload-relative, for the manifest check in ./elevate.js. */
+const HELPER_FILES = Object.freeze([
+    'app/apps/manager/privileged/helper.js',
+    'app/apps/manager/privileged/protocol.js',
+    'app/apps/manager/privileged/linux.js',
+    'app/apps/manager/platform/systemdUnit.js'
+]);
+
+/**
+ * The sandbox a non-root helper acts in (tests, CI): where the unit, cron and
+ * update-conf files go and where the fake programs are, all under `dir`.
+ */
+function sandboxDeps(dir) {
+    return {
+        sandbox: true,
+        unitDir: path.join(dir, 'etc', 'systemd', 'system'),
+        cronDir: path.join(dir, 'etc', 'cron.d'),
+        updateConf: path.join(dir, 'etc', 'goobster-update.conf'),
+        commandDirs: [path.join(dir, 'bin')]
+    };
+}
+
 module.exports = {
     PLATFORM,
     OPERATIONS,
+    HELPER_FILES,
     DISABLED_PREFIX,
     SYSTEM_COMMAND_DIRS,
     createHandler,
+    sandboxDeps,
     elevation,
     manualCommand,
     systemdFacts,
+    /** The platform-neutral name ./elevate.js asks for. */
+    serviceFacts: systemdFacts,
     invokerFromEnv
 };

@@ -80,7 +80,11 @@ written. Checks: roots (see above); writability; the store owner; target and
 Node ABI against the payload manifest; the feature selection; free disk for
 the payload; system dependencies of the selected features (warn only - the
 manager audits them, it does not install them); Postgres settings for
-`paired` or `postgres`; and ports. `PORT_IN_USE` blocks only `install.new`
+`paired` or `postgres`; and ports. A port is in use when something accepts a
+connection on it, not merely when a bind fails: on macOS an account other than
+root cannot bind a port on which another account's stopped service still has
+connections in TIME_WAIT, which would otherwise refuse an install for half a
+minute after an uninstall. `PORT_IN_USE` blocks only `install.new`
 (a repair or reconfigure expects its own service to hold the port). Preflight
 also refuses an install over existing evidence (`EXISTING_INSTALLATION`)
 unless a tombstone says a previous uninstall left it. Uninstall also

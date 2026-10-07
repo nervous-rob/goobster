@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Goobster</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+@LICENSE_LINE@
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="@HOST_ARCHITECTURES@"/>
+    <allowed-os-versions>
+        <os-version min="13.0"/>
+    </allowed-os-versions>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="io.goobster.payload"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="io.goobster.payload" visible="false" title="Goobster @VERSION@" description="The Goobster release payload and its installer.">
+        <pkg-ref id="io.goobster.payload"/>
+    </choice>
+    <pkg-ref id="io.goobster.payload" version="@VERSION@" auth="Root" onConclusion="none">@COMPONENT@</pkg-ref>
+</installer-gui-script>
