@@ -3,7 +3,7 @@ import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThr
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
-import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus } from './types';
+import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -150,6 +150,8 @@ export const api = {
     hostProbe: (body: { target: string; useSaved?: boolean; credential?: string }) =>
         request<HostProbeOutcome>('/api/app/admin/host/config/probe', { method: 'POST', body }),
     hostDatabaseStatus: () => request<DatabaseStatus>('/api/app/admin/host/database/status'),
+    hostDockerStatus: (storage?: string) =>
+        request<DockerStatus>(`/api/app/admin/host/docker/status${storage ? `?storage=${encodeURIComponent(storage)}` : ''}`),
     hostDatabaseTest: (connection: DatabaseConnectionBody) =>
         request<DatabaseReport>('/api/app/admin/host/database/test', { method: 'POST', body: { connection } }),
     hostPreview: (kind: HostOperationKind, input: unknown) =>

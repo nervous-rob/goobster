@@ -1514,7 +1514,8 @@ export type MigrationPreflight = {
 };
 
 // Connecting to an existing PostgreSQL server (documentation/database_connection.md).
-export type DatabaseOperationKind = 'database.provision' | 'database.schema.apply' | 'database.connect';
+export type DockerDatabaseOperationKind = 'database.docker.provision' | 'database.docker.start' | 'database.docker.stop' | 'database.docker.repair' | 'database.docker.reconfigure';
+export type DatabaseOperationKind = 'database.provision' | 'database.schema.apply' | 'database.connect' | DockerDatabaseOperationKind;
 export type DatabaseFinding = { code: string; detail: string; remediation?: string; [key: string]: unknown };
 export type DatabaseExtensionState = { available: boolean; installed: boolean; trusted: boolean | null; state: string; summary: string; canCreate: boolean };
 export type DatabaseSchemaState = {
@@ -1557,4 +1558,34 @@ export type DatabaseStatus = {
 };
 export type DatabaseConnectionBody = {
     host: string; port?: number; database: string; schema?: string; user: string; password: string; tls?: { mode: string; caFile?: string };
+};
+
+// The PostgreSQL instance the installer runs in Docker (documentation/docker_postgres.md).
+export type DockerFinding = { code: string; detail: string; remedy?: string | null; severity?: string };
+export type DockerContainerSummary = {
+    exists: boolean; running: boolean; status: string; health: string; port: number | null; bind: string | null; image: string | null;
+    imagePinned: boolean; restartPolicy: string | null; memoryBytes: number; startedAt: string | null;
+    data: { kind: 'volume' | 'path'; name: string | null; source: string | null } | null;
+};
+export type DockerDaemonReport = {
+    cli: { present: boolean; version: string | null };
+    daemon: { reachable: boolean; code: string | null; serverVersion: string | null; flavor: string | null; rootless: boolean };
+    platform: { os: string; arch: string; daemonOs: string | null; daemonArch: string | null; platform: string | null; supported: boolean; pullBytes: number | null };
+    image: { reference: string; humanReference: string; digest: string; postgresMajor: number; pulled: boolean | null; pullBytes: number | null };
+    backupTools: { ok: boolean; code: string; version: string | null; remedy: string | null } | null;
+    storage: { path: string | null; freeBytes: number | null; requiredBytes: number | null };
+    verdict: { ok: boolean; blocks: DockerFinding[]; warnings: DockerFinding[]; notes: DockerFinding[]; next: string };
+};
+export type DockerRecord = {
+    step: string; complete: boolean; image: { reference: string; major: number; minor: number | null };
+    request: { port: number; bind: string; storage: { kind: 'volume' | 'path'; path?: string }; role: string; database: string; memoryMb: number | null };
+    created: { network: boolean; volume: boolean; container: boolean }; dataInitialised: boolean; updatedAt: string | null;
+};
+export type DockerStatus = {
+    daemon: DockerDaemonReport;
+    names: { container: string; volume: string; network: string; template: boolean };
+    record: DockerRecord | null;
+    recordProblem: unknown;
+    owned: { container: DockerContainerSummary | null; volume: boolean; network: boolean; foreign: Array<{ kind: string; name: string | null }> } | null;
+    connected: boolean;
 };

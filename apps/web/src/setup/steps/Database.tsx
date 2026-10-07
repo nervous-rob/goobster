@@ -2,8 +2,9 @@ import { useState } from 'react';
 import type { DatabaseReport } from '../../lib/types';
 import { DATABASE_PASSWORD, useAnswers } from '../answers';
 import { ConnectionForm, TestConnection } from '../database/ConnectionForm';
+import { DockerOption, dockerReady, gateOf, useDockerStatus } from '../database/DockerOption';
 import { EngineGuidance, ServerStorageBlock, StorageOwnership } from '../database/Explain';
-import { connectionProblems, isLoopback, MANAGED_LATER, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
+import { connectionProblems, DOCKER_LABEL, isLoopback, MANAGED_LATER, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
 import { Provision } from '../database/Provision';
 import { useConfigReport, useSuggest } from '../data';
 import { layoutFor } from '../model';
@@ -11,9 +12,10 @@ import { describeError, formatBytes, StepFrame, StepNav } from '../ui';
 import type { StepProps } from './order';
 
 /**
- * Where the data lives: one file on this machine, or a PostgreSQL server that
- * somebody already runs. A server the installer would set up itself (Docker or
- * a native package) is not offered yet and says so.
+ * Where the data lives: one file on this machine, a PostgreSQL server that
+ * somebody already runs, or one the installer runs in Docker (enabled only
+ * once the daemon check passes). A server set up through a native package is
+ * not offered yet and says so.
  */
 export function Database({ go }: StepProps) {
     const suggest = useSuggest();
@@ -26,14 +28,19 @@ export function Database({ go }: StepProps) {
     const database = answers.database;
     const [report, setReport] = useState<DatabaseReport | null>(null);
     const [shown, setShown] = useState<FormProblem[]>([]);
+    const dockerQuery = useDockerStatus();
+    const gate = gateOf(dockerQuery);
     const postgres = database.engine === 'postgres';
+    const docker = postgres && database.source === 'docker';
+    const existing = postgres && !docker;
+    const dockerCheck = docker ? dockerReady(database.docker, gate) : { ok: true, problems: [] };
     const setDatabase = (next: DatabaseAnswer) => update((previous) => ({
         ...previous,
         database: next,
         reenter: next.password ? previous.reenter.filter((id) => id !== DATABASE_PASSWORD) : previous.reenter
     }));
-    const problems = postgres ? shown : [];
-    const ready = !postgres || usable(report);
+    const problems = existing ? shown : [];
+    const ready = !postgres || (docker ? dockerCheck.ok : usable(report));
 
     return (
         <StepFrame id="database" title="Where does the data live?"
@@ -45,16 +52,23 @@ export function Database({ go }: StepProps) {
                     <legend>Database</legend>
                     <div role="radiogroup" aria-label="Database engine">
                         <label className="wizard-choice">
-                            <input type="radio" name="engine" checked={!postgres} onChange={() => { setReport(null); setDatabase({ ...database, engine: 'sqlite' }); }} data-testid="engine-sqlite" />
+                            <input type="radio" name="engine" checked={!postgres} onChange={() => { setReport(null); setShown([]); setDatabase({ ...database, engine: 'sqlite' }); }} data-testid="engine-sqlite" />
                             {' '}<strong>SQLite</strong> <span className="hint">a single file, nothing to run or maintain (recommended for one machine)</span>
                         </label>
                         <label className="wizard-choice">
-                            <input type="radio" name="engine" checked={postgres} onChange={() => setDatabase({ ...database, engine: 'postgres' })} data-testid="engine-postgres-existing" />
+                            <input type="radio" name="engine" checked={existing} onChange={() => setDatabase({ ...database, engine: 'postgres', source: 'existing' })} data-testid="engine-postgres-existing" />
                             {' '}<strong>An existing PostgreSQL server</strong> <span className="hint">one you or your host already run, on this machine or another</span>
                         </label>
-                        <label className="wizard-choice" aria-disabled="true">
-                            <input type="radio" name="engine" disabled aria-describedby="postgres-later" data-testid="engine-postgres-docker" />
-                            {' '}<strong>A PostgreSQL server the installer sets up in Docker</strong>
+                        <label className="wizard-choice" aria-disabled={gate.state === 'ready' ? undefined : 'true'}>
+                            <input type="radio" name="engine" checked={docker} disabled={gate.state !== 'ready'} aria-describedby="docker-availability"
+                                onChange={() => { setReport(null); setDatabase({ ...database, engine: 'postgres', source: 'docker' }); }} data-testid="engine-postgres-docker" />
+                            {' '}<strong>{DOCKER_LABEL}</strong>{' '}
+                            <span id="docker-availability" className="hint" data-testid="docker-availability">
+                                {gate.state === 'ready' && 'Docker answered; the installer creates and looks after one container for Goobster.'}
+                                {gate.state === 'checking' && 'Checking Docker…'}
+                                {gate.state === 'unavailable' && `Not available: ${gate.reason}`}
+                                {gate.state === 'blocked' && `Not available: ${gate.reason}`}
+                            </span>
                         </label>
                         <label className="wizard-choice" aria-disabled="true">
                             <input type="radio" name="engine" disabled aria-describedby="postgres-later" data-testid="engine-postgres-native" />
@@ -83,7 +97,18 @@ export function Database({ go }: StepProps) {
                     )}
                 </fieldset>
             )}
-            {postgres && (
+            {docker && (
+                <>
+                    <DockerOption value={database.docker} onChange={(next) => setDatabase({ ...database, docker: next })} problems={shown} />
+                    <StorageOwnership engine="postgres" docker />
+                    <p className="hint" data-testid="docker-next-hint">
+                        {ready
+                            ? 'Docker is ready. The installer creates the container, the application\'s role and Goobster\'s tables when you press Install.'
+                            : 'Continue unlocks when the check above passes and what it asks for is ticked.'}
+                    </p>
+                </>
+            )}
+            {postgres && !docker && (
                 <>
                     <ConnectionForm value={database} onChange={(next) => setDatabase(next)} problems={problems} passwordLabel="Password of the application user" />
                     <TestConnection value={database} onReport={setReport} onProblems={setShown} />
@@ -98,7 +123,11 @@ export function Database({ go }: StepProps) {
                 </>
             )}
             <StepNav onBack={() => go('connections')}
-                onNext={() => { if (postgres && !usable(report)) { setShown(connectionProblems(database)); return; } go('defaults'); }}
+                onNext={() => {
+                    if (docker && !dockerCheck.ok) { setShown(dockerCheck.problems); return; }
+                    if (existing && !usable(report)) { setShown(connectionProblems(database)); return; }
+                    go('defaults');
+                }}
                 nextDisabled={!data || (postgres && !ready)} />
         </StepFrame>
     );
