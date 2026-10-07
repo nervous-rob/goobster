@@ -1,0 +1,117 @@
+#!/bin/sh
+# postinstall of goobster-<version>-darwin-<arch>.pkg (documentation/macos_install.md).
+#
+# macOS runs this as root, once, after the release payload has been laid down
+# under /opt/goobster/stage/<version>. It installs nothing by itself: it starts
+# the manager's bootstrap entry, which installs through the setup engine
+# (stage, verify, activate). Exactly one of two things happens:
+#
+#   1. /etc/goobster-answers.json exists  ->  the headless, machine-wide install.
+#      The one documented headless path. The file must be a regular file owned
+#      by root with mode 0600. The install runs here once, as root, and ends;
+#      the service it registers runs as the hidden _goobster account.
+#   2. otherwise  ->  the wizard, started as the person at the console
+#      (launchctl asuser <uid> sudo -u <user> ...), per user, in their browser.
+#      The wizard and the manager never run as root.
+#
+# The values below are written by scripts/package-bootstrap-darwin.js.
+GOOBSTER_PKG_VERSION='@VERSION@'
+GOOBSTER_PKG_TARGET='@TARGET@'
+GOOBSTER_PKG_PAYLOAD_DIGEST='@PAYLOAD_DIGEST@'
+GOOBSTER_PKG_SIGNED='@SIGNED@'
+GOOBSTER_PKG_BUILD='@BUILD@'
+GOOBSTER_PKG_PUBLIC_KEY_B64='@PUBLIC_KEY_B64@'
+
+PKG_PATH=${1:-goobster.pkg}
+STAGE="/opt/goobster/stage/$GOOBSTER_PKG_VERSION"
+ANSWERS=/etc/goobster-answers.json
+LOG=/var/log/goobster-install.log
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+umask 022
+: >> "$LOG" 2>/dev/null || LOG=/dev/null
+exec >> "$LOG" 2>&1
+
+say() { printf '%s\n' "$*"; }
+fail() { printf 'goobster: %s\n' "$1"; exit "${2:-1}"; }
+
+say "---- Goobster $GOOBSTER_PKG_VERSION ($GOOBSTER_PKG_TARGET, $GOOBSTER_PKG_BUILD build) ----"
+if [ "$GOOBSTER_PKG_BUILD" != "release" ]; then
+    say "NOTICE: this is an UNSIGNED DEVELOPMENT build. Its payload carries no valid release signature;"
+    say "        it installs only into a development environment you trust."
+fi
+
+# the payload is read by the service and must not be writable by anyone else
+chown -R root:wheel "$STAGE" 2>/dev/null
+chmod -R go-w "$STAGE" 2>/dev/null
+
+NODE="$STAGE/runtime/bin/node"
+ENTRY="$STAGE/app/apps/manager/bootstrap/darwin.js"
+[ -x "$NODE" ] || fail "the package holds no runtime ($NODE)." 1
+[ -f "$ENTRY" ] || fail "the package holds no bootstrap entry." 1
+
+KEYDIR=
+cleanup() {
+    if [ -n "$KEYDIR" ]; then rm -rf "$KEYDIR"; fi
+}
+trap cleanup EXIT
+
+KEYARG=
+if [ -n "$GOOBSTER_PKG_PUBLIC_KEY_B64" ]; then
+    KEYDIR=$(mktemp -d /private/var/tmp/goobster-key.XXXXXXXX) || fail "a temporary directory could not be created." 1
+    if ! printf '%s' "$GOOBSTER_PKG_PUBLIC_KEY_B64" | base64 -D > "$KEYDIR/release-key.pem" 2>/dev/null; then
+        printf '%s' "$GOOBSTER_PKG_PUBLIC_KEY_B64" | base64 -d > "$KEYDIR/release-key.pem" || fail "the embedded release key could not be decoded." 1
+    fi
+    KEYARG="$KEYDIR/release-key.pem"
+fi
+
+run_entry() {
+    if [ -n "$KEYARG" ]; then
+        "$@" --payload-digest "$GOOBSTER_PKG_PAYLOAD_DIGEST" --build "$GOOBSTER_PKG_BUILD" --signed "$GOOBSTER_PKG_SIGNED" --public-key "$KEYARG"
+    else
+        "$@" --payload-digest "$GOOBSTER_PKG_PAYLOAD_DIGEST" --build "$GOOBSTER_PKG_BUILD" --signed "$GOOBSTER_PKG_SIGNED"
+    fi
+}
+
+# ---- 1. headless, machine-wide ------------------------------------------
+if [ -e "$ANSWERS" ] || [ -L "$ANSWERS" ]; then
+    [ -f "$ANSWERS" ] && [ ! -L "$ANSWERS" ] || fail "$ANSWERS must be a regular file, not a link." 2
+    facts=$(stat -f '%u %Lp' "$ANSWERS") || fail "$ANSWERS could not be examined." 2
+    [ "$facts" = "0 600" ] || fail "$ANSWERS must be owned by root with mode 0600 (it is '$facts'); nothing was installed." 2
+    say "Headless install from $ANSWERS."
+    run_entry "$NODE" "$ENTRY" --payload "$STAGE" --installer "$PKG_PATH" --headless --answers "$ANSWERS" --yes
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        say "The install finished. The unpacked copy under /opt/goobster/stage is no longer needed."
+        rm -rf "$STAGE"
+        rmdir /opt/goobster/stage 2>/dev/null
+    else
+        say "The install did not finish (exit $status); the unpacked copy is kept at $STAGE so it can be run again."
+    fi
+    exit "$status"
+fi
+
+# ---- 2. the wizard, as the person at the console -------------------------
+CONSOLE_USER=$(stat -f '%Su' /dev/console 2>/dev/null)
+case $CONSOLE_USER in
+    ''|root|loginwindow|_mbsetupuser)
+        say "Nobody is logged in at the console and there is no $ANSWERS, so no wizard was started."
+        say "The release is unpacked at $STAGE. To start the wizard later, as yourself (not root):"
+        say "  $NODE $ENTRY --payload $STAGE --per-user --open-browser"
+        exit 0
+        ;;
+esac
+CONSOLE_UID=$(id -u "$CONSOLE_USER" 2>/dev/null) || fail "the console user could not be resolved." 1
+say "Starting the wizard for the console user (uid $CONSOLE_UID), per user."
+WIZARD_LOG=/var/log/goobster-wizard.log
+: >> "$WIZARD_LOG" 2>/dev/null
+chmod 0666 "$WIZARD_LOG" 2>/dev/null
+if [ -n "$KEYARG" ]; then
+    # the wizard outlives this script; give it its own copy of the public key
+    KEEPKEY=/private/var/tmp/goobster-release-key-$CONSOLE_UID.pem
+    cp "$KEYARG" "$KEEPKEY" && chmod 0644 "$KEEPKEY" && KEYARG=$KEEPKEY
+fi
+run_entry /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" -H "$NODE" "$ENTRY" --payload "$STAGE" --installer "$PKG_PATH" --per-user --open-browser < /dev/null >> "$WIZARD_LOG" 2>&1 &
+say "The wizard is running (output in $WIZARD_LOG)."
+exit 0
