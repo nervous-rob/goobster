@@ -42,6 +42,7 @@ const TARGETS = Object.freeze({ 'win32-x64': { arch: 'x64' } });
 const TEMPLATE = path.join(REPO, 'bootstrap', 'windows', 'installer.nsi');
 const HOST_NAME = 'goobster-service.exe';
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/;
+// eslint-disable-next-line no-control-regex -- rejecting control characters is the point
 const FORBIDDEN_NAME = /[\u0000-\u001f"*?$<>|]/;
 
 class PackageError extends Error {

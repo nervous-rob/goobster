@@ -416,7 +416,10 @@ does the same as the units; Ctrl-C stops the workers first.
   register/unregister steps are kind-neutral: a platform adds its definition
   to `apps/manager/platform/serviceKinds.js` (text, installed path, fallback
   file, by-hand commands, account rules) and the steps, the ownership record
-  and the bootstrap's closing message follow it.
+  and the bootstrap's closing message follow it. The Windows service is done
+  too (#331, [windows_install.md](windows_install.md)): the same steps with the
+  `windows-service` definition, a WinSW host running the manager as
+  `NT SERVICE\goobster`, and a 120 s stop bound whose gracefulness the CI journey checks.
 - **#334 (maintenance barrier):** done in
   [maintenance_barrier.md](maintenance_barrier.md). It reuses this worker
   contract (the control file, the one-second poll, the drain bounds) with a
