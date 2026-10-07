@@ -1,0 +1,228 @@
+/**
+ * The manager: state detection, the store, credentials, sessions, the
+ * bridge verifier and the setup engine, assembled without the application
+ * database, Discord, provider keys or any optional feature.
+ *
+ * States (documentation/manager.md):
+ *   unclaimed  no installation.json and no evidence of an application
+ *              installation: first-time setup with the bootstrap credential
+ *   claimed    installation.json is usable; the app database may still be
+ *              unreachable (reported, not fatal)
+ *   recovery   installation.json is missing, damaged or unreadable while
+ *              an installation exists (or the file itself exists): only the
+ *              local recovery flow works, nothing is adopted automatically
+ */
+
+const nodeFs = require('node:fs');
+const { createStore } = require('./store/installation');
+const { createJournal } = require('./store/journal');
+const { createLock } = require('./store/lock');
+const { createOneTimeCredential } = require('./auth/credentials');
+const { createSessionRegistry } = require('./auth/sessions');
+const { createBridgeVerifier } = require('./auth/bridge');
+const { createEngine } = require('./engine');
+const { createFeaturesSetKind } = require('./engine/kinds/featuresSet');
+const { createClaimKind, createAdoptKind, createRecoveryUnlockKind } = require('./engine/kinds/installation');
+const { existingInstallEvidence, probeAppDatabase, DEFAULT_PROBE_TIMEOUT_MS } = require('./appDatabase');
+const { reconcileAudit, pendingAuditCount } = require('./audit');
+const privileged = require('./privileged');
+const files = require('./store/files');
+
+const MANAGER_VERSION = 1;
+const PROBE_TTL_MS = 10_000;
+const STORE_REASONS = {
+    missing: 'MANAGER_STORE_MISSING',
+    corrupt: 'MANAGER_STORE_CORRUPT',
+    unsupported: 'MANAGER_STORE_UNSUPPORTED',
+    unreadable: 'MANAGER_STORE_UNREADABLE'
+};
+
+function readConfigJson(configPath, fs) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        return { present: true, readable: files.isPlainObject(parsed), config: files.isPlainObject(parsed) ? parsed : {} };
+    } catch (error) {
+        return { present: !(error && error.code === 'ENOENT'), readable: false, config: {} };
+    }
+}
+
+/**
+ * @param {Object} params
+ * @param {Object} params.settings resolveSettings() output
+ * @param {Object} [params.fs]
+ * @param {() => Date} [params.now]
+ * @param {Object} [params.hooks] engine fault injection (tests)
+ * @param {(pid: number) => boolean} [params.isProcessAlive]
+ * @param {number} [params.probeTimeoutMs]
+ * @param {Object} [params.logger]
+ * @param {Object} [params.reconcileDeps] { loadDb, loadAudit } overrides for reconcileAudit
+ */
+function createManager({
+    settings,
+    fs = nodeFs,
+    now = () => new Date(),
+    hooks = {},
+    isProcessAlive,
+    probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
+    logger = console,
+    reconcileDeps = {}
+}) {
+    const store = createStore({ root: settings.storeDir, fs, now });
+    const initResult = store.init();
+    const journal = createJournal({ store, fs, now });
+    const lock = createLock({ store, fs, now, ...(isProcessAlive ? { isProcessAlive } : {}) });
+    const bootstrap = createOneTimeCredential({ store, kind: 'bootstrap', fs, now });
+    const recovery = createOneTimeCredential({ store, kind: 'recovery', fs, now });
+    const sessions = createSessionRegistry({ now });
+    const bridge = createBridgeVerifier({ store, fs, now });
+    let probeCache = null;
+    let reconciling = null;
+
+    /** @returns {import('./engine').ManagerState & { evidence: string[] }} */
+    function currentState() {
+        const evidence = existingInstallEvidence(settings, fs);
+        if (!initResult.ok) {
+            return { state: 'recovery', reason: 'MANAGER_STORE_UNREADABLE', installation: null, evidence };
+        }
+        const installation = store.readInstallation();
+        if (installation.status === 'ok') return { state: 'claimed', reason: null, installation: installation.doc, evidence };
+        if (installation.status === 'missing' && evidence.length === 0) {
+            return { state: 'unclaimed', reason: null, installation: null, evidence };
+        }
+        return { state: 'recovery', reason: STORE_REASONS[installation.status], installation: null, evidence };
+    }
+
+    function createFeatureState() {
+        const { createFeatureState: create } = require('@goobster/core/features/featureState');
+        return create({
+            filePath: settings.featuresPath,
+            env: settings.env,
+            config: readConfigJson(settings.configPath, fs).config,
+            logger: { warn: () => {} }
+        });
+    }
+
+    async function probe({ fresh = false } = {}) {
+        const t = now().getTime();
+        if (!fresh && probeCache && t - probeCache.at < PROBE_TTL_MS) return probeCache.result;
+        const result = await probeAppDatabase(settings, { fs, timeoutMs: probeTimeoutMs });
+        probeCache = { at: now().getTime(), result };
+        return result;
+    }
+
+    function reconcile() {
+        if (reconciling) return reconciling;
+        reconciling = reconcileAudit({ journal, probe: () => probe({ fresh: true }), ...reconcileDeps })
+            .catch((error) => {
+                logger.warn?.(`[manager] audit reconciliation deferred: ${error && (error.code || error.name)}`);
+                return { deferred: true, reason: 'RECONCILE_FAILED' };
+            })
+            .finally(() => { reconciling = null; });
+        return reconciling;
+    }
+
+    const kinds = {};
+    for (const kind of [createFeaturesSetKind(), createAdoptKind(), createClaimKind(), createRecoveryUnlockKind()]) {
+        kinds[kind.kind] = kind;
+    }
+
+    const engine = createEngine({
+        journal,
+        lock,
+        kinds,
+        currentState,
+        context: {
+            store,
+            sessions,
+            bridge,
+            createFeatureState,
+            evidence: () => existingInstallEvidence(settings, fs)
+        },
+        hooks,
+        now,
+        logger,
+        onAudit: () => {
+            if (settings.reconcile) reconcile();
+        }
+    });
+
+    /**
+     * Boot-time housekeeping. Mints the bootstrap credential in the
+     * unclaimed state (replacing any earlier one); drops it otherwise;
+     * makes sure a claimed installation has its bridge key; marks
+     * operations a crash interrupted.
+     * @returns {Promise<{ state: Object, bootstrap: { credential: string, expiresAt: string, file: string } | null, recovered: string[] }>}
+     */
+    async function init({ mintBootstrap = true } = {}) {
+        const state = currentState();
+        let minted = null;
+        if (initResult.ok) {
+            if (state.state === 'unclaimed') {
+                if (mintBootstrap) minted = bootstrap.mint();
+            } else {
+                bootstrap.revoke();
+            }
+            if (state.state === 'claimed') bridge.ensureKey(state.installation.installationId);
+        }
+        const recovered = initResult.ok ? await engine.recoverInterrupted() : [];
+        return { state, bootstrap: minted, recovered };
+    }
+
+    /** Everything GET /status shows. No credential, hash, label, path or URL. */
+    async function status() {
+        const state = currentState();
+        const appDatabase = await probe();
+        const config = readConfigJson(settings.configPath, fs);
+        const out = {
+            service: 'goobster-manager',
+            version: MANAGER_VERSION,
+            state: state.state,
+            reason: state.reason,
+            installation: state.installation
+                ? {
+                    installationId: state.installation.installationId,
+                    createdAt: state.installation.createdAt,
+                    claimed: Boolean(state.installation.claimedAt),
+                    origin: state.installation.origin
+                }
+                : null,
+            existingInstallation: state.evidence.length > 0,
+            appDatabase,
+            config: { present: config.present, readable: config.readable },
+            lock: initResult.ok ? lock.describe() : { held: false },
+            audit: { pending: initResult.ok ? pendingAuditCount(journal) : 0 },
+            transport: { lan: settings.lan, tls: settings.lan },
+            auth: { bridge: state.state === 'claimed', strongAuthRequired: bridge.requireStrongAuth() },
+            privileged: privileged.describe()
+        };
+        if (state.state === 'unclaimed') {
+            const pending = bootstrap.describe();
+            out.setup = { bootstrapPending: pending.pending, expiresAt: pending.expiresAt, expired: pending.expired };
+        }
+        if (state.state !== 'unclaimed') {
+            const pending = recovery.describe();
+            out.recovery = { credentialPending: pending.pending, expiresAt: pending.expiresAt };
+        }
+        return out;
+    }
+
+    return {
+        settings,
+        store,
+        journal,
+        lock,
+        engine,
+        sessions,
+        bridge,
+        credentials: { bootstrap, recovery },
+        storeReady: initResult.ok,
+        currentState,
+        createFeatureState,
+        probe,
+        reconcile,
+        init,
+        status
+    };
+}
+
+module.exports = { createManager, MANAGER_VERSION, readConfigJson };
