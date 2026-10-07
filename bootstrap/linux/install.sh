@@ -39,7 +39,7 @@ case $SELF in
 esac
 
 say() { printf '%s\n' "$*"; }
-fail() { printf 'goobster: %s\n' "$*" >&2; exit "${2:-1}"; }
+fail() { printf 'goobster: %s\n' "$1" >&2; exit "${2:-1}"; }
 
 usage() {
     cat <<USAGE
