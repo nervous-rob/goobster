@@ -72,7 +72,7 @@ The steps below are the minimum authored curriculum. Every semicolon-separated a
 | `memory.basics` | Compare transcript, personal fact and saved note; inspect why a memory exists; preview a correction/deletion; adjust future memory behavior; preview an export and account deletion scope. | Vector cleanup, retention and shared-copy semantics. `user_settings.md`, `user_knowledge_graph.md`. |
 | `connections.basics` | Inspect an available integration; preview connection and permission scope; select a delivery destination; disconnect the sample integration without deleting account data. | Provider credentials and guild access. `webapp_setup.md`, integration-specific setup docs. |
 
-Host-only administration gets a separate `admin.instance` tour: issue/revoke an invitation, disable a sample account, inspect aggregate capacity, set a quota, and review a failed integration. It cannot appear to ordinary accounts (F1 enforces this on the catalog and API).
+Host-only administration gets a separate `admin.instance` tour: issue/revoke an invitation, disable a sample account, inspect aggregate capacity, set a quota, and review a failed integration. It cannot appear to ordinary accounts (F1 enforces this on the catalog and API). The Host Features, Connections and Instance Defaults pages (#326, `host_operations.md`) are real operator controls that apply changes through the installation manager, so a tour step over them must stay observational: a simulation or a preview that is discarded, never an Apply. No tour changes a person's own preference defaults.
 
 ## Detailed example: Knowledge tutorial
 
