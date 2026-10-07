@@ -342,10 +342,7 @@ describe('expedition service and runner', () => {
         const userId = nextUser();
         const created = await spitballService.createExpedition({ userId, seed: 'queued topic', autoStart: true });
         const pipeline = { runCycle: jest.fn(async () => { throw new Error('pipeline must not run'); }) };
-        const runner = new spitballRunner.SpitballExpeditionRunner
-            ? new spitballRunner.SpitballExpeditionRunner({ pipeline })
-            : null;
-        expect(runner).not.toBeNull();
+        const runner = new spitballRunner.SpitballExpeditionRunner({ pipeline });
 
         setState({ off: ['expeditions'] });
         const refusal = runner.kick(created.id);
