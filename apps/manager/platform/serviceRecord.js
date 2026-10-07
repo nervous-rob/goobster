@@ -57,9 +57,22 @@ function writeRecord(storeDir, services, fs = nodeFs) {
 function recordRegistered(storeDir, { kind, name, unitPath, installationId }, { now = () => new Date(), fs = nodeFs } = {}) {
     const current = readRecord(storeDir, fs).services;
     const previous = current.find(entry => entry.kind === kind && entry.name === name);
-    const entry = { kind, name, unitPath, installationId, registeredBy: 'installer', registeredAt: previous ? previous.registeredAt : now().toISOString() };
+    const entry = { kind, name, unitPath, installationId, registeredBy: 'installer', registeredAt: previous ? previous.registeredAt : now().toISOString(), ...(previous && previous.templateHash ? { templateHash: previous.templateHash } : {}) };
     writeRecord(storeDir, [...current.filter(item => item !== previous), entry], fs);
     return entry;
+}
+
+/**
+ * Remember the hash of the service template this registration was made from
+ * (update/serviceTemplate.js); a hash is a digest of the template, never of a path or a name.
+ */
+function recordTemplate(storeDir, { kind, name, templateHash }, { fs = nodeFs } = {}) {
+    const current = readRecord(storeDir, fs).services;
+    const at = current.findIndex(entry => entry.kind === kind && entry.name === name);
+    if (at < 0 || !/^[0-9a-f]{64}$/.test(String(templateHash))) return false;
+    const next = current.map((entry, index) => (index === at ? { ...entry, templateHash } : entry));
+    writeRecord(storeDir, next, fs);
+    return true;
 }
 
 function recordUnregistered(storeDir, { kind, name }, { fs = nodeFs } = {}) {
@@ -70,4 +83,4 @@ function recordUnregistered(storeDir, { kind, name }, { fs = nodeFs } = {}) {
     return true;
 }
 
-module.exports = { VERSION, FILE_NAME, KINDS, recordPath, readRecord, recordRegistered, recordUnregistered };
+module.exports = { VERSION, FILE_NAME, KINDS, recordPath, readRecord, recordRegistered, recordTemplate, recordUnregistered };

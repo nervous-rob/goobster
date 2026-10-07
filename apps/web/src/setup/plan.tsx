@@ -28,6 +28,13 @@ function Preflight({ operation }: { operation: InstallOperation }) {
     );
 }
 
+const UPDATE_TEXT: Record<string, string> = {
+    off: 'Off: nothing looks for a newer release',
+    check: 'Check: looks for a newer release and says so; installs nothing',
+    download: 'Download: checks, then downloads and verifies a newer release so it is ready to apply',
+    apply: 'Apply: checks, downloads and applies a newer release inside the update window'
+};
+
 /** The exact plan of a first install: nothing here has happened yet. */
 export function NewPlan({ operation, titles }: { operation: InstallOperation; titles: (id: string) => string }) {
     const { plan } = operation;
@@ -40,6 +47,7 @@ export function NewPlan({ operation, titles }: { operation: InstallOperation; ti
                 ['Database', describeDatabase(plan)],
                 ['Copied', plan.source?.bytes ? `${formatBytes(plan.source.bytes)} in ${plan.source.files ?? '?'} files` : 'nothing new'],
                 ['Settings written', plan.config ? `${plan.config.settings.length} setting${plan.config.settings.length === 1 ? '' : 's'}${plan.config.secretCount ? `, ${plan.config.secretCount} key${plan.config.secretCount === 1 ? '' : 's'} (never shown)` : ''}` : 'none'],
+                ['Updates', UPDATE_TEXT[target?.update?.mode || 'off'] || 'Off'],
                 ['Starts at boot', plan.registerService === false ? 'No: start it from this page or the Host room (a later version registers it as a service)' : 'Yes']
             ]} />
             <h3 className="section-title">Folders</h3>

@@ -181,7 +181,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
 
     // ------------------------------------------------------ install.new
     function parseNew(input) {
-        exactKeys(input, new Set(['ownerLabel', 'source', 'features', 'layout', 'roots', 'database', 'release', 'runtimeUser', 'createRuntimeUser', 'config', 'registerService']));
+        exactKeys(input, new Set(['ownerLabel', 'source', 'features', 'layout', 'roots', 'database', 'release', 'runtimeUser', 'createRuntimeUser', 'config', 'registerService', 'update']));
         const config = parseConfigChanges(input.config);
         const databaseAnswer = databaseInstall.parseNewDatabase(input.database, settings, parseDatabase);
         return {
@@ -198,7 +198,8 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             createRuntimeUser: parseBoolean(input.createRuntimeUser, 'createRuntimeUser', false),
             changes: config.changes,
             secrets: config.secrets,
-            registerService: parseBoolean(input.registerService, 'registerService', true)
+            registerService: parseBoolean(input.registerService, 'registerService', true),
+            update: require('../../update/policy').fromAnswer(input.update)
         };
     }
 
@@ -271,9 +272,10 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             release: core.releaseSection(info.manifest, selected),
             dependencies,
             runtimeUser: parsed.runtimeUser,
-            createRuntimeUser: parsed.createRuntimeUser
+            createRuntimeUser: parsed.createRuntimeUser,
+            update: parsed.update
         };
-        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, dockerDatabase: parsed.docker ? dockerService.publicRequest(parsed.docker) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService, runtimeUser: parsed.runtimeUser, createUser: parsed.createRuntimeUser });
+        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, dockerDatabase: parsed.docker ? dockerService.publicRequest(parsed.docker) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService, runtimeUser: parsed.runtimeUser, createUser: parsed.createRuntimeUser, update: parsed.update });
         const plan = {
             action: 'install-new',
             signature,
@@ -408,7 +410,8 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             owned: { files: model.ownedFiles({ origin, roots: target.roots }), services: [], dependencies: target.dependencies || [] },
             updater: { kind: 'manager' },
             release: null,
-            database: target.database
+            database: target.database,
+            ...(target.update ? { update: target.update } : {})
         };
     }
 

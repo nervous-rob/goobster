@@ -8,6 +8,7 @@ export const HOST_KEYS = {
     features: ['host-features'],
     config: ['host-config'],
     lifecycle: ['host-lifecycle'],
+    update: ['host-update'],
     audit: ['admin-audit']
 } as const;
 

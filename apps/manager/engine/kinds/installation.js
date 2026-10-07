@@ -71,7 +71,7 @@ function createClaimKind() {
 }
 
 const SESSION_VIA = ['local', 'bridge', 'setup', 'recovery'];
-const MANAGED_KEYS = new Set(['label', 'replaceUnreadable', 'candidateId', 'roots', 'layout', 'keepUpdater', 'database']);
+const MANAGED_KEYS = new Set(['label', 'replaceUnreadable', 'candidateId', 'roots', 'layout', 'keepUpdater', 'database', 'update']);
 
 /**
  * `adopt` has two forms. With only a label it is the #323 recovery adoption:
@@ -103,6 +103,7 @@ function createAdoptKind({ settings = null, fs = nodeFs, now = () => new Date(),
         const label = parseLabel(input, MANAGED_KEYS);
         const replace = parse.parseBoolean(input.replaceUnreadable, 'replaceUnreadable', false);
         const keepUpdater = parse.parseBoolean(input.keepUpdater, 'keepUpdater', false);
+        const updatePolicy = require('../../update/policy').fromAnswer(input.update);
         const given = parse.parseRootsInput(input.roots);
         if (input.candidateId !== undefined && typeof input.candidateId !== 'string') throw new ManagerError(400, 'INVALID_INPUT', '"candidateId" must be a discovery id.');
         if (input.candidateId === undefined && !given.code) throw new ManagerError(400, 'INVALID_INPUT', 'Name the instance to adopt: "candidateId" from discovery, or "roots.code".');
@@ -152,7 +153,8 @@ function createAdoptKind({ settings = null, fs = nodeFs, now = () => new Date(),
             services,
             release: releaseSection,
             evidence: candidate.evidence,
-            updater: keepUpdater ? candidate.updater : { kind: 'manager' }
+            updater: keepUpdater ? candidate.updater : { kind: 'manager' },
+            ...(updatePolicy ? { update: updatePolicy } : {})
         };
         const plan = {
             action: 'adopt-instance',
@@ -212,7 +214,8 @@ function createAdoptKind({ settings = null, fs = nodeFs, now = () => new Date(),
                 owned: { files: model.ownedFiles({ origin: 'adopt', roots: t.roots }), services: t.services, dependencies: [] },
                 updater: t.updater,
                 release: t.release,
-                database: t.database
+                database: t.database,
+                ...(t.update ? { update: t.update } : {})
             };
             const current = ctx.store.readInstallation();
             let doc;

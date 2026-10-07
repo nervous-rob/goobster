@@ -31,7 +31,7 @@ export function writeRun(run: RunRecord | null) {
 export function digestOf(answers: Answers, secretIds: ReadonlySet<string>): string {
     const fields = Object.fromEntries(Object.entries(answers.fields).filter(([id]) => !secretIds.has(id)));
     return JSON.stringify({
-        label: answers.label, source: answers.sourceDir, unsigned: answers.allowUnsigned, layout: answers.layout, roots: answers.roots,
+        label: answers.label, source: answers.sourceDir, unsigned: answers.allowUnsigned, updates: answers.updateMode, layout: answers.layout, roots: answers.roots,
         features: answers.features, fields, defaults: answers.instanceDefaults,
         owner: { create: answers.owner.create, login: answers.owner.loginName, display: answers.owner.displayName },
         database: { ...answers.database, password: '' }

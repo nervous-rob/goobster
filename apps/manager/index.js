@@ -22,6 +22,8 @@ const { resolveSettings, validateTransport, StartupError } = require('./settings
 const { createManager } = require('./manager');
 const { createManagerApp } = require('./server');
 const extensions = require('./extensions');
+const { createUpdateRuntime } = require('./update/runtime');
+const { EXIT_SELF_UPDATE } = require('./update/apply');
 
 const STOP_CONNECTION_GRACE_MS = 1500;
 const RECONCILE_INTERVAL_MS = 60_000;
@@ -57,9 +59,11 @@ function printCredential(out, label, minted, { reveal }) {
  * @param {NodeJS.WriteStream} [options.stdout]
  * @param {Object} [options.logger]
  * @param {Object} [options.supervisorOptions] adapter/policy overrides for --supervise (tests)
+ * @param {(code: number) => void} [options.exitOnHandoff] leave the process for the OS supervisor with this code
+ *   (the update's handoff, exit code 76); only the entry script passes it, so a manager built in a test never exits
  * @returns {Promise<{ code: number, server?: import('node:http').Server, manager?: Object, stop?: () => Promise<void> }>}
  */
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null, updateDeps = null, exitOnHandoff = null } = {}) {
     const flags = new Set(argv);
     if (flags.has('--help') || flags.has('-h')) {
         stdout.write(`${HELP}\n`);
@@ -67,6 +71,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     }
     const settings = resolveSettings(env);
     if (installDeps) settings.installDeps = installDeps;
+    if (updateDeps) settings.updateDeps = updateDeps;
     if (settings.dbUrl && !env.GOOBSTER_DB_URL) {
         // The overlay's connection must also select the facade the manager's own audit reconciliation opens.
         env.GOOBSTER_DB_URL = settings.dbUrl;
@@ -159,9 +164,10 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         ...(await baseStatus()),
         lifecycle: supervision ? supervision.supervisor.summary() : { supervising: false, layout: null, workers: [] }
     });
+    const updates = createUpdateRuntime({ manager, settings, logger });
     const beginSupervision = async () => {
         const { startSupervision } = require('./lifecycle');
-        supervision = await startSupervision({ manager, logger, ...supervisorOptions });
+        supervision = await startSupervision({ manager, logger, releaseIdOf: updates.releaseIdOf, ...supervisorOptions });
         const view = supervision.supervisor.summary();
         logger.info(`[manager] supervising the ${view.layout || 'unknown'} layout: ${view.workers.map(w => w.name).join(', ') || 'no workers'}`);
     };
@@ -202,9 +208,12 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         logger.error('[manager] not supervising: the manager store cannot be written.');
     }
 
+    let clearExit = () => {};
     const stop = () => {
         if (stopping) return stopping;
         stopping = (async () => {
+            updates.stop();
+            clearExit();
             if (timer) clearInterval(timer);
             if (claimWatch) clearInterval(claimWatch);
             clearStarter();
@@ -224,17 +233,30 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         })();
         return stopping;
     };
+    if (typeof exitOnHandoff === 'function') {
+        clearExit = registry.setExitHandler(settings.storeDir, async (code) => {
+            logger.info?.(`[manager] leaving with exit code ${code} so the service manager restarts it on the new release`);
+            await stop();
+            exitOnHandoff(code);
+        });
+    }
+    let handoffFinished = Promise.resolve({ resumed: false });
+    if (manager.storeReady && manager.currentState().state === 'claimed') {
+        handoffFinished = updates.resume().finally(() => { if (!stopping) updates.start(); });
+    }
     return {
         code: 0,
         server,
         manager,
+        updates,
+        handoffFinished,
         get supervisor() { return supervision ? supervision.supervisor : null; },
         stop
     };
 }
 
 if (require.main === module) {
-    main().then((outcome) => {
+    main(undefined, { exitOnHandoff: (code) => process.exit(code) }).then((outcome) => {
         if (!outcome.server) {
             process.exitCode = outcome.code;
             return;
@@ -250,4 +272,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { main, createManager, createManagerApp, resolveSettings, validateTransport };
+module.exports = { main, createManager, createManagerApp, resolveSettings, validateTransport, EXIT_SELF_UPDATE };

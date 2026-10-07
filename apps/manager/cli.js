@@ -64,7 +64,7 @@ const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
-const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'backup', 'restore', 'database', 'help']);
+const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'backup', 'restore', 'database', 'update', 'help']);
 const MIGRATE_KIND = Object.freeze({ preflight: 'db.migrate.preflight', run: 'db.migrate', rollback: 'db.migrate.rollback' });
 const LOCAL_AUTH = Object.freeze({ principal: 'local:cli', via: 'local' });
 const MAX_ANSWERS_BYTES = 256 * 1024;
@@ -85,6 +85,8 @@ const REFUSED_CODES = new Set([
     'ALREADY_POSTGRES', 'ALREADY_MIGRATED', 'MIGRATION_IN_PROGRESS', 'MIGRATION_STATE_UNREADABLE', 'MAINTENANCE_NOT_HELD', 'WRITER_UNACKNOWLEDGED',
     'STALE_MAINTENANCE', 'PHASE_NOT_ALLOWED', 'NOTHING_TO_ROLL_BACK', 'POSTGRES_HAS_WRITES', 'ROLLBACK_FOREIGN_OBJECTS', 'PLAN_INPUT_LOST',
     'MAINTENANCE_ACTIVE', 'RESTART_PENDING', 'WRITER_UNFENCEABLE',
+    'UPDATE_ROLLED_BACK', 'UPDATE_RECOVERY_REQUIRED', 'HANDOFF_UNAVAILABLE', 'UPDATER_NOT_MANAGER', 'NO_UPDATE_AVAILABLE', 'NOTHING_STAGED', 'STAGE_STALE',
+    'RECOVERY_PENDING', 'UPDATE_IN_PROGRESS', 'NO_RECOVERY_PENDING', 'NO_BACKUP', 'INSUFFICIENT_SPACE',
     'FOREIGN_TARGET', 'FEATURE_ACTIVE', 'BACKUP_UNVERIFIED', 'BACKUP_FAILED', 'BACKUP_DESTINATION_UNSAFE', 'FILE_SET_UNSAFE',
     'INSTANCE_RESET_REQUIRES_LOCAL', 'MUTATION_NOT_COMPLETE', 'FENCE_MISMATCH', 'MAINTENANCE_NOT_ACTIVE'
 ]);
@@ -99,14 +101,15 @@ class CliError extends Error {
 }
 
 // ---------------------------------------------------------------- arguments
-const VALUE_FLAGS = new Map([['--answers', 'answers'], ['--confirm', 'confirm'], ['--scope', 'scope'], ['--feature', 'feature'], ['--backup-dir', 'backupDir'], ['--out', 'out'], ['--passphrase-file', 'passphraseFile']]);
-const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h', '--force', '--acknowledge-mutation', '--include-config', '--without-config', '--accept-schema-change']);
+const VALUE_FLAGS = new Map([['--answers', 'answers'], ['--confirm', 'confirm'], ['--scope', 'scope'], ['--feature', 'feature'], ['--backup-dir', 'backupDir'], ['--out', 'out'], ['--passphrase-file', 'passphraseFile'], ['--mode', 'mode'], ['--channel', 'channel'], ['--source-dir', 'sourceDir'], ['--github', 'github'], ['--source-url', 'sourceUrl'], ['--window', 'windowAt'], ['--decision', 'decision']]);
+const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h', '--force', '--acknowledge-mutation', '--include-config', '--without-config', '--accept-schema-change', '--now', '--no-window']);
 
 function parseArgs(argv) {
     const flags = {
         answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, release: false, sub: null, help: false,
         scope: null, feature: null, backupDir: null, force: false, acknowledgeMutation: false,
-        out: null, passphraseFile: null, includeConfig: false, withoutConfig: false, acceptSchemaChange: false, dir: null
+        out: null, passphraseFile: null, includeConfig: false, withoutConfig: false, acceptSchemaChange: false, dir: null,
+        now: false, noWindow: false, mode: null, channel: null, sourceDir: null, github: null, sourceUrl: null, windowAt: null, decision: null
     };
     const positional = [];
     for (let index = 0; index < argv.length; index++) {
@@ -134,6 +137,8 @@ function parseArgs(argv) {
             else if (name === '--include-config') flags.includeConfig = true;
             else if (name === '--without-config') flags.withoutConfig = true;
             else if (name === '--accept-schema-change') flags.acceptSchemaChange = true;
+            else if (name === '--now') flags.now = true;
+            else if (name === '--no-window') flags.noWindow = true;
             else flags.help = true;
         } else {
             throw new CliError('USAGE', `Unknown option ${name}. Try "help".`);
@@ -155,6 +160,8 @@ function parseArgs(argv) {
         if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'migrate status takes no answers.');
     } else if (command === 'backup' || command === 'restore') {
         require('./cliBackup').checkArgs(command, flags, positional, CliError);
+    } else if (command === 'update') {
+        require('./cliUpdate').checkArgs(flags, positional, CliError);
     } else if (command === 'database') {
         flags.sub = positional.shift() || '';
         if (!databaseCli.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'database needs a command: test, provision, schema, connect, status or docker.');
@@ -168,6 +175,7 @@ function parseArgs(argv) {
     } else if (flags.release) {
         throw new CliError('USAGE', '--release only applies to migrate, restore and database connect.');
     }
+    if ((flags.now || flags.noWindow || flags.mode || flags.channel || flags.sourceDir || flags.github || flags.sourceUrl || flags.windowAt || flags.decision) && command !== 'update') throw new CliError('USAGE', '--now, --no-window, --mode, --channel, --source-dir, --github, --source-url, --window and --decision belong to update.');
     if (positional.length) throw new CliError('USAGE', 'Unexpected argument; values go in --answers or at the prompt.');
     if (flags.confirm && !flags.deleteData && command !== 'reset' && command !== 'migrate' && command !== 'restore') throw new CliError('USAGE', '--confirm belongs to --delete-data, reset, migrate or restore.');
     if ((flags.out || flags.passphraseFile || flags.includeConfig || flags.withoutConfig || flags.acceptSchemaChange) && command !== 'backup' && command !== 'restore') throw new CliError('USAGE', '--out, --passphrase-file, --include-config, --without-config and --accept-schema-change belong to backup and restore.');
@@ -261,6 +269,7 @@ function createPrompter({ input, output }) {
         while (waiting.length) waiting.shift()(null);
     });
     return {
+        interactive: Boolean(input && input.isTTY),
         async ask(question, { hidden = false, fallback = '' } = {}) {
             output.write(question);
             muted = hidden;
@@ -278,6 +287,22 @@ function createPrompter({ input, output }) {
 }
 
 const yes = (answer) => /^(y|yes)$/i.test(String(answer).trim());
+
+/**
+ * The one question about updates (documentation/manager_update.md): asked once, with `check` shown as
+ * the default. Only a person at a terminal is asked: a scripted run (piped answers) sets `update` in its
+ * answers file, and without it the policy stays off.
+ */
+async function askUpdateMode(prompter) {
+    if (!prompter.interactive) return null;
+    try {
+        const answer = (await prompter.ask('Updates: off, check (look for a newer release and say so), download, apply [check]: ', { fallback: 'check' })).toLowerCase();
+        return { mode: answer };
+    } catch (error) {
+        if (error && error.code === 'INPUT_ENDED') return null;
+        throw error;
+    }
+}
 
 async function promptInstall(prompter) {
     const input = { source: await prompter.ask('Release source (a verified payload directory): ') };
@@ -300,6 +325,8 @@ async function promptInstall(prompter) {
         config.push({ id, value });
     }
     if (config.length) input.config = config;
+    const update = await askUpdateMode(prompter);
+    if (update) input.update = update;
     return input;
 }
 
@@ -312,6 +339,10 @@ async function promptAdopt(prompter, candidates, output) {
     const label = await prompter.ask('Owner label [Goobster]: ', { fallback: 'Goobster' });
     const input = { label, candidateId: chosen.id };
     if (chosen.updaters.length && yes(await prompter.ask('Keep the existing auto-update running (the manager then does not update it)? [y/N]: '))) input.keepUpdater = true;
+    if (chosen.updaters.length && !input.keepUpdater) {
+        const update = await askUpdateMode(prompter);
+        if (update) input.update = update;
+    }
     return input;
 }
 
@@ -453,6 +484,21 @@ async function run(argv, io = {}) {
                 prompter: null,
                 setPrompter: (value) => { prompter = value; },
                 cli: { CliError, EXIT, LOCAL_AUTH, loadAnswers, answersInput, createPrompter }
+            });
+        }
+
+        if (command === 'update') {
+            return await require('./cliUpdate').run({
+                flags,
+                io,
+                fs,
+                baseEnv,
+                out,
+                progress,
+                finish,
+                secrets,
+                json,
+                cli: { CliError, EXIT, LOCAL_AUTH }
             });
         }
 
@@ -808,6 +854,10 @@ function usage() {
         '  backup inspect <dir>   what an archive holds and whether it can be restored here (read only)',
         '  restore <dir>   replace the database, files and config.json from an archive: --confirm <installationId>,',
         '               --without-config or the passphrase (--passphrase-file or a hidden prompt), --accept-schema-change, --release',
+        '  update status|check|stage|apply|policy|recovery   staged manager updates (documentation/manager_update.md)',
+        '               apply [--now|--window]; policy [--mode off|check|download|apply] [--channel stable|prerelease]',
+        '               [--source-dir <dir>|--github <owner/repo>|--source-url <base>] [--window <days>/<start>-<end>/<tz>|--no-window];',
+        '               recovery --decision restore|retry [--yes] (the decision after a schema-changing update failed)',
         '  database test       read-only probe of an existing Postgres server (the password: prompt, answers file or GOOBSTER_DB_PASSWORD_FILE)',
         '  database provision  create the database, role, schema, extensions and grants you tick, with an administrative credential used once',
         '  database schema     apply Goobster\'s schema to an empty (or older Goobster) schema',

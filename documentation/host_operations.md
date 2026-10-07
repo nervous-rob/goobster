@@ -326,6 +326,19 @@ This adds a management and UI integration and regression evidence. It does not
 replace the owner's restore drill on a real host (#249), which stays a human
 check (`documentation/backup_and_restore.md`).
 
+## Updates (#342)
+
+The Host room's **Updates** panel (under the Maintenance card) shows the
+installed and staged release, the update policy, the last check and the last
+apply with its measured downtime, and runs **Check**, **Stage** and **Apply**
+through the same `POST /api/app/admin/host/operations` flow as every other
+change (kinds `update.check`, `update.stage`, `update.apply`, `update.policy`;
+audited as `host.update.apply`, versions and outcome only, never a source
+address). `GET /api/app/admin/host/update/status` is the read. A schema-changing
+update that failed after the database was in use waits for a decision the portal
+shows but cannot make: it is made on the machine, `goobster-manager update
+recovery`. The rules are in `documentation/manager_update.md`.
+
 ## Seams
 
 - Tour authoring and per-account provider keys are

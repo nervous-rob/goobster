@@ -15,6 +15,15 @@
         "absolutePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "layout": { "enum": ["lite", "standalone", "paired"] },
         "ownerLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "updateAnswer": {
+            "description": "The one question about updates, asked once at install or adoption. The window and the source are set later with the update command.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "mode": { "enum": ["off", "check", "download", "apply"] },
+                "channel": { "enum": ["stable", "prerelease"] }
+            }
+        },
         "featureList": { "type": "array", "maxItems": 80, "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]{0,40}$" } },
         "roots": {
             "type": "object",
@@ -136,6 +145,7 @@
                 "runtimeUser": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" },
                 "createRuntimeUser": { "type": "boolean", "description": "Create `runtimeUser` as a no-login system account through the privileged helper; needs the installer to run as root." },
                 "config": { "$ref": "#/definitions/config" },
+                "update": { "$ref": "#/definitions/updateAnswer" },
                 "registerService": { "type": "boolean" }
             }
         },
@@ -152,6 +162,7 @@
                 "layout": { "$ref": "#/definitions/layout" },
                 "database": { "$ref": "#/definitions/database" },
                 "keepUpdater": { "type": "boolean" },
+                "update": { "$ref": "#/definitions/updateAnswer" },
                 "replaceUnreadable": { "type": "boolean" }
             }
         },

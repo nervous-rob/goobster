@@ -223,8 +223,8 @@ signature into a pass, and it always says what it accepted: the result carries
 Trusted keys come from the caller (`--public-key`, the install's
 `release.publicKeyFiles`, `GOOBSTER_RELEASE_PUBLIC_KEY_FILE`) and from the key
 list. `verify` reads the repository's `scripts/release-keys.json` unless told not
-to (`--no-key-list`). The installed payload does not ship the index verifier yet
-(see "Known gaps").
+to (`--no-key-list`). The installed payload ships the index verifier, so an installed
+manager checks an index it downloaded (`documentation/manager_update.md`).
 
 ### The installed record
 
@@ -411,9 +411,10 @@ journeys do and do not prove. Windows on Arm, 32-bit systems and musl are out of
   The ADR 0012 / #262 prerequisite for a public listing stays an owner decision.
   Technically, signed artifacts can exist once the owner supplies the key and the
   certificates; today none exists.
-- **No updater.** This issue produces and verifies releases; it contains no code that
-  downloads one, checks for a newer one or replaces an installed payload. Downloading
-  and applying an update through the manager is #342.
+- **The pipeline is not an updater.** The release pipeline produces and verifies releases;
+  it contains no code that downloads one or replaces an installed payload. That is the
+  manager's update machinery (`documentation/manager_update.md`), which verifies the
+  index and the artifact with the rules in this document.
 - No release has been published by this pipeline, and no certificate has been exercised.
 
 ## Known gaps
@@ -427,10 +428,6 @@ journeys do and do not prove. Windows on Arm, 32-bit systems and musl are out of
 - **Key expiry.** Ed25519 keys have no notion of expiry. Only certificates are
   checked for it (the workflow's 60-day warning); a signing key is controlled by
   custody and revocation.
-- **The installed payload does not ship the index verifier.** `scripts/lib/releaseIndex.js`
-  and `scripts/release-keys.json` are in the repository and used by the pipeline and by
-  the manager when run from a checkout; the payload build does not copy them, so an
-  installed manager cannot yet verify an index it downloaded. #342 needs that.
 - **`signed` on the install record** means a signature file is present, not that it
   verified.
 - **Windows and macOS signing, and the non-Linux-x64 jobs, are unexecuted** (above).
@@ -440,6 +437,15 @@ journeys do and do not prove. Windows on Arm, 32-bit systems and musl are out of
   builds. The release workflow smoke-checks the payload and scans the artifacts but does
   not install them on a clean machine; the checklist's last manual step does.
 - A release is not reproducible byte for byte (above).
+
+## Updating an installation
+
+An installed manager verifies and applies a release from this pipeline with the
+index verifier the payload carries (`scripts/lib/releaseIndex.js`,
+`scripts/lib/payloadStage.js`, `scripts/release-keys.json`). The trust policy,
+the key list and the artifact digests are the ones described above;
+`documentation/manager_update.md` describes the staged apply, the handoff and the
+rollback.
 
 ## Commands
 

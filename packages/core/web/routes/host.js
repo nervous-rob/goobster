@@ -34,7 +34,8 @@ const INSTALL_KINDS = Object.freeze(['install.new', 'install.reconfigure', 'inst
 const MAINTENANCE_KINDS = Object.freeze(['backup.create', 'backup.restore', 'data.reset']);
 const DOCKER_DATABASE_KINDS = Object.freeze(['database.docker.provision', 'database.docker.start', 'database.docker.stop', 'database.docker.repair', 'database.docker.reconfigure']);
 const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect', ...DOCKER_DATABASE_KINDS]);
-const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...MAINTENANCE_KINDS, ...DATABASE_KINDS]);
+const UPDATE_KINDS = Object.freeze(['update.check', 'update.stage', 'update.apply', 'update.policy']);
+const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...MAINTENANCE_KINDS, ...DATABASE_KINDS, ...UPDATE_KINDS]);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
     'config.set': 'host.config.apply',
@@ -50,7 +51,8 @@ const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'database.provision': 'host.database.apply',
     'database.schema.apply': 'host.database.apply',
     'database.connect': 'host.database.apply',
-    ...Object.fromEntries(DOCKER_DATABASE_KINDS.map(kind => [kind, 'host.database.apply']))
+    ...Object.fromEntries(DOCKER_DATABASE_KINDS.map(kind => [kind, 'host.database.apply'])),
+    ...Object.fromEntries(UPDATE_KINDS.map(kind => [kind, 'host.update.apply']))
 });
 const LIFECYCLE_ACTIONS = Object.freeze({
     'restart-now': 'host.lifecycle.restart_now',
@@ -600,6 +602,25 @@ function mountHost(app, ctx, h) {
                 names: dockerNames(plan),
                 effect: plan.effect || null
             };
+        // Versions, outcomes and flags only: no source, path, address or file name.
+        case 'update.check':
+            return { operation: 'check', outcome: (result && result.outcome) || null, ...(result && result.code ? { code: result.code } : {}) };
+        case 'update.stage':
+            return { operation: 'stage', staged: Boolean(result && result.staged), version: (result && result.version) || null, schemaChanging: Boolean(result && result.schemaChanging) };
+        case 'update.apply':
+            return {
+                operation: 'apply',
+                outcome: (result && result.outcome) || null,
+                fromVersion: (result && result.from) || null,
+                toVersion: (result && result.to) || null,
+                schemaChanging: Boolean(result && result.schemaChanging),
+                ...(result && result.downtimeMs !== undefined ? { downtimeMs: result.downtimeMs } : {}),
+                ...(result && result.service ? { service: result.service.template || null } : {})
+            };
+        case 'update.policy': {
+            const policy = (result && result.policy) || {};
+            return { operation: 'policy', mode: policy.mode || null, channel: policy.channel || null, source: policy.source ? policy.source.kind : 'default', window: Boolean(policy.window) };
+        }
         default:
             return {};
         }
@@ -634,7 +655,7 @@ function mountHost(app, ctx, h) {
         const result = await client.call({
             actor: actorOf(req), method: 'POST', path: `/manager/api/operations/${operationId}/apply`,
             body: { revision: current.revision === undefined ? null : current.revision },
-            ...(INSTALL_KINDS.includes(current.kind) || MAINTENANCE_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
+            ...(INSTALL_KINDS.includes(current.kind) || MAINTENANCE_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) || UPDATE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
         });
         const failure = failureOf(result);
         if (failure) throw failure;
@@ -696,6 +717,10 @@ function mountHost(app, ctx, h) {
 
     app.get(`${BASE}/migrate/status`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/migrate/status'))));
 
+    // --- Updates (#342) -----------------------------------------------------------------
+
+    app.get(`${BASE}/update/status`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/update/status'))));
+
     // --- Lifecycle ------------------------------------------------------------------
 
     app.get(`${BASE}/lifecycle`, ...guard, route(async (req) => clean(await managerJson(req, 'GET', '/manager/api/lifecycle'))));
@@ -723,6 +748,7 @@ module.exports = {
     MAINTENANCE_KINDS,
     DATABASE_KINDS,
     DOCKER_DATABASE_KINDS,
+    UPDATE_KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,
     KEEPS_DATA

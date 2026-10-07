@@ -267,6 +267,30 @@ a default model with no default provider (`DEFAULT_MODEL_WITHOUT_PROVIDER`).
 The manager opens the application database for these calls only and closes it
 again.
 
+## Update policy
+
+The one setting that is not a `config.json` field: **how this installation
+updates itself** lives in the manager's installation record as `update`
+(`channel`, `mode`, an optional `window` and a `source`), because the manager
+that applies updates must read it when the application's configuration is
+broken. It is set by the install answers, the setup wizard and the adoption
+question, and changed with `update.policy` (`goobster-manager update policy`,
+`POST /manager/api/update/policy`, the Updates panel on the Host card). The
+default is `mode: off`. `documentation/manager_update.md` is the reference:
+modes, windows, sources, the apply, the handoff and the rollback rules. The
+field catalog, `config.set` and the effective report do not list it and do not
+change it.
+
+One environment setting belongs with it: `GOOBSTER_UPDATE_SETTLE_MS` (default
+`30000`, whole milliseconds, 0 to 600000, `0` turns it off) is the **settle
+window** an apply keeps watching the new release after every worker is ready,
+with the maintenance barrier still held, before it records the release and
+lifts the barrier. A worker that leaves inside the window fails the update with
+`EXITED_AFTER_READY` (automatic rollback, or the recovery decision for a
+schema-changing release). It is read from the manager's own environment, not
+from `config.json`, and is not part of the update policy; see "The settle
+window" in `documentation/manager_update.md`.
+
 ## API summary
 
 | Route / kind | Auth | Notes |
@@ -275,6 +299,7 @@ again.
 | `POST /manager/api/config/probe` | assertion or session, nonce for a session | body never journaled |
 | `config.set` | operations API | `manager.config.set` audit record |
 | `defaults.set` | operations API | `manager.defaults.set` audit record |
+| `update.policy` | operations API | `manager.update.policy` audit record; see `documentation/manager_update.md` |
 
 Both audit actions are written to the manager's pending audit log and
 reconciled into `operator_audit` (`target` is the operation id) like the other
