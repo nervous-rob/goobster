@@ -17,11 +17,13 @@
  * journaled, audited or logged.
  */
 
-const catalog = require('@goobster/core/config/fieldCatalog');
-const effective = require('@goobster/core/config/effectiveConfig');
-const probes = require('@goobster/core/services/providerProbeService');
 const { ManagerError } = require('../errors');
 const view = require('../configView');
+const { lazy } = require('../lazy');
+
+const catalog = lazy('@goobster/core/config/fieldCatalog');
+const effective = lazy('@goobster/core/config/effectiveConfig');
+const probes = lazy('@goobster/core/services/providerProbeService');
 
 const BODY_KEYS = new Set(['target', 'useSaved', 'credential']);
 const PROBE_WINDOW_MS = 60_000;
@@ -51,7 +53,7 @@ function decorate(entry) {
     return out;
 }
 
-function createConfigMount({ probe = probes.probe, probeOptions = {} } = {}) {
+function createConfigMount({ probe = null, probeOptions = {} } = {}) {
     return function mountConfigRoutes(api, helpers) {
         const { route, authenticate, readAuth, checkActor, manager } = helpers;
         const settings = manager.settings;
@@ -160,7 +162,7 @@ function createConfigMount({ probe = probes.probe, probeOptions = {} } = {}) {
             throttleProbes();
             const options = resolveProbe(body);
             try {
-                const outcome = await probe(body.target, { ...probeOptions, ...options });
+                const outcome = await (probe || probes.probe)(body.target, { ...probeOptions, ...options });
                 return { ...outcome, usedSaved: body.useSaved };
             } catch (error) {
                 if (!(error instanceof probes.ProbeInputError)) throw error;

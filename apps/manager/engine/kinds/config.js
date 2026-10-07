@@ -27,12 +27,14 @@
  *   (the supervisor, #325, does).
  */
 
-const catalog = require('@goobster/core/config/fieldCatalog');
-const configFile = require('@goobster/core/config/configFile');
+const { lazy } = require('../../lazy');
 const { ManagerError } = require('../../errors');
 const files = require('../../store/files');
 const view = require('../../configView');
 const { probeAppDatabase } = require('../../appDatabase');
+
+const catalog = lazy('@goobster/core/config/fieldCatalog');
+const configFile = lazy('@goobster/core/config/configFile');
 
 const MAX_CHANGES = 64;
 const INPUT_KEYS = new Set(['changes', 'expectedRevision', 'force']);

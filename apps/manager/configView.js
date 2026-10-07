@@ -12,9 +12,11 @@
 const nodeFs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const configFile = require('@goobster/core/config/configFile');
-const effective = require('@goobster/core/config/effectiveConfig');
 const { probeAppDatabase } = require('./appDatabase');
+const { lazy } = require('./lazy');
+
+const configFile = lazy('@goobster/core/config/configFile');
+const effective = lazy('@goobster/core/config/effectiveConfig');
 
 let chain = Promise.resolve();
 let closeConnections = true;

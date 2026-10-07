@@ -18,11 +18,13 @@
  * `acknowledgeRetention: true`, and the plan carries a warning either way.
  */
 
-const catalog = require('@goobster/core/config/fieldCatalog');
+const { lazy } = require('../../lazy');
 const { ManagerError } = require('../../errors');
 const files = require('../../store/files');
 const view = require('../../configView');
 const { probeAppDatabase } = require('../../appDatabase');
+
+const catalog = lazy('@goobster/core/config/fieldCatalog');
 
 const MAX_CHANGES = 16;
 const INPUT_KEYS = new Set(['changes', 'expectedRevision', 'acknowledgeRetention']);
