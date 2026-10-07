@@ -19,6 +19,8 @@ const DEFAULT_DB_PATH = path.join(require('../runtimePaths').dataDir, 'goobster.
 
 let db = null;
 let vecLoaded = false;
+/** The maintenance fence (runtime/maintenance.js): the connection refuses writes at the engine level. */
+let readOnly = false;
 
 const txContext = new AsyncLocalStorage();
 
@@ -61,8 +63,15 @@ function getDb() {
     // CREATE TABLE text can lag behind it, and the first pass skipped
     // tables that did not exist yet.
     applyColumnMigrations(db);
+    if (readOnly) db.pragma('query_only = ON');
 
     return db;
+}
+
+/** Engine-level backstop behind the facade's maintenance fence: `PRAGMA query_only`. */
+function setReadOnly(on) {
+    readOnly = Boolean(on);
+    if (db) db.pragma(`query_only = ${readOnly ? 'ON' : 'OFF'}`);
 }
 
 /**
@@ -554,6 +563,19 @@ async function listTables({ includeDerived = false } = {}) {
 }
 
 /**
+ * Give deleted pages back to the file so emptied rows do not linger in free
+ * pages or the write-ahead log. VACUUM cannot run inside a transaction.
+ * @returns {Promise<{ compacted: boolean }>}
+ */
+async function compactStorage() {
+    const handle = getDb();
+    handle.pragma('wal_checkpoint(TRUNCATE)');
+    handle.exec('VACUUM');
+    handle.pragma('wal_checkpoint(TRUNCATE)');
+    return { compacted: true };
+}
+
+/**
  * SQLite is one process, so the lock cannot be contended. Always run fn.
  * @param {string} _name
  * @param {() => Promise<*>|*} fn
@@ -573,7 +595,9 @@ module.exports = {
     insert,
     transaction,
     closeConnection,
+    setReadOnly,
     withAdvisoryLock,
     describeStorage,
     listTables,
+    compactStorage,
 };

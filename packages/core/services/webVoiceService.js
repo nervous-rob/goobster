@@ -142,7 +142,7 @@ class WebVoiceService {
         if (this._deps.elevenLabsKey) return this._deps.elevenLabsKey();
         if (process.env.ELEVENLABS_API_KEY) return process.env.ELEVENLABS_API_KEY;
         try {
-            return require('../../../config.json').elevenlabs?.apiKey || null;
+            return require('../config/configJson').load().elevenlabs?.apiKey || null;
         } catch {
             return null;
         }
@@ -442,7 +442,7 @@ class WebVoiceService {
 
     _configVoiceId() {
         try {
-            return require('../../../config.json').elevenlabs?.voiceId || null;
+            return require('../config/configJson').load().elevenlabs?.voiceId || null;
         } catch {
             return null;
         }

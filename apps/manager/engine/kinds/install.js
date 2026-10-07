@@ -32,6 +32,7 @@ const model = require('../../install/model');
 const paths = require('../../install/paths');
 const release = require('../../install/release');
 const tombstone = require('../../install/tombstone');
+const environment = require('../../environment');
 const registry = require('../../lifecycle/registry');
 const { runPreflight, portsFor } = require('../../install/preflight');
 const parse = require('../../install/engine');
@@ -755,6 +756,8 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     const roots = record.plan.target.roots;
                     const keep = [roots.managerStore, tombstone.tombstonePath(roots.managerStore)];
                     let removed = 0;
+                    // The overlay holds the database connection; the store survives (it carries the tombstone) but this secret does not.
+                    if (environment.remove(settings.storeDir, fs)) removed++;
                     for (const item of record.plan.removes.filter(entry => entry.role !== 'code')) {
                         if (item.scope === 'file') {
                             if (core.removeOwnedPath(item.path, roots)) removed++;

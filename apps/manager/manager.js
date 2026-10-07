@@ -25,6 +25,9 @@ const { createFeaturesSetKind } = require('./engine/kinds/featuresSet');
 const { createClaimKind, createAdoptKind, createRecoveryUnlockKind } = require('./engine/kinds/installation');
 const { existingInstallEvidence, probeAppDatabase, DEFAULT_PROBE_TIMEOUT_MS } = require('./appDatabase');
 const { reconcileAudit, pendingAuditCount } = require('./audit');
+const { reconcileMigration } = require('./migration/reconcile');
+const coreMaintenance = require('@goobster/core/runtime/maintenance');
+const { createMaintenanceStore, summarize: summarizeMaintenance, recoverOnStart } = require('./maintenance/store');
 const privileged = require('./privileged');
 const { readTombstone } = require('./install/tombstone');
 const files = require('./store/files');
@@ -118,9 +121,34 @@ function createManager({
         return result;
     }
 
+    /** The barrier's verdict from the store alone; an unreadable file counts as active. */
+    function maintenanceBlocksWrites() {
+        const stored = coreMaintenance.readStore({ env: { GOOBSTER_MANAGER_STATE_DIR: settings.storeDir }, fs });
+        return stored.status === 'active' || stored.status === 'unreadable';
+    }
+
+    /**
+     * The facade is a process singleton selected when it is first required.
+     * After a migration switched the connection the manager's own selection
+     * may be stale (a SQLite singleton loaded earlier): audit rows then wait
+     * in the journal until the manager restarts on the new connection
+     * instead of being written into the old file.
+     */
+    function loadApplicationDb() {
+        const db = require('@goobster/core/db');
+        const wanted = settings.dbUrl ? 'postgres' : 'sqlite';
+        if (db.engine !== wanted) {
+            throw Object.assign(new Error('the manager must restart to use the new database connection'), { code: 'MANAGER_RESTART_NEEDED' });
+        }
+        return db;
+    }
+
     function reconcile() {
         if (reconciling) return reconciling;
-        reconciling = reconcileAudit({ journal, probe: () => probe({ fresh: true }), closeAfter: true, ...reconcileDeps })
+        if (maintenanceBlocksWrites()) {
+            return Promise.resolve({ pending: pendingAuditCount(journal), inserted: 0, existing: 0, deferred: true, reason: 'MAINTENANCE_ACTIVE' });
+        }
+        reconciling = reconcileAudit({ journal, probe: () => probe({ fresh: true }), closeAfter: true, loadDb: loadApplicationDb, ...reconcileDeps })
             .catch((error) => {
                 logger.warn?.(`[manager] audit reconciliation deferred: ${error && (error.code || error.name)}`);
                 return { deferred: true, reason: 'RECONCILE_FAILED' };
@@ -174,8 +202,10 @@ function createManager({
             }
             if (state.state === 'claimed') bridge.ensureKey(state.installation.installationId);
         }
+        const migration = initResult.ok ? reconcileMigration({ settings, store, fs, now, logger }) : { reconciled: false, action: null };
         const recovered = initResult.ok ? await engine.recoverInterrupted() : [];
-        return { state, bootstrap: minted, recovered };
+        const maintenance = initResult.ok ? recoverOnStart(createMaintenanceStore({ storeDir: settings.storeDir, fs, now })) : null;
+        return { state, bootstrap: minted, recovered, maintenance, migration };
     }
 
     /** Everything GET /status shows. No credential, hash, label, path or URL. */
@@ -200,6 +230,9 @@ function createManager({
             appDatabase,
             config: { present: config.present, readable: config.readable },
             lock: initResult.ok ? lock.describe() : { held: false },
+            maintenance: initResult.ok
+                ? summarizeMaintenance(createMaintenanceStore({ storeDir: settings.storeDir, fs, now }).read())
+                : { active: false, phase: null, fence: null, since: null, stale: false, problem: 'MANAGER_STORE_UNREADABLE' },
             audit: { pending: initResult.ok ? pendingAuditCount(journal) : 0 },
             transport: { lan: settings.lan, tls: settings.lan },
             auth: { bridge: state.state === 'claimed', strongAuthRequired: bridge.requireStrongAuth() },

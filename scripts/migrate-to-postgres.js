@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 /**
- * One-shot SQLite -> Postgres migrator (reactive port, Phase 2).
+ * Developer SQLite -> Postgres migrator.
  *
- * Copies every table from the SQLite database into an EMPTY Postgres
- * database, inside one transaction, then re-seats identity sequences and
- * verifies row counts per table. Idempotent onto an empty database;
- * refuses a non-empty one. Vector index tables (memory_vec_*) are derived
- * data and deliberately not copied - memoryService.syncVecIndex() rebuilds
- * them from memory_embeddings on first use.
+ * Copies every table from a SQLite file into an EMPTY Postgres database
+ * (it refuses a non-empty one), re-seats identity sequences, verifies counts,
+ * foreign keys, identities, relationships, sampled content and attachment
+ * references, and rebuilds the derived vector index (memory_vec_* tables are
+ * never copied). It is built on the same modules the manager's `db.migrate`
+ * operation uses (packages/core/db/migration).
+ *
+ * It is NOT the supported way to migrate an installation. It does not hold
+ * the maintenance barrier, does not take or verify a backup, does not hold a
+ * consistent read-only source, does not start the application for
+ * validation, does not switch any configuration and cannot resume: a failed
+ * run leaves the tables it finished. For an installation use
+ *
+ *     node apps/manager/cli.js migrate preflight --answers <file>
+ *     node apps/manager/cli.js migrate run --answers <file> --confirm <id>
+ *
+ * (documentation/db_migration.md). Stop the application first.
  *
  * Usage:
  *   GOOBSTER_DB_PATH=data/goobster.sqlite \
@@ -16,9 +27,6 @@
  */
 
 const path = require('node:path');
-const Database = require('better-sqlite3');
-
-const BATCH_SIZE = 500;
 
 async function main() {
     const url = process.env.GOOBSTER_DB_URL;
@@ -26,99 +34,59 @@ async function main() {
         console.error('Set GOOBSTER_DB_URL to the target Postgres database.');
         process.exit(64);
     }
-    const sqlitePath = process.env.GOOBSTER_DB_PATH
-        || path.join(require('@goobster/core/runtimePaths').dataDir, 'goobster.sqlite');
+    const { dataDir } = require('@goobster/core/runtimePaths');
+    const sqlitePath = process.env.GOOBSTER_DB_PATH || path.join(dataDir, 'goobster.sqlite');
+    const migration = require('@goobster/core/db/migration');
 
-    console.log(`Source: ${sqlitePath}`);
-    console.log(`Target: ${url.replace(/:[^:@/]+@/, ':***@')}`);
+    console.log('Developer migration: no maintenance barrier, no backup, no configuration switch (see documentation/db_migration.md).');
+    const where = migration.describeTarget(url);
+    console.log(`Target: ${where.host}:${where.port}/${where.database}${where.schema ? ` (schema ${where.schema})` : ''}`);
 
-    const source = new Database(sqlitePath, { readonly: true, fileMustExist: true });
-
-    // Bootstrap the target schema through the normal adapter (same DDL
-    // translation the bot itself uses - one source of truth).
     const db = require('@goobster/core/db');
     if (db.engine !== 'postgres') {
         console.error('GOOBSTER_DB_URL did not select the Postgres adapter.');
         process.exit(64);
     }
-    await db.get('SELECT 1 AS ok'); // forces schema bootstrap
+    // The normal adapter applies the schema (one source of truth for the DDL).
+    await db.get('SELECT 1 AS ok');
 
-    const tables = source.prepare(
-        `SELECT name FROM sqlite_master WHERE type = 'table'
-         AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'memory_vec_%'`
-    ).all().map(r => r.name);
-
-    // The target must be empty (beyond the schema the adapter just applied).
-    for (const table of tables) {
-        const { count } = await db.get(`SELECT COUNT(*) AS count FROM ${table}`);
-        if (count > 0) {
-            console.error(`Target table ${table} already has ${count} row(s) - refusing to migrate into a non-empty database.`);
-            process.exit(1);
-        }
-    }
-
-    const report = [];
-    await db.transaction(async () => {
-        for (const table of tables) {
-            const columns = source.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-            const quotedCols = columns.map(c => (c === c.toLowerCase() ? c : `"${c}"`)).join(', ');
-            const params = columns.map(c => `@${c}`).join(', ');
-            const insertSql = `INSERT INTO ${table} (${quotedCols}) VALUES (${params})`;
-
-            let copied = 0;
-            let batch = [];
-            const flush = async () => {
-                for (const row of batch) await db.run(insertSql, row);
-                copied += batch.length;
-                batch = [];
-            };
-            for (const row of source.prepare(`SELECT * FROM ${table}`).iterate()) {
-                batch.push(row);
-                if (batch.length >= BATCH_SIZE) await flush();
+    const source = migration.openSource(sqlitePath);
+    try {
+        source.pin();
+        const plan = migration.planCopy(source);
+        for (const table of plan.tables) {
+            const { c } = await db.get(`SELECT COUNT(*) AS c FROM ${migration.schemaModel.quoteIdent(table.name)}`);
+            if (Number(c) > 0) {
+                console.error(`Target table ${table.name} already has ${c} row(s) - refusing to migrate into a non-empty database.`);
+                process.exitCode = 1;
+                return;
             }
-            await flush();
-            report.push({ table, copied });
-            if (copied > 0) console.log(`  ${table}: ${copied} row(s)`);
         }
-
-        // Identity columns were inserted with explicit ids; re-seat each
-        // sequence so the next insert doesn't collide.
-        const identities = await db.all(
-            `SELECT table_name, column_name FROM information_schema.columns
-             WHERE table_schema = current_schema() AND is_identity = 'YES'`
-        );
-        for (const { table_name, column_name } of identities) {
-            await db.rawQuery(
-                `SELECT setval(pg_get_serial_sequence($1, $2), (SELECT COALESCE(MAX("${column_name}") + 0, 0) + 1 FROM ${table_name}), false)`,
-                [table_name, column_name]
-            );
+        const result = await migration.copyTables({
+            source,
+            target: db,
+            plan,
+            onProgress: async (event) => {
+                if (event.state === 'done' && event.rows > 0) console.log(`  ${event.table}: ${event.rows} row(s)`);
+            }
+        });
+        const report = await migration.verifyMigration({ source, target: db, plan, dataDir });
+        if (!report.ok) {
+            console.error(`\nVerification failed: ${report.failures.join(', ')}.`);
+            process.exitCode = 1;
+            return;
         }
-    });
-
-    // Verify per-table row counts.
-    let mismatches = 0;
-    for (const { table, copied } of report) {
-        const sourceCount = source.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c;
-        const { count: targetCount } = await db.get(`SELECT COUNT(*) AS count FROM ${table}`);
-        if (sourceCount !== copied || Number(targetCount) !== sourceCount) {
-            console.error(`  MISMATCH ${table}: source=${sourceCount} copied=${copied} target=${targetCount}`);
-            mismatches++;
-        }
+        console.log(`\nMigrated ${result.rows} row(s) across ${result.tables} table(s); counts, foreign keys, identities, relationships, sampled content and attachments verified.`);
+        if (report.vectors.rebuilt) console.log(`Vector index rebuilt: ${report.vectors.indexed} of ${report.vectors.embeddings} embedding(s).`);
+        else console.log('The vector index rebuilds itself from memory_embeddings on first recall.');
+    } finally {
+        source.close();
+        await db.closeConnection();
     }
-
-    source.close();
-    await db.closeConnection();
-
-    if (mismatches > 0) {
-        console.error(`\n✖ ${mismatches} table(s) mismatched.`);
-        process.exit(1);
-    }
-    const total = report.reduce((sum, r) => sum + r.copied, 0);
-    console.log(`\n✔ Migrated ${total} row(s) across ${report.length} table(s), all counts verified.`);
-    console.log('The vector index rebuilds itself from memory_embeddings on first recall.');
 }
 
-main().catch(error => {
-    console.error('Migration failed:', error);
+main().catch((error) => {
+    const { redactText } = require('@goobster/core/db/migration').target;
+    console.error('Migration failed:', redactText(error && (error.code || error.message || error), [process.env.GOOBSTER_DB_URL]));
     process.exit(1);
 });

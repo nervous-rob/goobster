@@ -1,6 +1,7 @@
 // Before anything reads feature state: a staged revision the manager started
 // this process with runs the staged feature document (manager_lifecycle.md).
 const lifecycle = require('@goobster/core/runtime/lifecycle');
+const maintenance = require('@goobster/core/runtime/maintenance');
 lifecycle.boot({ worker: 'bot' });
 
 const fs = require('node:fs');
@@ -51,7 +52,7 @@ if (!fs.existsSync(configPath)) {
 }
 
 logger.info('Loading config...');
-const config = require('../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 if (!config.token) {
 	logger.error('Discord token not found in config.json!');
 	process.exit(1);
@@ -457,7 +458,7 @@ async function handleCommandInteraction(interaction) {
     // A command whose file was not loaded because its feature is off: answer
     // (ephemeral) before anything else, never run it.
     if ((interaction.isAutocomplete() || interaction.isContextMenuCommand() || interaction.isChatInputCommand())
-        && (!client.commands.has(interaction.commandName) || lifecycle.restartNotice())
+        && (!client.commands.has(interaction.commandName) || lifecycle.restartNotice() || maintenance.isActive())
         && await refuseUnavailableCommand(interaction, commandNames)) {
         return;
     }
@@ -541,6 +542,7 @@ async function handleCommandInteraction(interaction) {
 
 // Add reaction handlers
 client.on('messageReactionAdd', async (reaction, user) => {
+	if (maintenance.isActive()) return;
 	// 📋 is the GitHub issue-capture reaction; with GitHub off it does nothing.
 	if (!ISSUE_CAPTURE_ACTIVE && reaction.emoji?.name === '📋') return;
 	logger.debug('Raw reaction event received:', {
@@ -573,6 +575,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 });
 
 client.on('messageReactionRemove', async (reaction, user) => {
+	if (maintenance.isActive()) return;
 	try {
 		// Partial reactions need to be fetched
 		if (reaction.partial) {
@@ -662,6 +665,59 @@ async function drainWork() {
 lifecycle.onPauseNewWork(() => {
         client.coreRuntime?.pauseNewWork?.();
         requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' })?.pauseNewWork();
+});
+
+/**
+ * The maintenance barrier (documentation/maintenance_barrier.md): admission
+ * is already closed when this runs (Discord commands, buttons and messages
+ * are refused). Drain what is running - interactions, sandbox runs, voice
+ * sessions, the scheduled runtime - then the lifecycle sets the database
+ * fence and acknowledges. Resume starts the runtime again as a start would.
+ */
+lifecycle.onMaintenance({
+        name: 'bot',
+        async drain({ boundMs }) {
+                const sandboxService = requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' });
+                const pending = [lifecycle.settle([{
+                        name: 'httpRequests',
+                        drain: () => require('@goobster/core/web/maintenanceGate').drainRequests()
+                }], lifecycle.contractBoundMs('integrationAction', boundMs))];
+                if (sandboxService) {
+                        sandboxService.pauseNewWork();
+                        pending.push(lifecycle.settle([{
+                                name: 'sandboxRun',
+                                drain: () => sandboxService.drainRuns(),
+                                interrupt: () => sandboxService.interruptRunning()
+                        }], lifecycle.contractBoundMs('sandboxRun', boundMs)));
+                }
+                pending.push(lifecycle.settle([{
+                        name: 'integrationAction',
+                        drain: () => Promise.allSettled([...interactionsInFlight])
+                }], lifecycle.contractBoundMs('integrationAction', boundMs)));
+                if (client.coreRuntime?.enterMaintenance) pending.push(client.coreRuntime.enterMaintenance(boundMs));
+                const voiceSessionService = VOICE_ACTIVE
+                        ? requireOptional('@goobster/core/services/voice/voiceSessionService', { feature: 'voice' })
+                        : null;
+                if (voiceSessionService) {
+                        const gateway = client.coreRuntime?.gateway || require('@goobster/core/gateway').toGateway(client);
+                        pending.push(lifecycle.settle([{
+                                name: 'voiceSession',
+                                drain: () => voiceSessionService.endAllSessions({ gateway })
+                        }], lifecycle.contractBoundMs('voiceSession', boundMs)));
+                }
+                await Promise.all(pending);
+        },
+        async resume() {
+                requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' })?.resumeNewWork?.();
+                if (!client.coreRuntime?.resumeFromMaintenance) return;
+                await client.coreRuntime.resumeFromMaintenance();
+                client.automationService = client.coreRuntime.services.automation || null;
+                client.heartbeatService = client.coreRuntime.services.heartbeat || null;
+                client.personalHeartbeatService = client.coreRuntime.services.personalHeartbeat || null;
+                client.agentTrackerService = client.coreRuntime.services.agentTracker || null;
+                client.monologueService = client.coreRuntime.services.monologue || null;
+                client.exchangeRiskEngine = client.coreRuntime.services.exchangeRiskEngine || null;
+        }
 });
 
 // Graceful shutdown handling; one run whatever asks (signal, restart request, orphan watch)

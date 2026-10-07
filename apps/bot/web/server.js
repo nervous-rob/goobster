@@ -16,6 +16,7 @@ const { createPanelApi } = require('./panelApi');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const mcpConfig = require('@goobster/core/config/mcpConfig');
 const featureGate = require('@goobster/core/web/featureGate');
+const maintenanceGate = require('@goobster/core/web/maintenanceGate');
 const gateSurface = require('@goobster/core/features/gate');
 const { createInternalGatewayApi, internalGatewayEnabled } = require('./internalGatewayApi');
 const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
@@ -103,6 +104,10 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // below, no worker, listener or router is built for it at all.
     const gate = (id) => featureGate.mountable(id);
     healthApp.use(featureGate.routeGate({ only: FEATURE_PATHS }));
+    // Maintenance barrier (documentation/maintenance_barrier.md): while this
+    // process is fenced, everything mutating on the public server (webhooks,
+    // Activity, internal gateway, MCP, portal) answers 503 MAINTENANCE.
+    healthApp.use(maintenanceGate.maintenanceGate());
     healthApp.use(mcpConfig.path, featureGate.ownerGate('mcp'));
 
     // Webhook receivers (GitHub + Cursor agent status): enabled per-receiver
@@ -202,6 +207,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     });
 
     featureGate.rejectBlockedUpgrades(healthServer);
+    maintenanceGate.guardUpgrades(healthServer);
 
     if (tableManager) {
         activityApi.attachActivityWebSocket(healthServer, healthApp.locals.activityContext);

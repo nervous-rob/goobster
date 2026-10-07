@@ -43,7 +43,7 @@ function withAppEnv({ env, config }, fn) {
     try {
         let result;
         jest.isolateModules(() => {
-            jest.doMock(path.join(REPO, 'config.json'), () => config, { virtual: true });
+            jest.doMock('@goobster/core/config/configJson', () => ({ load: () => config, configJsonPath: () => path.join(REPO, 'config.json') }));
             jest.doMock('dotenv', () => ({ config: () => ({}) }));
             result = fn();
         });

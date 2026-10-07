@@ -1,6 +1,6 @@
 /** Fresh-install defaults. Host overrides are stored in instance_state.limits. */
 let file = {};
-try { file = require('../../../config.json').limits || {}; } catch { /* optional */ }
+try { file = require('./configJson').load().limits || {}; } catch { /* optional */ }
 const value = (env, key, fallback) => process.env[env] ?? file[key] ?? fallback;
 const integer = (raw, fallback, min, max) => Number.isSafeInteger(Number(raw)) && Number(raw) >= min && Number(raw) <= max
     ? Number(raw) : fallback;

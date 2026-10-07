@@ -7,7 +7,7 @@ const requireOptional = require('../utils/optionalModule').forModule(module);
 // config.json is optional (env-only deployments); never crash at import time.
 let fileConfig = {};
 try {
-    fileConfig = require('../../../config.json');
+    fileConfig = require('./configJson').load();
 } catch {
     // config.json optional at load time
 }

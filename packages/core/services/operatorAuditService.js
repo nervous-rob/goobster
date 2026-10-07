@@ -30,11 +30,14 @@ const ACTIONS = new Set([
     // Written by the manager's audit reconciliation (documentation/manager.md);
     // `target` is the manager operation id.
     'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock',
+    'manager.config.set', 'manager.defaults.set',
     'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
+    'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
+    'manager.maintenance.enter', 'manager.maintenance.release',
+    'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
+    'manager.data.reset',
     'manager.lifecycle.start', 'manager.lifecycle.stop',
     'manager.owner.create',
-    'manager.config.set', 'manager.defaults.set',
-    'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.

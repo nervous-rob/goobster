@@ -37,7 +37,7 @@ install operation attaches facts to it. The sealed record
 | `owned` | What the manager may remove: `files` (roots it created), `services` (units it registered, with `registeredBy`), `dependencies` (system packages it installed). |
 | `updater` | `{kind: 'manager' \| 'script' \| 'none', unit?}` - who updates this install. |
 | `release` | `{releaseId, version, target, features}` of the active payload, or `null` for an adopted checkout. |
-| `database` | `{engine: 'sqlite' \| 'postgres', external}`. An external Postgres is never created or deleted by the manager. |
+| `database` | `{engine: 'sqlite' \| 'postgres', external}`. An external Postgres is never created or deleted by the manager. A successful `db.migrate` ([db_migration.md](db_migration.md)) flips it to `{engine: 'postgres', external: true}`; the connection itself lives in the manager's environment overlay (`<managerStore>/environment.json`, [manager.md](manager.md#the-environment-overlay)), never in the record. |
 
 **Ownership is explicit.** Uninstall removes only what `owned` lists and
 only paths that still resolve inside a recorded root. Anything the manager
@@ -246,6 +246,7 @@ node apps/manager/cli.js <command> [options]     # npm script: manager:cli
 | `status` | What the manager store says (read only). |
 | `discover` | List installations on this host (read only). |
 | `schema` | Print the answers-file JSON schema. |
+| `migrate preflight\|run\|rollback\|status` | SQLite to Postgres ([db_migration.md](db_migration.md)). `--confirm <installationId>` and `--release` apply to `run` and `rollback`; the target URL and backup passphrase come only from the answers file or a hidden prompt. |
 
 | Option | Meaning |
 | --- | --- |
@@ -283,7 +284,9 @@ The shipped schema is `apps/manager/install/answers.schema.json` (JSON Schema
 Other fields: `database.engine`, `runtimeUser`, `registerService` (install);
 `candidateId`, `keepUpdater`, `replaceUnreadable` (adopt); `source`,
 `release`, `config` (reconfigure/repair); `keepData`, `confirm`,
-`acknowledgeUnknownServices` (uninstall).
+`acknowledgeUnknownServices` (uninstall); `target`, `backup`, `provision`,
+`confirm`, `roots.data`, `release` (migrate run; the `migrate`,
+`migrate-preflight` and `migrate-rollback` definitions).
 
 ### Exit codes
 
@@ -294,13 +297,24 @@ Other fields: `database.engine`, `runtimeUser`, `registerService` (install);
 | 2 | Invalid input, bad answers file, or a preflight block. |
 | 3 | Refused: another operation holds the lock, tampered ownership, wrong state, existing installation, unknown service owner. |
 | 4 | Interrupted after at least one step; run the same command again to resume. |
-| 5 | Applied, but a step is deferred for the privileged helper. |
+| 5 | Applied, but a step is deferred for the privileged helper (not used by `migrate`). |
 
 The CLI runs with `via: 'local'`: whoever can write the manager store can
 run it, which is the same guarantee the recovery credential gives the
 portal. It is audited as `manager.install.new`, `manager.install.reconfigure`,
 `manager.install.repair` and `manager.install.uninstall` (and `manager.adopt`),
 reconciled into `operator_audit` like every other manager operation.
+
+## Reset
+
+`goobster-manager reset` and `goobster-manager release` are the same local CLI
+for the data reset ([data_reset.md](data_reset.md)): `reset --scope instance`
+or `reset --scope feature --feature <id>` enters the maintenance barrier, runs
+the `data.reset` operation (a verified backup first, a typed confirmation of
+the installation id) and releases the barrier; `--dry-run` only prints the
+preview. The answers file takes a `reset` section (`scope`, `feature`,
+`backup.dir`, `backup.passphrase`, `confirm`), and the passphrase is never
+accepted on the command line. The audit action is `manager.data.reset`.
 
 ## Not done here
 
