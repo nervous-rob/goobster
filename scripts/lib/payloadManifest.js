@@ -27,10 +27,9 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 
 const { buildRequireGraph } = require('./requireGraph');
+const { MANIFEST_VERSION, CORE, canonicalJson, closeOverRequires, selectPayload } = require('./payloadStage');
 const { createOwnerMatcher } = require('../../packages/core/features/payloadGlob');
 
-const MANIFEST_VERSION = 1;
-const CORE = 'core';
 /** Repository trees whose files are attributed to an owner. */
 const SOURCE_ROOTS = ['packages/core', 'apps/bot', 'apps/api', 'apps/mcp', 'apps/sandbox', 'apps/web/src', 'campaigns', 'clients'];
 /** Server trees the require graph walks (the portal client is chunked by Vite instead). */
@@ -52,22 +51,6 @@ function hostOf(file) {
 
 function sortedUnique(values) {
     return [...new Set(values)].sort();
-}
-
-/** Canonical JSON: object keys sorted, two-space indent, LF, trailing newline. */
-function canonicalJson(value) {
-    const normalize = (item) => {
-        if (Array.isArray(item)) return item.map(normalize);
-        if (item && typeof item === 'object') {
-            const out = {};
-            for (const key of Object.keys(item).sort()) {
-                if (item[key] !== undefined) out[key] = normalize(item[key]);
-            }
-            return out;
-        }
-        return item;
-    };
-    return `${JSON.stringify(normalize(value), null, 2)}\n`;
 }
 
 /** Tracked repository files (POSIX, sorted); a filtered walk outside a git checkout. */
@@ -494,69 +477,6 @@ function buildReleaseManifest({ ownership, catalog, coreVersion, target, node, f
         dependencies: dependencies.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
         frontend: { chunks: chunkEntries.sort((a, b) => (a.file < b.file ? -1 : 1)) },
         unreferenced: ownership.unreferenced.map(({ name, reason }) => ({ name, reason }))
-    };
-}
-
-// ---------------------------------------------------------------------------
-// selection
-// ---------------------------------------------------------------------------
-
-/** `ids` plus everything they require, from the manifest's own groups. */
-function closeOverRequires(manifest, ids) {
-    const wanted = new Set([CORE]);
-    const add = (id) => {
-        if (!manifest.groups[id]) throw Object.assign(new Error(`Unknown feature "${id}"`), { code: 'UNKNOWN_FEATURE' });
-        if (wanted.has(id)) return;
-        wanted.add(id);
-        for (const dep of manifest.groups[id].requires || []) add(dep);
-    };
-    for (const id of ids) if (id !== CORE) add(id);
-    return wanted;
-}
-
-/**
- * Resolve a selection against a release manifest.
- * @param {Object} manifest   release manifest v1
- * @param {{ features: string[] }} selection
- * @returns {{ features: string[], files: string[], dependencies: string[], chunks: string[],
- *   excluded: { features: string[], files: string[], dependencies: string[], chunks: string[] } }}
- *   dependencies are payload directories; chunks are dist-relative files
- */
-function selectPayload(manifest, { features = [] } = {}) {
-    const selected = closeOverRequires(manifest, features);
-    const keepDep = new Map();
-    for (const dep of manifest.dependencies) keepDep.set(dep.path, dep.owners.some(owner => selected.has(owner)));
-    const depByName = new Map();
-    for (const dep of manifest.dependencies) {
-        if (!depByName.has(dep.name)) depByName.set(dep.name, []);
-        depByName.get(dep.name).push(dep);
-    }
-    const keepFile = (file) => {
-        if (file.dependency) {
-            const dep = manifest.dependencies.filter(item => item.name === file.dependency && file.path.startsWith(`${item.path}/`))
-                .sort((a, b) => b.path.length - a.path.length)[0];
-            return dep ? keepDep.get(dep.path) : true;
-        }
-        return selected.has(file.owner);
-    };
-    const files = { keep: [], drop: [] };
-    for (const file of manifest.files) (keepFile(file) ? files.keep : files.drop).push(file.path);
-    const deps = { keep: [], drop: [] };
-    for (const dep of manifest.dependencies) (keepDep.get(dep.path) ? deps.keep : deps.drop).push(dep.path);
-    const chunks = { keep: [], drop: [] };
-    for (const chunk of manifest.frontend.chunks) (selected.has(chunk.feature) ? chunks.keep : chunks.drop).push(chunk.file);
-    const ids = Object.keys(manifest.groups);
-    return {
-        features: ids.filter(id => selected.has(id)),
-        files: files.keep,
-        dependencies: deps.keep,
-        chunks: chunks.keep,
-        excluded: {
-            features: ids.filter(id => !selected.has(id)),
-            files: files.drop,
-            dependencies: deps.drop,
-            chunks: chunks.drop
-        }
     };
 }
 
