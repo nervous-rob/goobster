@@ -472,6 +472,36 @@ describe('scripts/package-sign.js', () => {
     });
 });
 
+describe('payloadStage verify CLI', () => {
+    function runCli(argv) {
+        let out = '';
+        const status = stage.verifyCli(argv, { stdout: { write: (chunk) => { out += chunk; } } });
+        return { status, out };
+    }
+
+    test('prints ok with the summary, a refusal code with exit 2, and usage errors with exit 1', () => {
+        const { publicKey, privateKey } = keypair();
+        const release = signRelease(makeRelease(), privateKey);
+        const keyFile = path.join(tempDir('cli'), 'key.pub.pem');
+        fs.writeFileSync(keyFile, publicKey.export({ type: 'spki', format: 'pem' }));
+
+        const passed = runCli(['verify', release.dir, '--target', 'linux-x64', '--abi', '127', '--public-key', keyFile]);
+        expect(passed.status).toBe(0);
+        expect(JSON.parse(passed.out)).toMatchObject({ ok: true, code: null, signed: true, target: 'linux-x64' });
+
+        const wrongTarget = runCli(['verify', release.dir, '--target', 'win32-x64', '--public-key', keyFile]);
+        expect(wrongTarget.status).toBe(2);
+        expect(JSON.parse(wrongTarget.out)).toMatchObject({ ok: false, code: CODES.TARGET_MISMATCH });
+
+        const unsigned = makeRelease();
+        expect(JSON.parse(runCli(['verify', unsigned.dir]).out).code).toBe(CODES.UNSIGNED_DEV_ONLY);
+        expect(JSON.parse(runCli(['verify', unsigned.dir, '--dev']).out)).toMatchObject({ ok: true, signed: false, devMode: true });
+
+        expect(runCli(['verify']).status).toBe(1);
+        expect(runCli(['verify', release.dir, '--bogus']).status).toBe(1);
+    });
+});
+
 describe('satisfies', () => {
     test.each([
         ['2.4.0', '>=2.4.0 <3.0.0', true],

@@ -800,5 +800,48 @@ module.exports = {
     listStaging,
     cleanStaging,
     recoverInstall,
-    activate
+    activate,
+    verifyCli
 };
+
+/**
+ * `node scripts/lib/payloadStage.js verify <dir> [--target <id>] [--abi <n>]
+ * [--core <version>] [--public-key <pem>] [--dev]` prints `{ ok, code, message }`
+ * plus the verification summary as JSON; exit 0 when the payload verifies, 2
+ * when it is refused, 1 on a usage error.
+ */
+function verifyCli(argv, { stdout = process.stdout } = {}) {
+    const [command, dir, ...rest] = argv;
+    if (command !== 'verify' || !dir) {
+        stdout.write('usage: payloadStage.js verify <dir> [--target <id>] [--abi <n>] [--core <version>] [--public-key <pem>] [--dev]\n');
+        return 1;
+    }
+    const options = { devMode: false };
+    const value = (flag, index) => {
+        if (rest[index + 1] === undefined) throw new Error(`${flag} needs a value`);
+        return rest[index + 1];
+    };
+    for (let i = 0; i < rest.length; i++) {
+        const arg = rest[i];
+        if (arg === '--target') options.expectedTarget = value(arg, i++);
+        else if (arg === '--abi') options.nodeAbi = value(arg, i++);
+        else if (arg === '--core') options.coreVersion = value(arg, i++);
+        else if (arg === '--public-key') options.publicKey = fs.readFileSync(value(arg, i++), 'utf8');
+        else if (arg === '--dev') options.devMode = true;
+        else {
+            stdout.write(`unknown option: ${arg}\n`);
+            return 1;
+        }
+    }
+    try {
+        const result = verifyPayload(dir, options);
+        stdout.write(`${JSON.stringify({ ok: true, code: null, message: 'verified', ...result }, null, 2)}\n`);
+        return 0;
+    } catch (error) {
+        if (!(error instanceof PayloadError)) throw error;
+        stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message }, null, 2)}\n`);
+        return 2;
+    }
+}
+
+if (require.main === module) process.exitCode = verifyCli(process.argv.slice(2));
