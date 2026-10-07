@@ -500,7 +500,10 @@ describe('HTTP surface', () => {
         if (unclaimed.length) {
             throw new Error(`\nUnclaimed static assets: ${unclaimed.join(', ')}. Add each exact key to \`staticAssets\` in packages/core/features/inventory.js.`);
         }
-        const real = new Set([...mustBeClaimed, ...getRoutes]);
+        // Vite writes apps/web/public/style.css on build (gitignored), so it is
+        // present after `npm run build:web` and absent on a clean checkout.
+        const generated = ['/app/style.css'];
+        const real = new Set([...mustBeClaimed, ...getRoutes, ...generated]);
         const stale = claimedKeys.filter((key) => !real.has(key)).sort();
         if (stale.length) throw new Error(`\nStale static assets (no mount, public file or GET route): ${stale.join(', ')}.`);
     });
