@@ -314,6 +314,20 @@ Work:
 2. Reset rewritten for the whole current schema on both engines, with
    explicit scope (everything, or per feature's dormant data) and typed
    confirmation.
+
+   **Status (P4.2, #335): built.** The manager kind `data.reset` (audit
+   action `manager.data.reset`) empties either every application table, the
+   derived vector index and every owned file set (`instance`), or one
+   non-active feature's tables, shared-table rows and files (`feature`),
+   from an inventory derived from `schema.sql` and the feature inventory
+   (`packages/core/db/resetInventory.js`, `reset.js`). It runs inside the
+   maintenance barrier after a verified backup (`backupService.verifyBackup`)
+   and a typed confirmation, keeps `operator_audit` and `data_migrations`,
+   recreates `instance_state` (paused) and `self_docs`, and does not release
+   the barrier. `goobster-manager reset` and `release` are the CLI;
+   `GET /manager/api/reset/plan` is the preview. `scripts/initDb.js` no longer
+   has a drop list and `--reset` is refused. Portal pages are #337. See
+   [data_reset.md](data_reset.md).
 3. Migrator: true preflight, required verified backup, row-count
    verification, rollback point.
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.

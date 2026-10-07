@@ -100,6 +100,17 @@ The Host room shows the pause (since when, from which archive, what was interrup
 
 A restore will run inside the manager's maintenance barrier (installer plan Phase 4.4; [maintenance_barrier.md](maintenance_barrier.md)), and the paused-after-recovery policy above is separate from releasing that barrier: releasing maintenance does not resume a paused instance.
 
+### Reset takes a verified backup first
+
+`data.reset` ([data_reset.md](data_reset.md)) never empties anything before it
+has written an archive with this same service and checked it with
+`backupService.verifyBackup(dir, { expectCounts, expectFingerprint })`: the
+snapshot is not empty, the schema fingerprint matches, every table's row count
+matches what was read, and each file set holds the files that were counted. A
+failed check throws `BackupError('UNVERIFIED')` with the list of problems, and
+the reset does not start. The archive keeps what the reset removes, so the
+privacy note below applies to it.
+
 ### Moving between engines
 
 An archive restores only onto the engine that made it. To move SQLite data to Postgres: restore onto a SQLite installation, then run `npm run migrate-to-postgres` ([postgres_setup.md](postgres_setup.md)). There is no Postgres → SQLite path.
