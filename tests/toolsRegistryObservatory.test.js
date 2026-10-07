@@ -146,20 +146,29 @@ describe('getDefinitions gating', () => {
 });
 
 describe('execute gating (defense in depth)', () => {
-    test('refuses when disabled, as the stable feature-unavailable result', async () => {
+    test('with no features.json the legacy switch keeps its own refusal (behaviour unchanged)', async () => {
         observatoryConfig.enabled = false;
         features.refresh();
         const out = await toolsRegistry.execute('observatory', { action: 'list' });
-        expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'observatory' });
+        expect(out).toMatch(/disabled/i);
     });
 
-    test('refuses when only the sandbox is disabled', async () => {
-        sandboxConfig.enabled = false;
-        features.refresh();
+    test('refuses with the stable feature-unavailable result when the feature is enforced off', async () => {
+        sandboxConfig.enabled = true;
         observatoryConfig.enabled = true;
-        features.refresh();
+        features._resetForTests({ env: { GOOBSTER_FEATURE_OBSERVATORY: 'off' }, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
         const out = await toolsRegistry.execute('observatory', { action: 'list' });
         expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'observatory' });
+        features._resetForTests();
+    });
+
+    test('refuses when only the sandbox dependency is enforced off', async () => {
+        sandboxConfig.enabled = true;
+        observatoryConfig.enabled = true;
+        features._resetForTests({ env: { GOOBSTER_FEATURE_SANDBOX: '0' }, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
+        const out = await toolsRegistry.execute('observatory', { action: 'list' });
+        expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'observatory' });
+        features._resetForTests();
     });
 
     test('the tool still refuses on its own when the feature state says active but the switch is off', async () => {

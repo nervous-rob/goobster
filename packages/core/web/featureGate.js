@@ -6,15 +6,10 @@
  * the api app. Ownership comes only from `features/inventory.js` (ordered
  * `routeRules`, `wsPaths`) and the answer from the one `features` predicate.
  *
- * Enforcement follows the state file, not the legacy defaults. With no usable
- * `data/features.json` the installation behaves exactly as it did before the
- * catalog existed: a feature whose legacy switch is off is "inactive" in the
- * resolver, but the existing code (an unmounted router, a service-level
- * refusal, a token route that stays open on purpose) already decides what its
- * routes do, and this module must not change that. A refusal is therefore
- * enforced when the state file is in force, or when the operator forced the
- * feature off with `GOOBSTER_FEATURE_<ID>`, or when a dependency is enforced
- * off. `enforced()` is the single seam for that rule.
+ * Enforcement follows the state file, not the legacy defaults: the rule is
+ * `featureState.enforcedOff` (shared with the command, step, tool and MCP
+ * gates through `features/gate.js`), so with no usable `data/features.json`
+ * the installation behaves exactly as it did before the catalog existed.
  *
  * Refusals never carry `reasons` (they are for the signed-in portal's
  * `/api/app/features`, not for the network edge) and never echo request data.
@@ -27,16 +22,9 @@ const FEATURE_UNAVAILABLE = 'FEATURE_UNAVAILABLE';
 const UNAVAILABLE_MESSAGE = 'That feature is not available on this installation.';
 const CLOSE_POLICY = 1008;
 
-/** True when a request for a surface owned by `id` must be refused. */
-function enforced(id, state = defaultFeatures, seen = new Set()) {
-    if (state.isActive(id)) return false;
-    if (seen.has(id)) return false;
-    seen.add(id);
-    const { source } = state.status();
-    if (source === 'file') return true;
-    return state.availability(id).reasons.some(reason =>
-        reason.code === 'ENV_OFF'
-        || (reason.code === 'DEPENDENCY_INACTIVE' && reason.dependency && enforced(reason.dependency, state, seen)));
+/** True when a request for a surface owned by `id` must be refused (see `featureState.enforcedOff`). */
+function enforced(id, state = defaultFeatures) {
+    return state.enforcedOff(id);
 }
 
 /** The first of owner, then alsoRequires, that is enforced off; null when the claim is available. */
