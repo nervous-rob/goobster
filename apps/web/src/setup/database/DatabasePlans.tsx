@@ -30,6 +30,10 @@ export function describeDatabase(plan: InstallOperation['plan']): ReactNode {
         const docker = (plan as { dockerDatabase: { names?: { container?: string; volume?: string }; request?: { port?: number; bind?: string } } }).dockerDatabase;
         return <span data-testid="plan-database-docker">PostgreSQL in Docker, created by the installer: container <code>{docker.names?.container}</code> on <code>{docker.request?.bind}:{docker.request?.port}</code> <span className="hint">(kept when you uninstall, unless you ask otherwise)</span></span>;
     }
+    if (engine === 'postgres' && (plan as { nativeDatabase?: unknown }).nativeDatabase) {
+        const native = (plan as { nativeDatabase: { names?: { cluster?: string }; request?: { port?: number; bind?: string }; port?: { chosen?: number } } }).nativeDatabase;
+        return <span data-testid="plan-database-native">PostgreSQL on this machine, created by the installer: cluster <code>{native.names?.cluster}</code> on <code>{native.request?.bind || '127.0.0.1'}:{native.port?.chosen ?? native.request?.port}</code> <span className="hint">(kept when you uninstall, unless you ask otherwise)</span></span>;
+    }
     if (engine === 'postgres') {
         const target = (plan as { databaseTarget?: Target }).databaseTarget;
         return <span data-testid="plan-database-postgres">PostgreSQL on a server you run: <code>{where(target)}</code> <span className="hint">(never deleted by Goobster)</span></span>;

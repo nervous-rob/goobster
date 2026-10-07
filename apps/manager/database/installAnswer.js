@@ -13,6 +13,7 @@ const environment = require('../environment');
 const input = require('./input');
 const { createProbe } = require('./probe');
 const dockerService = require('../docker/service');
+const nativeService = require('../native/service');
 
 const ENGINES = ['sqlite', 'postgres'];
 const USABLE = new Set(['empty', 'goobster-older', 'goobster-current']);
@@ -21,25 +22,29 @@ const USABLE = new Set(['empty', 'goobster-older', 'goobster-current']);
  * @param {*} value the raw `database` answer
  * @param {Object} settings
  * @param {(value: *, settings: Object) => { engine: string, external: boolean }} fallback the engine-only parser (install/engine.js parseDatabase)
- * @returns {{ database: { engine: string, external: boolean }, connection: Object|null, target: Object|null, docker: Object|null }}
+ * @returns {{ database: { engine: string, external: boolean }, connection: Object|null, target: Object|null, docker: Object|null, native: Object|null }}
  */
 function parseNewDatabase(value, settings, fallback) {
     const plain = value === undefined || value === null || typeof value !== 'object' || Array.isArray(value);
-    if (plain || (value.connection === undefined && value.docker === undefined)) {
-        return { database: fallback(value, settings), connection: null, target: null, docker: null };
+    if (plain || (value.connection === undefined && value.docker === undefined && value.native === undefined)) {
+        return { database: fallback(value, settings), connection: null, target: null, docker: null, native: null };
     }
     for (const key of Object.keys(value)) {
-        if (key !== 'engine' && key !== 'connection' && key !== 'docker') throw new ManagerError(400, 'INVALID_INPUT', '"database" has a field this operation does not accept.');
+        if (key !== 'engine' && key !== 'connection' && key !== 'docker' && key !== 'native') throw new ManagerError(400, 'INVALID_INPUT', '"database" has a field this operation does not accept.');
     }
     if (!ENGINES.includes(value.engine)) throw new ManagerError(400, 'INVALID_INPUT', '"database.engine" must be sqlite or postgres.');
-    if (value.engine !== 'postgres') throw new ManagerError(400, 'INVALID_INPUT', '"database.connection" and "database.docker" only apply to the postgres engine.');
-    if (value.connection !== undefined && value.docker !== undefined) throw new ManagerError(400, 'INVALID_INPUT', 'Give either "database.connection" (an existing server) or "database.docker" (a database the installer creates in Docker), not both.');
+    if (value.engine !== 'postgres') throw new ManagerError(400, 'INVALID_INPUT', '"database.connection", "database.docker" and "database.native" only apply to the postgres engine.');
+    if ([value.connection, value.docker, value.native].filter(item => item !== undefined).length > 1) throw new ManagerError(400, 'INVALID_INPUT', 'Give one of "database.connection" (an existing server), "database.docker" (a database the installer creates in Docker) or "database.native" (a cluster the installer creates on this machine), not several.');
     if (value.docker !== undefined) {
         const request = dockerService.parseRequest(value.docker);
-        return { database: { engine: 'postgres', external: true }, connection: null, target: dockerService.publicRequest(request), docker: request };
+        return { database: { engine: 'postgres', external: true }, connection: null, target: dockerService.publicRequest(request), docker: request, native: null };
+    }
+    if (value.native !== undefined) {
+        const request = nativeService.parseRequest(value.native, { allowTransient: (settings.nativeDeps || {}).allowTransient === true });
+        return { database: { engine: 'postgres', external: true }, connection: null, target: nativeService.publicRequest(request), docker: null, native: request };
     }
     const connection = input.parseConnection(value.connection, 'database.connection');
-    return { database: { engine: 'postgres', external: true }, connection, target: input.publicView(connection), docker: null };
+    return { database: { engine: 'postgres', external: true }, connection, target: input.publicView(connection), docker: null, native: null };
 }
 
 /** An environment variable that names another database wins over the overlay this install would write. */

@@ -29,8 +29,10 @@ const ALLOWED_KEYS = Object.freeze(['GOOBSTER_DB_URL']);
  * provisioned and has not connected an installation to yet
  * (documentation/docker_postgres.md). `database.connect` and the migration read
  * it through `{ owned: 'docker' }`, so the generated password is never shown.
+ * `GOOBSTER_NATIVE_DB_URL` is the same thing for the native PostgreSQL cluster
+ * (documentation/native_postgres.md, `{ owned: 'native' }`).
  */
-const STAGED_KEYS = Object.freeze(['GOOBSTER_DOCKER_DB_URL']);
+const STAGED_KEYS = Object.freeze(['GOOBSTER_DOCKER_DB_URL', 'GOOBSTER_NATIVE_DB_URL']);
 
 const fileFor = (storeDir) => path.join(storeDir, FILE_NAME);
 

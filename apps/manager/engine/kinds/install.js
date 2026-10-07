@@ -41,15 +41,18 @@ const parse = require('../../install/engine');
 const dockerService = require('../../docker/service');
 const dockerPasswords = require('../../docker/passwords');
 const dockerState = require('../../docker/state');
+const nativeService = require('../../native/service');
+const nativePasswords = require('../../native/passwords');
+const nativeState = require('../../native/state');
 const { createServiceLifecycle } = require('../../platform/serviceLifecycle');
 
 const { createInstallCore, exactKeys, textField, absolutePath, parseLabel, parseFeatures, parseRootsInput, parseLayout, parseRelease, parseRuntimeUser, parseBoolean, parseConfigChanges, parseDatabase } = parse;
 
 const SESSION_VIA = ['local', 'bridge', 'setup', 'recovery'];
-const NEW_STEPS = ['preflight', 'stage', 'verify', 'ownership', 'docker-postgres', 'init-db', 'write-config', 'write-features', 'activate', 'finalize', 'register-service'];
+const NEW_STEPS = ['preflight', 'stage', 'verify', 'ownership', 'docker-postgres', 'native-postgres', 'init-db', 'write-config', 'write-features', 'activate', 'finalize', 'register-service'];
 const RECONFIGURE_STEPS = ['preflight', 'stage', 'verify', 'write-config', 'activate', 'record', 'retire-old', 'register-service'];
 const REPAIR_STEPS = ['preflight', 'stage', 'verify', 'init-db', 'write-features', 'activate', 'register-service'];
-const UNINSTALL_STEPS = ['preflight', 'unregister-service', 'tombstone', 'docker-postgres', 'remove-code', 'remove-data', 'remove-ownership'];
+const UNINSTALL_STEPS = ['preflight', 'unregister-service', 'tombstone', 'docker-postgres', 'native-postgres', 'remove-code', 'remove-data', 'remove-ownership'];
 const PRIVILEGED_BY_STEP = Object.freeze({ 'register-service': 'service.register', 'unregister-service': 'service.unregister' });
 
 const sameList = (a, b) => JSON.stringify([...(a || [])]) === JSON.stringify([...(b || [])]);
@@ -63,6 +66,17 @@ function dockerFindings(view) {
     return view.findings
         .filter(item => item.severity === 'block' || item.severity === 'warn')
         .map(item => ({ code: item.code.startsWith('DOCKER_') ? item.code : `DOCKER_${item.code}`, severity: item.severity, detail: item.remedy ? `${item.detail} ${item.remedy}` : item.detail }));
+}
+
+/** What the preflight shows of the native database: facts and findings, never an environment value or a secret. */
+function nativePlanView(view) {
+    return { names: view.names, cluster: view.cluster, mode: view.mode, request: view.request, port: view.port, storage: view.storage, packages: view.packages, backupTools: view.backupTools ? { ok: view.backupTools.ok, code: view.backupTools.code, version: view.backupTools.version } : null, findings: view.findings };
+}
+
+function nativeFindings(view) {
+    return view.findings
+        .filter(item => item.severity === 'block' || item.severity === 'warn')
+        .map(item => ({ code: item.code.startsWith('NATIVE_') ? item.code : `NATIVE_${item.code}`, severity: item.severity, detail: item.remedy ? `${item.detail} ${item.remedy}` : item.detail }));
 }
 
 function stepList(names) {
@@ -193,6 +207,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             database: databaseAnswer.database,
             connection: databaseAnswer.connection,
             docker: databaseAnswer.docker,
+            native: databaseAnswer.native,
             release: parseRelease(input.release),
             runtimeUser: parseRuntimeUser(input.runtimeUser),
             createRuntimeUser: parseBoolean(input.createRuntimeUser, 'createRuntimeUser', false),
@@ -239,11 +254,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         if (parsed.database.engine === 'sqlite' && settings.dbUrl) extraFindings.push({ code: 'DATABASE_MISMATCH', severity: 'block', detail: 'sqlite was chosen while GOOBSTER_DB_URL names a Postgres database' });
         const connection = parsed.connection ? await databaseInstall.probeForInstall({ settings, connection: parsed.connection }) : null;
         const dockerView = parsed.docker ? await dockerService.createDockerService({ settings, fs, now, logger }).assess({ installationId: existing ? existing.installationId : null, request: parsed.docker }) : null;
+        const nativeView = parsed.native ? await nativeService.createNativeService({ settings, fs, now, logger }).assess({ installationId: existing ? existing.installationId : null, request: parsed.native }) : null;
         const pre = await runPreflight({
             kind: resumedRecord ? 'install.repair' : 'install.new',
             roots,
             layout: parsed.layout,
-            settings: connection || dockerView ? { ...settings, dbUrl: 'postgres://configured-in-the-answers' } : settings,
+            settings: connection || dockerView || nativeView ? { ...settings, dbUrl: 'postgres://configured-in-the-answers' } : settings,
             manifest: info.manifest,
             features: asked,
             database: parsed.database,
@@ -259,7 +275,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             includeManagerPort: false,
             via: ctx.auth ? ctx.auth.via : 'local'
         });
-        pre.findings.push(...extraFindings, ...(connection ? connection.findings : []), ...(dockerView ? dockerFindings(dockerView) : []));
+        pre.findings.push(...extraFindings, ...(connection ? connection.findings : []), ...(dockerView ? dockerFindings(dockerView) : []), ...(nativeView ? nativeFindings(nativeView) : []));
         pre.ok = !pre.findings.some(item => item.severity === 'block');
 
         const dependencies = dependenciesFor(info.manifest, selected);
@@ -275,7 +291,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             createRuntimeUser: parsed.createRuntimeUser,
             update: parsed.update
         };
-        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, dockerDatabase: parsed.docker ? dockerService.publicRequest(parsed.docker) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService, runtimeUser: parsed.runtimeUser, createUser: parsed.createRuntimeUser, update: parsed.update });
+        const signature = core.signatureOf({ kind: 'install.new', roots, layout: parsed.layout, releaseId, features: selected, database: parsed.database, databaseTarget: parsed.connection ? databaseInput.publicView(parsed.connection) : null, dockerDatabase: parsed.docker ? dockerService.publicRequest(parsed.docker) : null, nativeDatabase: parsed.native ? nativeService.publicRequest(parsed.native) : null, configIds: parsed.changes.map(item => item.id), register: parsed.registerService, runtimeUser: parsed.runtimeUser, createUser: parsed.createRuntimeUser, update: parsed.update });
         const plan = {
             action: 'install-new',
             signature,
@@ -288,12 +304,13 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             config: { settings: parsed.changes.map(item => item.id), secretCount: Object.keys(parsed.secrets).length },
             ...(parsed.connection ? { databaseTarget: databaseInput.publicView(parsed.connection) } : {}),
             ...(dockerView ? { dockerDatabase: dockerPlanView(dockerView) } : {}),
+            ...(nativeView ? { nativeDatabase: nativePlanView(nativeView) } : {}),
             services: parsed.registerService ? [{ kind: core.serviceKindForHost(), name: 'goobster', action: 'register', privileged: 'service.register' }] : [],
             registerService: parsed.registerService,
             updater: { kind: 'manager' },
             retainedData: { existing: Boolean(tomb.present && !tomb.doc?.dataRemoved), roots: [] },
             reusesTombstone: tomb.present,
-            privilegedSteps: privilegedPlan(parsed.registerService ? steps : steps.filter(item => item.name !== 'register-service'), { createUser: parsed.createRuntimeUser && Boolean(parsed.runtimeUser) }),
+            privilegedSteps: [...privilegedPlan(parsed.registerService ? steps : steps.filter(item => item.name !== 'register-service'), { createUser: parsed.createRuntimeUser && Boolean(parsed.runtimeUser) }), ...(nativeView ? [planned('native-postgres', 'package.install'), planned('native-postgres', 'postgres.cluster.create')] : [])],
             steps
         };
         ledgerMatch(plan, 'install.new', ctx, signature);
@@ -361,9 +378,22 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     ctx.scratch.dockerConnection = out.application;
                     return { detail: { container: view.names.container, volume: view.names.volume, network: view.names.network, cleaned: created.cleaned.length, done: out.results.filter(item => item.status === 'done').length } };
                 }),
+                core.step('native-postgres', async (record, ctx) => {
+                    const answered = needInput(ctx).parsed;
+                    if (!answered.native) return { status: 'skipped', code: 'NOT_REQUESTED' };
+                    const svc = nativeService.createNativeService({ settings, fs, now, logger });
+                    const password = nativePasswords.generate();
+                    const view = await svc.assess({ installationId: ctx.scratch.installationId, request: answered.native });
+                    svc.assertAssessed(view);
+                    const scope = { record, ctx };
+                    const packages = await svc.installPackages({ installationId: ctx.scratch.installationId, request: answered.native, view, operationId: record.id, scope });
+                    const cluster = await svc.createCluster({ installationId: ctx.scratch.installationId, request: answered.native, view, password, scope });
+                    ctx.scratch.nativeConnection = svc.applicationConnection(nativeState.read(settings.storeDir, fs).doc, password);
+                    return { detail: { cluster: view.names.cluster, service: view.names.service, packages: packages.installed.length, created: cluster.created } };
+                }),
                 core.step('init-db', async (record, ctx) => {
                     const t = record.plan.target;
-                    const answered = needInput(ctx).parsed.connection || ctx.scratch.dockerConnection;
+                    const answered = needInput(ctx).parsed.connection || ctx.scratch.dockerConnection || ctx.scratch.nativeConnection;
                     if (!answered) {
                         const out = await deps.initDatabase({ roots: t.roots, settings, database: t.database });
                         return { detail: { engine: out.engine, tables: out.tables } };
@@ -377,6 +407,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                         const svc = dockerService.createDockerService({ settings, fs, now, logger });
                         svc.advance('schema');
                         await svc.verify({ application: ctx.scratch.dockerConnection });
+                        svc.removeStaged();
+                    }
+                    if (ctx.scratch.nativeConnection) {
+                        const svc = nativeService.createNativeService({ settings, fs, now, logger });
+                        svc.advance('schema');
+                        await svc.verify({ application: ctx.scratch.nativeConnection });
                         svc.removeStaged();
                     }
                     return { detail: { engine: out.engine, tables: out.tables, overlay: true } };
@@ -728,11 +764,29 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
     }
 
+    /** The native cluster this manager owns, as an uninstall sees it: left as it is unless `removeNativeData` names it. Packages always stay. */
+    async function nativeUninstallView(doc, removeNativeData) {
+        const recorded = nativeState.read(settings.storeDir, fs);
+        if (!recorded.present) return { view: null, findings: [] };
+        const svc = nativeService.createNativeService({ settings, fs, now, logger });
+        if (!removeNativeData) {
+            const names = recorded.doc ? svc.resourceNames(doc.installationId, recorded.doc.family, recorded.doc.cluster.name, recorded.doc.cluster.dataDirectory) : null;
+            return { view: { action: 'kept', note: 'The cluster, its data directory and its service are left as they are, and the PostgreSQL packages stay installed. Remove the cluster with removeNativeData.', names }, findings: [] };
+        }
+        const removal = await svc.removalPlan({ installationId: doc.installationId });
+        const findings = [];
+        if (!recorded.doc) findings.push({ code: 'NATIVE_RECORD_UNREADABLE', severity: 'block', detail: 'native-postgres.json cannot be read, so the cluster cannot be removed safely. Inspect it, or uninstall without removeNativeData.' });
+        else if (recorded.doc.installationId.toLowerCase() !== String(doc.installationId).toLowerCase()) findings.push({ code: 'NATIVE_RECORD_OF_ANOTHER_INSTALLATION', severity: 'block', detail: 'the native database in the store belongs to another installation; it is not removed by this one.' });
+        else if (!svc.elevation().available) findings.push({ code: 'NATIVE_ELEVATION_UNAVAILABLE', severity: 'block', detail: 'Removing the cluster needs administrator rights, and none can be obtained here without a password prompt. Run the manager as root or allow passwordless sudo, or uninstall without removeNativeData.' });
+        return { view: { action: 'remove', names: removal.names, resources: removal.resources, packagesKept: true }, findings };
+    }
+
     async function buildUninstall(input, ctx) {
         const raw = input === undefined ? {} : input;
-        exactKeys(raw, new Set(['keepData', 'confirm', 'acknowledgeUnknownServices', 'removeDockerData']));
+        exactKeys(raw, new Set(['keepData', 'confirm', 'acknowledgeUnknownServices', 'removeDockerData', 'removeNativeData']));
         const keepData = parseBoolean(raw.keepData, 'keepData', true);
         const removeDockerData = parseBoolean(raw.removeDockerData, 'removeDockerData', false);
+        const removeNativeData = parseBoolean(raw.removeNativeData, 'removeNativeData', false);
         const acknowledged = parseBoolean(raw.acknowledgeUnknownServices, 'acknowledgeUnknownServices', false);
         if (raw.confirm !== undefined) textField(raw.confirm, 'confirm', { max: 64 });
         const doc = ownedRecord(ctx);
@@ -755,13 +809,17 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         const database = doc.database.external
             ? { engine: doc.database.engine, action: 'not deleted: external' }
             : { engine: doc.database.engine, action: keepData ? 'kept' : (sqliteInside ? 'removed with the data root' : 'not deleted: outside the owned roots') };
-        const confirmation = { required: !keepData || removeDockerData, satisfied: (keepData && !removeDockerData) || raw.confirm === doc.installationId };
+        const confirmation = { required: !keepData || removeDockerData || removeNativeData, satisfied: (keepData && !removeDockerData && !removeNativeData) || raw.confirm === doc.installationId };
         const dockerDatabase = await dockerUninstallView(doc, removeDockerData);
-        const pre = { ok: true, findings: [...dockerDatabase.findings] };
+        const nativeDatabase = await nativeUninstallView(doc, removeNativeData);
+        const pre = { ok: true, findings: [...dockerDatabase.findings, ...nativeDatabase.findings] };
         // "Delete my data" does not reach into Docker on its own: the volume keeps the
         // database, and the overlay that held the only credential goes with the data root.
         if (!keepData && !removeDockerData && dockerDatabase.view) {
             pre.findings.push({ code: 'DOCKER_DATA_RETAINED', severity: 'warn', detail: `the Docker database keeps its data in the volume "${dockerDatabase.view.names.volume}" (and its container keeps running); this uninstall removes neither. Pass removeDockerData to delete them too, or remove them by hand afterwards.` });
+        }
+        if (!keepData && !removeNativeData && nativeDatabase.view && nativeDatabase.view.names) {
+            pre.findings.push({ code: 'NATIVE_DATA_RETAINED', severity: 'warn', detail: `the native database keeps its data in "${nativeDatabase.view.names.dataDirectory}" (and its cluster "${nativeDatabase.view.names.cluster}" keeps running); this uninstall removes neither, and the PostgreSQL packages stay installed. Pass removeNativeData to remove the cluster and its data too, or remove them by hand afterwards.` });
         }
         if (roots.managerStore !== settings.storeDir) pre.findings.push({ code: 'ROOTS_MISMATCH', severity: 'block', detail: 'the recorded manager store is not where this manager keeps it' });
         if (registry.get(settings.storeDir)) pre.findings.push({ code: 'WORKERS_RUNNING', severity: 'block', detail: 'the manager is supervising the application workers' });
@@ -780,7 +838,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         pre.ok = pre.findings.every(item => item.severity !== 'block');
         const steps = stepList(UNINSTALL_STEPS);
-        const signature = core.signatureOf({ kind: 'install.uninstall', id: doc.installationId, keepData, removeDockerData });
+        const signature = core.signatureOf({ kind: 'install.uninstall', id: doc.installationId, keepData, removeDockerData, removeNativeData });
         const plan = {
             action: 'uninstall',
             signature,
@@ -789,7 +847,9 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             installationId: doc.installationId,
             keepData,
             removeDockerData,
+            removeNativeData,
             ...(dockerDatabase.view ? { dockerDatabase: dockerDatabase.view } : {}),
+            ...(nativeDatabase.view ? { nativeDatabase: nativeDatabase.view } : {}),
             target: { layout: doc.layout, roots, database: doc.database, features: doc.release ? doc.release.features : [], release: doc.release },
             removes,
             retainedData: { roots: retained.map(item => item.role), paths: retained.map(item => item.path) },
@@ -801,11 +861,11 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             confirmation,
             tombstone: true,
             downloads: [],
-            privilegedSteps: privilegedPlan(steps.filter(item => item.name === 'unregister-service')),
+            privilegedSteps: [...privilegedPlan(steps.filter(item => item.name === 'unregister-service')), ...(removeNativeData && nativeDatabase.view ? [planned('native-postgres', 'postgres.cluster.remove')] : [])],
             steps
         };
         ledgerMatch(plan, 'install.uninstall', ctx, signature);
-        return finish(plan, pre, { revision: doc.revision, unknownServices: acknowledged ? [] : unknown, privateInput: { raw, parsed: { keepData, acknowledged, removeDockerData } } });
+        return finish(plan, pre, { revision: doc.revision, unknownServices: acknowledged ? [] : unknown, privateInput: { raw, parsed: { keepData, acknowledged, removeDockerData, removeNativeData } } });
     }
 
     /** After the service is unregistered nothing of the application may still hold its ports. */
@@ -874,6 +934,12 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                     if (!record.plan.dockerDatabase) return { status: 'skipped', code: 'NOT_OWNED' };
                     const out = await dockerService.createDockerService({ settings, fs, now, logger }).retire({ installationId: record.plan.installationId, remove: true });
                     return { detail: { removed: out.removed.length, container: out.removed.includes('container'), volume: out.removed.includes('volume'), network: out.removed.includes('network') } };
+                }),
+                core.step('native-postgres', async (record, ctx) => {
+                    if (!record.plan.removeNativeData) return { status: 'skipped', code: 'KEEP_NATIVE_DATA' };
+                    if (!record.plan.nativeDatabase) return { status: 'skipped', code: 'NOT_OWNED' };
+                    const out = await nativeService.mapped(() => nativeService.createNativeService({ settings, fs, now, logger }).retire({ installationId: record.plan.installationId, remove: true, scope: { record, ctx } }));
+                    return { detail: { removed: out.removed, dataKept: out.dataKept } };
                 }),
                 core.step('remove-code', (record) => {
                     const roots = record.plan.target.roots;

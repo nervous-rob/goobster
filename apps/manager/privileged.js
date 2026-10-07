@@ -20,7 +20,11 @@ const PRIVILEGED_OPERATIONS = Object.freeze([
     'service.unregister',
     'package.install',
     'updater.disable',
-    'user.create'
+    'user.create',
+    'postgres.cluster.create',
+    'postgres.cluster.control',
+    'postgres.cluster.remove',
+    'postgres.cluster.relocate'
 ]);
 
 /**
@@ -30,14 +34,18 @@ const PRIVILEGED_OPERATIONS = Object.freeze([
 const INPUT_SHAPES = Object.freeze({
     'service.register': { kind: "'systemd'|'windows-service'|'launchd' (the platform's kind, apps/manager/platform/serviceKinds.js)", name: 'identifier (^[a-z][a-z0-9-]{0,31}$)', layout: "'lite'|'standalone'|'paired'", codeRoot: 'absolute path', runtimeUser: 'identifier', installationId: 'uuid', roots: 'absolute paths for code, data, config, cache, logs, uploads, managerStore', mode: "'payload'|'checkout' (optional)", nodePath: 'absolute path (checkout mode only)', scope: "'machine'|'user' (optional, default machine; 'user' is a launchd LaunchAgent)" },
     'service.unregister': { kind: "'systemd'|'windows-service'|'launchd'", name: 'identifier', registeredBy: "'installer'", installationId: 'uuid' },
-    'package.install': { names: 'string[] (system dependency names from the release manifest)' },
+    'package.install': { names: 'string[] (names from the installer\'s fixed package table only)', repository: "'pgdg' (optional; added only from the pinned key fingerprint)" },
     'updater.disable': { mechanism: "'systemd-timer'|'cron-system'", unit: 'timer unit or cron file name', codeRoot: 'absolute path' },
-    'user.create': { name: 'identifier', home: 'absolute path', system: 'true', installationId: 'uuid', roots: 'absolute paths as for service.register', mode: "'payload'|'checkout' (optional)" }
+    'user.create': { name: 'identifier', home: 'absolute path', system: 'true', installationId: 'uuid', roots: 'absolute paths as for service.register', mode: "'payload'|'checkout' (optional)" },
+    'postgres.cluster.create': { installationId: 'uuid', managerStore: 'absolute path', clusterName: "'goobster' or 'goobster-<id8>'", dataDirectory: 'absolute path', port: 'integer 1024-65535', bind: 'IPv4 address', lan: 'boolean (true only for a non-loopback bind)', role: 'sql name', database: 'sql name', passwordVerifier: 'SCRAM-SHA-256 verifier (mode create only; never a password)', mode: "'create'|'converge' (optional)", acknowledgeMount: 'boolean (optional)' },
+    'postgres.cluster.control': { installationId: 'uuid', managerStore: 'absolute path', clusterName: 'goobster cluster name', action: "'start'|'stop'|'enable'|'disable'" },
+    'postgres.cluster.remove': { installationId: 'uuid', managerStore: 'absolute path', clusterName: 'goobster cluster name', removeData: 'boolean (optional; default keeps the data directory)' },
+    'postgres.cluster.relocate': { installationId: 'uuid', managerStore: 'absolute path', clusterName: 'goobster cluster name', target: 'absolute path (empty or absent)', acknowledgeMount: 'boolean (optional)' }
 });
 
 /** Operations each platform helper implements; the rest answer 501. */
 const IMPLEMENTED = Object.freeze({
-    linux: Object.freeze(['service.register', 'service.unregister', 'updater.disable', 'user.create']),
+    linux: Object.freeze(['service.register', 'service.unregister', 'updater.disable', 'user.create', 'package.install', 'postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate']),
     win32: Object.freeze(['service.register', 'service.unregister']),
     darwin: Object.freeze(['service.register', 'service.unregister', 'user.create'])
 });

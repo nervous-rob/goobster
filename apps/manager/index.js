@@ -63,7 +63,7 @@ function printCredential(out, label, minted, { reveal }) {
  *   (the update's handoff, exit code 76); only the entry script passes it, so a manager built in a test never exits
  * @returns {Promise<{ code: number, server?: import('node:http').Server, manager?: Object, stop?: () => Promise<void> }>}
  */
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null, updateDeps = null, exitOnHandoff = null } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null, nativeDeps = null, updateDeps = null, exitOnHandoff = null } = {}) {
     const flags = new Set(argv);
     if (flags.has('--help') || flags.has('-h')) {
         stdout.write(`${HELP}\n`);
@@ -71,6 +71,11 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     }
     const settings = resolveSettings(env);
     if (installDeps) settings.installDeps = installDeps;
+    if (nativeDeps) {
+        const { databaseDeps, ...rest } = nativeDeps;
+        settings.nativeDeps = rest;
+        if (databaseDeps) settings.databaseDeps = databaseDeps;
+    }
     if (updateDeps) settings.updateDeps = updateDeps;
     if (settings.dbUrl && !env.GOOBSTER_DB_URL) {
         // The overlay's connection must also select the facade the manager's own audit reconciliation opens.

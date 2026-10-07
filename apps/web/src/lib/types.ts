@@ -1539,7 +1539,8 @@ export type MigrationPreflight = {
 
 // Connecting to an existing PostgreSQL server (documentation/database_connection.md).
 export type DockerDatabaseOperationKind = 'database.docker.provision' | 'database.docker.start' | 'database.docker.stop' | 'database.docker.repair' | 'database.docker.reconfigure';
-export type DatabaseOperationKind = 'database.provision' | 'database.schema.apply' | 'database.connect' | DockerDatabaseOperationKind;
+export type NativeDatabaseOperationKind = 'database.native.provision' | 'database.native.start' | 'database.native.stop' | 'database.native.repair' | 'database.native.relocate';
+export type DatabaseOperationKind = 'database.provision' | 'database.schema.apply' | 'database.connect' | DockerDatabaseOperationKind | NativeDatabaseOperationKind;
 export type DatabaseFinding = { code: string; detail: string; remediation?: string; [key: string]: unknown };
 export type DatabaseExtensionState = { available: boolean; installed: boolean; trusted: boolean | null; state: string; summary: string; canCreate: boolean };
 export type DatabaseSchemaState = {
@@ -1611,5 +1612,35 @@ export type DockerStatus = {
     record: DockerRecord | null;
     recordProblem: unknown;
     owned: { container: DockerContainerSummary | null; volume: boolean; network: boolean; foreign: Array<{ kind: string; name: string | null }> } | null;
+    connected: boolean;
+};
+
+// The PostgreSQL cluster the installer runs natively on this machine (documentation/native_postgres.md).
+export type NativeFinding = { code: string; detail: string; remedy?: string | null; severity?: string };
+export type NativePackageState = { names: string[]; installed: boolean; version: string | null; availability: string | null };
+export type NativeHostReport = {
+    supported: boolean; reason: string | null; remedy: string | null;
+    distro: { id: string; version: string | null; family: 'debian' | 'rhel'; arch: string | null; raspberryPi: boolean; label: string | null; tested: boolean } | null;
+    packageManager: string | null; major: number | null;
+    packages: Record<string, NativePackageState> | null;
+    clusters: Array<{ version: number | null; name: string; port: number | null; online: boolean; owned: boolean; dataDirectory?: string }>;
+    systemd: unknown; selinux: unknown;
+    backupTools: { ok: boolean; code: string; version: string | null; remedy: string | null } | null;
+    storage: { path: string | null; exists: boolean; isDirectory: boolean; empty: boolean; freeBytes: number | null; requiredBytes: number | null; mountIssues: Array<{ code: string; severity: string }>; reachableByPostgres: boolean | null; blockedAt: string | null; candidate: boolean } | null;
+    layout: { socketDir: string; binDir: string; defaultDataParent: string } | null;
+};
+export type NativeRecord = {
+    step: string; complete: boolean; family: string;
+    cluster: { name: string; service: string | null; dataDirectory: string; port: number; bind: string; role: string; database: string };
+    relocation: { from: string; to: string; step: string } | null;
+    updatedAt: string | null;
+};
+export type NativeStatus = {
+    host: NativeHostReport;
+    elevation: { implemented: boolean; kind: string; available: boolean; reason: string | null };
+    names: { cluster: string; service: string | null; dataDirectory: string | null; configDirectory?: string; template: boolean };
+    record: NativeRecord | null;
+    recordProblem: unknown;
+    owned: { exists: boolean; online: boolean; port: number | null; version: number | null } | null;
     connected: boolean;
 };

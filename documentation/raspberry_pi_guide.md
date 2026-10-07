@@ -118,6 +118,20 @@ If the screen blanks, disable DPMS (`raspi-config` → Display → Screen Blanki
 - `curl http://localhost:3000/health` for external monitors (e.g. Uptime Kuma).
 - `journalctl -u goobster -f` or `logs/goobster.log` for logs.
 
+## PostgreSQL on the Pi (optional)
+
+SQLite is the default and is enough for one Pi. If you want PostgreSQL on the same
+Pi (64-bit Raspberry Pi OS Bookworm), the installation manager can install it
+and create a cluster for Goobster: choose **PostgreSQL on this machine** in the
+setup wizard's Database step or run `goobster-manager database native status`
+(read only), then `database native provision` and `database connect` with
+`{ "connection": { "owned": "native" } }`. It needs `sudo -n` (or root), asks
+before downloading packages and puts the data in
+`/var/lib/postgresql/17/goobster` unless you choose a folder (an SSD mount is
+better than the SD card; the manager checks the mount is listed in
+`/etc/fstab`). See [native_postgres.md](native_postgres.md); the manual route is
+[postgres_setup.md](postgres_setup.md).
+
 ## Performance Tips
 
 - **Boot from USB SSD** if possible; SQLite on an SD card works fine (WAL mode reduces write amplification) but an SSD improves longevity and latency.

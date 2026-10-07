@@ -13,8 +13,9 @@
  *   { "v": 1, "ok": true,  "operation": "...", "outcome": "done"|"noop", "detail": { ... }, "log": [ ... ] }
  *   { "v": 1, "ok": false, "operation": "...", "code": "SERVICE_FOREIGN", "message": "...", "log": [ ... ] }
  *
- * Values never travel in argv or the environment; a secret never travels at
- * all (no operation takes one). Validation here is strict and closed: an
+ * Values never travel in argv or the environment. A secret never travels at
+ * all: the one operation that sets a database password (`postgres.cluster.create`)
+ * takes its SCRAM-SHA-256 verifier, which the manager computes, never the password. Validation here is strict and closed: an
  * unknown field, a path outside the shape rules, an identifier that is not
  * `^[a-z][a-z0-9-]{0,31}$` is a refusal before anything runs. This module and
  * the files beside it are the helper's whole code: Node built-ins only.
@@ -31,7 +32,11 @@ const PRIVILEGED_OPERATIONS = Object.freeze([
     'service.unregister',
     'package.install',
     'updater.disable',
-    'user.create'
+    'user.create',
+    'postgres.cluster.create',
+    'postgres.cluster.control',
+    'postgres.cluster.remove',
+    'postgres.cluster.relocate'
 ]);
 
 const IDENTIFIER = /^[a-z][a-z0-9-]{0,31}$/;
@@ -43,6 +48,42 @@ const LAYOUTS = Object.freeze(['lite', 'standalone', 'paired']);
 const MODES = Object.freeze(['payload', 'checkout']);
 const ROOT_ROLES = Object.freeze(['code', 'data', 'config', 'cache', 'logs', 'uploads', 'managerStore']);
 const UPDATER_MECHANISMS = Object.freeze(['systemd-timer', 'cron-system']);
+
+/**
+ * The closed package table of `package.install` (documentation/native_postgres.md).
+ * The helper may load nothing outside its hashed files, so this is a copy of
+ * packages/core/db/native/packages.js; tests/nativePostgresAdapters.test.js keeps
+ * the two equal. A name that is not here is refused before anything runs.
+ */
+const PG_MAJOR = 17;
+const PACKAGE_TABLE = Object.freeze({
+    debian: Object.freeze({
+        prerequisites: Object.freeze(['ca-certificates', 'curl', 'gnupg']),
+        server: Object.freeze([`postgresql-${PG_MAJOR}`, 'postgresql-common']),
+        client: Object.freeze([`postgresql-client-${PG_MAJOR}`]),
+        pgvector: Object.freeze([`postgresql-${PG_MAJOR}-pgvector`]),
+        contrib: Object.freeze([]),
+        selinux: Object.freeze([])
+    }),
+    rhel: Object.freeze({
+        prerequisites: Object.freeze(['gnupg2']),
+        server: Object.freeze([`postgresql${PG_MAJOR}-server`]),
+        client: Object.freeze([`postgresql${PG_MAJOR}`]),
+        pgvector: Object.freeze([`pgvector_${PG_MAJOR}`]),
+        contrib: Object.freeze([`postgresql${PG_MAJOR}-contrib`]),
+        selinux: Object.freeze(['policycoreutils-python-utils'])
+    })
+});
+const PACKAGE_NAMES = Object.freeze([...new Set(Object.values(PACKAGE_TABLE).flatMap(entry => Object.values(entry).flat()))]);
+const REPOSITORIES = Object.freeze(['pgdg']);
+
+const CLUSTER_NAME = /^goobster(-[0-9a-f]{8})?$/;
+const SQL_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+const NATIVE_PATH = /^\/[A-Za-z0-9._+/-]+$/;
+const SCRAM = /^SCRAM-SHA-256\$\d{1,6}:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}=$/;
+const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const CLUSTER_ACTIONS = Object.freeze(['start', 'stop', 'enable', 'disable']);
+const CREATE_MODES = Object.freeze(['create', 'converge']);
 
 /** Locations a privileged operation may never be pointed at, whatever the request says. */
 const SYSTEM_PATHS = Object.freeze(['/', '/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib32', '/lib64', '/media', '/mnt', '/opt', '/proc', '/root', '/run', '/sbin', '/srv', '/sys', '/tmp', '/usr', '/var']);
@@ -138,6 +179,31 @@ function runtimeUser(value, what = 'The runtime user') {
     return value;
 }
 
+/** A data directory: absolute, normalised, plain characters (no space), not a system location. */
+function nativePath(value, what) {
+    const safe = safeRoot(value, what);
+    if (!NATIVE_PATH.test(safe) || safe.length > 200 || safe.split('/').includes('..')) {
+        throw refuse('INVALID_PATH', `${what} may contain letters, digits and . _ + - / only.`);
+    }
+    return safe;
+}
+
+function flag(value, what, fallback = false) {
+    if (value === undefined) return fallback;
+    if (typeof value !== 'boolean') throw refuse('INVALID_INPUT', `${what} must be true or false.`);
+    return value;
+}
+
+function clusterName(value) {
+    if (typeof value !== 'string' || !CLUSTER_NAME.test(value)) throw refuse('INVALID_INPUT', 'The cluster name must be "goobster" or "goobster-" and eight hex digits.');
+    return value;
+}
+
+function sqlName(value, what, { reserved = [] } = {}) {
+    if (typeof value !== 'string' || !SQL_NAME.test(value) || reserved.includes(value) || value.startsWith('pg_')) throw refuse('INVALID_INPUT', `${what} must be a lowercase name of letters, digits and "_" that is not reserved.`);
+    return value;
+}
+
 function installationId(value) {
     if (typeof value !== 'string' || !UUID.test(value)) throw refuse('INVALID_INPUT', 'The installation id must be a UUID.');
     return value;
@@ -207,11 +273,70 @@ const VALIDATORS = {
         return { mechanism, unit: input.unit, codeRoot: safeRoot(input.codeRoot, 'The code root') };
     },
     'package.install'(input) {
-        exactKeys(input, ['names'], 'The input');
-        if (!Array.isArray(input.names) || input.names.length > 32 || input.names.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9+._-]{0,63}$/.test(name))) {
-            throw refuse('INVALID_INPUT', 'The names must be a list of package names.');
+        exactKeys(input, ['names', 'repository'], 'The input');
+        if (!Array.isArray(input.names) || input.names.length === 0 || input.names.length > 32 || input.names.some(name => typeof name !== 'string' || !PACKAGE_NAMES.includes(name))) {
+            throw refuse('PACKAGE_NOT_ALLOWED', 'The names must be a list of packages from the installer\'s fixed table.');
         }
-        return { names: [...input.names] };
+        if (new Set(input.names).size !== input.names.length) throw refuse('INVALID_INPUT', 'A package is named twice.');
+        const out = { names: [...input.names] };
+        if (input.repository !== undefined) out.repository = oneOf(input.repository, REPOSITORIES, 'The repository');
+        return out;
+    },
+    'postgres.cluster.create'(input) {
+        exactKeys(input, ['installationId', 'managerStore', 'clusterName', 'dataDirectory', 'port', 'bind', 'lan', 'role', 'database', 'passwordVerifier', 'mode', 'acknowledgeMount'], 'The input');
+        const mode = oneOf(input.mode === undefined ? 'create' : input.mode, CREATE_MODES, 'The mode');
+        if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65535) throw refuse('INVALID_INPUT', 'The port must be a whole number from 1024 to 65535.');
+        if (typeof input.bind !== 'string' || !IPV4.test(input.bind) || input.bind.split('.').some(part => Number(part) > 255)) throw refuse('INVALID_INPUT', 'The bind address must be an IPv4 address.');
+        const lan = flag(input.lan, 'The lan flag');
+        if ((input.bind !== '127.0.0.1') !== lan) throw refuse('INVALID_INPUT', 'A bind address other than 127.0.0.1 needs lan: true, and lan: true needs such an address.');
+        const out = {
+            installationId: installationId(input.installationId),
+            managerStore: safeRoot(input.managerStore, 'The manager store'),
+            clusterName: clusterName(input.clusterName),
+            dataDirectory: nativePath(input.dataDirectory, 'The data directory'),
+            port: input.port,
+            bind: input.bind,
+            lan,
+            role: sqlName(input.role, 'The application role', { reserved: ['postgres', 'public'] }),
+            database: sqlName(input.database, 'The application database', { reserved: ['postgres', 'template0', 'template1'] }),
+            mode,
+            acknowledgeMount: flag(input.acknowledgeMount, 'acknowledgeMount')
+        };
+        if (mode === 'create') {
+            if (typeof input.passwordVerifier !== 'string' || !SCRAM.test(input.passwordVerifier)) throw refuse('INVALID_INPUT', 'Creating a cluster needs the application password as a SCRAM-SHA-256 verifier (never the password).');
+            out.passwordVerifier = input.passwordVerifier;
+        } else if (input.passwordVerifier !== undefined) {
+            throw refuse('INVALID_INPUT', 'Converging an existing cluster takes no password.');
+        }
+        return out;
+    },
+    'postgres.cluster.control'(input) {
+        exactKeys(input, ['installationId', 'managerStore', 'clusterName', 'action'], 'The input');
+        return {
+            installationId: installationId(input.installationId),
+            managerStore: safeRoot(input.managerStore, 'The manager store'),
+            clusterName: clusterName(input.clusterName),
+            action: oneOf(input.action, CLUSTER_ACTIONS, 'The action')
+        };
+    },
+    'postgres.cluster.remove'(input) {
+        exactKeys(input, ['installationId', 'managerStore', 'clusterName', 'removeData'], 'The input');
+        return {
+            installationId: installationId(input.installationId),
+            managerStore: safeRoot(input.managerStore, 'The manager store'),
+            clusterName: clusterName(input.clusterName),
+            removeData: flag(input.removeData, 'removeData')
+        };
+    },
+    'postgres.cluster.relocate'(input) {
+        exactKeys(input, ['installationId', 'managerStore', 'clusterName', 'target', 'acknowledgeMount'], 'The input');
+        return {
+            installationId: installationId(input.installationId),
+            managerStore: safeRoot(input.managerStore, 'The manager store'),
+            clusterName: clusterName(input.clusterName),
+            target: nativePath(input.target, 'The target directory'),
+            acknowledgeMount: flag(input.acknowledgeMount, 'acknowledgeMount')
+        };
     }
 };
 
@@ -275,6 +400,11 @@ module.exports = {
     SYSTEM_TREES,
     WINDOWS_SYSTEM_TREES,
     RESERVED_ACCOUNTS,
+    PACKAGE_TABLE,
+    PACKAGE_NAMES,
+    PG_MAJOR,
+    CLUSTER_NAME,
+    SCRAM,
     windowsRoot,
     HelperError,
     refuse,
