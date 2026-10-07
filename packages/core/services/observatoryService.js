@@ -19,9 +19,11 @@ const { unavailableResult } = require('../features/gate');
 const FEATURE_ID = 'observatory';
 
 function patchExecutionSeam(target) {
-    const proto = target.ObservatoryService.prototype;
+    // A test double of projectService has no class to patch; leave it alone.
+    const proto = target && target.ObservatoryService && target.ObservatoryService.prototype;
+    const reported = proto && Object.getOwnPropertyDescriptor(proto, 'executionEnabled');
+    if (!reported || typeof proto._requireEnabled !== 'function') return target;
     if (Object.prototype.hasOwnProperty.call(proto, '__featureSeam')) return target;
-    const reported = Object.getOwnPropertyDescriptor(proto, 'executionEnabled');
     const requireEnabled = proto._requireEnabled;
 
     Object.defineProperty(proto, 'executionEnabled', {
