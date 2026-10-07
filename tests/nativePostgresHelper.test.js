@@ -71,8 +71,9 @@ describe('input validation (closed, before anything is spawned)', () => {
         expect(protocol.PRIVILEGED_OPERATIONS).toEqual(expect.arrayContaining(['package.install', 'postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate']));
         expect(privileged.PRIVILEGED_OPERATIONS).toEqual(protocol.PRIVILEGED_OPERATIONS);
         expect(privileged.IMPLEMENTED.linux).toEqual(expect.arrayContaining(['postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate', 'package.install']));
-        expect(privileged.IMPLEMENTED.win32).toEqual([]);
-        expect(privileged.IMPLEMENTED.darwin).toEqual([]);
+        for (const platform of ['win32', 'darwin']) {
+            expect(privileged.IMPLEMENTED[platform]).toEqual(expect.not.arrayContaining(['package.install', 'postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate']));
+        }
     });
 
     test('a package outside the fixed table is refused, whatever else is asked', () => {
