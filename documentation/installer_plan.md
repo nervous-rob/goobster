@@ -264,7 +264,10 @@ Work, in order:
    sources, and every privileged
    operation (`service.register`, `service.unregister`, `updater.disable`,
    `user.create` answer 501, so no OS service registration has been tested).
-   **Status (P3.4, #330): the wizard screens are built (PR pending).**
+   **Status (P3.4, #330): the wizard screens are built** (PR
+   [#363](https://github.com/nervous-rob/goobster/pull/363), stacked on #360:
+   SQLite 265 suites / 5251 passed, Postgres `core` 1949 and `portal` 1116,
+   Playwright 233 passed including 19 wizard journeys).
    `documentation/setup_wizard.md` is the reference. The manager serves a
    static client at `/manager/` (setup, recovery and maintenance pages, an
    `HttpOnly` cookie session) and the portal's Host room has an Installation
