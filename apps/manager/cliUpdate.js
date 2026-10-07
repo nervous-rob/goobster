@@ -181,7 +181,7 @@ function describeStatus(view) {
     else lines.push('last check  never');
     lines.push(`staged      ${view.staged ? `${view.staged.version}${view.staged.schemaChanging ? ' (changes the database schema)' : ''}${view.staged.stale ? ' (STALE: stage again)' : ''}` : 'nothing'}`);
     if (view.scheduled) lines.push(`scheduled   applies when the window opens (${view.scheduled.opensAt})`);
-    if (view.handoff) lines.push(`handoff     ${view.handoff.phase}: ${view.handoff.from} -> ${view.handoff.to}${view.watchdog ? `, watchdog ${view.watchdog.expired ? 'EXPIRED' : `until ${view.watchdog.deadline}`}` : ''}`);
+    if (view.handoff) lines.push(`handoff     ${view.handoff.settling ? `verifying (settling, ${view.handoff.settling.secondsLeft} s left)` : view.handoff.phase}: ${view.handoff.from} -> ${view.handoff.to}${view.watchdog ? `, watchdog ${view.watchdog.expired ? 'EXPIRED' : `until ${view.watchdog.deadline}`}` : ''}`);
     if (view.recovery) {
         lines.push(`DECISION    the update to ${view.recovery.to.version} failed (${view.recovery.code}); the maintenance barrier is held`);
         lines.push(`            ${view.recovery.warning}`);

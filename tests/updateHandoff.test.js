@@ -268,6 +268,45 @@ describe('the crash matrix', () => {
         expect(update(w.harness, 'last-apply')).toMatchObject({ outcome: 'rolled_back' });
     });
 
+    test('the manager that comes back watches the settle window: a worker that leaves inside it sends a schema-changing update to recovery', async () => {
+        const w = await world({ next: { columns: [['users', 'nickname', 'TEXT']] }, deps: { settleMs: 400 } });
+        await applyNow(w.harness);
+        w.fakes.behave(w.names[0], { exitAfterMs: 120, exitCode: 9 });
+        await restartLikeTheOs(w);
+        const out = await w.applier.resume();
+        expect(out).toMatchObject({ resumed: true, outcome: 'recovery', code: 'SCHEMA_CHANGED_DATABASE_IN_USE', cause: 'EXITED_AFTER_READY' });
+        expect(barrierOf(w.harness).active).toBe(true);
+        expect(currentVersion(w.harness)).toBe('2.5.0');
+        expect(update(w.harness, 'recovery')).toMatchObject({ cause: 'EXITED_AFTER_READY', backup: { name: expect.any(String) } });
+        expect(update(w.harness, 'handoff')).toMatchObject({ phase: 'recovery' });
+        expect(update(w.harness, 'last-apply')).toBeNull();
+    });
+
+    test('the same exit on a release that does not change the schema hands over again and is rolled back with EXITED_AFTER_READY', async () => {
+        const w = await world({ deps: { settleMs: 400 } });
+        await applyNow(w.harness);
+        w.fakes.behave(w.names[0], { exitAfterMs: 120, exitCode: 9 });
+        await restartLikeTheOs(w);
+        w.exits.length = 0;
+        const out = await w.applier.resume();
+        expect(out).toMatchObject({ resumed: true, outcome: 'rolling_back', code: 'EXITED_AFTER_READY' });
+        expect(currentVersion(w.harness)).toBe('2.4.0');
+        const finished = await w.applier.resume();
+        expect(finished).toMatchObject({ resumed: true, outcome: 'rolled_back', code: 'EXITED_AFTER_READY' });
+        expect(update(w.harness, 'last-apply')).toMatchObject({ outcome: 'rolled_back', code: 'EXITED_AFTER_READY' });
+        expect(barrierOf(w.harness).active).toBe(false);
+    });
+
+    test('a quiet window ends in applied, and its length is inside the downtime', async () => {
+        const w = await world({ deps: { settleMs: 300 } });
+        await applyNow(w.harness);
+        await restartLikeTheOs(w);
+        const out = await w.applier.resume();
+        expect(out).toMatchObject({ resumed: true, outcome: 'applied' });
+        expect(out.downtimeMs).toBeGreaterThanOrEqual(300);
+        expect(update(w.harness, 'last-apply').downtimeMs).toBeGreaterThanOrEqual(300);
+    });
+
     test('nothing pending is nothing to do, and a stale watchdog is cleared', async () => {
         const w = await world();
         fs.mkdirSync(path.join(w.harness.settings.storeDir, 'update'), { recursive: true });

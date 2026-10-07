@@ -151,7 +151,7 @@ export function UpdatesPanel({ enabled = true }: { enabled?: boolean }) {
                         <div className="list-row" data-testid="update-scheduled"><span>Scheduled</span><span>Opens {whenLabel(data.scheduled.opensAt)}</span></div>
                     )}
                     {data.handoff && (
-                        <div className="list-row" role="status" data-testid="update-handoff"><span>In progress</span><span>{data.handoff.from} to {data.handoff.to} · {data.handoff.phase}</span></div>
+                        <div className="list-row" role="status" data-testid="update-handoff"><span>In progress</span><span>{data.handoff.from} to {data.handoff.to} · {data.handoff.settling ? `verifying (settling, ${data.handoff.settling.secondsLeft} s left)` : data.handoff.phase}</span></div>
                     )}
                     {last && !recovery && (
                         <div className="list-row" data-testid="update-last-apply">

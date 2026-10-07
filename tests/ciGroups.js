@@ -87,6 +87,7 @@ const GROUPS = [
             'launchdService', 'darwinHelper', 'darwinBootstrapCli', 'darwinBootstrapStage',
             'windowsService', 'windowsHelper', 'windowsBootstrapCli', 'packageBootstrapWin32',
             'releaseIndex', 'releaseArtifacts', 'releaseManagerTrust', 'releaseWorkflow',
+            'updateCheck', 'updateStage', 'updateApply', 'updateHandoff', 'updateRoutes', 'updateHostRoutes', 'updateService',
             'presenceService',
             'reportIntegrations',
             'safeFetch',

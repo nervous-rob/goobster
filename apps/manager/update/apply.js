@@ -27,6 +27,8 @@ const EXIT_SELF_UPDATE = 76;
 const WATCHDOG_MS = 10 * 60_000;
 const EXIT_DELAY_MS = 1200;
 const VERIFY_TIMEOUT_MS = 150_000;
+const SETTLE_MS = 30_000;
+const SETTLE_ENV = 'GOOBSTER_UPDATE_SETTLE_MS';
 const RANK = Object.freeze({ quiesced: 0, backup: 1, mutate: 2, verify: 3, cutover: 4 });
 const NEXT_STEP_NAMES = Object.freeze(['verify', 'cutover', 'release']);
 
@@ -42,6 +44,13 @@ function createApplier({ core, store, journal, logger = console }) {
     const exitHandler = () => deps.exit || registry.getExitHandler(storeDir);
     const watchdogMs = () => (Number.isFinite(deps.watchdogMs) ? deps.watchdogMs : WATCHDOG_MS);
     const verifyTimeoutMs = () => (Number.isFinite(deps.verifyTimeoutMs) ? deps.verifyTimeoutMs : VERIFY_TIMEOUT_MS);
+    /** The settle window: the test seam, then GOOBSTER_UPDATE_SETTLE_MS (whole milliseconds, 0 to 600000), then 30 s. */
+    const settleMs = () => {
+        if (Number.isFinite(deps.settleMs)) return deps.settleMs;
+        const raw = String((core.env || {})[SETTLE_ENV] ?? '').trim();
+        if (/^\d{1,6}$/.test(raw) && Number(raw) <= 600_000) return Number(raw);
+        return SETTLE_MS;
+    };
 
     // ---------------------------------------------------------------- facts
     const codeRootOf = (doc) => doc.roots.code;
@@ -203,7 +212,17 @@ function createApplier({ core, store, journal, logger = console }) {
     }
 
     // ------------------------------------------------------------- verify
-    async function restartAndVerify(releaseId) {
+    /** The watch after readiness: the window's end is written to the handoff so `update status` can show it. */
+    const watchOptions = (releaseId, onSettle) => ({
+        releaseId,
+        timeoutMs: verifyTimeoutMs(),
+        settleMs: settleMs(),
+        onSettle: ({ until }) => {
+            if (onSettle) onSettle(until);
+        }
+    });
+
+    async function restartAndVerify(releaseId, onSettle = null) {
         const sup = supervisor();
         if (!sup) return { ok: true, code: 'NOT_SUPERVISED', reached: false, skipped: true };
         if (typeof sup.restartAll !== 'function') return { ok: false, code: 'RESTART_UNSUPPORTED', reached: false };
@@ -214,24 +233,30 @@ function createApplier({ core, store, journal, logger = console }) {
             return { ok: false, code: error && error.code ? error.code : 'RESTART_FAILED', reached: false };
         }
         if (!out.ok) return out;
-        return sup.verifyRunning({ releaseId, timeoutMs: verifyTimeoutMs() });
+        return sup.verifyRunning(watchOptions(releaseId, onSettle));
     }
 
-    async function verifyRunning(releaseId) {
+    async function verifyRunning(releaseId, onSettle = null) {
         const sup = supervisor();
         if (!sup) return { ok: true, code: 'NOT_SUPERVISED', reached: false, skipped: true };
-        return sup.verifyRunning({ releaseId, timeoutMs: verifyTimeoutMs() });
+        return sup.verifyRunning(watchOptions(releaseId, onSettle));
     }
 
     // ----------------------------------------------------------- the phases
     const writeHandoff = (h, patch = {}) => state.write('handoff', { ...h, ...patch });
 
-    /** Step `verify`: the workers run the new release, healthy and acknowledged. */
+    /**
+     * Step `verify`: the workers run the new release, healthy and acknowledged, and stay up for
+     * the settle window. The barrier is held throughout, so the window is part of the downtime.
+     */
     async function verifyPhase(h, { restart }) {
         ensurePhase(h, 'verify', h.actor);
-        const out = restart ? await restartAndVerify(h.to.releaseId) : await verifyRunning(h.to.releaseId);
+        const onSettle = (until) => {
+            try { writeHandoff(state.read('handoff') || h, { settleUntil: until }); } catch { }
+        };
+        const out = restart ? await restartAndVerify(h.to.releaseId, onSettle) : await verifyRunning(h.to.releaseId, onSettle);
         if (!out.ok) return { ok: false, code: out.code || 'VERIFY_FAILED', reached: Boolean(out.reached), worker: out.worker };
-        writeHandoff(h, { phase: 'verified', verifiedAt: stamp(), reached: Boolean(out.reached) });
+        writeHandoff(state.read('handoff') || h, { phase: 'verified', verifiedAt: stamp(), reached: Boolean(out.reached), settleUntil: null });
         return { ok: true, code: out.skipped ? 'NOT_SUPERVISED' : null, reached: Boolean(out.reached) };
     }
 
@@ -529,8 +554,18 @@ function createApplier({ core, store, journal, logger = console }) {
     function statusOf() {
         const handoff = state.read('handoff');
         const dog = state.read('watchdog');
+        const settleLeft = handoff && handoff.phase === 'pending' && handoff.settleUntil ? Math.max(0, Math.ceil((Date.parse(handoff.settleUntil) - now().getTime()) / 1000)) : null;
         return {
-            handoff: handoff ? { phase: handoff.phase, operationRef: handoff.operationId, from: handoff.from.version, to: handoff.to.version, schemaChanging: Boolean(handoff.schemaChanging), flippedAt: handoff.flippedAt || null, attempts: handoff.attempts || 0 } : null,
+            handoff: handoff ? {
+                phase: handoff.phase,
+                operationRef: handoff.operationId,
+                from: handoff.from.version,
+                to: handoff.to.version,
+                schemaChanging: Boolean(handoff.schemaChanging),
+                flippedAt: handoff.flippedAt || null,
+                attempts: handoff.attempts || 0,
+                ...(settleLeft === null ? {} : { settling: { until: handoff.settleUntil, secondsLeft: settleLeft } })
+            } : null,
             watchdog: dog ? { deadline: dog.deadline, expired: Date.parse(dog.deadline) <= now().getTime() } : null,
             recovery: recoveryView(),
             scheduled: state.read('scheduled'),
@@ -568,6 +603,7 @@ function createApplier({ core, store, journal, logger = console }) {
         resume,
         scheduleExit,
         watchdogMs,
+        settleMs,
         recoveryView,
         statusOf,
         writeHandoff,
@@ -575,4 +611,4 @@ function createApplier({ core, store, journal, logger = console }) {
     };
 }
 
-module.exports = { createApplier, EXIT_SELF_UPDATE, WATCHDOG_MS };
+module.exports = { createApplier, EXIT_SELF_UPDATE, WATCHDOG_MS, SETTLE_MS, SETTLE_ENV };

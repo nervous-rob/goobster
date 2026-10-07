@@ -130,7 +130,7 @@ async function installBase({ roots, key, base, sourceDir = null, policy = null, 
         root,
         env: { GOOBSTER_RELEASE_PUBLIC_KEY_FILE: key.publicKeyPath, ...env },
         installDeps,
-        updateDeps: { runsFromPayload: false, backupEstimate: 0, freeBytes: () => null, ...updateDeps }
+        updateDeps: { runsFromPayload: false, backupEstimate: 0, freeBytes: () => null, settleMs: 0, ...updateDeps }
     });
     await drive(harness, 'install.new', { source: base.dir, features: ['tavern'], release: { publicKeyFiles: [key.publicKeyPath] }, ...(answer === undefined ? {} : { update: answer }) });
     if (sourceDir || policy) {

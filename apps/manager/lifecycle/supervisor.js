@@ -43,6 +43,7 @@ const DEFAULT_POLICY = Object.freeze({
     stableMs: 60_000,
     healthTimeoutMs: 60_000,
     readyTimeoutMs: 120_000,
+    settleMs: 30_000,
     pollMs: 500,
     lockWaitMs: 30_000,
     lockRetryMs: 250,
@@ -827,21 +828,30 @@ function createSupervisor({
 
     /**
      * Wait until every worker of the plan is healthy and has acknowledged its revision, and was
-     * launched while `<code>/current` held `releaseId`. Resolves `{ ok, code, worker, reached }`;
-     * `reached` is true once any worker got past /health since it was launched.
+     * launched while `<code>/current` held `releaseId`; then keep watching for `settleMs` (the
+     * settle window, documentation/manager_update.md) so a worker that answers /health and dies
+     * a moment later is seen by the caller. Resolves `{ ok, code, worker, reached }`; `reached`
+     * is true once any worker got past /health since it was launched. A worker that leaves, is
+     * replaced or conflicts inside the window fails with EXITED_AFTER_READY. `onSettle({ until })`
+     * is called once, when the window opens.
      */
-    async function verifyRunning({ releaseId = null, timeoutMs = policy.readyTimeoutMs } = {}) {
+    async function verifyRunning({ releaseId = null, timeoutMs = policy.readyTimeoutMs, settleMs = policy.settleMs, onSettle = null } = {}) {
         const deadline = ms() + timeoutMs;
         const ordered = plan.workers.map(worker => slotFor(worker));
         if (plan.error) return { ok: false, code: plan.error, reached: false };
         if (ordered.length === 0) return { ok: false, code: 'NO_WORKERS', reached: false };
         const reachedAny = () => ordered.some(slot => slot.reached);
+        const generations = new Map();
         for (const slot of ordered) {
             for (;;) {
                 if (abandoned || stopping) return { ok: false, code: 'INTERRUPTED', worker: slot.worker.name, reached: reachedAny() };
                 if (slot.state === 'conflict') return { ok: false, code: slot.lastCode || 'CONFLICT', worker: slot.worker.name, reached: reachedAny() };
+                const generation = slot.generation;
                 const ready = slot.ready ? await Promise.race([slot.ready, sleep(Math.max(1, deadline - ms())).then(() => ({ ok: false, code: 'VERIFY_TIMEOUT' }))]) : { ok: false, code: 'NOT_STARTED' };
-                if (ready.ok) break;
+                if (ready.ok) {
+                    generations.set(slot, generation);
+                    break;
+                }
                 if (ready.code === 'SUPERSEDED' && ms() < deadline) {
                     await sleep(policy.pollMs);
                     continue;
@@ -852,6 +862,30 @@ function createSupervisor({
                 return { ok: false, code: 'RELEASE_MISMATCH', worker: slot.worker.name, reached: reachedAny() };
             }
         }
+        const gone = () => {
+            for (const slot of ordered) {
+                if (slot.generation !== generations.get(slot)) return slot;
+                if (slot.state === 'conflict' || slot.state === 'crash-loop' || slot.state === 'backoff' || slot.state === 'exited' || slot.state === 'stopped' || slot.state === 'stopping') return slot;
+                if (slot.handle && !slot.handle.external && !slot.handle.running()) return slot;
+            }
+            return null;
+        };
+        if (Number.isFinite(settleMs) && settleMs > 0) {
+            const until = ms() + settleMs;
+            if (onSettle) {
+                try { onSettle({ until: new Date(now().getTime() + settleMs).toISOString(), settleMs }); } catch { }
+            }
+            for (;;) {
+                if (abandoned || stopping) return { ok: false, code: 'INTERRUPTED', reached: reachedAny() };
+                const lost = gone();
+                if (lost) return { ok: false, code: 'EXITED_AFTER_READY', worker: lost.worker.name, reached: true };
+                const left = until - ms();
+                if (left <= 0) break;
+                await sleep(Math.min(policy.pollMs, left));
+            }
+        }
+        const lost = gone();
+        if (lost) return { ok: false, code: 'EXITED_AFTER_READY', worker: lost.worker.name, reached: true };
         return { ok: true, code: null, reached: reachedAny() };
     }
 

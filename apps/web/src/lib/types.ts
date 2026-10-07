@@ -1416,7 +1416,7 @@ export type HostUpdateStatus = {
     };
     lastCheck?: { at: string; outcome: string; code?: string; latest?: { version: string; channel: string; tag: string } } | null;
     staged?: { version: string; releaseId: string; schemaChanging: boolean; stagedAt: string; stale: boolean } | null;
-    handoff?: { phase: string; from: string; to: string; schemaChanging: boolean } | null;
+    handoff?: { phase: string; from: string; to: string; schemaChanging: boolean; settling?: { until: string; secondsLeft: number } } | null;
     watchdog?: { deadline: string; expired: boolean } | null;
     recovery?: {
         code: string; cause: string | null; at: string; from: UpdateVersionRef; to: UpdateVersionRef; schemaChanging: boolean;

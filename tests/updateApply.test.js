@@ -165,6 +165,106 @@ describe('update.apply, the manager and its workers in one process', () => {
     });
 });
 
+describe('the settle window after every worker is ready', () => {
+    const SETTLE = 400;
+    const leavesInside = { exitAfterMs: 120, exitCode: 9 };
+
+    test('a worker that answers /health and exits inside the window on a schema-changing release leaves the update in recovery with the barrier held', async () => {
+        const w = await world({ next: { columns: [['users', 'nickname', 'TEXT']] }, updateDeps: { settleMs: SETTLE } });
+        const { harness } = w;
+        const before = record(harness);
+        w.fakes.behave(w.names[0], leavesInside);
+        const failure = await apply(harness).catch(error => error);
+
+        expect(failure.code).toBe('UPDATE_RECOVERY_REQUIRED');
+        expect(failure.details || failure.detail || {}).toMatchObject({ cause: 'EXITED_AFTER_READY' });
+        expect(barrierOf(harness).active).toBe(true);
+        expect(currentId(harness)).toBe('2.5.0');
+        expect(record(harness).release).toEqual(before.release);
+        expect(update(harness, 'recovery')).toMatchObject({ code: 'SCHEMA_CHANGED_DATABASE_IN_USE', cause: 'EXITED_AFTER_READY', schemaChanging: true, backup: { name: expect.any(String) } });
+        expect(update(harness, 'handoff')).toMatchObject({ phase: 'recovery' });
+        expect(update(harness, 'last-apply')).toBeNull();
+        expect(ledger(harness, failure.operation.id).verify).toBe('failed');
+        expect(wiring.applier(harness.settings.storeDir).recoveryView()).toMatchObject({ cause: 'EXITED_AFTER_READY', decisions: ['restore', 'retry'] });
+    });
+
+    test('the same exit on a release that does not change the schema rolls back automatically with EXITED_AFTER_READY', async () => {
+        const w = await world({ updateDeps: { settleMs: SETTLE } });
+        const { harness } = w;
+        const before = record(harness);
+        w.fakes.behave(w.names[0], leavesInside);
+        const failure = await apply(harness).catch(error => error);
+
+        expect(failure.code).toBe('UPDATE_ROLLED_BACK');
+        expect(currentId(harness)).toBe('2.4.0');
+        expect(record(harness)).toEqual(before);
+        expect(barrierOf(harness).active).toBe(false);
+        expect(update(harness, 'recovery')).toBeNull();
+        expect(update(harness, 'handoff')).toBeNull();
+        expect(update(harness, 'last-apply')).toMatchObject({ outcome: 'rolled_back', code: 'EXITED_AFTER_READY', from: { version: '2.4.0' }, to: { version: '2.5.0' } });
+        expect(await waitFor(() => w.fakes.alive().length === w.names.length, { what: 'previous release running' })).toBe(true);
+    });
+
+    test('a worker replaced by the supervisor inside the window (a crash and a restart) is also seen', async () => {
+        const w = await world({ next: { columns: [['users', 'nickname', 'TEXT']] }, updateDeps: { settleMs: SETTLE } });
+        w.fakes.behave(w.names[w.names.length - 1], { exitAfterMs: 200, exitCode: 0 });
+        const failure = await apply(w.harness).catch(error => error);
+        expect(failure.code).toBe('UPDATE_RECOVERY_REQUIRED');
+        expect(update(w.harness, 'recovery')).toMatchObject({ cause: 'EXITED_AFTER_READY' });
+    });
+
+    test('when nothing happens inside the window the update is applied and the window is part of the downtime', async () => {
+        const w = await world({ updateDeps: { settleMs: SETTLE } });
+        const started = Date.now();
+        const { applied } = await apply(w.harness);
+        expect(Date.now() - started).toBeGreaterThanOrEqual(SETTLE);
+        expect(applied.result).toMatchObject({ outcome: 'applied' });
+        expect(applied.result.downtimeMs).toBeGreaterThanOrEqual(SETTLE);
+        expect(update(w.harness, 'last-apply')).toMatchObject({ outcome: 'applied' });
+        expect(update(w.harness, 'last-apply').downtimeMs).toBeGreaterThanOrEqual(SETTLE);
+        expect(barrierOf(w.harness).active).toBe(false);
+        expect(update(w.harness, 'handoff')).toBeNull();
+    });
+
+    test('a failure after the window has closed is an ordinary crash: the update stays applied and the supervisor restarts the worker', async () => {
+        const w = await world({ next: { columns: [['users', 'nickname', 'TEXT']] }, updateDeps: { settleMs: 60 } });
+        w.fakes.behave(w.names[0], { exitAfterMs: 400, exitCode: 9 });
+        const { applied } = await apply(w.harness);
+        expect(applied.result).toMatchObject({ outcome: 'applied', schemaChanging: true });
+        await waitFor(() => w.fakes.of(w.names[0]).length >= 3, { what: 'the supervisor restarting the worker' });
+        expect(update(w.harness, 'recovery')).toBeNull();
+        expect(update(w.harness, 'last-apply')).toMatchObject({ outcome: 'applied' });
+        expect(barrierOf(w.harness).active).toBe(false);
+    });
+
+    test('while the window runs the status says so, with the seconds left', async () => {
+        const w = await world({ updateDeps: { settleMs: 1500 } });
+        const running = apply(w.harness);
+        const status = require('@goobster/manager/update/status');
+        const seen = await waitFor(() => {
+            const view = status.buildStatus({ manager: w.harness.manager, settings: w.harness.settings });
+            return view.handoff && view.handoff.settling ? view : null;
+        }, { what: 'the settle window', timeoutMs: 3000 });
+        expect(seen.handoff).toMatchObject({ phase: 'pending', settling: { secondsLeft: expect.any(Number) } });
+        expect(seen.handoff.settling.secondsLeft).toBeGreaterThan(0);
+        await running;
+        expect(status.buildStatus({ manager: w.harness.manager, settings: w.harness.settings }).handoff).toBeNull();
+    });
+
+    test('the window comes from GOOBSTER_UPDATE_SETTLE_MS when no seam sets it', () => {
+        const { createApplier, SETTLE_MS } = require('@goobster/manager/update/apply');
+        expect(SETTLE_MS).toBe(30_000);
+        const make = (env, deps = {}) => {
+            const applier = createApplier({ core: { settings: { storeDir: '/x' }, now: () => new Date(), state: {}, deps, env }, store: {}, journal: {} });
+            return applier;
+        };
+        expect(make({}).settleMs()).toBe(30_000);
+        expect(make({ GOOBSTER_UPDATE_SETTLE_MS: '8000' }).settleMs()).toBe(8000);
+        expect(make({ GOOBSTER_UPDATE_SETTLE_MS: 'soon' }).settleMs()).toBe(30_000);
+        expect(make({ GOOBSTER_UPDATE_SETTLE_MS: '8000' }, { settleMs: 5 }).settleMs()).toBe(5);
+    });
+});
+
 describe('a failure after the new release is active', () => {
     test('a release that never answers /health is rolled back automatically when the schema is unchanged', async () => {
         const w = await world();
