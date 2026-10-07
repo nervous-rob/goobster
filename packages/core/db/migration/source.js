@@ -15,7 +15,20 @@ const { quoteIdent } = require('./schemaModel');
 
 const CHUNK = 1 << 20;
 
+/** Leave the directory as it was found: a read-only open of a WAL database may create an empty `-wal` and a `-shm` it cannot remove. */
+function removeCreatedSidecars(sqlitePath, existed) {
+    try {
+        const wal = `${sqlitePath}-wal`;
+        const shm = `${sqlitePath}-shm`;
+        if (!existed.wal && fs.existsSync(wal) && fs.statSync(wal).size === 0) {
+            fs.unlinkSync(wal);
+            if (!existed.shm && fs.existsSync(shm)) fs.unlinkSync(shm);
+        }
+    } catch { }
+}
+
 function openSource(sqlitePath) {
+    const existed = { wal: fs.existsSync(`${sqlitePath}-wal`), shm: fs.existsSync(`${sqlitePath}-shm`) };
     let database;
     try {
         database = new Database(sqlitePath, { readonly: true, fileMustExist: true });
@@ -54,6 +67,7 @@ function openSource(sqlitePath) {
             try { if (pinned) database.exec('ROLLBACK'); } catch { }
             pinned = false;
             database.close();
+            removeCreatedSidecars(sqlitePath, existed);
         }
     };
 }
@@ -72,12 +86,13 @@ function hashFile(hash, file) {
     }
 }
 
-/** sha256 over the database file and its `-wal`, as one digest. */
+/** sha256 over the database file and its `-wal` (an empty one counts as absent), as one digest. */
 function hashSource(sqlitePath) {
     const hash = crypto.createHash('sha256');
     let bytes = 0;
     for (const file of [sqlitePath, `${sqlitePath}-wal`]) {
         if (!fs.existsSync(file)) continue;
+        if (file !== sqlitePath && fs.statSync(file).size === 0) continue;
         hash.update(`${file === sqlitePath ? 'db' : 'wal'}:${fs.statSync(file).size}:`);
         hashFile(hash, file);
         bytes += fs.statSync(file).size;

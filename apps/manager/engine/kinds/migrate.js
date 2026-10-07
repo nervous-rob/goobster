@@ -264,6 +264,15 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
         return view;
     }
 
+    /** The barrier an earlier run of this same migration entered itself, still held by this manager process. */
+    function ownBarrier() {
+        const { doc } = state().read();
+        const previous = doc && doc.maintenance;
+        if (!previous || !previous.entered) return null;
+        const view = barrier().view();
+        return view.active && view.operationId === previous.operationId && view.fence === previous.fence && !view.stale ? previous : null;
+    }
+
     function ensurePhase(op, target, actor) {
         const view = barrier().view();
         if (!view.active || view.operationId !== op.operationId || view.fence !== op.fence) {
@@ -328,7 +337,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     throw new ManagerError(400, 'CONFIRMATION_REQUIRED', 'A migration needs "confirm" to be the installation id; nothing was changed.');
                 }
                 if (parsed.maintenance) heldBarrier(parsed.maintenance);
-                else barrier().assertEnterable();
+                else if (!ownBarrier()) barrier().assertEnterable();
             },
             steps: stepsFor(),
             result: scratch => scratch.result || null,
@@ -346,6 +355,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 async run(record, ctx) {
                     book(record, name, 'started');
                     try {
+                        await deps().beforeStep?.({ step: name, operationId: record.id });
                         const out = await body(record, ctx, needInput(ctx).parsed);
                         book(record, name, out && out.skipped ? 'skipped' : 'done');
                         return out;
@@ -434,14 +444,11 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     return { mode: 'held', fence: parsed.maintenance.fence };
                 }
                 const b = barrier();
-                const previous = store.read().doc.maintenance;
-                if (previous && previous.entered) {
-                    const view = b.view();
-                    if (view.active && view.operationId === previous.operationId && view.fence === previous.fence && !view.stale) {
-                        heldBarrier(previous);
-                        ctx.scratch.maintenance = { ...previous };
-                        return { mode: 'reused', fence: previous.fence };
-                    }
+                const previous = ownBarrier();
+                if (previous) {
+                    heldBarrier(previous);
+                    ctx.scratch.maintenance = { ...previous };
+                    return { mode: 'reused', fence: previous.fence };
                 }
                 const resolved = await b.preflight({ actor: record.actor, ctx });
                 const { fence } = b.begin({ operationId: record.id, actor: record.actor, via: record.via, reason: 'migration' });
@@ -500,8 +507,10 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     url: parsed.target.url,
                     onEvent: event => emit({ ...event, event: 'table' })
                 });
-                markStep('copy', { tables: result.tables, rows: result.rows, resumed: result.resumed, recopied: result.recopied, skipped: (result.skipped || []).length });
-                return { tables: result.tables, rows: result.rows, resumed: result.resumed, recopied: result.recopied };
+                const resumed = (result.resumed || []).length;
+                const recopied = (result.recopied || []).length;
+                markStep('copy', { tables: result.tables, rows: result.rows, resumed, recopied, skipped: (result.skipped || []).length });
+                return { tables: result.tables, rows: result.rows, resumed, recopied };
             }),
 
             guarded('verify', async (record, ctx, parsed) => {

@@ -38,7 +38,7 @@ function reconcileMigration({ settings, store, fs = nodeFs, now = () => new Date
     try {
         const state = createMigrationState({ storeDir: settings.storeDir, fs, now });
         const { doc } = state.read();
-        if (!doc || doc.status !== 'running' || !doc.cutover || doc.cutover.phase !== 'switching') return { reconciled: false, action: null };
+        if (!doc || !['running', 'failed'].includes(doc.status) || !doc.cutover || doc.cutover.phase !== 'switching') return { reconciled: false, action: null };
         if (!overlayMatches(settings.storeDir, fs, doc)) {
             state.update(next => ({ ...next, status: 'failed', cutover: { ...next.cutover, phase: 'not-written' }, failure: { step: 'cutover', code: 'INTERRUPTED', at: now().toISOString() } }));
             return { reconciled: true, action: 'switch-not-written' };
