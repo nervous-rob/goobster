@@ -147,9 +147,11 @@ function Manager-Up {
 
 function Node-Processes([string]$under) {
     $prefix = $under.TrimEnd('\') + '\'
-    return @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
+    $found = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
         $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
     })
+    # The comma keeps an empty result an array: a bare `return @()` reaches the caller as $null, whose .Count strict mode refuses.
+    return ,$found
 }
 
 function Installation-Id { return (Get-Content -Raw -LiteralPath (Join-Path $Store 'installation.json') | ConvertFrom-Json).installationId }
@@ -197,19 +199,26 @@ function Dump-Service([string]$name) {
 
 function Collect-Evidence {
     try {
-        Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, ParentProcessId, ExecutablePath |
-            Format-Table -AutoSize | Out-String -Width 400 | Set-Content -LiteralPath (Join-Path $Reports 'node-processes-at-exit.txt')
-        foreach ($folder in @($Logs, $MovedLogs)) {
-            if (Test-Path -LiteralPath $folder) {
-                $leaf = (Split-Path -Leaf $folder) -replace '\s', '-'
-                Get-ChildItem -LiteralPath $folder -Filter 'goobster-service*' -ErrorAction SilentlyContinue |
-                    ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Reports "winsw-$leaf-$($_.Name)") -Force }
-            }
+        $items = @(
+            { Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, ParentProcessId, ExecutablePath |
+                Format-Table -AutoSize | Out-String -Width 400 | Set-Content -LiteralPath (Join-Path $Reports 'node-processes-at-exit.txt') },
+            { foreach ($folder in @($Logs, $MovedLogs)) {
+                if (Test-Path -LiteralPath $folder) {
+                    $leaf = (Split-Path -Leaf $folder) -replace '\s', '-'
+                    Get-ChildItem -LiteralPath $folder -Filter 'goobster-service*' -ErrorAction SilentlyContinue |
+                        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Reports "winsw-$leaf-$($_.Name)") -Force }
+                }
+            } },
+            { Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = $ServiceName } -MaxEvents 200 -ErrorAction SilentlyContinue |
+                Select-Object TimeCreated, LevelDisplayName, Message | Format-List | Out-String -Width 300 |
+                Set-Content -LiteralPath (Join-Path $Reports 'event-log-goobster.txt') },
+            { & $Sc query $ServiceName 2>&1 | Out-File -FilePath (Join-Path $Reports 'sc-query-at-exit.txt') -Encoding utf8 },
+            { & $Sc qc $ServiceName 2>&1 | Out-File -FilePath (Join-Path $Reports 'sc-qc-at-exit.txt') -Encoding utf8 }
+        )
+        # Each piece of evidence on its own: one that cannot be collected (no event-log provider yet) must not skip the rest.
+        foreach ($item in $items) {
+            try { & $item } catch { Write-Host "(evidence collection: $($_.Exception.Message))" }
         }
-        Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = $ServiceName } -MaxEvents 200 -ErrorAction SilentlyContinue |
-            Select-Object TimeCreated, LevelDisplayName, Message | Format-List | Out-String -Width 300 |
-            Set-Content -LiteralPath (Join-Path $Reports 'event-log-goobster.txt')
-        & $Sc query $ServiceName 2>&1 | Out-File -FilePath (Join-Path $Reports 'sc-query-at-exit.txt') -Encoding utf8
     } catch {
         Write-Host "(evidence collection: $($_.Exception.Message))"
     }
