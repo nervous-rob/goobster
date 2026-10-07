@@ -12,6 +12,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { useToast } from '../../hooks/useToast';
 import { Field, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
+import { reasonSentence } from '../../lib/rooms';
 import type { TutorialProgress, TutorialStatus } from '../../lib/types';
 
 const STATUS_LABEL: Record<TutorialStatus, string> = {
@@ -75,9 +76,10 @@ export function TutorialsSection() {
                     {data?.catalog.map((entry) => {
                         const progress = data.progress.find((p) => p.tutorialId === entry.id);
                         const status = statusOf(progress);
-                        const canResume = status === 'in_progress' || status === 'paused'
+                        const unavailable = entry.available === false;
+                        const canResume = !unavailable && status === 'in_progress' || status === 'paused'
                             || (status === 'not_started' && entry.launchable);
-                        const canReplay = status !== 'not_started';
+                        const canReplay = !unavailable && status !== 'not_started';
                         const seen = progress
                             ? progress.completedStepIds.length + progress.skippedStepIds.length
                             : 0;
@@ -89,8 +91,15 @@ export function TutorialsSection() {
                                     <span className="hint tutorial-row-meta">
                                         {STATUS_LABEL[status]}
                                         {showProgress ? ` · step ${Math.min(seen + 1, entry.steps.length)} of ${entry.steps.length}` : ''}
-                                        {status === 'not_started' && !entry.launchable ? ' · coming soon' : ''}
+                                        {!unavailable && status === 'not_started' && !entry.launchable ? ' · coming soon' : ''}
                                     </span>
+                                    {unavailable && (
+                                        <span className="hint tutorial-row-unavailable" data-testid="tutorial-unavailable" data-feature={entry.unavailable?.feature}>
+                                            Not available on this installation. {entry.unavailable
+                                                ? reasonSentence(entry.unavailable.feature, entry.unavailable.reasons)
+                                                : ''} Your progress is kept.
+                                        </span>
+                                    )}
                                 </span>
                                 <span className="tutorial-row-actions">
                                     {canResume && (
@@ -111,7 +120,7 @@ export function TutorialsSection() {
                                     )}
                                     <button type="button" className="btn subtle small"
                                         data-tour={`tutorial-reset-${entry.id}`}
-                                        disabled={busy !== null || status === 'not_started'}
+                                        disabled={busy !== null || unavailable || status === 'not_started'}
                                         onClick={() => void run(`reset:${entry.id}`, async () => {
                                             if (!await confirm(`Reset “${entry.title}”? Your notes and projects are untouched.`)) return;
                                             await resetOne(entry.id);

@@ -27,6 +27,7 @@ import { VoiceChatOverlay } from '../components/VoiceChatOverlay';
 import { BerryMark } from '../components/BerryMark';
 import { consumeSharedPayload } from '../lib/shareTarget';
 import { useOnline } from '../lib/pwa';
+import { featureActive } from '../lib/rooms';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -871,7 +872,7 @@ export function StudyRoom() {
                         requestGrant={confirm}
                         // Adding a generated app to a project is organization
                         // (me.features.projects), not execution (ADR 0009/0010).
-                        onSaveToProject={me.features?.projects !== false
+                        onSaveToProject={featureActive(me, 'projects')
                             ? (info) => setSaveTarget({
                                 ...info,
                                 conversationId: activeId,

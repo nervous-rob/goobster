@@ -9,6 +9,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { GraphCanvas } from '../../components/GraphCanvas';
 import { describeAudience } from '../../components/TransferNoteModal';
 import type { Expedition, TransferAudience } from '../../lib/types';
+import { featureActive } from '../../lib/rooms';
 
 type GraphNode = {
     id?: string | number;
@@ -79,7 +80,7 @@ export function KnowledgeTab({
     const expeditionsQ = useQuery({
         queryKey: [...keys.spitball, 'project', projectId || slug],
         queryFn: () => api.spitballExpeditions(projectId) as Promise<{ expeditions: Expedition[] }>,
-        enabled: Boolean(me.features?.spitball && projectId)
+        enabled: Boolean(featureActive(me, 'expeditions') && projectId)
     });
 
     const launch = useMutation({
@@ -126,7 +127,7 @@ export function KnowledgeTab({
     return (
         <div className="obs-knowledge">
             {projectId && <details className="followed-sources-disclosure"><summary>Follow sources for this project</summary><FollowedSources projectId={projectId} /></details>}
-            {me.features?.spitball && projectId ? (
+            {featureActive(me, 'expeditions') && projectId ? (
                 <div className="obs-knowledge-launch">
                     <div className="section-title">Research into this project</div>
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
