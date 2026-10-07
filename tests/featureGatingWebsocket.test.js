@@ -87,7 +87,10 @@ function flipTo(off) {
 }
 
 // Every socket path the inventory claims, with the harness path that serves it.
-const WS_PATHS = Object.entries(inventory.wsPaths).map(([wsPath, owner]) => ({ wsPath, owner }));
+const WS_PATHS = Object.entries(inventory.wsPaths).map(([wsPath, claim]) => ({
+    wsPath,
+    owner: typeof claim === 'string' ? claim : claim.owner
+}));
 const OPTIONAL_WS = WS_PATHS.filter(entry => entry.owner !== 'core');
 
 describe('the socket paths under test are the inventory\'s', () => {
@@ -292,6 +295,12 @@ describe('upgrade', () => {
         const attempt = await connect('/api/activity/ws');
         expect(attempt.status).toBe(404);
     });
+
+    test.each([['gambling'], ['economy']])('the Activity socket is the casino protocol: with %s off its upgrade is a 404', async (id) => {
+        useState([id]);
+        const attempt = await connect('/api/activity/ws');
+        expect(attempt.status).toBe(404);
+    });
 });
 
 describe('stale open connections after refresh()', () => {
@@ -312,6 +321,42 @@ describe('stale open connections after refresh()', () => {
             type: 'error', code: 'FEATURE_UNAVAILABLE', feature: owner, message: featureGate.UNAVAILABLE_MESSAGE
         }]);
         expect(delivered).toEqual([]);
+    });
+
+    test.each([['gambling', 'gambling'], ['economy', 'gambling']])(
+        'an Activity socket stops serving tables when %s goes off (blocking feature %s)',
+        async (id, blocking) => {
+            useState([]);
+            const attempt = await connect('/api/activity/ws', authed());
+            expect(attempt.status).toBe(101);
+            flipTo([id]);
+            attempt.socket.send(JSON.stringify({ type: 'join', session: 'x', guildId: '1', channelId: '2' }));
+            await waitFor(() => attempt.result.closed);
+            expect(attempt.result.closed.code).toBe(1008);
+            expect(attempt.result.frames).toEqual([{
+                type: 'error', code: 'FEATURE_UNAVAILABLE', feature: blocking, message: featureGate.UNAVAILABLE_MESSAGE
+            }]);
+        }
+    );
+
+    test('the Activity handler refuses table messages itself, even when the open-socket guard is bypassed', async () => {
+        useState([]);
+        const guard = jest.spyOn(featureGate, 'guardOpenSocket').mockImplementation(() => {});
+        try {
+            const attempt = await connect('/api/activity/ws', authed());
+            expect(attempt.status).toBe(101);
+            flipTo(['gambling']);
+            attempt.socket.send(JSON.stringify({ type: 'join', session: 'x', guildId: '1', channelId: '2' }));
+            attempt.socket.send(JSON.stringify({ type: 'action', action: 'bet', amount: 50 }));
+            await waitFor(() => attempt.result.frames.length === 2);
+            expect(attempt.result.frames).toEqual([
+                { type: 'error', code: 'FEATURE_UNAVAILABLE', feature: 'gambling', message: featureGate.UNAVAILABLE_MESSAGE },
+                { type: 'error', code: 'FEATURE_UNAVAILABLE', feature: 'gambling', message: featureGate.UNAVAILABLE_MESSAGE }
+            ]);
+            attempt.socket.close();
+        } finally {
+            guard.mockRestore();
+        }
     });
 
     test('an idle portal socket is closed with the same frame without any message from the client', async () => {

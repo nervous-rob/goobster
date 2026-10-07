@@ -5,6 +5,8 @@ const { dmScopeId } = require('../utils/dmScope');
 const { assessUrl } = require('../utils/safeFetch');
 const { parseFeed, normalizePage, pageChange, hash } = require('../utils/followedSourceContent');
 const fetcher = require('./followedSourceFetcher');
+const { features } = require('../features/featureState');
+const { unavailableResult } = require('../features/gate');
 const { utc } = fetcher;
 const INTERVAL = 3600_000;
 class FollowedSourceError extends Error {
@@ -112,6 +114,14 @@ class FollowedSourceService {
         return { ok: true };
     }
     async prepareResearch({ userId, sourceId, entryId }) {
+        // Drafting an expedition is expeditions' work: refuse before the lock, the lookups and the insert.
+        if (features.enforcedOff('expeditions')) {
+            const refusal = unavailableResult('expeditions');
+            const error = new FollowedSourceError(404, refusal.code, 'Research is not available on this installation.');
+            error.feature = refusal.feature;
+            error.reasons = refusal.reasons;
+            throw error;
+        }
         return db.transaction(async () => {
             const source = await this.require(userId, sourceId);
             // The update locks this source while duplicate clicks resolve to one draft.

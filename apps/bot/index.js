@@ -6,6 +6,14 @@ const { validateConfig } = require('@goobster/core/utils/configValidator');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 const { getConnection, closeConnection } = require('@goobster/core/db');
 const { parseTrackName } = require('@goobster/core/utils/musicUtils');
+const { surfaceActive } = require('@goobster/core/features/gate');
+const {
+	commandNameIndex,
+	featureCommandFilter,
+	listCommandFiles,
+	skippedReason,
+	unclaimedCommandWarning
+} = require('@goobster/core/utils/commandDeployment');
 
 // Fun idle status messages when no music is playing
 const idleStatusMessages = [
@@ -51,11 +59,14 @@ require('@goobster/core/config/reportIntegrations').reportIntegrations({ logger 
 const { handleReactionAdd, handleReactionRemove } = require('@goobster/core/utils/chatHandler');
 
 // Command-backed tools (playTrack, setNickname, speakMessage): core never
-// imports app code, so hand the registry the command modules it drives.
+// imports app code, so hand the registry the command modules it drives. A
+// command whose feature is not active is not required at all (its top-level
+// imports start work) and its adapter stays unregistered.
+const adapterFor = (key) => (surfaceActive('command', key) ? require(`./commands/${key}`) : undefined);
 require('@goobster/core/utils/toolsRegistry').registerCommandAdapters({
-	playTrack: require('./commands/music/playtrack'),
-	nickname: require('./commands/settings/nickname'),
-	speak: require('./commands/chat/speak')
+	playTrack: adapterFor('music/playtrack.js'),
+	nickname: adapterFor('settings/nickname.js'),
+	speak: adapterFor('chat/speak.js')
 });
 
 logger.info('Starting bot initialization...');
@@ -130,6 +141,8 @@ webServers.catch((error) => {
         logger.error('Failed to start HTTP servers:', error);
 });
 
+const { refuseUnavailableCommand } = require('./events/interactionCreate');
+
 logger.info('Loading event handlers...');
 
 // Load event handlers
@@ -155,15 +168,28 @@ logger.info('Loading commands...');
 
 client.commands = new Collection();
 const foldersPath = path.join(__dirname, 'commands');
-const commandFolders = fs.readdirSync(foldersPath);
+
+// The same file lister and feature filter deploy-commands.js uses, so what
+// Discord shows and what this process answers cannot disagree.
+const { active: activeCommandFiles, inactive: inactiveCommandFiles } = listCommandFiles(foldersPath, {
+	filter: featureCommandFilter
+});
+for (const entry of inactiveCommandFiles) {
+	logger.info(`Command ${entry.key} not loaded: ${skippedReason(entry)}`);
+}
+for (const entry of activeCommandFiles.filter(item => item.unclaimed)) {
+	logger.warn(unclaimedCommandWarning(entry));
+}
+// Every declared name, loaded or not, so a stale slash command for a disabled
+// feature gets an answer instead of Discord's "application did not respond".
+const commandNames = commandNameIndex(foldersPath);
+
+const commandFolders = [...new Set(activeCommandFiles.map(entry => entry.folder))];
 
 for (const folder of commandFolders) {
 	try {
-		const commandsPath = path.join(foldersPath, folder);
-		const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 		logger.info(`Loading commands from folder: ${folder}`);
-		for (const file of commandFiles) {
-			const filePath = path.join(commandsPath, file);
+		for (const { filePath } of activeCommandFiles.filter(entry => entry.folder === folder)) {
 			const command = require(filePath);
 			if ('data' in command && 'execute' in command) {
 				client.commands.set(command.data.name, command);
@@ -290,6 +316,13 @@ async function updateGlobalPresence(client) {
         }
 }
 
+// Feature snapshots for the listeners and start-up work below (the startup
+// snapshot never changes while the process runs). Playback needs music,
+// voice and discord; the voice stack and its listeners need voice.
+const VOICE_ACTIVE = surfaceActive('eventGate', 'voiceStateUpdate');
+const MUSIC_ACTIVE = surfaceActive('eventGate', 'musicTrackStarted');
+const ISSUE_CAPTURE_ACTIVE = surfaceActive('eventGate', 'messageReactionAdd:issue-capture');
+
 client.once(Events.ClientReady, async readyClient => {
 	logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
 	
@@ -303,16 +336,22 @@ client.once(Events.ClientReady, async readyClient => {
 		// Continue startup even if database fails - some features will be disabled
 	}
 
-	// Initialize shared voice service (optional - bot continues without voice)
-	try {
-		logger.info('Initializing shared voice service...');
-		if (!voiceService._isInitialized) {
-			await voiceService.initialize();
+	// Initialize shared voice service (optional - bot continues without voice).
+	// With the voice feature off the shared service is an inert stand-in and
+	// nothing is built.
+	if (VOICE_ACTIVE) {
+		try {
+			logger.info('Initializing shared voice service...');
+			if (!voiceService._isInitialized) {
+				await voiceService.initialize();
+			}
+			logger.info('Shared voice service initialized successfully');
+		} catch (error) {
+			logger.error('Failed to initialize shared voice service:', error);
+			logger.info('Bot will continue without voice features');
 		}
-		logger.info('Shared voice service initialized successfully');
-	} catch (error) {
-		logger.error('Failed to initialize shared voice service:', error);
-		logger.info('Bot will continue without voice features');
+	} else {
+		logger.info('Voice feature not active: shared voice service not started');
 	}
 
 	// The core runtime: event bus, startup reconciliation, and every
@@ -336,32 +375,36 @@ client.once(Events.ClientReady, async readyClient => {
 	}
 
 	// Initialize music service (using the shared voiceService)
-	try {
-		logger.info('Initializing shared music service...');
-		client.musicService = voiceService.musicService;
-		if (client.musicService) {
-			client.musicService.setClient(readyClient);
-			logger.info('Shared music service initialized and client set successfully');
-		} else {
-			logger.error('Failed to access music service from shared voice service.');
+	if (VOICE_ACTIVE && MUSIC_ACTIVE) {
+		try {
+			logger.info('Initializing shared music service...');
+			client.musicService = voiceService.musicService;
+			if (client.musicService) {
+				client.musicService.setClient(readyClient);
+				logger.info('Shared music service initialized and client set successfully');
+			} else {
+				logger.error('Failed to access music service from shared voice service.');
+			}
+		} catch (error) {
+			logger.error('Failed to initialize music service:', error);
+			logger.info('Bot will continue without music service features tied to client events.');
 		}
-	} catch (error) {
-		logger.error('Failed to initialize music service:', error);
-		logger.info('Bot will continue without music service features tied to client events.');
+
+		// --> ADDED: Event listeners for music presence <--
+		readyClient.on('musicTrackStarted', async (guildId, track) => {
+			logger.info(`Music started in guild ${guildId}: ${track.name}`);
+			activeMusicGuilds.set(guildId, { track, startedAt: new Date() });
+			await updateGlobalPresence(readyClient);
+		});
+
+		readyClient.on('musicTrackEnded', async (guildId) => {
+			logger.info(`Music ended in guild ${guildId}`);
+			activeMusicGuilds.delete(guildId);
+			await updateGlobalPresence(readyClient);
+		});
+	} else {
+		logger.info('Music playback not active: shared music service and presence listeners not started');
 	}
-
-	// --> ADDED: Event listeners for music presence <--
-	readyClient.on('musicTrackStarted', async (guildId, track) => {
-		logger.info(`Music started in guild ${guildId}: ${track.name}`);
-		activeMusicGuilds.set(guildId, { track, startedAt: new Date() });
-		await updateGlobalPresence(readyClient);
-	});
-
-	readyClient.on('musicTrackEnded', async (guildId) => {
-		logger.info(`Music ended in guild ${guildId}`);
-		activeMusicGuilds.delete(guildId);
-		await updateGlobalPresence(readyClient);
-	});
 
 	// Initial presence update
 	await updateGlobalPresence(readyClient);
@@ -389,6 +432,13 @@ async function rejectGuildOnlyCommandInDm(interaction, command) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
+    // A command whose file was not loaded because its feature is off: answer
+    // (ephemeral) before anything else, never run it.
+    if ((interaction.isAutocomplete() || interaction.isContextMenuCommand() || interaction.isChatInputCommand())
+        && !client.commands.has(interaction.commandName)
+        && await refuseUnavailableCommand(interaction, commandNames)) {
+        return;
+    }
     // Handle autocomplete interactions first
     if (interaction.isAutocomplete()) {
         const command = client.commands.get(interaction.commandName);
@@ -469,6 +519,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
 // Add reaction handlers
 client.on('messageReactionAdd', async (reaction, user) => {
+	// 📋 is the GitHub issue-capture reaction; with GitHub off it does nothing.
+	if (!ISSUE_CAPTURE_ACTIVE && reaction.emoji?.name === '📋') return;
 	logger.debug('Raw reaction event received:', {
 		emoji: reaction.emoji.name,
 		partial: reaction.partial,
@@ -510,8 +562,8 @@ client.on('messageReactionRemove', async (reaction, user) => {
 	}
 });
 
-// Add voice state tracking
-client.on('voiceStateUpdate', async (oldState, newState) => {
+// Add voice state tracking (only when the voice feature is active)
+if (VOICE_ACTIVE) client.on('voiceStateUpdate', async (oldState, newState) => {
 	try {
 		if (!client.musicService) return;
 

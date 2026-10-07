@@ -1,5 +1,4 @@
 const { REST, Routes, RateLimitError } = require('discord.js');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { validateConfig } = require('@goobster/core/utils/configValidator');
@@ -18,14 +17,22 @@ const FORCE_DEPLOY = process.argv.includes('--force');
 // tests/globalCommandPayload.test.js so what we validate is what we ship.
 const {
 	collectCommandPayloads,
+	computeDeployHash,
+	featureCommandFilter,
 	mergeEntryPointCommands,
 	validateGlobalCommandPayload
 } = require('@goobster/core/utils/commandDeployment');
 
-const { guildCommands, globalCommands } = collectCommandPayloads(
+// The same filter the bot's command loader uses: a command whose feature is
+// not active is left out of the payload, and the bulk overwrite below removes
+// it from Discord.
+const { guildCommands, globalCommands, skipped } = collectCommandPayloads(
 	path.join(__dirname, 'commands'),
-	{ log: console.log }
+	{ log: console.log, filter: featureCommandFilter }
 );
+if (skipped.length > 0) {
+	console.log(`Commands left out because their feature is not active: ${skipped.map(entry => entry.key).join(', ')}`);
+}
 
 console.log(`Total commands to deploy: ${guildCommands.length} guild-only, ${globalCommands.length} global (DM-enabled)`);
 console.log('Guild command names:', guildCommands.map(cmd => cmd.name));
@@ -38,16 +45,9 @@ if (payloadIssues.length > 0) {
 	process.exit(1);
 }
 
-/**
- * Compute a stable hash of the full command payload plus deployment targets.
- * @returns {string}
- */
-function computeDeployHash() {
-	const payload = JSON.stringify({ clientId, guildIds, guildCommands, globalCommands });
-	return crypto.createHash('sha256').update(payload).digest('hex');
-}
-
-const deployHash = computeDeployHash();
+// The hash covers the payload, the deployment targets and the active feature
+// set, so enabling or disabling a feature always re-syncs Discord.
+const deployHash = computeDeployHash({ clientId, guildIds, guildCommands, globalCommands });
 
 if (!FORCE_DEPLOY) {
 	try {

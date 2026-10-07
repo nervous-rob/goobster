@@ -80,6 +80,8 @@ const FEATURES = {
 const PLAYBACK = { owner: 'music', alsoRequires: ['voice', 'discord'] };
 const WHEEL_OR_PREDICTIONS = { owner: 'gambling', alsoRequires: ['exchange'] };
 const VOICE_IN_DISCORD = { owner: 'voice', alsoRequires: ['discord'] };
+/** The presence listeners are registered only where the shared voice stack is served. */
+const MUSIC_PRESENCE = { owner: 'music', alsoRequires: ['voice'] };
 
 /** Keyed by path relative to apps/bot/commands/. */
 const commands = {
@@ -212,8 +214,8 @@ const eventGates = {
     'messageReactionAdd:issue-capture': 'github',
     messageReactionRemove: 'core',
     voiceStateUpdate: 'voice',
-    musicTrackStarted: 'music',
-    musicTrackEnded: 'music',
+    musicTrackStarted: MUSIC_PRESENCE,
+    musicTrackEnded: MUSIC_PRESENCE,
     error: 'core',
     warn: 'core',
     debug: 'core',
@@ -364,6 +366,7 @@ const routeRules = [
     { pattern: /^\/api\/app\/exchange\//, owner: 'exchange' },
     { pattern: /^\/api\/app\/voice\//, owner: 'voice' },
     { pattern: /^\/api\/app\/studio\//, owner: 'music' },
+    { method: 'DELETE', pattern: /^\/api\/app\/push\/subscriptions$/, owner: 'core' },
     { pattern: /^\/api\/app\/push(?:\/|$)/, owner: 'push' },
     { pattern: /^\/api\/app\/mcp(?:\/|$)/, owner: 'core' },
     { method: 'GET', pattern: /^\/api\/app\/auth\/(?:login|link\/discord|callback)$/, owner: 'discord' },
@@ -378,6 +381,7 @@ const routeRules = [
     { method: 'GET', pattern: /^\/api\/app\/events$/, owner: 'core' },
     { pattern: /^\/app(?:\/|$)/, owner: 'core' },
 
+    { method: 'GET', pattern: /^\/api\/activity\/music\/casino$/, owner: 'discordActivity', alsoRequires: ['gambling'] },
     { pattern: /^\/api\/activity\//, owner: 'discordActivity' },
     { method: 'POST', pattern: /^\/api\/webhooks\/github$/, owner: 'github' },
     { method: 'POST', pattern: /^\/api\/webhooks\/cursor$/, owner: 'cursor' },
@@ -402,7 +406,7 @@ const wsPaths = {
     '/api/app/parlor/live': 'core',
     '/api/app/voice/live': 'voice',
     '/api/app/studio/live': 'music',
-    '/api/activity/ws': 'discordActivity',
+    '/api/activity/ws': { owner: 'discordActivity', alsoRequires: ['gambling'] },
     '/api/screen/ws': 'screenVision',
     '/api/gba-run/ws': 'gba'
 };
@@ -621,13 +625,8 @@ const systemDependencies = {
 
 /** Defects found while taking the inventory; each is fixed under the issue named. */
 const knownGaps = [
-    { issue: '#318', surface: 'interactionTypes.collector:clear_search_button', note: 'The music paginator id parses as router type `search` and is deferred by the approval branch before the collector sees it; rename the id or exclude live collectors.' },
     { issue: '#318', surface: 'interactionTypes.intaction', note: 'One router token serves github and cursor actions; the owner is resolved from `pending.type` at runtime.' },
-    { issue: '#318', surface: 'runtimeSteps', note: 'step() has no feature parameter; automation, heartbeat, personalHeartbeat, memoryConsolidation, followupDelivery and monologue are bundled core steps whose feature branches are gated inside them.' },
-    { issue: '#318', surface: 'runtimeSteps.exchangeRiskEngine', note: 'Runs while exchange is active; prediction settlement inside it is gated on gambling.' },
-    { issue: '#319', surface: 'mcpResources.goobster://briefs/{id}', note: 'MCP brief tools and resources are not guarded by the expeditions feature.' },
     { issue: '#319', surface: 'mcp', note: 'MCP enablement is read at boot only.' },
-    { issue: '#319', surface: 'aiTools', note: 'toolsRegistry.execute() has no feature gating; only discovery filters tools.' },
     { issue: '#319', surface: 'aiTools.observatory', note: 'The definition needs an action-aware reduced form so project organization stays offered when only projects is active.' },
     { issue: '#321', surface: 'tutorials.knowledge.research', note: 'Declares no requirement although the Research view needs expeditions.' },
     { issue: '#321', surface: 'tutorials.projects.runs', note: 'Requires only projects although runs need observatory.' },

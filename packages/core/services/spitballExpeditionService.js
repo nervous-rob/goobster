@@ -27,6 +27,7 @@
 const db = require('../db');
 const logger = require('../utils/logger');
 const spitballConfig = require('../config/spitballConfig');
+const { features } = require('../features/featureState');
 const lensConfig = require('../config/spitballLensConfig');
 const domainEventBus = require('./domainEventBus');
 const { dmScopeId } = require('../utils/dmScope');
@@ -107,11 +108,17 @@ class SpitballExpeditionService {
         this.config = config;
     }
 
+    /** The legacy switch AND not enforced off by feature state (a no-op without a state file or override). */
     get enabled() {
-        return this.config.enabled === true;
+        return this.config.enabled === true && !features.enforcedOff('expeditions');
     }
 
     _requireEnabled() {
+        if (features.enforcedOff('expeditions')) {
+            const error = new SpitballError(404, 'FEATURE_UNAVAILABLE', 'Spitball Expeditions are not available on this installation.');
+            error.feature = 'expeditions';
+            throw error;
+        }
         if (!this.enabled) {
             throw new SpitballError(403, 'DISABLED', 'Spitball Expeditions are disabled on this server.');
         }

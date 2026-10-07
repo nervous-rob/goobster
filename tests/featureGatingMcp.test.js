@@ -29,7 +29,7 @@ const { features } = require('@goobster/core/features/featureState');
 const catalog = require('@goobster/core/features/catalog');
 const { createMcpApp, mountMcpIfEnabled } = require('@goobster/core/mcp/http');
 const { serveStdio } = require('@goobster/core/mcp/stdio');
-const { TOOLS, toolDescriptors, callTool, toolNames } = require('@goobster/core/mcp/tools');
+const { TOOLS, toolDescriptors, callTool, toolNames, describeServer } = require('@goobster/core/mcp/tools');
 const { listResources, listResourceTemplates, readResource } = require('@goobster/core/mcp/resources');
 const { _resetForTests: resetRate } = require('@goobster/core/mcp/rateLimit');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
@@ -426,6 +426,51 @@ describe('the mcp feature itself', () => {
         expect(mountMcpIfEnabled(express(), { logger: { info() {} } })).toBe(false);
         useFileState();
         expect(mountMcpIfEnabled(express(), { logger: { info() {} } })).toBe(true);
+    });
+
+    describe('one value for "is MCP on": what is reported is what is served', () => {
+        const legacy = (enabled) => features._resetForTests({ config: { token: 'jest-placeholder', mcp: { enabled } }, env: {} });
+
+        test('legacy switch off: reported off, not mounted, nothing served', () => {
+            legacy(false);
+            expect(features.status().source).toBe('none');
+            expect(describeServer().enabled).toBe(false);
+            expect(mountMcpIfEnabled(express(), { logger: { info() {} } })).toBe(false);
+        });
+
+        test('legacy switch on: reported on and mounted', () => {
+            legacy(true);
+            expect(describeServer().enabled).toBe(true);
+            expect(mountMcpIfEnabled(express(), { logger: { info() {} } })).toBe(true);
+        });
+
+        test('a state file may switch MCP on although the legacy switch is off (the adoption path for a default-off adapter)', () => {
+            mcpConfig._setForTests({ enabled: false });
+            useFileState();
+            expect(mcpConfig.enabled).toBe(false);
+            expect(describeServer().enabled).toBe(true);
+            expect(mountMcpIfEnabled(express(), { logger: { info() {} } })).toBe(true);
+        });
+
+        test('a state file that turns MCP off is reported off although the legacy switch is on', () => {
+            mcpConfig._setForTests({ enabled: true });
+            useFileState({ off: ['mcp'] });
+            expect(mcpConfig.enabled).toBe(true);
+            expect(describeServer().enabled).toBe(false);
+            expect(mountMcpIfEnabled(express(), { logger: { info() {} } })).toBe(false);
+        });
+
+        test('the stdio entry, the HTTP mount and the reported value read the same predicate', () => {
+            const source = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
+            for (const file of ['packages/core/mcp/http.js', 'packages/core/mcp/surface.js', 'apps/mcp/index.js']) {
+                expect(source(file)).toMatch(/features\.isActive\('mcp'\)/);
+                expect(source(file)).not.toMatch(/mcpConfig\.enabled/);
+            }
+            const tools = source('packages/core/mcp/tools.js');
+            const route = source('packages/core/web/routes/mcp.js');
+            expect(tools).toMatch(/enabled: features\.isActive\('mcp'\)/);
+            expect(route).not.toMatch(/mcpConfig\.enabled/);
+        });
     });
 
     test('stdio refuses to start: it reads nothing and writes nothing', async () => {

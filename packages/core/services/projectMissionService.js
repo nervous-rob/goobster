@@ -21,6 +21,8 @@ const db = require('../db');
 const { dmScopeId } = require('../utils/dmScope');
 const domainEventBus = require('./domainEventBus');
 const logger = require('../utils/logger');
+const { features } = require('../features/featureState');
+const { blockingAmong, unavailableResult, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const OPEN_STATUSES = ['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW'];
 const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED'];
@@ -73,6 +75,9 @@ class ProjectMissionError extends Error {
         this.code = code;
     }
 }
+
+/** The feature whose execution a mission step of this kind needs (null: none). */
+const STEP_KIND_FEATURE = { job: 'observatory', expedition: 'expeditions' };
 
 function parseJson(raw, fallback) {
     if (raw && typeof raw === 'object') return raw;
@@ -1184,6 +1189,7 @@ class ProjectMissionService {
 
         const budget = legalizeBudget(row.budgetJson);
         await this._enforceBudget(row.id, step.kind, budget);
+        await this._requireStepFeature({ userId, step });
 
         if (step.kind === 'human') {
             await db.run(
@@ -1277,6 +1283,32 @@ class ProjectMissionService {
             stepId: step.id, kind: step.kind
         });
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
+    }
+
+    /**
+     * Refuse to start a step whose work belongs to a feature that is enforced
+     * off, before the step is claimed or any child (job, expedition) exists.
+     * The step stays READY, so it can start once the feature is back. The
+     * ledger row carries the code and the step id only.
+     */
+    async _requireStepFeature({ userId, step }) {
+        const needed = STEP_KIND_FEATURE[step.kind];
+        const blocking = needed ? blockingAmong([needed]) : null;
+        if (!blocking) return;
+        try {
+            await require('./workFailureService').note({
+                kind: 'mission_step',
+                workId: step.id,
+                phase: 'start',
+                code: FEATURE_UNAVAILABLE,
+                reason: `feature ${blocking} is not available on this installation`,
+                actor: userId
+            });
+        } catch { /* the ledger is best-effort */ }
+        const refusal = unavailableResult(blocking);
+        const error = new ProjectMissionError(404, refusal.code, 'That kind of step is not available on this installation.');
+        error.feature = refusal.feature;
+        throw error;
     }
 
     async _enforceBudget(missionId, kind, budget) {
@@ -1464,6 +1496,7 @@ class ProjectMissionService {
 
     async _ensureExpeditionDispatched(step) {
         if (step.kind !== 'expedition' || !step.expeditionId) return;
+        if (features.enforcedOff('expeditions')) return;
         const row = await db.get(
             'SELECT id, status, userId FROM spitball_expeditions WHERE id = @id',
             { id: step.expeditionId }
