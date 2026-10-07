@@ -146,7 +146,7 @@ means the surface exists in the inventory but its assertions wait for #321.
 | Remaining module loading recorded separately from execution gating (#322) | `featureConformance.test.js` "module loading versus execution"; `feature_inventory.md` "Loaded but not executed when off" |
 | Portal rooms, tutorials and `consultDocs` availability follow the state (plan, Phase 1; #261 tutorials) | `featureConformance.test.js` "#321" block: per profile, rooms/views (`rooms.cjs`), tutorial listing and launch refusal, self-docs annotation (141 tests) |
 | The migration turns switches on only where rows exist (#261) | Not covered by #322 (row-presence seeding for existing installs is a state-seeding concern outside this gate) |
-| Gambling cannot be enabled on a shared instance without the attestation, recorded in `operator_audit` (#261) | Not covered by #322: it is a Phase 2 operator action (no toggle surface exists yet) |
+| Gambling cannot be enabled on a shared instance without the attestation, recorded in `operator_audit` (#261) | Not covered by #322: it is the Phase 2 Features page (#326): `tests/hostRoutes.test.js` (attestation required on a shared instance, remembered per operation, no `operator_audit` row without it) and `e2e/hostOperator.spec.js` |
 | `documentation/features.md` generated or checked against the catalog (plan, Phase 1) | Not part of #322 |
 
 ### Phase 2: manager process, lifecycle and operator pages
@@ -161,6 +161,7 @@ Status (issues #323 - #326 under epic #315):
 | #323 | `apps/manager`: own store, setup engine, bootstrap and recovery credentials, portal bridge, transport, privilege boundary, audit reconciliation | Workspace `apps/manager`, bridge minter `packages/core/web/managerBridge.js`, specs `tests/managerBoot.test.js`, `tests/managerAuth.test.js`, `tests/managerEngine.test.js`, `tests/managerBridge.test.js`; `documentation/manager.md` (PR pending review) |
 | #324 | Shared configuration: field catalog (`packages/core/config/fieldCatalog.js`), effective settings with sources, safe `config.json` writes (`configFile.js`), `config.set` and `defaults.set` kinds, `GET /manager/api/config`, explicit provider probes, instance defaults | `packages/core/config/{fieldCatalog,effectiveConfig,configFile}.js`, `providerProbeService.js`, `instanceDefaultsService.js`, `apps/manager/{configView.js,routes/config.js,engine/kinds/{config,defaults}.js}`, generator `scripts/generate-config-reference.js`, specs `tests/{configFieldCatalog,effectiveConfig,configFile,providerProbes,instanceDefaults,managerConfig}.test.js`; `documentation/manager_configuration.md`, `documentation/config_reference.md` (PR pending review) |
 | #325 | Supervision of every layout, staged restart with a 60 s grace period, restart contracts for long-running work, per-target command deploy | `apps/manager/lifecycle/` (layouts, child and external adapters, supervisor, `lifecycle.json`), the `lifecycle.apply` / `lifecycle.restart` / `lifecycle.cancel` kinds and `/manager/api/lifecycle*` routes, `--supervise`; worker side `packages/core/runtime/{lifecycle,revisionAck}.js` (exit 75, stop new work, revision acks); `deploy/goobster.service` and `ecosystem.config.js` run the manager. Specs `tests/managerSupervisor.test.js`, `tests/managerLifecycle.test.js`, `tests/lifecycleAdapters.test.js`, `tests/commandDeployHash.test.js`, `tests/workInterruption.test.js`; `documentation/manager_lifecycle.md` (PR pending review) |
+| #326 | Host room operator pages: Features, Connections and Instance Defaults previewed and applied through the manager over the authenticated portal bridge, a restart panel (countdown, Restart now, Cancel, per-worker acknowledgement, last outcome), `host.*` audit actions | `packages/core/web/routes/host.js`, `packages/core/web/hostManagerClient.js`, `packages/core/config/managerConfig.js` (`manager.baseUrl`), `apps/web/src/rooms/host/`, spec `tests/hostRoutes.test.js`, journeys `e2e/hostOperator.spec.js`; `documentation/host_operations.md` (PR pending review) |
 
 Work:
 
@@ -244,7 +245,7 @@ Work, in order:
    builds minimal, voice and projects+sandbox payloads on `ubuntu-24.04`,
    and runs routes, dormant-data and tamper probes against them. Reduced
    payloads on the other four targets are unverified. Production signing
-   keys are #341. The wizard (#329) and the bootstrappers (#331) consume
+   keys are a release matter (`documentation/release.md`, #341). The wizard (#329) and the bootstrappers (#331) consume
    the seams listed in `documentation/packaging.md`, "The manager seam".
 3. Wizard screens, each with an "about this" panel: mode (install,
    reconfigure, repair, uninstall); features with size, dependencies and
@@ -252,17 +253,32 @@ Work, in order:
    `config.json`; database (SQLite only in this phase); instance defaults;
    review and progress; first-run check.
 
-   **Status (P3.3, #329): engine and CLI built, no wizard screens yet.**
+   **Status (P3.3, #329): engine and CLI built; the wizard screens follow in P3.4.**
    `documentation/manager_install.md` is the reference. Done: the version 2
    installation record with explicit ownership; read-only discovery of
    payload, Raspberry Pi script, PM2, Docker and manual installs; preflight;
    the `install.new`, `install.reconfigure`, `install.repair` and
    `install.uninstall` kinds and the managed form of `adopt` (with updater
    reconcile); resume after interruption; uninstall that keeps data by
-   default and writes a tombstone. Not done: the wizard screens (item 3
-   itself), network download and archive sources, and every privileged
+   default and writes a tombstone. Not done: network download and archive
+   sources, and every privileged
    operation (`service.register`, `service.unregister`, `updater.disable`,
-   `user.create` answer 501, so no OS service registration has been tested).
+   `user.create` answered 501 at that point; the Linux implementation is P3.7
+   below).
+   **Status (P3.4, #330): the wizard screens are built** (PR
+   [#363](https://github.com/nervous-rob/goobster/pull/363), stacked on #360:
+   SQLite 265 suites / 5251 passed, Postgres `core` 1949 and `portal` 1116,
+   Playwright 233 passed including 19 wizard journeys).
+   `documentation/setup_wizard.md` is the reference. The manager serves a
+   static client at `/manager/` (setup, recovery and maintenance pages, an
+   `HttpOnly` cookie session) and the portal's Host room has an Installation
+   page for Reconfigure, Repair and Uninstall through the bridge. Both run the
+   same engine, kinds and field components as the CLI. New manager kinds:
+   `owner.create`, `lifecycle.start`, `lifecycle.stop`. Postgres is shown
+   disabled; OS service registration is not driven from the page (the Linux
+   bootstrapper registers it, `documentation/linux_install.md`) and maintenance,
+   reset and migration (#334-#336) are not wired in. Proven on Linux x64 in Playwright
+   against throwaway directories and a fake Ollama.
 4. Headless CLI running the same engine (answers file or prompts).
 
    **Status (P3.3, #329): built.** `apps/manager/cli.js` (`install`,
@@ -271,12 +287,91 @@ Work, in order:
    `apps/manager/install/answers.schema.json` or prompts, supports
    `--dry-run` and `--json`, refuses secrets on the command line, and
    exits 0/2/3/4/5 as documented. Proven on Linux x64 against throwaway
-   directories only.
+   directories only. The wizard (item 3) drives the same engine and kinds, so
+   an answers file and the browser journeys produce the same plans.
 5. Bootstrappers: Windows NSIS, macOS pkg, Linux script and AppImage;
    privileged operations limited to service registration and package
    installation; the installation registry per user; repair keeps `data/`
    and `config.json`; uninstall keeps them unless the operator explicitly
    chooses to delete data, with the privacy consequence stated.
+
+   **Status (P3.7, #333): the Linux bootstrapper is built; Windows (#331)
+   and macOS (#332) are separate.** `documentation/linux_install.md` is the
+   reference. The payload now carries the manager (`bin/goobster-manager`);
+   `scripts/package-bootstrap.js` builds a deterministic self-extracting
+   `.run` and an AppImage (appimagetool pinned by SHA-256) from it; both start
+   the manager's `install.new` from the embedded payload, with the wizard on
+   `127.0.0.1:3400` or headless from an answers file. The privileged helper
+   (`apps/manager/privileged/`) implements `service.register`,
+   `service.unregister`, `user.create` and `updater.disable` on Linux (one JSON
+   document on stdin, `sudo -n` then `pkexec`, files hash-checked against the
+   payload manifest before an elevated start); `package.install` stays
+   `NOT_IMPLEMENTED` - system dependencies are reported, never installed.
+   Registration writes a marker-bearing systemd unit and records it in the
+   manager's store; without systemd or rights the install finishes in the manual
+   manager fallback. Raspberry Pi installs are adopted with their updater
+   disabled. Proven locally on Linux x64 without systemd (the same journey,
+   `scripts/linux-bootstrap-proof.sh --no-systemd`, 29 checks) and by Jest
+   (`tests/privilegedHelper.test.js`, `linuxService.test.js`,
+   `bootstrapStage.test.js`, `bootstrapCli.test.js`). `systemctl enable --now`
+   on a real systemd, on x64 and arm64, is proven only by
+   `.github/workflows/linux-bootstrap.yml`. Unsigned development builds only
+   (`-dev`); release signing keys: `documentation/release.md` (#341). PR
+   [#367](https://github.com/nervous-rob/goobster/pull/367) (stacked on #366,
+   merging the B1 loader #364): SQLite full suite 284 suites / 5751 passed;
+   Postgres `core` 2377 and `portal` 1124 passed in isolated schemas; Playwright
+   250 passed; lint, smoke, docs and group inventory green; the `--no-systemd`
+   journey 29/29 against a payload rebuilt from the branch head; the rendered
+   unit passes `systemd-analyze verify`. A checkout unit keeps
+   `ProtectSystem=full` (the pre-installer Pi unit); a payload unit is `strict`
+   with `XDG_CACHE_HOME` pointed at the cache root.
+
+   **Status (P3.5, #331): the Windows bootstrapper is built, not yet run on
+   Windows.** `documentation/windows_install.md` is the reference. An NSIS
+   installer (`bootstrap/windows/installer.nsi`, built by
+   `scripts/package-bootstrap-win32.js`; `RequestExecutionLevel user`) unpacks
+   the payload and a WinSW 2.12.0 service host (pinned by SHA-256 in
+   `scripts/bootstrap-pins.json`) and starts `apps/manager/bootstrap/win32.js`:
+   the wizard in the browser, or `/S /ANSWERS=<file>`. The `windows-service`
+   kind (`apps/manager/platform/windowsService.js`, `windowsServiceXml.js`)
+   plugs into the kind-neutral register/unregister steps; the helper's Windows
+   module (`privileged/win32.js`) implements `service.register` and
+   `service.unregister` with `sc.exe` and `icacls.exe` for the virtual account
+   `NT SERVICE\goobster`, elevating by an administrator session or a UAC prompt
+   with a file transport. Proven on Linux x64 by Jest against injected
+   exec/spawn/fs fakes (`tests/windowsHelper.test.js`, `windowsService.test.js`,
+   `windowsBootstrapCli.test.js`, `packageBootstrapWin32.test.js`) and by two
+   byte-identical `makensis` builds of one payload; the service, the UAC-free
+   journey, graceful stop and crash restart are proven only by
+   `.github/workflows/windows-bootstrap.yml` on `windows-2022`
+   (`scripts/windows-bootstrap-proof.ps1`). Unsigned development builds only
+   (`-dev`); the Authenticode hook is wired and off, signing is `documentation/release.md` (#341).
+
+   **Status (P3.6, #332): the macOS bootstrapper is built and its journey is
+   written; it has not run on a Mac.** `documentation/macos_install.md` is the
+   reference. `scripts/package-bootstrap-darwin.js` builds a per-user
+   `goobster-<version>-darwin-<arch>[-dev].tar.gz` (`install.command`) and, on a
+   Mac, an installer `.pkg` (`pkgbuild`, `productbuild`, macOS 13 or newer) whose
+   `postinstall` starts `apps/manager/bootstrap/darwin.js`: headless and
+   machine-wide as root when `/etc/goobster-answers.json` is present (a
+   LaunchDaemon `io.goobster.goobster` running as the hidden `_goobster`
+   account), otherwise the wizard for the console user (a LaunchAgent). The
+   privileged helper gains a macOS module (`service.register`,
+   `service.unregister`, `user.create` through `launchctl` and `dscl`; root,
+   `sudo -n`, then the `osascript` administrator prompt with a file
+   transport); the `launchd` service kind is one definition with a machine and
+   a user scope. The uninstall never deletes the `_goobster` account (the
+   privileged protocol has no operation for it). Apple signing and
+   notarization are wired and off by default (P5.1). Proven locally on Linux
+   only by Jest through injected command runners and fake executables:
+   `tests/launchdService.test.js`, `darwinHelper.test.js`,
+   `darwinBootstrapCli.test.js` and `darwinBootstrapStage.test.js` (125 passed,
+   1 skipped on SQLite and on Postgres); the packager built the tar.gz, the
+   Distribution tree and the report from a foreign Linux payload and reported
+   `PKG_SKIPPED`. `launchctl`, `dscl`, `pkgbuild`, `installer` and the restart
+   after `SIGKILL` are proven only by `.github/workflows/macos-bootstrap.yml`
+   (`macos-15` and `macos-15-intel`) running `scripts/macos-bootstrap-proof.sh`,
+   which has not run yet.
 
 Acceptance: selective-installation tests prove an excluded feature's
 files, dependencies and frontend bundle are absent; Playwright journeys
@@ -326,7 +421,7 @@ Work:
    recreates `instance_state` (paused) and `self_docs`, and does not release
    the barrier. `goobster-manager reset` and `release` are the CLI;
    `GET /manager/api/reset/plan` is the preview. `scripts/initDb.js` no longer
-   has a drop list and `--reset` is refused. Portal pages are #337. See
+   has a drop list and `--reset` is refused. Portal pages are #337 (done, see P4.4). See
    [data_reset.md](data_reset.md).
 3. Migrator: true preflight, required verified backup, row-count
    verification, rollback point.
@@ -350,12 +445,89 @@ Work:
    2018 passed and `privacy` 325 passed in isolated schemas; lint, smoke,
    docs and group inventory green; CI green on both engines at `65ba14d`.
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.
+
+   **Status (P4.4, #337): built, PR pending.** The manager kinds
+   `backup.create` and `backup.restore` (audit actions
+   `manager.backup.create` and `manager.backup.restore`), `GET
+   /manager/api/backup/inspect?dir=` and `GET /manager/api/backup/status`,
+   the CLI commands `backup`, `backup inspect` and `restore`, a file-set
+   completeness audit (a table with a "since" column and a unit test that
+   fails on an unclassified data folder), the Wizard's Backup, Restore,
+   Reset and Migration journeys, and the Host room's Maintenance page with
+   the audit actions `host.backup.apply` and `host.reset.apply`. Barrier
+   release and instance resume stay separate controls. Only `config.json`
+   is encrypted; the archive is not. This adds management, UI and
+   regression evidence; it does **not** claim the owner's restore drill on
+   a real host (#249), which remains a human check. Not in scope: a backup
+   scheduler, a Postgres-to-SQLite conversion, a Postgres chooser (#338) and
+   service registration. See [backup_and_restore.md](backup_and_restore.md),
+   [setup_wizard.md](setup_wizard.md) and
+   [host_operations.md](host_operations.md).
+   PR [#366](https://github.com/nervous-rob/goobster/pull/366) (stacked on
+   #365): SQLite full suite 279 suites / 5605 passed; Postgres `core` 2231,
+   `portal` 1124 and `privacy` 325 passed in isolated schemas; Playwright
+   250 passed; lint, smoke, docs and group inventory green.
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container
    (the compose pgvector image), managed native install on Linux (from
    `scripts/ensure-local-postgres.sh`), storage path for managed
    instances. The explainer and a recommendation from the selected
    features.
+
+   **Status (P4.5, #338): existing server built (PR pending review).** The
+   chooser (SQLite, an existing PostgreSQL server, and the Docker and native
+   entries disabled with "Available in a later version of this installer"),
+   workload guidance without user-count thresholds, the connection form and
+   the read-only `database test` (route `POST /manager/api/database/test`,
+   `database test` in the CLI), the kinds `database.provision` (an elevated
+   credential used once, least-privilege role, ticked actions, DBA SQL for an
+   unprivileged hosted server), `database.schema.apply` and
+   `database.connect` (maintenance barrier, probe, validation on the target,
+   overlay write, record update, barrier left up unless released), the
+   Postgres `database` answer of `install.new`, the setup wizard step, the
+   Database maintenance journey and the Host Database page. A SQLite
+   database that holds data is routed to the migration (`MIGRATION_REQUIRED`).
+   Not built here: native PostgreSQL provisioning, bind and
+   storage edits for a server the manager owns, cluster tuning and
+   PostgreSQL major upgrades. See
+   [database_connection.md](database_connection.md).
+
+   **Status (P4.6, #339): explicitly chosen Docker container built (stacked
+   on #338).** The Docker entry of the chooser is enabled only after the
+   daemon check passes (CLI, daemon, socket permission, Desktop or Engine,
+   platform, the pinned image, the host `pg_dump` against the server major);
+   the image is `pgvector/pgvector:pg17` by digest in
+   `packages/core/db/docker/image.js` and a major upgrade is manual
+   (`MAJOR_UPGRADE_IS_MANUAL`); the container, volume and network are named
+   `goobster-pg-<id8>`, `goobster-pgdata-<id8>` and `goobster-<id8>` and carry
+   `io.goobster.installation|role|manager` labels that every change checks
+   (`RESOURCE_FOREIGN`); the kinds `database.docker.provision` (preflight,
+   create, wait-healthy, provision through the #338 library, verify),
+   `.start`, `.stop`, `.repair` and `.reconfigure` (backup first, inside a held
+   barrier); generated passwords that never reach argv, the journal, the
+   audit log or a state file (the application's URL lives only in the
+   manager's overlay, `database.connect { owned: docker }` is the cutover);
+   the `DATABASE_NOT_READY` gate before workers start; an uninstall that keeps
+   the data unless `removeDockerData` is set; `GET /manager/api/docker/status`,
+   `goobster-manager database docker ...`, the Database step option, the
+   instance card on the Database page and the Host proxy. Unit and route tests
+   run against a fake `docker` executable; the real-container block runs with
+   `GOOBSTER_DOCKER_TESTS=1` in a CI job that has a daemon. Not built here:
+   native PostgreSQL (#340), moving a data directory, a remote Docker host and
+   Windows containers. See [docker_postgres.md](docker_postgres.md).
+   PR [#368](https://github.com/nervous-rob/goobster/pull/368) (stacked on
+   #367): SQLite full suite 287 suites / 5853 passed; Postgres `core` 2466 and
+   `portal` 1137 passed in isolated schemas; Playwright 254 passed; lint, smoke,
+   docs and group inventory green; the `test (docker postgres)` CI job runs the
+   gated real-daemon blocks. A delete-data uninstall that leaves the volume
+   warns `DOCKER_DATA_RETAINED`.
+
+   The P4.5 chooser below:
+   PR [#365](https://github.com/nervous-rob/goobster/pull/365) (stacked on
+   #363, merging #362): SQLite full suite 276 suites / 5551 passed; Postgres
+   `core` 2186 and `portal` 1116 passed in isolated schemas, the real-server
+   blocks 122 passed as a superuser; Playwright 239 passed; lint, smoke,
+   docs and group inventory green.
 
 Acceptance: every operation refuses to start while another holds the
 lock; an interrupted restore or migration recovers to a stated state;
@@ -368,6 +540,71 @@ before this phase), auto-update through the manager, the GitHub Actions
 release matrix, docs. Deferred items picked up here if wanted: native
 Windows and macOS Postgres provisioning; major-version upgrades for
 Postgres instances the manager owns, as a separate labelled workflow.
+
+**Status (P5.1, #341): the signed release pipeline and the artifact
+verification contract are built; nothing has been signed.**
+`documentation/release.md` is the reference. `.github/workflows/release.yml`
+runs for `v*` tags and manual dispatch (never a pull request): a `plan` job
+derives the channel (`v1.4.0` stable, `-rc.N`/`-beta.N`/`-alpha.N` and every
+dispatch prerelease) and the signing mode, stopping a stable tag with no active
+key at `RELEASE_BLOCKED_UNSIGNED`; a five-target build matrix builds, signs and
+scans each target; a `publish` job assembles and signs `release-index.json`
+(`scripts/release-index.js`, `scripts/lib/releaseIndex.js`), verifies it under a
+production and a development policy, and publishes a GitHub Release, leaving a
+failed target out of the index and the notes. The index adds a second signed
+layer over the per-payload manifest of #328 without changing it;
+`scripts/release-verify-artifacts.js` refuses a release artifact carrying
+config, keys, databases or a binary for the wrong platform; the manager's
+install record reports `signed`, `keyId` and `channel`. `scripts/release-keys.json`
+ships with **no active key** and the Windows, Apple and key secrets are the
+owner's to supply, so every stable build is blocked today and every other build
+is an `UNSIGNED DEVELOPMENT BUILD`. Proven on Linux x64 by Jest
+(`tests/releaseIndex.test.js`, `releaseArtifacts.test.js`,
+`releaseManagerTrust.test.js`, `releaseWorkflow.test.js`) and a local run
+against a real payload; the Windows and macOS signing steps and the arm64,
+macOS and Windows jobs are written and structurally tested but have not run.
+
+**Status (P5.2, #342): staged manager updates with a health-checked apply and a
+schema-gated rollback are built.** `documentation/manager_update.md` is the
+reference. The installation record carries an explicit `update` policy
+(`channel`, `mode` of `off`, `check`, `download` or `apply`, an optional
+window and a source); it is `off` until somebody chooses, the setup wizard and
+the adoption flow ask once, and `apply` is honoured only while the manager is
+the updater, so an adopted Pi keeps its `auto-update.sh` timer until the
+adoption turns it off through `updater.disable`. `update.check`,
+`update.stage`, `update.apply`, `update.policy` and `update.recover` run in the
+step ledger; the index is verified under the production policy with the
+verifier the payload now carries, the artifact against the size and SHA-256 it
+names, and a corrupted download is deleted and nothing is applied. Apply runs
+inside the maintenance barrier (preflight, a verified backup, quiesce,
+activate, verify with a restart, `/health`, the revision acknowledgement and
+the running release id, cutover, release), and the downtime is the span from
+quiesce to release. The manager's own code changes through an OS-supervised
+handoff: it leaves with exit code 76 after a durable `handoff.json` and a
+`watchdog.json`, the service manager restarts it from the new `current`, and
+the new manager finishes the update; the crash matrix is documented. The
+schema fingerprint (SHA-256 of `schema.sql` and the ordered
+`COLUMN_MIGRATIONS`) decides the rollback: a failed update that cannot have
+changed the database is put back automatically, and a schema-changing update
+that failed after a worker got past `/health` stays in `recovery` with the
+barrier held until the operator chooses to restore the pre-update backup or
+retry. `config.json`, `features.json` and the data roots are never touched,
+and the service registration is re-rendered only when its template hash
+changed. The portal Host card has an Updates panel and the CLI has
+`goobster-manager update`. Proven on Linux x64 by Jest
+(`tests/updateCheck.test.js`, `updateStage.test.js`, `updateApply.test.js`,
+`updateHandoff.test.js`, `updateRoutes.test.js`, `updateHostRoutes.test.js`,
+`updateService.test.js`), the provider-free Playwright journey
+`e2e/update.spec.js`, and a local proof with a real minimal payload, real
+workers and a restart loop standing in for the OS supervisor: a healthy
+1.0.0 to 1.1.0 update through the exit-76 handoff (downtime 3.7 s, secrets,
+layout, features and application data identical afterwards), a corrupted
+archive refused at stage, an automatic rollback when the new workers die at
+start, and a schema-changing release that failed after `/health` left in
+`recovery` and restored from the backup. The Windows (WinSW) and macOS
+(launchd) handoffs are written and unit-tested through the supervisor seam but
+have not run, and the proof ran with no registered service (no systemd in the
+test VM), so the service-registration refresh is proven by Jest only.
 
 ## Audits before implementation
 

@@ -19,11 +19,11 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.adopt',
     'manager.features.set',
     'manager.recovery.unlock',
-    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
-    'manager.maintenance.enter', 'manager.maintenance.release',
     'manager.config.set',
     'manager.defaults.set',
+    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
+    'manager.maintenance.enter', 'manager.maintenance.release',
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
     'manager.data.reset'
 ]);
