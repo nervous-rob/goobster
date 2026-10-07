@@ -332,7 +332,9 @@ the command set change on restart, interactions are refused live.
   deploy hash (`data/.command-deploy-hash`) covers the payload, the targets
   and the served feature set (`activeFeatureIds`, enforcement view), so
   turning a feature on or off re-syncs Discord even when the payload is
-  unchanged. A slash command, autocomplete or context menu Discord still
+  unchanged; because the served feature set is part of the hash, every
+  installation redeploys its slash commands once after upgrading to the
+  release that introduces it (accepted). A slash command, autocomplete or context menu Discord still
   holds for a filtered file is answered ephemerally with "That feature is
   not available on this installation." (autocomplete gets an empty list)
   before any handler runs.
