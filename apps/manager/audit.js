@@ -32,7 +32,8 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.data.reset',
     'manager.backup.create', 'manager.backup.restore',
     'manager.privileged.service.register', 'manager.privileged.service.unregister', 'manager.privileged.user.create',
-    'manager.privileged.updater.disable', 'manager.privileged.package.install'
+    'manager.privileged.updater.disable', 'manager.privileged.package.install',
+    'manager.update.check', 'manager.update.stage', 'manager.update.apply', 'manager.update.policy', 'manager.update.recover', 'manager.update.handoff'
 ]);
 
 /**

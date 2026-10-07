@@ -39,4 +39,23 @@ function getStarter(storeDir) {
     return starters.get(storeDir) || null;
 }
 
-module.exports = { register, get, setStarter, getStarter };
+/**
+ * The running manager's way to leave the process for the OS supervisor with a given exit code
+ * (the update's handoff, documentation/manager_update.md). Registered by apps/manager/index.js
+ * `main()` only when the entry script asks for it; a manager built any other way has none, and
+ * an update then leaves the handoff pending for the next start.
+ */
+const exits = new Map();
+
+function setExitHandler(storeDir, handler) {
+    exits.set(storeDir, handler);
+    return () => {
+        if (exits.get(storeDir) === handler) exits.delete(storeDir);
+    };
+}
+
+function getExitHandler(storeDir) {
+    return exits.get(storeDir) || null;
+}
+
+module.exports = { register, get, setStarter, getStarter, setExitHandler, getExitHandler };

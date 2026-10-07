@@ -531,6 +531,26 @@ function createBarrier({
         });
     }
 
+    /**
+     * Take over a barrier a handoff left with the previous manager process: the same operation and
+     * fence the caller holds the record of (the update's handoff file), re-owned by this process.
+     * Nothing else about the barrier changes. A barrier of another operation is never taken.
+     */
+    function adopt({ operationId, fence, actor = null }) {
+        let from = null;
+        store.update((doc) => {
+            if (!doc.active) throw new ManagerError(409, 'MAINTENANCE_NOT_ACTIVE', 'Maintenance is not active.');
+            if (doc.operationId !== operationId || doc.fence !== fence) {
+                throw new ManagerError(409, 'FENCE_MISMATCH', 'The operation id and fence do not match the active barrier.', { fence: doc.fence });
+            }
+            from = doc.phase;
+            doc.owner = { pid: process.pid, bootId };
+            store.record(doc, { phase: doc.phase, outcome: 'adopted', action: 'maintenance.adopt', actor, fence });
+            return doc;
+        });
+        return { phase: from };
+    }
+
     return {
         store,
         view,
@@ -546,6 +566,7 @@ function createBarrier({
         release,
         advance,
         settle,
+        adopt,
         get timing() { return { ...cfg }; }
     };
 }

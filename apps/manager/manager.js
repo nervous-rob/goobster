@@ -31,6 +31,7 @@ const { createMaintenanceStore, summarize: summarizeMaintenance, recoverOnStart 
 const privileged = require('./privileged');
 const { readTombstone } = require('./install/tombstone');
 const files = require('./store/files');
+const updateWiring = require('./update/wiring');
 
 const MANAGER_VERSION = 1;
 const PROBE_TTL_MS = 10_000;
@@ -183,6 +184,8 @@ function createManager({
             if (settings.reconcile) reconcile();
         }
     });
+
+    updateWiring.bind(settings.storeDir, { engine, store, journal });
 
     /**
      * Boot-time housekeeping. Mints the bootstrap credential in the

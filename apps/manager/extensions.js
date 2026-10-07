@@ -20,7 +20,8 @@ const routes = [
     require('./routes/migrate').mountMigrateRoutes,
     require('./routes/backup').mountBackupRoutes,
     require('./routes/database').mountDatabaseRoutes,
-    require('./routes/docker').mountDockerRoutes
+    require('./routes/docker').mountDockerRoutes,
+    require('./routes/update').mountUpdateRoutes
 ];
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
@@ -35,7 +36,8 @@ const kinds = [
     require('./engine/kinds/migrate').createKinds,
     require('./engine/kinds/backup').createKinds,
     require('./engine/kinds/database').createKinds,
-    require('./engine/kinds/dockerPostgres').createKinds
+    require('./engine/kinds/dockerPostgres').createKinds,
+    require('./engine/kinds/update').createKinds
 ];
 
 module.exports = { routes, kinds };

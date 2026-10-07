@@ -81,6 +81,7 @@ function tokenEquals(a, b) {
  * @param {() => boolean} [params.sandboxActive]
  * @param {Partial<typeof DEFAULT_POLICY>} [params.policy]
  * @param {number} [params.managerPid]
+ * @param {() => string|null} [params.releaseIdOf] the release `<code>/current` holds, read at each launch (the update's verify)
  */
 function createSupervisor({
     manager,
@@ -93,7 +94,8 @@ function createSupervisor({
     readAck = null,
     sandboxActive = null,
     policy: policyOverrides = {},
-    managerPid = process.pid
+    managerPid = process.pid,
+    releaseIdOf = null
 }) {
     const settings = manager.settings;
     const policy = { ...DEFAULT_POLICY, ...policyOverrides };
@@ -252,6 +254,11 @@ function createSupervisor({
         slot.staged = Boolean(staged);
         slot.healthy = false;
         slot.healthyAt = null;
+        slot.reached = false;
+        slot.releaseId = null;
+        if (releaseIdOf) {
+            try { slot.releaseId = releaseIdOf() || null; } catch { }
+        }
         slot.ackedRevision = null;
         slot.intentional = false;
         slot.startedAt = ms();
@@ -336,6 +343,7 @@ function createSupervisor({
                     if (generation !== slot.generation) return { ok: false, code: 'SUPERSEDED' };
                     slot.healthy = true;
                     slot.healthyAt = ms();
+                    slot.reached = true;
                     if (slot.state === 'starting') slot.state = 'running';
                     cancelTimer(slot.stableTimer);
                     slot.stableTimer = later(() => { slot.consecutive = 0; }, policy.stableMs);
@@ -796,6 +804,57 @@ function createSupervisor({
         return { workers: names, revision };
     }
 
+    /**
+     * Stop every worker and start them again at the current revision, then wait for health and the
+     * revision ack from all of them (the update's activate and rollback). The holds are lifted only
+     * when every worker is ready, so a failed start does not restart-loop under the caller.
+     */
+    async function restartAll({ requestId = null } = {}) {
+        if (committing || readDoc().pending?.phase === 'committing') {
+            throw new ManagerError(409, 'ALREADY_COMMITTED', 'A staged restart is under way; wait for it to finish.');
+        }
+        const revision = currentRevision();
+        const id = requestId || (externalMode ? crypto.randomUUID() : null);
+        await stopEverything({ revision, requestId: id, announce: false });
+        const next = resolvePlan();
+        if (next.error) return { ok: false, code: next.error, reached: false };
+        adoptPlan(next);
+        if (abandoned || stopping) return { ok: false, code: 'INTERRUPTED', reached: false };
+        const ready = await startAll(revision, { staged: false, requestId: id });
+        if (ready.ok) releaseHolds();
+        return { ...ready, reached: [...slots.values()].some(slot => slot.reached) };
+    }
+
+    /**
+     * Wait until every worker of the plan is healthy and has acknowledged its revision, and was
+     * launched while `<code>/current` held `releaseId`. Resolves `{ ok, code, worker, reached }`;
+     * `reached` is true once any worker got past /health since it was launched.
+     */
+    async function verifyRunning({ releaseId = null, timeoutMs = policy.readyTimeoutMs } = {}) {
+        const deadline = ms() + timeoutMs;
+        const ordered = plan.workers.map(worker => slotFor(worker));
+        if (plan.error) return { ok: false, code: plan.error, reached: false };
+        if (ordered.length === 0) return { ok: false, code: 'NO_WORKERS', reached: false };
+        const reachedAny = () => ordered.some(slot => slot.reached);
+        for (const slot of ordered) {
+            for (;;) {
+                if (abandoned || stopping) return { ok: false, code: 'INTERRUPTED', worker: slot.worker.name, reached: reachedAny() };
+                if (slot.state === 'conflict') return { ok: false, code: slot.lastCode || 'CONFLICT', worker: slot.worker.name, reached: reachedAny() };
+                const ready = slot.ready ? await Promise.race([slot.ready, sleep(Math.max(1, deadline - ms())).then(() => ({ ok: false, code: 'VERIFY_TIMEOUT' }))]) : { ok: false, code: 'NOT_STARTED' };
+                if (ready.ok) break;
+                if (ready.code === 'SUPERSEDED' && ms() < deadline) {
+                    await sleep(policy.pollMs);
+                    continue;
+                }
+                return { ok: false, code: ready.code, worker: slot.worker.name, reached: reachedAny() };
+            }
+            if (releaseId && slot.releaseId && slot.releaseId !== releaseId) {
+                return { ok: false, code: 'RELEASE_MISMATCH', worker: slot.worker.name, reached: reachedAny() };
+            }
+        }
+        return { ok: true, code: null, reached: reachedAny() };
+    }
+
     /** The HTTP ack path: the per-start token and the pid must match the running start. */
     function ack({ worker, revision, pid, token }) {
         const slot = slots.get(worker);
@@ -998,6 +1057,8 @@ function createSupervisor({
         commit,
         restartNow,
         operatorRestart,
+        restartAll,
+        verifyRunning,
         ack,
         fenceTargets,
         fenceAck,

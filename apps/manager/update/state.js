@@ -9,13 +9,14 @@
  *   watchdog.json    the release to put back if the new manager never reaches `verify`
  *   recovery.json    a schema-changing update that failed after the database was in use
  *   scheduled.json   an apply waiting for its window
+ *   last-apply.json  how the last apply ended (applied, rolled_back, recovery, abandoned) and its downtime
  */
 
 const nodeFs = require('node:fs');
 const path = require('node:path');
 const files = require('../store/files');
 
-const NAMES = Object.freeze(['last-check', 'staged', 'handoff', 'watchdog', 'recovery', 'scheduled']);
+const NAMES = Object.freeze(['last-check', 'staged', 'handoff', 'watchdog', 'recovery', 'scheduled', 'last-apply']);
 
 function createUpdateState({ storeDir, fs = nodeFs, now = () => new Date() }) {
     const dir = path.join(storeDir, 'update');
