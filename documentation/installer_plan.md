@@ -606,6 +606,27 @@ start, and a schema-changing release that failed after `/health` left in
 have not run, and the proof ran with no registered service (no systemd in the
 test VM), so the service-registration refresh is proven by Jest only.
 
+**Status (P5.3, #343), operator runbooks: published, walked on Linux only.**
+`documentation/operator_runbooks.md` gives a second operator numbered
+procedures, with the commands, the expected result and the refusal code with its
+remedy, for getting started on Linux, Windows and macOS (first owner without
+Discord, first chat), the feature and configuration reference, service
+ownership, network access, backup and recovery, migration and rollback, upgrade
+and uninstall, each with a "what this cannot do" line. The Linux getting-started,
+backup and restore, feature toggle and uninstall procedures were executed from
+that document on a Linux x64 machine (no systemd, no Discord) and the document
+was corrected where a step did not work as written; the Windows and macOS
+procedures, systemd registration, adoption, SQLite to Postgres migration,
+Docker-managed Postgres and `update apply` were not run. The walk found
+problems that need a source change and are recorded in the document rather
+than fixed there: the command-line `restore` can exit 1 with no message and
+leave a held barrier, a full uninstall leaves `config.json.pre-restore-<time>`,
+and several manager operations have no command-line verb. The accessibility
+record is `documentation/accessibility_review.md`. Open owner decisions the
+runbooks name and do not close: #249 (the restore drill on a real second host),
+#255 (authentication policy), #262 (public listing) and the signing material
+for #372.
+
 ## Audits before implementation
 
 | Id | Question | Needed by | Result |
