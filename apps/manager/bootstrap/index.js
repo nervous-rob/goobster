@@ -125,6 +125,25 @@ function buildInstallAnswers(given, { payload, args, roots, euid }) {
     return answers;
 }
 
+/**
+ * As root the manager creates the roots' missing parents private (0700), which the service
+ * account cannot then enter. Create the parents here, readable and searchable, before the install.
+ */
+function prepareAncestors(roots, fs) {
+    const wanted = [roots.code, roots.data, path.dirname(roots.config), roots.cache, roots.logs, roots.managerStore];
+    for (const root of wanted) {
+        if (typeof root !== 'string' || !path.isAbsolute(root)) continue;
+        const missing = [];
+        for (let dir = path.dirname(root); !fs.existsSync(dir) && path.dirname(dir) !== dir; dir = path.dirname(dir)) missing.push(dir);
+        for (const dir of missing.reverse()) {
+            try {
+                fs.mkdirSync(dir);
+                fs.chmodSync(dir, 0o755);
+            } catch { }
+        }
+    }
+}
+
 function writePrivateAnswers(answers, fs) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-answers-'));
     fs.chmodSync(dir, 0o700);
@@ -164,6 +183,7 @@ async function runHeadless(args, ctx) {
     const roots = defaultRoots({ env, euid, base: args.base });
     const given = cli.loadAnswers(path.resolve(args.answers), fs);
     const answers = buildInstallAnswers(given, { payload: ctx.payload, args, roots, euid });
+    if (euid === 0 && !args.dryRun) prepareAncestors({ ...roots, ...answers.roots }, fs);
     const tmp = writePrivateAnswers(answers, fs);
     const cliEnv = { ...env, ...rootsEnvironment({ ...roots, ...answers.roots }), GOOBSTER_RUNTIME_MODE: env.GOOBSTER_RUNTIME_MODE || 'standalone' };
     if (args.build === 'dev' && !args.signed) cliEnv.GOOBSTER_PAYLOAD_DEV_UNSIGNED = '1';
@@ -333,7 +353,7 @@ async function run(argv, io = {}) {
             spawn: io.spawn,
             onReady: io.onReady,
             pollMs: io.pollMs || POLL_MS,
-            signal: io.signal || signalFromProcess()
+            signal: io.signal || (args.headless ? null : signalFromProcess())
         };
         return args.headless ? await runHeadless(args, ctx) : await runWizard(args, ctx);
     } catch (error) {

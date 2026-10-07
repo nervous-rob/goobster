@@ -59,6 +59,7 @@ function defaultExec(file, args, { env, input } = {}) {
  * @param {number|null} [deps.euid]
  * @param {number|null} [deps.invokerUid]  the account that asked (sudo/pkexec say who)
  * @param {boolean} [deps.sandbox]         tests: a non-root helper acting on a private tree
+ * @param {boolean} [deps.checkReachability] tests: judge directory access even in a sandbox
  * @param {Function} [deps.exec]
  */
 function createHandler(deps = {}) {
@@ -152,6 +153,25 @@ function createHandler(deps = {}) {
         return { name: fields[0], uid: Number(fields[2]), gid: Number(fields[3]), home: fields[5] || null, shell: fields[6] || null };
     }
 
+    /** Whether `user` can search (x) every directory above `target`, judged from owner, primary group and mode. */
+    function unreachableAncestor(user, target) {
+        if (sandbox && deps.checkReachability !== true) return null;
+        let dir = path.dirname(target);
+        for (;;) {
+            let stat;
+            try {
+                stat = fs.statSync(dir);
+            } catch {
+                return null;
+            }
+            const bit = stat.uid === user.uid ? 0o100 : (stat.gid === user.gid ? 0o010 : 0o001);
+            if ((stat.mode & bit) === 0) return dir;
+            const parent = path.dirname(dir);
+            if (parent === dir) return null;
+            dir = parent;
+        }
+    }
+
     function unitPathFor(name) {
         return path.join(unitDir, unitText.unitFileName(name));
     }
@@ -195,7 +215,14 @@ function createHandler(deps = {}) {
         requireSystemd();
         verifyRecord(input);
         verifyInstall(input);
-        if (!lookupUser(input.runtimeUser)) throw refuse('RUNTIME_USER_MISSING', 'The runtime user does not exist; create it first.');
+        const runtimeAccount = lookupUser(input.runtimeUser);
+        if (!runtimeAccount) throw refuse('RUNTIME_USER_MISSING', 'The runtime user does not exist; create it first.');
+        for (const target of [input.codeRoot, ...unitText.ownedPaths({ roots: input.roots, mode: input.mode })]) {
+            const blocked = unreachableAncestor(runtimeAccount, target);
+            if (blocked) {
+                throw refuse('ROOT_NOT_REACHABLE', `${input.runtimeUser} cannot enter ${blocked}, which holds ${target}; give it search permission (chmod o+x '${blocked}') and run the install again.`);
+            }
+        }
         const file = unitPathFor(input.name);
         const duplicates = otherUnitsOf(input.installationId, file);
         if (duplicates.length > 0) throw refuse('SERVICE_DUPLICATE', `Another unit of this installation is registered (${duplicates[0]}); unregister it first.`);

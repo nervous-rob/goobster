@@ -280,6 +280,26 @@ describe('--headless --answers', () => {
     });
 });
 
+describe('roots under directories that do not exist yet', () => {
+    test('as root the missing parents are created searchable, so the service account can reach the roots', async () => {
+        const base = scratch('as-root-nested');
+        const file = writeAnswers(scratch('as-root-nested-answers'), { roots: { data: path.join(base, 'a b', 'deep', 'data'), managerStore: path.join(base, 'a b', 'deep', 'data', 'manager') } });
+        const real = require('@goobster/manager/cli');
+        const cli = { loadAnswers: real.loadAnswers, run: async () => 1 };
+        process.umask(0o077);
+        try {
+            await bootstrap.run(['--payload', payload(), '--payload-digest', DIGEST, '--build', 'dev', '--headless', '--answers', file, '--base', base], {
+                env: await environment(base), stdout: sink(), stderr: sink(), euid: 0, cli
+            });
+        } finally {
+            process.umask(0o022);
+        }
+        for (const dir of [path.join(base, 'a b'), path.join(base, 'a b', 'deep')]) {
+            expect(fs.statSync(dir).mode & 0o777).toBe(0o755);
+        }
+    });
+});
+
 describe('the wizard', () => {
     function get(port, urlPath) {
         return new Promise((resolve, reject) => {

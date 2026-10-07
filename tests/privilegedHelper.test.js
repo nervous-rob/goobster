@@ -253,6 +253,24 @@ describe('service.register / service.unregister', () => {
         expect(call(noUser, 'service.register', registerInput(withPayload)).reply).toMatchObject({ code: 'RUNTIME_USER_MISSING' });
     });
 
+    test('a root the runtime user cannot reach is refused with the directory to fix', () => {
+        const sandbox = makeSandbox();
+        const roots = makeInstallation(sandbox);
+        fs.appendFileSync(path.join(sandbox.fake, 'passwd'), 'goobster:x:990:990::/nonexistent:/usr/sbin/nologin\n');
+        const parent = path.dirname(roots.data);
+        const mode = (value) => { for (const dir of [sandbox.base, path.join(sandbox.base, 'opt'), parent]) fs.chmodSync(dir, value); };
+        mode(0o755);
+        fs.chmodSync(parent, 0o700);
+        const refused = call(sandbox, 'service.register', registerInput(roots), { checkReachability: true });
+        expect(refused.reply).toMatchObject({ ok: false, code: 'ROOT_NOT_REACHABLE' });
+        expect(refused.reply.message).toContain(parent);
+        expect(fs.existsSync(path.join(sandbox.unitDir, 'goobster.service'))).toBe(false);
+
+        fs.chmodSync(parent, 0o755);
+        const accepted = call(sandbox, 'service.register', registerInput(roots), { checkReachability: true });
+        expect(accepted.reply.ok).toBe(true);
+    });
+
     test('a missing systemctl is reported, not guessed at', () => {
         const sandbox = makeSandbox();
         const roots = makeInstallation(sandbox);
