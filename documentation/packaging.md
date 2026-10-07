@@ -58,7 +58,9 @@ It is pure and deterministic and has no timestamps.
   Anything reached by core, or by two features, is shared and stays while
   any owner is selected.
 - **Unreferenced packages** are reported and **left out of every payload**.
-  Today these are `play-dl` and `play-audio` (finding B5).
+  Today there are none: `play-dl` and `play-audio` (finding B5) were the
+  only ones and are no longer declared. `tests/payloadManifest.test.js`
+  fails if a new one appears.
 - **System dependencies** (ffmpeg, the music Python venv, bubblewrap,
   Ollama) are listed per group with their kind. They are never shipped
   inside the payload and never uninstalled by it. See "Adding and removing
@@ -297,7 +299,8 @@ in this order:
 `node app/scripts/lib/payloadStage.js verify <dir> [--target <id>] [--abi <n>] [--core <version>] [--public-key <pem>] [--dev]`
 prints `{ ok, code, message }` and the summary as JSON. It exits 0 when the
 payload verifies, 2 when it is refused and 1 on a usage error. CI's tamper
-probes use it.
+probes use it; from a source checkout the same command is
+`npm run package:verify -- <dir> [options]`.
 
 ## Staging and activation
 

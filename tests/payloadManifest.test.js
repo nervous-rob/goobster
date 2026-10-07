@@ -213,12 +213,32 @@ describe('ownership', () => {
         expect(seen.size).toBeGreaterThan(50);
     });
 
-    test('play-dl and play-audio are reported unreferenced and in no group', () => {
-        expect(manifest.unreferenced.map(entry => entry.name).sort()).toEqual(['play-audio', 'play-dl']);
-        for (const entry of manifest.unreferenced) expect(entry.reason).toMatch(/imported by no source file|only required by unreferenced/);
+    test('no declared production dependency is unreferenced (play-dl and play-audio are gone, finding B5)', () => {
+        // A package nobody imports would be reported here and left out of
+        // every payload; the manifests no longer declare one.
+        expect(manifest.unreferenced).toEqual([]);
         const names = new Set(manifest.dependencies.map(dep => dep.name));
         expect(names.has('play-dl')).toBe(false);
         expect(names.has('play-audio')).toBe(false);
+        for (const file of ['package.json', 'packages/core/package.json']) {
+            const declared = JSON.parse(fs.readFileSync(path.join(ROOT, file), 'utf8')).dependencies || {};
+            expect(Object.keys(declared)).not.toContain('play-dl');
+        }
+    });
+
+    test('a declared dependency that no source file imports is reported unreferenced', () => {
+        // The lockfile is the manifest's source of declared dependencies;
+        // add one that nothing requires (the shape play-dl had) and a
+        // package only it pulls in.
+        const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+        lock.packages['packages/core'].dependencies = { ...lock.packages['packages/core'].dependencies, 'left-over-dep': '^1.0.0' };
+        lock.packages['node_modules/left-over-dep'] = { version: '1.0.0', license: 'GPL-3.0', dependencies: { 'left-over-child': '^1.0.0' } };
+        lock.packages['node_modules/left-over-child'] = { version: '1.0.0', license: 'GPL-3.0' };
+        const again = payload.computeOwnership({ root: ROOT, catalog, target: TARGET, lock });
+        expect(again.unreferenced.map(entry => entry.name).sort()).toEqual(['left-over-child', 'left-over-dep']);
+        expect(again.unreferenced.find(entry => entry.name === 'left-over-dep').reason).toMatch(/imported by no source file/);
+        expect(again.unreferenced.find(entry => entry.name === 'left-over-child').reason).toMatch(/only required by unreferenced left-over-dep/);
+        expect(again.dependencies.some(dep => dep.name.startsWith('left-over-'))).toBe(false);
     });
 
     test('a dependency is exclusive only with one non-core owner', () => {

@@ -325,7 +325,10 @@ describeLinux.each(PROFILES)('reduced payload: $name', (profile) => {
                 expect(removedFeatures.has(id)).toBe(true);
             }
         }
-        expect(tree.excludedPackages).toEqual(expect.arrayContaining(['play-audio', 'play-dl']));
+        // Finding B5: the GPL packages are no longer declared at all, so a
+        // reduced tree neither keeps nor has to exclude them.
+        expect(tree.keptPackageKeys.some(key => /play-dl|play-audio/.test(key))).toBe(false);
+        expect(tree.excludedPackages).not.toEqual(expect.arrayContaining(['play-dl']));
     });
 
     test('apps/api boots: /health and the feature list answer', () => {

@@ -478,19 +478,17 @@ Hosted runners cannot prove this.
 **Licences.** The payload manifest lists every dependency licence.
 Findings, not legal advice:
 
-- `play-dl` (1.9.7) and `play-audio` (0.5.2) are **GPL-3.0** and are
-  declared in `package.json` but referenced by no source file. **Closed for
-  the payload by #328:** the ownership graph reports them as unreferenced
-  (`play-dl`: declared by `packages/core` but imported by no source file;
-  `play-audio`: only required by `play-dl`), `scripts/package-runtime.js`
-  deletes them from every payload before hashing, so they are in neither
-  the catalogue nor the licence list, and the smoke check's
-  `payload.exclusive-absence` fails if either directory is present. They are
-  still installed in development checkouts: `play-dl` is declared in the
-  root `package.json` and in `packages/core/package.json`, and `play-audio`
-  arrives only through it. Removing the `play-dl` line from both and
-  refreshing `package-lock.json` drops both packages; that change is left to
-  the maintainers of the manifests.
+- `play-dl` (1.9.7) and `play-audio` (0.5.2) are **GPL-3.0** and were
+  declared in `package.json` but referenced by no source file. **Closed by
+  #328:** the `play-dl` line is gone from the root `package.json` and from
+  `packages/core/package.json` and `package-lock.json` no longer carries
+  either package, so development checkouts stop installing them too. The
+  mechanism that caught them stays: the ownership graph reports any
+  production dependency no source file imports as unreferenced,
+  `scripts/package-runtime.js` deletes such packages from every payload
+  before hashing (so they reach neither the catalogue nor the licence
+  list), the smoke check's `payload.exclusive-absence` fails if one ships,
+  and `tests/payloadManifest.test.js` asserts the unreferenced list is empty.
 - libvips and the libraries sharp bundles with it are LGPL-3.0 and similar.
   They are shipped as separate shared libraries in `sharp/vendor`, which
   keeps them replaceable; sharp's own `THIRD-PARTY-NOTICES.md` is shipped in
