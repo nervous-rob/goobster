@@ -63,19 +63,4 @@ async function has(pip) {
     return Boolean(await db.get('SELECT 1 AS x FROM sandbox_packages WHERE pip = @pip', { pip }));
 }
 
-/**
- * /forget-me: the packages stay (they are host state every user shares),
- * but the requester/approver attribution goes.
- * @returns {number} rows anonymized
- */
-async function anonymizeUser(userId) {
-    return (await db.run(
-        `UPDATE sandbox_packages SET
-             requestedBy = CASE WHEN requestedBy = @userId THEN NULL ELSE requestedBy END,
-             approvedBy = CASE WHEN approvedBy = @userId THEN NULL ELSE approvedBy END
-         WHERE requestedBy = @userId OR approvedBy = @userId`,
-        { userId }
-    )).changes;
-}
-
-module.exports = { list, modules, requirements, record, has, anonymizeUser };
+module.exports = { list, modules, requirements, record, has };

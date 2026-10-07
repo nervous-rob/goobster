@@ -31,9 +31,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { discord } = require('../utils/optionalModule');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 
 const db = require('../db');
+const dormantData = require('./dormantDataService');
 const logger = require('../utils/logger');
 const { toGateway } = require('../gateway');
 const sandboxConfig = require('../config/sandboxConfig');
@@ -105,7 +107,9 @@ class SandboxRequestService {
 
     /** Lazy to avoid a require cycle (observatory -> sandbox -> here). */
     _getObservatory() {
-        return this._observatory || require('./observatoryService');
+        const observatory = this._observatory || requireOptional('./observatoryService', { feature: 'projects' });
+        if (!observatory) throw new SandboxRequestError(404, 'FEATURE_UNAVAILABLE', 'Projects are not installed on this server.');
+        return observatory;
     }
 
     /** Approvers for host-level mutations (operator-configured user ids). */
@@ -741,9 +745,7 @@ class SandboxRequestService {
 
     /** /forget-me: the user's request rows go; package attribution is nulled. */
     async forgetUser(userId) {
-        const requests = (await db.run('DELETE FROM sandbox_requests WHERE userId = @userId', { userId })).changes;
-        const packagesAnonymized = await store.anonymizeUser(userId);
-        return { requests, packagesAnonymized };
+        return dormantData.forgetSandboxRequests(userId);
     }
 }
 
