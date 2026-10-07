@@ -190,6 +190,26 @@ async function seed() {
         { u: USER, now: Date.now() });
     await db.run(`INSERT INTO web_chat_queue (userId, conversationId, position, message)
             VALUES (@u, NULL, 1, 'queued follow-up')`, { u: USER });
+
+    // developer integrations (#322): agent runs with prompts, queued
+    // confirmations, the audit trail, repo watches, the companion pairing
+    for (const [agentId, who] of [['agent-rob', USER], ['agent-alice', OTHER]]) {
+        await db.run(`INSERT INTO agent_runs (agentId, runId, guildId, channelId, userId, repo, prompt, status)
+                VALUES (@agentId, 'run-1', @g, 'c1', @who, 'acme/app', 'fix the login bug', 'RUNNING')`, { agentId, g: GUILD, who });
+    }
+    await db.run(`INSERT INTO pending_integration_actions (type, guildId, channelId, requestedBy, payload)
+            VALUES ('github-issue', @g, 'c1', @u, '{"repo":"acme/app","title":"rob issue"}')`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO pending_integration_actions (type, guildId, channelId, requestedBy, payload, status, resolvedBy)
+            VALUES ('agent-launch', @g, 'c1', @o, '{"prompt":"alice task"}', 'CONFIRMED', @u)`, { g: GUILD, o: OTHER, u: USER });
+    await db.run(`INSERT INTO pending_integration_actions (type, guildId, channelId, requestedBy, payload)
+            VALUES ('github-issue', @g, 'c1', @o, '{"title":"alice issue"}')`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO integration_audit (guildId, userId, action, detail) VALUES (@g, @u, 'agent.launch', '{"repo":"acme/app"}')`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO integration_audit (guildId, userId, action, detail) VALUES (@g, @o, 'agent.launch', '{"repo":"acme/app"}')`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO repo_watches (guildId, channelId, repo, createdBy) VALUES (@g, 'c1', 'acme/app', @u)`, { g: GUILD, u: USER });
+    await db.run(`INSERT INTO repo_watches (guildId, channelId, repo, createdBy) VALUES (@g, 'c1', 'acme/other', @o)`, { g: GUILD, o: OTHER });
+    await db.run(`INSERT INTO screen_vision_clients (userId, tokenHash, label) VALUES (@u, 'hash-rob', 'Rob PC')`, { u: USER });
+    await db.run(`INSERT INTO screen_vision_clients (userId, tokenHash, label) VALUES (@o, 'hash-alice', 'Alice PC')`, { o: OTHER });
+    await db.run(`INSERT INTO kg_reflection_runs (guildId, scopeKey, requestedBy, passes) VALUES (@g, 'GUILD', @u, '["distill"]')`, { g: GUILD, u: USER });
 }
 
 beforeAll(async () => {
@@ -228,6 +248,15 @@ describe('buildUserReport', () => {
         expect(report.observatory.triggers).toBe(1);
         expect(report.observatory.missions).toBe(1);
         expect(report.observatory.openMissions).toBe(1);
+    });
+
+    test('reports the developer-integration footprint without prompts or token hashes', async () => {
+        const report = await privacyService.buildUserReport({ guildId: GUILD, userId: USER });
+        expect(report.developerIntegrations).toEqual({ agentRuns: 1, pendingActions: 1, auditEntries: 1, repoWatches: 1 });
+        expect(report.screenVision).toMatchObject({ paired: true, label: 'Rob PC' });
+        const text = JSON.stringify({ d: report.developerIntegrations, s: report.screenVision });
+        expect(text).not.toContain('hash-rob');
+        expect(text).not.toContain('fix the login bug');
     });
 });
 
@@ -376,6 +405,34 @@ describe('forgetUser', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM messages WHERE conversationId = 20')).c).toBe(1);
         expect((await db.get('SELECT userId FROM usage_log WHERE inputTokens = 10')).userId).toBe(OTHER);
         expect((await db.get('SELECT COUNT(*) AS c FROM guild_activity WHERE userId = @id', { id: OTHER })).c).toBe(1);
+    });
+
+    test('erases the person\'s developer-integration footprint and anonymizes the shared records', async () => {
+        expect(counts.agentRuns).toBe(1);
+        expect(counts.pendingIntegrationActions).toBe(1);
+        expect(counts.screenVisionClients).toBe(1);
+        expect(counts.anonymizedIntegrationAudit).toBe(1);
+        expect(counts.anonymizedRepoWatches).toBe(1);
+        expect(counts.anonymizedIntegrationResolver).toBe(1);
+        expect(counts.anonymizedReflectionRuns).toBe(1);
+
+        expect((await db.get('SELECT COUNT(*) AS c FROM agent_runs WHERE userId = @id', { id: USER })).c).toBe(0);
+        expect((await db.get('SELECT COUNT(*) AS c FROM screen_vision_clients WHERE userId = @id', { id: USER })).c).toBe(0);
+        // someone else's request survives; only the resolver attribution goes
+        const approved = await db.get(`SELECT requestedBy, resolvedBy, status FROM pending_integration_actions WHERE type = 'agent-launch'`);
+        expect(approved).toEqual({ requestedBy: OTHER, resolvedBy: null, status: 'CONFIRMED' });
+        expect((await db.get('SELECT COUNT(*) AS c FROM pending_integration_actions')).c).toBe(2);
+        // guild-wide records keep the row and lose the person
+        expect((await db.get('SELECT COUNT(*) AS c FROM integration_audit')).c).toBe(2);
+        expect((await db.get('SELECT COUNT(*) AS c FROM integration_audit WHERE userId IS NULL')).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM repo_watches')).c).toBe(2);
+        expect((await db.get('SELECT COUNT(*) AS c FROM repo_watches WHERE createdBy IS NULL')).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_reflection_runs WHERE requestedBy IS NULL')).c).toBe(1);
+        // the other account is untouched
+        expect((await db.get('SELECT COUNT(*) AS c FROM agent_runs WHERE userId = @id', { id: OTHER })).c).toBe(1);
+        expect((await db.get('SELECT label FROM screen_vision_clients WHERE userId = @id', { id: OTHER })).label).toBe('Alice PC');
+        expect((await db.get('SELECT COUNT(*) AS c FROM integration_audit WHERE userId = @id', { id: OTHER })).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM repo_watches WHERE createdBy = @id', { id: OTHER })).c).toBe(1);
     });
 
     test('post-erasure audit reports zero user-attributed rows', async () => {
