@@ -23,6 +23,7 @@ const { ManagerError } = require('./errors');
 const { createTransportGuards } = require('./auth/transport');
 const coreBridge = require('@goobster/core/web/managerBridge');
 const privileged = require('./privileged');
+const { LABEL_SHAPE } = require('./engine/kinds/installation');
 
 const BODY_LIMIT = '64kb';
 const ACTOR_FIELDS = ['actor', 'principalId', 'actorId'];
@@ -163,17 +164,21 @@ function createManagerApp(manager, { logger = console, now = () => new Date() } 
 
     api.post('/claim', route(async (req) => {
         throttle('bootstrap');
-        if (manager.currentState().state !== 'unclaimed') {
-            throw new ManagerError(409, 'ALREADY_CLAIMED', 'This installation already exists; first-time setup is closed. Use local recovery.');
-        }
         const { credential, label, ...rest } = req.body;
         checkActor({ body: rest }, null);
         if (Object.keys(rest).length > 0) throw new ManagerError(400, 'INVALID_INPUT', 'The request has a field claim does not accept.');
+        if (typeof label !== 'string' || !LABEL_SHAPE.test(label.trim())) {
+            throw new ManagerError(400, 'INVALID_INPUT', '"label" must be 1 to 80 letters, digits, spaces or ._\'@()- characters.');
+        }
         try {
             manager.credentials.bootstrap.consume(credential);
         } catch (error) {
             noteFailure('bootstrap');
             throw error;
+        }
+        if (manager.currentState().state !== 'unclaimed') {
+            manager.credentials.bootstrap.revoke();
+            throw new ManagerError(409, 'ALREADY_CLAIMED', 'This installation already exists; first-time setup is closed. Use local recovery.');
         }
         const { operation, result } = await manager.engine.run('claim', { label }, { principal: null, via: 'bootstrap' });
         return {
