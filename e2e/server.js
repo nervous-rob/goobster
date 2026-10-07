@@ -26,7 +26,9 @@ process.env.GOOBSTER_DB_PATH = DB_PATH;
 process.env.GOOBSTER_OBSERVATORY_ENABLED = process.env.GOOBSTER_OBSERVATORY_ENABLED || '1';
 process.env.GOOBSTER_SANDBOX_ENABLED = process.env.GOOBSTER_SANDBOX_ENABLED || '1';
 
-const distIndex = path.join(ROOT, 'apps/web/dist/index.html');
+// GOOBSTER_E2E_WEB_DIST serves another built client, such as a payload's pruned copy.
+const WEB_DIST = process.env.GOOBSTER_E2E_WEB_DIST || path.join(ROOT, 'apps/web/dist');
+const distIndex = path.join(WEB_DIST, 'index.html');
 if (!fs.existsSync(distIndex)) {
     console.error('The web client is not built. Run npm run build:web.');
     process.exit(1);
@@ -609,7 +611,7 @@ async function main() {
             webapp: { enabled: true, devMode: true }
         },
         logger: { error: () => {}, warn: () => {}, info: () => {} },
-        deps: { observatory, followedSources, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }) }
+        deps: { observatory, followedSources, briefs: new ExpeditionBriefService({ ai: fakeBriefModel() }), webDistDir: WEB_DIST }
     });
 
     const app = express();
