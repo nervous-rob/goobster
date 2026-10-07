@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const protocol = require('./protocol');
 
-const PLATFORMS = Object.freeze({ linux: './linux' });
+const PLATFORMS = Object.freeze({ linux: () => require('./linux') });
 
 function readStdin() {
     try {
@@ -62,11 +62,11 @@ function execute(text, { platform = process.platform, deps = null, env = process
         const message = error instanceof protocol.HelperError ? error.message : 'The request could not be read.';
         return { reply: protocol.errorReply('unknown', code, message), code: 2 };
     }
-    const modulePath = PLATFORMS[platform];
-    if (!modulePath) {
+    const load = PLATFORMS[platform];
+    if (!load) {
         return { reply: protocol.errorReply(request.operation, 'PLATFORM_UNSUPPORTED', `There is no privileged helper for ${platform} yet.`), code: 1 };
     }
-    const implementation = require(modulePath);
+    const implementation = load();
     try {
         const handler = implementation.createHandler(deps || sandboxDeps(env));
         const result = handler.handle(request.operation, request.input);

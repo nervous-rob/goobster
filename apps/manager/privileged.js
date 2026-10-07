@@ -43,7 +43,7 @@ const IMPLEMENTED = Object.freeze({
 });
 
 const PLATFORM_MODULES = Object.freeze({
-    linux: './privileged/linux'
+    linux: () => require('./privileged/linux')
 });
 
 function isPrivileged(name) {
@@ -59,8 +59,8 @@ function request(name) {
 }
 
 function implementationFor(platform) {
-    const file = PLATFORM_MODULES[platform];
-    return file ? require(file) : null;
+    const load = PLATFORM_MODULES[platform];
+    return load ? load() : null;
 }
 
 function isImplemented(name, platform = process.platform) {

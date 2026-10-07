@@ -349,7 +349,7 @@ function describePlan(plan, kind, { dryRun }) {
     if (plan.database && plan.database.action) lines.push(`  database   ${plan.database.action}`);
     if (plan.confirmation && plan.confirmation.required) lines.push(`  confirm    ${plan.confirmation.satisfied ? 'given' : `required: --delete-data --confirm ${plan.installationId}`}`);
     if (plan.tombstone) lines.push('  tombstone  written, so the host is not reopened to a remote first claim');
-    if (plan.privilegedSteps && plan.privilegedSteps.length) lines.push(`  privileged ${plan.privilegedSteps.map(item => `${item.step} -> ${item.operation} (${item.status}: not implemented in this version)`).join('; ')}`);
+    if (plan.privilegedSteps && plan.privilegedSteps.length) lines.push(`  privileged ${plan.privilegedSteps.map(item => `${item.step} -> ${item.operation} (${item.status === 'needs-elevation' ? 'runs through the privileged helper: sudo or pkexec is asked; without them the install still completes' : `${item.status}: no helper for this platform in this version`})`).join('; ')}`);
     if (plan.preflight) {
         const blocks = plan.preflight.findings.filter(item => item.severity === 'block');
         const warns = plan.preflight.findings.filter(item => item.severity === 'warn');
@@ -571,7 +571,15 @@ async function run(argv, io = {}) {
             out(`${kindName}: ${applied.operation.status}${planned.plan.noop ? ' (nothing to change)' : ''}`);
             for (const item of steps) out(`  ${item.status.padEnd(8)} ${item.name}${item.code ? ` (${item.code})` : ''}`);
             if (applied.result && applied.result.restartRequired) out('Restart the manager and the application workers for the change to take effect.');
-            if (deferred.length) out(`Applied. ${deferred.length} step${deferred.length === 1 ? '' : 's'} (${deferred.join(', ')}) need the privileged helper, which is not available in this version; nothing was registered with the operating system.`);
+            if (deferred.length) out(`Applied. ${deferred.length} step${deferred.length === 1 ? '' : 's'} (${deferred.join(', ')}) need the privileged helper, which is not available on this platform in this version; nothing was registered with the operating system.`);
+            const service = applied.result && applied.result.service;
+            if (service && service.registered) out(`Service ${service.unit} registered and enabled (runs as ${service.runtimeUser}${service.active ? `, ${service.active}` : ''}).`);
+            if (service && service.fallback) {
+                out(`The service was not registered with the operating system (${service.reason || 'MANUAL_FALLBACK'}). The installation is complete; run the manager by hand:`);
+                out(`  ${service.foreground}`);
+                out('To start it at boot, as an administrator:');
+                for (const line of service.boot || []) out(`  ${line}`);
+            }
         }
         return finish(deferred.length ? EXIT.PRIVILEGE : EXIT.OK, {
             operation: { id: applied.operation.id, kind: kindName, status: applied.operation.status },
