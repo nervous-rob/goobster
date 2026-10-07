@@ -125,6 +125,7 @@ Status (issues #323 - #326 under epic #315):
 | Issue | Scope | State |
 |---|---|---|
 | #323 | `apps/manager`: own store, setup engine, bootstrap and recovery credentials, portal bridge, transport, privilege boundary, audit reconciliation | Workspace `apps/manager`, bridge minter `packages/core/web/managerBridge.js`, specs `tests/managerBoot.test.js`, `tests/managerAuth.test.js`, `tests/managerEngine.test.js`, `tests/managerBridge.test.js`; `documentation/manager.md` (PR pending review) |
+| #324 | Shared configuration: field catalog (`packages/core/config/fieldCatalog.js`), effective settings with sources, safe `config.json` writes (`configFile.js`), `config.set` and `defaults.set` kinds, `GET /manager/api/config`, explicit provider probes, instance defaults | `packages/core/config/{fieldCatalog,effectiveConfig,configFile}.js`, `providerProbeService.js`, `instanceDefaultsService.js`, `apps/manager/{configView.js,routes/config.js,engine/kinds/{config,defaults}.js}`, generator `scripts/generate-config-reference.js`, specs `tests/{configFieldCatalog,effectiveConfig,configFile,providerProbes,instanceDefaults,managerConfig}.test.js`; `documentation/manager_configuration.md`, `documentation/config_reference.md` (PR pending review) |
 
 Work:
 

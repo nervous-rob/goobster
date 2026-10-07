@@ -322,3 +322,23 @@ describe('masks and fingerprints', () => {
         expect(catalog.deletePath(doc, 'nope.nothing')).toBe(false);
     });
 });
+
+describe('generated reference', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const { render } = require('../scripts/generate-config-reference');
+
+    test('documentation/config_reference.md is exactly what the catalog renders, and lists every setting once', () => {
+        const file = fs.readFileSync(path.join(__dirname, '..', 'documentation', 'config_reference.md'), 'utf8');
+        expect(file).toBe(render());
+        for (const field of catalog.list()) {
+            expect(file.split(`| \`${field.id}\` |`).length - 1).toBe(1);
+        }
+    });
+
+    test('no secret default or example value is rendered', () => {
+        const text = render();
+        expect(text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+        expect(text).not.toMatch(/xox[bp]-/);
+    });
+});
