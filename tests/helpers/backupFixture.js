@@ -101,6 +101,8 @@ async function createBackupHarness({ root, dataDir, configPath, sqlitePath, dbUr
         manager.store.updateInstallation(draft => ({ ...draft, database: { engine: recordedEngine, external: true } }));
     }
 
+    manager.bridge.ensureKey(manager.store.readInstallation().doc.installationId);
+
     tune(settings.storeDir, TUNING);
     const fakes = createFakeWorkers();
     const supervisor = createSupervisor({ manager, adapter: fakes.adapter, checkHealth: fakes.checkHealth, sandboxActive: () => false, logger: { info() {}, warn() {}, error() {} }, policy: { ...FAST_POLICY } });
