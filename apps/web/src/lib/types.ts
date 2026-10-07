@@ -1380,7 +1380,8 @@ export type HostConfigReport = {
 export type HostProbeOutcome = {
     target: string; ok: boolean; code: string; latencyMs: number; detail: string; whatItDoes: string; usedSaved: boolean;
 };
-export type HostOperationKind = 'features.set' | 'config.set' | 'defaults.set' | 'lifecycle.apply';
+export type HostOperationKind = 'features.set' | 'config.set' | 'defaults.set' | 'lifecycle.apply' | InstallOperationKind;
+export type InstallOperationKind = 'install.new' | 'install.reconfigure' | 'install.repair' | 'install.uninstall';
 export type HostPlanChange = {
     id: string; from?: boolean; to?: boolean; running?: boolean; action?: 'set' | 'remove'; secret?: boolean; apply?: string;
     section?: string; value?: unknown; ineffective?: boolean; controlledBy?: string;
@@ -1403,4 +1404,61 @@ export type HostPreview = {
 export type HostApplied = {
     operation: HostOperation;
     result: { revision?: number | string; pending?: string[]; restartRequired?: string[]; ineffective?: string[]; changed?: string[]; effect?: string } | null;
+};
+
+// Setup wizard (documentation/setup_wizard.md): the installation journeys, shared by the manager-served client and the Host room
+export type InstallRootRole = 'code' | 'data' | 'config' | 'cache' | 'logs' | 'uploads' | 'managerStore';
+export type InstallSuggest = {
+    platform: string; separator: string;
+    bases: Array<{ path: string; freeBytes: number | null }>;
+    roots: Record<InstallRootRole, { path: string; fixed: boolean; allowed: boolean; freeBytes?: number | null }>;
+    layout: { suggested: string; source: string; ready: boolean; problem: string | null; available: string[] };
+    database: { engines: Array<{ engine: string; available: boolean }>; configured: string };
+    ports: { workers: Array<{ name: string; port: number }>; manager: number | null; lan: boolean; host: string };
+    candidates: Array<{ id: string; kind: string; layout: string; dbEngine: string; code: string; evidence: string[] }>;
+    sources: InstallSource[];
+};
+export type InstallSource = {
+    dir: string; releaseId: string; version: string; target: string; totalBytes: number;
+    features: Array<{ id: string; title: string; summary: string; freshDefault: string; dependsOn: string[]; bytes: number; requires: string[]; system: Array<{ name: string; kind: string }> }>;
+};
+export type InstallRecord = {
+    installed: boolean; status?: string;
+    record: null | {
+        installationId: string; origin: string; createdAt: string; updatedAt: string | null; revision: number;
+        layout: string | null; roots: Record<InstallRootRole, string> | null;
+        release: { releaseId: string; version?: string; features: string[]; [key: string]: unknown } | null;
+        database: { engine: string; external?: boolean } | null;
+        updater: { kind: string } | null;
+        services: Array<{ kind: string; name: string }>;
+        dependencies: Array<{ name: string; ownedBy: string }>;
+    };
+};
+export type InstallFinding = { code: string; severity: 'block' | 'warn' | 'info'; detail: string };
+export type InstallStepRecord = { name: string; status: string; at?: string; detail?: { code?: string } };
+export type InstallOperation = {
+    id: string; kind: string; status: string; revision: number | string | null;
+    plan: {
+        action?: string; noop?: boolean; installationId?: string;
+        preflight?: { ok: boolean; findings: InstallFinding[] };
+        target?: { layout: string; roots: Record<string, string>; database: { engine: string }; features: string[]; previousRoots?: Record<string, string> };
+        source?: { bytes?: number; files?: number } | null;
+        steps?: Array<{ name: string; privileged?: string }>;
+        changes?: { roots?: boolean; layout?: boolean; config?: string[] };
+        config?: { settings: string[]; secretCount: number };
+        keepData?: boolean;
+        removes?: Array<{ role: string; path: string; scope: string }>;
+        retainedData?: { roots: string[]; paths?: string[]; existing?: boolean };
+        exclusiveDependencies?: string[]; systemDependenciesLeft?: string[];
+        database?: { engine: string; action: string };
+        services?: Array<{ kind: string; name: string; action?: string }>;
+        unknownServices?: Array<{ name?: string }>;
+        confirmation?: { required: boolean; satisfied: boolean };
+        current?: { present: boolean; healthy: boolean; code: string | null };
+        registerService?: boolean;
+        [key: string]: unknown;
+    };
+    steps: InstallStepRecord[];
+    createdAt?: string; updatedAt?: string;
+    error?: { code: string; message: string };
 };

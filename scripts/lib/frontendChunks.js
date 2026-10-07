@@ -181,6 +181,34 @@ function analyseDist(dist, { requires, frontend = {} }) {
     return { chunks: sorted, features, violations };
 }
 
+/**
+ * The setup client (apps/web/setup.html, built into `<dist>/setup`) belongs to
+ * no feature: the manager serves it before any feature is chosen. It is not in
+ * feature-chunks.json, so the payload manifest owns every file of it as core;
+ * this is the check that keeps that true - the page is there and no file in
+ * the folder carries a feature's chunk name.
+ * @param {string} dist
+ * @returns {string[]} problems (empty when the setup client is sound)
+ */
+function checkSetupClient(dist) {
+    const dir = path.join(dist, 'setup');
+    const problems = [];
+    if (!fs.existsSync(path.join(dir, 'index.html'))) return ['setup/index.html is missing'];
+    const walk = (current, rel) => {
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+            const name = rel ? `${rel}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) walk(path.join(current, entry.name), name);
+            else if (FEATURE_FILE.test(name)) problems.push(`${name} is named like a feature chunk`);
+        }
+    };
+    walk(dir, '');
+    const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+    const referenced = [...html.matchAll(/(?:src|href)="\/manager\/(assets\/[^"]+)"/g)].map(match => match[1]);
+    if (referenced.length === 0) problems.push('setup/index.html references no script');
+    for (const file of referenced) if (!fs.existsSync(path.join(dir, file))) problems.push(`${file} is referenced but missing`);
+    return problems;
+}
+
 function writeFeatureChunks(dist, analysis) {
     const body = { version: VERSION, chunks: analysis.chunks };
     fs.writeFileSync(path.join(dist, CHUNKS_FILE), `${JSON.stringify(body, null, 2)}\n`);
@@ -236,6 +264,7 @@ module.exports = {
     chunkFeature,
     fileFeature,
     analyseDist,
+    checkSetupClient,
     writeFeatureChunks,
     readFeatureChunks,
     pruneDist

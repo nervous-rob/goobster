@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { ApiError } from '../../lib/api';
+import { useHostTransport } from './transport';
 import type { HostConfigField } from '../../lib/types';
 
 export const HOST_KEYS = {
@@ -44,6 +45,13 @@ export function SourceBadge({ source }: { source: HostConfigField['source'] }) {
 
 /** The portal docs pages a recovery sentence can point at (slugs from apps/web/docs/manifest.json). */
 export function DocLink({ slug, children, hash }: { slug: string; children: string; hash?: string }) {
+    const transport = useHostTransport();
+    if (transport) {
+        const href = transport.docHref ? transport.docHref(slug, hash) : null;
+        return href
+            ? <a href={href} target="_blank" rel="noreferrer noopener" className="feature-doc-link">{children}</a>
+            : <span className="hint">{children}</span>;
+    }
     return <Link to="/docs/$slug" params={{ slug }} hash={hash} className="feature-doc-link">{children}</Link>;
 }
 

@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import type { HostConfigField, HostConfigReport, HostConfigSection } from '../../lib/types';
 import { ChangeReview } from './ChangeReview';
 import { FieldControl, PROBE_FIELD, type FieldDraft } from './FieldControl';
+import { buildChanges, type Drafts } from './drafts';
 import { LifecyclePanel } from './LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './ManagerCard';
 import { DocLink, HOST_KEYS } from './shared';
@@ -17,26 +18,6 @@ const RETENTION_FIELD = 'defaults.memory.chatHistoryRetentionDays';
 
 const ENV_READONLY = (field: HostConfigField) =>
     `Set by the environment variable ${field.envName || 'for this field'}. Change the environment and restart; it cannot be changed from here.`;
-
-type Drafts = Record<string, FieldDraft>;
-
-function parseValue(field: HostConfigField, draft: FieldDraft): { value?: unknown; invalid?: string } {
-    if (draft.action === 'remove') return {};
-    const raw = draft.value;
-    if (field.type === 'boolean') return { value: raw === true };
-    const text = String(raw).trim();
-    if (field.secret) return text ? { value: String(raw) } : { invalid: 'Type the new value, or cancel.' };
-    if (text === '') return { invalid: 'This needs a value; use "Use the default" to clear it.' };
-    if (field.type === 'integer' || field.type === 'number') {
-        const number = Number(text);
-        if (!Number.isFinite(number) || (field.type === 'integer' && !Number.isInteger(number))) return { invalid: 'This must be a number.' };
-        if (field.min !== undefined && number < field.min) return { invalid: `The smallest value is ${field.min}.` };
-        if (field.max !== undefined && number > field.max) return { invalid: `The largest value is ${field.max}.` };
-        return { value: number };
-    }
-    if (field.type === 'list') return { value: text.split(',').map((item) => item.trim()).filter(Boolean) };
-    return { value: text };
-}
 
 function useConfig() {
     const query = useQuery({ queryKey: HOST_KEYS.config, queryFn: () => api.hostConfig() });
@@ -67,23 +48,6 @@ function Section({ section, drafts, setDraft, readOnlyFor, probes }: {
             </ul>
         </section>
     );
-}
-
-/** Drafts to the manager's `changes`, or the first thing wrong with them. */
-function buildChanges(fields: Map<string, HostConfigField>, drafts: Drafts): { changes: Array<Record<string, unknown>>; problem: string | null } {
-    const changes: Array<Record<string, unknown>> = [];
-    let problem: string | null = null;
-    for (const [id, draft] of Object.entries(drafts)) {
-        const field = fields.get(id);
-        if (!field) continue;
-        const parsed = parseValue(field, draft);
-        if (parsed.invalid) {
-            problem = `${id}: ${parsed.invalid}`;
-            continue;
-        }
-        changes.push(draft.action === 'remove' ? { id, action: 'remove' } : { id, action: 'set', value: parsed.value });
-    }
-    return { changes, problem };
 }
 
 function useDrafts() {

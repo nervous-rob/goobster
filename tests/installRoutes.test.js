@@ -248,6 +248,8 @@ describe('GET /install/first-run', () => {
             ['config', true], ['features', true], ['database', true], ['owner', true], ['workers', true], ['portal', true]
         ]);
         expect(res.body.ok).toBe(true);
+        expect(res.body.portal).toMatchObject({ worker: 'bot' });
+        expect(res.body.portal.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/app\/$/);
     });
 
     test('an owner that does not exist yet fails only that item', async () => {

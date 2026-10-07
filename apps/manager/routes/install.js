@@ -49,10 +49,16 @@ function freeBytes(target, fs, statfs) {
 function sourceSummary(dir, fs) {
     const { manifest, releaseId, dir: real } = release.loadManifest(dir, fs);
     const size = new Map(manifest.files.map(file => [file.path, file.size]));
+    const catalog = require('@goobster/core/features/catalog');
     const features = Object.keys(manifest.groups).sort((a, b) => (a === 'core' ? -1 : b === 'core' ? 1 : (a < b ? -1 : 1))).map((id) => {
         const group = manifest.groups[id];
+        const known = catalog.FEATURE_IDS.includes(id) ? catalog.get(id) : null;
         return {
             id,
+            title: known ? known.title : id,
+            summary: known ? known.summary : '',
+            freshDefault: known ? known.freshDefault : 'off',
+            dependsOn: known ? [...known.dependsOn] : [],
             bytes: (group.files || []).reduce((sum, rel) => sum + (size.get(rel) || 0), 0),
             requires: group.requires || [],
             system: (group.system || []).map(item => ({ name: item.name, kind: item.kind }))
@@ -191,8 +197,8 @@ function createInstallMount() {
 
         api.get('/install/first-run', route(async (req) => {
             readAuth(req);
-            const checks = await firstRun();
-            return { ok: checks.every(item => item.ok === true), checks };
+            const { checks, portal } = await firstRun();
+            return { ok: checks.every(item => item.ok === true), checks, portal };
         }));
 
         async function firstRun() {
@@ -255,7 +261,9 @@ function createInstallMount() {
             const portalHealthy = portal ? (workers.find(worker => worker.name === portal.name) || {}).healthy === true : false;
             add('portal', 'Web portal', portalHealthy, portalHealthy ? 'the portal answers its health check' : 'the portal does not answer yet',
                 'Wait a few seconds and check again; if it stays down the process log in the logs folder says why.');
-            return out;
+            let origin = null;
+            try { origin = portal ? new URL(portal.healthUrl).origin : null; } catch { }
+            return { checks: out, portal: origin ? { url: `${origin}/app/`, port: Number(new URL(origin).port) || null, worker: portal.name } : null };
         }
     };
 }

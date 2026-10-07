@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api } from '../../lib/api';
 import type { HostConfigField, HostConfigReport, HostProbeOutcome } from '../../lib/types';
 import { failureOf, HelpLink, SourceBadge } from './shared';
+import { useProbe } from './transport';
 
 export type FieldDraft = { action: 'set'; value: string | boolean } | { action: 'remove' };
 export type ProbeTarget = HostConfigReport['probes'][number];
@@ -39,6 +39,7 @@ function ProbeControl({ field, probe, typed }: { field: HostConfigField; probe: 
     const [outcome, setOutcome] = useState<HostProbeOutcome | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const runProbe = useProbe();
     const usingTyped = probe.needsCredential && typed.length > 0;
     const canRun = usingTyped || field.present || !probe.needsCredential;
 
@@ -47,7 +48,7 @@ function ProbeControl({ field, probe, typed }: { field: HostConfigField; probe: 
         setOutcome(null);
         setError(null);
         try {
-            setOutcome(await api.hostProbe(usingTyped ? { target: probe.target, credential: typed } : { target: probe.target, useSaved: true }));
+            setOutcome(await runProbe(usingTyped ? { target: probe.target, credential: typed } : { target: probe.target, useSaved: true }));
         } catch (cause) {
             setError(failureOf(cause).message);
         } finally {

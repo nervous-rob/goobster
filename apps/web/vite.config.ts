@@ -1,4 +1,4 @@
-import { defineConfig, normalizePath, type Plugin } from 'vite';
+import { build as viteBuild, defineConfig, normalizePath, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -120,8 +120,28 @@ function featureChunksPlugin(): Plugin {
     };
 }
 
+/**
+ * The setup client is a second, separate build (vite.setup.config.ts) that
+ * lands in dist/setup, so `npm run build:web` produces both. It shares no
+ * chunk with the portal and has no feature labels: checkSetupClient fails the
+ * build if a file of it is named like a feature's or the page is missing.
+ */
+function setupClientPlugin(): Plugin {
+    return {
+        name: 'goobster-setup-client',
+        apply: 'build',
+        async closeBundle(error?: Error) {
+            if (error) return;
+            const dist = path.join(root, 'dist');
+            await viteBuild({ configFile: path.join(root, 'vite.setup.config.ts'), logLevel: 'warn' });
+            const problems = frontendChunks.checkSetupClient(dist) as string[];
+            if (problems.length) this.error(`the setup client is not core: ${problems.join('; ')}`);
+        }
+    };
+}
+
 export default defineConfig({
-    plugins: [react(), stableCssPlugin(), documentationPlugin(), featureChunksPlugin()],
+    plugins: [react(), stableCssPlugin(), documentationPlugin(), featureChunksPlugin(), setupClientPlugin()],
     base: '/app/',
     resolve: {
         alias: {

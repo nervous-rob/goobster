@@ -1,5 +1,5 @@
 import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, PushStatus } from './types';
-import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome } from './types';
+import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -149,6 +149,10 @@ export const api = {
     hostApply: (id: string) =>
         request<HostApplied>(`/api/app/admin/host/operations/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
     hostLifecycle: () => request<HostLifecycle>('/api/app/admin/host/lifecycle'),
+    hostInstallSuggest: () => request<InstallSuggest>('/api/app/admin/host/install/suggest'),
+    hostInstallRecord: () => request<InstallRecord>('/api/app/admin/host/install/record'),
+    hostInstallSource: (dir: string) => request<InstallSource>(`/api/app/admin/host/install/source?dir=${encodeURIComponent(dir)}`),
+    hostOperation: (id: string) => request<{ operation: InstallOperation }>(`/api/app/admin/host/operations/${encodeURIComponent(id)}`),
     hostLifecycleAction: (action: 'restart-now' | 'cancel' | 'restart') =>
         request<{ operation: unknown; result: unknown }>(`/api/app/admin/host/lifecycle/${action}`, { method: 'POST' }),
     adminTestMail: (to: string) => request<{ ok: true; provider: string }>('/api/app/admin/mail/test', { method: 'POST', body: { to } }),
