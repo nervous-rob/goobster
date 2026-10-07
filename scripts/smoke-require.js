@@ -23,6 +23,7 @@ const SOURCE_DIRS = [
     'apps/api/server.js',
     'apps/mcp/index.js',
     'apps/sandbox/server.js',
+    'apps/manager',
     'apps/bot/commands',
     'apps/bot/events',
     'apps/bot/web'
