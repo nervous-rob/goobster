@@ -563,6 +563,21 @@ describe('no state file: the installation behaves as it did before the catalog',
         expect(login503.json.error.code).toBe('LOGIN_UNAVAILABLE');
     });
 
+    test.each([
+        ['legacy switch off, no state file', () => useNoState({ config: {} }), false],
+        ['legacy switch on, no state file', () => useNoState({ config: { mcp: { enabled: true } } }), true],
+        ['state file turns MCP on over a default-off switch', () => useState({ off: [], config: {} }), true],
+        ['state file turns MCP off over an enabled switch', () => useState({ off: ['mcp'], config: { mcp: { enabled: true } } }), false]
+    ])('GET /api/app/mcp reports the value the endpoint serves by: %s', async (label, setup, expected) => {
+        setup();
+        mcpConfig._setForTests({ enabled: !expected });
+        const res = await call('GET', '/api/app/mcp', { headers: { Cookie: cookie } });
+        mcpConfig._setForTests(null);
+        expect(res.status).toBe(200);
+        expect(res.json.enabled).toBe(expected);
+        expect(res.json.enabled).toBe(features.isActive('mcp'));
+    });
+
     test('an unusable state file falls back to the same legacy behaviour', async () => {
         features._resetForTests({ fs: memoryFs({ [FILE]: 'not json' }), filePath: FILE, env: {}, config: {} });
         const mcpRoute = await call('GET', '/api/app/mcp', { headers: { Cookie: cookie } });

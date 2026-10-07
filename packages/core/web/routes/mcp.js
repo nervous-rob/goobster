@@ -4,8 +4,10 @@
  *
  * Creating and revoking a token is the signed-in person's own account
  * action. The plaintext secret is returned once from POST and is never
- * logged. The HTTP MCP endpoint is a separate opt-in (`mcp.enabled`);
- * these routes stay available so a token can be ready before that switch.
+ * logged. The HTTP MCP endpoint is a separate opt-in (the `mcp` feature:
+ * `mcp.enabled` or the feature state file); `enabled` in the GET answer is
+ * the same value the endpoint serves by. These routes stay available so a
+ * token can be ready (or revoked) while it is off.
  */
 
 const mcpConfig = require('../../config/mcpConfig');
@@ -17,7 +19,6 @@ function mountMcp(app, ctx, h) {
 
     app.get('/api/app/mcp', requireAuth, mcpRoute(async (req) => ({
         ...describeServer(),
-        enabled: mcpConfig.enabled,
         scopes: Object.values(mcpTokenService.SCOPES),
         defaultExpiryDays: mcpConfig.defaultTokenDays,
         maxExpiryDays: mcpConfig.maxTokenDays,

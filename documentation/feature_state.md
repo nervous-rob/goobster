@@ -101,7 +101,12 @@ routes that stay open so a token can be revoked). That is how the
 compatibility rule "no `features.json` means today's behaviour" holds by
 construction at every surface. `enforcedUnavailable()` is the list the
 surfaces refuse (the prompt line uses it); `unavailable()` is the reported
-list. Adoption, the first write of the file, turns enforcement on for every
+list. MCP is the one feature that serves by the reported value
+(`features.isActive('mcp')`, read by the HTTP mount, the surface, the stdio
+entry and the portal's `enabled` field alike), so a state file may switch it
+on beyond its legacy default-off `mcp.enabled` switch; that is the adoption
+path for a default-off adapter. Adoption, the first write of the file, turns
+enforcement on for every
 feature at the next startup snapshot.
 
 ## `data/features.json`
