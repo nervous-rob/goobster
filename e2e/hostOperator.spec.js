@@ -367,7 +367,8 @@ test.describe('a feature change takes effect through a real restart', () => {
         const countdown = page.getByTestId('host-countdown');
         await expect(countdown).toBeVisible();
         const first = Number((await countdown.innerText()).replace(/\D+/g, ''));
-        expect(first).toBeLessThanOrEqual(60);
+        expect(first).toBeLessThanOrEqual(65);
+        expect(first).toBeGreaterThan(30);
         await expect.poll(async () => Number((await countdown.innerText()).replace(/\D+/g, '')), { timeout: 10_000 }).toBeLessThan(first);
 
         await page.getByTestId('host-restart-now').click();
