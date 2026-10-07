@@ -10,6 +10,7 @@ import { whenLabel } from '../observatory/format';
 import { EXECUTION_OFF } from './Command';
 import { RunsList } from './RunsList';
 import type { Detail } from './types';
+import { featureActive } from '../../lib/rooms';
 
 const LATEST_RUNS = 3;
 
@@ -31,7 +32,7 @@ export function OverviewView({
     const me = useMe();
     const toast = useToast();
     const confirm = useConfirm();
-    const executionOn = Boolean(me.features?.observatory);
+    const executionOn = featureActive(me, 'observatory');
     const p = detail.project;
     const completed = detail.jobs.filter((j) => j.status === 'COMPLETED').length;
     const failed = detail.jobs.filter((j) => j.status === 'FAILED' || j.status === 'TIMED_OUT').length;

@@ -1,4 +1,5 @@
 ---
+feature: music
 title: Music Lab and Song Studio
 kind: guide
 summary: The Conservatory's browser music rooms and the Song Studio arranger — timeline, clips, sections, tracks, the wizard, handoffs, undo, keyboard shortcuts, export/import, recording, and shared songs edited live with other people.

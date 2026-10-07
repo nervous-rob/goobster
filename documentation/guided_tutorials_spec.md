@@ -120,6 +120,18 @@ Events are idempotent. A stale tab cannot resurrect progress from before a reset
 
 Tutorial progress and feedback rows are per-user data: `privacyService.forgetUser` / `auditUser` / `buildUserReport` cover them.
 
+## Availability
+
+A tour belongs to the features it teaches, and a feature is an installation-level fact ([feature_state.md](feature_state.md); [features.md](features.md)). Each catalog entry declares `requires: { feature }` (one id or a list), and `tests/featureGatingPortal.test.js` fails when a declaration drifts from the feature inventory. Requirements that matter: `knowledge.research` needs `expeditions`; `projects.*` need `projects`, and `projects.runs` also needs `observatory`; `trading.basics` needs `exchange` and `discord`; `music.*` need `music`; `knowledge.basics` needs `knowledge`.
+
+When a required feature is not active on this installation:
+
+- `GET /api/app/tutorials` still lists the tour, with `available: false`, `launchable: false` and `unavailable: { feature, reasons }` (the same sanitized reason codes as `/api/app/features`; a dependency is named by id). Settings → Tutorials shows it as "Not available on this installation" with the reason and the note that its progress is kept; Resume, Replay and Reset are not offered, and the client never launches it or offers it on first entry.
+- Every action that would change it is refused with `404 { error: { code: 'FEATURE_UNAVAILABLE', details: { feature } } }` through `gate.requireSurface('tutorial', id)`: `start`, `complete_step`, `skip_step`, `skip_tutorial`, `pause`, `back`, `finish`, feedback, the per-tour reset and any demo action. Reset-all skips it. It is never marked complete, and its progress rows are left exactly as they were.
+- Disabled is not deleted. When the host turns the feature back on after a restart, the tour is launchable again and resumes from the saved step.
+
+The server's refusal follows the one enforcement rule the other gates use (a `features.json` in force, a `GOOBSTER_FEATURE_<ID>=0` override, or an enforced-off dependency), so with no `data/features.json` nothing new is refused. One deliberate addition: the caller's legacy capability snapshot (a `projects` or Discord switch the host turned off) also refuses the tour, which is what the old catalog did by omission, so an unavailable tour never launches. Operator-only and host-only tours (`admin.instance`) are still omitted for ordinary accounts, not listed unavailable: that is a role, not an installation fact.
+
 ## UI integration and accessibility
 
 `TutorialProvider` and `TutorialPanel` mount inside the authenticated account scope (`apps/web/src/tutorials/`). Resolve room IDs from the route registry. Add stable `data-tour` anchors to actual controls rather than selectors based on translated labels or brittle CSS structure. F1 targets existing anchors; add an anchor only where a step has nowhere to point. Missing anchors explain themselves and offer skip or continue — never spin forever. A tutorial failure must not break the room.

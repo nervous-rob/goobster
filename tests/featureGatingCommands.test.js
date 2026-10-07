@@ -198,17 +198,70 @@ describe('command deployment and loading share one filter', () => {
         expect(inactive).toContain('music/contextMenu.js');
     });
 
-    test('a command file the inventory does not claim is left out (fail closed), never loaded', () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gating-unclaimed-'));
-        fs.mkdirSync(path.join(dir, 'chat'));
-        fs.writeFileSync(path.join(dir, 'chat', 'chat.js'), "module.exports = { data: { name: 'chat', toJSON: () => ({ name: 'chat' }) }, execute() {} };\n");
-        fs.writeFileSync(path.join(dir, 'chat', 'rogue.js'), "throw new Error('must never be required');\n");
-        useState();
-        const listed = listCommandFiles(dir, { filter: featureCommandFilter });
-        expect(listed.active.map(entry => entry.key)).toEqual(['chat/chat.js']);
-        expect(listed.inactive).toEqual([expect.objectContaining({ key: 'chat/rogue.js', reason: 'UNCLAIMED_SURFACE' })]);
-        expect(() => collectCommandPayloads(dir, { filter: featureCommandFilter })).not.toThrow();
-        fs.rmSync(dir, { recursive: true, force: true });
+    describe('a command file the inventory does not claim (an operator\'s own command)', () => {
+        let dir;
+        beforeEach(() => {
+            dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gating-unclaimed-'));
+            fs.mkdirSync(path.join(dir, 'chat'));
+            fs.writeFileSync(path.join(dir, 'chat', 'chat.js'), "module.exports = { data: { name: 'chat', toJSON: () => ({ name: 'chat' }) }, execute() {} };\n");
+            fs.writeFileSync(path.join(dir, 'chat', 'rogue.js'), "module.exports = { data: { name: 'rogue', toJSON: () => ({ name: 'rogue' }) }, execute() {} };\n");
+        });
+        afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+        test('no state file: it is loaded and deployed exactly as before the inventory, with a warning naming it', () => {
+            useState();
+            expect(features.status().source).toBe('none');
+            const logs = [];
+            const listed = listCommandFiles(dir, { filter: featureCommandFilter, log: (...args) => logs.push(args.join(' ')) });
+            expect(listed.active.map(entry => entry.key).sort()).toEqual(['chat/chat.js', 'chat/rogue.js']);
+            expect(listed.inactive).toEqual([]);
+            expect(listed.active.find(entry => entry.key === 'chat/rogue.js').unclaimed).toBe(true);
+            expect(listed.active.find(entry => entry.key === 'chat/chat.js').unclaimed).toBeUndefined();
+            const warning = logs.find(line => line.includes('chat/rogue.js'));
+            expect(warning).toMatch(/not claimed by the feature inventory/);
+            expect(warning).not.toMatch(/feature is not active/);
+            expect(logs.filter(line => /not claimed/.test(line))).toHaveLength(1);
+
+            const payload = collectCommandPayloads(dir, { filter: featureCommandFilter });
+            expect(payload.guildCommands.map(command => command.name).sort()).toEqual(['chat', 'rogue']);
+            expect(payload.skipped).toEqual([]);
+        });
+
+        test('an env override alone is not a state file: the command is still allowed', () => {
+            useState({ env: { GOOBSTER_FEATURE_MUSIC: 'off' } });
+            expect(features.status().source).toBe('none');
+            expect(listCommandFiles(dir, { filter: featureCommandFilter }).active.map(entry => entry.key))
+                .toContain('chat/rogue.js');
+        });
+
+        test('a state file in force: it fails closed with the accurate reason and is never required', () => {
+            fs.writeFileSync(path.join(dir, 'chat', 'rogue.js'), "throw new Error('must never be required');\n");
+            useState({ inactive: [] });
+            expect(features.status().source).toBe('file');
+            const logs = [];
+            const listed = listCommandFiles(dir, { filter: featureCommandFilter });
+            expect(listed.active.map(entry => entry.key)).toEqual(['chat/chat.js']);
+            expect(listed.inactive).toEqual([expect.objectContaining({ key: 'chat/rogue.js', reason: 'UNCLAIMED_SURFACE' })]);
+            expect(() => collectCommandPayloads(dir, { filter: featureCommandFilter, log: (...args) => logs.push(args.join(' ')) })).not.toThrow();
+            const skipLine = logs.find(line => line.includes('chat/rogue.js'));
+            expect(skipLine).toMatch(/not claimed by the feature inventory/);
+            expect(skipLine).not.toMatch(/its feature is not available/);
+        });
+
+        test('the stale-interaction path agrees with the loader: allowed with no file, refused with one', async () => {
+            const index = new Map([['rogue', { kind: 'command', key: 'chat/rogue.js' }]]);
+            const interaction = { commandName: 'rogue', isAutocomplete: () => false, reply: jest.fn(async () => {}) };
+            useState();
+            expect(await interactionCreate.refuseUnavailableCommand(interaction, index)).toBe(false);
+            useState({ inactive: [] });
+            expect(await interactionCreate.refuseUnavailableCommand(interaction, index)).toBe(true);
+        });
+
+        test('the real command tree is fully claimed, so none of this changes what loads in the repo', () => {
+            useState();
+            const listed = listCommandFiles(COMMANDS_DIR, { filter: featureCommandFilter });
+            expect(listed.active.filter(entry => entry.unclaimed)).toEqual([]);
+        });
     });
 
     test('a disabled command module is never required, so its top-level imports start nothing', () => {
@@ -265,6 +318,7 @@ describe('deploy hash', () => {
         expect(deploy).toMatch(/computeDeployHash\(/);
         expect(bot).toMatch(/filter: featureCommandFilter/);
         expect(bot).toMatch(/listCommandFiles\(/);
+        expect(bot).toMatch(/unclaimedCommandWarning\(/);
     });
 });
 
@@ -408,6 +462,30 @@ describe('stale buttons, modals and selects', () => {
         expect(mockHandlers.project).toHaveBeenCalledTimes(1);
     });
 
+    test('Deny on a sandbox request still resolves with sandbox off; Approve is refused', async () => {
+        useState({ config: EVERYTHING_ON, inactive: ['sandbox'] });
+        const deny = button('deny_sbxreq_7');
+        await interactionCreate.execute(deny);
+        expect(mockHandlers.sandbox).toHaveBeenCalledWith('deny', 7, deny);
+        expect(deny.reply).not.toHaveBeenCalled();
+
+        mockHandlers.sandbox.mockClear();
+        const approve = button('approve_sbxreq_7');
+        await interactionCreate.execute(approve);
+        expect(mockHandlers.sandbox).not.toHaveBeenCalled();
+        expect(approve.reply).toHaveBeenCalledWith(UNAVAILABLE);
+        expect(approve.deferUpdate).not.toHaveBeenCalled();
+    });
+
+    test('only the decline action of a resolve-only token is let through; other tokens and actions keep refusing', async () => {
+        useState({ config: EVERYTHING_ON, inactive: ['tavern', 'projects', 'sandbox'] });
+        for (const customId of ['deny_tavern_1', 'decline_projectinvite_1', 'confirm_sbxreq_1', 'cancel_sbxreq_1']) {
+            const interaction = button(customId);
+            await interactionCreate.execute(interaction);
+            expect({ customId, replied: interaction.reply.mock.calls.length }).toEqual({ customId, replied: 1 });
+        }
+    });
+
     test('core routed tokens are never refused, even with every optional feature off', async () => {
         useState({ config: EVERYTHING_ON, inactive: MANAGEABLE });
         for (const [customId, key] of [
@@ -443,6 +521,48 @@ describe('stale buttons, modals and selects', () => {
             expect(runSpy).not.toHaveBeenCalled();
             const row = await db.get('SELECT status FROM pending_integration_actions WHERE id = @id', { id });
             expect(row.status).toBe('PENDING');
+        });
+
+        test('Cancel still clears a pending action of a feature that is off; Confirm is refused', async () => {
+            const launch = await pending('agent-launch');
+            const issue = await pending('github-issue');
+            useState({ config: EVERYTHING_ON, inactive: ['github', 'cursor'] });
+            for (const id of [launch, issue]) {
+                mockHandlers.integration.mockClear();
+                const cancel = button(`deny_intaction_${id}`);
+                await interactionCreate.execute(cancel);
+                expect(mockHandlers.integration).toHaveBeenCalledWith('deny', id, cancel);
+                expect(cancel.reply).not.toHaveBeenCalled();
+
+                mockHandlers.integration.mockClear();
+                const confirm = button(`approve_intaction_${id}`);
+                await interactionCreate.execute(confirm);
+                expect(mockHandlers.integration).not.toHaveBeenCalled();
+                expect(confirm.reply).toHaveBeenCalledWith(UNAVAILABLE);
+            }
+        });
+
+        test('nothing enforced off: no pending_integration_actions read is added; with an owner off the row is read', async () => {
+            const id = await pending('github-issue');
+            const getSpy = jest.spyOn(db, 'get');
+            try {
+                useState({ config: EVERYTHING_ON });
+                getSpy.mockClear();
+                await interactionCreate.execute(button(`approve_intaction_${id}`));
+                expect(getSpy.mock.calls.filter(([sql]) => /pending_integration_actions/.test(sql))).toEqual([]);
+
+                useState({ config: EVERYTHING_ON, inactive: ['tavern'] });
+                getSpy.mockClear();
+                await interactionCreate.execute(button(`approve_intaction_${id}`));
+                expect(getSpy.mock.calls.filter(([sql]) => /pending_integration_actions/.test(sql))).toEqual([]);
+
+                useState({ config: EVERYTHING_ON, inactive: ['github'] });
+                getSpy.mockClear();
+                await interactionCreate.execute(button(`approve_intaction_${id}`));
+                expect(getSpy.mock.calls.filter(([sql]) => /pending_integration_actions/.test(sql))).toHaveLength(1);
+            } finally {
+                getSpy.mockRestore();
+            }
         });
 
         test('a GitHub issue is refused when github is off, but a Cursor launch is not (cursor needs github, so both are off)', async () => {

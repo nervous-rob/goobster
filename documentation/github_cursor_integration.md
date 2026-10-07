@@ -1,3 +1,7 @@
+---
+feature: github
+---
+
 # GitHub & Cursor Agent Integration
 
 Goobster can watch GitHub repositories (events posted into Discord channels, plus

@@ -68,8 +68,9 @@ class PushService {
         this._logger = logger;
     }
 
+    /** The legacy answer AND not enforced off by feature state (a no-op without a state file or GOOBSTER_FEATURE_PUSH). */
     get enabled() {
-        return this._config.resolve().enabled;
+        return this._config.resolve().enabled && !features.enforcedOff('push');
     }
 
     get publicKey() {
@@ -79,11 +80,12 @@ class PushService {
     /** What the Settings pane needs: is push available here, and how many devices this person has. */
     async describe(userId) {
         const resolved = this._config.resolve();
+        const enabled = this.enabled;
         return {
-            enabled: resolved.enabled,
-            reason: resolved.reason,
-            publicKey: resolved.enabled ? resolved.publicKey : null,
-            devices: resolved.enabled ? await this.countForUser(userId) : 0
+            enabled,
+            reason: resolved.enabled && !enabled ? 'feature-off' : resolved.reason,
+            publicKey: enabled ? resolved.publicKey : null,
+            devices: enabled ? await this.countForUser(userId) : 0
         };
     }
 

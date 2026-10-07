@@ -530,6 +530,19 @@ describe('bot process boot (listener and loader spies)', () => {
         expect(handle.runtimeStarted).toBe(1);
     });
 
+    test('music on, voice off: the presence listeners are not registered (the inventory claim says music and voice)', async () => {
+        const { readyClient, handle } = await boot({ config: EVERYTHING_ON, inactive: ['voice'] });
+        expect(handle.voice.initialize).not.toHaveBeenCalled();
+        expect(readyClient.listenerCount('musicTrackStarted')).toBe(0);
+        expect(readyClient.listenerCount('musicTrackEnded')).toBe(0);
+    });
+
+    test('voice on, music off: the presence listeners are not registered either', async () => {
+        const { readyClient } = await boot({ config: EVERYTHING_ON, inactive: ['music'] });
+        expect(readyClient.listenerCount('musicTrackStarted')).toBe(0);
+        expect(readyClient.listenerCount('musicTrackEnded')).toBe(0);
+    });
+
     test('music on, voice on, with a music service: presence listeners register on the ready client', async () => {
         const { readyClient, music } = await bootWithMusic();
         expect(music.setClient).toHaveBeenCalledWith(readyClient);

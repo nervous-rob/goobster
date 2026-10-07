@@ -255,7 +255,9 @@ Everything else is refused while its owner is off: `/api/app/projects*` and
 `/observatory*` (projects, with the run/render/job routes owned by
 observatory), `/spitball/*` (knowledge; lenses, expeditions, briefs and
 note evidence are expeditions), `/note-attachments*` (knowledge),
-`/exchange/*`, `/voice/*`, `/studio/*` (music), `/push*`, `/mcp*`, the
+`/exchange/*`, `/voice/*`, `/studio/*` (music), `/push*` (except
+`DELETE /push/subscriptions`, which is core so a subscription can always be
+removed), `/mcp*`, the
 Discord OAuth routes, public Observatory share links
 (`/app/observatory/share/*`), `/api/activity/*`, `/api/webhooks/github`,
 `/api/webhooks/cursor`, `/api/screen/*`, `/companion*`, `/api/gba-run/*`,
@@ -295,7 +297,9 @@ diagnostic ones - `error`, `warn`, `debug`, `invalidated`, `rateLimit`,
 subscribers). The `messageCreate` gates keep their order, which the spec
 asserts; owners are core except `#06 agent mission-control threads`
 (cursor) and `#10 GBA advice inbox` (gba). `voiceStateUpdate` is voice;
-`musicTrackStarted`/`musicTrackEnded` are music; the 📋 issue-capture
+`musicTrackStarted`/`musicTrackEnded` are music with
+`alsoRequires: ['voice']` (they are registered only where the shared voice
+stack is served); the 📋 issue-capture
 reaction is github.
 
 Seventeen interaction families in `apps/bot/events/interactionCreate.js`,
@@ -322,11 +326,24 @@ the command set change on restart, interactions are refused live.
   one lister, `featureCommandFilter` the one filter. `apps/bot/index.js`
   (load) and `apps/bot/deploy-commands.js` (deploy) both use it, so what
   Discord shows and what the process answers cannot disagree. A filtered
-  file is never `require()`d (its top-level imports do not run). The
+  file is never `require()`d (its top-level imports do not run). A command
+  file the inventory does not claim (a self-hoster's own command) keeps
+  loading and deploying while no usable `data/features.json` is in force,
+  with a log warning that names the file and says it is **not claimed by the
+  feature inventory**; once a state file is in force it fails closed and the
+  log gives that same accurate reason. The inventory spec still fails CI for
+  an unclaimed command file inside the repository. The
   deploy hash (`data/.command-deploy-hash`) covers the payload, the targets
   and the served feature set (`activeFeatureIds`, enforcement view), so
   turning a feature on or off re-syncs Discord even when the payload is
-  unchanged. A slash command, autocomplete or context menu Discord still
+  unchanged; because the served feature set is part of the hash, every
+  installation redeploys its slash commands once after upgrading to the
+  release that introduces it (accepted). The Activity's Entry Point
+  ("Launch") command is deliberately *not* removed when `discordActivity`
+  is off: Discord only accepts that as a separate delete the deploy script
+  cannot undo on re-enable (the operator would have to recreate it in the
+  developer portal), and disabling is non-destructive. The button stays and
+  the Activity it opens answers with the gated 404. A slash command, autocomplete or context menu Discord still
   holds for a filtered file is answered ephemerally with "That feature is
   not available on this installation." (autocomplete gets an empty list)
   before any handler runs.
@@ -336,7 +353,13 @@ the command set change on restart, interactions are refused live.
   paginator's own collector and never parsed as the `search` router token),
   then the second `_` token - and refuses an off owner before any handler
   or write. `intaction` buttons resolve their owner from the pending
-  action's `type` (`github-issue` → github, `agent-launch` → cursor).
+  action's `type` (`github-issue` → github, `agent-launch` → cursor), and
+  that read is skipped when neither owner is enforced off. Deny / Cancel on
+  a sandbox request (`sbxreq`) or an integration action (`intaction`) is
+  let through whatever is off, because it only resolves the pending row and
+  executes nothing, so those rows can always be cleared (a table of
+  resolve-only actions in `interactionCreate.js`, one mechanism for both
+  tokens); Approve / Confirm is refused.
 - Runtime steps: `coreRuntime.step(name, fn, { feature })` never invokes
   the callback of an enforced-off owner and records
   `{ status: 'skipped', reason: 'feature', feature }` in `runtime.report`
@@ -354,12 +377,64 @@ the command set change on restart, interactions are refused live.
   the `voiceStateUpdate` listener, the `musicTrackStarted`/`musicTrackEnded`
   presence listeners, the 📋 issue-capture reaction and the
   `playTrack`/`nickname`/`speak` tool adapters follow the same snapshot.
+- The `discord` adapter (Phase 1 behaviour): `apps/bot` is the Discord
+  client, so with `discord` off in `features.json` it still logs in and
+  builds `LocalGateway`; only the internal gateway API (`/internal/gateway/*`,
+  not mounted) and the surfaces that list `discord` as an owner or
+  `alsoRequires` honour it. What stops Discord outright is the adapter
+  switch (`discord.enabled` / `GOOBSTER_DISCORD_ENABLED`, read by
+  `config/discordConfig.js`), which selects the standalone `apps/api`
+  runtime with `DisabledGateway` instead of the bot. Making the bot
+  process refuse to log in is not a one-line change that keeps legacy
+  parity, so it is not done in Phase 1.
 - `messageCreate`: gates `#06` (cursor) and `#10` (gba) are skipped when
   their owner is off; the other ten and their order are untouched
   (`// messageCreate#NN` markers, asserted by the spec).
+- The Activity casino: the Activity transport is `discordActivity`, but
+  everything it carries over its socket is the table-game protocol
+  (`join`, `sit`, `action`, the bot invite, balances) and its one content
+  route is the casino lounge music, so those two claims carry
+  `alsoRequires: ['gambling']` (`/api/activity/ws` in `wsPaths`, `GET
+  /api/activity/music/casino` in `routeRules`; `economy` off blocks them
+  through `gambling`'s hard dependency). The auth and client-file routes
+  stay `discordActivity` alone. `apps/bot/web/server.js` builds
+  `TableManager` and `BotPlayer` and replays the escrow journal
+  (`recoverFromJournal`) only when the `table_games` table claim is
+  available (owner `gambling`, also `discordActivity`); otherwise no wager
+  can move points, the socket is never attached (its upgrade is a plain
+  404) and the handler refuses any table message with the standard
+  `FEATURE_UNAVAILABLE` frame.
 
-Specs: `tests/featureGatingCommands.test.js` and
-`tests/featureGatingRuntime.test.js` (no-file baseline equals the
+- Service seams: a door can be bypassed by a caller that reaches a service
+  through a route or loop owned by another feature, so the work itself
+  refuses with `features.enforcedOff` (a no-op without a state file or
+  override). `observatoryService` (`executionEnabled` and `_requireEnabled`,
+  so run, resume, render and fetch data) refuses with `FEATURE_UNAVAILABLE`
+  and inherits a sandbox or projects that is off through the dependency
+  rule; `sandboxService.enabled` and `run` follow `sandbox`;
+  `spitballExpeditionService` (`enabled`, `createExpedition`, so no orphan
+  row) and `spitballExpeditionRunner` (`kick`, `_runLoop`) follow
+  `expeditions`. Mission `job` and `expedition` steps refuse before they are
+  claimed (the step stays `READY`) and project trigger `run_script`, `render`
+  and `fetch_data` fail with `FEATURE_UNAVAILABLE`; both write one
+  `work_failures` row carrying the code and the step or trigger id, never the
+  script. A refused cron trigger fire or wheel automation is claimed so it
+  waits for its next time, but `lastRun` and `automation-ran` are not
+  written; the wheel claim order is decided before `markRan`. The personal
+  heartbeat reconciles mission steps only while `missionReconcile` is
+  available, and a reconcile never re-queues or kicks an expedition while
+  `expeditions` is off. The exchange risk sweep skips prediction settlement
+  while `gambling` is off (`marketsSkipped: 'gambling'`). `pushService`
+  and `mailService` read `enabled` as legacy AND not enforced off; nothing is
+  pushed or mailed while off, stored subscriptions stay and
+  `pushService.unsubscribe` keeps working. `VoiceService.initialize` builds
+  `MusicService` (which probes ffmpeg) and `AmbientService` only while
+  `music` is available. `followedSourceService.prepareResearch` refuses
+  before it creates an expedition.
+
+Specs: `tests/featureGatingCommands.test.js`,
+`tests/featureGatingRuntime.test.js` and `tests/featureGatingServices.test.js`
+(the service seams, on the live config modules; no-file baseline equals the
 unfiltered walk, env-override-only filtering, one-feature-off loops over
 every manageable feature, standalone/paired/paused→resume shapes, a boot
 harness that spies on listeners, the loader and the adapters).
@@ -468,7 +543,7 @@ They read dormant tables of disabled features by design.
 | `GET /api/app/projects/:slug/parlor` | projects / core | projects |
 | Run/render/job routes inside `routes/projects.js` | projects / observatory | observatory |
 | `/api/app/mtga/*`, `/api/app/applets/*`, `/api/app/followed-sources/*` | core / projects / expeditions | core |
-| `GET /api/activity/music/casino` | activity / music / gambling | discordActivity (transport asset) |
+| `GET /api/activity/music/casino` | activity / music / gambling | discordActivity, `alsoRequires: gambling` (the lounge music is casino content) |
 | `/app/liveAudioWorklet.js` | core / voice | core (shared) |
 | Table games (`TableManager`, `BotPlayer`, `table_games`, `activity/games/*`) | activity / gambling | gambling, `alsoRequires: discordActivity` |
 | `sharp` | core / exchange | core |
@@ -629,21 +704,22 @@ block using `profile.served` and `claimServed(inventory.ownerOf('room' | 'tutori
 
 Recorded as `knownGaps` in `inventory.js` so they are not lost:
 
-- #318: `toolsRegistry`-independent command gating does not exist; the
-  command loader (`apps/bot/index.js`) and `collectCommandPayloads`
-  filter nothing but `config*`; `serviceManager.js` constructs
-  `VoiceService` at require time; `clear_search_button` router collision.
-- #319: `toolsRegistry.execute()` has no feature gate; MCP enablement is
-  boot-time only and the briefs tools/resource are unguarded by
-  Expeditions.
-- #321: tutorial `knowledge.research` has no `requires`; `projects.runs`
-  needs observatory and `trading.basics` needs exchange; unmet tutorials
-  are omitted instead of reported unavailable.
+- #318: the `intaction` router token serves both github and cursor
+  actions, so its owner is resolved from `pending.type` at runtime.
+  (Fixed since the first audit: command gating, lazy `VoiceService`, the
+  `step()` feature parameter and the `clear_search_button` collision.)
+- #319: MCP enablement is boot-time only and the `observatory` tool needs
+  an action-aware reduced definition. (`toolsRegistry.execute()` and the
+  MCP brief tools and resource are gated.)
+- #321 (closed): the tutorial catalog now declares `knowledge.research`
+  (expeditions), `projects.runs` (projects and observatory) and
+  `trading.basics` (exchange and discord), and an unmet tutorial is
+  reported unavailable instead of omitted. See
+  [portal_navigation.md](portal_navigation.md#feature-availability).
 - #322: closed. The reach gaps (`screen_vision_clients`, `agent_runs`,
   `repo_watches`, `integration_audit`, `pending_integration_actions` for
   erasure; economy, exchange, tavern, studio, push, friends and DMs,
   `user_integrations` and sandbox for export) are fixed and pinned by
   `tests/featureDormantData.test.js`; what is deliberately not per-person
   (GBA, the MTGA deck library, `sandbox_packages`) is explained under
-  "Conformance and dormant data (#322)". Rooms, tutorials and self-docs
-  conformance waits on #321.
+  "Conformance and dormant data (#322)".

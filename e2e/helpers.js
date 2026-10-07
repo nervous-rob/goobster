@@ -1,3 +1,7 @@
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { expect } = require('@playwright/test');
 const { OWNER, OWNER_NAME } = require('./constants');
 
@@ -39,4 +43,87 @@ async function openRoom(page, label) {
     await page.getByRole('navigation', { name: 'Rooms' }).getByRole('link', { name: label }).click();
 }
 
-module.exports = { login, openRoom };
+const SERVER_ENTRY = path.join(__dirname, 'server.js');
+
+/**
+ * A second headless portal in its own process, data dir and port, so a spec
+ * can change installation state (a features.json, a GOOBSTER_FEATURE_<ID>
+ * override) without touching the shared server Playwright started.
+ * `restart` reuses the data dir and database (GOOBSTER_E2E_KEEP_DB=1 skips
+ * the fixture seed), which is how a spec proves a re-enabled feature gets its
+ * saved data back.
+ */
+function createSecondServer({ port, dataDir = null } = {}) {
+    const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-e2e-second-'));
+    let child = null;
+    let started = false;
+    let log = '';
+
+    async function waitForHealth() {
+        const deadline = Date.now() + 60_000;
+        while (Date.now() < deadline) {
+            if (child.exitCode !== null) throw new Error(`second e2e server exited early:\n${log.slice(-2000)}`);
+            try {
+                const res = await fetch(`http://127.0.0.1:${port}/health`);
+                if (res.ok) return;
+            } catch { /* not listening yet */ }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        throw new Error(`second e2e server did not become healthy:\n${log.slice(-2000)}`);
+    }
+
+    async function start({ features = null, env = {} } = {}) {
+        const stateFile = path.join(dir, 'features.json');
+        if (features) {
+            const entries = {};
+            for (const [id, active] of Object.entries(features)) entries[id] = { installed: true, active };
+            fs.writeFileSync(stateFile, JSON.stringify({
+                version: 1, revision: 1, updatedAt: '2026-10-06 21:14:02', origin: 'operator', features: entries
+            }));
+        } else {
+            fs.rmSync(stateFile, { force: true });
+        }
+        log = '';
+        child = spawn(process.execPath, [SERVER_ENTRY], {
+            env: {
+                ...process.env,
+                GOOBSTER_E2E_PORT: String(port),
+                GOOBSTER_DATA_DIR: dir,
+                GOOBSTER_DB_PATH: path.join(dir, 'goobster-e2e.sqlite'),
+                ...(started ? { GOOBSTER_E2E_KEEP_DB: '1' } : {}),
+                ...env
+            },
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        child.stdout.on('data', (chunk) => { log += chunk; });
+        child.stderr.on('data', (chunk) => { log += chunk; });
+        started = true;
+        await waitForHealth();
+    }
+
+    async function stop() {
+        if (!child || child.exitCode !== null) return;
+        const exited = new Promise((resolve) => child.once('exit', resolve));
+        child.kill('SIGTERM');
+        const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+        await exited;
+        clearTimeout(timer);
+    }
+
+    async function restart(options) {
+        await stop();
+        await start(options);
+    }
+
+    return {
+        port,
+        dir,
+        url: `http://127.0.0.1:${port}`,
+        start,
+        stop,
+        restart,
+        cleanup() { fs.rmSync(dir, { recursive: true, force: true }); }
+    };
+}
+
+module.exports = { login, openRoom, createSecondServer };

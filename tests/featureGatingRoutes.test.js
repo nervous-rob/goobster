@@ -264,6 +264,22 @@ describe('portal: one feature turned off at a time', () => {
         expect(sideEffects()).toEqual(NO_EFFECTS);
     });
 
+    test('with push off a person can still remove their subscription ("disabled is not deleted"), but cannot add one or send a test', async () => {
+        useOff('push');
+        resetSpies();
+        expect(inventory.ownerOf('route', 'DELETE /api/app/push/subscriptions')).toEqual({ owner: 'core', alsoRequires: [] });
+        expect(featureGate.routeBlock('/api/app/push/subscriptions', 'DELETE', features)).toBeNull();
+        for (const [method, reqPath] of [['POST', '/api/app/push/subscriptions'], ['POST', '/api/app/push/test'], ['GET', '/api/app/push']]) {
+            expect({ method, reqPath, blocked: featureGate.routeBlock(reqPath, method, features) }).toEqual({ method, reqPath, blocked: 'push' });
+            const refused = await call(method, reqPath, { headers: { Cookie: cookie }, body: method === 'POST' ? {} : undefined });
+            expect(refused.status).toBe(404);
+            expect(refused.json).toEqual(expect.objectContaining({ error: expect.objectContaining({ code: 'FEATURE_UNAVAILABLE' }), feature: 'push' }));
+        }
+        const removal = await call('DELETE', '/api/app/push/subscriptions', { headers: { Cookie: cookie }, body: {} });
+        expect(removal.json?.error?.code).not.toBe('FEATURE_UNAVAILABLE');
+        expect(removal.status).not.toBe(404);
+    });
+
     test('a route whose owner is active is never refused by the gate', () => {
         useOff('exchange', 'mcp', 'push');
         for (const route of table) {
@@ -499,6 +515,21 @@ describe('no state file: the installation behaves as it did before the catalog',
         expect(login503.json.error.code).toBe('LOGIN_UNAVAILABLE');
     });
 
+    test.each([
+        ['legacy switch off, no state file', () => useNoState({ config: {} }), false],
+        ['legacy switch on, no state file', () => useNoState({ config: { mcp: { enabled: true } } }), true],
+        ['state file turns MCP on over a default-off switch', () => useState({ off: [], config: {} }), true],
+        ['state file turns MCP off over an enabled switch', () => useState({ off: ['mcp'], config: { mcp: { enabled: true } } }), false]
+    ])('GET /api/app/mcp reports the value the endpoint serves by: %s', async (label, setup, expected) => {
+        setup();
+        mcpConfig._setForTests({ enabled: !expected });
+        const res = await call('GET', '/api/app/mcp', { headers: { Cookie: cookie } });
+        mcpConfig._setForTests(null);
+        expect(res.status).toBe(200);
+        expect(res.json.enabled).toBe(expected);
+        expect(res.json.enabled).toBe(features.isActive('mcp'));
+    });
+
     test('an unusable state file falls back to the same legacy behaviour', async () => {
         features._resetForTests({ fs: memoryFs({ [FILE]: 'not json' }), filePath: FILE, env: {}, config: {} });
         const mcpRoute = await call('GET', '/api/app/mcp', { headers: { Cookie: cookie } });
@@ -649,6 +680,32 @@ describe('bot public server', () => {
         expect(BotPlayer).not.toHaveBeenCalled();
         expect(handles.tableManager).toBeNull();
         expect(handles.botPlayer).toBeNull();
+    });
+
+    test.each([
+        ['the fresh preset (economy, exchange and gambling off)', ['economy', 'exchange', 'gambling']],
+        ['gambling alone', ['gambling']],
+        ['economy alone (gambling depends on it)', ['economy']]
+    ])('with %s the casino is not built: no TableManager, BotPlayer or journal replay, the Activity shell stays up', async (label, off) => {
+        useOff(...off);
+        await boot();
+        expect(TableManager).not.toHaveBeenCalled();
+        expect(BotPlayer).not.toHaveBeenCalled();
+        expect(handles.tableManager).toBeNull();
+        expect(handles.botPlayer).toBeNull();
+        expect((await hit('GET', '/api/activity/config')).status).toBe(200);
+        const music = await hit('GET', '/api/activity/music/casino');
+        expect(music.status).toBe(404);
+        expect(music.json).toEqual({ error: 'FEATURE_UNAVAILABLE', feature: 'gambling' });
+    });
+
+    test('with economy and gambling on (exchange off) the casino is built and its journal replayed', async () => {
+        useOff('exchange');
+        await boot();
+        expect(TableManager).toHaveBeenCalledTimes(1);
+        expect(BotPlayer).toHaveBeenCalledTimes(1);
+        const manager = TableManager.mock.results[0].value;
+        expect(manager.recoverFromJournal).toHaveBeenCalledTimes(1);
     });
 
     test('with screen vision and the GBA harness off their session managers are configured disabled', async () => {

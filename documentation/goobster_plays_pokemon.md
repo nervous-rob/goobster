@@ -1,3 +1,7 @@
+---
+feature: gba
+---
+
 # Goobster Plays Pokémon — Design & Roadmap
 
 > Goobster plays a GBA Pokémon game (FireRed first) on a spare gaming

@@ -26,6 +26,8 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
+const { features } = require('../features/featureState');
+const { unavailableResult } = require('../features/gate');
 const expeditionService = require('./spitballExpeditionService');
 const { payerForExpedition } = expeditionService;
 const defaultPipeline = require('./spitballResearchPipeline');
@@ -82,9 +84,12 @@ class SpitballExpeditionRunner {
     /**
      * Fire-and-forget: start driving an expedition if nobody is. Safe to call
      * repeatedly (create, continue, restart pickup) - the claim decides.
+     * Refuses (and returns the standard FEATURE_UNAVAILABLE result) while the
+     * expeditions feature is enforced off; the durable row is left untouched.
      * @param {number} expeditionId
      */
     kick(expeditionId) {
+        if (features.enforcedOff('expeditions')) return unavailableResult('expeditions');
         const id = Number(expeditionId);
         if (!Number.isFinite(id) || this._live.has(id)) return;
         const loop = this._runLoop(id)
@@ -132,6 +137,7 @@ class SpitballExpeditionRunner {
     }
 
     async _runLoop(expeditionId) {
+        if (features.enforcedOff('expeditions')) return;
         const claimed = await this.service.claimForRun(expeditionId, { runnerId: this.runnerId });
         if (!claimed) return;
         // Every search call, sandbox second and failure inside the loop is

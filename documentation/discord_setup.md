@@ -1,3 +1,7 @@
+---
+feature: discord
+---
+
 # Discord Developer Portal Setup Guide
 
 ## Overview

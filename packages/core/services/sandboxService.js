@@ -38,6 +38,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const logger = require('../utils/logger');
+const { features } = require('../features/featureState');
 const sandboxConfig = require('../config/sandboxConfig');
 const sandboxPackages = require('../config/sandboxPackages');
 
@@ -134,8 +135,19 @@ class SandboxService {
         this._pythonModules = null; // probed lazily (listPythonModules)
     }
 
+    /**
+     * The legacy switch AND not enforced off by feature state. With no
+     * usable data/features.json and no GOOBSTER_FEATURE_SANDBOX override the
+     * second term is always true, so this is the legacy value unchanged.
+     */
     get enabled() {
-        return this.config.enabled === true;
+        return this.config.enabled === true && !features.enforcedOff('sandbox');
+    }
+
+    _featureUnavailable() {
+        const error = new SandboxError(404, 'FEATURE_UNAVAILABLE', 'The code sandbox is not available on this installation.');
+        error.feature = 'sandbox';
+        return error;
     }
 
     /**
@@ -625,6 +637,7 @@ class SandboxService {
      * }>}
      */
     async run({ record = true, ...params } = {}) {
+        if (features.enforcedOff('sandbox')) throw this._featureUnavailable();
         const startedAt = Date.now();
         let result;
         try {
@@ -687,6 +700,7 @@ class SandboxService {
     }
 
     async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, signal = null } = {}) {
+        if (features.enforcedOff('sandbox')) throw this._featureUnavailable();
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }

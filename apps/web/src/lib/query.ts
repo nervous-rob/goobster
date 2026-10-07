@@ -3,6 +3,7 @@ import { queryKeysForInvalidation } from './parseSse.js';
 
 export const keys = {
     me: ['me'] as const,
+    features: ['features'] as const,
     config: ['config'] as const,
     home: ['home'] as const,
     conversations: ['conversations'] as const,

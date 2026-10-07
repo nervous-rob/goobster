@@ -141,6 +141,7 @@ const TUTORIALS = [
         roomId: 'knowledge',
         version: 2,
         title: 'Knowledge basics',
+        requires: { feature: 'knowledge' },
         steps: [
             {
                 id: 'create-note',
@@ -184,7 +185,7 @@ const TUTORIALS = [
         ]
     },
     {
-        id: 'knowledge.research', roomId: 'knowledge', version: 2, title: 'Research',
+        id: 'knowledge.research', roomId: 'knowledge', version: 2, title: 'Research', requires: { feature: 'expeditions' },
         steps: [
             { id: 'question-budget', title: 'A question and a small budget', path: '/knowledge/research', demo: 'research-budget', body: 'Research follows a question through sources, claims and notes. Start Focused and inspect the displayed cycle, source and note limits before committing. This tour uses prepared fictional evidence and never starts a live run.' },
             { id: 'progress-stop', title: 'Read progress and stop safely', path: '/knowledge/research', demo: 'research-progress', body: 'A live run can be queued, researching, stopped or failed. Stop prevents more work; it does not erase evidence already collected. A budget stop is not proof that the question is answered. This sample has already stopped.' },
@@ -234,16 +235,16 @@ const TUTORIALS = [
     },
     { id: 'discussions.basics', roomId: 'discussions', version: 1, title: 'Discussions basics', steps: [] },
     { id: 'tools.overview', roomId: 'tools', version: 1, title: 'Tools overview', steps: [] },
-    { id: 'music.overview', roomId: 'music', version: 1, title: 'Music Lab overview', steps: [] },
-    { id: 'music.intervals', roomId: 'music', version: 1, title: 'Intervals', steps: [] },
-    { id: 'music.chords', roomId: 'music', version: 1, title: 'Chords', steps: [] },
-    { id: 'music.rhythm', roomId: 'music', version: 1, title: 'Rhythm', steps: [] },
-    { id: 'music.harmony', roomId: 'music', version: 1, title: 'Harmony', steps: [] },
-    { id: 'music.space', roomId: 'music', version: 1, title: 'Space', steps: [] },
-    { id: 'music.melody', roomId: 'music', version: 1, title: 'Melody', steps: [] },
-    { id: 'music.stage', roomId: 'music', version: 1, title: 'Stage', steps: [] },
-    { id: 'music.studio', roomId: 'music', version: 1, title: 'Studio', steps: [] },
-    { id: 'trading.basics', roomId: 'trading', version: 1, title: 'Trading basics', requires: { discord: true }, steps: [] },
+    { id: 'music.overview', roomId: 'music', version: 1, title: 'Music Lab overview', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.intervals', roomId: 'music', version: 1, title: 'Intervals', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.chords', roomId: 'music', version: 1, title: 'Chords', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.rhythm', roomId: 'music', version: 1, title: 'Rhythm', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.harmony', roomId: 'music', version: 1, title: 'Harmony', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.space', roomId: 'music', version: 1, title: 'Space', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.melody', roomId: 'music', version: 1, title: 'Melody', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.stage', roomId: 'music', version: 1, title: 'Stage', requires: { feature: 'music' }, steps: [] },
+    { id: 'music.studio', roomId: 'music', version: 1, title: 'Studio', requires: { feature: 'music' }, steps: [] },
+    { id: 'trading.basics', roomId: 'trading', version: 1, title: 'Trading basics', requires: { feature: ['exchange', 'discord'] }, steps: [] },
     { id: 'decks.basics', roomId: 'decks', version: 1, title: 'Decks basics', steps: [] },
     { id: 'connections.basics', roomId: 'settings', version: 1, title: 'Connections basics', steps: [] },
 ];
@@ -272,7 +273,23 @@ const ACTIONS = [
 ];
 
 /**
- * Whether a requires/capability gate is satisfied.
+ * Feature ids a requirement names (`feature` is one id or a list). These are
+ * catalog feature ids (packages/core/features/catalog.js); tutorialService
+ * answers them from the feature predicate, never from this file.
+ * @param {object|null|undefined} requires
+ * @returns {string[]}
+ */
+function requiredFeatureIds(requires) {
+    const raw = requires && typeof requires === 'object' ? requires.feature : null;
+    if (!raw) return [];
+    return (Array.isArray(raw) ? raw : [raw]).map(String);
+}
+
+/**
+ * Whether a step's requires/capability gate is satisfied by the caller's
+ * legacy capability snapshot. Tutorial-level feature requirements are not
+ * decided here: a tour whose feature is unavailable is listed as such and
+ * refused, not silently omitted (tutorialService.tutorialAvailability).
  * @param {object|null|undefined} requires
  * @param {{ features?: object, discordEnabled?: boolean, isOperator?: boolean }} caps
  */
@@ -280,21 +297,25 @@ function capabilityMet(requires, caps = {}) {
     if (!requires || typeof requires !== 'object') return true;
     if (requires.operator && !caps.isOperator) return false;
     if (requires.discord && !caps.discordEnabled) return false;
-    if (requires.feature) {
-        const features = caps.features || {};
-        if (!features[requires.feature]) return false;
+    const features = caps.features || {};
+    for (const id of requiredFeatureIds(requires)) {
+        if (!features[id]) return false;
     }
     return true;
 }
 
 /**
  * A tutorial is permitted for this account when it is not host-only (or the
- * caller is an operator) and its own capability gate passes.
+ * caller is an operator) and it does not require the operator role. Whether
+ * its feature is available on this installation is a separate question
+ * (tutorialService.tutorialAvailability): an unavailable tour is reported,
+ * not hidden.
  */
 function isTutorialPermitted(tutorial, caps = {}) {
     if (!tutorial) return false;
     if (tutorial.hostOnly && !caps.isOperator) return false;
-    return capabilityMet(tutorial.requires, caps);
+    if (tutorial.requires?.operator && !caps.isOperator) return false;
+    return true;
 }
 
 module.exports = {
@@ -303,6 +324,7 @@ module.exports = {
     TUTORIAL_BY_ID,
     STATUSES,
     ACTIONS,
+    requiredFeatureIds,
     capabilityMet,
     isTutorialPermitted
 };

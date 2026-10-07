@@ -1,4 +1,5 @@
 ---
+feature: mcp
 title: "MCP server"
 kind: guide
 summary: A read-only Model Context Protocol server that lets Cursor and other clients search one person's Goobster workspace, with scoped, expiring tokens.

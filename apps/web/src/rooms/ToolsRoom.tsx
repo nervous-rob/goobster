@@ -6,14 +6,16 @@ import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
 import { useApplySectionResult } from '../hooks/useUserSettings';
 import { MenuButton } from '../shell/MenuButton';
-import { TOOL_ROOMS, catalogTools, isRoomAvailable, unavailableReason } from '../lib/rooms';
+import { TOOL_ROOMS, toolCards } from '../lib/rooms';
+import { FeatureDocLink } from '../shell/UnavailableState';
 
 /**
  * Tools: the optional specialist rooms (Music Lab, Trading game, Card decks)
  * behind one primary destination. Three states stay distinct:
  *
- * - Host-unavailable (Discord off, a feature flag, the operator role): a
- *   card that is not a link and says why.
+ * - Host-unavailable (a feature the installation has not made available:
+ *   Discord off, Exchange off, Music off, ...): a card that is not a link,
+ *   says so, says why from the server's reason, and points at the doc.
  * - Hidden by this account (`appearance.hiddenToolRooms`): gone from this
  *   grid and from navigation, with an unhide control that is not that card.
  * - A direct URL still opens a hidden tool. A preference is not a permission,
@@ -29,7 +31,7 @@ export function ToolsRoom() {
     });
     const appearance = settingsQ.data?.sections.appearance;
     const hidden = appearance?.values.hiddenToolRooms ?? [];
-    const visible = catalogTools(hidden);
+    const cards = toolCards(hidden, me);
     const hiddenRooms = TOOL_ROOMS.filter((tool) => hidden.includes(tool.id));
 
     async function setHidden(next: string[]) {
@@ -59,9 +61,7 @@ export function ToolsRoom() {
                     Optional rooms that sit beside the core workspace. They never change what Chat, Knowledge, or Projects do.
                 </p>
                 <nav className="tools-grid" aria-label="Tools">
-                    {visible.map((tool) => {
-                        const available = isRoomAvailable(tool, me);
-                        const reason = unavailableReason(tool, me);
+                    {cards.map(({ room: tool, available, unavailable }) => {
                         const body = (
                             <>
                                 <div className="tools-card-head">
@@ -74,11 +74,17 @@ export function ToolsRoom() {
                                 <p className="tools-card-blurb">{tool.blurb}</p>
                                 {available
                                     ? <div className="home-card-action">Open {tool.name} →</div>
-                                    : <div className="tools-card-unavailable" role="note">{reason}</div>}
+                                    : (
+                                        <div className="tools-card-unavailable" role="note" data-testid="tool-unavailable">
+                                            <strong className="tools-card-unavailable-label">Not available on this installation</strong>
+                                            <span>{unavailable?.sentence}</span>
+                                        </div>
+                                    )}
                             </>
                         );
                         return (
-                            <div key={tool.id} className={`home-card tools-card${available ? '' : ' is-unavailable'}`}>
+                            <div key={tool.id} className={`home-card tools-card${available ? '' : ' is-unavailable'}`}
+                                data-available={available ? 'true' : 'false'}>
                                 {available ? (
                                     <Link to={tool.path as never} className="tools-card-link" data-tour={`tool-${tool.id}`}>
                                         {body}
@@ -88,6 +94,7 @@ export function ToolsRoom() {
                                         {body}
                                     </div>
                                 )}
+                                {unavailable?.kind === 'feature' && <FeatureDocLink info={unavailable} label={`About ${unavailable.title}`} />}
                                 <button type="button" className="btn subtle tools-hide" aria-label={`Hide ${tool.name}`}
                                     disabled={!appearance}
                                     onClick={() => void setHidden([...hidden, tool.id])}>
