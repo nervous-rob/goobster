@@ -342,3 +342,109 @@ test.describe('small screens', () => {
         await screenshot(page, 'small-viewport');
     });
 });
+
+async function openMaintain(page, h, p, context) {
+    await signInManager(context, h, p);
+    await page.goto(`${h.url}/manager/`);
+    await expect(page.getByTestId('step-maintain')).toBeVisible();
+    await expect(page.getByTestId('installation-id')).toBeVisible();
+}
+
+test.describe('maintaining an installation', () => {
+    test('reconfigure shows the exact difference and the pending restart, and a restart applies it', async ({ page, context }) => {
+        const h = await installation();
+        const p = await h.provision({ features: [], start: true });
+        await openMaintain(page, h, p, context);
+        await page.getByTestId('action-reconfigure').click();
+        await expect(page.getByTestId('reconfigure-edit').or(page.getByTestId('step-reconfigure-edit'))).toBeVisible();
+
+        const field = page.locator('[data-field="identity.assistantName"]');
+        await field.getByTestId('field-input').fill('Gooby');
+        await page.getByRole('button', { name: 'Review the changes' }).click();
+
+        await expect(page.getByTestId('plan-diff')).toContainText('identity.assistantName');
+        await expect(page.getByTestId('plan-diff').locator('[data-change="config-identity.assistantName"]')).toBeVisible();
+        await expect(page.getByTestId('pending-restart')).toBeVisible();
+        await screenshot(page, 'reconfigure-review');
+        await page.getByRole('button', { name: 'Apply' }).click();
+
+        await expect(page.getByTestId('reconfigure-done')).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId('pending-restart')).toBeVisible();
+        await page.getByTestId('restart-workers').click();
+        await expect(page.getByTestId('worker-row').first()).toHaveAttribute('data-stage', 'healthy', { timeout: 90_000 });
+        const settings = JSON.parse(fs.readFileSync(path.join(h.data, 'config.json'), 'utf8'));
+        expect(JSON.stringify(settings)).toContain('Gooby');
+    });
+
+    test('repair restores a damaged program file from a copy of the release and keeps the data', async ({ page, context }) => {
+        const h = await installation();
+        const p = await h.provision({ features: [] });
+        const damaged = path.join(h.code, 'current', 'app', 'apps', 'bot', 'index.js');
+        expect(fs.existsSync(damaged)).toBe(true);
+        fs.rmSync(damaged);
+        const before = fs.readFileSync(path.join(h.data, 'config.json'), 'utf8');
+
+        await openMaintain(page, h, p, context);
+        await page.getByTestId('action-repair').click();
+        await expect(page.getByTestId('repair-scope')).toBeVisible();
+        await page.getByRole('button', { name: 'Review the repair' }).click();
+        await expect(page.getByTestId('plan-failure')).toBeVisible();
+        await expect(page.getByTestId('plan-failure')).toContainText('REPAIR_SOURCE_REQUIRED');
+
+        await page.getByRole('button', { name: 'Back' }).click();
+        await page.locator('details.wizard-details summary').click();
+        await page.getByTestId('repair-source').fill(h.release.dir);
+        await page.getByRole('button', { name: 'Review the repair' }).click();
+        await expect(page.getByTestId('plan-repair')).toContainText('restored');
+        await screenshot(page, 'repair-review');
+        await page.getByRole('button', { name: 'Repair', exact: true }).click();
+        await expect(page.getByTestId('repair-done')).toBeVisible({ timeout: 90_000 });
+        expect(fs.existsSync(damaged)).toBe(true);
+        expect(fs.readFileSync(path.join(h.data, 'config.json'), 'utf8')).toBe(before);
+    });
+
+    test('uninstall keeping the data stops the workers first, removes the program and leaves the data', async ({ page, context }) => {
+        const h = await installation();
+        const p = await h.provision({ features: [], start: true });
+        await openMaintain(page, h, p, context);
+        await page.getByTestId('action-uninstall').click();
+        await expect(page.getByTestId('keep-data')).toBeChecked();
+        await page.getByRole('button', { name: 'Review', exact: true }).click();
+        await expect(page.getByTestId('workers-running')).toBeVisible({ timeout: 30_000 });
+        await page.getByTestId('stop-workers').click();
+        await expect(page.getByTestId('workers-running')).toHaveCount(0, { timeout: 60_000 });
+        await page.getByRole('button', { name: 'Check again' }).click().catch(() => {});
+        const go = page.getByTestId('nav-next').filter({ hasText: 'Uninstall, keep my data' });
+        await expect(go).toBeEnabled({ timeout: 30_000 });
+        await go.click();
+        await expect(page.getByTestId('uninstall-done')).toBeVisible({ timeout: 90_000 });
+        await expect(page.getByTestId('uninstall-done')).toContainText('kept');
+        expect(fs.existsSync(path.join(h.code, 'current'))).toBe(false);
+        expect(fs.existsSync(path.join(h.data, 'config.json'))).toBe(true);
+        expect(fs.existsSync(path.join(h.data, 'goobster.sqlite'))).toBe(true);
+        await screenshot(page, 'uninstall-keep');
+    });
+
+    test('uninstall deleting the data needs the installation id typed exactly', async ({ page, context }) => {
+        const h = await installation();
+        const p = await h.provision({ features: [] });
+        await openMaintain(page, h, p, context);
+        await page.getByTestId('action-uninstall').click();
+        await page.getByTestId('delete-data').check();
+        const id = await page.getByTestId('confirm-expected').innerText();
+        await page.getByTestId('uninstall-confirm').fill(`${id}x`);
+        await page.getByRole('button', { name: 'Review', exact: true }).click();
+        await expect(page.getByRole('alert').filter({ hasText: 'Type the installation id exactly' }).first()).toBeVisible();
+        expect(fs.existsSync(path.join(h.data, 'goobster.sqlite'))).toBe(true);
+
+        await page.getByTestId('uninstall-confirm').fill(id);
+        await page.getByRole('button', { name: 'Review', exact: true }).click();
+        const go = page.getByTestId('nav-next').filter({ hasText: 'Uninstall and delete my data' });
+        await expect(go).toBeEnabled({ timeout: 30_000 });
+        await screenshot(page, 'uninstall-delete-review');
+        await go.click();
+        await expect(page.getByTestId('uninstall-done')).toBeVisible({ timeout: 90_000 });
+        await expect(page.getByTestId('uninstall-done')).toContainText('deleted');
+        expect(fs.existsSync(path.join(h.data, 'goobster.sqlite'))).toBe(false);
+    });
+});
