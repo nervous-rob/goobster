@@ -27,152 +27,25 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const db = require('../db');
 const runtimePaths = require('../runtimePaths');
-const { encryptWithPassphrase, decryptWithPassphrase, PassphraseError } = require('../utils/passphraseCrypto');
+const { encryptWithPassphrase } = require('../utils/passphraseCrypto');
 const instanceState = require('./instanceStateService');
 const workFailures = require('./workFailureService');
+const archive = require('./backupArchive');
+
+const {
+    FORMAT, CONFIG_FILE, COUNT_EXEMPT, ENV_SECRETS, FILE_SETS, DATA_CLASSIFICATION, BackupError,
+    utcText, stamp, schemaFingerprint, goobsterVersion, envSecretsPresent, describeSecret, countFiles,
+    inspectBackup, verifyBackup, openConfig, assessArchive, describeManifest
+} = archive;
 
 const execFileAsync = promisify(execFile);
 
-const FORMAT = 1;
-const CONFIG_FILE = 'config.json.enc';
 const INTERRUPTED_REASON = 'interrupted by restore';
 const INTERRUPTED_CODE = 'INTERRUPTED_BY_RESTORE';
-
-/**
- * Tables whose counts legitimately differ right after a restore: the
- * restore itself writes the pause and failure rows and clears the
- * process-bound leases and queues, and self_docs refills on the next start.
- */
-const COUNT_EXEMPT = new Set([
-    'instance_state', 'work_failures', 'operator_audit', 'execution_admissions', 'admission_locks',
-    'web_live_turns', 'web_chat_queue', 'self_docs', 'data_migrations', 'account_exports'
-]);
-
-/**
- * Environment variables that hold secrets and are deliberately not in the
- * archive. Restore prints the ones that were set when the backup was made.
- */
-const ENV_SECRETS = [
-    ['GOOBSTER_DB_URL', 'database connection URL (Postgres)'],
-    ['GOOBSTER_INTERNAL_TOKEN', 'shared secret between bot, api and sandbox'],
-    ['DISCORD_CLIENT_SECRET', 'Discord OAuth client secret (portal sign-in, Activity)'],
-    ['OPENAI_API_KEY', 'OpenAI'],
-    ['ANTHROPIC_API_KEY', 'Anthropic'],
-    ['GEMINI_API_KEY', 'Gemini'],
-    ['PERPLEXITY_API_KEY', 'Perplexity search'],
-    ['ELEVENLABS_API_KEY', 'ElevenLabs speech'],
-    ['GITHUB_TOKEN', 'GitHub integration'],
-    ['GITHUB_WEBHOOK_SECRET', 'GitHub webhooks'],
-    ['CURSOR_API_KEY', 'Cursor agents'],
-    ['CURSOR_WEBHOOK_SECRET', 'Cursor webhooks'],
-    ['SPOTIFY_CLIENT_SECRET', 'Spotify']
-];
-
-/**
- * The file sets an archive carries, each resolved against the data
- * directory (or its environment override) of the installation doing the
- * backup or the restore - never against the absolute path recorded by the
- * other side.
- */
-const FILE_SETS = [
-    { id: 'projects', label: 'project files', resolve: dataDir => path.join(dataDir, 'sandbox', 'projects') },
-    { id: 'dashboards', label: 'project dashboards', resolve: dataDir => path.join(dataDir, 'sandbox', 'dashboards') },
-    { id: 'uploads', label: 'portal uploads', resolve: dataDir => process.env.GOOBSTER_UPLOADS_DIR || path.join(dataDir, 'web-uploads') },
-    { id: 'artifacts', label: 'saved knowledge files', resolve: dataDir => process.env.GOOBSTER_KG_ARTIFACTS_DIR || path.join(dataDir, 'kg-artifacts') },
-    { id: 'images', label: 'generated images', resolve: dataDir => path.join(dataDir, 'images') },
-    { id: 'tavern-campaigns', label: 'Tavern campaign overrides', resolve: dataDir => process.env.GOOBSTER_TAVERN_CAMPAIGNS_DIR || path.join(dataDir, 'tavern', 'campaigns') },
-    { id: 'tavern-assets', label: 'Tavern assets', resolve: dataDir => path.join(dataDir, 'tavern', 'assets') },
-    // The self-generated VAPID pair (documentation/pwa.md): a single file,
-    // but losing it strands every browser push subscription.
-    { id: 'web-push-keys', label: 'Web Push keys', resolve: dataDir => path.join(dataDir, 'web-push-keys.json') }
-];
-
-class BackupError extends Error {
-    constructor(code, message, details = {}) {
-        super(message);
-        this.name = 'BackupError';
-        this.code = code;
-        Object.assign(this, details);
-    }
-}
-
-function utcText(date = new Date()) {
-    return new Date(date).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
-}
-
-function stamp(date = new Date()) {
-    return new Date(date).toISOString().replace(/[:.]/g, '-').replace(/-\d{3}Z$/, 'Z');
-}
-
-/**
- * A fingerprint of the schema this code applies: schema.sql plus the
- * column migrations. Two installations running the same code agree on it;
- * restoring across a schema change is refused unless the operator accepts
- * that the open will migrate the restored database forward.
- * @returns {string} 16 hex characters
- */
-function schemaFingerprint() {
-    const dir = path.join(__dirname, '..', 'db');
-    const hash = crypto.createHash('sha256');
-    for (const file of ['schema.sql', 'migrations.js']) {
-        hash.update(fs.readFileSync(path.join(dir, file)));
-        hash.update('\0');
-    }
-    return hash.digest('hex').slice(0, 16);
-}
-
-function goobsterVersion() {
-    try {
-        return require(path.join(runtimePaths.workspaceRoot, 'package.json')).version || null;
-    } catch {
-        return null;
-    }
-}
-
-/** Which of the known environment secrets are set (names only). */
-function envSecretsPresent(env = process.env) {
-    return ENV_SECRETS.filter(([name]) => typeof env[name] === 'string' && env[name].length > 0).map(([name]) => name);
-}
-
-function describeSecret(name) {
-    const entry = ENV_SECRETS.find(([n]) => n === name);
-    return entry ? `${name} (${entry[1]})` : name;
-}
-
-/** Row counts for every application table. */
-async function tableCounts() {
-    const counts = {};
-    for (const table of await db.listTables()) {
-        const row = await db.get(`SELECT COUNT(*) AS c FROM ${table}`);
-        counts[table] = Number(row?.c || 0);
-    }
-    return counts;
-}
-
-function countFiles(dir) {
-    let files = 0;
-    let bytes = 0;
-    if (fs.existsSync(dir) && fs.statSync(dir).isFile()) {
-        return { files: 1, bytes: fs.statSync(dir).size };
-    }
-    const walk = (current) => {
-        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-            const full = path.join(current, entry.name);
-            if (entry.isDirectory()) walk(full);
-            else if (entry.isFile()) {
-                files += 1;
-                bytes += fs.statSync(full).size;
-            }
-        }
-    };
-    if (fs.existsSync(dir)) walk(dir);
-    return { files, bytes };
-}
 
 /**
  * Where the PostgreSQL client tools live. `GOOBSTER_PG_BIN` points at a
@@ -210,6 +83,22 @@ async function runTool(command, args, { env = process.env } = {}) {
 
 // --- Backup ---------------------------------------------------------------
 
+/** Live row count of every table (derived vector tables excluded). */
+async function tableCounts() {
+    const counts = {};
+    for (const table of await db.listTables()) {
+        const row = await db.get(`SELECT COUNT(*) AS c FROM ${table}`);
+        counts[table] = Number(row?.c || 0);
+    }
+    return counts;
+}
+
+/** Whether `candidate` is `root` or lies below it. */
+function isInside(root, candidate) {
+    const relative = path.relative(path.resolve(root), path.resolve(candidate));
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 /**
  * Write a backup archive.
  * @param {Object} params
@@ -218,6 +107,7 @@ async function runTool(command, args, { env = process.env } = {}) {
  * @param {boolean} [params.includeConfig=true]
  * @param {string} [params.dataDir] - defaults to runtimePaths.dataDir
  * @param {string} [params.configPath] - defaults to runtimePaths.configJsonPath
+ * @param {Object} [params.env] - where file-set overrides and environment secrets are read; defaults to process.env
  * @param {Object} [params.logger]
  * @returns {Promise<{dir: string, manifest: Object}>}
  */
@@ -227,9 +117,15 @@ async function createBackup({
     includeConfig = true,
     dataDir = runtimePaths.dataDir,
     configPath = runtimePaths.configJsonPath,
+    env = process.env,
     logger = console
 } = {}) {
     if (!destDir) throw new BackupError('BAD_ARGS', 'A destination directory is required.');
+    for (const set of FILE_SETS) {
+        if (isInside(set.resolve(dataDir, env), path.resolve(destDir))) {
+            throw new BackupError('DESTINATION_INSIDE_DATA', 'The backup destination lies inside data the archive copies; choose a directory outside it.');
+        }
+    }
     const configExists = fs.existsSync(configPath);
     if (includeConfig && configExists && !passphrase) {
         throw new BackupError('PASSPHRASE_REQUIRED',
@@ -252,7 +148,9 @@ async function createBackup({
         tables: await tableCounts(),
         files: [],
         config: { included: false, encrypted: false, file: null },
-        envSecrets: { present: envSecretsPresent(), known: ENV_SECRETS.map(([name]) => name) },
+        envSecrets: { present: envSecretsPresent(env), known: ENV_SECRETS.map(([name]) => name) },
+        fileSetsKnown: FILE_SETS.map(set => set.id),
+        excluded: DATA_CLASSIFICATION.filter(item => item.disposition === 'excluded').map(item => item.path),
         notes: [
             'The database and the files are stored unencrypted. Keep this archive on protected storage.',
             'config.json (if present) is encrypted with the passphrase typed at backup time; the passphrase is not stored anywhere.',
@@ -279,7 +177,7 @@ async function createBackup({
 
     // File sets.
     for (const set of FILE_SETS) {
-        const source = set.resolve(dataDir);
+        const source = set.resolve(dataDir, env);
         if (!fs.existsSync(source)) continue;
         const archivePath = path.join('files', set.id);
         fs.cpSync(source, path.join(dir, archivePath), { recursive: true });
@@ -302,96 +200,6 @@ async function createBackup({
 
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
     return { dir, manifest };
-}
-
-// --- Inspect --------------------------------------------------------------
-
-/**
- * Read and validate an archive's manifest.
- * @param {string} dir
- * @returns {Object} manifest
- */
-function inspectBackup(dir) {
-    const file = path.join(dir, 'manifest.json');
-    if (!fs.existsSync(file)) throw new BackupError('NOT_AN_ARCHIVE', `${dir} has no manifest.json.`);
-    let manifest;
-    try {
-        manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch (error) {
-        throw new BackupError('BAD_MANIFEST', `manifest.json is not valid JSON: ${error.message}`, { cause: error });
-    }
-    if (manifest.format !== FORMAT) {
-        throw new BackupError('BAD_FORMAT', `Archive format ${manifest.format} is not supported by this version (expected ${FORMAT}).`);
-    }
-    if (!manifest.database?.file || !fs.existsSync(path.join(dir, manifest.database.file))) {
-        throw new BackupError('BAD_MANIFEST', 'The archive is missing its database snapshot.');
-    }
-    if (manifest.config?.included && !fs.existsSync(path.join(dir, manifest.config.file))) {
-        throw new BackupError('BAD_MANIFEST', 'The manifest says config.json is included but the file is missing.');
-    }
-    return manifest;
-}
-
-/**
- * Check that an archive is complete and describes the data it is supposed
- * to: the manifest is valid, the database snapshot exists and is not empty,
- * every file set the manifest lists is present with the recorded file
- * count, the schema fingerprint is this code's, and (when `expectCounts`
- * is given) every table count equals the live count - both the count the
- * manifest recorded and, when the archive holds a SQLite snapshot, the count
- * inside the snapshot itself. Reads the archive only; never writes. A
- * backup that fails this is not a safety net.
- * @param {string} dir
- * @param {Object} [options]
- * @param {Object<string, number>} [options.expectCounts] live table counts to compare with
- * @param {string} [options.expectFingerprint] defaults to schemaFingerprint()
- * @returns {{ manifest: Object, tables: number, files: number }}
- * @throws {BackupError} code UNVERIFIED with `problems` (codes only, no paths or rows)
- */
-function verifyBackup(dir, { expectCounts = null, expectFingerprint = schemaFingerprint() } = {}) {
-    const manifest = inspectBackup(dir);
-    const problems = [];
-    const snapshotPath = path.join(dir, manifest.database.file);
-    if (countFiles(snapshotPath).bytes === 0) problems.push('SNAPSHOT_EMPTY');
-    if (manifest.schemaFingerprint !== expectFingerprint) problems.push('FINGERPRINT_MISMATCH');
-    for (const entry of manifest.files || []) {
-        const target = path.join(dir, entry.archivePath);
-        if (!fs.existsSync(target)) problems.push(`FILES_MISSING:${entry.id}`);
-        else if (countFiles(target).files !== entry.files) problems.push(`FILES_COUNT:${entry.id}`);
-    }
-    if (expectCounts) {
-        const recorded = manifest.tables || {};
-        let inSnapshot = null;
-        let snapshot = null;
-        if (manifest.database.kind === 'sqlite-file' && !problems.includes('SNAPSHOT_EMPTY')) {
-            const Database = require('better-sqlite3');
-            try {
-                snapshot = new Database(snapshotPath, { readonly: true, fileMustExist: true });
-                inSnapshot = (table) => {
-                    try {
-                        return snapshot.prepare(`SELECT COUNT(*) AS c FROM ${/^[a-z_][a-z0-9_]*$/i.test(table) ? table : `"${table.replace(/"/g, '""')}"`}`).get().c;
-                    } catch {
-                        return undefined;
-                    }
-                };
-            } catch {
-                problems.push('SNAPSHOT_UNREADABLE');
-            }
-        }
-        try {
-            for (const [table, expected] of Object.entries(expectCounts)) {
-                if (COUNT_EXEMPT.has(table)) continue;
-                const matches = recorded[table] === expected && (!inSnapshot || inSnapshot(table) === expected);
-                if (!matches) problems.push(`COUNT_MISMATCH:${table}`);
-            }
-        } finally {
-            if (snapshot) snapshot.close();
-        }
-    }
-    if (problems.length > 0) {
-        throw new BackupError('UNVERIFIED', `The backup could not be verified (${problems.join(', ')}).`, { problems });
-    }
-    return { manifest, tables: Object.keys(manifest.tables || {}).length, files: (manifest.files || []).length };
 }
 
 // --- Restore --------------------------------------------------------------
@@ -538,95 +346,20 @@ async function interruptInFlightWork({ now = new Date() } = {}) {
 }
 
 /**
- * Restore an archive into this installation. The instance must be stopped.
- * @param {Object} params
- * @param {string} params.dir - the archive directory
- * @param {string|null} [params.passphrase] - to bring config.json back; omit to skip it
- * @param {boolean} [params.withConfig=true] - false skips config.json even if a passphrase is given
- * @param {boolean} [params.acceptSchemaChange=false] - restore across a schema fingerprint change
- * @param {boolean} [params.force=false] - restore over a target that already has data
- * @param {string} [params.dataDir]
- * @param {string} [params.configPath]
- * @param {string} [params.by] - who ran it (recorded on the pause)
- * @param {Object} [params.logger]
- * @returns {Promise<Object>} a report for the operator
+ * The database step of a restore. SQLite: close the connection, move the
+ * current file (and its -wal/-shm) aside when it held data, write the
+ * snapshot. Postgres: drop what is in the schema, then `pg_restore
+ * --single-transaction`. A failed Postgres restore leaves the target
+ * without a complete database; the safety backup is the way back.
+ * @returns {Promise<{ setAside: string[] }>}
  */
-async function restoreBackup({
-    dir,
-    passphrase = null,
-    withConfig = true,
-    acceptSchemaChange = false,
-    force = false,
-    dataDir = runtimePaths.dataDir,
-    configPath = runtimePaths.configJsonPath,
-    by = 'npm run restore',
-    logger = console
-} = {}) {
-    if (!dir) throw new BackupError('BAD_ARGS', 'An archive directory is required.');
-    const manifest = inspectBackup(dir);
-    const tag = stamp();
-
-    // 1. Gates that cost nothing: engine, schema, passphrase.
-    if (manifest.engine !== db.engine) {
-        throw new BackupError('ENGINE_MISMATCH',
-            `The archive is a ${manifest.engine} backup but this installation uses ${db.engine}. `
-            + 'Restore onto the same engine. To move SQLite data to Postgres, restore onto SQLite first and then run `npm run migrate-to-postgres`.',
-            { archiveEngine: manifest.engine, targetEngine: db.engine });
-    }
-    const currentFingerprint = schemaFingerprint();
-    const schemaChanged = manifest.schemaFingerprint !== currentFingerprint;
-    if (schemaChanged && !acceptSchemaChange) {
-        throw new BackupError('SCHEMA_MISMATCH',
-            `The archive was made by code with schema ${manifest.schemaFingerprint}; this installation has ${currentFingerprint}. `
-            + 'Check out the version that made the backup, or pass --accept-schema-change to restore anyway and let the database open migrate it forward.',
-            { archiveSchema: manifest.schemaFingerprint, targetSchema: currentFingerprint });
-    }
-
-    let configBytes = null;
-    const configIncluded = Boolean(manifest.config?.included);
-    if (configIncluded && withConfig && passphrase) {
-        const envelope = JSON.parse(fs.readFileSync(path.join(dir, manifest.config.file), 'utf8'));
-        try {
-            configBytes = decryptWithPassphrase(envelope, passphrase);
-        } catch (error) {
-            if (error instanceof PassphraseError && error.code === 'BAD_PASSPHRASE') {
-                throw new BackupError('BAD_PASSPHRASE', 'The passphrase does not open this archive. Nothing was restored.', { cause: error });
-            }
-            throw error;
-        }
-    }
-
-    // 2. Protect a target that already holds data.
-    const hadData = await targetHasData();
-    if (hadData && !force) {
-        throw new BackupError('TARGET_NOT_EMPTY',
-            'This installation already has data. Pass --force to replace it (SQLite keeps a .pre-restore copy of the old file).');
-    }
-
+async function restoreDatabase({ dir, manifest, schemaChanged = false, hadData = false, tag = stamp(), logger = console } = {}) {
     const storage = await db.describeStorage();
-    let configSkipped = null;
-    if (!configIncluded) configSkipped = 'the archive has no config.json';
-    else if (!withConfig) configSkipped = 'excluded by --without-config';
-    else if (!passphrase) configSkipped = 'no passphrase was given';
-    const report = {
-        archive: dir,
-        archiveCreatedAt: manifest.createdAt,
-        engine: manifest.engine,
-        schemaChanged,
-        replacedExisting: hadData,
-        setAside: [],
-        files: [],
-        config: { restored: false, path: null, skipped: configSkipped },
-        secretsToReenter: [],
-        interrupted: {},
-        counts: { expected: manifest.tables, actual: null, mismatches: [] }
-    };
-
-    // 3. The database.
+    const moved = [];
     if (storage.engine === 'sqlite') {
         await db.closeConnection();
         if (hadData) {
-            report.setAside = setAside(storage.path, tag);
+            moved.push(...setAside(storage.path, tag));
         } else {
             // targetHasData() opened (and so created) an empty database; a
             // .pre-restore copy of nothing would only confuse.
@@ -662,70 +395,193 @@ async function restoreBackup({
         }
         logger.info?.(`[restore] Database restored into schema ${schema}`);
     }
+    return { setAside: moved };
+}
 
-    // 4. Files.
+/**
+ * The file-set step. Every set the archive carries replaces the current
+ * one, which is moved aside first (`<set>.pre-restore-<tag>`). A set the
+ * archive's code knew about but that was absent when it was made is moved
+ * aside too, so the restored installation holds what the backup held; sets
+ * of a newer or older code the archive does not mention are left alone.
+ * @param {Object} params
+ * @param {string[]} [params.only] restrict to these set ids (resuming a restore)
+ * @returns {{ files: Array, setAside: string[], skipped: string[] }}
+ */
+function restoreFileSets({ dir, manifest, dataDir = runtimePaths.dataDir, env = process.env, tag = stamp(), only = null, logger = console } = {}) {
+    const report = { files: [], setAside: [], skipped: [] };
+    const carried = new Set((manifest.files || []).map(entry => entry.id));
+    const consider = (id) => !only || only.includes(id);
     for (const entry of manifest.files || []) {
         const set = FILE_SETS.find(s => s.id === entry.id);
         if (!set) {
             logger.warn?.(`[restore] Unknown file set '${entry.id}' in the archive; skipped`);
+            report.skipped.push(entry.id);
             continue;
         }
+        if (!consider(set.id)) continue;
         const from = path.join(dir, entry.archivePath);
         if (!fs.existsSync(from)) continue;
-        const to = set.resolve(dataDir);
+        const to = set.resolve(dataDir, env);
         fs.mkdirSync(path.dirname(to), { recursive: true });
+        if (fs.existsSync(to)) {
+            fs.renameSync(to, `${to}.pre-restore-${tag}`);
+            report.setAside.push(`${to}.pre-restore-${tag}`);
+        }
         fs.cpSync(from, to, { recursive: true, force: true });
         report.files.push({ id: set.id, label: set.label, to, files: entry.files });
-        logger.info?.(`[restore] ${set.label}: ${entry.files} file(s) → ${to}`);
+        logger.info?.(`[restore] ${set.label}: ${entry.files} file(s) -> ${to}`);
     }
+    for (const id of manifest.fileSetsKnown || []) {
+        const set = FILE_SETS.find(s => s.id === id);
+        if (!set || carried.has(id) || !consider(id)) continue;
+        const to = set.resolve(dataDir, env);
+        if (!fs.existsSync(to)) continue;
+        fs.renameSync(to, `${to}.pre-restore-${tag}`);
+        report.setAside.push(`${to}.pre-restore-${tag}`);
+        logger.info?.(`[restore] ${set.label}: absent in the archive, current copy set aside`);
+    }
+    return report;
+}
 
-    // 5. config.json.
-    if (configBytes) {
-        if (fs.existsSync(configPath)) {
-            const aside = `${configPath}.pre-restore-${tag}`;
-            fs.renameSync(configPath, aside);
-            report.setAside.push(aside);
-        }
-        fs.mkdirSync(path.dirname(configPath), { recursive: true });
-        fs.writeFileSync(configPath, configBytes, { mode: 0o600 });
-        report.config = { restored: true, path: configPath, skipped: null };
-        logger.info?.(`[restore] config.json restored to ${configPath}`);
+/**
+ * The config.json step: decrypt (in memory) and write it with mode 0600,
+ * moving an existing file aside. A wrong passphrase throws BAD_PASSPHRASE
+ * before the file is touched.
+ * @returns {{ restored: boolean, path: string|null, skipped: string|null, setAside: string[] }}
+ */
+function restoreConfig({ dir, manifest, passphrase = null, withConfig = true, configPath = runtimePaths.configJsonPath, tag = stamp(), logger = console } = {}) {
+    const included = Boolean(manifest.config?.included);
+    let skipped = null;
+    if (!included) skipped = 'the archive has no config.json';
+    else if (!withConfig) skipped = 'excluded by --without-config';
+    else if (!passphrase) skipped = 'no passphrase was given';
+    if (skipped) return { restored: false, path: null, skipped, setAside: [] };
+    const bytes = openConfig(dir, manifest, passphrase);
+    const moved = [];
+    if (fs.existsSync(configPath)) {
+        const aside = `${configPath}.pre-restore-${tag}`;
+        fs.renameSync(configPath, aside);
+        moved.push(aside);
     }
-    if (!report.config.restored) {
-        report.secretsToReenter.push('config.json: recreate it from config.example.json (Discord token, client id, guild ids, any provider keys kept there)');
-    }
-    for (const name of manifest.envSecrets?.present || []) {
-        report.secretsToReenter.push(describeSecret(name));
-    }
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, bytes, { mode: 0o600 });
+    logger.info?.(`[restore] config.json restored to ${configPath}`);
+    return { restored: true, path: configPath, skipped: null, setAside: moved };
+}
 
-    // 6. Open the restored database (schema applied, migrations if accepted),
-    //    fail in-flight work, pause, and verify counts.
-    report.interrupted = await interruptInFlightWork();
+/** What the operator has to supply again after a restore. */
+function secretsToReenter({ manifest, configRestored }) {
+    const out = [];
+    if (!configRestored) {
+        out.push('config.json: recreate it from config.example.json (Discord token, client id, guild ids, any provider keys kept there)');
+    }
+    for (const name of manifest.envSecrets?.present || []) out.push(describeSecret(name));
+    return out;
+}
+
+/**
+ * The last restore step: open the restored database (schema applied,
+ * migrations if accepted), mark every in-flight job failed, pause the
+ * instance, record the restore, and compare table counts with the manifest.
+ * @returns {Promise<{ interrupted: Object, counts: { expected: Object, actual: Object, mismatches: Array } }>}
+ */
+async function finishRestore({ dir, manifest, schemaChanged = false, configRestored = false, by = 'npm run restore' } = {}) {
+    const interrupted = await interruptInFlightWork();
     await instanceState.pause({
         reason: 'restore',
         by,
-        detail: { archive: path.basename(dir), archiveCreatedAt: manifest.createdAt, interrupted: report.interrupted }
+        detail: { archive: path.basename(dir), archiveCreatedAt: manifest.createdAt, interrupted }
     });
     await instanceState.recordRestore({
         archive: path.basename(dir),
         archiveCreatedAt: manifest.createdAt,
         engine: manifest.engine,
         schemaChanged,
-        configRestored: report.config.restored,
-        interrupted: report.interrupted,
+        configRestored,
+        interrupted,
         by
     });
-
-    report.counts.actual = await tableCounts();
+    const actual = await tableCounts();
+    const mismatches = [];
     for (const [table, expected] of Object.entries(manifest.tables || {})) {
         if (COUNT_EXEMPT.has(table)) continue;
-        const actual = report.counts.actual[table];
-        if (actual === undefined) {
-            report.counts.mismatches.push({ table, expected, actual: null });
-        } else if (actual !== expected) {
-            report.counts.mismatches.push({ table, expected, actual });
-        }
+        if (actual[table] === undefined) mismatches.push({ table, expected, actual: null });
+        else if (actual[table] !== expected) mismatches.push({ table, expected, actual: actual[table] });
     }
+    return { interrupted, counts: { expected: manifest.tables, actual, mismatches } };
+}
+
+/**
+ * Restore an archive into this installation. The instance must be stopped.
+ * Composes the same primitives the installation manager's `backup.restore`
+ * runs one at a time (restoreDatabase, restoreFileSets, restoreConfig,
+ * finishRestore), so there is one restore implementation.
+ * @param {Object} params
+ * @param {string} params.dir - the archive directory
+ * @param {string|null} [params.passphrase] - to bring config.json back; omit to skip it
+ * @param {boolean} [params.withConfig=true] - false skips config.json even if a passphrase is given
+ * @param {boolean} [params.acceptSchemaChange=false] - restore across a schema fingerprint change
+ * @param {boolean} [params.force=false] - restore over a target that already has data
+ * @param {string} [params.dataDir]
+ * @param {string} [params.configPath]
+ * @param {string} [params.by] - who ran it (recorded on the pause)
+ * @param {Object} [params.logger]
+ * @returns {Promise<Object>} a report for the operator
+ */
+async function restoreBackup({
+    dir,
+    passphrase = null,
+    withConfig = true,
+    acceptSchemaChange = false,
+    force = false,
+    dataDir = runtimePaths.dataDir,
+    configPath = runtimePaths.configJsonPath,
+    env = process.env,
+    by = 'npm run restore',
+    logger = console
+} = {}) {
+    if (!dir) throw new BackupError('BAD_ARGS', 'An archive directory is required.');
+    const tag = stamp();
+
+    // 1. Gates that cost nothing: engine, schema, passphrase.
+    const { manifest, schemaChanged, config } = assessArchive({ dir, targetEngine: db.engine, passphrase, withConfig, acceptSchemaChange });
+
+    // 2. Protect a target that already holds data.
+    const hadData = await targetHasData();
+    if (hadData && !force) {
+        throw new BackupError('TARGET_NOT_EMPTY',
+            'This installation already has data. Pass --force to replace it (SQLite keeps a .pre-restore copy of the old file).');
+    }
+
+    const report = {
+        archive: dir,
+        archiveCreatedAt: manifest.createdAt,
+        engine: manifest.engine,
+        schemaChanged,
+        replacedExisting: hadData,
+        setAside: [],
+        files: [],
+        config: { restored: false, path: null, skipped: config.skipped },
+        secretsToReenter: [],
+        interrupted: {},
+        counts: { expected: manifest.tables, actual: null, mismatches: [] }
+    };
+
+    // 3. Database, files, config.
+    report.setAside.push(...(await restoreDatabase({ dir, manifest, schemaChanged, hadData, tag, logger })).setAside);
+    const files = restoreFileSets({ dir, manifest, dataDir, env, tag, logger });
+    report.files = files.files;
+    report.setAside.push(...files.setAside);
+    const restoredConfig = restoreConfig({ dir, manifest, passphrase, withConfig, configPath, tag, logger });
+    report.setAside.push(...restoredConfig.setAside);
+    report.config = { restored: restoredConfig.restored, path: restoredConfig.path, skipped: restoredConfig.skipped };
+    report.secretsToReenter = secretsToReenter({ manifest, configRestored: restoredConfig.restored });
+
+    // 4. Open the restored database, fail in-flight work, pause, verify counts.
+    const finished = await finishRestore({ dir, manifest, schemaChanged, configRestored: restoredConfig.restored, by });
+    report.interrupted = finished.interrupted;
+    report.counts = finished.counts;
     return report;
 }
 
@@ -733,13 +589,26 @@ module.exports = {
     createBackup,
     inspectBackup,
     verifyBackup,
+    assessArchive,
+    describeManifest,
+    openConfig,
     restoreBackup,
+    restoreDatabase,
+    restoreFileSets,
+    restoreConfig,
+    secretsToReenter,
+    finishRestore,
     interruptInFlightWork,
+    targetHasData,
+    setAside,
+    isInside,
     schemaFingerprint,
     envSecretsPresent,
+    describeSecret,
     tableCounts,
     BackupError,
     FILE_SETS,
+    DATA_CLASSIFICATION,
     ENV_SECRETS,
     COUNT_EXEMPT,
     FORMAT,

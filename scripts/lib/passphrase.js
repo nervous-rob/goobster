@@ -1,10 +1,12 @@
 /**
  * Passphrase input for the backup and restore CLIs.
  *
- * Order of preference: --passphrase-file <path> (first line), the
- * GOOBSTER_BACKUP_PASSPHRASE environment variable (for unattended runs -
- * the runbook says where that leaves the secret), then an interactive
- * prompt with echo off. Nothing here stores the passphrase anywhere.
+ * Order of preference: --passphrase-file <path> (first line), the file named
+ * by GOOBSTER_BACKUP_PASSPHRASE_FILE, the GOOBSTER_BACKUP_PASSPHRASE
+ * environment variable (for unattended runs - the runbook says where that
+ * leaves the secret), then an interactive prompt with echo off. Nothing here
+ * stores the passphrase anywhere. The installation manager's `backup` and
+ * `restore` commands read it the same way.
  */
 
 const fs = require('node:fs');
@@ -19,6 +21,7 @@ const readline = require('node:readline');
  * @returns {Promise<string|null>} null when no source is available
  */
 async function readPassphrase({ file = null, prompt, confirm = false, env = process.env }) {
+    if (!file && env.GOOBSTER_BACKUP_PASSPHRASE_FILE) file = env.GOOBSTER_BACKUP_PASSPHRASE_FILE;
     if (file) {
         const text = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0];
         if (!text) throw new Error(`${file} is empty.`);

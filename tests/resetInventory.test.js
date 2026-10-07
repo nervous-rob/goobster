@@ -175,7 +175,7 @@ describe('the file-set inventory', () => {
         const classified = [...Object.keys(inventory.BACKUP_SET_OWNER), ...Object.keys(inventory.BACKUP_SET_KEPT)].sort();
         expect(classified).toEqual(ids);
         for (const owner of Object.values(inventory.BACKUP_SET_OWNER)) expect(featureInventory.FEATURE_IDS).toContain(owner);
-        expect(real.keptFileSets.map(set => set.id)).toEqual(['tavern-campaigns']);
+        expect(real.keptFileSets.map(set => set.id)).toEqual(['tavern-campaigns', 'self-docs']);
     });
 
     test('file sets resolve against the installation roots passed in, not the process', () => {
