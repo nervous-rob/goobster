@@ -301,6 +301,15 @@ GOOBSTER_API_PORT=3100 node apps/api
 The `lite` profile (`apps/bot` serving the portal in-process) is unchanged
 and still needs a bot token, because that process *is* the Discord adapter.
 
+### The manager
+
+`apps/manager` is a separate process that sits beside every mode. It starts
+with no application database, no Discord and no keys, keeps its own store
+under `data/manager/`, and serves first-time setup, local recovery and
+feature changes on `127.0.0.1:3400`. The portal reaches it through a short,
+signed operator assertion (`packages/core/web/managerBridge.js`). See
+[manager.md](manager.md).
+
 ## Native people discovery
 
 An installation with no Discord has no shared servers to list people from,

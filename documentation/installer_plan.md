@@ -120,6 +120,12 @@ the dormant-data rule holds (privacy tests pass with every feature off).
 Deliverable: an operator changes features from the portal, and the
 installation restarts safely.
 
+Status (issues #323 - #326 under epic #315):
+
+| Issue | Scope | State |
+|---|---|---|
+| #323 | `apps/manager`: own store, setup engine, bootstrap and recovery credentials, portal bridge, transport, privilege boundary, audit reconciliation | Workspace `apps/manager`, bridge minter `packages/core/web/managerBridge.js`, specs `tests/managerBoot.test.js`, `tests/managerAuth.test.js`, `tests/managerEngine.test.js`, `tests/managerBridge.test.js`; `documentation/manager.md` (PR pending review) |
+
 Work:
 
 1. `apps/manager`: starts with no database, no Discord, no keys. Own
