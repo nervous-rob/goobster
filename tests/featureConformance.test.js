@@ -324,8 +324,16 @@ beforeAll(async () => {
     app.use(portalRouter);
     portal = await listen(app);
     portalBase = `http://127.0.0.1:${portal.address().port}`;
+    // The first query of a suite applies the whole schema (an isolated
+    // Postgres schema takes several seconds); do it here rather than
+    // inside the 3 s window `call()` gives one request.
+    await db.get('SELECT 1 AS ok');
     const login = await call('POST', '/api/app/auth/dev-session', { body: { userId: USER, name: 'Conformance tester' } });
-    cookie = login.headers.get('set-cookie').split(';')[0];
+    const setCookie = login.headers.get('set-cookie');
+    if (login.status !== 200 || !setCookie) {
+        throw new Error(`dev-session login failed: HTTP ${login.status} ${login.text}`);
+    }
+    cookie = setCookie.split(';')[0];
     portalTable = routeTable(portalRouter).filter(route => !/[()*\\]/.test(route.path));
 
     mcpConfig._setForTests({ enabled: true, requestsPerMinute: 100000, maxTokensPerUser: 1000 });

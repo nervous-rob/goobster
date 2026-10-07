@@ -2,7 +2,7 @@ const { REST, Routes, RateLimitError } = require('discord.js');
 const fs = require('node:fs');
 const path = require('node:path');
 const { validateConfig } = require('@goobster/core/utils/configValidator');
-const config = require('../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 
 const { clientId, guildIds, token } = config;
 
