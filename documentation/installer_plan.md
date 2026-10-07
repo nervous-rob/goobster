@@ -326,6 +326,27 @@ Work, in order:
    `ProtectSystem=full` (the pre-installer Pi unit); a payload unit is `strict`
    with `XDG_CACHE_HOME` pointed at the cache root.
 
+   **Status (P3.5, #331): the Windows bootstrapper is built, not yet run on
+   Windows.** `documentation/windows_install.md` is the reference. An NSIS
+   installer (`bootstrap/windows/installer.nsi`, built by
+   `scripts/package-bootstrap-win32.js`; `RequestExecutionLevel user`) unpacks
+   the payload and a WinSW 2.12.0 service host (pinned by SHA-256 in
+   `scripts/bootstrap-pins.json`) and starts `apps/manager/bootstrap/win32.js`:
+   the wizard in the browser, or `/S /ANSWERS=<file>`. The `windows-service`
+   kind (`apps/manager/platform/windowsService.js`, `windowsServiceXml.js`)
+   plugs into the kind-neutral register/unregister steps; the helper's Windows
+   module (`privileged/win32.js`) implements `service.register` and
+   `service.unregister` with `sc.exe` and `icacls.exe` for the virtual account
+   `NT SERVICE\goobster`, elevating by an administrator session or a UAC prompt
+   with a file transport. Proven on Linux x64 by Jest against injected
+   exec/spawn/fs fakes (`tests/windowsHelper.test.js`, `windowsService.test.js`,
+   `windowsBootstrapCli.test.js`, `packageBootstrapWin32.test.js`) and by two
+   byte-identical `makensis` builds of one payload; the service, the UAC-free
+   journey, graceful stop and crash restart are proven only by
+   `.github/workflows/windows-bootstrap.yml` on `windows-2022`
+   (`scripts/windows-bootstrap-proof.ps1`). Unsigned development builds only
+   (`-dev`); the Authenticode hook is wired and off, signing keys are #341.
+
 Acceptance: selective-installation tests prove an excluded feature's
 files, dependencies and frontend bundle are absent; Playwright journeys
 cover install, reconfigure, repair and uninstall against the wizard;
