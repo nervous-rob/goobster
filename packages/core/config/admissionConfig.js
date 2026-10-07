@@ -1,5 +1,5 @@
 let file = {};
-try { file = require('../../../config.json').admission || {}; } catch { /* optional */ }
+try { file = require('./configJson').load().admission || {}; } catch { /* optional */ }
 const bounded = (value, fallback, max) => Number.isFinite(Number(value)) && Number(value) > 0
     ? Math.min(max, Math.floor(Number(value))) : fallback;
 module.exports = {

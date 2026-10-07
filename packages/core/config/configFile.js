@@ -20,8 +20,8 @@
  * set an ACL, so the file inherits the ACL of its directory; keep the
  * installation directory private (documentation/manager_configuration.md).
  *
- * This is the loader the 37 `require('../../../config.json')` sites will move
- * to (documentation/packaging_proof.md, finding B1); it does not refactor them.
+ * Reads go through `configJson.load()` (documentation/packaging_proof.md,
+ * finding B1); this module is the writer.
  *
  * Pure filesystem: no database, no app imports. Errors carry a stable `code`
  * and never a path or a value.

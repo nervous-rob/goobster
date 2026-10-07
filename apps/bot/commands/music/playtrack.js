@@ -5,7 +5,7 @@ const SpotDLService = require('@goobster/core/services/spotdl/spotdlService');
 const { voiceService } = require('@goobster/core/services/serviceManager'); // Import shared instance
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const { filterTracks, createTrackListUI, truncateForDiscord } = require('@goobster/core/utils/musicUtils');
-const config = require('../../../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 
 const spotdlService = new SpotDLService();
 // const voiceService = new VoiceService(config); // Removed local instance
