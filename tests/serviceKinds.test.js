@@ -240,6 +240,23 @@ describe('the bootstrap default roots per platform sit under the bases the setup
     });
 });
 
+describe('the protocol carries the service scope', () => {
+    const protocol = require('@goobster/manager/privileged/protocol');
+    const roots = { code: '/srv/g/code', data: '/srv/g/data', config: '/srv/g/config/config.json', cache: '/srv/g/cache', logs: '/srv/g/logs', uploads: '/srv/g/data/web-uploads', managerStore: '/srv/g/data/manager' };
+    const input = { kind: 'systemd', name: 'goobster', layout: 'standalone', codeRoot: roots.code, runtimeUser: 'goobster', installationId: '5f3c0e0e-3e8e-4a52-9d57-0e4a5f6f8a11', roots, mode: 'payload' };
+
+    test('scope defaults to machine, accepts user, refuses anything else', () => {
+        expect(protocol.validateInput('service.register', input).scope).toBe('machine');
+        expect(protocol.validateInput('service.register', { ...input, kind: 'launchd', scope: 'user' }).scope).toBe('user');
+        expect(() => protocol.validateInput('service.register', { ...input, scope: 'session' })).toThrow(/scope/);
+    });
+
+    test('the Linux helper registers machine services only', () => {
+        const handler = linux.createHandler({ sandbox: true, fs, exec: () => ({ status: 0, stdout: '', stderr: '', error: null }) });
+        expect(() => handler.handle('service.register', { ...input, scope: 'user' })).toThrow(expect.objectContaining({ code: 'NOT_IMPLEMENTED' }));
+    });
+});
+
 describe('the elevation runner takes what differs per platform from the platform module', () => {
     test('serviceFacts is asked before service.register (systemdFacts still answers for the Linux module)', () => {
         expect(elevate.serviceFactsOf({ serviceFacts: () => ({ available: false, reason: 'SCM_UNAVAILABLE', state: 'stopped' }) }, {})).toMatchObject({ available: false, reason: 'SCM_UNAVAILABLE' });

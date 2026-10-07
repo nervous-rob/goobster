@@ -222,7 +222,10 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
                 installationId: doc.installationId,
                 roots: rootsOf(t.roots),
                 mode,
-                nodePath: process.execPath
+                nodePath: process.execPath,
+                // For a kind that registers per-account services as well as machine ones (launchd).
+                invoking,
+                elevated: typeof process.geteuid === 'function' ? process.geteuid() === 0 : null
             });
             result = await core.runPrivileged('service.register', input, { record, ctx, requestDir });
         }

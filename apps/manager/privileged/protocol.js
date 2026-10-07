@@ -37,6 +37,7 @@ const IDENTIFIER = /^[a-z][a-z0-9-]{0,31}$/;
 const TIMER_UNIT = /^[a-z][a-z0-9-]{0,31}\.timer$/;
 const CRON_FILE = /^[a-z][a-z0-9._-]{0,63}$/;
 const SERVICE_KINDS = Object.freeze(['systemd', 'windows-service', 'launchd']);
+const SERVICE_SCOPES = Object.freeze(['machine', 'user']);
 const LAYOUTS = Object.freeze(['lite', 'standalone', 'paired']);
 const MODES = Object.freeze(['payload', 'checkout']);
 const ROOT_ROLES = Object.freeze(['code', 'data', 'config', 'cache', 'logs', 'uploads', 'managerStore']);
@@ -114,9 +115,12 @@ function roots(value) {
 
 const VALIDATORS = {
     'service.register'(input) {
-        exactKeys(input, ['kind', 'name', 'layout', 'codeRoot', 'runtimeUser', 'installationId', 'roots', 'mode', 'nodePath'], 'The input');
+        exactKeys(input, ['kind', 'name', 'layout', 'codeRoot', 'runtimeUser', 'installationId', 'roots', 'mode', 'nodePath', 'scope'], 'The input');
         const out = {
             kind: oneOf(input.kind, SERVICE_KINDS, 'The service kind'),
+            // Whether the service belongs to the machine (a system unit, a LaunchDaemon, a Windows service) or to the
+            // invoking account's sessions (a LaunchAgent). systemd registers machine services only.
+            scope: input.scope === undefined ? 'machine' : oneOf(input.scope, SERVICE_SCOPES, 'The service scope'),
             name: identifier(input.name, 'The service name'),
             layout: oneOf(input.layout, LAYOUTS, 'The layout'),
             codeRoot: safeRoot(input.codeRoot, 'The code root'),

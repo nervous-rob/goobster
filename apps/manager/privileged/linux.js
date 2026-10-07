@@ -211,6 +211,7 @@ function createHandler(deps = {}) {
     // ---- service.register -------------------------------------------------
     function serviceRegister(input, log) {
         if (input.kind !== 'systemd') throw refuse('NOT_IMPLEMENTED', 'This platform registers systemd services only.');
+        if (input.scope && input.scope !== 'machine') throw refuse('NOT_IMPLEMENTED', 'systemd services are registered for the machine; there is no per-account service here.');
         requireElevated();
         requireSystemd();
         verifyRecord(input);

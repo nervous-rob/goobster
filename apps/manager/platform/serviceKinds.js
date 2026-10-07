@@ -24,7 +24,9 @@
  *                        creatable: `user.create` applies (a POSIX system account the helper
  *                        creates and hands the mutable roots to); a service manager that
  *                        assigns the identity itself (a Windows virtual account) says false
- *   registerInput(params)     the `service.register` request body (privileged/protocol.js shape)
+ *   registerInput(params)     the `service.register` request body (privileged/protocol.js shape) from
+ *                        { name, layout, codeRoot, runtimeUser, installationId, roots, mode, nodePath,
+ *                          invoking, elevated }; a kind with per-account services sets `scope: 'user'`
  *   unregisterInput({ name, installationId })   the `service.unregister` request body
  *
  * A platform with no definition registers nothing: the steps answer
