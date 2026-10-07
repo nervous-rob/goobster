@@ -18,6 +18,7 @@ import { ManagerNotice, useManagerStatus } from './host/ManagerCard';
 import { DatabaseCard, DatabasePage } from './host/DatabasePage';
 import { InstallationCard, InstallationPage } from './host/InstallationPage';
 import { MaintenanceCard, MaintenancePage } from './host/MaintenancePage';
+import { UpdatesPanel } from './host/UpdatesPanel';
 
 const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
@@ -701,6 +702,7 @@ function OverviewPage() {
             <InstallationCard />
             <DatabaseCard />
             <MaintenanceCard />
+            <UpdatesPanel enabled={usable} />
             <SignupPanel />
             <InvitesPanel />
             <AccountsPanel />

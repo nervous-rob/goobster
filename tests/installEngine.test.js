@@ -565,6 +565,20 @@ describe('adoption of an existing instance', () => {
         expect(planned.plan.preflight.ok).toBe(true);
     });
 
+    test('an adoption records the update answer when it is given, and leaves the policy unset when it is not (#342)', async () => {
+        const harness = await newHarness({ root: scratch('adopt-update'), installDeps: { discover: (opts) => discover({ ...opts, exec: () => null }) } });
+        manualCheckout(harness);
+        const { applied } = await drive(harness, 'adopt', { label: 'Rob', roots: { code: harness.code }, update: { mode: 'check' } });
+        expect(applied.operation.status).toBe('applied');
+        expect(harness.manager.store.readInstallation().doc.update).toEqual({ channel: 'stable', mode: 'check' });
+
+        const other = await newHarness({ root: scratch('adopt-update2'), installDeps: { discover: (opts) => discover({ ...opts, exec: () => null }) } });
+        manualCheckout(other);
+        expect(await codeOf(drive(other, 'adopt', { label: 'Rob', roots: { code: other.code }, update: { mode: 'sometimes' } }))).toBe('INVALID_INPUT');
+        await drive(other, 'adopt', { label: 'Rob', roots: { code: other.code } });
+        expect(other.manager.store.readInstallation().doc.update || null).toBeNull();
+    });
+
     test('a systemd timer needs the privileged helper: deferred (501) when the script carries the guard, UPDATER_CONFLICT when it does not', async () => {
         const root = scratch('adopt-timer');
         const exec = (name) => (name === 'systemctl-timer' ? 'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n' : null);
@@ -724,5 +738,51 @@ describe('over HTTP (#330): public kinds with allowed bases', () => {
         expect(paths.isUnderAllowedBase('/home/a/goobster', ['/home/a'], { platform: 'linux' })).toBe(true);
         expect(paths.isUnderAllowedBase('/home/ab/goobster', ['/home/a'], { platform: 'linux' })).toBe(false);
         expect(paths.isUnderAllowedBase('/home/a/../etc', ['/home/a'], { platform: 'linux' })).toBe(false);
+    });
+});
+
+describe('the port probe', () => {
+    const { defaultProbePort } = require('@goobster/manager/install/preflight');
+
+    test('a port with a listener is busy, a free port is free', async () => {
+        const holder = net.createServer();
+        await new Promise(resolve => holder.listen(0, '127.0.0.1', resolve));
+        const { port } = holder.address();
+        expect(await defaultProbePort(port)).toBe('busy');
+        await new Promise(resolve => holder.close(resolve));
+        expect(await defaultProbePort(port)).toBe('free');
+    });
+
+    test('a bind refused with EADDRINUSE and nothing listening (another account\'s TIME_WAIT on macOS) is free', async () => {
+        const fake = {
+            createServer: () => {
+                const handlers = {};
+                return {
+                    unref() {},
+                    once(event, handler) { handlers[event] = handler; },
+                    listen() { setImmediate(() => handlers.error(Object.assign(new Error('in use'), { code: 'EADDRINUSE' }))); },
+                    close(callback) { callback(); }
+                };
+            },
+            connect: () => {
+                const handlers = {};
+                const socket = {
+                    unref() {},
+                    setTimeout() {},
+                    destroy() {},
+                    once(event, handler) { handlers[event] = handler; return socket; }
+                };
+                setImmediate(() => handlers.error(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })));
+                return socket;
+            }
+        };
+        expect(await defaultProbePort(3100, fake)).toBe('free');
+        const accepting = { ...fake, connect: () => {
+            const handlers = {};
+            const socket = { unref() {}, setTimeout() {}, destroy() {}, once(event, handler) { handlers[event] = handler; return socket; } };
+            setImmediate(() => handlers.connect());
+            return socket;
+        } };
+        expect(await defaultProbePort(3100, accepting)).toBe('busy');
     });
 });

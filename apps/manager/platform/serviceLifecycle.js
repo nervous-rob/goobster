@@ -2,30 +2,37 @@
  * Registering and unregistering the operating-system service as steps of the
  * install operations (documentation/linux_install.md, "The service").
  *
+ * Everything specific to one service manager (the definition text, where it
+ * is installed, the account rules, the by-hand commands) comes from the kind
+ * definition in `serviceKinds.js`; this module is the same for systemd,
+ * launchd and the Windows service manager.
+ *
  * Registration, in order: the roots file the launcher reads, the ownership
  * record (installation.json `owned.services` and `<store>/services.json`),
- * the runtime account when one was asked for (`user.create`, which hands the
- * mutable roots to it), then `service.register`. The record is written first
- * because handing the manager store to another account ends the installer's
- * ability to write it. When the machine cannot take the service (systemd
- * absent or offline, no way to elevate, the operator declined) the install is
+ * the runtime account when one was asked for and the kind creates accounts
+ * (`user.create`, which hands the mutable roots to it), then
+ * `service.register`. The record is written first because handing the
+ * manager store to another account ends the installer's ability to write
+ * it. When the machine cannot take the service (the service manager absent
+ * or offline, no way to elevate, the operator declined) the install is
  * still complete: the step is `skipped` with MANUAL_FALLBACK, the record is
- * taken back, the unit text is left at `<store>/goobster.service`, and the
- * result names the exact command that runs the supervisor by hand.
+ * taken back, the definition text is left at `<store>/<fallbackFileName>`,
+ * and the result names the exact command that runs the supervisor by hand.
  *
  * Unregistration acts only on services the installer recorded, and the helper
- * independently refuses a unit that does not carry this installation's marker.
+ * independently refuses a service that does not carry this installation's marker.
  */
 
 const nodeFs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const files = require('../store/files');
-const unitText = require('./systemdUnit');
 const rootsEnv = require('./rootsEnv');
 const serviceRecord = require('./serviceRecord');
+const serviceKinds = require('./serviceKinds');
 const { ROLE_KEYS } = require('../install/engine');
 
+/** The kind this process registers; kept for callers that expect the systemd names. */
 const SERVICE_NAME = 'goobster';
 const FALLBACK_UNIT = 'goobster.service';
 
@@ -48,51 +55,36 @@ function rootsOf(roots) {
     return out;
 }
 
-/** What an operator types to run the supervisor in the foreground, and to start it at boot by hand. */
-function manualInstructions({ codeRoot, mode, nodePath, unitFile }) {
-    const foreground = mode === 'payload'
-        ? `${shellQuote(`${codeRoot}/current/bin/goobster-manager`)} --supervise`
-        : `${shellQuote(nodePath)} ${shellQuote(`${codeRoot}/apps/manager/index.js`)} --supervise`;
-    return {
-        foreground,
-        boot: [
-            `sudo install -m 0644 ${shellQuote(unitFile)} /etc/systemd/system/${FALLBACK_UNIT}`,
-            'sudo systemctl daemon-reload',
-            `sudo systemctl enable --now ${FALLBACK_UNIT}`
-        ],
-        unitFile
-    };
+/**
+ * What an operator types to run the supervisor in the foreground, and to start
+ * it at boot by hand, for the kind this platform registers (systemd when the
+ * platform has no definition yet, so the wording is never empty).
+ */
+function manualInstructions({ codeRoot, mode, nodePath, unitFile, kind = null }) {
+    const definition = (kind ? serviceKinds.forKind(kind) : serviceKinds.forPlatform()) || serviceKinds.forKind('systemd');
+    return definition.manualInstructions({ codeRoot, mode, nodePath, unitFile });
 }
 
 const MAY_HAVE_WRITTEN = new Set(['COMMAND_FAILED', 'HELPER_FAILED', 'HELPER_PROTOCOL']);
 
-function shellQuote(value) {
-    return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${String(value).replace(/'/g, "'\\''")}'`;
-}
-
-function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new Date() }) {
+/**
+ * @param {Object} params
+ * @param {Object} params.core       the install engine (privileged hooks, the host's service kind)
+ * @param {Object} params.settings
+ * @param {Object} [params.fs]
+ * @param {Function} [params.now]
+ * @param {Object} [params.kinds]    the kind registry (tests inject one with a fake kind)
+ */
+function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new Date(), kinds = serviceKinds }) {
     const storeDir = () => settings.storeDir;
     const available = (operation) => core.privilegedAvailable(operation);
+    const definitionForHost = () => kinds.forKind(core.serviceKindForHost());
 
-    function unitInput({ t, doc, runtimeUser, mode }) {
-        return {
-            kind: core.serviceKindForHost(),
-            name: SERVICE_NAME,
-            layout: t.layout,
-            codeRoot: t.roots.code,
-            runtimeUser,
-            installationId: doc.installationId,
-            roots: rootsOf(t.roots),
-            mode,
-            ...(mode === 'checkout' ? { nodePath: process.execPath } : {})
-        };
-    }
-
-    function writeFallbackUnit({ t, doc, runtimeUser, mode }) {
-        const target = path.join(storeDir(), FALLBACK_UNIT);
+    function writeFallbackDefinition(def, { t, doc, runtimeUser, mode }) {
+        const target = path.join(storeDir(), def.fallbackFileName);
         try {
-            const text = unitText.renderUnit({
-                name: SERVICE_NAME,
+            const text = def.render({
+                name: def.serviceName,
                 installationId: doc.installationId,
                 runtimeUser,
                 codeRoot: t.roots.code,
@@ -109,33 +101,40 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
         }
     }
 
-    function takeBackRecord(ctx, doc) {
+    function takeBackRecord(def, ctx) {
         try {
-            serviceRecord.recordUnregistered(storeDir(), { kind: 'systemd', name: SERVICE_NAME }, { fs });
+            serviceRecord.recordUnregistered(storeDir(), { kind: def.kind, name: def.serviceName }, { fs });
         } catch { }
         try {
             ctx.store.updateInstallation(draft => ({
                 ...draft,
-                owned: { ...draft.owned, services: draft.owned.services.filter(item => !(item.kind === 'systemd' && item.name === SERVICE_NAME && item.registeredBy === 'installer')) }
+                owned: { ...draft.owned, services: draft.owned.services.filter(item => !(item.kind === def.kind && item.name === def.serviceName && item.registeredBy === 'installer')) }
             }));
         } catch { }
-        void doc;
     }
 
-    function recordRegistration(ctx, doc, t) {
-        if (!doc.owned.services.some(item => item.kind === 'systemd' && item.name === SERVICE_NAME)) {
+    function recordRegistration(def, ctx, doc, t) {
+        if (!doc.owned.services.some(item => item.kind === def.kind && item.name === def.serviceName)) {
             ctx.store.updateInstallation(draft => ({
                 ...draft,
-                owned: { ...draft.owned, services: [...draft.owned.services, { kind: 'systemd', name: SERVICE_NAME, registeredBy: 'installer' }] }
+                owned: { ...draft.owned, services: [...draft.owned.services, { kind: def.kind, name: def.serviceName, registeredBy: 'installer' }] }
             }));
         }
         serviceRecord.recordRegistered(storeDir(), {
-            kind: 'systemd',
-            name: SERVICE_NAME,
-            unitPath: path.join(unitText.UNIT_DIR, unitText.unitFileName(SERVICE_NAME)),
+            kind: def.kind,
+            name: def.serviceName,
+            unitPath: def.installedPath(def.serviceName, { roots: rootsOf(t.roots) }),
             installationId: doc.installationId
         }, { now, fs });
-        void t;
+    }
+
+    function fallback(def, { t, doc, mode, runtimeUser, reason, helperCommand = null, detail = {} }) {
+        const unitFile = writeFallbackDefinition(def, { t, doc, runtimeUser, mode });
+        const manual = def.manualInstructions({ codeRoot: t.roots.code, mode, nodePath: process.execPath, unitFile: unitFile || path.join(storeDir(), def.fallbackFileName) });
+        return {
+            scratch: { registered: false, fallback: true, reason, kind: def.kind, ...(helperCommand ? { helperCommand } : {}), ...manual },
+            step: { status: 'skipped', code: 'MANUAL_FALLBACK', detail: { ...detail, reason, unitFile: unitFile !== null } }
+        };
     }
 
     /**
@@ -154,7 +153,10 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
             }
             return { status: 'skipped', code: 'NOT_REQUESTED' };
         }
-        if (core.serviceKindForHost() !== 'systemd' || !available('service.register')) {
+        const def = definitionForHost();
+        // No definition for this platform's kind: there is no request to make, so the step defers without a helper call.
+        if (!def) return { status: 'deferred', code: 'NOT_IMPLEMENTED', detail: { privileged: 'service.register', kind: core.serviceKindForHost() } };
+        if (!available('service.register')) {
             return core.privilegedStep('service.register', { enabled: true, input: null, record, ctx });
         }
         const read = ctx.store.readInstallation();
@@ -163,16 +165,16 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
         const mode = modeOf(t.roots.code, fs);
         const invoking = currentUser();
         const asked = t.runtimeUser || null;
-        const wantUser = Boolean(t.createRuntimeUser && asked);
-        let runtimeUser = asked || invoking;
-        const detail = { mode, runtimeUser: null, userCreated: false };
+        const wantUser = Boolean(def.account.creatable && t.createRuntimeUser && asked);
+        let runtimeUser = asked || def.account.defaultFor({ invoking });
+        const detail = { kind: def.kind, mode, runtimeUser: null, userCreated: false };
         const warnings = [];
 
         const requestDir = path.join(storeDir(), 'requests');
-        if (runtimeUser === 'root' || !runtimeUser || !unitText.RUNTIME_USER.test(runtimeUser)) {
-            const unitFile = writeFallbackUnit({ t, doc, runtimeUser: 'goobster', mode });
-            ctx.scratch.service = { registered: false, fallback: true, reason: 'RUNTIME_USER_REQUIRED', ...manualInstructions({ codeRoot: t.roots.code, mode, nodePath: process.execPath, unitFile: unitFile || path.join(storeDir(), FALLBACK_UNIT) }) };
-            return { status: 'skipped', code: 'MANUAL_FALLBACK', detail: { reason: 'RUNTIME_USER_REQUIRED', unitFile: unitFile !== null } };
+        if (!def.account.accepts(runtimeUser)) {
+            const out = fallback(def, { t, doc, mode, runtimeUser: def.account.fallbackName, reason: 'RUNTIME_USER_REQUIRED' });
+            ctx.scratch.service = out.scratch;
+            return out.step;
         }
 
         if (mode === 'payload') {
@@ -182,7 +184,7 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
                 warnings.push('ROOTS_ENV_NOT_WRITTEN');
             }
         }
-        recordRegistration(ctx, doc, t);
+        recordRegistration(def, ctx, doc, t);
 
         if (wantUser) {
             const created = await core.runPrivileged('user.create', {
@@ -194,52 +196,68 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
                 mode
             }, { record, ctx, requestDir });
             if (created.status === 'failed') {
-                takeBackRecord(ctx, doc);
+                takeBackRecord(def, ctx);
                 const { ManagerError } = require('../errors');
                 throw new ManagerError(409, created.code || 'HELPER_FAILED', created.message || 'The runtime account could not be created.', { privileged: 'user.create', log: created.log || [] });
             }
             if (created.status === 'done') {
                 detail.userCreated = created.outcome !== 'noop';
             } else {
-                runtimeUser = invoking;
+                runtimeUser = def.account.defaultFor({ invoking });
                 warnings.push('RUNTIME_USER_NOT_CREATED');
             }
         }
         detail.runtimeUser = runtimeUser;
-        if (!asked && invoking) warnings.push('RUNS_AS_INVOKING_USER');
+        if (!asked && invoking && runtimeUser === invoking) warnings.push('RUNS_AS_INVOKING_USER');
 
         let result;
-        if (!runtimeUser || runtimeUser === 'root') {
+        if (!def.account.accepts(runtimeUser)) {
             result = { status: 'fallback', reason: 'RUNTIME_USER_REQUIRED' };
         } else {
-            result = await core.runPrivileged('service.register', unitInput({ t, doc, runtimeUser, mode }), { record, ctx, requestDir });
+            const input = def.registerInput({
+                name: def.serviceName,
+                layout: t.layout,
+                codeRoot: t.roots.code,
+                runtimeUser,
+                installationId: doc.installationId,
+                roots: rootsOf(t.roots),
+                mode,
+                nodePath: process.execPath,
+                // For a kind that registers per-account services as well as machine ones (launchd).
+                invoking,
+                elevated: typeof process.geteuid === 'function' ? process.geteuid() === 0 : null
+            });
+            result = await core.runPrivileged('service.register', input, { record, ctx, requestDir });
         }
 
         if (result.status === 'done') {
-            ctx.scratch.service = { registered: true, name: SERVICE_NAME, unit: unitText.unitFileName(SERVICE_NAME), runtimeUser, active: result.detail && result.detail.active ? result.detail.active : null, mode };
+            try {
+                serviceRecord.recordTemplate(storeDir(), { kind: def.kind, name: def.serviceName, templateHash: require('../update/serviceTemplate').hashOf(def) }, { fs });
+            } catch { }
+            ctx.scratch.service = { registered: true, kind: def.kind, name: def.serviceName, unit: def.installedFileName(def.serviceName), runtimeUser, active: result.detail && result.detail.active ? result.detail.active : null, mode };
             return { status: 'done', detail: { ...detail, privileged: 'service.register', outcome: result.outcome, via: result.via || null, active: result.detail ? result.detail.active || null : null, warnings, log: result.log || [] } };
         }
         if (result.status === 'failed') {
-            // A refusal wrote nothing: the record must not claim a unit that is not ours. A command that died half way may have
-            // left our unit behind, so the record stays and a resumed install (or an uninstall) finishes or removes it.
-            if (!MAY_HAVE_WRITTEN.has(result.code)) takeBackRecord(ctx, doc);
+            // A refusal wrote nothing: the record must not claim a service that is not ours. A command that died half way may have
+            // left our definition behind, so the record stays and a resumed install (or an uninstall) finishes or removes it.
+            if (!MAY_HAVE_WRITTEN.has(result.code)) takeBackRecord(def, ctx);
             const { ManagerError } = require('../errors');
             throw new ManagerError(409, result.code || 'HELPER_FAILED', result.message || 'The service could not be registered.', { privileged: 'service.register', log: result.log || [] });
         }
         if (result.status === 'deferred') {
-            takeBackRecord(ctx, doc);
+            takeBackRecord(def, ctx);
             return { status: 'deferred', code: 'NOT_IMPLEMENTED', detail: { privileged: 'service.register' } };
         }
 
-        takeBackRecord(ctx, doc);
-        const fallbackUser = runtimeUser || invoking || 'goobster';
-        const unitFile = writeFallbackUnit({ t, doc, runtimeUser: fallbackUser, mode });
-        const manual = manualInstructions({ codeRoot: t.roots.code, mode, nodePath: process.execPath, unitFile: unitFile || path.join(storeDir(), FALLBACK_UNIT) });
-        ctx.scratch.service = { registered: false, fallback: true, reason: result.reason, helperCommand: result.manual || null, ...manual };
-        return { status: 'skipped', code: 'MANUAL_FALLBACK', detail: { ...detail, privileged: 'service.register', reason: result.reason, unitFile: unitFile !== null, warnings } };
+        takeBackRecord(def, ctx);
+        const fallbackUser = def.account.accepts(runtimeUser) ? runtimeUser : (def.account.accepts(invoking) ? invoking : def.account.fallbackName);
+        const out = fallback(def, { t, doc, mode, runtimeUser: fallbackUser, reason: result.reason, helperCommand: result.manual || null, detail: { ...detail, privileged: 'service.register' } });
+        out.step.detail.warnings = warnings;
+        ctx.scratch.service = out.scratch;
+        return out.step;
     }
 
-    /** The `unregister-service` step body: only what the record names, only a unit with our marker. */
+    /** The `unregister-service` step body: only what the record names, only a service with our marker. */
     async function unregister(record, ctx, { enabled }) {
         if (!enabled) {
             try {
@@ -247,31 +265,33 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
             } catch { }
             return { status: 'skipped', code: 'NOT_REQUESTED' };
         }
+        const def = definitionForHost();
         const read = ctx.store.readInstallation();
         const doc = read.status === 'ok' ? read.doc : null;
-        const owned = doc ? doc.owned.services.filter(item => item.registeredBy === 'installer' && item.kind === 'systemd') : [];
-        if (!doc || owned.length === 0 || core.serviceKindForHost() !== 'systemd' || !available('service.unregister')) {
+        if (!def) return { status: 'deferred', code: 'NOT_IMPLEMENTED', detail: { privileged: 'service.unregister', kind: core.serviceKindForHost() } };
+        const owned = doc ? doc.owned.services.filter(item => item.registeredBy === 'installer' && item.kind === def.kind) : [];
+        if (!doc || owned.length === 0 || !available('service.unregister')) {
             return core.privilegedStep('service.unregister', { enabled: true, input: null, record, ctx });
         }
         const outcomes = [];
         for (const service of owned) {
-            const result = await core.runPrivileged('service.unregister', { kind: 'systemd', name: service.name, registeredBy: 'installer', installationId: doc.installationId }, { record, ctx, requestDir: path.join(storeDir(), 'requests') });
+            const result = await core.runPrivileged('service.unregister', def.unregisterInput({ name: service.name, installationId: doc.installationId }), { record, ctx, requestDir: path.join(storeDir(), 'requests') });
             if (result.status === 'failed') {
                 const { ManagerError } = require('../errors');
                 throw new ManagerError(409, result.code || 'HELPER_FAILED', result.message || 'The service could not be unregistered.', { privileged: 'service.unregister', log: result.log || [] });
             }
             if (result.status === 'fallback') {
                 const { ManagerError } = require('../errors');
-                throw new ManagerError(409, 'ELEVATION_REQUIRED', 'Removing the registered service needs administrator rights, which are not available; remove it by hand (systemctl disable --now goobster, delete its unit file), then run the uninstall again.', { reason: result.reason, ...(result.manual ? { manual: result.manual } : {}) });
+                throw new ManagerError(409, 'ELEVATION_REQUIRED', `Removing the registered service needs administrator rights, which are not available; remove it by hand (${def.removeByHand}), then run the uninstall again.`, { reason: result.reason, ...(result.manual ? { manual: result.manual } : {}) });
             }
             if (result.status === 'deferred') return { status: 'deferred', code: 'NOT_IMPLEMENTED', detail: { privileged: 'service.unregister' } };
-            serviceRecord.recordUnregistered(storeDir(), { kind: 'systemd', name: service.name }, { fs });
+            serviceRecord.recordUnregistered(storeDir(), { kind: def.kind, name: service.name }, { fs });
             outcomes.push({ name: service.name, outcome: result.outcome });
         }
         try {
             rootsEnv.removeRootsEnv(record.plan.target.roots.code, fs);
         } catch { }
-        return { status: 'done', detail: { privileged: 'service.unregister', services: outcomes.length, outcomes } };
+        return { status: 'done', detail: { privileged: 'service.unregister', kind: def.kind, services: outcomes.length, outcomes } };
     }
 
     return { register, unregister, modeOf, manualInstructions };

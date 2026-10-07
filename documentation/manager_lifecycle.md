@@ -412,7 +412,17 @@ does the same as the units; Ctrl-C stops the workers first.
   value, a stop timeout of at least drain + 15 s + margin, and the manager
   alone receives the stop signal. The Linux unit is done (#333,
   [linux_install.md](linux_install.md)): `apps/manager/platform/systemdUnit.js`
-  renders it, `deploy/goobster.service` is its reference output.
+  renders it, `deploy/goobster.service` is its reference output. The
+  register/unregister steps are kind-neutral: a platform adds its definition
+  to `apps/manager/platform/serviceKinds.js` (text, installed path, fallback
+  file, by-hand commands, account rules) and the steps, the ownership record
+  and the bootstrap's closing message follow it. The macOS job is done too (#332,
+  [macos_install.md](macos_install.md)): `launchdPlist.js` renders it, with
+  `ExitTimeOut` 120 so launchd's `SIGTERM` to the manager alone is followed by
+  the same drain. So is the Windows service (#331,
+  [windows_install.md](windows_install.md)): the same steps with the
+  `windows-service` definition, a WinSW host running the manager as
+  `NT SERVICE\goobster`, and a 120 s stop bound whose gracefulness the CI journey checks.
 - **#334 (maintenance barrier):** done in
   [maintenance_barrier.md](maintenance_barrier.md). It reuses this worker
   contract (the control file, the one-second poll, the drain bounds) with a

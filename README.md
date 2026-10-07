@@ -188,6 +188,8 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Running without Discord (adapter switch, assistant identity, the Inbox, runtime modes, people discovery) | `documentation/independent_runtime.md` |
 | Backup and tested restore (`npm run backup` / `npm run restore`, the paused instance, the recovery test) | `documentation/backup_and_restore.md` |
 | The work ledger (failures, resource events, operator audit, cost per accepted result) | `documentation/work_ledger.md` |
+| Releasing (the signed release pipeline, release index, trust policies, signing keys and certificates, release checklist) | `documentation/release.md` |
+| Updating an installation (the update policy, staged apply, the handoff, schema fingerprint, rollback and recovery, `goobster-manager update`) | `documentation/manager_update.md` |
 | Shared-instance roadmap handoff (what shipped, where the next steps hook in) | `documentation/shared_instance_handoff.md` |
 | Private single-user pilot (task, measurements, cycle record and exit decision) | `documentation/pilot_plan.md` |
 | Owner-judged research evaluation (30 fixed-evidence questions, optional live runner and review artifacts) | `documentation/research_evaluation.md` |

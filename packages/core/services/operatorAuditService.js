@@ -45,13 +45,14 @@ const ACTIONS = new Set([
     'manager.privileged.service.register', 'manager.privileged.service.unregister', 'manager.privileged.user.create',
     'manager.privileged.updater.disable', 'manager.privileged.package.install',
     'manager.privileged.postgres.cluster.create', 'manager.privileged.postgres.cluster.control', 'manager.privileged.postgres.cluster.remove', 'manager.privileged.postgres.cluster.relocate',
+    'manager.update.check', 'manager.update.stage', 'manager.update.apply', 'manager.update.policy', 'manager.update.recover', 'manager.update.handoff',
     // Written by the portal's Host routes once the manager answered success
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.
     'host.features.apply', 'host.config.apply', 'host.defaults.apply',
     'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart',
     'host.install.apply', 'host.backup.apply', 'host.reset.apply',
-    'host.database.apply'
+    'host.database.apply', 'host.update.apply'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */

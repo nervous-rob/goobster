@@ -1,0 +1,204 @@
+name: Windows bootstrap
+
+# Issue #331 (installer epic #315, installer plan Phase 3.5). Builds the Windows
+# installer - the NSIS `.exe` that carries the release payload and the pinned
+# WinSW service host - from the release payload on windows-2022, then proves on
+# a real Windows machine that it installs, registers and runs the `goobster`
+# service as NT SERVICE\goobster, survives a re-run and an interruption, stops
+# gracefully, restarts after a crash, reconfigures, repairs, uninstalls from
+# Programs and Features, and refuses a service that is not its own.
+#
+# `scripts/windows-bootstrap-proof.ps1` is the journey; this file only builds,
+# runs it and keeps the evidence. Nothing of the Windows half (the service
+# control manager, WinSW, icacls, the virtual account, the HKCU entry, the NSIS
+# stub) can be exercised on a Linux developer machine, so this workflow is where
+# it is proven. The GitHub-hosted runner is an administrator session with UAC
+# not prompting, so the UAC branch of the elevated helper (Start-Process -Verb
+# RunAs) is NOT exercised here; its transport is covered by unit tests only.
+#
+# Not a release pipeline: the payload is signed with a throwaway development
+# key and the installer is not Authenticode-signed, so the artifact is labelled
+# `-dev` and carries the unsigned-build notice. Nothing is published; the
+# artifacts are kept for a few days.
+# Documentation: documentation/windows_install.md.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'bootstrap/windows/**'
+      - 'apps/manager/**'
+      - 'scripts/package-*'
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/windows-bootstrap-proof.ps1'
+      - 'scripts/lib/bootstrapStage.js'
+      - 'scripts/lib/payload*'
+      - 'documentation/windows_install.md'
+      - '.github/workflows/windows-bootstrap.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/*/package.json'
+      - 'apps/*/package.json'
+  push:
+    branches: [main]
+    paths:
+      - 'bootstrap/windows/**'
+      - 'scripts/package-bootstrap-win32.js'
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/windows-bootstrap-proof.ps1'
+      - 'apps/manager/privileged/**'
+      - 'apps/manager/platform/**'
+      - 'apps/manager/bootstrap/**'
+      - '.github/workflows/windows-bootstrap.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: win32-x64 (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TARGET: win32-x64
+    steps:
+      - name: Output locations (outside the checkout)
+        run: |
+          @(
+            "PAYLOAD=$env:RUNNER_TEMP\goobster-payload",
+            "REPORTS=$env:RUNNER_TEMP\goobster-reports",
+            "ARTIFACTS=$env:RUNNER_TEMP\goobster-bootstrap",
+            "TOOLS=$env:RUNNER_TEMP\goobster-bootstrap-tools"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'choco install nsis failed' }
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          if (-not (Test-Path (Join-Path $nsis 'makensis.exe'))) { throw "makensis.exe is not in $nsis" }
+          $nsis | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & (Join-Path $nsis 'makensis.exe') -VERSION
+
+      - name: Build the payload (development-signed)
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:REPORTS | Out-Null
+          node scripts/package-runtime.js --target $env:TARGET --out $env:PAYLOAD --report-dir $env:REPORTS --force --dev-sign 2>&1 | Tee-Object -FilePath (Join-Path $env:REPORTS "package-runtime-$env:TARGET.log")
+          if ($LASTEXITCODE -ne 0) { throw "package-runtime exited $LASTEXITCODE" }
+
+      - name: The payload carries the manager and the Windows entry, and passes its own smoke check
+        run: |
+          foreach ($file in @('bin\goobster-manager.cmd', 'runtime\node.exe', 'app\apps\manager\bootstrap\win32.js', 'app\apps\manager\privileged\win32.js', 'app\apps\manager\platform\windowsServiceXml.js')) {
+            if (-not (Test-Path (Join-Path $env:PAYLOAD $file))) { throw "the payload has no $file" }
+          }
+          & "$env:PAYLOAD\runtime\node.exe" "$env:PAYLOAD\app\scripts\package-smoke.js" `
+            --public-key "$env:REPORTS\payload-dev-key-$env:TARGET.pub.pem" `
+            --report "$env:REPORTS\package-smoke-$env:TARGET.json" 2>&1 | Tee-Object -FilePath "$env:REPORTS\package-smoke-$env:TARGET.log"
+          if ($LASTEXITCODE -ne 0) { throw "package-smoke exited $LASTEXITCODE" }
+
+      - name: Build the installer (a skipped installer fails the job)
+        run: |
+          node scripts/package-bootstrap-win32.js --target $env:TARGET --payload $env:PAYLOAD --out $env:ARTIFACTS `
+            --tools-dir $env:TOOLS --require-installer 2>&1 | Tee-Object -FilePath "$env:REPORTS\package-bootstrap-$env:TARGET.log"
+          if ($LASTEXITCODE -ne 0) { throw "package-bootstrap-win32 exited $LASTEXITCODE" }
+          Get-FileHash -Algorithm SHA256 (Get-ChildItem $env:ARTIFACTS -File).FullName | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path -Leaf $_.Path)" } | Tee-Object -FilePath "$env:REPORTS\sha256-$env:TARGET.txt"
+
+      - name: The installer is labelled, unsigned, and the service host it carries is the pinned one
+        run: |
+          $exe = (Get-ChildItem $env:ARTIFACTS -Filter 'goobster-*-win32-x64-dev.exe').FullName
+          $info = (Get-Item $exe).VersionInfo
+          "ProductName=$($info.ProductName) ProductVersion=$($info.ProductVersion) Comments=$($info.Comments)"
+          if ($info.Comments -notmatch 'UNSIGNED DEVELOPMENT BUILD') { throw 'the version resource does not carry the unsigned-build notice' }
+          $signature = Get-AuthenticodeSignature $exe
+          "Authenticode: $($signature.Status)"
+          if ($signature.Status -ne 'NotSigned') { throw 'the development installer must not be Authenticode-signed' }
+          $report = Get-Content -Raw (Join-Path $env:ARTIFACTS 'bootstrap-report-win32-x64.json') | ConvertFrom-Json
+          if ($report.skipped.Count -ne 0) { throw 'the report lists a skipped artifact' }
+          if ($report.installer.host.sha256 -ne (Get-Content -Raw scripts\bootstrap-pins.json | ConvertFrom-Json).winsw.sha256) { throw 'the report names another service host than the pin' }
+          & "$env:PAYLOAD\runtime\node.exe" "$env:PAYLOAD\app\apps\manager\bootstrap\win32.js" --help | Tee-Object -FilePath "$env:REPORTS\bootstrap-help-$env:TARGET.txt"
+          if (-not (Select-String -Path "$env:REPORTS\bootstrap-help-$env:TARGET.txt" -Pattern 'Goobster installer for Windows' -Quiet)) { throw 'the Windows entry did not print its help' }
+
+      - name: Building the installer twice (reported, not enforced)
+        run: |
+          $again = Join-Path $env:RUNNER_TEMP 'goobster-bootstrap-again'
+          node scripts/package-bootstrap-win32.js --target $env:TARGET --payload $env:PAYLOAD --out $again --tools-dir $env:TOOLS --require-installer | Out-Null
+          $first = Get-FileHash -Algorithm SHA256 (Get-ChildItem $env:ARTIFACTS -Filter '*.exe').FullName
+          $second = Get-FileHash -Algorithm SHA256 (Get-ChildItem $again -Filter '*.exe').FullName
+          "first : $($first.Hash)"
+          "second: $($second.Hash)"
+          if ($first.Hash -ne $second.Hash) { Write-Host '::warning::two builds of one payload on windows-2022 gave different installer bytes' } else { 'the installer is reproducible on this runner' }
+
+      - name: Service journey on real Windows (administrator, roots with spaces, data root apart from the code root)
+        run: |
+          $exe = (Get-ChildItem $env:ARTIFACTS -Filter 'goobster-*-win32-x64-dev.exe').FullName
+          & pwsh -NoProfile -File scripts\windows-bootstrap-proof.ps1 -Installer $exe -Payload $env:PAYLOAD `
+            -Work 'C:\goobster proof' -Reports "$env:REPORTS\journey" *>&1 | Tee-Object -FilePath "$env:REPORTS\windows-bootstrap-proof-$env:TARGET.log"
+          if ($LASTEXITCODE -ne 0) { throw "the journey exited $LASTEXITCODE" }
+
+      - name: The journey leaves nothing registered
+        if: always()
+        run: |
+          $query = & sc.exe query goobster 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $query | Tee-Object -FilePath "$env:REPORTS\service-after-$env:TARGET.txt"
+          # 1060 is ERROR_SERVICE_DOES_NOT_EXIST, the one answer this step accepts.
+          if ($code -ne 1060) { throw "a service named goobster is still registered (sc.exe exited $code)" }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Goobster') { throw 'the Programs and Features entry is still there' }
+          # The runner exits the step with the last native exit code; sc.exe's 1060 is the expected answer, not a failure.
+          exit 0
+
+      - name: Job summary
+        if: always()
+        run: |
+          $log = "$env:REPORTS\windows-bootstrap-proof-$env:TARGET.log"
+          $passed = 0; $failed = 0; $warned = 0
+          if (Test-Path $log) {
+            $passed = @(Select-String -Path $log -Pattern '^PASS:').Count
+            $failed = @(Select-String -Path $log -Pattern '^FAIL:').Count
+            $warned = @(Select-String -Path $log -Pattern '^WARN:').Count
+          }
+          $lines = @('### Windows bootstrap (win32-x64, development build)', '', '| Artifact | SHA-256 |', '| --- | --- |')
+          if (Test-Path "$env:REPORTS\sha256-$env:TARGET.txt") {
+            $lines += Get-Content "$env:REPORTS\sha256-$env:TARGET.txt" | ForEach-Object { $parts = $_ -split '\s+', 2; "| $($parts[1]) | ``$($parts[0])`` |" }
+          }
+          $lines += ''
+          $lines += "Journey: $passed checks passed, $failed failed, $warned reported."
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bootstrap-reports-win32-x64
+          path: ${{ runner.temp }}\goobster-reports
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload the development artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bootstrap-dev-win32-x64
+          path: ${{ runner.temp }}\goobster-bootstrap
+          if-no-files-found: error
+          retention-days: 3

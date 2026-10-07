@@ -21,6 +21,7 @@
  * the files beside it are the helper's whole code: Node built-ins only.
  */
 
+const path = require('node:path');
 const { UUID, RUNTIME_USER, assertSafePath } = require('../platform/systemdUnit');
 
 const PROTOCOL_VERSION = 1;
@@ -42,6 +43,7 @@ const IDENTIFIER = /^[a-z][a-z0-9-]{0,31}$/;
 const TIMER_UNIT = /^[a-z][a-z0-9-]{0,31}\.timer$/;
 const CRON_FILE = /^[a-z][a-z0-9._-]{0,63}$/;
 const SERVICE_KINDS = Object.freeze(['systemd', 'windows-service', 'launchd']);
+const SERVICE_SCOPES = Object.freeze(['machine', 'user']);
 const LAYOUTS = Object.freeze(['lite', 'standalone', 'paired']);
 const MODES = Object.freeze(['payload', 'checkout']);
 const ROOT_ROLES = Object.freeze(['code', 'data', 'config', 'cache', 'logs', 'uploads', 'managerStore']);
@@ -132,6 +134,45 @@ function safeRoot(value, what) {
     return value;
 }
 
+// ---- Windows paths (the `windows-service` kind) -------------------------------------------------
+// Keyed on the request's `kind`, never on the platform the code runs on: the same validation runs in the
+// manager (before anything is started) and in the elevated helper, on any host.
+
+const WINDOWS_MAX_PATH = 200;
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:\\/;
+// eslint-disable-next-line no-control-regex -- rejecting control characters is the point
+const WINDOWS_UNSAFE_CHARS = /[\u0000-\u001f\u007f<>"|?*%]/;
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])$/i;
+/** First path segments no privileged operation may be pointed at or below, case-insensitively. */
+const WINDOWS_SYSTEM_TREES = Object.freeze(['windows', 'program files', 'program files (x86)', 'system volume information', '$recycle.bin', 'recovery']);
+const WINDOWS_ACCOUNT = 'goobster';
+
+/**
+ * An absolute, normalised drive path of safe characters that is not a system location: `C:\Goobster\code`.
+ * No UNC, no `..`, no trailing separator, no `<>"|?*%` or control character, nothing under `\Windows` or
+ * `\Program Files`, never a drive root, `\Users` itself, a profile root or `\ProgramData` itself.
+ */
+function windowsRoot(value, what) {
+    const wrong = () => refuse('INVALID_PATH', `${what} must be an absolute, normalised drive path (C:\\...) without <>"|?*%, control characters, UNC names or "..".`);
+    if (typeof value !== 'string' || value.length > WINDOWS_MAX_PATH || !WINDOWS_DRIVE_PATH.test(value)) throw wrong();
+    if (WINDOWS_UNSAFE_CHARS.test(value) || value.includes(':', 2) || value.endsWith('\\') || path.win32.normalize(value) !== value) throw wrong();
+    const segments = value.slice(3).split('\\');
+    for (const segment of segments) {
+        if (segment === '' || segment === '.' || segment === '..' || /[. ]$/.test(segment) || WINDOWS_RESERVED_NAMES.test(segment.split('.')[0])) throw wrong();
+    }
+    const first = segments[0].toLowerCase();
+    if (WINDOWS_SYSTEM_TREES.includes(first)) throw refuse('PATH_NOT_ALLOWED', `${what} is inside a system location.`);
+    if (segments.length < 2) throw refuse('PATH_NOT_ALLOWED', `${what} is too close to the drive root.`);
+    if (first === 'users' && segments.length < 3) throw refuse('PATH_NOT_ALLOWED', `${what} is a profile root.`);
+    return value;
+}
+
+function windowsAccount(input) {
+    if (input.runtimeUser !== WINDOWS_ACCOUNT || input.name !== WINDOWS_ACCOUNT) {
+        throw refuse('INVALID_INPUT', 'A Windows service is named goobster and runs as the virtual account NT SERVICE\\goobster.');
+    }
+}
+
 function runtimeUser(value, what = 'The runtime user') {
     if (typeof value !== 'string' || !RUNTIME_USER.test(value)) throw refuse('INVALID_INPUT', `${what} must be a lowercase account name.`);
     if (RESERVED_ACCOUNTS.includes(value)) throw refuse('USER_REFUSED', `${what} names a system account.`);
@@ -168,30 +209,36 @@ function installationId(value) {
     return value;
 }
 
-function roots(value) {
+function roots(value, rule = safeRoot) {
     exactKeys(value, ROOT_ROLES, 'The roots');
     const out = {};
     for (const role of ROOT_ROLES) {
         if (value[role] === undefined) throw refuse('INVALID_INPUT', `The roots must name ${role}.`);
-        out[role] = safeRoot(value[role], `The ${role} root`);
+        out[role] = rule(value[role], `The ${role} root`);
     }
     return out;
 }
 
 const VALIDATORS = {
     'service.register'(input) {
-        exactKeys(input, ['kind', 'name', 'layout', 'codeRoot', 'runtimeUser', 'installationId', 'roots', 'mode', 'nodePath'], 'The input');
+        exactKeys(input, ['kind', 'name', 'layout', 'codeRoot', 'runtimeUser', 'installationId', 'roots', 'mode', 'nodePath', 'scope'], 'The input');
+        const kind = oneOf(input.kind, SERVICE_KINDS, 'The service kind');
+        const rule = kind === 'windows-service' ? windowsRoot : safeRoot;
         const out = {
-            kind: oneOf(input.kind, SERVICE_KINDS, 'The service kind'),
+            kind,
+            // Whether the service belongs to the machine (a system unit, a LaunchDaemon, a Windows service) or to the
+            // invoking account's sessions (a LaunchAgent). systemd registers machine services only.
+            scope: input.scope === undefined ? 'machine' : oneOf(input.scope, SERVICE_SCOPES, 'The service scope'),
             name: identifier(input.name, 'The service name'),
             layout: oneOf(input.layout, LAYOUTS, 'The layout'),
-            codeRoot: safeRoot(input.codeRoot, 'The code root'),
+            codeRoot: rule(input.codeRoot, 'The code root'),
             runtimeUser: runtimeUser(input.runtimeUser),
             installationId: installationId(input.installationId),
-            roots: roots(input.roots),
+            roots: roots(input.roots, rule),
             mode: input.mode === undefined ? 'payload' : oneOf(input.mode, MODES, 'The mode')
         };
-        if (input.nodePath !== undefined) out.nodePath = safeRoot(input.nodePath, 'The node path');
+        if (kind === 'windows-service') windowsAccount(out);
+        if (input.nodePath !== undefined) out.nodePath = rule(input.nodePath, 'The node path');
         if (out.codeRoot !== out.roots.code) throw refuse('INVALID_INPUT', 'The code root is not the roots\' code root.');
         return out;
     },
@@ -351,12 +398,14 @@ module.exports = {
     ROOT_ROLES,
     SYSTEM_PATHS,
     SYSTEM_TREES,
+    WINDOWS_SYSTEM_TREES,
     RESERVED_ACCOUNTS,
     PACKAGE_TABLE,
     PACKAGE_NAMES,
     PG_MAJOR,
     CLUSTER_NAME,
     SCRAM,
+    windowsRoot,
     HelperError,
     refuse,
     isPlainObject,

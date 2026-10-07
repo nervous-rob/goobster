@@ -46,6 +46,15 @@ merges to `main` on its own: stop, pull, reinstall, reload, restart, health
 check, and automatic rollback when the new commit does not come up. See
 `continuous_deployment.md`.
 
+That timer belongs to installs the manager does not own. An installation the
+manager owns updates through the manager instead (`manager_update.md`): signed
+releases, a verified backup, the maintenance barrier, a health check and a
+rollback that never discards data silently. When you adopt an existing Pi into
+the manager, the adoption asks whether to take over updates, turns the timer
+off, and leaves a guard (`goobster-manager-guard`) so a copy of
+`auto-update.sh` that is still scheduled exits without acting. Only one
+updater runs at a time.
+
 ## Local AI with Ollama (no cloud required)
 
 If you don't provide an OpenAI key, Goobster automatically uses a local Ollama server for chat.

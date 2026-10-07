@@ -1,0 +1,203 @@
+name: macOS bootstrap
+
+# Issue #332 (installer epic #315, installer plan Phase 3 item 6). Builds the
+# macOS bootstrap artifacts - the `.pkg` and the per-user `.tar.gz` - from the
+# release payload on Apple silicon and Intel, then proves on a real macOS
+# machine that they install, register the launchd service, survive a re-run and
+# a SIGKILL, reconfigure, repair and uninstall.
+#
+# `scripts/macos-bootstrap-proof.sh` is the journey; this file only builds,
+# runs it and keeps the evidence. Everything that needs launchd, `dscl`,
+# `pkgbuild` and `installer` cannot be exercised on a Linux developer machine,
+# so this workflow is where it is proven.
+#
+# Not a release pipeline: the payload is signed with a throwaway development
+# key and the pkg is not signed or notarized, so every artifact is labelled
+# `-dev` and carries the unsigned-build notice. Nothing is published; the
+# artifacts are kept for a few days. Documentation: documentation/macos_install.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      darwin_x64:
+        description: 'Include darwin-x64 (macos-15-intel). Untick if the repository has no access to the GitHub-hosted Intel macOS runner; the job would otherwise queue forever.'
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - 'bootstrap/macos/**'
+      - 'apps/manager/**'
+      - 'scripts/package-*'
+      - 'scripts/lib/bootstrap/**'
+      - 'scripts/lib/bootstrapStage.js'
+      - 'scripts/lib/payload*'
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/macos-bootstrap-proof.sh'
+      - 'documentation/macos_install.md'
+      - '.github/workflows/macos-bootstrap.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/*/package.json'
+      - 'apps/*/package.json'
+  push:
+    branches: [main]
+    paths:
+      - 'bootstrap/macos/**'
+      - 'scripts/package-bootstrap-darwin.js'
+      - 'scripts/lib/bootstrap/**'
+      - 'scripts/macos-bootstrap-proof.sh'
+      - 'apps/manager/privileged/**'
+      - 'apps/manager/platform/**'
+      - 'apps/manager/bootstrap/**'
+      - '.github/workflows/macos-bootstrap.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: plan matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        env:
+          INCLUDE_X64: ${{ github.event_name != 'workflow_dispatch' && vars.PACKAGING_PROOF_DARWIN_X64 != 'false' || inputs.darwin_x64 == true }}
+        run: |
+          # macos-13 no longer exists on GitHub-hosted runners; the Intel macOS runner is macos-15-intel.
+          entries='{"target":"darwin-arm64","runner":"macos-15"}'
+          if [ "$INCLUDE_X64" = "true" ]; then
+            entries="$entries"',{"target":"darwin-x64","runner":"macos-15-intel"}'
+          else
+            echo "::notice::darwin-x64 is NOT part of this run; that target stays unverified."
+          fi
+          echo "matrix={\"include\":[$entries]}" >> "$GITHUB_OUTPUT"
+
+  bootstrap:
+    name: ${{ matrix.target }} (${{ matrix.runner }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Output locations (outside the checkout)
+        shell: bash
+        run: |
+          {
+            echo "PAYLOAD=$RUNNER_TEMP/goobster-payload"
+            echo "REPORTS=$RUNNER_TEMP/goobster-reports"
+            echo "ARTIFACTS=$RUNNER_TEMP/goobster-bootstrap"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      - name: Build the payload (development-signed)
+        run: node scripts/package-runtime.js --target "$TARGET" --out "$PAYLOAD" --report-dir "$REPORTS" --force --dev-sign
+
+      - name: The payload carries the manager and passes its own smoke check
+        run: |
+          test -x "$PAYLOAD/bin/goobster-manager"
+          test -f "$PAYLOAD/app/apps/manager/bootstrap/darwin.js"
+          env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+            "$PAYLOAD/runtime/bin/node" "$PAYLOAD/app/scripts/package-smoke.js" \
+            --public-key "$REPORTS/payload-dev-key-$TARGET.pub.pem" \
+            --report "$REPORTS/package-smoke-$TARGET.json" 2>&1 | tee "$REPORTS/package-smoke-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Build the .pkg and the .tar.gz (a skipped pkg fails the job)
+        run: |
+          node scripts/package-bootstrap-darwin.js --target "$TARGET" --payload "$PAYLOAD" --out "$ARTIFACTS" \
+            --require-pkg 2>&1 | tee "$REPORTS/package-bootstrap-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The package is well formed, the archive is reproducible
+        run: |
+          pkg="$(ls "$ARTIFACTS"/goobster-*-"$TARGET"-dev.pkg)"
+          tarball="$(ls "$ARTIFACTS"/goobster-*-"$TARGET"-dev.tar.gz)"
+          pkgutil --check-signature "$pkg" | tee "$REPORTS/pkg-signature-$TARGET.txt" || true
+          pkgutil --payload-files "$pkg" > "$REPORTS/pkg-payload-files-$TARGET.txt"
+          pkgutil --expand "$pkg" "$RUNNER_TEMP/pkg-expanded"
+          test -f "$RUNNER_TEMP/pkg-expanded/Distribution"
+          grep -q 'opt/goobster/stage' "$REPORTS/pkg-payload-files-$TARGET.txt"
+          node scripts/package-bootstrap-darwin.js --target "$TARGET" --payload "$PAYLOAD" --out "$RUNNER_TEMP/goobster-bootstrap-again" --no-pkg > /dev/null
+          cmp "$tarball" "$RUNNER_TEMP/goobster-bootstrap-again/$(basename "$tarball")"
+          shasum -a 256 "$ARTIFACTS"/*.pkg "$ARTIFACTS"/*.tar.gz | tee "$REPORTS/sha256-$TARGET.txt"
+
+      - name: Tools the journey uses
+        run: |
+          command -v jq >/dev/null || brew install jq
+          sw_vers
+          launchctl print "gui/$(id -u)" > /dev/null
+
+      - name: Service journey on real launchd (root, roots with a space and a non-ASCII letter, per-user LaunchAgent)
+        run: |
+          pkg="$(ls "$ARTIFACTS"/goobster-*-"$TARGET"-dev.pkg)"
+          tarball="$(ls "$ARTIFACTS"/goobster-*-"$TARGET"-dev.tar.gz)"
+          work="/Users/Shared/goobster proof ünï"
+          sudo mkdir -p "$work"
+          sudo chmod 755 "$work"
+          sudo -E bash scripts/macos-bootstrap-proof.sh --pkg "$pkg" --tarball "$tarball" --payload "$PAYLOAD" \
+            --work "$work" --reports "$REPORTS/journey" --person "$USER" 2>&1 | tee "$REPORTS/macos-bootstrap-proof-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The journey leaves nothing registered
+        if: always()
+        run: |
+          sudo launchctl print system | grep -i goobster | tee "$REPORTS/launchd-after-$TARGET.txt" || true
+          test ! -e /Library/LaunchDaemons/io.goobster.goobster.plist
+          test ! -e "$HOME/Library/LaunchAgents/io.goobster.goobster.plist"
+          test ! -e /etc/goobster-answers.json
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### macOS bootstrap ($TARGET, development build)"
+            echo
+            echo '| Artifact | SHA-256 |'
+            echo '| --- | --- |'
+            if [ -f "$REPORTS/sha256-$TARGET.txt" ]; then awk '{printf "| %s | `%s` |\n", $2, $1}' "$REPORTS/sha256-$TARGET.txt" | sed "s#$ARTIFACTS/##"; fi
+            echo
+            echo "Journey: $(grep -c '^PASS:' "$REPORTS/macos-bootstrap-proof-$TARGET.log" 2>/dev/null || echo 0) checks passed, $(grep -c '^FAIL:' "$REPORTS/macos-bootstrap-proof-$TARGET.log" 2>/dev/null || echo 0) failed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bootstrap-reports-${{ matrix.target }}
+          path: ${{ runner.temp }}/goobster-reports
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload the development artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bootstrap-dev-${{ matrix.target }}
+          path: ${{ runner.temp }}/goobster-bootstrap
+          if-no-files-found: error
+          retention-days: 3

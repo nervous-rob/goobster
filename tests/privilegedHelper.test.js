@@ -458,7 +458,7 @@ describe('what Linux does not do', () => {
     });
 
     test('another platform has no helper yet', () => {
-        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: ['postgresql-17'] }), { platform: 'win32' });
+        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: ['postgresql-17'] }), { platform: 'aix' });
         expect(reply).toMatchObject({ ok: false, code: 'PLATFORM_UNSUPPORTED' });
     });
 
@@ -617,6 +617,24 @@ describe('the manager-side runner', () => {
         expect(JSON.parse(fs.readFileSync(requestFile, 'utf8')).operation).toBe('user.create');
     });
 
+    test('the platform\'s elevation() sees the operation and the validated input, so it can answer that none is needed', async () => {
+        const seen = [];
+        const implementation = {
+            ...linux,
+            elevation: (params) => {
+                seen.push(params);
+                return { kind: 'none', prefix: [], reason: 'TEST' };
+            }
+        };
+        const result = await elevate.runHelper({ operation: 'user.create', input: userInput(roots), implementation, spawn: jest.fn() });
+        expect(result).toMatchObject({ status: 'fallback', reason: 'ELEVATION_UNAVAILABLE', detail: { why: 'TEST' } });
+        expect(seen).toHaveLength(1);
+        expect(seen[0].operation).toBe('user.create');
+        expect(seen[0].input).toMatchObject({ name: userInput(roots).name, roots: roots });
+        expect(seen[0].env).toBeDefined();
+        expect(seen[0].fs).toBeDefined();
+    });
+
     test('an input the shape rules refuse is a thrown refusal, never a spawn', async () => {
         const spawn = jest.fn();
         await expect(elevate.runHelper({ operation: 'service.register', input: { ...registerInput(roots), name: 'Bad Name' }, implementation: linux, spawn, elevation: { kind: 'root', prefix: [] }, facts: { available: true } }))
@@ -713,9 +731,10 @@ describe('helper integrity', () => {
 
     test('the helper\'s code is node built-ins plus its own files and nothing else', () => {
         const dir = path.join(__dirname, '..', 'apps', 'manager');
-        const own = new Set(elevate.HELPER_FILES.map(rel => path.join(dir, '..', '..', rel.replace(/^app\//, ''))).map(file => path.normalize(file)));
+        const darwin = require('../apps/manager/privileged/darwin');
+        const own = new Set([...elevate.HELPER_FILES, ...darwin.HELPER_FILES].map(rel => path.join(dir, '..', '..', rel.replace(/^app\//, ''))).map(file => path.normalize(file)));
         const seen = new Set();
-        const queue = [path.join(dir, 'privileged', 'helper.js'), path.join(dir, 'privileged', 'linux.js')];
+        const queue = [path.join(dir, 'privileged', 'helper.js'), path.join(dir, 'privileged', 'linux.js'), path.join(dir, 'privileged', 'darwin.js')];
         while (queue.length > 0) {
             const file = queue.pop();
             if (seen.has(file)) continue;
@@ -725,13 +744,17 @@ describe('helper integrity', () => {
             for (const match of text.matchAll(/require\((['"])([^'"]+)\1\)/g)) {
                 const target = match[2];
                 if (target.startsWith('node:')) continue;
+                // darwin.js's manager half (transport) loads elevate lazily; the helper process never calls it.
+                if (target === './elevate' && path.basename(file) === 'darwin.js') continue;
                 expect(target.startsWith('.')).toBe(true);
+                // The other platforms' modules are loaded lazily, only on their own platform, against their own HELPER_FILES.
+                if (path.basename(file) === 'helper.js' && /^\.\/(win32|darwin)$/.test(target)) continue;
                 let resolved = path.resolve(path.dirname(file), target);
                 if (!resolved.endsWith('.js')) resolved += '.js';
                 queue.push(resolved);
             }
         }
-        expect(seen.size).toBe(4);
+        expect(seen.size).toBe(6);
     });
 });
 
@@ -745,14 +768,14 @@ describe('the dispatcher', () => {
 
     test('run() reports the implemented set per platform', () => {
         expect(privileged.describe('linux')).toMatchObject({ implemented: true, implementedOperations: ['service.register', 'service.unregister', 'updater.disable', 'user.create', 'package.install', 'postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate'] });
-        expect(privileged.describe('win32')).toMatchObject({ implemented: false });
+        expect(privileged.describe('aix')).toMatchObject({ implemented: false });
         expect(privileged.isImplemented('package.install', 'linux')).toBe(true);
         expect(privileged.isImplemented('package.install', 'win32')).toBe(false);
     });
 
     test('run() throws 501 for an operation or a platform with no helper, 404 for an unknown name, 400 for a refused input', async () => {
         await expect(privileged.run('package.install', { names: ['postgresql-17'] }, { platform: 'win32' })).rejects.toMatchObject({ status: 501 });
-        await expect(privileged.run('service.register', {}, { platform: 'darwin' })).rejects.toMatchObject({ status: 501 });
+        await expect(privileged.run('service.register', {}, { platform: 'aix' })).rejects.toMatchObject({ status: 501 });
         await expect(privileged.run('shell.exec', {}, {})).rejects.toMatchObject({ status: 404 });
         await expect(privileged.run('user.create', { name: 'root' }, { platform: 'linux' })).rejects.toMatchObject({ status: 400 });
     });

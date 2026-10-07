@@ -3,15 +3,17 @@
  * The privileged helper (documentation/linux_install.md, "Elevation").
  *
  *   sudo -n <node> apps/manager/privileged/helper.js   < request.json
+ *   <node> apps/manager/privileged/helper.js --request <file> --reply <file>   (file transport)
  *
  * Reads one JSON request from stdin, validates it against the closed shapes
  * in ./protocol.js, performs the one operation through the platform module
  * (./<platform>.js) and writes one JSON reply to stdout. Exit code 0 when the
  * reply is `ok`, 1 for a refusal or a failure, 2 for a request it could not
  * even parse. It takes no argument and reads no environment for values; its
- * code is this file, ./protocol.js, ./linux.js and ../platform/systemdUnit.js,
- * and the manager checks their hashes against the release manifest before it
- * starts it elevated (./elevate.js).
+ * code is this file, ./protocol.js, the platform module (./linux.js and the
+ * service text it renders, ../platform/systemdUnit.js) - the platform module's
+ * HELPER_FILES names them - and the manager checks their hashes against the
+ * release manifest before it starts it elevated (./elevate.js).
  *
  * The one environment variable it honours is GOOBSTER_HELPER_SANDBOX, a
  * directory, and only when it is NOT running as root: a non-root helper can
@@ -23,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const protocol = require('./protocol');
 
-const PLATFORMS = Object.freeze({ linux: () => require('./linux') });
+const PLATFORMS = Object.freeze({ linux: () => require('./linux'), win32: () => require('./win32'), darwin: () => require('./darwin') });
 
 function readStdin() {
     try {
@@ -33,17 +35,15 @@ function readStdin() {
     }
 }
 
-function sandboxDeps(env) {
+/**
+ * The handler dependencies for a sandboxed (non-root) run, shaped by the
+ * platform module; nothing when the helper is root or no sandbox is named.
+ */
+function sandboxDeps(env, implementation = require('./linux')) {
     const dir = env.GOOBSTER_HELPER_SANDBOX;
     const root = typeof process.geteuid === 'function' ? process.geteuid() === 0 : false;
     if (!dir || root || !path.isAbsolute(dir)) return {};
-    return {
-        sandbox: true,
-        unitDir: path.join(dir, 'etc', 'systemd', 'system'),
-        cronDir: path.join(dir, 'etc', 'cron.d'),
-        updateConf: path.join(dir, 'etc', 'goobster-update.conf'),
-        commandDirs: [path.join(dir, 'bin')]
-    };
+    return implementation.sandboxDeps(dir);
 }
 
 /**
@@ -68,7 +68,7 @@ function execute(text, { platform = process.platform, deps = null, env = process
     }
     const implementation = load();
     try {
-        const handler = implementation.createHandler(deps || sandboxDeps(env));
+        const handler = implementation.createHandler(deps || sandboxDeps(env, implementation));
         const result = handler.handle(request.operation, request.input);
         return { reply: protocol.okReply(request.operation, result.outcome, result.detail, result.log), code: 0 };
     } catch (error) {
@@ -79,11 +79,45 @@ function execute(text, { platform = process.platform, deps = null, env = process
     }
 }
 
+/**
+ * `--request <file>` and `--reply <file>`: the file transport for a platform
+ * whose elevation cannot pass a pipe (./elevate.js `transport()`). The paths
+ * are the only arguments the helper ever takes; the values stay in the files.
+ */
+function parseArgs(argv) {
+    const out = { requestFile: null, replyFile: null };
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === '--request' && argv[i + 1]) out.requestFile = argv[++i];
+        else if (argv[i] === '--reply' && argv[i + 1]) out.replyFile = argv[++i];
+    }
+    return out;
+}
+
+function readRequest(requestFile) {
+    if (!requestFile) return readStdin();
+    try {
+        return fs.readFileSync(requestFile, 'utf8');
+    } catch {
+        return '';
+    }
+}
+
 function main() {
-    const { reply, code } = execute(readStdin());
-    process.stdout.write(`${JSON.stringify(reply)}\n`, () => process.exit(code));
+    const args = parseArgs(process.argv.slice(2));
+    const { reply, code } = execute(readRequest(args.requestFile));
+    const text = `${JSON.stringify(reply)}\n`;
+    if (args.replyFile) {
+        try {
+            fs.writeFileSync(args.replyFile, text, { mode: 0o600 });
+        } catch {
+            process.stdout.write(text);
+        }
+        process.exit(code);
+        return;
+    }
+    process.stdout.write(text, () => process.exit(code));
 }
 
 if (require.main === module) main();
 
-module.exports = { execute, sandboxDeps };
+module.exports = { execute, sandboxDeps, parseArgs, readRequest };

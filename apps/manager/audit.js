@@ -34,7 +34,8 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.backup.create', 'manager.backup.restore',
     'manager.privileged.service.register', 'manager.privileged.service.unregister', 'manager.privileged.user.create',
     'manager.privileged.updater.disable', 'manager.privileged.package.install',
-    'manager.privileged.postgres.cluster.create', 'manager.privileged.postgres.cluster.control', 'manager.privileged.postgres.cluster.remove', 'manager.privileged.postgres.cluster.relocate'
+    'manager.privileged.postgres.cluster.create', 'manager.privileged.postgres.cluster.control', 'manager.privileged.postgres.cluster.remove', 'manager.privileged.postgres.cluster.relocate',
+    'manager.update.check', 'manager.update.stage', 'manager.update.apply', 'manager.update.policy', 'manager.update.recover', 'manager.update.handoff'
 ]);
 
 /**

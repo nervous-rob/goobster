@@ -16,6 +16,8 @@ export type Answers = {
     label: string;
     sourceDir: string;
     allowUnsigned: boolean;
+    /** The one question about updates (documentation/manager_update.md); `check` is what the page offers. */
+    updateMode: 'off' | 'check' | 'download' | 'apply';
     layout: 'auto' | 'lite' | 'standalone';
     roots: { code: string; cache: string; logs: string; uploads: string };
     features: string[] | null;
@@ -34,6 +36,7 @@ export const EMPTY_ANSWERS: Answers = {
     label: '',
     sourceDir: '',
     allowUnsigned: false,
+    updateMode: 'check',
     layout: 'auto',
     roots: { code: '', cache: '', logs: '', uploads: '' },
     features: null,

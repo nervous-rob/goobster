@@ -165,6 +165,7 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
         readCrontab: undefined,
         writeCrontab: undefined,
         home: os.homedir(),
+        platform: undefined,
         ...(settings.installDeps || {})
     };
     const env = settings.env || process.env;
@@ -442,10 +443,24 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
         return { releaseId: stage().releaseIdOf(manifest), version: manifest.release.core, target: manifest.target.id, features: selected };
     }
 
+    // ------------------------------------------------------- service kinds
+    /** The kind registry (../platform/serviceKinds.js); tests inject one with a fake kind. */
+    const serviceKinds = deps.serviceKinds || require('../platform/serviceKinds');
+
+    /** The service kind this platform registers; the name exists for every platform, a definition may not yet. */
     function serviceKindForHost() {
-        if (process.platform === 'win32') return 'windows-service';
-        if (process.platform === 'darwin') return 'launchd';
-        return 'systemd';
+        return serviceKinds.kindForPlatform(deps.platform || process.platform);
+    }
+
+    /** The kind definition for this platform, or null when this version has none. */
+    function serviceDefinitionForHost() {
+        return serviceKinds.forKind(serviceKindForHost());
+    }
+
+    /** Does the runtime account come from `user.create` (POSIX), or does the service manager assign the identity itself? */
+    function serviceAccountCreatable() {
+        const definition = serviceDefinitionForHost();
+        return definition ? definition.account.creatable !== false : true;
     }
 
     /** Units named goobster*.service already on this machine (a legacy Pi unit, another installation). */
@@ -577,7 +592,10 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
         systemDependencies,
         exclusiveDependencies,
         releaseSection,
+        serviceKinds,
         serviceKindForHost,
+        serviceDefinitionForHost,
+        serviceAccountCreatable,
         privilegedAvailable,
         unitNames,
         runPrivileged,

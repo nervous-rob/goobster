@@ -16,12 +16,15 @@ headless command line for them. The release payload comes from
 document is about the manager around it.
 
 The one step that needs administrator rights, `register-service`, goes through
-the privileged helper (see "Privileged steps"). On Linux the helper is built
-(#333, [linux_install.md](linux_install.md)): the install registers a systemd
-service, or finishes in a documented manual-manager fallback when it cannot. On
-a platform whose helper does not exist yet (Windows #331, macOS #332) the
-operations answer `501 NOT_IMPLEMENTED`, a fresh install finishes with exit code
-5, and everything is on disk with that one step recorded as deferred.
+the privileged helper (see "Privileged steps"). Each platform has one: Linux
+registers a systemd service (#333, [linux_install.md](linux_install.md)),
+Windows a service run by WinSW as `NT SERVICE\goobster` (#331,
+[windows_install.md](windows_install.md)), macOS a LaunchDaemon or, per user, a
+LaunchAgent (#332, [macos_install.md](macos_install.md)); each finishes in a
+documented manual-manager fallback when it cannot register. On a platform with
+no helper the operations answer `501 NOT_IMPLEMENTED`, a fresh install finishes
+with exit code 5, and everything is on disk with that one step recorded as
+deferred.
 
 ## The installation record
 
@@ -80,7 +83,11 @@ written. Checks: roots (see above); writability; the store owner; target and
 Node ABI against the payload manifest; the feature selection; free disk for
 the payload; system dependencies of the selected features (warn only - the
 manager audits them, it does not install them); Postgres settings for
-`paired` or `postgres`; and ports. `PORT_IN_USE` blocks only `install.new`
+`paired` or `postgres`; and ports. A port is in use when something accepts a
+connection on it, not merely when a bind fails: on macOS an account other than
+root cannot bind a port on which another account's stopped service still has
+connections in TIME_WAIT, which would otherwise refuse an install for half a
+minute after an uninstall. `PORT_IN_USE` blocks only `install.new`
 (a repair or reconfigure expects its own service to hold the port). Preflight
 also refuses an install over existing evidence (`EXISTING_INSTALLATION`)
 unless a tombstone says a previous uninstall left it. Uninstall also
@@ -215,7 +222,8 @@ preflight finding `ROOT_OUTSIDE_ALLOWED_BASES`. Read-only routes feed the
 screens: `GET /install/suggest` (suggested roots, bases, detected layout,
 release sources, ports), `GET /install/source?dir=` (the features, sizes
 and system prerequisites a release directory carries, from its manifest
-only), `GET /install/record` (the sanitised record) and
+only), `GET /install/record` (the sanitised record; its `release` also carries `signed`,
+`keyId` and `channel` from the installed payload, see [release.md](release.md)) and
 `GET /install/first-run` (the checklist). Three small kinds finish a setup:
 `owner.create` (the first operator account, with no Discord; the password
 travels only in private input), `lifecycle.start` (start supervising the
@@ -247,8 +255,11 @@ helper (`apps/manager/privileged/`). On Linux the helper implements all but
 `package.install`: it reads one JSON document on stdin, runs as root through
 `sudo -n` or `pkexec`, and validates every field against a closed shape before it
 acts. What it does, how it is started and what it never does are in
-[linux_install.md](linux_install.md), "What runs as root". Where no helper exists
-for the platform, or for `package.install` on Linux, the operation answers `501
+[linux_install.md](linux_install.md), "What runs as root"; the Windows and macOS
+helpers (`win32.js`, `darwin.js`) are described in
+[windows_install.md](windows_install.md) and [macos_install.md](macos_install.md).
+Where an operation has no helper on the platform (`package.install` everywhere,
+`user.create` on Windows), the operation answers `501
 NOT_IMPLEMENTED`; the step is then recorded `deferred` with the operation name,
 never run, and the CLI exits 5. The manager never executes a shell command for
 these. Each operation writes a `manager.privileged.<operation>` audit row.
@@ -379,7 +390,7 @@ accepted on the command line. The audit action is `manager.data.reset`.
   package installation on every platform (system dependencies are reported,
   never installed).
 - Network download and archive sources: only a local payload directory.
-  Production signing keys: #341.
+  Production signing keys and the release pipeline: [release.md](release.md) (#341).
 - Lifecycle workers for a payload `current/app` layout (the lifecycle layer
   assumes `<root>/apps/...`).
 - The browser wizard exists (`documentation/setup_wizard.md`, #330); what it

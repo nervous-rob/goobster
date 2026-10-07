@@ -32,8 +32,8 @@ const PRIVILEGED_OPERATIONS = Object.freeze([
  * before anything is spawned. Values are names of settings, never a credential.
  */
 const INPUT_SHAPES = Object.freeze({
-    'service.register': { kind: "'systemd'", name: 'identifier (^[a-z][a-z0-9-]{0,31}$)', layout: "'lite'|'standalone'|'paired'", codeRoot: 'absolute path', runtimeUser: 'identifier', installationId: 'uuid', roots: 'absolute paths for code, data, config, cache, logs, uploads, managerStore', mode: "'payload'|'checkout' (optional)", nodePath: 'absolute path (checkout mode only)' },
-    'service.unregister': { kind: "'systemd'", name: 'identifier', registeredBy: "'installer'", installationId: 'uuid' },
+    'service.register': { kind: "'systemd'|'windows-service'|'launchd' (the platform's kind, apps/manager/platform/serviceKinds.js)", name: 'identifier (^[a-z][a-z0-9-]{0,31}$)', layout: "'lite'|'standalone'|'paired'", codeRoot: 'absolute path', runtimeUser: 'identifier', installationId: 'uuid', roots: 'absolute paths for code, data, config, cache, logs, uploads, managerStore', mode: "'payload'|'checkout' (optional)", nodePath: 'absolute path (checkout mode only)', scope: "'machine'|'user' (optional, default machine; 'user' is a launchd LaunchAgent)" },
+    'service.unregister': { kind: "'systemd'|'windows-service'|'launchd'", name: 'identifier', registeredBy: "'installer'", installationId: 'uuid' },
     'package.install': { names: 'string[] (names from the installer\'s fixed package table only)', repository: "'pgdg' (optional; added only from the pinned key fingerprint)" },
     'updater.disable': { mechanism: "'systemd-timer'|'cron-system'", unit: 'timer unit or cron file name', codeRoot: 'absolute path' },
     'user.create': { name: 'identifier', home: 'absolute path', system: 'true', installationId: 'uuid', roots: 'absolute paths as for service.register', mode: "'payload'|'checkout' (optional)" },
@@ -46,12 +46,14 @@ const INPUT_SHAPES = Object.freeze({
 /** Operations each platform helper implements; the rest answer 501. */
 const IMPLEMENTED = Object.freeze({
     linux: Object.freeze(['service.register', 'service.unregister', 'updater.disable', 'user.create', 'package.install', 'postgres.cluster.create', 'postgres.cluster.control', 'postgres.cluster.remove', 'postgres.cluster.relocate']),
-    win32: Object.freeze([]),
-    darwin: Object.freeze([])
+    win32: Object.freeze(['service.register', 'service.unregister']),
+    darwin: Object.freeze(['service.register', 'service.unregister', 'user.create'])
 });
 
 const PLATFORM_MODULES = Object.freeze({
-    linux: () => require('./privileged/linux')
+    linux: () => require('./privileged/linux'),
+    win32: () => require('./privileged/win32'),
+    darwin: () => require('./privileged/darwin')
 });
 
 function isPrivileged(name) {

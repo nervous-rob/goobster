@@ -5,15 +5,27 @@
  *
  * Results (never thrown, except for an input the shape rules refuse):
  *   { status: 'done', outcome, detail, log }
- *   { status: 'fallback', reason, manual? }   systemd is absent or offline, no elevation is
- *                                             available, or the operator declined it:
- *                                             the install completes, the step is skipped
+ *   { status: 'fallback', reason, manual? }   the service manager is absent or offline, no
+ *                                             elevation is available, or the operator declined
+ *                                             it: the install completes, the step is skipped
  *   { status: 'failed', code, message, log }  the helper refused or failed; the step fails
  *
  * Before an elevated start the manager hashes the helper's own files and the
  * bundled Node against the payload's release manifest, so a root process
  * never runs code the manifest does not vouch for. From a source checkout
  * (no manifest beside the code) that check does not apply and is reported.
+ *
+ * The platform module (`./linux.js`, and its siblings for the other platforms)
+ * supplies what differs per platform: `elevation()` (how to start the helper
+ * with rights: `{ kind, prefix, reason? }`, `kind` 'root' when already there,
+ * 'none' when there is no way, 'user' when the request at hand needs none; it
+ * receives `{ env, fs, operation, input }`), `manualCommand()`, `serviceFacts()` (is the
+ * service manager there and running), `HELPER_FILES` (the files the elevated
+ * process runs, for the manifest check), and optionally `transport()` (when
+ * the elevation tool cannot pass stdin/stdout: the request and the reply go
+ * through files under the request directory; `helper.js --request <file>
+ * --reply <file>` reads and writes them) and `refusal()` (how that tool says
+ * the operator declined). The defaults below are the Linux ones.
  */
 
 const nodeFs = require('node:fs');
@@ -28,6 +40,13 @@ const HELPER_FILES = Object.freeze([
     'app/apps/manager/privileged/linux.js',
     'app/apps/manager/platform/systemdUnit.js'
 ]);
+
+/** The service-manager facts a platform module reports before `service.register` is attempted. */
+function serviceFactsOf(implementation, { fs, env }) {
+    if (typeof implementation.serviceFacts === 'function') return implementation.serviceFacts({ fs, env });
+    if (typeof implementation.systemdFacts === 'function') return implementation.systemdFacts({ fs, env });
+    return { available: true };
+}
 const HELPER_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT = 256 * 1024;
 
@@ -48,9 +67,11 @@ function sha256File(file, fs = nodeFs) {
 }
 
 /**
+ * @param {Object} params
+ * @param {string[]} [params.files]  the helper's files, payload-relative (the platform module's HELPER_FILES)
  * @returns {{ checked: boolean, ok: boolean, reason?: string, files?: number }}
  */
-function verifyHelperFiles({ payloadRoot, nodePath, fs = nodeFs }) {
+function verifyHelperFiles({ payloadRoot, nodePath, fs = nodeFs, files = HELPER_FILES }) {
     const manifestFile = path.join(payloadRoot, 'payload-manifest.json');
     let manifest;
     try {
@@ -59,7 +80,7 @@ function verifyHelperFiles({ payloadRoot, nodePath, fs = nodeFs }) {
         return { checked: false, ok: true, reason: 'NO_MANIFEST' };
     }
     const byPath = new Map((manifest.files || []).map(entry => [entry.path, entry.sha256]));
-    const wanted = [...HELPER_FILES];
+    const wanted = [...files];
     const runtimeRel = path.relative(payloadRoot, nodePath).split(path.sep).join('/');
     if (!runtimeRel.startsWith('..') && byPath.has(runtimeRel)) wanted.push(runtimeRel);
     for (const rel of wanted) {
@@ -143,12 +164,13 @@ function allowedPathsOf(input) {
  */
 async function runHelper({ operation, input, implementation, env = process.env, fs = nodeFs, nodePath = process.execPath, helperPath = path.join(__dirname, 'helper.js'), requestDir = null, spawn, elevation = null, facts = null, timeoutMs }) {
     const checked = protocol.validateInput(operation, input);
-    const servicePlatform = operation.startsWith('service.');
-    if (servicePlatform && operation === 'service.register') {
-        const state = facts || (implementation.systemdFacts ? implementation.systemdFacts({ fs, env }) : { available: true });
-        if (!state.available) return { status: 'fallback', reason: state.reason || 'SYSTEMD_UNAVAILABLE', detail: { systemd: state.state || null } };
+    if (operation === 'service.register') {
+        const state = facts || serviceFactsOf(implementation, { fs, env });
+        if (!state.available) return { status: 'fallback', reason: state.reason || 'SERVICE_MANAGER_UNAVAILABLE', detail: { serviceManager: state.state || null, systemd: state.state || null } };
     }
-    const plan = elevation || implementation.elevation({ env, fs });
+    // The request goes along so a platform can answer `user` for an operation that needs no
+    // rights at all (a per-user launchd agent) instead of hunting for an elevation tool.
+    const plan = elevation || implementation.elevation({ env, fs, operation, input: checked });
     const request = protocol.buildRequest(operation, checked);
     if (plan.kind === 'none') {
         let manual = null;
@@ -164,11 +186,15 @@ async function runHelper({ operation, input, implementation, env = process.env, 
     }
     if (plan.kind !== 'root') {
         const payloadRoot = path.resolve(__dirname, '..', '..', '..', '..');
-        const verdict = verifyHelperFiles({ payloadRoot, nodePath, fs });
+        const verdict = verifyHelperFiles({ payloadRoot, nodePath, fs, files: Array.isArray(implementation.HELPER_FILES) ? implementation.HELPER_FILES : HELPER_FILES });
         if (!verdict.ok) return { status: 'failed', code: 'HELPER_UNVERIFIED', message: 'The helper or the runtime does not match the release manifest; it was not started.', log: [] };
     }
-    const argv = [...plan.prefix, nodePath, helperPath];
-    const result = await spawnHelper({ argv, request, spawn, timeoutMs });
+    // The transport: stdin/stdout by default; a platform whose elevation cannot pass a pipe
+    // (UAC, an administrator prompt) supplies `transport()` and carries the request and the
+    // reply in files under the request directory instead.
+    const result = typeof implementation.transport === 'function'
+        ? await implementation.transport({ plan, request, nodePath, helperPath, requestDir, spawn, fs, env, timeoutMs: timeoutMs || HELPER_TIMEOUT_MS })
+        : await spawnHelper({ argv: [...plan.prefix, nodePath, helperPath], request, spawn, timeoutMs });
     const reply = protocol.parseReply(result.stdout, operation);
     const allowed = allowedPathsOf(checked);
     if (reply && reply.ok) {
@@ -178,11 +204,15 @@ async function runHelper({ operation, input, implementation, env = process.env, 
         return { status: 'failed', code: reply.code, message: scrubLines([reply.message], allowed)[0], log: scrubLines(reply.log, allowed), via: plan.kind };
     }
     if (result.spawnError) return { status: 'fallback', reason: 'ELEVATION_UNAVAILABLE', detail: { why: result.spawnError } };
-    if (plan.kind === 'sudo' || plan.kind === 'pkexec') {
+    if (typeof implementation.refusal === 'function') {
+        // The platform reads its own elevation tool's way of saying no (a dismissed prompt, a policy).
+        const refused = implementation.refusal({ plan, status: result.status, stderr: result.stderr || '' });
+        if (refused) return { status: 'fallback', reason: refused.reason || 'ELEVATION_REFUSED', detail: { via: plan.kind, ...(refused.detail || {}) } };
+    } else if (plan.kind === 'sudo' || plan.kind === 'pkexec') {
         const refused = plan.kind === 'pkexec' ? [126, 127].includes(result.status) : /password is required|not allowed|may not run|no tty present/i.test(result.stderr);
         if (refused) return { status: 'fallback', reason: 'ELEVATION_REFUSED', detail: { via: plan.kind } };
     }
     return { status: 'failed', code: 'HELPER_PROTOCOL', message: `The helper ended with status ${result.status === null ? 'signal' : result.status} and no reply.`, log: [], via: plan.kind };
 }
 
-module.exports = { HELPER_FILES, verifyHelperFiles, scrubLines, spawnHelper, runHelper, sha256File };
+module.exports = { HELPER_FILES, verifyHelperFiles, serviceFactsOf, scrubLines, spawnHelper, runHelper, sha256File };
