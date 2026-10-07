@@ -135,7 +135,8 @@ function scrubReport(report) {
         fields: (section.fields || []).map((field) => {
             const descriptor = fieldCatalog.get(field.id);
             if (!descriptor || !descriptor.secret) return field;
-            const { value, ...rest } = field;
+            const rest = { ...field };
+            delete rest.value;
             return rest;
         })
     })) : [];
@@ -413,7 +414,6 @@ function mountHost(app, ctx, h) {
 
         let managerInput = input;
         let attested = false;
-        let shared = null;
         let warnings = [];
         if (kind === 'features.set') {
             const parsed = featuresInput(input);
@@ -422,7 +422,7 @@ function mountHost(app, ctx, h) {
             const changes = managerInput.changes && typeof managerInput.changes === 'object' ? managerInput.changes : {};
             ({ warnings } = await mailGuard(req, changes));
             if (changes.gambling === true) {
-                shared = await sharedInstance(req.webUser.userId);
+                const shared = await sharedInstance(req.webUser.userId);
                 if (shared.shared && !attested) {
                     throw fail(409, 'ATTESTATION_REQUIRED',
                         'This instance is shared. Turning Gambling on needs you to confirm it is private, or that gambling is permitted for its members.',
