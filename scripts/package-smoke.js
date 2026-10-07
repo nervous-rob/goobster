@@ -24,7 +24,8 @@
  *      with the portal enabled, /health and the built client answer, and a
  *      shutdown request ends the process with exit code 0
  *   6. the launcher (bin/goobster-api[.cmd]) does the same with only GOOBSTER_HOME
- *      set, proving the roots are relocatable
+ *      set, proving the roots are relocatable; bin/goobster-manager[.cmd] starts the
+ *      installation manager's help, its CLI and its status document (manager.launches)
  *   7. restricted permissions: --read-only-data points the data directory at
  *      a read-only location and reports the failure instead of passing
  *   8. the payload verifies against its release manifest (payload.verify: the
@@ -874,6 +875,34 @@ async function main() {
         });
     } else {
         checks.push({ name: 'api.standalone.launcher', status: 'skip', detail: options.launcher ? 'the database did not open' : '--no-launcher', ms: 0 });
+    }
+
+    if (options.launcher) {
+        await check('manager.launches', () => {
+            const roots = makeInstance('manager');
+            const launcher = IS_WINDOWS ? path.join(PAYLOAD_ROOT, 'bin', 'goobster-manager.cmd') : path.join(PAYLOAD_ROOT, 'bin', 'goobster-manager');
+            assert(fs.existsSync(launcher), 'bin/goobster-manager is not in the payload');
+            const env = childEnvironment(roots, 0, { GOOBSTER_HOME: roots.home });
+            const launch = (args) => (IS_WINDOWS
+                ? childProcess.spawnSync('cmd.exe', ['/d', '/s', '/c', `""${launcher}" ${args.join(' ')}"`], { env, cwd: PAYLOAD_ROOT, encoding: 'utf8', windowsVerbatimArguments: true, timeout: 60_000 })
+                : childProcess.spawnSync(launcher, args, { env, cwd: PAYLOAD_ROOT, encoding: 'utf8', timeout: 60_000 }));
+            const help = launch(['--help']);
+            assert(help.status === 0 && /Goobster manager/.test(help.stdout), `bin/goobster-manager --help exited ${help.status}: ${scrub(help.stderr || help.stdout).split('\n')[0]}`);
+            const cli = launch(['help']);
+            assert(cli.status === 0 && /install/.test(cli.stdout), `bin/goobster-manager help (the CLI) exited ${cli.status}: ${scrub(cli.stderr || cli.stdout).split('\n')[0]}`);
+            const status = launch(['--status']);
+            assert(status.status === 0, `bin/goobster-manager --status exited ${status.status}: ${scrub(status.stderr || status.stdout).split('\n')[0]}`);
+            let document;
+            try {
+                document = JSON.parse(status.stdout);
+            } catch {
+                throw new Error('bin/goobster-manager --status did not print a JSON document');
+            }
+            assert(document && typeof document === 'object' && document.state, '--status carried no installation state');
+            return { help: 'ok', cli: 'ok', status: document.state.state || document.state };
+        });
+    } else {
+        checks.push({ name: 'manager.launches', status: 'skip', detail: '--no-launcher', ms: 0 });
     }
 
     if (options.routes) {
