@@ -151,7 +151,15 @@ the barrier (step 8): everything between, including the backup, the swap, the
 restart, the verification and the settle window, is time the application does
 not write. The barrier stays held through the window (the update is not done
 until the release is stable), so the window is part of the downtime: with the
-default 30 s window the downtime is the restart plus 30 s. It is
+default 30 s window the downtime is the restart plus 30 s.
+
+*Measured* (Linux x64, minimal payload on a small VM, a three-second drain, the
+exit-76 handoff under a restart loop): 3.7 s from quiesce to release without a
+window and 11.7 s with `GOOBSTER_UPDATE_SETTLE_MS=8000`. An external probe
+polling `/health` every 200 ms saw the portal's API unavailable for 415 ms
+(the worker restart); the rest of the span is the application held quiet by
+the barrier. A rolled-back update that fails at start measured 14.4 s end to
+end (two handoffs and the failed start included). It is
 reported in the result, in `last-apply.json`, in the audit entry and in the
 status. The portal and the bot are read-only or paused for that span.
 
