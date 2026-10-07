@@ -40,6 +40,13 @@
  * until the operator resumes from the Host room, then start on their own
  * without a process restart.
  *
+ * **Maintenance** (documentation/maintenance_barrier.md) is not that flag
+ * either: a process that starts while the manager's maintenance barrier is
+ * active starts nothing (every step reports `{ status: 'skipped', reason:
+ * 'maintenance' }`), `enterMaintenance(boundMs)` drains and tears the
+ * runtime down in a running process, and `resumeFromMaintenance()` brings
+ * it up again exactly as a start would.
+ *
  * **Stop new work** (documentation/manager_lifecycle.md) is not that flag:
  * `pauseNewWork()` is this process getting ready to exit. Every scheduler
  * stops opening passes, a step that has not started yet never starts, and
@@ -51,6 +58,7 @@
 const { toGateway } = require('../gateway');
 const { requireSurface, surfaceActive } = require('../features/gate');
 const { settle, contractBoundMs } = require('./lifecycle');
+const maintenance = require('./maintenance');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const FOLLOWUP_INTERVAL_MS = 60 * 1000;
@@ -137,6 +145,11 @@ async function startCoreRuntime({
      *   steps that belong to one (checked against the inventory by the specs)
      */
     const step = async (name, fn, { feature } = {}) => {
+        if (maintenance.isActive()) {
+            skipped.push(name);
+            report.push({ name, status: 'skipped', reason: 'maintenance' });
+            return;
+        }
         if (newWorkPaused) {
             skipped.push(name);
             report.push({ name, status: 'skipped', reason: 'restarting' });
@@ -213,71 +226,87 @@ async function startCoreRuntime({
         }
     };
 
-    // --- Always: the event bus and history retention ----------------------
-    await step('eventBus', () => {
-        const eventBus = load('eventBusService', () => require('../services/eventBusService'));
-        eventBus.start();
-        stoppers.push(async () => { await eventBus.close?.(); });
-    });
-    await step('chatHistoryRetention', () => {
-        const retention = load('chatHistoryRetentionService', () => require('../services/chatHistoryRetentionService'));
-        retention.start();
-        stoppers.push(async () => { await retention.stop?.(); });
-    });
-
-    if (schedulers) await step('accountExports', () => {
-        const exports = load('accountExportService', () => require('../services/accountExportService'));
-        exports.start();
-        stoppers.push(async () => { await exports.stop(); });
-    });
-
-    // --- Paused? (a restored instance comes back this way) -----------------
-    // No autonomous work or startup catch-up runs until the operator
-    // resumes from the Host room; interactive exports and retention remain available. The flag
-    // is in the database, so every process sees the same answer and picks
-    // the work up on its own once it clears.
-    const instanceState = load('instanceStateService', () => require('../services/instanceStateService'));
     let paused = false;
-    try {
-        paused = await instanceState.isPaused();
-    } catch (error) {
-        logger.warn?.(`[runtime] Could not read the instance pause flag (${error?.message || error}); starting normally`);
-    }
-    if (paused) {
-        const pause = await instanceState.getPause().catch(() => null);
-        logger.warn?.(`[runtime] Instance is PAUSED${pause ? ` since ${pause.since} UTC (${pause.reason})` : ''}: `
-            + 'scheduled work and startup catch-up are on hold until the operator resumes it from the Host room.');
-        skipped.push('paused');
-        report.push({ name: 'paused', status: 'skipped', reason: 'paused' });
-        let starting = false;
-        const watch = setInterval(async () => {
-            if (starting) return;
-            if (newWorkPaused) {
+    /** True while this runtime holds nothing running because of maintenance (started under it, or entered it). */
+    let dormant = maintenance.isActive();
+
+    /** Everything a start does: the event bus, then (unless paused) the workers. */
+    async function bringUp() {
+        // --- Always: the event bus and history retention ----------------------
+        await step('eventBus', () => {
+            const eventBus = load('eventBusService', () => require('../services/eventBusService'));
+            eventBus.start();
+            stoppers.push(async () => { await eventBus.close?.(); });
+        });
+        await step('chatHistoryRetention', () => {
+            const retention = load('chatHistoryRetentionService', () => require('../services/chatHistoryRetentionService'));
+            retention.start();
+            stoppers.push(async () => { await retention.stop?.(); });
+        });
+
+        if (schedulers) await step('accountExports', () => {
+            const exports = load('accountExportService', () => require('../services/accountExportService'));
+            exports.start();
+            stoppers.push(async () => { await exports.stop(); });
+        });
+
+        // A start during maintenance reads nothing and starts nothing: every
+        // remaining step reports `skipped: maintenance`.
+        if (maintenance.isActive()) {
+            await startWorkers();
+            return;
+        }
+
+        // --- Paused? (a restored instance comes back this way) -----------------
+        // No autonomous work or startup catch-up runs until the operator
+        // resumes from the Host room; interactive exports and retention remain available. The flag
+        // is in the database, so every process sees the same answer and picks
+        // the work up on its own once it clears.
+        const instanceState = load('instanceStateService', () => require('../services/instanceStateService'));
+        paused = false;
+        try {
+            paused = await instanceState.isPaused();
+        } catch (error) {
+            logger.warn?.(`[runtime] Could not read the instance pause flag (${error?.message || error}); starting normally`);
+        }
+        if (paused) {
+            const pause = await instanceState.getPause().catch(() => null);
+            logger.warn?.(`[runtime] Instance is PAUSED${pause ? ` since ${pause.since} UTC (${pause.reason})` : ''}: `
+                + 'scheduled work and startup catch-up are on hold until the operator resumes it from the Host room.');
+            skipped.push('paused');
+            report.push({ name: 'paused', status: 'skipped', reason: 'paused' });
+            let starting = false;
+            const watch = setInterval(async () => {
+                if (starting) return;
+                if (newWorkPaused) {
+                    clearInterval(watch);
+                    return;
+                }
+                let stillPaused = true;
+                try {
+                    stillPaused = await instanceState.isPaused();
+                } catch { /* database hiccup - ask again next tick */ }
+                if (stillPaused) return;
+                starting = true;
                 clearInterval(watch);
-                return;
-            }
-            let stillPaused = true;
-            try {
-                stillPaused = await instanceState.isPaused();
-            } catch { /* database hiccup - ask again next tick */ }
-            if (stillPaused) return;
-            starting = true;
-            clearInterval(watch);
-            logger.info?.('[runtime] Instance resumed - starting the workers now');
-            try {
-                await startWorkers();
-                logger.info?.(`[runtime] Started after resume: ${started.join(', ') || 'nothing'}`);
-            } catch (error) {
-                logger.error?.(`[runtime] Start after resume failed: ${error?.message || error}`);
-            }
-        }, pausePollMs);
-        watch.unref?.();
-        stoppers.push(async () => clearInterval(watch));
-        onPause(() => clearInterval(watch));
-        return finish();
+                logger.info?.('[runtime] Instance resumed - starting the workers now');
+                try {
+                    await startWorkers();
+                    logger.info?.(`[runtime] Started after resume: ${started.join(', ') || 'nothing'}`);
+                } catch (error) {
+                    logger.error?.(`[runtime] Start after resume failed: ${error?.message || error}`);
+                }
+            }, pausePollMs);
+            watch.unref?.();
+            stoppers.push(async () => clearInterval(watch));
+            onPause(() => clearInterval(watch));
+            return;
+        }
+
+        await startWorkers();
     }
 
-    await startWorkers();
+    await bringUp();
     return finish();
 
     /** Everything a running (not paused) instance does beyond the event bus. */
@@ -520,6 +549,41 @@ async function startCoreRuntime({
                 }
                 const settled = await Promise.all(tasks.map(task => settle([task], contractBoundMs(task.contract, boundMs))));
                 return settled.flat();
+            },
+            /**
+             * The maintenance barrier: stop opening work, let the running
+             * passes and the expedition checkpoint settle (bounded), then
+             * tear every worker down. Nothing is left running that could
+             * write. Reversible with `resumeFromMaintenance()`.
+             * @returns {Promise<Array<{ name: string, outcome: string }>>}
+             */
+            async enterMaintenance(boundMs) {
+                if (dormant) return [];
+                const settled = await this.settleInFlight(boundMs);
+                for (const stopper of stoppers.splice(0).reverse()) {
+                    try {
+                        await stopper();
+                    } catch (error) {
+                        logger.error?.(`[runtime] Stop for maintenance failed: ${error?.message || error}`);
+                    }
+                }
+                dormant = true;
+                logger.info?.('[runtime] Stopped for maintenance');
+                return settled;
+            },
+            /** Start everything again, as a start would (after the process fence was released). */
+            async resumeFromMaintenance() {
+                if (!dormant || stopped) return false;
+                dormant = false;
+                newWorkPaused = false;
+                for (const list of [started, skipped, featureSkipped, report, pausers, inFlight, settleTasks, stoppers]) list.length = 0;
+                for (const key of Object.keys(services)) delete services[key];
+                await bringUp();
+                logger.info?.(`[runtime] Resumed after maintenance: ${started.join(', ') || 'nothing'}`);
+                return true;
+            },
+            get dormant() {
+                return dormant;
             },
             async stop() {
                 if (stopped) return;

@@ -19,9 +19,11 @@ const { features } = require('@goobster/core/features/featureState');
 const { requireSurface, unavailableResult } = require('@goobster/core/features/gate');
 const { featureCommandFilter } = require('@goobster/core/utils/commandDeployment');
 const lifecycle = require('@goobster/core/runtime/lifecycle');
+const maintenance = require('@goobster/core/runtime/maintenance');
 const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 
 const UNAVAILABLE_TEXT = 'That feature is not available on this installation.';
+const MAINTENANCE_TEXT = 'Goobster is in maintenance right now. Try that again in a few minutes.';
 const restartingText = seconds => `Goobster is restarting in ${seconds} s. Try that again in a minute.`;
 const COLLECTOR_PREFIX = 'collector:';
 
@@ -102,6 +104,10 @@ async function replyUnavailable(interaction, content = UNAVAILABLE_TEXT) {
  *   (refused, or owned by a command's own collector)
  */
 async function gateComponentInteraction(interaction) {
+    if (maintenance.isActive()) {
+        await replyUnavailable(interaction, MAINTENANCE_TEXT);
+        return { handled: true, refusal: { maintenance: true } };
+    }
     const surface = resolveInteractionSurface(interaction.customId);
     if (!surface) return { handled: false };
     const action = String(interaction.customId).split('_')[0];
@@ -123,12 +129,22 @@ async function gateComponentInteraction(interaction) {
  *
  * The same reply answers feature-owned commands while a restart the
  * manager announced drains this process ("restarting in N s"); core
- * commands keep working, and a plain stop announces nothing.
+ * commands keep working, and a plain stop announces nothing. While the
+ * maintenance barrier holds this process (documentation/maintenance_barrier.md)
+ * every command is refused with one sentence, core ones included.
  * @param {Object} interaction
  * @param {Map<string, { kind: string, key: string }>} nameIndex from commandNameIndex()
  * @param {{ restartNotice?: () => ({ secondsLeft: number }|null) }} [worker] the process lifecycle
  */
 async function refuseUnavailableCommand(interaction, nameIndex, worker = lifecycle) {
+    if (maintenance.isActive()) {
+        if (typeof interaction.isAutocomplete === 'function' && interaction.isAutocomplete()) {
+            try { await interaction.respond([]); } catch { /* the autocomplete window closed */ }
+            return true;
+        }
+        await replyUnavailable(interaction, MAINTENANCE_TEXT);
+        return true;
+    }
     const entry = nameIndex.get(interaction.commandName);
     if (!entry) return false;
     const restarting = worker.restartNotice?.() || null;
@@ -150,6 +166,7 @@ async function refuseUnavailableCommand(interaction, nameIndex, worker = lifecyc
 module.exports = {
     name: 'interactionCreate',
     UNAVAILABLE_TEXT,
+    MAINTENANCE_TEXT,
     resolveInteractionSurface,
     gateComponentInteraction,
     refuseUnavailableCommand,
