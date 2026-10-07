@@ -48,6 +48,7 @@ function inspectSqlite(sqlitePath, { integrity = 'quick' } = {}) {
         return { present: false, readable: false, code: 'SOURCE_MISSING' };
     }
     const sidecars = ['-wal', '-shm'].map(suffix => ({ file: `${sqlitePath}${suffix}`, existed: fs.existsSync(`${sqlitePath}${suffix}`) }));
+    const walPresent = fs.existsSync(`${sqlitePath}-wal`) && fs.statSync(`${sqlitePath}-wal`).size > 0;
     let database;
     try {
         database = new Database(sqlitePath, { readonly: true, fileMustExist: true });
@@ -85,7 +86,7 @@ function inspectSqlite(sqlitePath, { integrity = 'quick' } = {}) {
             present: true,
             readable: true,
             sizeBytes: stat.size,
-            walPresent: fs.existsSync(`${sqlitePath}-wal`),
+            walPresent,
             userVersion: database.pragma('user_version', { simple: true }),
             tables,
             tableCount: tables.length,
