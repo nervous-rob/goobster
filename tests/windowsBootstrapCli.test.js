@@ -151,6 +151,14 @@ describe('the launcher left in the code root', () => {
         expect(block).toContain('set "RUNNER=%TEMP%\\goobster-uninstall-');
         expect(block).toContain('exit /b %RC%');
     });
+
+    test('an uninstall of an installation whose code is already gone succeeds without running anything', () => {
+        const block = lines.slice(lines.indexOf(':uninstall')).join('\n');
+        const guard = block.indexOf('if not exist "%CODE%\\current\\runtime\\node.exe"');
+        expect(guard).toBeGreaterThanOrEqual(0);
+        expect(guard).toBeLessThan(block.indexOf('copy /y'));
+        expect(block.slice(guard, block.indexOf('copy /y'))).toContain('exit /b 0');
+    });
 });
 
 describe('Programs and Features', () => {
