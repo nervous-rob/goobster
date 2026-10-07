@@ -31,6 +31,17 @@ const INTEGRATION_ACTION_OWNERS = {
     'github-issue': 'github'
 };
 
+/**
+ * Router tokens whose pending row can still be cleared with the feature off:
+ * a Deny / Cancel press only resolves the pending row (nothing executes), so
+ * it is let through; Approve / Confirm, which runs the work, is refused.
+ * "Disabled is not deleted": otherwise the rows could never be closed.
+ */
+const RESOLVE_ONLY_ACTIONS = {
+    sbxreq: ['deny'],
+    intaction: ['deny']
+};
+
 function claimedToken(token) {
     return typeof token === 'string'
         && Object.prototype.hasOwnProperty.call(inventory.interactionTypes, token);
@@ -55,6 +66,8 @@ function resolveInteractionSurface(customId) {
 async function integrationActionRefusal(customId) {
     const requestId = Number(String(customId).split('_')[2]);
     if (!Number.isInteger(requestId)) return null;
+    // Nothing either owner could refuse: no extra read on a default install.
+    if (!Object.values(INTEGRATION_ACTION_OWNERS).some(owner => features.enforcedOff(owner))) return null;
     try {
         const db = require('@goobster/core/db');
         const row = await db.get('SELECT type FROM pending_integration_actions WHERE id = @id', { id: requestId });
@@ -88,6 +101,8 @@ async function replyUnavailable(interaction) {
 async function gateComponentInteraction(interaction) {
     const surface = resolveInteractionSurface(interaction.customId);
     if (!surface) return { handled: false };
+    const action = String(interaction.customId).split('_')[0];
+    if ((RESOLVE_ONLY_ACTIONS[surface.key] || []).includes(action)) return { handled: surface.collector };
     let refusal = requireSurface('interactionType', surface.key);
     if (!refusal && surface.key === 'intaction') refusal = await integrationActionRefusal(interaction.customId);
     if (refusal) {

@@ -43,15 +43,43 @@ function commandKind(key) {
 /**
  * The one feature filter for Discord commands. `deploy-commands.js` and the
  * bot's command loader both pass this to the same file lister, so what is
- * deployed and what is loaded cannot disagree. A file the inventory does not
- * claim throws GateError('UNCLAIMED_SURFACE'); the lister treats that as
- * unavailable (fail closed) and the inventory spec fails in CI.
+ * deployed and what is loaded cannot disagree.
+ *
+ * A file the inventory does not claim (an operator's own command) follows the
+ * enforcement rule of the rest of the gate: with no usable `data/features.json`
+ * it is allowed, exactly as before the inventory existed; with a state file in
+ * force it fails closed (GateError('UNCLAIMED_SURFACE') - the lister reports it
+ * as left out with that accurate reason). The inventory spec still fails CI for
+ * an unclaimed in-repo command file.
  * @param {'command'|'contextMenu'} kind
  * @param {string} key
  * @returns {boolean}
  */
 function featureCommandFilter(kind, key) {
-    return surfaceActive(kind, key);
+    try {
+        return surfaceActive(kind, key);
+    } catch (error) {
+        if (error && error.code === 'UNCLAIMED_SURFACE' && features.status().source !== 'file') return true;
+        throw error;
+    }
+}
+
+/** True for a command file the inventory has no claim for. */
+function isUnclaimedCommand(entry) {
+    return inventory.ownerOf(entry.kind, entry.key) === null;
+}
+
+/** Warning for an unclaimed command file that is being loaded or deployed (no state file in force). */
+function unclaimedCommandWarning(entry) {
+    return `[WARNING] Command ${entry.key} is not claimed by the feature inventory; it is loaded and deployed because no feature state file is in force. Once data/features.json exists it will be left out until packages/core/features/inventory.js claims it.`;
+}
+
+/** Why a file was left out, for logs: the accurate reason for an unclaimed file, the feature wording otherwise. */
+function skippedReason(entry) {
+    if (entry.reason === 'UNCLAIMED_SURFACE') {
+        return 'it is not claimed by the feature inventory and a feature state file is in force (add it to packages/core/features/inventory.js)';
+    }
+    return 'its feature is not available on this installation';
 }
 
 /** The command (or context menu) name a file declares: its first literal `.setName('...')`. Static, never requires the file. */
@@ -102,6 +130,10 @@ function listCommandFiles(foldersPath, { filter = null, log = () => {} } = {}) {
                     entry.reason = error && error.code ? error.code : 'FILTER_ERROR';
                 }
             }
+            if (allowed && filter && isUnclaimedCommand(entry)) {
+                entry.unclaimed = true;
+                log(unclaimedCommandWarning(entry));
+            }
             (allowed ? active : inactive).push(entry);
         }
     }
@@ -138,7 +170,7 @@ function collectCommandPayloads(foldersPath, { log = () => {}, filter = null } =
     const { active, inactive } = listCommandFiles(foldersPath, { filter, log });
 
     for (const entry of inactive) {
-        log(`Skipping ${entry.key}: its feature is not available on this installation.`);
+        log(`Skipping ${entry.key}: ${skippedReason(entry)}.`);
     }
 
     for (const { filePath } of active) {
@@ -264,6 +296,9 @@ module.exports = {
     commandKey,
     commandKind,
     featureCommandFilter,
+    isUnclaimedCommand,
+    unclaimedCommandWarning,
+    skippedReason,
     listCommandFiles,
     commandNameIndex,
     activeFeatureIds,

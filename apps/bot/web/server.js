@@ -18,6 +18,7 @@ const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require(
 const { mountMcpIfEnabled } = require('@goobster/core/mcp/http');
 const mcpConfig = require('@goobster/core/config/mcpConfig');
 const featureGate = require('@goobster/core/web/featureGate');
+const gateSurface = require('@goobster/core/features/gate');
 const { createInternalGatewayApi, internalGatewayEnabled } = require('./internalGatewayApi');
 const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
 const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
@@ -139,9 +140,17 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     let tableManager = null;
     let botPlayer = null;
     if (config.activity?.enabled === true && gate('discordActivity')) {
-        tableManager = new TableManager();
-        await tableManager.recoverFromJournal();
-        botPlayer = new BotPlayer({ tableManager, client, config, logger });
+        // The casino is Gambling's (`table_games` also requires the Activity):
+        // with gambling, or the economy it needs, enforced off nothing is
+        // built and the escrow journal is not replayed, so no wager can move
+        // points. The Activity shell (auth, client files) still mounts.
+        if (gateSurface.surfaceActive('table', 'table_games')) {
+            tableManager = new TableManager();
+            await tableManager.recoverFromJournal();
+            botPlayer = new BotPlayer({ tableManager, client, config, logger });
+        } else {
+            logger.info?.('Activity table games are not served: the gambling feature is not available.');
+        }
         const activityContext = createActivityContext({ client, config, tableManager, botPlayer, logger });
         healthApp.use(createActivityApp(activityContext));
         healthApp.locals.activityContext = activityContext;
