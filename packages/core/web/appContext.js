@@ -22,31 +22,27 @@ const webDashboardService = require('../services/webDashboardService');
 const parlorService = require('../services/parlorService');
 const parlorLiveService = require('../services/parlorLiveService');
 const studioSongService = require('../services/studioSongService');
-const studioLiveService = require('../services/studioLiveService');
 const friendService = require('../services/friendService');
 const directMessageService = require('../services/directMessageService');
 const presenceService = require('../services/presenceService');
 const userIntegrationService = require('../services/userIntegrationService');
-const webVoiceService = require('../services/webVoiceService');
-const voiceLiveService = require('../services/voiceLiveService');
 const webTaskService = require('../services/webTaskService');
-const webExchangeService = require('../services/webExchangeService');
-const observatoryService = require('../services/observatoryService');
-const projectAssetService = require('../services/projectAssetService');
-const projectTriggerService = require('../services/projectTriggerService');
-const projectMissionService = require('../services/projectMissionService');
 const mtgaService = require('../services/mtgaService');
 const webAppletService = require('../services/webAppletService');
 const webSuggestionService = require('../services/webSuggestionService');
 const webAttentionService = require('../services/webAttentionService');
-const spitballExpeditionService = require('../services/spitballExpeditionService');
-const spitballExpeditionRunner = require('../services/spitballExpeditionRunner');
-const expeditionBriefService = require('../services/expeditionBriefService');
 const knowledgeTransferService = require('../services/knowledgeTransferService');
 const instanceStateService = require('../services/instanceStateService');
 const { features: featureState } = require('../features/featureState');
 const { workspaceRoot } = require('../runtimePaths');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
+/**
+ * The portal's service handles. A service owned by an optional feature is
+ * null when this payload does not carry it (documentation/packaging.md);
+ * core readers check before use, feature routes are not mounted or are
+ * refused by the feature gate.
+ */
 function createWebAppContext({ client = null, gateway = null, config, logger = console, deps = {} }) {
     const webappConfig = config.webapp || {};
     const publicUrl = typeof webappConfig.publicUrl === 'string'
@@ -84,22 +80,22 @@ function createWebAppContext({ client = null, gateway = null, config, logger = c
         parlor: deps.parlor || parlorService,
         parlorLive: deps.parlorLive || parlorLiveService,
         studioSongs: deps.studioSongs || studioSongService,
-        studioLive: deps.studioLive || studioLiveService,
+        studioLive: deps.studioLive || requireOptional('../services/studioLiveService', { feature: 'music' }),
         friends: deps.friends || friendService,
         dm: deps.dm || directMessageService,
         presence: deps.presence || presenceService,
         integrations: deps.integrations || userIntegrationService,
-        voice: deps.voice || webVoiceService,
-        voiceLive: deps.voiceLive || voiceLiveService,
+        voice: deps.voice || requireOptional('../services/webVoiceService', { feature: 'voice' }),
+        voiceLive: deps.voiceLive || requireOptional('../services/voiceLiveService', { feature: 'voice' }),
         tasks: deps.tasks || webTaskService,
-        exchange: deps.exchange || webExchangeService,
-        observatory: deps.observatory || observatoryService,
-        projectAssets: deps.projectAssets || projectAssetService,
-        projectTriggers: deps.projectTriggers || projectTriggerService,
-        projectMissions: deps.projectMissions || projectMissionService,
-        spitball: deps.spitball || spitballExpeditionService,
-        spitballRunner: deps.spitballRunner || spitballExpeditionRunner,
-        briefs: deps.briefs || expeditionBriefService,
+        exchange: deps.exchange || requireOptional('../services/webExchangeService', { feature: 'exchange' }),
+        observatory: deps.observatory || requireOptional('../services/observatoryService', { feature: 'projects' }),
+        projectAssets: deps.projectAssets || requireOptional('../services/projectAssetService', { feature: 'projects' }),
+        projectTriggers: deps.projectTriggers || requireOptional('../services/projectTriggerService', { feature: 'projects' }),
+        projectMissions: deps.projectMissions || requireOptional('../services/projectMissionService', { feature: 'projects' }),
+        spitball: deps.spitball || requireOptional('../services/spitballExpeditionService', { feature: 'expeditions' }),
+        spitballRunner: deps.spitballRunner || requireOptional('../services/spitballExpeditionRunner', { feature: 'expeditions' }),
+        briefs: deps.briefs || requireOptional('../services/expeditionBriefService', { feature: 'expeditions' }),
         transfers: deps.transfers || knowledgeTransferService,
         mtga: deps.mtga || mtgaService,
         applets: deps.applets || webAppletService,

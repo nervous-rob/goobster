@@ -14,7 +14,7 @@ function capsFromReq(req, ctx) {
         isOperator: req.actor?.account?.role === 'operator',
         discordEnabled: ctx.discordConfig?.enabled === true,
         features: {
-            projects: ctx.observatory?.organizationEnabled !== false,
+            projects: Boolean(ctx.observatory) && ctx.observatory.organizationEnabled !== false,
             observatory: (ctx.observatory?.executionEnabled ?? ctx.observatory?.enabled) === true,
             spitball: ctx.spitball?.enabled === true
         }

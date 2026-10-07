@@ -13,20 +13,12 @@ const path = require('node:path');
 const express = require('express');
 const { createPanelService } = require('@goobster/core/services/panelService');
 const { createPanelApi } = require('./panelApi');
-const { createActivityContext, createActivityApp, attachActivityWebSocket } = require('./activityApi');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
-const { mountMcpIfEnabled } = require('@goobster/core/mcp/http');
 const mcpConfig = require('@goobster/core/config/mcpConfig');
 const featureGate = require('@goobster/core/web/featureGate');
 const gateSurface = require('@goobster/core/features/gate');
 const { createInternalGatewayApi, internalGatewayEnabled } = require('./internalGatewayApi');
-const { createScreenVisionApp, attachScreenVisionWebSocket } = require('./screenVisionApi');
-const { createGbaRunApp, attachGbaRunWebSocket } = require('./gbaRunApi');
-const { createIntegrationsApp, integrationsWebhooksEnabled } = require('./integrationsApi');
-const screenVisionService = require('@goobster/core/services/screenVisionService');
-const gbaRunService = require('@goobster/core/services/gbaRunService');
-const { TableManager } = require('@goobster/core/services/tableGames/tableManager');
-const { BotPlayer } = require('@goobster/core/services/tableGames/botPlayer');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 
 const DEFAULT_PANEL_PORT = 3400;
 
@@ -118,8 +110,9 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // publicly reachable (e.g. via a cloudflared tunnel). Mounted before the
     // Activity app so its body parsers can never touch the raw webhook
     // bodies needed for HMAC signature verification.
-    if (integrationsWebhooksEnabled() && (gate('github') || gate('cursor'))) {
-        healthApp.use(createIntegrationsApp({ client, logger }));
+    const integrationsApi = requireOptional('./integrationsApi', { feature: 'github' });
+    if (integrationsApi?.integrationsWebhooksEnabled() && (gate('github') || gate('cursor'))) {
+        healthApp.use(integrationsApi.createIntegrationsApp({ client, logger }));
         logger.info?.('Integration webhook receivers enabled at /api/webhooks/*');
     }
 
@@ -139,27 +132,31 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // proxy (e.g. via a cloudflared tunnel). See documentation/activity_setup.md.
     let tableManager = null;
     let botPlayer = null;
-    if (config.activity?.enabled === true && gate('discordActivity')) {
+    const activityApi = requireOptional('./activityApi', { feature: 'discordActivity' });
+    if (activityApi && config.activity?.enabled === true && gate('discordActivity')) {
         // The casino is Gambling's (`table_games` also requires the Activity):
         // with gambling, or the economy it needs, enforced off nothing is
         // built and the escrow journal is not replayed, so no wager can move
         // points. The Activity shell (auth, client files) still mounts.
-        if (gateSurface.surfaceActive('table', 'table_games')) {
-            tableManager = new TableManager();
+        const tables = requireOptional('@goobster/core/services/tableGames/tableManager', { feature: 'gambling' });
+        const players = requireOptional('@goobster/core/services/tableGames/botPlayer', { feature: 'gambling' });
+        if (tables && players && gateSurface.surfaceActive('table', 'table_games')) {
+            tableManager = new tables.TableManager();
             await tableManager.recoverFromJournal();
-            botPlayer = new BotPlayer({ tableManager, client, config, logger });
+            botPlayer = new players.BotPlayer({ tableManager, client, config, logger });
         } else {
             logger.info?.('Activity table games are not served: the gambling feature is not available.');
         }
-        const activityContext = createActivityContext({ client, config, tableManager, botPlayer, logger });
-        healthApp.use(createActivityApp(activityContext));
+        const activityContext = activityApi.createActivityContext({ client, config, tableManager, botPlayer, logger });
+        healthApp.use(activityApi.createActivityApp(activityContext));
         healthApp.locals.activityContext = activityContext;
         logger.info?.(`Activity server enabled at /activity${activityContext.devMode ? ' (DEV MODE - auth bypass on)' : ''}`);
     }
 
     // Read-only MCP (documentation/mcp.md). Opt-in: the public server
     // gains a bearer-token endpoint over one person's workspace.
-    if (gate('mcp')) mountMcpIfEnabled(healthApp, { logger });
+    const mcpHttp = gate('mcp') ? requireOptional('@goobster/core/mcp/http', { feature: 'mcp' }) : null;
+    if (mcpHttp) mcpHttp.mountMcpIfEnabled(healthApp, { logger });
 
     // Web app (browser chat + memory dashboard): opt-in for the same reason
     // as the Activity - it must be reachable through the public tunnel.
@@ -175,24 +172,29 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     // the same reason as the Activity - the public server gains a pairing
     // endpoint and a WebSocket that must be reachable from players' PCs.
     // See documentation/screen_vision_setup.md.
-    const screenVisionEnabled = config.screenVision?.enabled === true && gate('screenVision');
-    screenVisionService.configure({
+    const screenVisionService = requireOptional('@goobster/core/services/screenVisionService', { feature: 'screenVision' });
+    const screenVisionApi = requireOptional('./screenVisionApi', { feature: 'screenVision' });
+    const screenVisionEnabled = Boolean(screenVisionService && screenVisionApi)
+        && config.screenVision?.enabled === true && gate('screenVision');
+    screenVisionService?.configure({
         enabled: screenVisionEnabled,
         publicUrl: config.screenVision?.publicUrl,
         releasesUrl: config.screenVision?.releasesUrl,
         logger
     });
     if (screenVisionEnabled) {
-        healthApp.use(createScreenVisionApp({ logger }));
+        healthApp.use(screenVisionApi.createScreenVisionApp({ logger }));
     }
 
     // GBA run harness (Goobster Plays Pokémon): opt-in for the same reason
     // as screen vision - the public server gains a pairing endpoint and a
     // WebSocket that must be reachable from the machine running mGBA.
-    const gbaRunEnabled = config.gbaRun?.enabled === true && gate('gba');
-    gbaRunService.configure({ enabled: gbaRunEnabled, client, logger });
+    const gbaRunService = requireOptional('@goobster/core/services/gbaRunService', { feature: 'gba' });
+    const gbaRunApi = requireOptional('./gbaRunApi', { feature: 'gba' });
+    const gbaRunEnabled = Boolean(gbaRunService && gbaRunApi) && config.gbaRun?.enabled === true && gate('gba');
+    gbaRunService?.configure({ enabled: gbaRunEnabled, client, logger });
     if (gbaRunEnabled) {
-        healthApp.use(createGbaRunApp({ logger }));
+        healthApp.use(gbaRunApi.createGbaRunApp({ logger }));
     }
 
     const healthServer = healthApp.listen(healthPort, () => {
@@ -202,7 +204,7 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     featureGate.rejectBlockedUpgrades(healthServer);
 
     if (tableManager) {
-        attachActivityWebSocket(healthServer, healthApp.locals.activityContext);
+        activityApi.attachActivityWebSocket(healthServer, healthApp.locals.activityContext);
     }
 
     // Parlor Live + Study voice chat share the web app's opt-in (same
@@ -213,12 +215,12 @@ async function startWebServers({ client, voiceService, config = {}, logger = con
     }
 
     if (screenVisionEnabled) {
-        attachScreenVisionWebSocket(healthServer, { logger });
+        screenVisionApi.attachScreenVisionWebSocket(healthServer, { logger });
         logger.info?.('Screen vision enabled: /api/screen/pair + /api/screen/ws');
     }
 
     if (gbaRunEnabled) {
-        attachGbaRunWebSocket(healthServer, { logger });
+        gbaRunApi.attachGbaRunWebSocket(healthServer, { logger });
         logger.info?.('GBA run harness enabled: /api/gba-run/pair + /api/gba-run/ws');
     }
 

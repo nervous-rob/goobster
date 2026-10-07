@@ -48,7 +48,10 @@ const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const observatoryConfig = require('../config/observatoryConfig');
 const { features } = require('../features/featureState');
-const sandboxService = require('./sandboxService');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
+// Organisation works without the sandbox; only execution needs it.
+const sandboxService = requireOptional('./sandboxService', { feature: 'sandbox' });
 const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
@@ -311,7 +314,7 @@ class ObservatoryService {
      * second term is always true, so this is the legacy value unchanged.
      */
     get executionEnabled() {
-        return this.config.enabled === true && this.sandbox.enabled === true
+        return this.config.enabled === true && this.sandbox?.enabled === true
             && !features.enforcedOff('observatory');
     }
 
@@ -3613,7 +3616,7 @@ class ObservatoryService {
     }
 
     _inviteMessage({ inviteId, inviterName, name }) {
-        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = discord;
         let appUrl = null;
         try {
             const publicUrl = require('../../../config.json').webapp?.publicUrl;
