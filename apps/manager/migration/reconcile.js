@@ -14,13 +14,15 @@
 const nodeFs = require('node:fs');
 const environment = require('../environment');
 const { createMigrationState } = require('./state');
-const { describeTarget } = require('@goobster/core/db/migration/target');
+const { lazy } = require('../lazy');
+
+const targetLib = lazy('@goobster/core/db/migration/target');
 
 function overlayMatches(storeDir, fs, state) {
     const { values } = environment.read(storeDir, fs);
     if (!values.GOOBSTER_DB_URL) return false;
     try {
-        return describeTarget(values.GOOBSTER_DB_URL).fingerprint === state.target.fingerprint;
+        return targetLib.describeTarget(values.GOOBSTER_DB_URL).fingerprint === state.target.fingerprint;
     } catch {
         return false;
     }

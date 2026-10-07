@@ -33,9 +33,14 @@ const { createInstallCore, exactKeys, textField, absolutePath, parseBoolean } = 
 const { createChildRunner } = require('../../migration/runChild');
 const { createMigrationState } = require('../../migration/state');
 const { validateOnTarget } = require('../../migration/validation');
-const { ROLLBACK_LIMIT } = require('@goobster/core/db/migration');
-const { describeTarget, publicTarget } = require('@goobster/core/db/migration/target');
-const { MigrationError } = require('@goobster/core/db/migration/errors');
+const { lazy } = require('../../lazy');
+
+// The manager boots with no database code loaded (tests/managerBoot.test.js): these load on first use.
+const targetLib = lazy('@goobster/core/db/migration/target');
+const limitLib = lazy('@goobster/core/db/migration/rollbackLimit');
+const rollbackLimit = () => limitLib.ROLLBACK_LIMIT;
+const describeTarget = (url) => targetLib.describeTarget(url);
+const publicTarget = (description) => targetLib.publicTarget(description);
 
 const MIGRATE_STEPS = ['preflight', 'maintenance', 'backup', 'snapshot', 'provision', 'copy', 'verify', 'validate', 'cutover', 'settle', 'release'];
 const ROLLBACK_STEPS = ['check', 'revert-switch', 'drop', 'record', 'release'];
@@ -60,7 +65,7 @@ function parseTarget(value) {
     try {
         description = describeTarget(url);
     } catch (error) {
-        throw invalid(error instanceof MigrationError ? error.message : 'The target is not a Postgres connection URL.');
+        throw invalid(error && error.name === 'MigrationError' ? error.message : 'The target is not a Postgres connection URL.');
     }
     return { url, description };
 }
@@ -213,7 +218,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
         result: scratch => scratch.report ? {
             ready: scratch.report.blocks.length === 0,
             ...scratch.report,
-            rollbackLimit: ROLLBACK_LIMIT
+            rollbackLimit: rollbackLimit()
         } : null
     };
 
@@ -296,7 +301,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 release: parsed.release,
                 confirmation: { required: true, satisfied: parsed.confirm === doc.installationId },
                 resumeOf: existing ? { migrationId: existing.id, status: existing.status, completed: Object.keys(existing.steps || {}).filter(name => existing.steps[name].done) } : null,
-                rollbackLimit: ROLLBACK_LIMIT,
+                rollbackLimit: rollbackLimit(),
                 steps: MIGRATE_STEPS.map(name => ({ name }))
             };
             return { plan, doc, parsed };
@@ -590,7 +595,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     maintenance: { operationId: op.operationId, fence: op.fence, phase: view.phase, enteredByMigration: op.entered },
                     instancePaused: true,
                     workersMode: settings.workersMode,
-                    rollbackLimit: ROLLBACK_LIMIT,
+                    rollbackLimit: rollbackLimit(),
                     warnings: ctx.scratch.warnings || []
                 };
                 ctx.scratch.audit = ctx.scratch.audit || { tables: doc.result.tables, rows: doc.result.rows, vectors: doc.result.vectors, provisioned: doc.result.provisioned, backupVerified: true };
@@ -625,7 +630,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
             const store = state();
             if (!doc) return new ManagerError(409, 'NOTHING_TO_ROLL_BACK', 'There is no migration to roll back.');
             if (doc.status === 'rolled-back') return new ManagerError(409, 'NOTHING_TO_ROLL_BACK', 'The migration was already rolled back.');
-            if (store.acceptedWrites(doc)) return new ManagerError(409, 'POSTGRES_HAS_WRITES', ROLLBACK_LIMIT);
+            if (store.acceptedWrites(doc)) return new ManagerError(409, 'POSTGRES_HAS_WRITES', rollbackLimit());
             return null;
         }
 
@@ -656,7 +661,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                         drops: { tables: (provision.createdTables || []).length, extensions: provision.extensionsCreated || [] },
                         releaseMaintenance: parsed.releaseMaintenance,
                         confirmation: { required: true, satisfied: parsed.confirm === doc.installationId },
-                        rollbackLimit: ROLLBACK_LIMIT,
+                        rollbackLimit: rollbackLimit(),
                         steps: ROLLBACK_STEPS.map(name => ({ name }))
                     },
                     revision: doc.revision ?? null,
@@ -727,7 +732,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                         const store = state();
                         store.update(next => ({ ...next, status: 'rolled-back', rolledBackAt: stamp(), cutover: null, failure: null, steps: {}, result: null }));
                         files.removeIfPresent(store.progressFile, fs);
-                        ctx.scratch.result = { rolledBack: true, switchReverted: Boolean(ctx.scratch.reverted), dropped: ctx.scratch.dropped || { tables: 0, derived: 0, extensions: [], retained: [] }, rollbackLimit: ROLLBACK_LIMIT };
+                        ctx.scratch.result = { rolledBack: true, switchReverted: Boolean(ctx.scratch.reverted), dropped: ctx.scratch.dropped || { tables: 0, derived: 0, extensions: [], retained: [] }, rollbackLimit: rollbackLimit() };
                         ctx.scratch.audit = { tables: (ctx.scratch.dropped || {}).tables || 0, switchReverted: Boolean(ctx.scratch.reverted) };
                         if (ctx.scratch.reverted) ctx.scratch.result.workersRestarted = restartWorkers();
                         return { rolledBack: true };

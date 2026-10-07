@@ -8,7 +8,9 @@
 
 const nodeFs = require('node:fs');
 const { createMigrationState, STEPS } = require('./state');
-const { ROLLBACK_LIMIT } = require('@goobster/core/db/migration');
+const { lazy } = require('../lazy');
+
+const limitLib = lazy('@goobster/core/db/migration/rollbackLimit');
 
 const STEP_FIELDS = Object.freeze(['at', 'done', 'tables', 'rows', 'verified', 'configIncluded', 'files', 'resumed', 'recopied', 'extensionsCreated', 'ok']);
 
@@ -41,7 +43,7 @@ function progressOf(raw) {
 function migrationStatus({ settings, fs = nodeFs, now = () => new Date() }) {
     const store = createMigrationState({ storeDir: settings.storeDir, fs, now });
     const { doc, problem } = store.read();
-    const base = { rollbackLimit: ROLLBACK_LIMIT };
+    const base = { rollbackLimit: limitLib.ROLLBACK_LIMIT };
     if (problem) return { ...base, state: 'unreadable', problem, rollback: { possible: false, reason: 'STATE_UNREADABLE' } };
     if (!doc) return { ...base, state: 'none', rollback: { possible: false, reason: 'NO_MIGRATION' } };
     const writes = store.acceptedWrites(doc);
