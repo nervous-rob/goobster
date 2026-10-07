@@ -95,7 +95,7 @@ function freePort() {
  * A manager over `<root>/app` with the engine's extension kinds registered.
  * `env` and `installDeps` override the environment and the engine's seams.
  */
-async function newHarness({ root, env = {}, installDeps = {}, hooks, port, now } = {}) {
+async function newHarness({ root, env = {}, installDeps = {}, updateDeps = null, hooks, port, now } = {}) {
     const code = path.join(root, 'app');
     fs.mkdirSync(code, { recursive: true });
     const botPort = port || await freePort();
@@ -110,6 +110,7 @@ async function newHarness({ root, env = {}, installDeps = {}, hooks, port, now }
         ...env
     });
     settings.installDeps = { home: root, readCrontab: () => null, writeCrontab: () => {}, discover: () => ({ candidates: [], searched: 0 }), ...installDeps };
+    if (updateDeps) settings.updateDeps = updateDeps;
     const manager = createManager({ settings, hooks, logger: silent, extraKinds: extensions.kinds, ...(now ? { now } : {}) });
     await manager.init({ mintBootstrap: false });
     return { root, code, settings, manager, botPort };
