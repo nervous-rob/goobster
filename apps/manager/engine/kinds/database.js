@@ -202,7 +202,12 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 }
             ],
             result: scratch => ({ done: scratch.done || [], verified: scratch.verified || null }),
-            auditDetail: (record, scratch) => ({ actions: (scratch.done || []).map(item => `${item.action}:${item.status}`), database: record.plan.database.database, schema: record.plan.database.schema })
+            auditDetail: (record, scratch) => ({
+                done: (scratch.done || []).filter(item => item.status === 'done').length,
+                already: (scratch.done || []).filter(item => item.status === 'already').length,
+                database: record.plan.database.database,
+                schema: record.plan.database.schema
+            })
         };
     }
 
@@ -497,7 +502,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 ctx.store.updateInstallation(draft => ({ ...draft, database: { engine: 'postgres', external: true } }), { expectedRevision: doc.revision });
                 environment.apply(settings, values);
                 ctx.scratch.workersRestarted = restartWorkers();
-                ctx.scratch.audit = { from: record.plan.from.engine, to: 'postgres', schema: ctx.scratch.schema, validated: ctx.scratch.validated || [], database: record.plan.to.database, tls: record.plan.to.tls.mode };
+                ctx.scratch.audit = { from: record.plan.from.engine, to: 'postgres', schema: ctx.scratch.schema, validated: (ctx.scratch.validated || []).length, database: record.plan.to.database, tls: record.plan.to.tls.mode };
                 return { engine: 'postgres', schema: ctx.scratch.schema, workersRestarted: ctx.scratch.workersRestarted };
             }),
 
