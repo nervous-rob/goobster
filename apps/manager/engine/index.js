@@ -44,6 +44,7 @@ const DEFAULT_PLAN_TTL_MS = 15 * 60 * 1000;
  * @property {(record: Object, ctx: Object) => (void|Promise<void>)} [validate] runs at validate and again inside the lock
  * @property {Array<{ name: string, run: (record: Object, ctx: Object) => any }>} steps a step returns its journal detail
  * @property {(scratch: Object) => any} [result] the caller's in-memory result (sessions, ids); never journaled
+ * @property {(scratch: Object, record: Object) => Object} [auditDetail] counts, booleans and short labels for the audit row of a successful operation
  */
 
 function publicError(error) {
@@ -170,7 +171,7 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
         }));
     }
 
-    async function audit(record, outcome) {
+    async function audit(record, outcome, detail = null) {
         try {
             const entry = await journal.appendAudit({
                 action: `manager.${record.kind}`,
@@ -178,7 +179,8 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
                 operationId: record.id,
                 outcome,
                 via: record.via,
-                forced: Boolean(record.plan && record.plan.force === true)
+                forced: Boolean(record.plan && record.plan.force === true),
+                detail
             });
             if (onAudit) onAudit(entry);
         } catch (error) {
@@ -261,7 +263,11 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
             held.release();
             privateInputs.delete(id);
         }
-        await audit(current, current.status);
+        let auditDetail = null;
+        if (!failure && spec.auditDetail) {
+            try { auditDetail = spec.auditDetail(scratch, current); } catch { }
+        }
+        await audit(current, current.status, auditDetail);
         if (failure) {
             const error = new ManagerError(failure.status, failure.code, failure.message, { ...(failure.details || {}), operationId: id });
             error.operation = view(current);

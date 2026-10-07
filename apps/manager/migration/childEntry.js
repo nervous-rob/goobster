@@ -101,15 +101,15 @@ const OPS = {
         return { sha256: hash.sha256, bytes: hash.bytes, tables: report.tableCount, rows: report.rows, integrity: report.integrity.mode };
     },
 
-    async provision({ url, extensions = [], expectEmpty = true }) {
+    async extensions({ url, extensions = [], expectEmpty = true }) {
         const { REQUIRED_EXTENSIONS } = require('@goobster/core/db/migration/inspect');
         const { Client } = require('pg');
         const created = [];
         const client = new Client({ connectionString: url, connectionTimeoutMillis: 10000 });
         await client.connect();
         try {
+            const schema = (await client.query('SELECT current_schema() AS s')).rows[0].s;
             if (expectEmpty) {
-                const schema = (await client.query('SELECT current_schema() AS s')).rows[0].s;
                 const found = await client.query(
                     `SELECT COUNT(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                      WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')`, [schema]
@@ -123,16 +123,20 @@ const OPS = {
                 await client.query(`CREATE EXTENSION ${name} WITH SCHEMA public`);
                 created.push(name);
             }
+            return { extensionsCreated: created, schema };
         } finally {
             await client.end().catch(() => { });
         }
+    },
+
+    async schema() {
         const db = require('@goobster/core/db');
         if (db.engine !== 'postgres') throw Object.assign(new Error('engine'), { code: 'NOT_POSTGRES' });
         await db.get('SELECT 1 AS ok');
         const schema = (await db.get('SELECT current_schema() AS s')).s;
         const tables = await db.listTables({ includeDerived: true });
         await db.closeConnection();
-        return { extensionsCreated: created, tables, schema };
+        return { tables, schema };
     },
 
     async copy({ sqlitePath, progressFile, sourceSha256 }) {
@@ -212,7 +216,7 @@ const OPS = {
         return { paused: true };
     },
 
-    async rollback({ url, tables, extensions, schema }) {
+    async rollback({ url, tables, extensions, schema, allOurs = false }) {
         const { Client } = require('pg');
         const { expectedSchema } = require('@goobster/core/db/migration/schemaModel');
         const client = new Client({ connectionString: url, connectionTimeoutMillis: 10000 });
@@ -225,7 +229,7 @@ const OPS = {
                 `SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')`, [schema]
             )).rows.map(row => row.name);
-            const owned = new Set(tables);
+            const owned = allOurs ? new Set(present) : new Set(tables);
             const derived = present.filter(name => /^memory_vec_\d+$/.test(name));
             const foreign = present.filter(name => !owned.has(name) && !derived.includes(name));
             if (foreign.length > 0) throw Object.assign(new Error('foreign'), { code: 'ROLLBACK_FOREIGN_OBJECTS' });

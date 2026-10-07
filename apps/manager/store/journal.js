@@ -39,6 +39,18 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
  * @property {{ code: string, message: string }} [error]
  */
 
+/** Numbers, booleans and short labels only; anything else is dropped. */
+function cleanAuditDetail(detail) {
+    if (!files.isPlainObject(detail)) return null;
+    const out = {};
+    for (const [key, value] of Object.entries(detail).slice(0, 16)) {
+        if (!/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(key)) continue;
+        if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) out[key] = value;
+        else if (typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}$/.test(value)) out[key] = value;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+}
+
 function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
     const dir = store.paths.operations;
     const fileFor = (id) => path.join(dir, `${id}.json`);
@@ -132,7 +144,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
      * Append one audit record: `{ action, actor, operationId, outcome }`.
      * Never a value, a credential or a label.
      */
-    function appendAudit({ action, actor = null, operationId, outcome, via = null, forced = false }) {
+    function appendAudit({ action, actor = null, operationId, outcome, via = null, forced = false, detail = null }) {
         const entry = {
             version: AUDIT_VERSION,
             action: String(action),
@@ -141,6 +153,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
             outcome: String(outcome),
             via,
             ...(forced ? { forced: true } : {}),
+            ...(cleanAuditDetail(detail) ? { detail: cleanAuditDetail(detail) } : {}),
             at: now().toISOString(),
             reconciledAt: null
         };

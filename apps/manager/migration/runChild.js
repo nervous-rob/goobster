@@ -14,7 +14,7 @@ const CHILD = path.join(__dirname, 'childEntry.js');
 const MARK = '@@goobster-migrate@@ ';
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const SHORT_TIMEOUT_MS = 2 * 60_000;
-const OP_TIMEOUTS = Object.freeze({ inspect: SHORT_TIMEOUT_MS, provision: 10 * 60_000, targetCounts: SHORT_TIMEOUT_MS, finalize: SHORT_TIMEOUT_MS, rollback: 10 * 60_000 });
+const OP_TIMEOUTS = Object.freeze({ inspect: SHORT_TIMEOUT_MS, extensions: SHORT_TIMEOUT_MS, schema: 10 * 60_000, targetCounts: SHORT_TIMEOUT_MS, finalize: SHORT_TIMEOUT_MS, rollback: 10 * 60_000 });
 const INHERITED_TO_DROP = ['GOOBSTER_DB_URL', 'GOOBSTER_DB_PATH', 'GOOBSTER_PG_TEST_ISOLATE', 'GOOBSTER_MANAGER_STATE_DIR', 'GOOBSTER_MANAGER_ACK_TOKEN', 'GOOBSTER_MANAGER_PID', 'GOOBSTER_REVISION'];
 
 function childEnv(settings, { url = null, sqlitePath = null } = {}) {
