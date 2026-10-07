@@ -33,7 +33,10 @@ const BASE = '/api/app/admin/host';
 const INSTALL_KINDS = Object.freeze(['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall']);
 const MAINTENANCE_KINDS = Object.freeze(['backup.create', 'backup.restore', 'data.reset']);
 const DOCKER_DATABASE_KINDS = Object.freeze(['database.docker.provision', 'database.docker.start', 'database.docker.stop', 'database.docker.repair', 'database.docker.reconfigure']);
-const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect', ...DOCKER_DATABASE_KINDS]);
+const NATIVE_DATABASE_KINDS = Object.freeze(['database.native.provision', 'database.native.start', 'database.native.stop', 'database.native.repair', 'database.native.relocate']);
+const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect', ...DOCKER_DATABASE_KINDS, ...NATIVE_DATABASE_KINDS]);
+/** A package install and a cluster build can outlast the ten-minute default on a Raspberry Pi. */
+const NATIVE_TIMEOUT_MS = 30 * 60 * 1000;
 const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...MAINTENANCE_KINDS, ...DATABASE_KINDS]);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
@@ -50,7 +53,8 @@ const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'database.provision': 'host.database.apply',
     'database.schema.apply': 'host.database.apply',
     'database.connect': 'host.database.apply',
-    ...Object.fromEntries(DOCKER_DATABASE_KINDS.map(kind => [kind, 'host.database.apply']))
+    ...Object.fromEntries(DOCKER_DATABASE_KINDS.map(kind => [kind, 'host.database.apply'])),
+    ...Object.fromEntries(NATIVE_DATABASE_KINDS.map(kind => [kind, 'host.database.apply']))
 });
 const LIFECYCLE_ACTIONS = Object.freeze({
     'restart-now': 'host.lifecycle.restart_now',
@@ -401,6 +405,17 @@ function mountHost(app, ctx, h) {
         return clean(await managerJson(req, 'GET', `/manager/api/docker/status${query}`, undefined, { timeoutMs: PROBE_TIMEOUT_MS }), 0, 8);
     }));
 
+    /**
+     * The native Postgres option's host facts and what the manager owns (documentation/native_postgres.md).
+     * Read only; the optional `storage` is the absolute directory whose free space is reported.
+     */
+    app.get(`${BASE}/native/status`, ...guard, route(async (req) => {
+        const storage = req.query && req.query.storage;
+        if (storage !== undefined && (typeof storage !== 'string' || storage.length > 1024)) throw fail(400, 'INVALID_INPUT', '"storage" must be an absolute directory path.');
+        const query = storage === undefined ? '' : `?storage=${encodeURIComponent(storage)}`;
+        return clean(await managerJson(req, 'GET', `/manager/api/native/status${query}`, undefined, { timeoutMs: PROBE_TIMEOUT_MS }), 0, 8);
+    }));
+
     // --- Preview ----------------------------------------------------------------
 
     function featuresInput(input) {
@@ -600,9 +615,32 @@ function mountHost(app, ctx, h) {
                 names: dockerNames(plan),
                 effect: plan.effect || null
             };
+        // Cluster and service names and the major version only: no path, port, address, user, URL or password.
+        case 'database.native.provision':
+            return {
+                operation: 'native.provision',
+                names: nativeNames(plan),
+                mode: plan.mode || null,
+                done: Boolean(result && (result.provisioned === true || result.verified === true))
+            };
+        case 'database.native.start':
+        case 'database.native.stop':
+        case 'database.native.repair':
+        case 'database.native.relocate':
+            return {
+                operation: operation.kind.replace('database.', ''),
+                names: nativeNames(plan),
+                effect: plan.effect || null
+            };
         default:
             return {};
         }
+    }
+
+    function nativeNames(plan) {
+        const names = plan && plan.names && typeof plan.names === 'object' ? plan.names : {};
+        const host = plan && plan.host && typeof plan.host === 'object' ? plan.host : {};
+        return { cluster: names.cluster || null, service: names.service || null, major: Number.isInteger(host.major) ? host.major : null };
     }
 
     function dockerNames(plan) {
@@ -634,7 +672,9 @@ function mountHost(app, ctx, h) {
         const result = await client.call({
             actor: actorOf(req), method: 'POST', path: `/manager/api/operations/${operationId}/apply`,
             body: { revision: current.revision === undefined ? null : current.revision },
-            ...(INSTALL_KINDS.includes(current.kind) || MAINTENANCE_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
+            ...(NATIVE_DATABASE_KINDS.includes(current.kind)
+                ? { timeoutMs: NATIVE_TIMEOUT_MS }
+                : INSTALL_KINDS.includes(current.kind) || MAINTENANCE_KINDS.includes(current.kind) || DATABASE_KINDS.includes(current.kind) ? { timeoutMs: INSTALL_TIMEOUT_MS } : {})
         });
         const failure = failureOf(result);
         if (failure) throw failure;
@@ -723,6 +763,7 @@ module.exports = {
     MAINTENANCE_KINDS,
     DATABASE_KINDS,
     DOCKER_DATABASE_KINDS,
+    NATIVE_DATABASE_KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,
     KEEPS_DATA

@@ -458,7 +458,7 @@ describe('the operations through the Host proxy', () => {
 
     test('the audit vocabulary knows the action the proxy writes', () => {
         expect(operatorAudit.ACTIONS).toContain('host.database.apply');
-        expect(host.DATABASE_KINDS).toEqual(['database.provision', 'database.schema.apply', 'database.connect', ...host.DOCKER_DATABASE_KINDS]);
+        expect(host.DATABASE_KINDS).toEqual(['database.provision', 'database.schema.apply', 'database.connect', ...host.DOCKER_DATABASE_KINDS, ...host.NATIVE_DATABASE_KINDS]);
         expect(host.DOCKER_DATABASE_KINDS).toEqual(['database.docker.provision', 'database.docker.start', 'database.docker.stop', 'database.docker.repair', 'database.docker.reconfigure']);
         for (const kind of host.DATABASE_KINDS) expect(host.KINDS).toContain(kind);
     });
