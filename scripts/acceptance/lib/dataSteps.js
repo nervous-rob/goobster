@@ -30,11 +30,16 @@ async function backup(cell, step, dir, { includeConfig = false } = {}) {
     return archive;
 }
 
-async function restore(cell, step, archive, { withConfig = false } = {}) {
+function matchesManifest(file, entry) {
+    return fs.existsSync(file) && require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex') === entry.sha256;
+}
+
+async function restore(cell, step, archive, { withConfig = false, launch = null } = {}) {
     const args = ['restore', archive, '--confirm', cell.installationId, '--release', '--json'];
     if (withConfig) args.push('--passphrase-file', cell.passphraseFile());
     else args.push('--without-config');
-    const done = await cell.cli(step, args, { show: ['restore', '<archive>', '--confirm', '<installationId>', '--release', ...(withConfig ? ['--passphrase-file', '<file>'] : ['--without-config']), '--json'] });
+    const run = launch ? (a, o) => launch(cell, step, a, o) : (a, o) => cell.cli(step, a, o);
+    const done = await run(args, { show: ['restore', '<archive>', '--confirm', '<installationId>', '--release', ...(withConfig ? ['--passphrase-file', '<file>'] : ['--without-config']), '--json'] });
     check(done.code === 0, `restore exited ${done.code}: ${cell.why(done)}`);
     return done;
 }
@@ -72,17 +77,21 @@ async function stepRepair(cell, step) {
     for (const suffix of ['-wal', '-shm']) fs.rmSync(`${sqlite}${suffix}`, { force: true });
     const damagedHash = cell.sha256File(sqlite);
 
-    const answers = cell.answersFile('repair', { command: 'repair', source: cell.base.dir, release: { publicKeyFiles: [cell.base.publicKeyPath] } });
-    const repaired = await fromPayload(cell, step, ['repair', '--answers', answers, '--yes', '--json']);
-    check(repaired.code === 0, `repair exited ${repaired.code}: ${cell.why(repaired)}`);
-    const restoredSource = fs.readFileSync(victimFile);
-    const wanted = victim.sha256;
-    check(require('node:crypto').createHash('sha256').update(restoredSource).digest('hex') === wanted, 'repair left the damaged release file as it was');
-    check(cell.sha256File(sqlite) === damagedHash, 'repair changed or replaced the database file: data must be kept as it is');
+    const recorded = cell.published.get(cell.state.release.version);
+    const source = recorded ? recorded.payloadDir : cell.base.dir;
+    const answers = cell.answersFile('repair', { command: 'repair', source, release: { publicKeyFiles: [cell.base.publicKeyPath] } });
+    const refused = await fromPayload(cell, step, ['repair', '--answers', answers, '--yes', '--json']);
+    check(refused.code !== 0 && refused.json && refused.json.error && refused.json.error.code === 'DB_INIT_FAILED', `repair over a corrupted database answered ${refused.code}: ${cell.why(refused)}, not the DB_INIT_FAILED refusal`);
+    check(cell.sha256File(sqlite) === damagedHash, 'the refused repair changed or replaced the database file: data must be kept as it is');
+    check(!matchesManifest(victimFile, victim), 'the refused repair already replaced the release file');
 
-    const done = await restore(cell, step, archive);
+    const done = await restore(cell, step, archive, { launch: fromPayload });
+    const repaired = await fromPayload(cell, step, ['repair', '--answers', answers, '--yes', '--json']);
+    check(repaired.code === 0, `repair after the restore exited ${repaired.code}: ${cell.why(repaired)}`);
+    check(matchesManifest(victimFile, victim), 'repair left the damaged release file as it was');
     const conversations = await comeBack(cell, before);
-    return { result: `release file damaged and database header overwritten: repair put the file back and left the damaged database byte-for-byte (data retained); restore from the pre-damage backup (${done.json && done.json.result && done.json.result.rowCounts && done.json.result.rowCounts.matchesArchive ? 'row counts match the archive' : 'verified'}) brought back ${conversations.length} conversation(s)` };
+    const counts = done.json && done.json.result && done.json.result.rowCounts && done.json.result.rowCounts.matchesArchive ? 'row counts match the archive' : 'verified';
+    return { result: `release file damaged and database header overwritten: repair refused (DB_INIT_FAILED, exit 4) and left both as they were; restore of the earlier backup (${counts}), then repair put the release file back; ${conversations.length} conversation(s) back` };
 }
 
 async function stepBackupRestore(cell, step) {
@@ -187,7 +196,7 @@ async function stepUninstallKeep(cell, step) {
     check(fs.statSync(cell.sqliteFile()).size === sizeBefore, 'the kept database changed size');
     const status = await fromPayload(cell, step, ['status', '--json']);
     const state = status.json && status.json.status ? status.json.status : {};
-    check(state.state === 'recovery' && /TOMBSTON/.test(String(state.reason)), `after the uninstall the manager says ${state.state} (${state.reason}), not a tombstoned recovery`);
+    check(state.state === 'recovery' && state.tombstone === true, `after the uninstall the manager says ${state.state} (tombstone ${state.tombstone}), not a tombstoned recovery`);
     const answers = cell.answersFile('reinstall', cell.installAnswers());
     const again = await fromPayload(cell, step, ['install', '--answers', answers, '--yes', '--json']);
     check(again.code === 0, `reinstall over the kept data exited ${again.code}: ${cell.why(again)}`);
