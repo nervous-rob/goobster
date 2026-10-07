@@ -15,7 +15,7 @@ module.exports = {
             files: [
                 'packages/core/services/{projectService,projectAssetService,projectMissionService,projectTriggerService}.js',
                 'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService}.js',
-                'packages/core/utils/projectSetupContract.js',
+                'packages/core/utils/{projectSetupContract,outputContract}.js',
                 'packages/core/web/routes/projects.js',
                 'apps/web/src/rooms/projects/**',
                 'apps/web/src/rooms/observatory/**'

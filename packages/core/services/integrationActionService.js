@@ -1,4 +1,5 @@
-const { discord } = require('../utils/optionalModule');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 const db = require('../db');
 const integrationAudit = require('./integrationAudit');
 const approvalExecutor = require('../utils/approvalExecutor');
@@ -20,6 +21,13 @@ const SAFE_RETRY_CODES = new Set([
     'FORBIDDEN',
     'RATE_LIMITED'
 ]);
+
+/** A pre-submission refusal: the feature's module is not in this payload. */
+function notInstalled(what) {
+    const error = new Error(`${what} is not installed on this server.`);
+    error.code = 'PRE_SUBMISSION';
+    return error;
+}
 
 function isSafeToRetry(error) {
     return Boolean(error && (error.safeToRetry === true || SAFE_RETRY_CODES.has(error.code)));
@@ -214,9 +222,10 @@ class IntegrationActionService {
     }
 
     async _executeAgentLaunch(pending, interaction) {
-        const cursorAgentService = require('./cursorAgentService');
-        const repoWatchService = require('./repoWatchService');
+        const cursorAgentService = requireOptional('./cursorAgentService', { feature: 'cursor' });
+        const repoWatchService = requireOptional('./repoWatchService', { feature: 'github' });
         const { repo, prompt, branch = null } = pending.payload;
+        if (!cursorAgentService || !repoWatchService) throw notInstalled('Cursor agents');
 
         if (!await repoWatchService.isRepoAllowed(pending.guildId, repo)) {
             const err = new Error(`${repo} is no longer allowlisted in this server.`);
@@ -265,7 +274,8 @@ class IntegrationActionService {
     }
 
     async _executeIssueCreate(pending, interaction) {
-        const githubService = require('./githubService');
+        const githubService = requireOptional('./githubService', { feature: 'github' });
+        if (!githubService) throw notInstalled('GitHub support');
         const { repo, title, body = '' } = pending.payload;
 
         const issue = await githubService.createIssue(repo, { title, body });

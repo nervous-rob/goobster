@@ -1,4 +1,5 @@
-const { discord } = require('../utils/optionalModule');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 const db = require('../db');
 
 // Event keys guilds can subscribe to, and the GitHub webhook events they map to.
@@ -121,7 +122,7 @@ class RepoWatchService {
      */
     async _handleAgentLabel({ client, repo, payload, logger = console }) {
         const integrationsConfig = require('../config/integrationsConfig');
-        const cursorAgentService = require('./cursorAgentService');
+        const cursorAgentService = requireOptional('./cursorAgentService', { feature: 'cursor' });
         const integrationActionService = require('./integrationActionService');
         const integrationAudit = require('./integrationAudit');
         const db = require('../db');
@@ -130,7 +131,7 @@ class RepoWatchService {
         const labelName = payload.label?.name;
         if (!issue || labelName !== integrationsConfig.github.agentLabel) return 0;
         if (issue.state !== 'open') return 0;
-        if (!cursorAgentService.isConfigured()) {
+        if (!cursorAgentService?.isConfigured()) {
             logger.warn?.(`Issue #${issue.number} labeled ${labelName} but the Cursor integration is not configured.`);
             return 0;
         }

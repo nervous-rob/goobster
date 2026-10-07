@@ -14,6 +14,7 @@
 const mcpConfig = require('../config/mcpConfig');
 const { callTool, clip, includeOperatorDocs } = require('./tools');
 const { surfaceActive, GateError } = require('../features/gate');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const DOC_PREFIX = 'goobster://docs/';
 const BRIEF_PREFIX = 'goobster://briefs/';
@@ -83,7 +84,9 @@ async function docEntries(userId) {
 }
 
 async function briefEntries(userId) {
-    const rows = await require('../services/expeditionBriefService').listForUser({ userId, limit: 50 });
+    const briefs = requireOptional('../services/expeditionBriefService', { feature: 'expeditions' });
+    if (!briefs) return [];
+    const rows = await briefs.listForUser({ userId, limit: 50 });
     return rows.map(row => ({
         uri: `${BRIEF_PREFIX}${row.id}`,
         name: `brief-${row.id}`,
