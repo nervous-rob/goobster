@@ -1,0 +1,5 @@
+{
+    "version": 1,
+    "note": "The Ed25519 public keys a release verifier trusts (documentation/release.md). `active` keys may sign new releases, `retired` keys still verify the releases they signed, `revoked` keys verify nothing. There is no production key yet: this list ships with no active key, so every stable build is blocked (RELEASE_BLOCKED_UNSIGNED) until the owner generates a key, stores the private half as the GOOBSTER_RELEASE_SIGNING_KEY_PEM secret of the `release` environment and adds the public half here. Only public keys belong in this file.",
+    "keys": []
+}

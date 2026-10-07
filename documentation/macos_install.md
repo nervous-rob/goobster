@@ -39,7 +39,7 @@ installer's welcome page says so, and the build report
 installs only into a machine you trust. A build is a release build only when
 `payload-manifest.sig` verifies against the public key the builder was given
 (`--public-key`), and production signing keys are not part of this repository
-(#341).
+([release.md](release.md), #341).
 
 The package itself is **not signed with a Developer ID and not notarized**, and
 the binaries inside the payload are not code-signed. Gatekeeper therefore
@@ -469,8 +469,9 @@ The Distribution file requires macOS 13, names the one architecture
 ## Signing and notarization
 
 Not done. The wiring exists and is **off by default**; it is installer plan
-item P5.1 (#341) and needs a Developer ID Installer identity, which this
-repository does not hold:
+item P5.1 ([release.md](release.md), #341). `.github/workflows/release.yml` runs these
+two steps when the owner supplies a Developer ID Installer certificate and the notary
+API key as secrets; this repository holds neither:
 
 - `--product-sign <identity>` runs `productsign --sign <identity>` on the
   package.

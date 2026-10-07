@@ -222,7 +222,8 @@ preflight finding `ROOT_OUTSIDE_ALLOWED_BASES`. Read-only routes feed the
 screens: `GET /install/suggest` (suggested roots, bases, detected layout,
 release sources, ports), `GET /install/source?dir=` (the features, sizes
 and system prerequisites a release directory carries, from its manifest
-only), `GET /install/record` (the sanitised record) and
+only), `GET /install/record` (the sanitised record; its `release` also carries `signed`,
+`keyId` and `channel` from the installed payload, see [release.md](release.md)) and
 `GET /install/first-run` (the checklist). Three small kinds finish a setup:
 `owner.create` (the first operator account, with no Discord; the password
 travels only in private input), `lifecycle.start` (start supervising the
@@ -389,7 +390,7 @@ accepted on the command line. The audit action is `manager.data.reset`.
   package installation on every platform (system dependencies are reported,
   never installed).
 - Network download and archive sources: only a local payload directory.
-  Production signing keys: #341.
+  Production signing keys and the release pipeline: [release.md](release.md) (#341).
 - Lifecycle workers for a payload `current/app` layout (the lifecycle layer
   assumes `<root>/apps/...`).
 - The browser wizard exists (`documentation/setup_wizard.md`, #330); what it

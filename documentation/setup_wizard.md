@@ -282,7 +282,7 @@ manager operation.
 - **A backup scheduler.** Backups are taken on demand from the Backup
   journey or `goobster-manager backup`.
 - Moving the program or data folder, network download and archive
-  sources, and production signing keys (#341).
+  sources, and production signing keys ([release.md](release.md), #341).
 - The wizard reads provider and identity settings the way each service does
   today; a payload layout in which the application reads its settings from a
   different folder than the manager is a packaging decision for #331 onward.

@@ -9,8 +9,9 @@
  *                                       release sources found, and the fixed roots of this manager
  *   GET /install/source?dir=  readAuth  the features, sizes and system prerequisites a release source
  *                                       directory carries (its manifest only; nothing is hashed or staged)
- *   GET /install/record      readAuth  the sanitised installation record: layout, roots, release,
- *                                       features, database engine, services; no label, secret or listing
+ *   GET /install/record      readAuth  the sanitised installation record: layout, roots, release (with
+ *                                       `signed`, `keyId` and `channel` read from the installed payload's
+ *                                       manifest), features, database engine, services; no label, secret or listing
  *   GET /install/first-run   readAuth  the first-run checklist: workers, portal health, database,
  *                                       features file, configuration, owner account - pass or fail
  *                                       with a recovery hint for each
@@ -186,7 +187,7 @@ function createInstallMount() {
                     revision: doc.revision,
                     layout: doc.layout || null,
                     roots: doc.roots || null,
-                    release: doc.release || null,
+                    release: doc.release ? { ...doc.release, ...release.installedTrust(doc.roots && doc.roots.code, fs) } : null,
                     database: doc.database || null,
                     updater: doc.updater || null,
                     services: doc.owned ? doc.owned.services : [],

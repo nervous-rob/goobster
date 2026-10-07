@@ -35,7 +35,7 @@ build report (`bootstrap-report-<target>.json`) records `"signed": false`. A
 `-dev` build installs only into a machine you trust. A build is a release build
 only when `payload-manifest.sig` verifies against the public key the builder
 was given (`--public-key`), and production signing keys are not part of this
-repository (#341).
+repository ([release.md](release.md), #341).
 
 ## Supported platforms
 
