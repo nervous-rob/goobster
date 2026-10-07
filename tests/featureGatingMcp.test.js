@@ -121,10 +121,17 @@ async function seedBrief(userId) {
     );
 }
 
+// Follows nextCursor: the documentation corpus alone can fill a page (mcpConfig.resourcePageSize).
 async function allResources(token) {
-    const reply = await rpc(token, 'resources/list');
-    expect(reply.status).toBe(200);
-    return reply.json.result.resources;
+    const resources = [];
+    let cursor;
+    do {
+        const reply = await rpc(token, 'resources/list', cursor ? { cursor } : {});
+        expect(reply.status).toBe(200);
+        resources.push(...reply.json.result.resources);
+        cursor = reply.json.result.nextCursor;
+    } while (cursor);
+    return resources;
 }
 
 beforeAll((done) => {
