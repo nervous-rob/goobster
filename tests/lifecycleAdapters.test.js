@@ -268,6 +268,16 @@ describe('the worker side', () => {
         ]);
         expect(interrupted.sort()).toEqual(['broken', 'slow']);
     });
+
+    test('the bot drains every interaction listener (commands and buttons) inside the integrationAction bound', () => {
+        const source = fs.readFileSync(path.join(REPO, 'apps', 'bot', 'index.js'), 'utf8');
+        const listeners = source.match(/client\.on\((?:Events\.InteractionCreate|event\.name)[^\n]*/g) || [];
+        const interaction = listeners.filter(line => line.includes('InteractionCreate') || line.includes('trackInteraction'));
+        expect(interaction).toHaveLength(2);
+        for (const line of interaction) expect(line).toContain('trackInteraction(');
+        expect(source).toMatch(/name: 'integrationAction',\s*drain: \(\) => Promise\.allSettled\(\[\.\.\.interactionsInFlight\]\)/);
+        expect(source).toContain("lifecycle.contractBoundMs('integrationAction', boundMs)");
+    });
 });
 
 describe('the restarting notice (the Phase 1 refusal path)', () => {

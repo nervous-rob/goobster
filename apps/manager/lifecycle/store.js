@@ -8,7 +8,8 @@
  *                changeKind, actor, via, announcedAt, deadline,
  *                graceSeconds, phase: 'countdown'|'committing', onExpired,
  *                committedAt?, restartOperationId? } or null
- *   lastOutcome  { revision, outcome: 'applied'|'failed', code, at, restartOperationId }
+ *   lastOutcome  { revision, outcome: 'applied'|'failed'|'rolled_back'|'cancelled', code, at,
+ *                restartOperationId?, worker?, configRecovery?, previousRevisionReady? }
  *   workers      per worker: { lastExit, crashes: [iso], crashLoop, backoffMs, ackedRevision, restarts }
  *   events       the last EVENT_LIMIT `{ at, type, revision?, worker?, code? }`
  *

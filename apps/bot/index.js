@@ -150,6 +150,16 @@ const { refuseUnavailableCommand } = require('./events/interactionCreate');
 
 logger.info('Loading event handlers...');
 
+// Interaction handlers still running (commands, and buttons such as a
+// confirmed integration action): a shutdown drains them inside the
+// integrationAction bound before the process exits.
+const interactionsInFlight = new Set();
+function trackInteraction(work) {
+	const entry = Promise.resolve(work).finally(() => interactionsInFlight.delete(entry));
+	interactionsInFlight.add(entry);
+	return entry;
+}
+
 // Load event handlers
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
@@ -161,6 +171,8 @@ for (const file of eventFiles) {
 		const event = require(filePath);
 		if (event.once) {
 			client.once(event.name, (...args) => event.execute(...args));
+		} else if (event.name === Events.InteractionCreate) {
+			client.on(event.name, (...args) => trackInteraction(event.execute(...args)));
 		} else {
 			client.on(event.name, (...args) => event.execute(...args));
 		}
@@ -438,7 +450,9 @@ async function rejectGuildOnlyCommandInDm(interaction, command) {
 	return true;
 }
 
-client.on(Events.InteractionCreate, async interaction => {
+client.on(Events.InteractionCreate, interaction => trackInteraction(handleCommandInteraction(interaction)));
+
+async function handleCommandInteraction(interaction) {
     // A command whose file was not loaded because its feature is off: answer
     // (ephemeral) before anything else, never run it.
     if ((interaction.isAutocomplete() || interaction.isContextMenuCommand() || interaction.isChatInputCommand())
@@ -522,7 +536,7 @@ client.on(Events.InteractionCreate, async interaction => {
 	}
 	// Note: button interactions (e.g. search approval) are handled by
 	// events/interactionCreate.js, which is loaded by the events loader above.
-});
+}
 
 // Add reaction handlers
 client.on('messageReactionAdd', async (reaction, user) => {
@@ -609,8 +623,8 @@ client.ws.on('close', (event) => {
 
 /**
  * Stop new work, then give in-flight work its restart contract inside the
- * drain bound (documentation/manager_lifecycle.md): scheduled passes drain,
- * expeditions checkpoint, sandbox runs keep their own timeout and are noted
+ * drain bound (documentation/manager_lifecycle.md): scheduled passes and
+ * interaction handlers drain, expeditions checkpoint, sandbox runs keep their own timeout and are noted
  * INTERRUPTED past the bound, voice sessions end with a notice.
  */
 async function drainWork() {
@@ -624,6 +638,10 @@ async function drainWork() {
                         interrupt: () => sandboxService.interruptRunning()
                 }], lifecycle.contractBoundMs('sandboxRun', boundMs))
         ];
+        pending.push(lifecycle.settle([{
+                name: 'integrationAction',
+                drain: () => Promise.allSettled([...interactionsInFlight])
+        }], lifecycle.contractBoundMs('integrationAction', boundMs)));
         if (client.coreRuntime?.settleInFlight) pending.push(client.coreRuntime.settleInFlight(boundMs));
         if (VOICE_ACTIVE) {
                 const voiceSessionService = require('@goobster/core/services/voice/voiceSessionService');
