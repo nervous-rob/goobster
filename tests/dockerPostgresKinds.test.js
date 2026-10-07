@@ -413,17 +413,22 @@ describe('database.docker.provision: what blocks it before anything is created',
         const codes = async (dir) => (await provision(env, { storage: { kind: 'path', path: dir } }, { apply: false })).planned.plan.findings.map(item => item.code);
         expect(await codes(file)).toContain('STORAGE_NOT_DIRECTORY');
         expect(await codes(holding)).toContain('STORAGE_HAS_DATA');
+        const closed = path.join(base, 'closed');
+        fs.mkdirSync(closed, { mode: 0o700 });
+        expect(await codes(closed)).toContain('STORAGE_NOT_ENTERABLE');
+        fs.chmodSync(closed, 0o711);
+        expect(await codes(closed)).not.toContain('STORAGE_NOT_ENTERABLE');
         const plan = (await provision(env, { storage: { kind: 'path', path: empty } }, { apply: false })).planned.plan;
         expect(plan.ok).toBe(true);
         expect(plan.storage).toMatchObject({ kind: 'path' });
         expect(env.fake.mutations()).toEqual([]);
     }, 60000);
 
-    test('a host directory is created owner-only, mounted into the container, and survives an uninstall that removes the Docker data', async () => {
+    test('a host directory is created enterable by the container account, mounted into the container, and survives an uninstall that removes the Docker data', async () => {
         const env = await setup({ workers: false });
         const dir = path.join(scratch('storage-path'), 'pgdata-root');
         await provision(env, { storage: { kind: 'path', path: dir } });
-        expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+        expect(fs.statSync(dir).mode & 0o777).toBe(0o755);
         const [run] = runCalls(env.fake);
         expect(run.args.join(' ')).toContain(`${dir}:`);
         expect(env.fake.state().volumes).toEqual({});

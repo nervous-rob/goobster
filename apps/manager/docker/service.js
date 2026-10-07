@@ -181,6 +181,11 @@ function createDockerService({ settings, fs = nodeFs, now = () => new Date(), lo
             if (entries.includes('pgdata')) {
                 out.push(finding('STORAGE_HAS_DATA', 'block', 'The chosen directory already holds a "pgdata" database directory.', 'Provisioning creates a new database and never adopts one, because its superuser password is unknown to this installer. Choose an empty directory, or move that one away yourself.'));
             }
+            // The image's postgres account (not the manager's) works inside the mount: it has to be
+            // able to enter the directory, or initdb fails and the container never becomes healthy.
+            if (process.platform !== 'win32' && (stat.mode & 0o011) === 0) {
+                out.push(finding('STORAGE_NOT_ENTERABLE', 'block', 'Only its owner may enter the chosen directory; the database account inside the container cannot.', `Allow search access (chmod o+x '${target}'), or choose another directory. The database directory the container creates inside it stays private to that account.`));
+            }
         } else {
             const parent = lib.nearestExisting(fs, target);
             let writable = false;
@@ -405,7 +410,8 @@ function createDockerService({ settings, fs = nodeFs, now = () => new Date(), lo
         if (request.storage.kind === 'volume') {
             done.volume = (await mapped(() => containers.ensureVolume())).created;
         } else {
-            fs.mkdirSync(request.storage.path, { recursive: true, mode: 0o700 });
+            // Enterable by the container's postgres account; the pgdata directory it creates inside is 0700 and its own.
+            fs.mkdirSync(request.storage.path, { recursive: true, mode: 0o755 });
             done.volume = true;
         }
         advance('volume', { created: { volume: doc.created.volume || done.volume } });
