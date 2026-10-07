@@ -345,6 +345,10 @@ Work:
    `manager.db.migrate` and `manager.db.migrate.rollback`. Portal pages are
    not built here. `scripts/migrate-to-postgres.js` stays as a developer
    path with reduced guarantees. See [db_migration.md](db_migration.md).
+   PR [#362](https://github.com/nervous-rob/goobster/pull/362) (stacked on
+   #361): SQLite full suite 269 suites / 5353 passed; Postgres `core`
+   2018 passed and `privacy` 325 passed in isolated schemas; lint, smoke,
+   docs and group inventory green.
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container
