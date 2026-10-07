@@ -337,8 +337,10 @@ function inspectBackup(dir) {
  * to: the manifest is valid, the database snapshot exists and is not empty,
  * every file set the manifest lists is present with the recorded file
  * count, the schema fingerprint is this code's, and (when `expectCounts`
- * is given) every table count equals the live count. Reads the archive
- * only; never writes. A backup that fails this is not a safety net.
+ * is given) every table count equals the live count - both the count the
+ * manifest recorded and, when the archive holds a SQLite snapshot, the count
+ * inside the snapshot itself. Reads the archive only; never writes. A
+ * backup that fails this is not a safety net.
  * @param {string} dir
  * @param {Object} [options]
  * @param {Object<string, number>} [options.expectCounts] live table counts to compare with
@@ -349,8 +351,8 @@ function inspectBackup(dir) {
 function verifyBackup(dir, { expectCounts = null, expectFingerprint = schemaFingerprint() } = {}) {
     const manifest = inspectBackup(dir);
     const problems = [];
-    const snapshot = path.join(dir, manifest.database.file);
-    if (countFiles(snapshot).bytes === 0) problems.push('SNAPSHOT_EMPTY');
+    const snapshotPath = path.join(dir, manifest.database.file);
+    if (countFiles(snapshotPath).bytes === 0) problems.push('SNAPSHOT_EMPTY');
     if (manifest.schemaFingerprint !== expectFingerprint) problems.push('FINGERPRINT_MISMATCH');
     for (const entry of manifest.files || []) {
         const target = path.join(dir, entry.archivePath);
@@ -358,9 +360,32 @@ function verifyBackup(dir, { expectCounts = null, expectFingerprint = schemaFing
         else if (countFiles(target).files !== entry.files) problems.push(`FILES_COUNT:${entry.id}`);
     }
     if (expectCounts) {
-        for (const [table, actual] of Object.entries(expectCounts)) {
-            if (COUNT_EXEMPT.has(table)) continue;
-            if (manifest.tables?.[table] !== actual) problems.push(`COUNT_MISMATCH:${table}`);
+        const recorded = manifest.tables || {};
+        let inSnapshot = null;
+        let snapshot = null;
+        if (manifest.database.kind === 'sqlite-file' && !problems.includes('SNAPSHOT_EMPTY')) {
+            const Database = require('better-sqlite3');
+            try {
+                snapshot = new Database(snapshotPath, { readonly: true, fileMustExist: true });
+                inSnapshot = (table) => {
+                    try {
+                        return snapshot.prepare(`SELECT COUNT(*) AS c FROM ${/^[a-z_][a-z0-9_]*$/i.test(table) ? table : `"${table.replace(/"/g, '""')}"`}`).get().c;
+                    } catch {
+                        return undefined;
+                    }
+                };
+            } catch {
+                problems.push('SNAPSHOT_UNREADABLE');
+            }
+        }
+        try {
+            for (const [table, expected] of Object.entries(expectCounts)) {
+                if (COUNT_EXEMPT.has(table)) continue;
+                const matches = recorded[table] === expected && (!inSnapshot || inSnapshot(table) === expected);
+                if (!matches) problems.push(`COUNT_MISMATCH:${table}`);
+            }
+        } finally {
+            if (snapshot) snapshot.close();
         }
     }
     if (problems.length > 0) {

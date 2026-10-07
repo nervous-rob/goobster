@@ -20,6 +20,7 @@ const nodeFs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const { workspaceRoot } = require('@goobster/core/runtimePaths');
+const environment = require('./environment');
 
 const DEFAULT_PORT = 3400;
 const ON_WORDS = new Set(['1', 'true', 'yes', 'on']);
@@ -48,17 +49,29 @@ function flag(raw, fallback = false) {
 }
 
 /**
+ * The manager's environment overlay (`<store>/environment.json`,
+ * ./environment.js) is merged beneath `env`: `settings.env` - which the
+ * workers inherit - carries the overlay's values only where the process
+ * environment has none. `settings.processEnv` is the environment as given.
+ *
  * @param {Object} [env]
+ * @param {{ fs?: Object }} [options]
  * @returns {Object} settings
  */
-function resolveSettings(env = process.env) {
+function resolveSettings(env = process.env, { fs = nodeFs } = {}) {
+    const processEnv = env;
     const root = env.GOOBSTER_WORKSPACE_ROOT || workspaceRoot;
     const dataDir = env.GOOBSTER_DATA_DIR || path.join(root, 'data');
+    const storeDir = env.GOOBSTER_MANAGER_STATE_DIR || path.join(dataDir, 'manager');
+    const overlay = environment.read(storeDir, fs);
+    env = environment.merge(processEnv, overlay.values);
     const lan = flag(env.GOOBSTER_MANAGER_LAN);
     const rawPort = env.GOOBSTER_MANAGER_PORT;
     const port = rawPort === undefined || rawPort === '' ? DEFAULT_PORT : Number(rawPort);
     return {
         env,
+        processEnv,
+        environment: { overlayKeys: Object.keys(overlay.values), overridden: environment.overridden(processEnv, overlay.values), problem: overlay.problem },
         root,
         supervise: flag(env.GOOBSTER_MANAGER_SUPERVISE),
         workersMode: String(env.GOOBSTER_MANAGER_WORKERS || '').trim().toLowerCase() === 'external' ? 'external' : 'child',
@@ -70,7 +83,7 @@ function resolveSettings(env = process.env) {
         tlsKeyFile: env.GOOBSTER_MANAGER_TLS_KEY || null,
         reconcile: flag(env.GOOBSTER_MANAGER_RECONCILE, true),
         dataDir,
-        storeDir: env.GOOBSTER_MANAGER_STATE_DIR || path.join(dataDir, 'manager'),
+        storeDir,
         sqlitePath: env.GOOBSTER_DB_PATH || path.join(dataDir, 'goobster.sqlite'),
         dbUrl: env.GOOBSTER_DB_URL || null,
         configPath: env.GOOBSTER_CONFIG_PATH || path.join(root, 'config.json'),

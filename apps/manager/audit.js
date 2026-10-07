@@ -24,6 +24,7 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
     'manager.maintenance.enter', 'manager.maintenance.release',
+    'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
     'manager.data.reset'
 ]);
 

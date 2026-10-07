@@ -16,7 +16,8 @@ const routes = [
     require('./routes/lifecycle').mountLifecycleRoutes,
     require('./routes/maintenance').mountMaintenanceRoutes,
     require('./routes/reset').mountResetRoutes,
-    require('./routes/config').createConfigMount()
+    require('./routes/config').createConfigMount(),
+    require('./routes/migrate').mountMigrateRoutes
 ];
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
@@ -26,7 +27,8 @@ const kinds = [
     require('./engine/kinds/lifecycle').createLifecycleKinds,
     require('./engine/kinds/install').createKinds,
     require('./engine/kinds/maintenance').createMaintenanceKinds,
-    require('./engine/kinds/reset').createKinds
+    require('./engine/kinds/reset').createKinds,
+    require('./engine/kinds/migrate').createKinds
 ];
 
 module.exports = { routes, kinds };

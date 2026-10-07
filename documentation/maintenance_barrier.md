@@ -114,7 +114,7 @@ plan -> preflight -> backup -> quiesce -> mutate -> verify -> cutover -> release
 | `preflight` | Refuse early: a restart is pending (`RESTART_PENDING`), maintenance is already active (`MAINTENANCE_ACTIVE` or `STALE_MAINTENANCE`), the layout cannot be resolved (`LAYOUT_UNRESOLVED`), a writer cannot be fenced (`WRITER_UNFENCEABLE`). Still nothing persisted | yes |
 | `backup` | A hook: a later kind (restore, reset) takes its backup here, with every writer already quiesced when it is reached through `quiesced` | hook only (`barrier.advance`) |
 | `quiesce` | The fence is incremented and persisted with `active: true` **before** any writer is asked to stop; each writer is sent stop-new-work with the fence, and the entry waits for each writer's acknowledgement of that fence | yes |
-| `mutate` | The change itself (restore, reset, migration) | hook only |
+| `mutate` | The change itself (restore, reset, migration). For the SQLite to Postgres migration ([db_migration.md](db_migration.md)) `backup` is the verified archive, `mutate` begins at the first write to the target (schema apply, then the copy), `verify` is the verification and the validation start, and `cutover` is the connection switch | hook only for restore and reset; used by `db.migrate` |
 | `verify` | In 4.1: verify of quiescence (every acknowledged writer is still the one that acknowledged; no unknown process answers a worker's health URL). A later kind adds verification of the mutation | quiescence only |
 | `cutover` | A hook for switching to the changed state | hook only |
 | `release` | `maintenance.release` with the matching fence | yes |
