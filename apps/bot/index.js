@@ -631,21 +631,24 @@ client.ws.on('close', (event) => {
 async function drainWork() {
         lifecycle.pauseNewWork({ reason: 'shutdown' });
         const boundMs = lifecycle.drainBoundMs();
-        const sandboxService = require('@goobster/core/services/sandboxService');
-        const pending = [
-                lifecycle.settle([{
+        const sandboxService = requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' });
+        const pending = [];
+        if (sandboxService) {
+                pending.push(lifecycle.settle([{
                         name: 'sandboxRun',
                         drain: () => sandboxService.drainRuns(),
                         interrupt: () => sandboxService.interruptRunning()
-                }], lifecycle.contractBoundMs('sandboxRun', boundMs))
-        ];
+                }], lifecycle.contractBoundMs('sandboxRun', boundMs)));
+        }
         pending.push(lifecycle.settle([{
                 name: 'integrationAction',
                 drain: () => Promise.allSettled([...interactionsInFlight])
         }], lifecycle.contractBoundMs('integrationAction', boundMs)));
         if (client.coreRuntime?.settleInFlight) pending.push(client.coreRuntime.settleInFlight(boundMs));
-        if (VOICE_ACTIVE) {
-                const voiceSessionService = require('@goobster/core/services/voice/voiceSessionService');
+        const voiceSessionService = VOICE_ACTIVE
+                ? requireOptional('@goobster/core/services/voice/voiceSessionService', { feature: 'voice' })
+                : null;
+        if (voiceSessionService) {
                 const gateway = client.coreRuntime?.gateway || require('@goobster/core/gateway').toGateway(client);
                 pending.push(lifecycle.settle([{
                         name: 'voiceSession',
@@ -658,7 +661,7 @@ async function drainWork() {
 
 lifecycle.onPauseNewWork(() => {
         client.coreRuntime?.pauseNewWork?.();
-        require('@goobster/core/services/sandboxService').pauseNewWork();
+        requireOptional('@goobster/core/services/sandboxService', { feature: 'sandbox' })?.pauseNewWork();
 });
 
 // Graceful shutdown handling; one run whatever asks (signal, restart request, orphan watch)
