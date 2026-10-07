@@ -20,7 +20,8 @@ const routes = [
 const kinds = [
     require('./engine/kinds/config').createKinds,
     require('./engine/kinds/defaults').createKinds,
-    require('./engine/kinds/lifecycle').createLifecycleKinds
+    require('./engine/kinds/lifecycle').createLifecycleKinds,
+    require('./engine/kinds/install').createKinds
 ];
 
 module.exports = { routes, kinds };
