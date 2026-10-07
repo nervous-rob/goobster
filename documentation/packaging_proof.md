@@ -486,9 +486,11 @@ Findings, not legal advice:
   deletes them from every payload before hashing, so they are in neither
   the catalogue nor the licence list, and the smoke check's
   `payload.exclusive-absence` fails if either directory is present. They are
-  still declared in `packages/core/package.json` and the lockfile; removing
-  them there (`npm uninstall -w @goobster/core play-dl play-audio`) is left
-  to the maintainers of the manifests.
+  still installed in development checkouts: `play-dl` is declared in the
+  root `package.json` and in `packages/core/package.json`, and `play-audio`
+  arrives only through it. Removing the `play-dl` line from both and
+  refreshing `package-lock.json` drops both packages; that change is left to
+  the maintainers of the manifests.
 - libvips and the libraries sharp bundles with it are LGPL-3.0 and similar.
   They are shipped as separate shared libraries in `sharp/vendor`, which
   keeps them replaceable; sharp's own `THIRD-PARTY-NOTICES.md` is shipped in
