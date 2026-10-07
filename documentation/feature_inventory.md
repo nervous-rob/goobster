@@ -362,6 +362,16 @@ the command set change on restart, interactions are refused live.
   the `voiceStateUpdate` listener, the `musicTrackStarted`/`musicTrackEnded`
   presence listeners, the 📋 issue-capture reaction and the
   `playTrack`/`nickname`/`speak` tool adapters follow the same snapshot.
+- The `discord` adapter (Phase 1 behaviour): `apps/bot` is the Discord
+  client, so with `discord` off in `features.json` it still logs in and
+  builds `LocalGateway`; only the internal gateway API (`/internal/gateway/*`,
+  not mounted) and the surfaces that list `discord` as an owner or
+  `alsoRequires` honour it. What stops Discord outright is the adapter
+  switch (`discord.enabled` / `GOOBSTER_DISCORD_ENABLED`, read by
+  `config/discordConfig.js`), which selects the standalone `apps/api`
+  runtime with `DisabledGateway` instead of the bot. Making the bot
+  process refuse to log in is not a one-line change that keeps legacy
+  parity, so it is not done in Phase 1.
 - `messageCreate`: gates `#06` (cursor) and `#10` (gba) are skipped when
   their owner is off; the other ten and their order are untouched
   (`// messageCreate#NN` markers, asserted by the spec).
