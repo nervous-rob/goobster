@@ -1,6 +1,7 @@
 import { ApiError } from '../lib/api';
 import type {
-    HostApplied, HostConfigReport, HostLifecycle, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest
+    BackupInspection, BackupStatus, HostApplied, HostConfigReport, HostLifecycle, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest,
+    MaintenanceView, MigrationPreflight, MigrationStatus, ResetPreview
 } from '../lib/types';
 import type { FirstRun, ManagerStatus, WizardTransport } from './transport';
 
@@ -109,5 +110,11 @@ export const managerTransport: WizardTransport = {
     lifecycle: () => managerRequest<HostLifecycle>('/lifecycle'),
     lifecycleAction: async (action) => { await managerRequest(`/lifecycle/${action}`, { method: 'POST', body: {} }); },
     firstRun: () => managerRequest<FirstRun>('/install/first-run'),
-    docHref: () => null
+    docHref: () => null,
+    backupStatus: () => managerRequest<BackupStatus>('/backup/status'),
+    backupInspect: (dir) => managerRequest<BackupInspection>(`/backup/inspect?dir=${encodeURIComponent(dir)}`),
+    maintenance: () => managerRequest<MaintenanceView>('/maintenance'),
+    resetPlan: (scope, feature) => managerRequest<ResetPreview>(`/reset/plan?scope=${encodeURIComponent(scope)}${feature ? `&feature=${encodeURIComponent(feature)}` : ''}`),
+    migrateStatus: () => managerRequest<MigrationStatus>('/migrate/status'),
+    migratePreflight: (url) => managerRequest<MigrationPreflight>('/migrate/preflight', { method: 'POST', body: { target: { url } } })
 };

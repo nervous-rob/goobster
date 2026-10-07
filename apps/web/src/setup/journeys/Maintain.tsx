@@ -4,8 +4,9 @@ import { LAYOUT_TEXT, summarizeRoots } from '../model';
 import { describeError, StepFrame } from '../ui';
 import { useState } from 'react';
 import { useTransport, type FirstRun } from '../transport';
+import { BarrierPanel } from './barrier';
 
-/** An installation that exists: what it is, whether it works, and the three things you can do to it. */
+/** An installation that exists: what it is, whether it works, and the things you can do to it. */
 export function Maintain({ go, recovery }: { go: (journey: string, step?: string) => void; recovery?: boolean }) {
     const transport = useTransport();
     const record = useRecord();
@@ -34,9 +35,14 @@ export function Maintain({ go, recovery }: { go: (journey: string, step?: string
                     The database could not be opened. <strong>Repair</strong> opens it again and applies the schema without touching your data.
                 </p>
             )}
+            {data && <BarrierPanel canRelease={transport.mode === 'manager'} />}
             <div className="wizard-actions" data-testid="maintain-actions">
                 <button type="button" className="btn" onClick={() => go('reconfigure', 'edit')} disabled={!record.data?.installed} data-testid="action-reconfigure">Reconfigure…</button>
                 <button type="button" className={`btn${databaseBroken || recovery ? ' primary' : ''}`} onClick={() => go('repair', 'scope')} disabled={!record.data?.installed} data-testid="action-repair">Repair…</button>
+                <button type="button" className="btn" onClick={() => go('backup', 'form')} disabled={!record.data?.installed} data-testid="action-backup">Backup…</button>
+                <button type="button" className="btn" onClick={() => go('restore', 'source')} disabled={!record.data?.installed} data-testid="action-restore">Restore…</button>
+                <button type="button" className="btn" onClick={() => go('reset', 'scope')} disabled={!record.data?.installed} data-testid="action-reset">Reset…</button>
+                <button type="button" className="btn" onClick={() => go('migration', 'status')} disabled={!record.data?.installed} data-testid="action-migration">Migration…</button>
                 <button type="button" className="btn danger" onClick={() => go('uninstall', 'choose')} disabled={!record.data?.installed} data-testid="action-uninstall">Uninstall…</button>
             </div>
             {suggest.data && data && <p className="hint">Logs are in <code>{data.roots?.logs}</code>.</p>}

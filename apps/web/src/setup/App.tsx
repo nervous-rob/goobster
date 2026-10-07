@@ -6,9 +6,13 @@ import { AnswersProvider } from './answers';
 import { managerApi, managerTransport } from './api';
 import { UnlockForm } from './Gate';
 import { KEYS } from './data';
+import { Backup } from './journeys/Backup';
 import { Maintain } from './journeys/Maintain';
+import { Migration } from './journeys/Migration';
 import { Reconfigure } from './journeys/Reconfigure';
 import { Repair } from './journeys/Repair';
+import { Reset } from './journeys/Reset';
+import { Restore } from './journeys/Restore';
 import { Uninstall } from './journeys/Uninstall';
 import { useRoute } from './route';
 import { Access } from './steps/Access';
@@ -28,7 +32,8 @@ import { describeError, isSessionProblem, LiveRegion, StepFrame } from './ui';
 
 const MAINTENANCE_ANSWERS = 'goobster-setup-maintenance-answers';
 const AFTER_INSTALL = new Set(['progress', 'first-run', 'done']);
-const JOURNEYS = new Set(['reconfigure', 'repair', 'uninstall']);
+const JOURNEYS = new Set(['reconfigure', 'repair', 'uninstall', 'backup', 'restore', 'reset', 'migration']);
+const FIRST_STEP: Record<string, string> = { reconfigure: 'edit', repair: 'scope', uninstall: 'choose', backup: 'form', restore: 'source', reset: 'scope', migration: 'status' };
 const hostValue = { probe: managerTransport.probe, docHref: managerTransport.docHref };
 
 function createClient(): QueryClient {
@@ -202,8 +207,14 @@ function Shell() {
     let maintenance = true;
 
     if (JOURNEYS.has(journey)) {
-        const props = { step: step || (journey === 'uninstall' ? 'choose' : journey === 'repair' ? 'scope' : 'edit'), id: place.id, go: goJourney(journey) };
-        body = journey === 'reconfigure' ? <Reconfigure {...props} /> : journey === 'repair' ? <Repair {...props} /> : <Uninstall {...props} />;
+        const props = { step: step || FIRST_STEP[journey], id: place.id, go: goJourney(journey) };
+        body = journey === 'reconfigure' ? <Reconfigure {...props} />
+            : journey === 'repair' ? <Repair {...props} />
+            : journey === 'backup' ? <Backup {...props} />
+            : journey === 'restore' ? <Restore {...props} />
+            : journey === 'reset' ? <Reset {...props} />
+            : journey === 'migration' ? <Migration {...props} />
+            : <Uninstall {...props} />;
     } else if (journey === 'maintain' || (installed && !(journey === 'setup' && AFTER_INSTALL.has(step))) || (!installed && journey !== 'setup' && journey !== '')) {
         body = <Maintain go={(next, nextStep) => go({ journey: next, step: nextStep })} recovery={recoveryPage} />;
     } else {
