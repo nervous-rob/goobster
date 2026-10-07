@@ -20,7 +20,7 @@ const { Client } = require('pg');
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-db-migration-'));
 process.env.GOOBSTER_DB_PATH = path.join(ROOT, 'jest-own.sqlite');
 
-const { newHarness, drive, codeOf, tempDir, LOCAL } = require('./helpers/installFixture');
+const { newHarness, drive, codeOf, tempDir } = require('./helpers/installFixture');
 const { createSeededSqlite, USER } = require('./helpers/migrationSeed');
 const { createFakeWorkers, waitFor, FAST_POLICY } = require('./helpers/fakeWorkers');
 const { discover } = require('@goobster/manager/install/discover');
