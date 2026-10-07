@@ -30,7 +30,6 @@ const { createMaintenanceStore } = require('@goobster/manager/maintenance/store'
 const environment = require('@goobster/manager/environment');
 const nativeState = require('@goobster/manager/native/state');
 const { createReadiness } = require('@goobster/manager/native/readiness');
-const { createNativeService } = require('@goobster/manager/native/service');
 const privileged = require('@goobster/manager/privileged');
 const { MANAGER_AUDIT_ACTIONS } = require('@goobster/manager/audit');
 const operatorAudit = require('@goobster/core/services/operatorAuditService');
@@ -657,4 +656,265 @@ describe('database.native.relocate', () => {
         expect(again.applied.operation.status).toBe('applied');
         expect(env.record().cluster.dataDirectory).toBe(target);
     }, 180000);
+});
+
+/* ============================================================ install and uninstall */
+
+describe('install.new with a native database answer', () => {
+    async function fresh({ machine = {}, nativeDeps = {}, elevation = null } = {}) {
+        const fake = fakeNative.create({ distro: 'debian', ...machine });
+        fake.install();
+        cleanups.push(() => fake.restore());
+        const server = scriptedServer();
+        const calls = [];
+        const root = scratch('npi');
+        const release = makeRelease(scratch('npi-src'));
+        const harness = await newHarness({
+            root,
+            installDeps: {
+                privileged,
+                privilegedOptions: fake.privilegedOptions(elevation ? { elevation } : {}),
+                initDatabase: async (args) => { calls.push({ ...args, overlay: environment.read(harness.settings.storeDir).values }); return { engine: args.database.engine, tables: 3 }; }
+            }
+        });
+        harness.settings.databaseDeps = { ...server.deps };
+        harness.settings.nativeDeps = fake.nativeDeps(nativeDeps);
+        return { harness, release, calls, fake, server, dataDirectory: path.join(fake.dir, 'srv', 'pgdata') };
+    }
+    const answer = (release, dataDirectory, extra = {}) => ({ source: release.dir, release: { allowUnsigned: true }, database: { engine: 'postgres', native: { installPackages: true, dataDirectory, ...extra } } });
+
+    test('creates the cluster, applies the schema to it, writes the connection at the cutover and stages nothing afterwards', async () => {
+        const { harness, release, calls, fake, dataDirectory } = await fresh();
+        const { planned, applied } = await drive(harness, 'install.new', answer(release, dataDirectory));
+        expect(planned.plan.nativeDatabase).toMatchObject({ mode: 'fresh' });
+        expect(planned.plan.databaseTarget).toBeUndefined();
+        expect(planned.plan.privilegedSteps.filter(item => item.step === 'native-postgres').map(item => item.operation)).toEqual(['package.install', 'postgres.cluster.create']);
+        expect(applied.operation.status).toBe('applied');
+        expect(applied.operation.steps.map(step => step.name)).toEqual(expect.arrayContaining(['native-postgres', 'init-db']));
+        expect(fake.state().clusters.map(item => item.name)).toEqual(['goobster']);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].overlay.GOOBSTER_DB_URL).toBeUndefined();
+        const overlay = environment.read(harness.settings.storeDir).values;
+        expect(overlay.GOOBSTER_DB_URL).toMatch(/^postgres:\/\/goobster:/);
+        expect(overlay.GOOBSTER_NATIVE_DB_URL).toBeUndefined();
+        expect(harness.manager.store.readInstallation().doc.database).toEqual({ engine: 'postgres', external: true });
+        expect(nativeState.read(harness.settings.storeDir).doc.step).toBe('verified');
+        const password = decodeURIComponent(new URL(overlay.GOOBSTER_DB_URL).password);
+        const published = journalText(harness) + JSON.stringify(planned) + JSON.stringify(applied) + fake.argvText() + fake.stdinText();
+        expect(published).not.toContain(password);
+        expect(published).not.toContain(encodeURIComponent(password));
+    }, 180000);
+
+    test('the preflight shows the port and the packages as findings and never a database target', async () => {
+        const { harness, release, fake, dataDirectory } = await fresh();
+        fake.set({ listening: [5432] });
+        const dry = await drive(harness, 'install.new', answer(release, dataDirectory), { apply: false }).catch(error => error);
+        const findings = dry.planned ? dry.planned.plan.preflight.findings : (dry.details || {}).findings || [];
+        expect(findings.map(item => item.code)).toEqual(expect.arrayContaining(['NATIVE_PORT_IN_USE']));
+        expect(JSON.stringify(findings)).not.toMatch(/password|postgres:\/\//);
+        expect(fake.mutations()).toEqual([]);
+        expect(environment.read(harness.settings.storeDir).present).toBe(false);
+    }, 120000);
+
+    test('an unsupported distribution and a missing elevation block the preflight; nothing is written', async () => {
+        const { harness, release, calls, fake, dataDirectory } = await fresh({ nativeDeps: { distro: { supported: false, reason: 'DISTRO_UNSUPPORTED', remedy: 'Not here.', family: null, id: 'arch' } } });
+        const failure = await drive(harness, 'install.new', answer(release, dataDirectory)).catch(error => error);
+        expect(failure.code).toBe('PREFLIGHT_FAILED');
+        expect(failure.details.findings.map(item => item.code)).toContain('NATIVE_DISTRO_UNSUPPORTED');
+        expect(calls).toEqual([]);
+        expect(fake.mutations()).toEqual([]);
+        expect(environment.read(harness.settings.storeDir).present).toBe(false);
+
+        const second = await fresh({ elevation: { kind: 'none', reason: 'NO_ELEVATION' } });
+        const blocked = await drive(second.harness, 'install.new', answer(second.release, second.dataDirectory)).catch(error => error);
+        expect(blocked.code).toBe('PREFLIGHT_FAILED');
+        expect(blocked.details.findings.map(item => item.code)).toContain('NATIVE_ELEVATION_UNAVAILABLE');
+        expect(second.fake.mutations()).toEqual([]);
+    }, 180000);
+
+    test('a connection, a docker answer and a native answer are mutually exclusive', async () => {
+        const { harness, release } = await fresh();
+        const connection = { host: 'db.example.com', port: 5432, database: 'x', user: 'u', password: 'p', tls: { mode: 'require' } };
+        for (const extra of [{ connection }, { docker: {} }]) {
+            const input = { source: release.dir, release: { allowUnsigned: true }, database: { engine: 'postgres', native: {}, ...extra } };
+            expect(await codeOf(drive(harness, 'install.new', input, { apply: false }))).toBe('INVALID_INPUT');
+        }
+        const sqlite = { source: release.dir, release: { allowUnsigned: true }, database: { engine: 'sqlite', native: {} } };
+        expect(await codeOf(drive(harness, 'install.new', sqlite, { apply: false }))).toBe('INVALID_INPUT');
+    }, 120000);
+});
+
+describe('uninstall', () => {
+    async function installed({ withForeign = true } = {}) {
+        const fake = fakeNative.create({ distro: 'debian' });
+        fake.install();
+        cleanups.push(() => fake.restore());
+        const server = scriptedServer();
+        const root = scratch('npu');
+        const release = makeRelease(scratch('npu-src'));
+        const harness = await newHarness({ root, installDeps: { privileged, privilegedOptions: fake.privilegedOptions(), initDatabase: async (args) => ({ engine: args.database.engine, tables: 3 }) } });
+        harness.settings.databaseDeps = { ...server.deps };
+        harness.settings.nativeDeps = fake.nativeDeps();
+        const foreign = withForeign ? fake.seedForeignCluster({ name: 'main', port: 5432 }) : null;
+        const dataDirectory = path.join(fake.dir, 'srv', 'pgdata');
+        await drive(harness, 'install.new', { source: release.dir, release: { allowUnsigned: true }, database: { engine: 'postgres', native: { installPackages: true, dataDirectory, port: 5441 } } });
+        const doc = harness.manager.store.readInstallation().doc;
+        return { harness, fake, doc, foreign, dataDirectory };
+    }
+
+    test('by default the cluster, its data directory and the packages are kept and nothing on the machine changes', async () => {
+        const { harness, fake, dataDirectory } = await installed();
+        fake.clearCalls();
+        const { planned, applied } = await drive(harness, 'install.uninstall', {});
+        expect(planned.plan.removeNativeData).toBe(false);
+        expect(planned.plan.nativeDatabase).toMatchObject({ action: 'kept' });
+        expect(applied.operation.status).toBe('applied');
+        expect(fake.mutations()).toEqual([]);
+        expect(fake.state().clusters.map(item => item.name).sort()).toEqual(['goobster', 'main']);
+        expect(fs.existsSync(path.join(dataDirectory, 'PG_VERSION'))).toBe(true);
+        expect(nativeState.read(harness.settings.storeDir).present).toBe(true);
+    }, 180000);
+
+    test('a delete-data uninstall without removeNativeData warns that the cluster and its data stay', async () => {
+        const { harness, doc, dataDirectory } = await installed();
+        const dry = await drive(harness, 'install.uninstall', { keepData: false, confirm: doc.installationId }, { apply: false });
+        const warning = dry.planned.plan.preflight.findings.find(item => item.code === 'NATIVE_DATA_RETAINED');
+        expect(warning).toMatchObject({ severity: 'warn' });
+        expect(warning.detail).toContain(dataDirectory);
+        expect(dry.planned.plan.preflight.ok).toBe(true);
+        const kept = await drive(harness, 'install.uninstall', { keepData: true }, { apply: false });
+        expect(kept.planned.plan.preflight.findings.some(item => item.code === 'NATIVE_DATA_RETAINED')).toBe(false);
+    }, 180000);
+
+    test('removeNativeData needs the installation id as confirmation and removes exactly our cluster and data; the other cluster and the packages stay', async () => {
+        const { harness, fake, doc, foreign, dataDirectory } = await installed();
+        const foreignBefore = fake.snapshot(foreign.files);
+        const packages = fake.state().installed.slice();
+        fake.clearCalls();
+        expect(await codeOf(drive(harness, 'install.uninstall', { removeNativeData: true }))).toBe('CONFIRMATION_REQUIRED');
+        expect(await codeOf(drive(harness, 'install.uninstall', { removeNativeData: true, confirm: 'nope' }))).toBe('CONFIRMATION_REQUIRED');
+        expect(fake.mutations()).toEqual([]);
+        const dry = await drive(harness, 'install.uninstall', { removeNativeData: true, confirm: doc.installationId }, { apply: false });
+        expect(dry.planned.plan.nativeDatabase).toMatchObject({ action: 'remove', packagesKept: true, resources: expect.arrayContaining([{ kind: 'cluster', name: 'goobster' }]) });
+        expect(dry.planned.plan.privilegedSteps.filter(item => item.step === 'native-postgres').map(item => item.operation)).toEqual(['postgres.cluster.remove']);
+
+        const { applied } = await drive(harness, 'install.uninstall', { removeNativeData: true, confirm: doc.installationId });
+        expect(applied.operation.status).toBe('applied');
+        expect(fake.state().clusters.map(item => item.name)).toEqual(['main']);
+        expect(fs.existsSync(dataDirectory)).toBe(false);
+        expect(fake.state().installed).toEqual(packages);
+        expect(fake.snapshot(foreign.files)).toEqual(foreignBefore);
+        expect(fake.calls().filter(call => call.program === 'apt-get' && !call.args.includes('install'))).toEqual([]);
+        for (const call of fake.mutations().filter(item => item.program === 'pg_dropcluster')) expect(call.args).toContain('goobster');
+        expect(nativeState.read(harness.settings.storeDir).present).toBe(false);
+        const entry = harness.manager.journal.readAudit().entries.find(item => item.action === 'manager.install.uninstall');
+        expect(JSON.stringify(entry)).not.toMatch(/postgres:\/\/|password/);
+    }, 180000);
+});
+
+/* ============================================================== readiness gate */
+
+describe('the readiness gate', () => {
+    test('is inert without a record, and when the installation is not connected to the owned port', async () => {
+        const env = await setup({ workers: false });
+        const readiness = () => createReadiness({ settings: env.settings });
+        expect(await readiness().check()).toMatchObject({ owned: false, ready: true });
+        env.fake.clearCalls();
+        await readiness().check();
+        expect(env.fake.calls()).toEqual([]);
+        await provision(env);
+        env.fake.clearCalls();
+        expect(await readiness().check()).toMatchObject({ owned: false, ready: true });
+        expect(env.fake.calls()).toEqual([]);
+    }, 90000);
+
+    test('answers DATABASE_NOT_READY with the reason while the owned cluster is stopped, and ready when it runs', async () => {
+        const env = await setup({ workers: false });
+        await provision(env);
+        await drive(env, 'database.connect', { connection: { owned: 'native' }, release: true }, { auth: BRIDGE });
+        const readiness = () => createReadiness({ settings: env.settings });
+        expect(await readiness().check()).toMatchObject({ owned: true, ready: true });
+        await drive(env, 'database.native.stop', { acknowledgeInUse: true }, { auth: BRIDGE });
+        expect(await readiness().check()).toMatchObject({ owned: true, ready: false, code: 'DATABASE_NOT_READY', reason: 'NOT_LISTENING' });
+        await drive(env, 'database.native.start', {}, { auth: BRIDGE });
+        expect(await readiness().check()).toMatchObject({ owned: true, ready: true });
+    }, 180000);
+
+    test('the supervisor holds a worker back with DATABASE_NOT_READY while the cluster is down', async () => {
+        const env = await setup({ workers: false });
+        await provision(env);
+        await drive(env, 'database.connect', { connection: { owned: 'native' }, release: true }, { auth: BRIDGE });
+        await drive(env, 'database.native.stop', { acknowledgeInUse: true }, { auth: BRIDGE });
+
+        const fakes = createFakeWorkers();
+        const gate = [];
+        const supervisor = createSupervisor({
+            manager: env.manager,
+            adapter: fakes.adapter,
+            checkHealth: fakes.checkHealth,
+            sandboxActive: () => false,
+            logger: { info() {}, warn() {}, error() {} },
+            policy: { ...FAST_POLICY, databaseWaitMs: 40, databasePollMs: 5, databaseGate: async () => { const out = await createReadiness({ settings: env.settings }).check(); gate.push(out.reason || 'ready'); return out; } }
+        });
+        const unregister = registry.register(env.settings.storeDir, supervisor);
+        cleanups.push(async () => { await supervisor.stop(); unregister(); for (const proc of fakes.alive()) proc.die(0); });
+        await supervisor.start().catch(() => null);
+        await waitFor(async () => gate.length > 0, { what: 'the gate was consulted' });
+        expect(gate).toContain('NOT_LISTENING');
+        expect(JSON.stringify(await supervisor.status())).toContain('DATABASE_NOT_READY');
+        expect(fakes.alive()).toHaveLength(0);
+    }, 120000);
+});
+
+/* ================================================== a cluster that is not ours */
+
+describe('a cluster that is not ours', () => {
+    test('provision, start, stop, repair, relocate and uninstall never touch it, byte for byte', async () => {
+        const calls = [];
+        const env = await setup({ nativeDeps: { backupService: () => ({ createBackup: async (args) => { calls.push(args); return { dir: path.join(args.destDir, 'a') }; }, verifyBackup: () => ({ tables: 1, files: 1 }), tableCounts: async () => ({}) }) } });
+        const foreign = env.fake.seedForeignCluster({ name: 'main', port: 5432 });
+        const files = env.fake.snapshot(foreign.files);
+        const config = env.fake.snapshot(foreign.config);
+        const check = () => {
+            expect(env.fake.snapshot(foreign.files)).toEqual(files);
+            expect(env.fake.snapshot(foreign.config)).toEqual(config);
+            const main = env.fake.state().clusters.find(item => item.name === 'main');
+            expect(main).toMatchObject({ port: 5432, online: true });
+        };
+        await provision(env, { port: 5450 });
+        check();
+        await drive(env, 'database.connect', { connection: { owned: 'native' }, release: true }, { auth: BRIDGE });
+        await drive(env, 'database.native.stop', { acknowledgeInUse: true }, { auth: BRIDGE });
+        await drive(env, 'database.native.start', {}, { auth: BRIDGE });
+        await drive(env, 'database.native.repair', {}, { auth: BRIDGE });
+        check();
+        const held = (await env.manager.engine.run('maintenance.enter', { reason: 'native database change', timeoutSeconds: 10 }, BRIDGE)).result;
+        await drive(env, 'database.native.relocate', { target: path.join(env.fake.dir, 'srv', 'moved'), backup: { dir: scratch('backup'), skipConfig: true }, maintenance: { operationId: held.operationId, fence: held.fence } }, { auth: BRIDGE });
+        check();
+        for (const call of env.fake.mutations()) {
+            const text = `${call.program} ${call.args.join(' ')}`;
+            expect(text).not.toMatch(/\b17 main\b|\b17\/main\b|\bmain\b/);
+        }
+        expect(env.fake.stdinText()).not.toMatch(/ALTER SYSTEM|pg_hba/i);
+    }, 240000);
+});
+
+/* ==================================================================== discovery */
+
+describe('discovery', () => {
+    test('lists the clusters this installer created by their fixed names, and never the distribution\'s own', async () => {
+        const env = await setup({ workers: false });
+        env.fake.seedForeignCluster({ name: 'main', port: 5432 });
+        await provision(env, { port: 5460 });
+        const read = (name) => {
+            const table = { 'native-clusters': ['pg_lsclusters', ['--no-header']] };
+            if (!table[name]) return null;
+            return require('node:child_process').spawnSync(path.join(env.fake.bin, table[name][0]), table[name][1], { encoding: 'utf8', env: { ...process.env, ...env.fake.env() } }).stdout;
+        };
+        const found = discover({ fs, home: env.root, env: env.settings.env, exec: read });
+        expect(found.nativeDatabases.map(item => item.cluster)).toEqual(['goobster']);
+        expect(found.nativeDatabases[0]).toMatchObject({ version: 17, port: 5460, state: 'online' });
+        expect(JSON.stringify(found)).not.toMatch(/password|postgres:\/\//);
+        expect(discover({ fs, home: env.root, env: env.settings.env, exec: () => null }).nativeDatabases).toEqual([]);
+    }, 90000);
 });
