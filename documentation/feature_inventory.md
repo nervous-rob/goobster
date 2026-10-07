@@ -308,6 +308,62 @@ music, everything else (`parlorinvite`, `accessreq`, `friendreq`,
 `clear_search_button` collides with the `search` approval family under
 that router.
 
+#### How the gates are enforced (#318)
+
+Every gate below asks `features/gate.js` (`surfaceActive` /
+`requireSurface`), which applies the enforcement rule from
+`documentation/feature_state.md` ("Reported versus enforced"): with no
+usable `data/features.json` and no `GOOBSTER_FEATURE_<ID>` override nothing
+is refused, so a default install loads, deploys, starts and answers exactly
+as before. The state is read once when the bot process starts; listeners and
+the command set change on restart, interactions are refused live.
+
+- Commands and context menus: `commandDeployment.listCommandFiles` is the
+  one lister, `featureCommandFilter` the one filter. `apps/bot/index.js`
+  (load) and `apps/bot/deploy-commands.js` (deploy) both use it, so what
+  Discord shows and what the process answers cannot disagree. A filtered
+  file is never `require()`d (its top-level imports do not run). The
+  deploy hash (`data/.command-deploy-hash`) covers the payload, the targets
+  and the served feature set (`activeFeatureIds`, enforcement view), so
+  turning a feature on or off re-syncs Discord even when the payload is
+  unchanged. A slash command, autocomplete or context menu Discord still
+  holds for a filtered file is answered ephemerally with "That feature is
+  not available on this installation." (autocomplete gets an empty list)
+  before any handler runs.
+- Components and modals: `interactionCreate.gateComponentInteraction`
+  resolves the customId to its inventory row - the full id first through
+  the `collector:<id>` keys (so `clear_search_button` is left to the music
+  paginator's own collector and never parsed as the `search` router token),
+  then the second `_` token - and refuses an off owner before any handler
+  or write. `intaction` buttons resolve their owner from the pending
+  action's `type` (`github-issue` → github, `agent-launch` → cursor).
+- Runtime steps: `coreRuntime.step(name, fn, { feature })` never invokes
+  the callback of an enforced-off owner and records
+  `{ status: 'skipped', reason: 'feature', feature }` in `runtime.report`
+  (also `runtime.featureSkipped`), distinct from `paused`, `declined` and
+  `failed`. The bundled core steps always start; `applyBundledFeatureGates`
+  switches off their feature branches on the instance (automation's project
+  trigger poll, heartbeat's agent proposals, the attention generators that
+  read `observatory_jobs`, `spitball_expeditions` and `project_missions`).
+  `automationService.executeWheel` refuses at the top when the wheel command
+  is off. An unclaimed step fails closed without taking the process down.
+- Startup side effects: `serviceManager.voiceService` is a lazy getter; with
+  voice enforced off it returns an inert `InactiveVoiceService` and the
+  voice stack (MusicService, ffmpeg probe, memory monitor, SpotDL,
+  ElevenLabs) is never built. In `apps/bot/index.js` voice initialisation,
+  the `voiceStateUpdate` listener, the `musicTrackStarted`/`musicTrackEnded`
+  presence listeners, the 📋 issue-capture reaction and the
+  `playTrack`/`nickname`/`speak` tool adapters follow the same snapshot.
+- `messageCreate`: gates `#06` (cursor) and `#10` (gba) are skipped when
+  their owner is off; the other ten and their order are untouched
+  (`// messageCreate#NN` markers, asserted by the spec).
+
+Specs: `tests/featureGatingCommands.test.js` and
+`tests/featureGatingRuntime.test.js` (no-file baseline equals the
+unfiltered walk, env-override-only filtering, one-feature-off loops over
+every manageable feature, standalone/paired/paused→resume shapes, a boot
+harness that spies on listeners, the loader and the adapters).
+
 ### M1 - Mail
 
 Mail is consumed only by identity (`nativeAuthService.js`, `appContext.js`);
