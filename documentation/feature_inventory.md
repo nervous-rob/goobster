@@ -322,7 +322,13 @@ the command set change on restart, interactions are refused live.
   one lister, `featureCommandFilter` the one filter. `apps/bot/index.js`
   (load) and `apps/bot/deploy-commands.js` (deploy) both use it, so what
   Discord shows and what the process answers cannot disagree. A filtered
-  file is never `require()`d (its top-level imports do not run). The
+  file is never `require()`d (its top-level imports do not run). A command
+  file the inventory does not claim (a self-hoster's own command) keeps
+  loading and deploying while no usable `data/features.json` is in force,
+  with a log warning that names the file and says it is **not claimed by the
+  feature inventory**; once a state file is in force it fails closed and the
+  log gives that same accurate reason. The inventory spec still fails CI for
+  an unclaimed command file inside the repository. The
   deploy hash (`data/.command-deploy-hash`) covers the payload, the targets
   and the served feature set (`activeFeatureIds`, enforcement view), so
   turning a feature on or off re-syncs Discord even when the payload is

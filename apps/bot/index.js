@@ -10,7 +10,9 @@ const { surfaceActive } = require('@goobster/core/features/gate');
 const {
 	commandNameIndex,
 	featureCommandFilter,
-	listCommandFiles
+	listCommandFiles,
+	skippedReason,
+	unclaimedCommandWarning
 } = require('@goobster/core/utils/commandDeployment');
 
 // Fun idle status messages when no music is playing
@@ -173,7 +175,10 @@ const { active: activeCommandFiles, inactive: inactiveCommandFiles } = listComma
 	filter: featureCommandFilter
 });
 for (const entry of inactiveCommandFiles) {
-	logger.info(`Command ${entry.key} not loaded: its feature is not active`);
+	logger.info(`Command ${entry.key} not loaded: ${skippedReason(entry)}`);
+}
+for (const entry of activeCommandFiles.filter(item => item.unclaimed)) {
+	logger.warn(unclaimedCommandWarning(entry));
 }
 // Every declared name, loaded or not, so a stale slash command for a disabled
 // feature gets an answer instead of Discord's "application did not respond".
