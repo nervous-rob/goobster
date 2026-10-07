@@ -9,9 +9,22 @@
 #   journalctl -u goobster -f            (or see logs/goobster.log)
 #
 # Adjust User/WorkingDirectory/ExecStart paths to match your install location.
+#
+# The unit runs the installation manager, which supervises the workers of
+# this installation's layout (lite: the bot; standalone: the api; paired:
+# bot + api) as its own children: it deploys slash commands when they
+# changed, restarts a worker that exits 75 at once and a crashed one with
+# backoff, and performs staged restarts (documentation/manager_lifecycle.md).
+# The manager listens on 127.0.0.1:3400; from another machine use
+#   ssh -L 3400:127.0.0.1:3400 pi@<host>
+#
+# Stop: systemd sends SIGTERM to the manager only (KillMode=mixed); the
+# manager stops each worker (stop new work, at most 45 s of in-flight work,
+# then 15 s to exit, then SIGKILL to its process group). TimeoutStopSec
+# covers that with room to spare before systemd kills what is left.
 
 [Unit]
-Description=Goobster Discord Bot
+Description=Goobster (installation manager and its workers)
 After=network-online.target
 Wants=network-online.target
 
@@ -19,12 +32,14 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/goobster
-ExecStartPre=/usr/bin/node apps/bot/deploy-commands.js
-ExecStart=/usr/bin/node apps/bot/index.js
+ExecStart=/usr/bin/node apps/manager/index.js --supervise
 Restart=on-failure
 RestartSec=10
+KillMode=mixed
+TimeoutStopSec=120
 
-# Resource limits appropriate for a Raspberry Pi 4B
+# Resource limits appropriate for a Raspberry Pi 4B (the manager and its
+# workers share this cgroup)
 MemoryMax=1G
 CPUWeight=80
 
@@ -35,6 +50,16 @@ ProtectSystem=full
 ReadWritePaths=/home/pi/goobster
 
 Environment=NODE_ENV=production
+Environment=GOOBSTER_SUPERVISOR=systemd
+
+# Legacy: run the bot directly, without the manager (existing installs that
+# have not moved over yet). Replace the ExecStart/KillMode/TimeoutStopSec
+# lines above with these. Exit code 75 still restarts the bot because of
+# Restart=on-failure, but nothing performs a staged restart.
+#
+#   ExecStartPre=/usr/bin/node apps/bot/deploy-commands.js
+#   ExecStart=/usr/bin/node apps/bot/index.js
+#   TimeoutStopSec=75
 
 [Install]
 WantedBy=multi-user.target
