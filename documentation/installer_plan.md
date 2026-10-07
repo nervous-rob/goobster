@@ -229,9 +229,10 @@ Work, in order:
    - feature add/remove that never touches `data/`, `config.json`, logs,
      cache or the manager store, and only audits system dependencies.
 
-   Findings B5 (unreferenced GPL packages are left out of every payload)
-   and B6 (`discord.js` is exclusive to the Discord adapter) are closed for
-   the payload. The `reduced` job in `.github/workflows/packaging-proof.yml`
+   Finding B5 is closed at the source (`play-dl` is no longer declared, so
+   neither GPL package is installed anywhere; the manifest still reports and
+   excludes any unreferenced dependency) and B6 (`discord.js` is exclusive
+   to the Discord adapter) is closed for the payload. The `reduced` job in `.github/workflows/packaging-proof.yml`
    builds minimal, voice and projects+sandbox payloads on `ubuntu-24.04`,
    and runs routes, dormant-data and tamper probes against them. Reduced
    payloads on the other four targets are unverified. Production signing
