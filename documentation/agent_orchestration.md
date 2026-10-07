@@ -79,6 +79,36 @@ the repo's existing provider contract (`aiService.chat` returning
    aborted result *with* the transcript and the model's interstitial text
    (`roundTexts`), so the caller can still tell the user what ran.
 
+## Switched-off features
+
+Tool availability follows the installation's feature state
+(`documentation/feature_state.md`) in two independent places:
+
+- **Discovery.** `toolsRegistry.getDefinitions()` leaves out a tool whose
+  owning feature is off, so the model is never offered it.
+- **Dispatch.** `toolsRegistry.execute()` re-checks before anything else. A
+  stale tool name from a model response, or a direct caller, gets
+  `{ ok: false, code: 'FEATURE_UNAVAILABLE', feature, reasons }` before the
+  incognito check, personal policy, approvals, admission or the handler.
+
+`runAgentLoop` treats `FEATURE_UNAVAILABLE` as a terminal observation. The
+result is fed back as an error text that names the tool and says to tell the
+user plainly it cannot be done here; the event, transcript entry and step carry
+`unavailable: true`. A second call to the same refused tool in that turn is
+short-circuited without executing and counts as a repeat for the stall check,
+so the turn ends with a user-facing answer. The loop never enables a feature,
+retries the call or searches for a substitute. The result is the same for the
+OpenAI, Anthropic, Gemini and Ollama providers. In a tool plan, a step whose
+result is `FEATURE_UNAVAILABLE` is reported as failed.
+
+The system prompt gets one line from `features.unavailable()`
+(`unavailableFeatureTitles()` in `utils/chat/promptContext.js`, text from
+`featureAvailabilityLine` in `utils/chat/promptFragments.js`):
+`UNAVAILABLE HERE: <Title>, <Title> are switched off on this installation. Do not offer or promise what depends on them; if asked, say so plainly.`
+It lists the titles of switched-off features that own or are required by an
+AI tool. No secrets, paths or hardcoded names appear in it. The line is omitted
+when every such feature is active.
+
 ## Budgets are sized by the work
 
 The visible failure this guards against: the user watches tool chips appear

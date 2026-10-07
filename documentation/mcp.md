@@ -183,6 +183,34 @@ text, and the bearer token are not written to the log. The work ledger is
 not involved: a token label is not a prompt, and the secret is not a
 ledger field.
 
+## Feature availability
+
+The server is the `mcp` feature (`documentation/feature_state.md`). What it
+offers follows the effective feature state **per request**, not at boot:
+
+- `tools/list` and `tools/call`: a tool whose owning feature is off is not
+  listed, and calling it by name answers `-32602` ("not available on this
+  installation") after the scope check and before the handler runs.
+- `resources/list`, `resources/templates/list` and `resources/read`: the
+  documentation and brief families are filtered the same way. A direct
+  `goobster://briefs/<id>` read while research briefs are unavailable
+  answers `-32002 Resource not found`.
+- The `mcp` feature off (`mcp.enabled` false, `GOOBSTER_MCP_ENABLED` unset,
+  `"mcp": { "installed": true, "active": false }` under `features` in
+  `data/features.json`, or
+  `GOOBSTER_FEATURE_MCP=off`): `POST /mcp` answers HTTP 404 with
+  `{ "error": "FEATURE_UNAVAILABLE", "feature": "mcp" }` and
+  `Cache-Control: no-store`. The stdio server (`serveStdio`) does not read a
+  message and returns, a running one answers every call with `-32000`, and
+  `apps/mcp` refuses to start and says how to turn the feature on.
+- Disabled is not deleted. Token rows are untouched, the portal routes that
+  mint and revoke tokens stay available, and `/forget-me` still deletes every
+  `mcp_tokens` row, because those paths live in core and not behind the MCP
+  surface.
+
+`GOOBSTER_FEATURE_MCP=0|false|no|off` can only turn the feature off; it never
+turns it on.
+
 ## Where the code lives
 
 - Protocol, tools, resources, and the per-scope surface: `packages/core/mcp/`
