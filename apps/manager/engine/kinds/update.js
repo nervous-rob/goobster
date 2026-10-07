@@ -29,7 +29,7 @@ const { createUpdateCore } = require('../../update/core');
 const { createStageHelpers } = require('../../update/stageRelease');
 const { createApplier } = require('../../update/apply');
 
-const VIA = ['local', 'bridge'];
+const VIA = ['local', 'bridge', 'recovery'];
 const RECOVER_VIA = ['local', 'recovery'];
 const CHECK_STEPS = ['fetch-index', 'verify-index', 'compare', 'record'];
 const STAGE_STEPS = ['preflight', 'fetch-index', 'verify-index', 'space', 'download', 'verify-artifact', 'verify-payload', 'stage', 'record'];
@@ -114,7 +114,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
         return {
             kind: 'update.check',
             public: true,
-            allowed: (st, via) => claimed(st, via, [...VIA, 'recovery']),
+            allowed: (st, via) => claimed(st, via, VIA),
             async plan(input, ctx) {
                 const built = await build(input, ctx);
                 return { plan: built.plan, revision: built.revision, privateInput: { raw: input } };
