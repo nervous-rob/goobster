@@ -589,6 +589,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 }));
                 ctx.scratch.audit = summary;
                 const restarted = restartWorkers();
+                ctx.scratch.workersRestarted = restarted;
                 return { ...summary, workersRestarted: restarted, rollbackBoundary: BOUNDARY };
             }),
 
@@ -604,6 +605,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     maintenance: { operationId: op.operationId, fence: op.fence, phase: view.phase, enteredByMigration: op.entered },
                     instancePaused: true,
                     workersMode: settings.workersMode,
+                    ...(ctx.scratch.workersRestarted === undefined ? {} : { workersRestarted: ctx.scratch.workersRestarted }),
                     rollbackLimit: rollbackLimit(),
                     warnings: ctx.scratch.warnings || []
                 };

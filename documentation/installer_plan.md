@@ -316,6 +316,21 @@ Work:
    confirmation.
 3. Migrator: true preflight, required verified backup, row-count
    verification, rollback point.
+
+   **Status (P4.3, #336): built.** `db.migrate.preflight` (read only: reads
+   the source and the target, writes nothing, bootstraps nothing),
+   `db.migrate` (inside the maintenance barrier: verified backup, source
+   snapshot hash, schema apply, per-table resumable copy, verification of
+   counts, foreign keys, identities, five relationship checks, sampled
+   content and attachment references, a start of the application on the
+   target under the fence, then the connection switch through the manager's
+   environment overlay) and `db.migrate.rollback` (possible until the first
+   write reaches Postgres). CLI: `migrate preflight|run|rollback|status`;
+   routes `GET /manager/api/migrate/status` and `POST
+   /manager/api/migrate/preflight`; audit actions `manager.db.migrate.preflight`,
+   `manager.db.migrate` and `manager.db.migrate.rollback`. Portal pages are
+   not built here. `scripts/migrate-to-postgres.js` stays as a developer
+   path with reduced guarantees. See [db_migration.md](db_migration.md).
 4. Backup and restore UI over `backupService` and `scripts/restore.js`.
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container

@@ -106,6 +106,21 @@ then `sudo systemctl restart postgresql`.
 
 ## 4. Migrate your existing data
 
+For an installation managed by the manager, use the supported path
+([db_migration.md](db_migration.md)): a read-only preflight, a verified
+backup, the copy and verification, a start of the application on Postgres,
+and the connection switch, with a rollback until the first write reaches
+Postgres:
+
+```bash
+node apps/manager/cli.js migrate preflight --answers pre.json
+node apps/manager/cli.js migrate run --answers run.json --confirm <installationId> --release
+```
+
+The URL and the backup passphrase go in the answers file (mode `0600`),
+never on the command line. The rest of this section is the developer
+script, which has none of those guarantees.
+
 Stop the bot, copy everything across, verify:
 
 ```bash
@@ -116,9 +131,11 @@ GOOBSTER_DB_URL='postgres://goobster:change-me@127.0.0.1:5432/goobster' \
   npm run migrate-to-postgres
 ```
 
-The migrator refuses a non-empty target, copies every table inside one
-transaction, re-seats the id sequences, and verifies per-table row counts —
-it finishes with `✔ ... all counts verified` or exits non-zero. Your SQLite
+The migrator refuses a non-empty target, copies every table (one transaction
+per table), re-seats the id sequences, and verifies row counts, foreign keys,
+identities, five relationship checks, sampled content and attachment
+references. It takes no backup and holds no maintenance barrier. It finishes
+with a verified summary or exits non-zero. Your SQLite
 file at `data/goobster.sqlite` is opened read-only and left untouched (it is
 your rollback).
 
@@ -161,7 +178,9 @@ with its on-disk size.
 
 Rolling back is removing the environment variable and restarting: the SQLite
 file was never modified. (Anything written *after* the switch lives only in
-Postgres, so treat the rollback window accordingly.)
+Postgres, so treat the rollback window accordingly.) With the manager's
+migration the same limit is enforced: `migrate rollback` is possible until the
+first write reaches Postgres, then refused (`POSTGRES_HAS_WRITES`).
 
 ## Troubleshooting
 

@@ -102,7 +102,7 @@ A restore will run inside the manager's maintenance barrier (installer plan Phas
 
 ### Moving between engines
 
-An archive restores only onto the engine that made it. To move SQLite data to Postgres: restore onto a SQLite installation, then run `npm run migrate-to-postgres` ([postgres_setup.md](postgres_setup.md)). There is no Postgres → SQLite path.
+An archive restores only onto the engine that made it. To move SQLite data to Postgres: restore onto a SQLite installation, then migrate it with the manager (`migrate preflight`, `migrate run`; [db_migration.md](db_migration.md)), which takes and verifies its own backup first. `npm run migrate-to-postgres` remains as a developer script with reduced guarantees. There is no Postgres → SQLite path.
 
 ## The recovery test
 
