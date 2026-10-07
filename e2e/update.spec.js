@@ -11,7 +11,7 @@ const path = require('node:path');
 const { test, expect } = require('@playwright/test');
 const { createSecondServer } = require('./helpers');
 const { createSetupInstallation, waitFor } = require('./setupHarness');
-const { freePort } = require('../tests/helpers/installFixture');
+const { freePort, drive } = require('../tests/helpers/installFixture');
 const { newKey, makePayload, publish } = require('../tests/helpers/updateFixture');
 
 const ARTIFACTS = process.env.GOOBSTER_E2E_ARTIFACTS || '/opt/cursor/artifacts';
@@ -55,8 +55,8 @@ async function world({ core = '2.5.0' } = {}) {
     const published = await publish(scratch, key, payload);
     const h = await createSetupInstallation({ env: { GOOBSTER_RELEASE_PUBLIC_KEY_FILE: key.publicKeyPath } });
     installations.push(h);
-    const prov = await h.provision({ features: [], start: true });
-    await prov.run('update.policy', { mode: 'check', source: { kind: 'directory', dir: published.dir } });
+    await h.provision({ features: [], start: true });
+    await drive({ manager: h.manager }, 'update.policy', { mode: 'check', source: { kind: 'directory', dir: published.dir } });
     return { h, key, published };
 }
 
