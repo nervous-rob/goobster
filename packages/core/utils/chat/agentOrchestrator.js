@@ -27,6 +27,12 @@
  *      provider call is returned as an aborted result carrying the
  *      transcript, so the caller can still tell the user what ran.
  *
+ * A tool the installation's feature policy has switched off answers with
+ * the stable FEATURE_UNAVAILABLE result. That is a terminal outcome, not a
+ * failure to retry: the model is told once, further calls to the same tool
+ * in the turn are answered without executing anything, nothing is ever
+ * enabled on its behalf, and the loop still ends in a user-facing answer.
+ *
  * Tool failures become observations (the error text is fed back to the
  * model) so a failed step can be retried or worked around mid-turn instead
  * of aborting the whole reply. Older tool results are compacted once the
@@ -36,6 +42,7 @@
 const aiService = require('../../services/aiService');
 const toolsRegistry = require('../toolsRegistry');
 const { PRIOR_RESULT_CHARS, PRIOR_BLOCK_CHARS } = require('../toolResultWindow');
+const { FEATURE_UNAVAILABLE } = require('../../features/gate');
 
 // Model rounds that may request tools within a single conversational reply.
 // Each round can contain several parallel tool calls, so this bounds
@@ -91,6 +98,26 @@ const EMPTY_REPLY_NUDGE =
     'Your previous reply was empty. Write the final answer for the user now, in plain ' +
     'conversational language, summarizing the tool results gathered above. Do NOT request ' +
     'any more tools.';
+
+function isFeatureUnavailable(result) {
+    return Boolean(result) && typeof result === 'object' && result.code === FEATURE_UNAVAILABLE;
+}
+
+/**
+ * What the model reads when a tool is switched off. It names the feature by
+ * title only (never a path, setting or reason) and says not to retry.
+ */
+function featureUnavailableText(toolName, result) {
+    let title = null;
+    if (result && typeof result.feature === 'string') {
+        try {
+            title = require('../../features/catalog').get(result.feature)?.title || null;
+        } catch { /* the wording works without a title */ }
+    }
+    return `${FEATURE_UNAVAILABLE}: ${toolName}${title ? ` (${title})` : ''} is turned off on this installation. ` +
+        'Do not call it again this turn and do not offer it. Tell the user plainly that you cannot do that here, ' +
+        'then help with what you can.';
+}
 
 /** Compact one-line preview of a JSON arguments string for chips/steps. */
 function previewText(text, cap) {
@@ -185,7 +212,7 @@ function formatDuration(ms) {
  * several long sandbox runs.
  * @returns {Promise<boolean>} whether the round was cut short by an abort
  */
-async function executeToolRound({ toolCalls, messagesForModel, transcript, steps, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort }) {
+async function executeToolRound({ toolCalls, messagesForModel, transcript, steps, resultCache, unavailableTools, interactionContext, executeTool, onToolEvent, shouldAbort }) {
     const emit = (payload) => {
         if (typeof onToolEvent !== 'function') return;
         try { onToolEvent(payload); } catch { /* cosmetic hooks never break the loop */ }
@@ -207,7 +234,13 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
 
         emit({ phase: 'start', id, name: call.name, cached, argsPreview });
 
-        if (cached) {
+        let unavailable = false;
+        if (unavailableTools.has(call.name)) {
+            // Terminal for the turn: no second attempt, with any arguments.
+            unavailable = true;
+            isError = true;
+            fnResult = unavailableTools.get(call.name);
+        } else if (cached) {
             fnResult = `(cached) You already called ${call.name} with these arguments this turn. ` +
                 `Previous result:\n${resultCache.get(cacheKey)}`;
         } else {
@@ -216,9 +249,16 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
                 parsedArgs.interactionContext = interactionContext;
                 fnResult = await executeTool(call.name, parsedArgs);
 
+                if (isFeatureUnavailable(fnResult)) {
+                    unavailable = true;
+                    isError = true;
+                    fnResult = featureUnavailableText(call.name, fnResult);
+                    unavailableTools.set(call.name, fnResult);
+                }
+
                 // Some tools return { _display, _data }; the display form is
                 // what belongs in the conversation.
-                if (fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
+                if (!unavailable && fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
                     fnResult = fnResult._display;
                 }
             } catch (toolErr) {
@@ -233,7 +273,10 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
         const resultPreview = previewText(resultText, STEP_RESULT_PREVIEW_CHARS);
         const durationMs = Date.now() - startedAt;
 
-        emit({ phase: 'result', id, name: call.name, isError, cached, resultPreview, durationMs });
+        emit({
+            phase: 'result', id, name: call.name, isError, cached, resultPreview, durationMs,
+            ...(unavailable ? { unavailable: true } : {})
+        });
 
         if (!isError && !resultCache.has(cacheKey)) {
             resultCache.set(cacheKey, resultText);
@@ -243,7 +286,8 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
             name: call.name,
             arguments: call.arguments || '{}',
             result: resultText,
-            isError
+            isError,
+            ...(unavailable ? { unavailable: true } : {})
         });
 
         steps.push({
@@ -254,7 +298,8 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
             resultPreview,
             isError,
             cached,
-            durationMs
+            durationMs,
+            ...(unavailable ? { unavailable: true } : {})
         });
 
         messagesForModel.push({
@@ -369,6 +414,8 @@ async function runAgentLoop({
     const transcript = [];
     const steps = [];
     const resultCache = new Map();
+    // Tools the feature policy refused this turn -> the text the model was told.
+    const unavailableTools = new Map();
     let roundsUsed = 0;
     let finalized = false;
     let aborted = false;
@@ -468,9 +515,10 @@ async function runAgentLoop({
         }
         // Progress check: a round made of nothing but repeats of calls
         // already made this turn learned nothing new.
-        const allRepeats = toolCalls.every(call => resultCache.has(`${call.name}:${call.arguments || '{}'}`));
+        const allRepeats = toolCalls.every(call =>
+            resultCache.has(`${call.name}:${call.arguments || '{}'}`) || unavailableTools.has(call.name));
         const cutShort = await executeToolRound({
-            toolCalls, messagesForModel, transcript, steps, resultCache, interactionContext, executeTool, onToolEvent, shouldAbort
+            toolCalls, messagesForModel, transcript, steps, resultCache, unavailableTools, interactionContext, executeTool, onToolEvent, shouldAbort
         });
         if (cutShort) {
             aborted = true;

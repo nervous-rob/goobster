@@ -24,6 +24,7 @@ process.env.GOOBSTER_SELF_DOCS_OPERATOR_DIR = OPERATOR_NOTES;
 
 const db = require('@goobster/core/db');
 const mcpConfig = require('@goobster/core/config/mcpConfig');
+const { features } = require('@goobster/core/features/featureState');
 const mcpTokenService = require('@goobster/core/services/mcpTokenService');
 const privacyService = require('@goobster/core/services/privacyService');
 const inboxService = require('@goobster/core/services/inboxService');
@@ -120,6 +121,7 @@ async function stdioRoundtrip(session, messages) {
 beforeAll((done) => {
     fs.writeFileSync(path.join(DIST_DIR, 'index.html'), '<!doctype html><title>Goobster</title>');
     mcpConfig._setForTests({ enabled: true, requestsPerMinute: 1000, maxTokensPerUser: 10 });
+    features.refresh();
     const ctx = createWebAppContext({
         client: { user: { id: '900000000000000099' }, guilds: { cache: new Map() } },
         config: { clientId: '123', webapp: { enabled: true, devMode: true } },
@@ -265,10 +267,16 @@ describe('framing', () => {
 
     test('the endpoint stays unmounted while the switch is off', () => {
         mcpConfig._setForTests({ enabled: false });
-        const app = express();
-        expect(mountMcpIfEnabled(app, { logger: { info() {} } })).toBe(false);
-        expect(consume('mcp:unused', 1)).toBe(true);
-        expect(toolDescriptors().length).toBeGreaterThan(5);
+        features.refresh();
+        try {
+            const app = express();
+            expect(mountMcpIfEnabled(app, { logger: { info() {} } })).toBe(false);
+            expect(consume('mcp:unused', 1)).toBe(true);
+            expect(toolDescriptors().length).toBeGreaterThan(5);
+        } finally {
+            mcpConfig._setForTests({ enabled: true, requestsPerMinute: 1000, maxTokensPerUser: 10 });
+            features.refresh();
+        }
     });
 });
 

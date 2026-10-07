@@ -3,7 +3,8 @@
  *
  *   GOOBSTER_MCP_TOKEN=gst_... node apps/mcp/index.js
  *
- * The master switch is mcp.enabled (or GOOBSTER_MCP_ENABLED=1). The
+ * The master switch is the `mcp` feature (mcp.enabled, GOOBSTER_MCP_ENABLED=1,
+ * or data/features.json; documentation/feature_state.md). The
  * token selects whose workspace the tools read. stdout is the protocol;
  * this file logs to stderr only, and any other write to stdout (a database
  * migration notice, a library's console.log) is diverted to stderr too.
@@ -12,7 +13,7 @@
  * other tooling can load it.
  */
 
-const mcpConfig = require('@goobster/core/config/mcpConfig');
+const { features } = require('@goobster/core/features/featureState');
 const mcpTokenService = require('@goobster/core/services/mcpTokenService');
 const { serveStdio } = require('@goobster/core/mcp/stdio');
 const { reserveStdout } = require('@goobster/core/mcp/stdout');
@@ -24,8 +25,8 @@ function log(line) {
 async function main() {
     // Before the first database open: its migration notices must not reach the client.
     const protocolOutput = reserveStdout();
-    if (!mcpConfig.enabled) {
-        log('MCP is off. Set mcp.enabled to true in config.json, or GOOBSTER_MCP_ENABLED=1, and restart.');
+    if (!features.isActive('mcp')) {
+        log('MCP is off on this installation. Turn the MCP feature on (mcp.enabled in config.json, GOOBSTER_MCP_ENABLED=1, or data/features.json) and restart.');
         process.exitCode = 1;
         return;
     }

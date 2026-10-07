@@ -321,3 +321,12 @@ features._resetForTests({ config: { token: 'x' }, env: {} });   // the singleton
 `tests/featureCatalog.test.js` keeps the catalog in step with the inventory
 and the repository (documentation paths, env var names and config sections
 must exist). `tests/featureState.test.js` covers everything in this document.
+
+## Consumers
+
+The first consumers of `gate.surfaceActive` and `requireSurface`:
+
+- `toolsRegistry.getDefinitions()` (discovery) and `toolsRegistry.execute()` (dispatch, which returns the `FEATURE_UNAVAILABLE` result), `runAgentLoop` (terminal observation) and the `UNAVAILABLE HERE:` prompt line built from `features.unavailable()`: see `documentation/agent_orchestration.md`.
+- The MCP surface (`packages/core/mcp/surface.js`, `tools.js`, `resources.js`, `http.js`, `stdio.js`) and `apps/mcp`, per request: see `documentation/mcp.md`.
+
+Covered by `tests/featureGatingTools.test.js` and `tests/featureGatingMcp.test.js`.
