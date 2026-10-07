@@ -46,7 +46,8 @@ const DEFAULT_POLICY = Object.freeze({
     lockWaitMs: 30_000,
     lockRetryMs: 250,
     conflictRetryMs: 5_000,
-    drainSeconds: coreLifecycle.DRAIN_BOUND_SECONDS
+    drainSeconds: coreLifecycle.DRAIN_BOUND_SECONDS,
+    stopTimeoutMs: null
 });
 
 const STATUS_EVENTS = 20;
@@ -165,7 +166,11 @@ function createSupervisor({
             }
         } catch { }
         const resolved = layouts.workersFor({ settings, config: cfg, env: settings.env || {}, sandboxActive: active, drainSeconds: policy.drainSeconds });
-        if (externalMode) resolved.workers = resolved.workers.map(worker => ({ ...worker, external: true }));
+        resolved.workers = resolved.workers.map(worker => ({
+            ...worker,
+            ...(externalMode ? { external: true } : {}),
+            ...(policy.stopTimeoutMs ? { stopTimeoutMs: policy.stopTimeoutMs } : {})
+        }));
         return resolved;
     }
 
@@ -234,6 +239,7 @@ function createSupervisor({
         slot.staged = Boolean(staged);
         slot.healthy = false;
         slot.healthyAt = null;
+        slot.ackedRevision = null;
         slot.intentional = false;
         slot.startedAt = ms();
         slot.lastCode = null;
@@ -791,7 +797,6 @@ function createSupervisor({
             slot.crashes = Array.isArray(info.crashes) ? info.crashes.map(t => Date.parse(t)).filter(Number.isFinite) : [];
             slot.restarts = Number.isInteger(info.restarts) ? info.restarts : 0;
             slot.lastExit = files.isPlainObject(info.lastExit) ? info.lastExit : null;
-            slot.ackedRevision = Number.isInteger(info.ackedRevision) ? info.ackedRevision : null;
         }
         if (plan.error) {
             logger.error?.(`[manager] the ${plan.layout} layout cannot start: ${plan.error}`);

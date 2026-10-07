@@ -49,6 +49,7 @@ const GROUPS = [
             'managerBoot',
             'managerBridge',
             'managerEngine',
+            'managerSupervisor',
             'presenceService',
             'reportIntegrations',
             'safeFetch',
