@@ -3,7 +3,7 @@ import { buildChanges } from '../rooms/host/drafts';
 import { OWNER_PASSWORD, typedSecret, type Answers } from './answers';
 
 export const OWNER_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
-export const PASSWORD_MIN = 12;
+export const PASSWORD_MIN = 15;
 export const PASSWORD_MAX = 128;
 export const ABSOLUTE = /^(\/|[A-Za-z]:[\\/]|\\\\)/;
 export const PORTAL_SIGNIN_FIELDS = ['webapp.enabled', 'identity.nativeLogin'];
@@ -81,9 +81,10 @@ export function configChanges(answers: Answers, fields: FieldMap, layout: 'lite'
     for (const change of built.changes) {
         if (change.action === 'set') entries.push({ id: String(change.id), value: change.value });
     }
-    const has = (id: string) => entries.some((entry) => entry.id === id);
-    if (!has('webapp.enabled')) entries.push({ id: 'webapp.enabled', value: true });
-    if (answers.owner.create && !has('identity.nativeLogin')) entries.push({ id: 'identity.nativeLogin', value: true });
+    // A setting the environment controls is the operator's: the manager refuses to record a file value that would have no effect.
+    const implied = (id: string) => !entries.some((entry) => entry.id === id) && fields.get(id)?.envControlled !== true;
+    if (implied('webapp.enabled')) entries.push({ id: 'webapp.enabled', value: true });
+    if (answers.owner.create && implied('identity.nativeLogin')) entries.push({ id: 'identity.nativeLogin', value: true });
     void layout;
     return { entries, problem: built.problem };
 }

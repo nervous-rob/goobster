@@ -173,7 +173,6 @@ export function Review({ go }: StepProps) {
             {phase.kind === 'ready' && (
                 <>
                     <dl className="wizard-facts" data-testid="review-answers">
-                        <div className="wizard-fact"><dt>Installation</dt><dd>{answers.label || 'Goobster'}</dd></div>
                         <div className="wizard-fact"><dt>Discord</dt><dd>{hasDiscordToken(answers, fields) || answers.reenter.includes('discord.token') ? 'Connected (token given)' : 'Not connected'}</dd></div>
                         <div className="wizard-fact"><dt>Owner account</dt><dd>{phase.owner ? `${answers.owner.loginName} (created after the install)` : 'Not created: sign in with Discord'}</dd></div>
                         <div className="wizard-fact"><dt>Layout</dt><dd>{layout}</dd></div>

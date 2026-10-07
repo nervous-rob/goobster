@@ -58,13 +58,14 @@ function printCredential(out, label, minted, { reveal }) {
  * @param {Object} [options.supervisorOptions] adapter/policy overrides for --supervise (tests)
  * @returns {Promise<{ code: number, server?: import('node:http').Server, manager?: Object, stop?: () => Promise<void> }>}
  */
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {} } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, logger = console, supervisorOptions = {}, installDeps = null } = {}) {
     const flags = new Set(argv);
     if (flags.has('--help') || flags.has('-h')) {
         stdout.write(`${HELP}\n`);
         return { code: 0 };
     }
     const settings = resolveSettings(env);
+    if (installDeps) settings.installDeps = installDeps;
 
     if (flags.has('--mint-bootstrap') || flags.has('--mint-recovery') || flags.has('--status')) {
         const manager = createManager({ settings, logger, extraKinds: extensions.kinds });

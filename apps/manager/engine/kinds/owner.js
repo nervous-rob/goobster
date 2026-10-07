@@ -22,7 +22,7 @@ const owner = require('../../install/owner');
 
 const INPUT_KEYS = new Set(['loginName', 'password', 'displayName']);
 const LOGIN_NAME = /^[a-z0-9][a-z0-9._-]{2,31}$/;
-const PASSWORD_MIN = 12;
+const PASSWORD_MIN = 15;
 const PASSWORD_MAX = 128;
 
 function allowed(state, via) {
