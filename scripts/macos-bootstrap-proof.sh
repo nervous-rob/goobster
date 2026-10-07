@@ -88,6 +88,23 @@ check() { local what=$1; shift; if "$@"; then pass "$what"; else fail "$what"; f
 group() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::$*"; else echo "== $*"; fi; }
 endgroup() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::endgroup::"; fi; }
 
+# What still runs or listens, for the log when a step finds something in the way.
+leftovers() {
+    echo "-- listeners on $API_PORT and $MANAGER_PORT:"; lsof -nP -iTCP:"$API_PORT" -iTCP:"$MANAGER_PORT" 2>/dev/null || true
+    echo "-- processes of $ACCOUNT:"; ps -axo pid,ppid,pgid,user,lstart,command 2>/dev/null | grep -E "^\s*PID|$ACCOUNT" | grep -v grep || true
+}
+no_account_process() { ! pgrep -u "$ACCOUNT" >/dev/null 2>&1; }
+# An uninstall ends with nothing of the service account running; the stop bound is 120 s.
+account_processes_gone() {
+    local waited=0
+    until no_account_process; do
+        waited=$((waited + 1))
+        if [ "$waited" -gt 150 ]; then leftovers; fail "a process of $ACCOUNT is still running 150 s after the uninstall"; fi
+        sleep 1
+    done
+    pass "no process of the service account is left"
+}
+
 wait_for() { # <seconds> <description> <command...>
     local limit=$1 what=$2
     shift 2
@@ -297,6 +314,7 @@ check "the plist is gone" test ! -e "$PLIST"
 check "the daemon is not loaded" bash -c '! launchctl print system/'"$LABEL"' >/dev/null 2>&1'
 check "no plist of this installation is left" test "$(plist_count)" = 0
 check "nothing answers on the api port" bash -c '! curl -fsS -m 3 http://127.0.0.1:'"$API_PORT"'/health'
+account_processes_gone
 check "the _goobster account stays by default" account_exists
 endgroup
 
@@ -316,6 +334,7 @@ check "the database is gone" test ! -e "$DATA/goobster.sqlite"
 check "the payload is gone" test ! -e "$CODE/current"
 check "the plist is gone" test ! -e "$PLIST"
 check "no plist of this installation is left" test "$(plist_count)" = 0
+account_processes_gone
 check "the _goobster account still stays (the uninstall never deletes an account)" account_exists
 endgroup
 
@@ -347,7 +366,7 @@ USER_ANSWERS="$WORK/user-answers.json"
 USER_CODE="$USER_BASE/code"
 USER_DATA="$USER_BASE/data"
 write_private "$USER_ANSWERS" "{\"ownerLabel\":\"macos per-user proof\"}" "$PERSON:staff"
-as_person env GOOBSTER_PAYLOAD_DEV_UNSIGNED=1 "$INSTALLER" --headless --answers "$USER_ANSWERS" --base "$USER_BASE" --yes > "$REPORTS/user-install.log" 2>&1 || { tail -40 "$REPORTS/user-install.log"; fail "install.command failed"; }
+as_person env GOOBSTER_PAYLOAD_DEV_UNSIGNED=1 "$INSTALLER" --headless --answers "$USER_ANSWERS" --base "$USER_BASE" --yes > "$REPORTS/user-install.log" 2>&1 || { tail -40 "$REPORTS/user-install.log"; leftovers; fail "install.command failed"; }
 pass "install.command finished for $PERSON"
 check "the payload is activated under the person's Library" test -x "$USER_CODE/current/bin/goobster-manager"
 check "the roots belong to the person" test "$(stat -f %Su "$USER_DATA")" = "$PERSON"

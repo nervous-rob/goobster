@@ -25,12 +25,34 @@ const POSIX = process.platform !== 'win32';
 const block = (code, detail) => ({ code, severity: 'block', detail });
 const warn = (code, detail) => ({ code, severity: 'warn', detail });
 
-/** @returns {Promise<'free'|'busy'|'unknown'>} */
+const PROBE_CONNECT_TIMEOUT_MS = 2000;
+
+/**
+ * Whether something listens on the loopback port. A bind that fails with
+ * EADDRINUSE is not enough on its own: on macOS a process that is not root
+ * cannot bind a port on which another account still has connections in
+ * TIME_WAIT (the ones a service that has just stopped leaves behind for about
+ * thirty seconds), so a refused bind is confirmed by connecting. A connection
+ * that is accepted means busy; one that is refused means nothing listens.
+ * @returns {Promise<'free'|'busy'|'unknown'>}
+ */
 function defaultProbePort(port, net = nodeNet) {
+    const confirm = () => new Promise((resolve) => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        socket.unref();
+        socket.setTimeout(PROBE_CONNECT_TIMEOUT_MS);
+        const done = (state) => { socket.destroy(); resolve(state); };
+        socket.once('connect', () => done('busy'));
+        socket.once('timeout', () => done('busy'));
+        socket.once('error', error => done(error && error.code === 'ECONNREFUSED' ? 'free' : 'busy'));
+    });
     return new Promise((resolve) => {
         const server = net.createServer();
         server.unref();
-        server.once('error', error => resolve(error && error.code === 'EADDRINUSE' ? 'busy' : 'unknown'));
+        server.once('error', error => {
+            if (error && error.code === 'EADDRINUSE') confirm().then(resolve);
+            else resolve('unknown');
+        });
         server.listen({ port, host: '127.0.0.1', exclusive: true }, () => server.close(() => resolve('free')));
     });
 }

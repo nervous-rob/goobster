@@ -26,13 +26,13 @@
  */
 
 const nodeFs = require('node:fs');
-const nodeNet = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const bootstrap = require('./index');
 const { defaultRoots } = require('./roots');
+const { defaultProbePort } = require('../install/preflight');
 
 const WIZARD_PORT = 3400;
 const OPEN_COMMAND = '/usr/bin/open';
@@ -78,14 +78,6 @@ function withValue(argv, flag, value) {
     if (at >= 0) out[at + 1] = value;
     else out.push(flag, value);
     return out;
-}
-
-function defaultProbePort(port) {
-    return new Promise((resolve) => {
-        const server = nodeNet.createServer();
-        server.once('error', error => resolve(error && error.code === 'EADDRINUSE' ? 'busy' : 'unknown'));
-        server.listen({ port, host: '127.0.0.1', exclusive: true }, () => server.close(() => resolve('free')));
-    });
 }
 
 function openWith(url, spawn = childProcess.spawn) {
