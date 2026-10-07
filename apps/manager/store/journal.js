@@ -132,7 +132,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
      * Append one audit record: `{ action, actor, operationId, outcome }`.
      * Never a value, a credential or a label.
      */
-    function appendAudit({ action, actor = null, operationId, outcome, via = null }) {
+    function appendAudit({ action, actor = null, operationId, outcome, via = null, forced = false }) {
         const entry = {
             version: AUDIT_VERSION,
             action: String(action),
@@ -140,6 +140,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
             operationId: String(operationId),
             outcome: String(outcome),
             via,
+            ...(forced ? { forced: true } : {}),
             at: now().toISOString(),
             reconciledAt: null
         };

@@ -25,6 +25,8 @@ const { createFeaturesSetKind } = require('./engine/kinds/featuresSet');
 const { createClaimKind, createAdoptKind, createRecoveryUnlockKind } = require('./engine/kinds/installation');
 const { existingInstallEvidence, probeAppDatabase, DEFAULT_PROBE_TIMEOUT_MS } = require('./appDatabase');
 const { reconcileAudit, pendingAuditCount } = require('./audit');
+const coreMaintenance = require('@goobster/core/runtime/maintenance');
+const { createMaintenanceStore, summarize: summarizeMaintenance, recoverOnStart } = require('./maintenance/store');
 const privileged = require('./privileged');
 const files = require('./store/files');
 
@@ -114,8 +116,17 @@ function createManager({
         return result;
     }
 
+    /** The barrier's verdict from the store alone; an unreadable file counts as active. */
+    function maintenanceBlocksWrites() {
+        const stored = coreMaintenance.readStore({ env: { GOOBSTER_MANAGER_STATE_DIR: settings.storeDir }, fs });
+        return stored.status === 'active' || stored.status === 'unreadable';
+    }
+
     function reconcile() {
         if (reconciling) return reconciling;
+        if (maintenanceBlocksWrites()) {
+            return Promise.resolve({ pending: pendingAuditCount(journal), inserted: 0, existing: 0, deferred: true, reason: 'MAINTENANCE_ACTIVE' });
+        }
         reconciling = reconcileAudit({ journal, probe: () => probe({ fresh: true }), closeAfter: true, ...reconcileDeps })
             .catch((error) => {
                 logger.warn?.(`[manager] audit reconciliation deferred: ${error && (error.code || error.name)}`);
@@ -171,7 +182,8 @@ function createManager({
             if (state.state === 'claimed') bridge.ensureKey(state.installation.installationId);
         }
         const recovered = initResult.ok ? await engine.recoverInterrupted() : [];
-        return { state, bootstrap: minted, recovered };
+        const maintenance = initResult.ok ? recoverOnStart(createMaintenanceStore({ storeDir: settings.storeDir, fs, now })) : null;
+        return { state, bootstrap: minted, recovered, maintenance };
     }
 
     /** Everything GET /status shows. No credential, hash, label, path or URL. */
@@ -196,6 +208,9 @@ function createManager({
             appDatabase,
             config: { present: config.present, readable: config.readable },
             lock: initResult.ok ? lock.describe() : { held: false },
+            maintenance: initResult.ok
+                ? summarizeMaintenance(createMaintenanceStore({ storeDir: settings.storeDir, fs, now }).read())
+                : { active: false, phase: null, fence: null, since: null, stale: false, problem: 'MANAGER_STORE_UNREADABLE' },
             audit: { pending: initResult.ok ? pendingAuditCount(journal) : 0 },
             transport: { lan: settings.lan, tls: settings.lan },
             auth: { bridge: state.state === 'claimed', strongAuthRequired: bridge.requireStrongAuth() },

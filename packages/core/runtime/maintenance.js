@@ -138,7 +138,8 @@ function readStore({ env = process.env, fs = nodeFs } = {}) {
     } catch {
         return { status: 'unreadable', fence: null, phase: null, operationId: null };
     }
-    if (!doc || typeof doc !== 'object' || doc.version !== MAINTENANCE_VERSION || !Number.isInteger(doc.fence) || doc.fence < 0) {
+    if (!doc || typeof doc !== 'object' || doc.version !== MAINTENANCE_VERSION
+        || typeof doc.active !== 'boolean' || !Number.isInteger(doc.fence) || doc.fence < 0) {
         return { status: 'unreadable', fence: null, phase: null, operationId: null };
     }
     return {
@@ -222,7 +223,7 @@ function postFenceAck({ url, worker, fence, state: ackState, pid, token, timeout
     return new Promise((resolve) => {
         let target;
         try {
-            target = new URL('/manager/api/lifecycle/ack', url);
+            target = new URL('/manager/api/maintenance/ack', url);
         } catch {
             resolve({ ok: false, error: 'BAD_URL' });
             return;

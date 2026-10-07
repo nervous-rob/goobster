@@ -12,12 +12,14 @@
 
 /** @type {Array<(api: import('express').Router, helpers: import('./server').RouteHelpers) => void>} */
 const routes = [
-    require('./routes/lifecycle').mountLifecycleRoutes
+    require('./routes/lifecycle').mountLifecycleRoutes,
+    require('./routes/maintenance').mountMaintenanceRoutes
 ];
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
 const kinds = [
-    require('./engine/kinds/lifecycle').createLifecycleKinds
+    require('./engine/kinds/lifecycle').createLifecycleKinds,
+    require('./engine/kinds/maintenance').createMaintenanceKinds
 ];
 
 module.exports = { routes, kinds };

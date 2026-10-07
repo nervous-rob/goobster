@@ -6,7 +6,9 @@
  *                      referenced change, stages it, persists the pending
  *                      revision with its deadline in lifecycle.json and
  *                      announces it; the supervisor runs the countdown.
- *                      The plan's revision is lifecycle.json `current`.
+ *                      The plan's revision is lifecycle.json `current`. Refused with
+ *                      409 MAINTENANCE_ACTIVE while the maintenance barrier is up
+ *                      (documentation/maintenance_barrier.md).
  *   lifecycle.cancel   internal (POST /lifecycle/cancel): only before the
  *                      stop-new-work signal went out.
  *   lifecycle.restart  internal (POST /lifecycle/restart-now, /lifecycle/restart):
@@ -26,6 +28,7 @@ const registry = require('../../lifecycle/registry');
 const stage = require('../../lifecycle/stage');
 const notice = require('../../lifecycle/notice');
 const { createLifecycleStore } = require('../../lifecycle/store');
+const { createMaintenanceStore } = require('../../maintenance/store');
 
 const DEFAULT_GRACE_SECONDS = 60;
 const MIN_GRACE_SECONDS = 10;
@@ -100,6 +103,10 @@ function createLifecycleKinds({ settings, fs = nodeFs, now = () => new Date() })
         if (doc.pending) {
             throw new ManagerError(409, 'RESTART_PENDING', 'A restart is already scheduled; cancel it or wait for it to finish.',
                 { revision: doc.pending.revision });
+        }
+        const maintenance = createMaintenanceStore({ storeDir: settings.storeDir, fs, now }).read();
+        if (maintenance.problem || maintenance.doc.active) {
+            throw new ManagerError(409, 'MAINTENANCE_ACTIVE', 'Maintenance is active (or its state cannot be read); a staged restart cannot be scheduled until it is released.');
         }
         const journal = createJournal({ store: ctx.store, fs, now });
         const { record } = journal.read(parsed.changeRef);
