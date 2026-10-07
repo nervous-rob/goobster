@@ -23,6 +23,7 @@ const GROUPS = [
             'cliResolver',
             'configFieldCatalog',
             'configFile',
+            'providerProbes',
             'effectiveConfig',
             'cursorAgentService',
             'dbSchemaUpgrade',
