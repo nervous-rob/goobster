@@ -5,10 +5,15 @@
 
 const spitballLensConfig = require('../../config/spitballLensConfig');
 const spitballConfig = require('../../config/spitballConfig');
+const { sendUnavailable } = require('../featureGate');
 
 function mountSpitball(app, ctx, h) {
     const { requireAuth, chatRoute, dashboardRoute } = h;
 
+    // Notes work without the research pipeline; a payload without the
+    // expeditions modules answers its routes the way a disabled feature does.
+    app.use(['/api/app/spitball/expeditions', '/api/app/spitball/briefs', '/api/app/spitball/notes/:nodeId/evidence'],
+        (req, res, next) => (ctx.spitball && ctx.briefs ? next() : sendUnavailable(res, 'expeditions')));
 
     app.get('/api/app/spitball/lenses', requireAuth, chatRoute(async () => ({
         lenses: spitballLensConfig.listLenses(),
