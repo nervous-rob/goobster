@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from '../lib/api';
 import type { InstallOperation } from '../lib/types';
 import { useTransport } from './transport';
-import { describeError, Details, LiveRegion, stepLabel, StepList } from './ui';
+import { describeError, Details, LiveRegion, ServiceOutcome, stepLabel, StepList } from './ui';
 
 export type RunPhase = 'loading' | 'ready' | 'running' | 'applied' | 'failed' | 'gone';
 
@@ -137,6 +137,7 @@ export function OperationProgress({ run, title, autoStart, kept, failureHelp, ch
                 <StepList planned={planned} done={operation.steps} status={operation.status} failedStep={failedStep} />
             )}
             {run.phase === 'applied' && <p role="status" className="wizard-success" data-testid="operation-applied">Finished.</p>}
+            {run.phase === 'applied' && <ServiceOutcome result={run.result} />}
             {run.phase === 'failed' && (
                 <div className="wizard-errors" role="alert" data-testid="operation-failed">
                     <strong>{interrupted ? 'This was interrupted.' : `${title} did not finish.`}</strong>
