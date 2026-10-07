@@ -231,6 +231,9 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
         }
 
         if (result.status === 'done') {
+            try {
+                serviceRecord.recordTemplate(storeDir(), { kind: def.kind, name: def.serviceName, templateHash: require('../update/serviceTemplate').hashOf(def) }, { fs });
+            } catch { }
             ctx.scratch.service = { registered: true, kind: def.kind, name: def.serviceName, unit: def.installedFileName(def.serviceName), runtimeUser, active: result.detail && result.detail.active ? result.detail.active : null, mode };
             return { status: 'done', detail: { ...detail, privileged: 'service.register', outcome: result.outcome, via: result.via || null, active: result.detail ? result.detail.active || null : null, warnings, log: result.log || [] } };
         }

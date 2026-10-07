@@ -20,6 +20,7 @@ const release = require('../install/release');
 const registry = require('../lifecycle/registry');
 const { createBarrier } = require('../maintenance/barrier');
 const { createChildRunner } = require('../backup/runChild');
+const { createServiceRefresh } = require('./serviceTemplate');
 
 /** The exit code a manager leaves with to be restarted by the OS supervisor on the new release. 75 is the workers'. */
 const EXIT_SELF_UPDATE = 76;
@@ -256,11 +257,22 @@ function createApplier({ core, store, journal, logger = console }) {
         return { releaseId: h.to.releaseId };
     }
 
+    /**
+     * After a successful update, and after the barrier is lifted (it is not part of the downtime): re-register the
+     * operating-system service when the new release renders a different definition. Never fails the update.
+     */
+    async function refreshService(h) {
+        const refresher = createServiceRefresh({ core: core.install, settings, store, journal, fs, now });
+        const out = await refresher.refresh({ operationId: h.operationId, actor: h.actor || null, via: h.via || null });
+        return ['none', 'unregistered', 'unchanged', 'baseline'].includes(out.template) ? null : out;
+    }
+
     /** Step `release`: lift the barrier, measure the downtime, forget the handoff. */
     async function releasePhase(h, { outcome = 'applied', code = null } = {}) {
         const out = await releaseBarrier(h, { acknowledgeMutation: outcome !== 'applied' });
         const releasedAtMs = now().getTime();
         const downtimeMs = h.quiescedAtMs ? Math.max(0, releasedAtMs - h.quiescedAtMs) : null;
+        const service = outcome === 'applied' ? await refreshService(h) : null;
         const last = state.write('last-apply', {
             outcome,
             ...(code ? { code } : {}),
@@ -270,12 +282,13 @@ function createApplier({ core, store, journal, logger = console }) {
             schemaChanging: Boolean(h.schemaChanging),
             ...(downtimeMs === null ? {} : { downtimeMs }),
             ...(h.backup ? { backup: { verified: true, at: h.backup.at } } : {}),
+            ...(service ? { service } : {}),
             finishedAt: stamp()
         });
         state.clear('handoff');
         state.clear('watchdog');
         state.clear('recovery');
-        return { outcome, downtimeMs, barrier: out.outcome, last };
+        return { outcome, downtimeMs, barrier: out.outcome, last, ...(service ? { service } : {}) };
     }
 
     /** The end of a successful apply: verify (done by the caller), cutover and release. */

@@ -204,7 +204,7 @@ function describeResult(sub, result) {
     }
     if (sub === 'apply') {
         if (result.outcome === 'scheduled') return ['scheduled   outside the window; it applies when the window opens'];
-        if (result.outcome === 'applied') return [`applied     ${result.from} -> ${result.to}, downtime ${result.downtimeMs} ms${result.backup ? ', verified backup taken first' : ''}`];
+        if (result.outcome === 'applied') return [`applied     ${result.from} -> ${result.to}, downtime ${result.downtimeMs} ms${result.backup ? ', verified backup taken first' : ''}`, ...(result.service ? [`service     registration ${result.service.template}${result.service.code ? ` (${result.service.code})` : ''}`] : [])];
         return [`handed over ${result.from} -> ${result.to}`, `            ${result.handoff}`];
     }
     if (sub === 'policy') return [`policy      ${result.policy.mode}, channel ${result.policy.channel}, source ${result.policy.source ? result.policy.source.kind : 'default'}${result.policy.window ? ', window set' : ''}`];

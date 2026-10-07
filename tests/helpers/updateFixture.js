@@ -124,11 +124,12 @@ async function publish(roots, key, payload, { channel = 'stable', corrupt = null
 }
 
 /** A manager installed from `base` (signed by `key`), with the directory source `sourceDir` and the update seams. */
-async function installBase({ roots, key, base, sourceDir = null, policy = null, updateDeps = {}, env = {}, answer }) {
+async function installBase({ roots, key, base, sourceDir = null, policy = null, updateDeps = {}, env = {}, installDeps = {}, answer }) {
     const root = tempDir(roots, 'update');
     const harness = await newHarness({
         root,
         env: { GOOBSTER_RELEASE_PUBLIC_KEY_FILE: key.publicKeyPath, ...env },
+        installDeps,
         updateDeps: { runsFromPayload: false, backupEstimate: 0, freeBytes: () => null, ...updateDeps }
     });
     await drive(harness, 'install.new', { source: base.dir, features: ['tavern'], release: { publicKeyFiles: [key.publicKeyPath] }, ...(answer === undefined ? {} : { update: answer }) });

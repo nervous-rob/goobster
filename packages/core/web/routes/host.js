@@ -614,7 +614,8 @@ function mountHost(app, ctx, h) {
                 fromVersion: (result && result.from) || null,
                 toVersion: (result && result.to) || null,
                 schemaChanging: Boolean(result && result.schemaChanging),
-                ...(result && result.downtimeMs !== undefined ? { downtimeMs: result.downtimeMs } : {})
+                ...(result && result.downtimeMs !== undefined ? { downtimeMs: result.downtimeMs } : {}),
+                ...(result && result.service ? { service: result.service.template || null } : {})
             };
         case 'update.policy': {
             const policy = (result && result.policy) || {};

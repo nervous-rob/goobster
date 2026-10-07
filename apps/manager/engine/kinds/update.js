@@ -558,6 +558,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     const h = state.read('handoff');
                     const out = await A().releasePhase(h, { outcome: 'applied' });
                     ctx.scratch.downtimeMs = out.downtimeMs;
+                    ctx.scratch.service = out.service || null;
                     ctx.scratch.applied = true;
                     return { detail: { downtimeMs: out.downtimeMs } };
                 })
@@ -570,7 +571,8 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     outcome: applied ? 'applied' : 'handoff-pending',
                     ...(h ? { from: h.from.version, to: h.to.version, schemaChanging: h.schemaChanging } : {}),
                     ...(applied ? { downtimeMs: scratch.downtimeMs } : { handoff: scratch.modeAtHandoff === 'exit' ? 'The manager is leaving with exit code 76; the OS service restarts it on the new release and it finishes the update.' : 'The new release is in place; the manager completes the update when it next starts.' }),
-                    ...(scratch.backup ? { backup: { verified: true, at: scratch.backup.at } } : {})
+                    ...(scratch.backup ? { backup: { verified: true, at: scratch.backup.at } } : {}),
+                    ...(scratch.service ? { service: scratch.service } : {})
                 };
             },
             auditDetail: (record, scratch) => scratch.scheduled
