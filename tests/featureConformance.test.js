@@ -254,8 +254,15 @@ async function call(method, reqPath, { headers = {}, body } = {}) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
     }
-    const res = await fetch(`${portalBase}${reqPath}`, init);
-    const text = await res.text();
+    init.signal = AbortSignal.timeout(3000);
+    let res;
+    let text;
+    try {
+        res = await fetch(`${portalBase}${reqPath}`, init);
+        text = await res.text();
+    } catch (error) {
+        return { status: 0, json: null, text: `no answer: ${error.name}`, headers: new Headers() };
+    }
     let json = null;
     try { json = JSON.parse(text); } catch { /* not JSON */ }
     return { status: res.status, json, text, headers: res.headers };
