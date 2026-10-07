@@ -13,7 +13,7 @@ const {
 } = require('discord.js');
 const { parseTrackName, formatTrackName, createTrackListUI } = require('@goobster/core/utils/musicUtils');
 const { voiceService } = require('@goobster/core/services/serviceManager');
-const config = require('../../../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 
 // Helper function to check if a user is in the same voice channel as the bot
 function isUserInBotVoiceChannel(interaction) {

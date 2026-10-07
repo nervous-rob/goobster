@@ -38,7 +38,7 @@ Remember:
  */
 function getBasePrompt() {
     try {
-        return require('../../../config.json').DEFAULT_PROMPT
+        return require('../config/configJson').load().DEFAULT_PROMPT
             || FALLBACK_PERSONALITY;
     } catch {
         return FALLBACK_PERSONALITY;
