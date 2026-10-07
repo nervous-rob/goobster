@@ -28,6 +28,7 @@ const GROUPS = [
             'dmCommands',
             'postgresConnectRetry',
             'executionLease',
+            'featureInventory',
             'gatewaySeam',
             'githubService',
             'globalCommandPayload',

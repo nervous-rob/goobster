@@ -33,28 +33,32 @@ portal shell and operator pages, settings, utility commands, privacy
 (`/forget-me`, `/what-do-you-know-about-me`, retention), memory storage,
 export and erasure, Inbox and system notices, self-docs, the work ledger.
 
-Optional features, each with its own switch:
+Optional features, each with its own switch. Ids are the catalog keys;
+the full ownership inventory and the evidence for each dependency are in
+`documentation/feature_inventory.md` (audit result of #316).
 
-| Feature | Notes |
+| Feature (id) | Notes |
 |---|---|
-| Music | Music Lab, downloads, the python venv (yt-dlp, spotdl). Depends on Voice. |
-| Voice | Voice chat and TTS without Music. Needs ffmpeg. |
-| Tavern | Adventure mode. |
-| Exchange | Trading, margin, options, futures, the risk engine. Depends on Economy. |
-| Economy | Games and point features. Shared accounting may stay infrastructure (see audit E1). |
-| Projects | Project rooms, agents, mission-control threads. |
-| MCP | The MCP access mechanism; exposes only installed features. |
-| Knowledge (Spitball) | Knowledge editing and graph tools. |
-| Expeditions | Autonomous research. Depends on Knowledge. |
-| Sandbox | The code-execution runner and tools. |
-| GitHub | Integration. |
-| Cursor | Integration. Grouped with GitHub in the wizard, separate switch. |
-| Screen Vision | |
-| Observatory | |
-| Activity (Discord Activity) | The embedded app and its workers. Inbox and notices stay. |
-| Discord adapter | Independent adapter (`config/discordConfig.js`). |
-| Push | Independent adapter. |
-| Mail | Delivery integration. Disabling is refused while registration or account recovery requires it, with the reason shown. |
+| Music (`music`) | Music Lab / Song Studio, generation and ambience, library, downloads, the python venv (yt-dlp, spotdl). No dependency on Voice; only the Discord playback surfaces also require Voice and Discord. |
+| Voice (`voice`) | Voice chat, TTS/STT, live voice. Owns ffmpeg. |
+| Tavern (`tavern`) | Adventure mode. |
+| Economy (`economy`) | Points and accounting (E1: accounting is the feature, not infrastructure). New-install default off (#261). |
+| Exchange (`exchange`) | Trading (incl. the stock game), margin, options, futures, perps, the risk engine. Depends on Economy. New-install default off (#261). |
+| Gambling (`gambling`) | `/gamble`, the wheel, predictions, casino table games. Depends on Economy; wheel and predictions also require Exchange. New-install default off with operator attestation (#261). |
+| Projects (`projects`) | Project rooms, missions, triggers, applets promotion. |
+| Observatory (`observatory`) | Runs, jobs, render. Depends on Projects and Sandbox. |
+| Sandbox (`sandbox`) | The code-execution runner and tools. |
+| MCP (`mcp`) | The MCP access mechanism; exposes only available features, requires none of them. |
+| Knowledge (Spitball) (`knowledge`) | Knowledge editing: notes, transfers, attachments, the Knowledge room. No legacy switch. |
+| Expeditions (`expeditions`) | Autonomous research and briefs. Depends on Knowledge. |
+| GitHub (`github`) | Integration, webhook receiver, issue capture. |
+| Cursor (`cursor`) | Integration, agent tracker and mission-control threads. Depends on GitHub. Grouped with GitHub in the wizard, separate switch. |
+| Screen Vision (`screenVision`) | Companion page and WebSocket. |
+| GBA (`gba`) | The GBA harness and `clients/gba-mcp`. Separate switch (#261). |
+| Discord Activity (`discordActivity`) | The embedded Activity transport only. Depends on the Discord adapter. Inbox and notices stay. |
+| Discord adapter (`discord`) | Independent adapter (`config/discordConfig.js`). |
+| Push (`push`) | Independent adapter. |
+| Mail (`mail`) | Delivery integration. Disabling is refused while native login is on and registration is open; a warning when verified addresses exist otherwise (M1). |
 
 Memory recall and consolidation stay settings (`ai.memory.enabled`), not a
 feature.
@@ -64,6 +68,18 @@ feature.
 ### Phase 1: catalog and gating
 
 Deliverable: a disabled feature cannot execute. Code may still load.
+
+Status (issues #316 - #322 under epic #315):
+
+| Issue | Scope | State |
+|---|---|---|
+| #316 | Audits E1/T1/R1/S1/M1, ownership inventory, ADR 0013 accepted | Inventory module `packages/core/features/inventory.js`, spec `tests/featureInventory.test.js`, `documentation/feature_inventory.md` (PR pending review) |
+| #317 | `catalog.js` + `featureState.js` contract | Not started |
+| #318 | Command loader / deploy, `coreRuntime.step()`, `messageCreate` and interaction gating | Not started |
+| #319 | AI tool registry, `runAgentLoop`, MCP gating | Not started |
+| #320 | HTTP / WS / Activity / internal route gating | Not started |
+| #321 | Portal rooms, tutorials, `consultDocs` availability | Not started |
+| #322 | Cross-surface conformance and dormant-data tests | Not started |
 
 Work:
 
@@ -80,7 +96,8 @@ Work:
    - HTTP routes (404 for a disabled feature's routes; the manager and
      operator routes are never gated);
    - `apps/bot/events/messageCreate.js` gates (the mission-control gate
-     short-circuits when Projects is off; the order of gates is unchanged);
+     short-circuits when Cursor is off, the GBA advice gate when GBA is
+     off; the order of gates is unchanged);
    - portal navigation and rooms;
    - `consultDocs` results, annotated (not hidden) for disabled features
      via a `feature:` front-matter key on the doc.
@@ -201,15 +218,15 @@ Postgres instances the manager owns, as a separate labelled workflow.
 
 ## Audits before implementation
 
-| Id | Question | Needed by |
-|---|---|---|
-| E1 | Which services read or write points outside Economy and Exchange? Decides whether accounting is infrastructure. | Phase 1 |
-| T1 | Which AI tools belong to which feature; which are core. | Phase 1 |
-| R1 | Every route under `packages/core/web/routes/` mapped to a feature or to core. | Phase 1 |
-| S1 | Every `coreRuntime` step and every `index.js` startup side effect mapped to a feature. | Phase 1 |
-| M1 | Mail's registration and account-recovery dependencies. | Phase 1 |
-| L1 | Long-running work (expeditions, sandbox, voice sessions) and its current interruption behaviour. | Phase 2 |
-| N1 | Prebuild availability for each native module on each target, pinned to the bundled Node ABI. | Phase 3 |
+| Id | Question | Needed by | Result |
+|---|---|---|---|
+| E1 | Which services read or write points outside Economy and Exchange? Decides whether accounting is infrastructure. | Phase 1 | Done (#316). No caller outside Economy, Exchange, Gambling and the Activity except `privacyService` (core exception) and `automationService.executeWheel` (gated inside the core step). Accounting is the `economy` feature; `exchange` and `gambling` depend on it. `documentation/feature_inventory.md` § E1. |
+| T1 | Which AI tools belong to which feature; which are core. | Phase 1 | Done (#316). 53 registry tools + `web_search` claimed in `inventory.js` `aiTools`; `execute()` gating gap recorded for #319. § T1. |
+| R1 | Every route under `packages/core/web/routes/` mapped to a feature or to core. | Phase 1 | Done (#316). Every mounted route (core routers and bot-side mounts), WS path and static bundle claimed by the ordered `routeRules`; checked by the inventory spec. § R1. |
+| S1 | Every `coreRuntime` step and every `index.js` startup side effect mapped to a feature. | Phase 1 | Done (#316). 20 steps (13 core, 7 single-owner), startup side effects, 26 listeners and 17 interaction families claimed; bundled core steps gate feature branches inside (#318). § S1. |
+| M1 | Mail's registration and account-recovery dependencies. | Phase 1 | Done (#316). Refuse disabling while `identity.nativeLogin && registration === 'open'`; warn when verified addresses exist otherwise; operator recovery link never needs mail. § M1. |
+| L1 | Long-running work (expeditions, sandbox, voice sessions) and its current interruption behaviour. | Phase 2 | Open |
+| N1 | Prebuild availability for each native module on each target, pinned to the bundled Node ABI. | Phase 3 | Open |
 
 ## Compatibility rules
 
