@@ -567,7 +567,9 @@ async function seed() {
 
 async function main() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    const observatory = await seed();
+    // GOOBSTER_E2E_KEEP_DB=1 restarts on an existing data dir without
+    // re-seeding (featureAvailability.spec.js restarts a second instance).
+    const observatory = process.env.GOOBSTER_E2E_KEEP_DB === '1' ? makeObservatory() : await seed();
     // Dedicated operator identities for safe Host tutorial journeys only.
     for (let mode = 0; mode < 3; mode++) {
         const principalId = `9900000000000039${mode}`;

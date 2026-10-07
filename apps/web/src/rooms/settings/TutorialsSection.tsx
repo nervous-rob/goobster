@@ -77,8 +77,8 @@ export function TutorialsSection() {
                         const progress = data.progress.find((p) => p.tutorialId === entry.id);
                         const status = statusOf(progress);
                         const unavailable = entry.available === false;
-                        const canResume = !unavailable && status === 'in_progress' || status === 'paused'
-                            || (status === 'not_started' && entry.launchable);
+                        const canResume = !unavailable && (status === 'in_progress' || status === 'paused'
+                            || (status === 'not_started' && entry.launchable));
                         const canReplay = !unavailable && status !== 'not_started';
                         const seen = progress
                             ? progress.completedStepIds.length + progress.skippedStepIds.length
