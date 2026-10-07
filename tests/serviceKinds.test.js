@@ -200,6 +200,46 @@ describe('the install steps follow the kind definition', () => {
     });
 });
 
+describe('the bootstrap default roots per platform sit under the bases the setup pages accept', () => {
+    const { defaultRoots } = require('@goobster/manager/bootstrap/roots');
+    const paths = require('@goobster/manager/install/paths');
+
+    test('Linux keeps its roots', () => {
+        expect(defaultRoots({ env: {}, euid: 0, platform: 'linux' }).code).toBe('/opt/goobster');
+        expect(defaultRoots({ env: {}, euid: 1000, home: '/home/x', platform: 'linux' }).code).toBe('/home/x/.local/share/goobster/code');
+    });
+
+    test('macOS: /opt/goobster for the machine, ~/Library/Application Support/Goobster per user', () => {
+        const machine = defaultRoots({ env: {}, euid: 0, platform: 'darwin' });
+        const person = defaultRoots({ env: {}, euid: 501, home: '/Users/a', platform: 'darwin' });
+        expect(machine).toMatchObject({ code: '/opt/goobster/code', config: '/opt/goobster/config/config.json', managerStore: '/opt/goobster/data/manager' });
+        expect(person).toMatchObject({ code: '/Users/a/Library/Application Support/Goobster/code', logs: '/Users/a/Library/Application Support/Goobster/logs' });
+        const bases = paths.allowedBases({ home: '/Users/a', platform: 'darwin', env: {} });
+        for (const roots of [machine, person]) for (const value of Object.values(roots)) expect(bases.some(base => value === base || value.startsWith(`${base}/`))).toBe(true);
+        expect(defaultRoots({ env: {}, euid: 501, base: '/Volumes/Data/g', platform: 'darwin' }).data).toBe('/Volumes/Data/g/data');
+    });
+
+    test('Windows: %ProgramData%\\Goobster when elevated, %LOCALAPPDATA%\\Goobster per user, drive-letter fallbacks', () => {
+        const env = { LOCALAPPDATA: 'C:\\Users\\a\\AppData\\Local', ProgramData: 'C:\\ProgramData', SystemDrive: 'C:' };
+        const machine = defaultRoots({ env, euid: null, elevated: true, platform: 'win32' });
+        const person = defaultRoots({ env, euid: null, elevated: false, platform: 'win32' });
+        expect(machine).toEqual({
+            code: 'C:\\ProgramData\\Goobster\\code',
+            data: 'C:\\ProgramData\\Goobster\\data',
+            config: 'C:\\ProgramData\\Goobster\\config\\config.json',
+            cache: 'C:\\ProgramData\\Goobster\\cache',
+            logs: 'C:\\ProgramData\\Goobster\\logs',
+            managerStore: 'C:\\ProgramData\\Goobster\\data\\manager'
+        });
+        expect(person.code).toBe('C:\\Users\\a\\AppData\\Local\\Goobster\\code');
+        const bases = paths.allowedBases({ home: 'C:\\Users\\a', platform: 'win32', env });
+        for (const roots of [machine, person]) for (const value of Object.values(roots)) expect(paths.isUnderAllowedBase(value, bases, { platform: 'win32' })).toBe(true);
+        expect(defaultRoots({ env: {}, elevated: true, platform: 'win32' }).code).toBe('C:\\ProgramData\\Goobster\\code');
+        expect(defaultRoots({ env: { SystemDrive: 'D:' }, elevated: false, home: 'D:\\Users\\b', platform: 'win32' }).code).toBe('D:\\Users\\b\\AppData\\Local\\Goobster\\code');
+        expect(defaultRoots({ env, elevated: false, base: 'D:\\Goobster', platform: 'win32' }).config).toBe('D:\\Goobster\\config\\config.json');
+    });
+});
+
 describe('the elevation runner takes what differs per platform from the platform module', () => {
     test('serviceFacts is asked before service.register (systemdFacts still answers for the Linux module)', () => {
         expect(elevate.serviceFactsOf({ serviceFacts: () => ({ available: false, reason: 'SCM_UNAVAILABLE', state: 'stopped' }) }, {})).toMatchObject({ available: false, reason: 'SCM_UNAVAILABLE' });
