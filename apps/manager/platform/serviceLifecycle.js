@@ -64,6 +64,8 @@ function manualInstructions({ codeRoot, mode, nodePath, unitFile }) {
     };
 }
 
+const MAY_HAVE_WRITTEN = new Set(['COMMAND_FAILED', 'HELPER_FAILED', 'HELPER_PROTOCOL']);
+
 function shellQuote(value) {
     return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${String(value).replace(/'/g, "'\\''")}'`;
 }
@@ -210,6 +212,9 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
             return { status: 'done', detail: { ...detail, privileged: 'service.register', outcome: result.outcome, via: result.via || null, active: result.detail ? result.detail.active || null : null, warnings, log: result.log || [] } };
         }
         if (result.status === 'failed') {
+            // A refusal wrote nothing: the record must not claim a unit that is not ours. A command that died half way may have
+            // left our unit behind, so the record stays and a resumed install (or an uninstall) finishes or removes it.
+            if (!MAY_HAVE_WRITTEN.has(result.code)) takeBackRecord(ctx, doc);
             const { ManagerError } = require('../errors');
             throw new ManagerError(409, result.code || 'HELPER_FAILED', result.message || 'The service could not be registered.', { privileged: 'service.register', log: result.log || [] });
         }
