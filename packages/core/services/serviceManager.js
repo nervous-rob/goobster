@@ -41,7 +41,7 @@ function getVoiceService() {
     }
 
     const VoiceService = require('./voice');
-    const config = require('../../../config.json');
+    const config = require('../config/configJson').load();
     instance = new VoiceService(config);
     instance.initialize().catch(error => {
         console.error('Failed to initialize voice service during startup:', error);
