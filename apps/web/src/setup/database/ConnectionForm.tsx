@@ -59,9 +59,11 @@ export function ConnectionForm({ value, onChange, problems = [], passwordLabel =
  * "Test connection": the manager's read-only probe. Nothing is created or
  * changed on the server or on this machine; the answer is a report.
  */
-export function TestConnection({ value, onReport, needPassword = true, children }: {
+export function TestConnection({ value, onReport, onProblems, needPassword = true, children }: {
     value: DatabaseAnswer;
     onReport?: (report: DatabaseReport | null) => void;
+    /** What is wrong with the form itself, so the fields can show it. */
+    onProblems?: (problems: FormProblem[]) => void;
     needPassword?: boolean;
     children?: (report: DatabaseReport, stale: boolean) => ReactElement | null;
 }) {
@@ -78,6 +80,7 @@ export function TestConnection({ value, onReport, needPassword = true, children 
     async function run() {
         const problems = connectionProblems(value, { needPassword });
         setLocal(problems);
+        onProblems?.(problems);
         setFailure(null);
         if (problems.length > 0) return;
         const signature = signatureOf(value);

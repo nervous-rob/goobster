@@ -6,7 +6,7 @@ import { useDatabaseApi } from '../database/api';
 import { ConnectionForm, TestConnection } from '../database/ConnectionForm';
 import { ConnectPlan, SchemaPlan } from '../database/DatabasePlans';
 import { EngineGuidance, FailureHelp, ServerStorageBlock, StorageOwnership, ThreeKinds } from '../database/Explain';
-import { connectionBody, connectionProblems, isLoopback, usable, type DatabaseAnswer } from '../database/model';
+import { connectionBody, connectionProblems, isLoopback, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
 import { Provision } from '../database/Provision';
 import { blocks } from '../plan';
 import { OperationProgress, useRun } from '../run';
@@ -92,7 +92,7 @@ function ConnectionStep({ mode, go }: { mode: 'connect' | 'schema'; go: Go }) {
     const status = useDatabaseStatus();
     const database = answers.database;
     const [report, setReport] = useState<DatabaseReport | null>(null);
-    const [shown, setShown] = useState(false);
+    const [shown, setShown] = useState<FormProblem[]>([]);
     const setDatabase = (next: DatabaseAnswer) => update((previous) => ({
         ...previous,
         database: { ...next, engine: 'postgres' },
@@ -101,7 +101,7 @@ function ConnectionStep({ mode, go }: { mode: 'connect' | 'schema'; go: Go }) {
     useEffect(() => {
         if (database.engine !== 'postgres') update((previous) => ({ ...previous, database: { ...previous.database, engine: 'postgres' } }));
     }, [database.engine, update]);
-    const problems = shown ? connectionProblems(database) : [];
+    const problems = shown;
     const state = report?.schema?.state;
     const ready = mode === 'connect' ? usable(report) : Boolean(report && report.verdict.ok && (state === 'empty' || state === 'goobster-older'));
     const reason = mode === 'schema' && report && !ready && report.verdict.ok
@@ -116,12 +116,12 @@ function ConnectionStep({ mode, go }: { mode: 'connect' | 'schema'; go: Go }) {
                     : 'Brings Goobster\'s tables up to date in a database it already uses, or creates them in an empty schema. Never touches a schema that holds anything else.'}>
                 {mode === 'connect' && <EngineGuidance layout={status.data?.layout || 'lite'} engine="postgres" />}
                 <ConnectionForm value={database} onChange={setDatabase} problems={problems} passwordLabel={mode === 'connect' ? 'Password of the application user' : 'Password'} />
-                <TestConnection value={database} onReport={setReport} />
+                <TestConnection value={database} onReport={setReport} onProblems={setShown} />
                 {mode === 'connect' && <Provision value={database} report={report} onDone={() => setReport(null)} />}
                 <ServerStorageBlock host={database.host} port={database.port} database={database.database} schema={database.schema} local={database.host !== '' && isLoopback(database.host)} />
                 {reason && <p className="hint" role="status" data-testid="schema-reason">{reason}</p>}
                 <StepNav onBack={() => go('status')}
-                    onNext={() => { if (!ready) { setShown(true); return; } go(mode === 'connect' ? 'review-connect' : 'review-schema'); }}
+                    onNext={() => { if (!ready) { setShown(connectionProblems(database)); return; } go(mode === 'connect' ? 'review-connect' : 'review-schema'); }}
                     nextLabel="Review" nextDisabled={!ready} />
             </StepFrame>
         </JourneyFrame>

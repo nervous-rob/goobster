@@ -3,15 +3,12 @@ import type { DatabaseReport } from '../../lib/types';
 import { DATABASE_PASSWORD, useAnswers } from '../answers';
 import { ConnectionForm, TestConnection } from '../database/ConnectionForm';
 import { EngineGuidance, ServerStorageBlock, StorageOwnership } from '../database/Explain';
-import { connectionProblems, isLoopback, MANAGED_LATER, usable, type DatabaseAnswer } from '../database/model';
+import { connectionProblems, isLoopback, MANAGED_LATER, usable, type DatabaseAnswer, type FormProblem } from '../database/model';
 import { Provision } from '../database/Provision';
 import { useConfigReport, useSuggest } from '../data';
 import { layoutFor } from '../model';
 import { describeError, formatBytes, StepFrame, StepNav } from '../ui';
 import type { StepProps } from './order';
-
-/** Kept for the callers that named it before the chooser existed; the text is the same sentence. */
-export const POSTGRES_LATER = MANAGED_LATER;
 
 /**
  * Where the data lives: one file on this machine, or a PostgreSQL server that
@@ -28,14 +25,14 @@ export function Database({ go }: StepProps) {
     const layout = layoutFor(answers, fields);
     const database = answers.database;
     const [report, setReport] = useState<DatabaseReport | null>(null);
-    const [shownProblems, setShownProblems] = useState(false);
+    const [shown, setShown] = useState<FormProblem[]>([]);
     const postgres = database.engine === 'postgres';
     const setDatabase = (next: DatabaseAnswer) => update((previous) => ({
         ...previous,
         database: next,
         reenter: next.password ? previous.reenter.filter((id) => id !== DATABASE_PASSWORD) : previous.reenter
     }));
-    const problems = postgres && shownProblems ? connectionProblems(database) : [];
+    const problems = postgres ? shown : [];
     const ready = !postgres || usable(report);
 
     return (
@@ -89,7 +86,7 @@ export function Database({ go }: StepProps) {
             {postgres && (
                 <>
                     <ConnectionForm value={database} onChange={(next) => setDatabase(next)} problems={problems} passwordLabel="Password of the application user" />
-                    <TestConnection value={database} onReport={setReport} />
+                    <TestConnection value={database} onReport={setReport} onProblems={setShown} />
                     <Provision value={database} report={report} onDone={() => setReport(null)} />
                     <ServerStorageBlock host={database.host} port={database.port} database={database.database} schema={database.schema} local={database.host !== '' && isLoopback(database.host)} />
                     <StorageOwnership engine="postgres" />
@@ -101,7 +98,7 @@ export function Database({ go }: StepProps) {
                 </>
             )}
             <StepNav onBack={() => go('connections')}
-                onNext={() => { if (postgres && !usable(report)) { setShownProblems(true); return; } go('defaults'); }}
+                onNext={() => { if (postgres && !usable(report)) { setShown(connectionProblems(database)); return; } go('defaults'); }}
                 nextDisabled={!data || (postgres && !ready)} />
         </StepFrame>
     );
