@@ -5,12 +5,13 @@
  * throwaway installation under the OS temp folder (e2e/setupHarness.js); the
  * only fake is the AI provider, a local stand-in for Ollama.
  */
+/* global window, document */
 const fs = require('node:fs');
 const path = require('node:path');
 const { test, expect } = require('@playwright/test');
-const { createSecondServer, login } = require('./helpers');
+const { createSecondServer } = require('./helpers');
 const C = require('./constants');
-const { createSetupInstallation, waitFor, REPLY } = require('./setupHarness');
+const { createSetupInstallation, REPLY } = require('./setupHarness');
 
 const ARTIFACTS = process.env.GOOBSTER_E2E_ARTIFACTS || '/opt/cursor/artifacts';
 const PASSWORD = 'plain-walnut-ladder-kettle-7';
