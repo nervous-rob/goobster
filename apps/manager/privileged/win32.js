@@ -491,7 +491,7 @@ function serviceFacts({ env = process.env, exec = null } = {}) {
 
 function unsafeForArgument(value) {
     // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
-    return typeof value !== 'string' || !path.win32.isAbsolute(value) || /[\u0000-\u001f"]/.test(value);
+    return typeof value !== 'string' || !path.isAbsolute(value) || /[\u0000-\u001f"]/.test(value);
 }
 
 function psQuote(value) {
@@ -572,8 +572,8 @@ async function transport({ plan, request, nodePath, helperPath, requestDir, spaw
     if (typeof operation !== 'string' || !/^[a-z]+\.[a-z]+$/.test(operation)) return failed('BAD_REQUEST');
 
     const systemRoot = systemRootOf(env);
-    const requestFile = path.win32.join(requestDir, `${operation}.request.json`);
-    const replyFile = path.win32.join(requestDir, `${operation}.reply.json`);
+    const requestFile = path.join(requestDir, `${operation}.request.json`);
+    const replyFile = path.join(requestDir, `${operation}.reply.json`);
     try {
         fs.mkdirSync(requestDir, { recursive: true });
         fs.writeFileSync(requestFile, `${request}\n`);

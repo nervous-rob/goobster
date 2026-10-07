@@ -50,7 +50,7 @@ module.exports = Object.freeze({
     serviceName: SERVICE_NAME,
     fallbackFileName: FALLBACK_FILE_NAME,
     installedFileName: () => xml.XML_FILE_NAME,
-    installedPath: (name, { roots }) => xml.servicePaths(roots).xml,
+    installedPath: (name, { roots }) => path.join(roots.managerStore, xml.SERVICE_DIR_NAME, xml.XML_FILE_NAME),
     render: ({ name, installationId, runtimeUser, codeRoot, roots, layout }) => xml.renderXml({ name, installationId, runtimeUser, codeRoot, roots, layout }),
     manualInstructions,
     statusCommand: `sc.exe query ${SERVICE_NAME}`,
