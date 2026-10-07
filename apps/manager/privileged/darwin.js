@@ -401,8 +401,9 @@ function createHandler(deps = {}) {
         } else {
             log.push('plist unchanged');
         }
-        // launchd refuses a LaunchDaemon that is not root:wheel and not writable by others.
-        if (scope === 'machine' && !sandbox) run(log, 'chown', ['root:wheel', '--', file]);
+        // launchd refuses a LaunchDaemon that is not root:wheel and not writable by others. BSD chown has no
+        // `--`; the paths are absolute by protocol, so none can read as an option.
+        if (scope === 'machine' && !sandbox) run(log, 'chown', ['root:wheel', file]);
         fs.chmodSync(file, 0o644);
 
         const label = plistText.labelFor(input.name);
@@ -475,7 +476,7 @@ function createHandler(deps = {}) {
         const allowed = [0, user.uid];
         if (invokerUid !== null && invokerUid !== undefined) allowed.push(invokerUid);
         if (!sandbox && !allowed.includes(stat.uid)) throw refuse('ROOT_NOT_OWNED', 'A root to hand over belongs to another account; nothing was changed there.');
-        run(log, 'chown', ['-R', '-h', `${user.name}:${user.gid}`, '--', target]);
+        run(log, 'chown', ['-R', '-h', `${user.name}:${user.gid}`, target]);
         return true;
     }
 
