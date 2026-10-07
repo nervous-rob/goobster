@@ -8,9 +8,12 @@
  *   install.uninstall    remove the owned code (and, only when asked and
  *                        confirmed, the owned data roots)
  *
- * None of them is plannable over HTTP: they take paths, so they are planned
- * in-process (the headless CLI; the portal routes of #326/#330 later) with
- * `engine.plan(kind, input, auth, { internal: true })`.
+ * They are public: the setup pages and the portal's Host room plan them over
+ * HTTP (documentation/manager_install.md "Over HTTP"). They take paths, so a
+ * caller that is not `local` (the command line) is held to the allowed bases
+ * (install/paths.js `allowedBases`, finding ROOT_OUTSIDE_ALLOWED_BASES), and
+ * an anonymous caller never reaches them: `allowed` admits only a local
+ * command, a portal assertion, or a setup/recovery session.
  *
  * Every step verifies what it finds before it acts, records one of
  * `done|skipped|failed|deferred` in the operation record's `progress`
@@ -210,7 +213,8 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
             probePort: deps.probePort,
             runtimeUser: parsed.runtimeUser,
             home: deps.home,
-            includeManagerPort: false
+            includeManagerPort: false,
+            via: ctx.auth ? ctx.auth.via : 'local'
         });
         pre.findings.push(...extraFindings);
         pre.ok = !pre.findings.some(item => item.severity === 'block');
@@ -252,7 +256,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
     function newKind() {
         return {
             kind: 'install.new',
-            public: false,
+            public: true,
             allowed(state, via) {
                 if (state.state === 'unclaimed') return via === 'local';
                 if (state.state === 'recovery') return via === 'local' || via === 'recovery';
@@ -425,7 +429,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         const pre = await runPreflight({
             kind: 'install.reconfigure', roots, layout, settings, manifest, features: selected.filter(id => id !== 'core'), database: doc.database, env: core.env, fs,
-            probePort: deps.probePort, runtimeUser: doc.runtimeUser, home: deps.home, includeManagerPort: false
+            probePort: deps.probePort, runtimeUser: doc.runtimeUser, home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
         });
         const steps = stepList(RECONFIGURE_STEPS);
         const target = { layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser, previousRoots: doc.roots };
@@ -455,7 +459,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         const moved = (t) => t.roots.code !== t.previousRoots.code;
         return {
             kind: 'install.reconfigure',
-            public: false,
+            public: true,
             allowed: (state, via) => state.state === 'claimed' && SESSION_VIA.includes(via),
             async plan(input, ctx) {
                 const built = await buildReconfigure(input, ctx);
@@ -565,7 +569,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
         }
         const pre = await runPreflight({
             kind: 'install.repair', roots, layout: doc.layout, settings, manifest, features: selected.filter(id => id !== 'core'), database: doc.database, env: core.env, fs,
-            probePort: deps.probePort, runtimeUser: doc.runtimeUser, home: deps.home, includeManagerPort: false
+            probePort: deps.probePort, runtimeUser: doc.runtimeUser, home: deps.home, includeManagerPort: false, via: ctx.auth ? ctx.auth.via : 'local'
         });
         const steps = stepList(REPAIR_STEPS);
         const target = { layout: doc.layout, roots, database: doc.database, features: selected, release: doc.release, dependencies: doc.owned.dependencies, runtimeUser: doc.runtimeUser };
@@ -593,7 +597,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
     function repairKind() {
         return {
             kind: 'install.repair',
-            public: false,
+            public: true,
             allowed: (state, via) => state.state === 'claimed' && SESSION_VIA.includes(via),
             async plan(input, ctx) {
                 const built = await buildRepair(input, ctx);
@@ -715,7 +719,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
     function uninstallKind() {
         return {
             kind: 'install.uninstall',
-            public: false,
+            public: true,
             allowed: (state, via) => state.state === 'claimed' && SESSION_VIA.includes(via),
             async plan(input, ctx) {
                 const built = await buildUninstall(input, ctx);

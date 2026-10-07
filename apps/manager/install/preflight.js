@@ -124,6 +124,7 @@ function portsFor({ layout, features, env, settings }) {
  * @param {string[]} [params.features]     requested features
  * @param {{ engine: string, external: boolean }} [params.database]
  * @param {boolean} [params.managerListening] the manager's own port is in use by the caller
+ * @param {string} [params.via] how the caller authenticated; every root of anyone but `local` (the command line) must sit under an allowed base
  */
 async function runPreflight({
     kind,
@@ -143,7 +144,8 @@ async function runPreflight({
     home = os.homedir(),
     managerListening = false,
     includeManagerPort = true,
-    requireRoots = true
+    requireRoots = true,
+    via = 'local'
 }) {
     const findings = [];
     const push = (finding) => findings.push(finding);
@@ -170,6 +172,14 @@ async function runPreflight({
         if (paths.isSymlink(roots.code, fs)) push(block('PATH_ESCAPE', 'the code root is a symbolic link'));
         for (const role of ['data', 'cache', 'logs']) {
             if (paths.isSymlink(roots[role], fs)) push(block('PATH_ESCAPE', `the ${role} root is a symbolic link`));
+        }
+        if (via !== 'local') {
+            const bases = paths.allowedBases({ home, platform, env });
+            for (const [role, value] of Object.entries(roots)) {
+                if (!paths.isUnderAllowedBase(value, bases, { platform, fs })) {
+                    push(block('ROOT_OUTSIDE_ALLOWED_BASES', `the ${role} root is not inside a folder the setup pages may use; choose one of the suggested folders, or use the command line`));
+                }
+            }
         }
         if (requireRoots) {
             if (roots.managerStore !== settings.storeDir) push(block('ROOTS_MISMATCH', 'the manager store is not where this manager keeps it; run the manager with the installation roots in its environment'));
