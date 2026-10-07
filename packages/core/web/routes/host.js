@@ -514,17 +514,18 @@ function mountHost(app, ctx, h) {
                 restartRequired: Boolean(result && result.restartRequired)
             };
         }
+        // Names only (database, schema): no host, port, user, URL or password reaches the ledger.
         case 'database.provision':
             return {
                 operation: 'provision',
-                database: plan.database ? { host: plan.database.host, port: plan.database.port, database: plan.database.database, schema: plan.database.schema, user: plan.database.user } : null,
+                database: plan.database ? { database: plan.database.database, schema: plan.database.schema } : null,
                 actions: Array.isArray(plan.actions) ? plan.actions.map(item => item.action) : [],
                 done: Array.isArray(result && result.done) ? result.done.map(item => `${item.action}:${item.status}`) : []
             };
         case 'database.schema.apply':
             return {
                 operation: 'schema',
-                database: plan.database ? { host: plan.database.host, port: plan.database.port, database: plan.database.database, schema: plan.database.schema } : null,
+                database: plan.database ? { database: plan.database.database, schema: plan.database.schema } : null,
                 effect: plan.effect || null,
                 before: (result && result.before) || null
             };
@@ -532,7 +533,7 @@ function mountHost(app, ctx, h) {
             return {
                 operation: 'connect',
                 from: plan.from ? plan.from.engine : null,
-                to: plan.to ? { host: plan.to.host, port: plan.to.port, database: plan.to.database, schema: plan.to.schema, user: plan.to.user, tls: plan.to.tls && plan.to.tls.mode } : null,
+                database: plan.to ? { database: plan.to.database, schema: plan.to.schema, tls: (plan.to.tls && plan.to.tls.mode) || null } : null,
                 schema: (result && result.schema) || null
             };
         default:

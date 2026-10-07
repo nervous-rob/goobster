@@ -406,7 +406,8 @@ describe('the operations through the Host proxy', () => {
         const rows = await auditRows('host.database.apply');
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({ target: id, actor: OPERATOR });
-        expect(rows[0].detail).toMatchObject({ operation: 'schema', effect: 'apply-schema', before: 'empty', database: { host: 'db.example.com', database: 'goobster', schema: 'public' } });
+        expect(rows[0].detail).toMatchObject({ operation: 'schema', effect: 'apply-schema', before: 'empty', database: { database: 'goobster', schema: 'public' } });
+        expect(JSON.stringify(rows[0].detail)).not.toContain('db.example.com');
         expect(await everything(h)).not.toContain(PASSWORD);
         expect(await everything(h)).not.toContain(encodeURIComponent(PASSWORD));
     });
