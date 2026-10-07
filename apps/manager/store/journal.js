@@ -112,7 +112,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
 
     /** Every record, newest first; unreadable files are listed with their problem, never repaired. */
     function list() {
-        let names = [];
+        let names;
         try {
             names = fs.readdirSync(dir);
         } catch {
@@ -157,7 +157,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
 
     /** @returns {{ entries: Object[], skipped: number }} lines that do not parse are counted, never dropped from disk. */
     function readAudit() {
-        let text = '';
+        let text;
         try {
             text = fs.readFileSync(store.paths.audit, 'utf8');
         } catch (error) {
@@ -189,7 +189,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
     function markReconciled(operationIds, at = now().toISOString()) {
         const wanted = new Set(operationIds);
         return enqueue(() => {
-            let text = '';
+            let text;
             try {
                 text = fs.readFileSync(store.paths.audit, 'utf8');
             } catch (error) {

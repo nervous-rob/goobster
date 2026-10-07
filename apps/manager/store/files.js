@@ -105,10 +105,6 @@ function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function utcNow(now = new Date()) {
-    return now.toISOString().slice(0, 19).replace('T', ' ');
-}
-
 module.exports = {
     IS_POSIX,
     DIR_MODE,
@@ -120,6 +116,5 @@ module.exports = {
     writeExclusive,
     readJson,
     removeIfPresent,
-    isPlainObject,
-    utcNow
+    isPlainObject
 };
