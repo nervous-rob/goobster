@@ -281,6 +281,16 @@ modes, windows, sources, the apply, the handoff and the rollback rules. The
 field catalog, `config.set` and the effective report do not list it and do not
 change it.
 
+One environment setting belongs with it: `GOOBSTER_UPDATE_SETTLE_MS` (default
+`30000`, whole milliseconds, 0 to 600000, `0` turns it off) is the **settle
+window** an apply keeps watching the new release after every worker is ready,
+with the maintenance barrier still held, before it records the release and
+lifts the barrier. A worker that leaves inside the window fails the update with
+`EXITED_AFTER_READY` (automatic rollback, or the recovery decision for a
+schema-changing release). It is read from the manager's own environment, not
+from `config.json`, and is not part of the update policy; see "The settle
+window" in `documentation/manager_update.md`.
+
 ## API summary
 
 | Route / kind | Auth | Notes |

@@ -138,7 +138,8 @@ timer applies it when the window opens.
    swapped in atomically (`current` points at it), and the handoff becomes
    `pending`.
 5. `handoff`: see [The handoff](#the-handoff).
-6. `verify`: the workers restart and are verified (below).
+6. `verify`: the workers restart, are verified and then watched for the
+   settle window (below).
 7. `cutover`: the installation record is updated to the new release (the
    release id, version, features) in one write.
 8. `release`: the barrier is released, the service registration is
@@ -147,7 +148,10 @@ timer applies it when the window opens.
 
 **Downtime** is the span from the end of quiesce (step 2) to the release of
 the barrier (step 8): everything between, including the backup, the swap, the
-restart and the verification, is time the application does not write. It is
+restart, the verification and the settle window, is time the application does
+not write. The barrier stays held through the window (the update is not done
+until the release is stable), so the window is part of the downtime: with the
+default 30 s window the downtime is the restart plus 30 s. It is
 reported in the result, in `last-apply.json`, in the audit entry and in the
 status. The portal and the bot are read-only or paused for that span.
 
@@ -163,6 +167,36 @@ A new release has verified when, after restarting the workers:
 
 Nothing is verified by inspecting the database. A failing check at any point
 is a failed verification.
+
+### The settle window
+
+Answering `/health` once is not proof a release is stable: a release can come
+up, acknowledge, and die seconds later. So after every worker is ready the
+update keeps watching for the **settle window**, with the barrier still held.
+A worker that exits, crashes, is replaced by the supervisor, or conflicts
+inside the window fails the verification with **`EXITED_AFTER_READY`**
+(`EXITED_BEFORE_READY` stays the code for a worker that never got ready). That
+failure takes the same road as any other failed verification, by the
+[rollback table](#schema-compatibility): an automatic rollback when the update
+did not change the schema, `recovery` when it did (the database was in use, so
+the cause is recorded as `EXITED_AFTER_READY` and the code is
+`SCHEMA_CHANGED_DATABASE_IN_USE`).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `GOOBSTER_UPDATE_SETTLE_MS` (manager environment) | `30000` | the window in whole milliseconds, 0 to 600000; `0` turns the window off; anything else is ignored |
+
+The window applies to both halves of a handoff: the manager that comes back
+on the new release (`resume`) is the one that watches. While it runs,
+`update status` shows `verifying (settling, N s left)` and the Host card shows
+the same on its in-progress row; the window's end is kept in `handoff.json`
+(`settleUntil`) and cleared when verification finishes. There is no new route:
+the status route carries it (`handoff.settling`).
+
+**Where the update's responsibility ends.** The window is the boundary. A
+failure after it closes and the barrier is released is an ordinary operational
+crash: the supervisor's restart policy and its crash-loop rule handle it, the
+update stays `applied`, and nothing is rolled back (see the crash matrix).
 
 ## The handoff
 
@@ -204,6 +238,8 @@ anything else.
 | A rollback in flight (`rollback`) | handoff `rollback` | swaps the previous release back if needed, restarts and verifies it, releases |
 | Waiting for a decision (`recovery`) | `recovery.json`, barrier held | nothing: it waits (`update status` shows the decision) |
 | `current` is neither release | | enters recovery (`RELEASE_UNEXPECTED`) rather than guess |
+| A worker leaves inside the settle window (`pending`, verification running) | handoff `pending` (`settleUntil` set), barrier held | the verification fails with `EXITED_AFTER_READY`; the rollback table decides (rollback, or `recovery` for a schema-changing release). If the manager itself dies in the window the handoff is still `pending`, so the next start verifies again (a second attempt), and if that fails a schema-changing update is treated as "database in use" and goes to `recovery` rather than a rollback |
+| A worker leaves after the window closed and the barrier was released | `last-apply.json` says `applied` | **nothing from the update**: an ordinary crash the supervisor restarts (and, after five in five minutes, declares `CRASH_LOOP`); not the update's business |
 
 The barrier is **held across** every one of these: a restart never lifts it
 by itself (`documentation/maintenance_barrier.md`).
@@ -228,10 +264,10 @@ that, the previous release is no longer guaranteed to read it. The manager
 never drops a column and never silently discards writes to make a downgrade
 fit, so:
 
-| Update | Failed before any worker got past `/health` | Failed after a worker got past `/health` (the database was in use) |
-|---|---|---|
-| **Not** schema-changing | automatic rollback | automatic rollback |
-| Schema-changing | automatic rollback (no process opened the database with the new schema) | **`recovery`**: the previous release is *not* put back automatically; the barrier is held and the operator decides |
+| Update | Failed before any worker got past `/health` | Failed after a worker got past `/health`, up to the end of the settle window (the database was in use) | Failed after the window closed |
+|---|---|---|---|
+| **Not** schema-changing | automatic rollback (`EXITED_BEFORE_READY`, `HEALTH_TIMEOUT`, ...) | automatic rollback (`EXITED_AFTER_READY`, `ACK_TIMEOUT`, ...) | not the update's: an ordinary crash |
+| Schema-changing | automatic rollback (no process opened the database with the new schema) | **`recovery`**: the previous release is *not* put back automatically; the barrier is held and the operator decides | not the update's: an ordinary crash |
 
 An automatic rollback puts the previous release back (`current` swapped back
 atomically), restarts the workers on it, verifies it exactly as above,
@@ -313,7 +349,7 @@ times only, never a URL, a path or a token):
 |---|---|
 | `last-check.json` | when the last check ran and what it found |
 | `staged.json` | the release staged and ready |
-| `handoff.json` | an apply that exited the manager and is not finished (phase, versions, attempts) |
+| `handoff.json` | an apply that exited the manager and is not finished (phase, versions, attempts, the end of the settle window while it runs) |
 | `watchdog.json` | the release to put back and the deadline |
 | `recovery.json` | the pending decision |
 | `scheduled.json` | an apply waiting for its window |
@@ -376,6 +412,7 @@ last apply and its downtime, and the recovery state.
 | `UPDATE_IN_PROGRESS`, `RECOVERY_PENDING` | an update or an undecided recovery already exists |
 | `HANDOFF_UNAVAILABLE`, `HANDOFF_LOST` | the manager cannot be restarted by the OS to hand over; or the handoff record is gone |
 | `BACKUP_UNVERIFIED`, `NO_BACKUP` | the pre-update backup is not verified (nothing changed), or recovery has no backup to restore |
+| `EXITED_AFTER_READY`, `EXITED_BEFORE_READY` | the cause recorded when a worker left inside the settle window, or before it was ready |
 | `UPDATE_ROLLED_BACK` | the new release did not verify; the previous one was put back |
 | `UPDATE_RECOVERY_REQUIRED` | a schema-changing release failed in use; decide with `update recovery` |
 | `NO_RECOVERY_PENDING`, `RESTORE_FIRST`, `PREVIOUS_UNAVAILABLE` | the decision is not applicable, needs the data restored first, or the previous release is gone |
