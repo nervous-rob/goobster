@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://goobster.local/schemas/manager-install-answers.json",
     "title": "Goobster manager CLI answers file",
-    "description": "Input of `goobster-manager <command> --answers <file>`. One document per command; `command` is optional when the CLI command names it. The `migrate` commands use the definitions `migrate-preflight` (preflight), `migrate` (run) and `migrate-rollback`; their `command` is `migrate`. The file may hold secrets (config values of secret fields) and must be readable by its owner only (mode 0600).",
+    "description": "Input of `goobster-manager <command> --answers <file>`. One document per command; `command` is optional when the CLI command names it. The `migrate` commands use the definitions `migrate-preflight` (preflight), `migrate` (run) and `migrate-rollback`; their `command` is `migrate`. `backup` and `restore` have their own definitions of the same names. The file may hold secrets (config values of secret fields) and must be readable by its owner only (mode 0600).",
     "oneOf": [
         { "$ref": "#/definitions/install" },
         { "$ref": "#/definitions/adopt" },
@@ -212,6 +212,33 @@
                 "target": { "$ref": "#/definitions/migrateTarget" },
                 "confirm": { "type": "string", "minLength": 1, "maxLength": 200 },
                 "releaseMaintenance": { "type": "boolean" }
+            }
+        },
+        "backup": {
+            "type": "object",
+            "description": "`goobster-manager backup`: write a verified archive (documentation/backup_and_restore.md). `passphrase` encrypts config.json only (the archive itself is not encrypted); it is read from this file, --passphrase-file or the hidden prompt, never the command line. `dir` is the same as --out.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "backup" },
+                "dir": { "$ref": "#/definitions/absolutePath" },
+                "includeConfig": { "type": "boolean" },
+                "passphrase": { "type": "string", "minLength": 1, "maxLength": 1024 }
+            }
+        },
+        "restore": {
+            "type": "object",
+            "description": "`goobster-manager restore`: replace the database, the file sets and (with the passphrase) config.json from an archive. `confirm` is the installation id; it and `dir` are the same as the command-line values. `passphrase` unlocks the archive's config.json and is read from this file, --passphrase-file or the hidden prompt, never the command line.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": { "type": "string" },
+                "command": { "const": "restore" },
+                "dir": { "$ref": "#/definitions/absolutePath" },
+                "confirm": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "withoutConfig": { "type": "boolean" },
+                "passphrase": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                "acceptSchemaChange": { "type": "boolean" },
+                "release": { "type": "boolean" }
             }
         }
     }

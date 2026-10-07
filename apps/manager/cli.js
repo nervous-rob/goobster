@@ -8,6 +8,11 @@
  *                                                 empty the installation's data (documentation/data_reset.md)
  *   goobster-manager release [--force] [--acknowledge-mutation]
  *                                                 lift a maintenance barrier a reset left up
+ *   goobster-manager backup --out <dir> [--include-config] [--passphrase-file <file>]
+ *                                                 write a verified archive (documentation/backup_and_restore.md)
+ *   goobster-manager backup inspect <dir>         what an archive holds and whether it can be restored here
+ *   goobster-manager restore <dir> --confirm <installationId> [--without-config] [--passphrase-file <file>] [--accept-schema-change] [--release]
+ *                                                 replace the database, files and config.json from an archive
  *   goobster-manager status | discover | schema
  *   goobster-manager migrate preflight|run|rollback|status [options]   SQLite -> Postgres (documentation/db_migration.md)
  *
@@ -57,7 +62,7 @@ const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
-const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'help']);
+const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'backup', 'restore', 'help']);
 const MIGRATE_KIND = Object.freeze({ preflight: 'db.migrate.preflight', run: 'db.migrate', rollback: 'db.migrate.rollback' });
 const LOCAL_AUTH = Object.freeze({ principal: 'local:cli', via: 'local' });
 const MAX_ANSWERS_BYTES = 256 * 1024;
@@ -92,13 +97,14 @@ class CliError extends Error {
 }
 
 // ---------------------------------------------------------------- arguments
-const VALUE_FLAGS = new Map([['--answers', 'answers'], ['--confirm', 'confirm'], ['--scope', 'scope'], ['--feature', 'feature'], ['--backup-dir', 'backupDir']]);
-const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h', '--force', '--acknowledge-mutation']);
+const VALUE_FLAGS = new Map([['--answers', 'answers'], ['--confirm', 'confirm'], ['--scope', 'scope'], ['--feature', 'feature'], ['--backup-dir', 'backupDir'], ['--out', 'out'], ['--passphrase-file', 'passphraseFile']]);
+const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h', '--force', '--acknowledge-mutation', '--include-config', '--without-config', '--accept-schema-change']);
 
 function parseArgs(argv) {
     const flags = {
         answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, release: false, sub: null, help: false,
-        scope: null, feature: null, backupDir: null, force: false, acknowledgeMutation: false
+        scope: null, feature: null, backupDir: null, force: false, acknowledgeMutation: false,
+        out: null, passphraseFile: null, includeConfig: false, withoutConfig: false, acceptSchemaChange: false, dir: null
     };
     const positional = [];
     for (let index = 0; index < argv.length; index++) {
@@ -108,7 +114,7 @@ function parseArgs(argv) {
             continue;
         }
         const [name, inline] = arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined];
-        if (SECRET_KEY.test(name)) {
+        if (SECRET_KEY.test(name) && name !== '--passphrase-file') {
             throw new CliError('SECRET_ON_ARGV', `${name} is not accepted: a secret on the command line is visible to other users and in shell history. Put it in an answers file (mode 0600, --answers) or enter it at the prompt.`);
         }
         if (VALUE_FLAGS.has(name)) {
@@ -123,6 +129,9 @@ function parseArgs(argv) {
             else if (name === '--release') flags.release = true;
             else if (name === '--force') flags.force = true;
             else if (name === '--acknowledge-mutation') flags.acknowledgeMutation = true;
+            else if (name === '--include-config') flags.includeConfig = true;
+            else if (name === '--without-config') flags.withoutConfig = true;
+            else if (name === '--accept-schema-change') flags.acceptSchemaChange = true;
             else flags.help = true;
         } else {
             throw new CliError('USAGE', `Unknown option ${name}. Try "help".`);
@@ -142,14 +151,17 @@ function parseArgs(argv) {
         if (flags.confirm && (flags.sub === 'preflight' || flags.sub === 'status')) throw new CliError('USAGE', `--confirm does not apply to migrate ${flags.sub}.`);
         if (flags.release && (flags.sub === 'preflight' || flags.sub === 'status')) throw new CliError('USAGE', `--release does not apply to migrate ${flags.sub}.`);
         if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'migrate status takes no answers.');
+    } else if (command === 'backup' || command === 'restore') {
+        require('./cliBackup').checkArgs(command, flags, positional, CliError);
     } else if (flags.release) {
-        throw new CliError('USAGE', '--release only applies to migrate.');
+        throw new CliError('USAGE', '--release only applies to migrate and restore.');
     }
     if (positional.length) throw new CliError('USAGE', 'Unexpected argument; values go in --answers or at the prompt.');
-    if (flags.confirm && !flags.deleteData && command !== 'reset' && command !== 'migrate') throw new CliError('USAGE', '--confirm belongs to --delete-data, reset or migrate.');
+    if (flags.confirm && !flags.deleteData && command !== 'reset' && command !== 'migrate' && command !== 'restore') throw new CliError('USAGE', '--confirm belongs to --delete-data, reset, migrate or restore.');
+    if ((flags.out || flags.passphraseFile || flags.includeConfig || flags.withoutConfig || flags.acceptSchemaChange) && command !== 'backup' && command !== 'restore') throw new CliError('USAGE', '--out, --passphrase-file, --include-config, --without-config and --accept-schema-change belong to backup and restore.');
     if ((flags.scope || flags.feature || flags.backupDir) && command !== 'reset') throw new CliError('USAGE', '--scope, --feature and --backup-dir belong to reset.');
     if ((flags.force || flags.acknowledgeMutation) && command !== 'release') throw new CliError('USAGE', '--force and --acknowledge-mutation belong to release.');
-    if (flags.release && command !== 'migrate') throw new CliError('USAGE', '--release belongs to migrate.');
+    if (flags.release && command !== 'migrate' && command !== 'restore') throw new CliError('USAGE', '--release belongs to migrate and restore.');
     if (flags.deleteData && command !== 'uninstall') throw new CliError('USAGE', '--delete-data only applies to uninstall.');
     return { command, flags };
 }
@@ -409,6 +421,28 @@ async function run(argv, io = {}) {
             });
         }
 
+        if (command === 'backup' || command === 'restore') {
+            return await require('./cliBackup').run({
+                command,
+                flags,
+                io,
+                fs,
+                baseEnv,
+                stdin,
+                stderr,
+                stdinIsInteractive: Boolean(stdin && stdin.isTTY) || Boolean(io.stdin),
+                out,
+                progress,
+                finish,
+                report,
+                secrets,
+                json,
+                prompter: null,
+                setPrompter: (value) => { prompter = value; },
+                cli: { CliError, EXIT, LOCAL_AUTH, loadAnswers, answersInput, createPrompter }
+            });
+        }
+
         if (command === 'reset' || command === 'release') {
             return await require('./cliReset').run({
                 command,
@@ -539,7 +573,7 @@ async function run(argv, io = {}) {
             progress(`${view.code}: ${view.message}`);
             for (const finding of view.findings || []) progress(`  ${finding.code}: ${finding.detail}`);
         }
-        const resetNotice = report.command === 'reset' ? require('./cliReset').failureNotice(error) : null;
+        const resetNotice = report.command === 'reset' ? require('./cliReset').failureNotice(error) : (report.command === 'restore' ? require('./cliBackup').failureNotice(error, 'restore') : null);
         if (resetNotice) progress(resetNotice);
         else if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
         if (report.command === 'migrate' && error && error.code === 'STALE_MAINTENANCE') {
@@ -741,6 +775,10 @@ function usage() {
         '  migrate run         back up, copy SQLite to Postgres, verify, switch (--confirm <installationId>, --release)',
         '  migrate rollback    undo a migration before the first write reaches Postgres (--confirm <installationId>)',
         '  migrate status      the migration\'s progress and the rollback boundary (read only)',
+        '  backup       write a verified archive: --out <dir>, with --include-config --passphrase-file <file> to add config.json (encrypted)',
+        '  backup inspect <dir>   what an archive holds and whether it can be restored here (read only)',
+        '  restore <dir>   replace the database, files and config.json from an archive: --confirm <installationId>,',
+        '               --without-config or the passphrase (--passphrase-file or a hidden prompt), --accept-schema-change, --release',
         '',
         'Options',
         '  --answers <file>   JSON answers (mode 0600; may hold secrets); without it the CLI asks',
@@ -748,8 +786,9 @@ function usage() {
         '  --yes              skip the "Proceed?" question (never a deletion)',
         '  --delete-data --confirm <id>   uninstall: also remove the owned data roots',
         '  --json             machine-readable output',
-        '  --confirm <id>     migrate run|rollback: the installation id',
-        '  --release          migrate run|rollback: also release the maintenance barrier',
+        '  --confirm <id>     migrate run|rollback, restore: the installation id',
+        '  --release          migrate run|rollback, restore: also release the maintenance barrier',
+        '  --passphrase-file <file>   backup, restore: the config.json passphrase (first line; file mode 0600)',
         '',
         'Secrets are never accepted on the command line.',
         'Exit codes: 0 ok, 2 invalid input or preflight block, 3 refused, 4 interrupted (run again to resume),',
