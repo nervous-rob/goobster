@@ -9,14 +9,16 @@
  * Every step verifies what it finds before it acts, so running an operation
  * again after an interruption picks up at the first step whose outcome is
  * not already on disk. Nothing here shells out; the only privileged work is
- * the closed list in ../privileged.js, which answers 501 today and is
- * recorded as a `deferred` step.
+ * the closed list in ../privileged.js: a step is `done`, `skipped` with
+ * MANUAL_FALLBACK when the machine cannot take it (systemd absent or offline,
+ * no way to elevate), or `deferred` where no helper exists for the platform.
  */
 
 const nodeFs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const childProcess = require('node:child_process');
 const { ManagerError } = require('../errors');
 const files = require('../store/files');
 const { createJournal } = require('../store/journal');
@@ -170,7 +172,7 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
 
     // ---------------------------------------------------------------- roots
     function resolveRoots(given = {}) {
-        const code = given.code || settings.root;
+        const code = given.code || env.GOOBSTER_INSTALL_ROOT || settings.root;
         const base = model.defaultRoots(code);
         const data = given.data || settings.dataDir;
         return {
@@ -446,19 +448,98 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
         return 'systemd';
     }
 
-    // ------------------------------------------------------- privileged hook
-    /** Run a privileged step through the closed list. 501 today: the step is `deferred`. */
-    function privilegedStep(operation, { enabled = true } = {}) {
-        if (!enabled) return { status: 'skipped', code: 'NOT_REQUESTED' };
+    /** Units named goobster*.service already on this machine (a legacy Pi unit, another installation). */
+    function unitNames() {
+        if (deps.unitNames) return deps.unitNames();
+        if (process.platform !== 'linux' || process.env.JEST_WORKER_ID) return [];
+        const names = new Set();
         try {
-            privileged.request(operation);
-            return { status: 'done', detail: { privileged: operation } };
-        } catch (error) {
-            if (error instanceof ManagerError && error.status === 501) {
-                return { status: 'deferred', code: 'NOT_IMPLEMENTED', detail: { privileged: operation } };
+            for (const entry of fs.readdirSync('/etc/systemd/system')) if (/^goobster[a-z0-9-]*\.service$/.test(entry)) names.add(entry);
+        } catch { }
+        try {
+            const text = childProcess.execFileSync('systemctl', ['list-units', '--all', '--no-legend', '--plain', '--type=service', 'goobster*'], { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] });
+            for (const line of text.split('\n')) {
+                const name = line.trim().split(/\s+/)[0];
+                if (/^goobster[a-z0-9-]*\.service$/.test(name)) names.add(name);
             }
-            throw error;
+        } catch { }
+        return [...names].sort();
+    }
+
+    // ------------------------------------------------------- privileged hook
+    /**
+     * The runner for privileged operations: the injected one (tests), the real
+     * dispatcher in production, and none under a test runner (a spec injects its
+     * own) so that it can never start an elevated helper or register a real
+     * service by accident.
+     */
+    function privilegedRunner() {
+        if (deps.privileged) return deps.privileged;
+        if (process.env.JEST_WORKER_ID) return null;
+        return privileged;
+    }
+
+    /** Is there a runner and a helper for this operation on this machine? */
+    function privilegedAvailable(operation) {
+        const runner = privilegedRunner();
+        if (!runner) return false;
+        return typeof runner.isImplemented === 'function' ? runner.isImplemented(operation) : true;
+    }
+
+    /**
+     * Run one privileged operation through the closed list (../privileged.js)
+     * and record one manager audit row for it: names and outcome only.
+     * @returns {Promise<{ status: 'done'|'fallback'|'failed'|'deferred', outcome?, reason?, code?, message?, manual?, detail?, log? }>}
+     *   a refused input throws a ManagerError; an operation with no helper on
+     *   this platform answers `deferred`
+     */
+    async function runPrivileged(operation, input, { record = null, ctx = null, requestDir = null } = {}) {
+        const runner = privilegedRunner();
+        let result;
+        if (!runner) {
+            result = { status: 'deferred', code: 'NOT_IMPLEMENTED' };
+        } else {
+            try {
+                result = await runner.run(operation, input, { requestDir, env, ...(deps.privilegedOptions || {}) });
+            } catch (error) {
+                if (error instanceof ManagerError && error.status === 501) result = { status: 'deferred', code: 'NOT_IMPLEMENTED' };
+                else throw error;
+            }
         }
+        if (result.status !== 'deferred' && ctx) {
+            const outcome = result.status === 'done' ? (result.outcome === 'noop' ? 'noop' : 'applied') : (result.status === 'fallback' ? 'fallback' : 'failed');
+            try {
+                await journalFor(ctx).appendAudit({
+                    action: `manager.privileged.${operation}`,
+                    actor: record ? record.actor : null,
+                    operationId: crypto.randomUUID(),
+                    outcome,
+                    via: result.via || (record ? record.via : null),
+                    detail: { operationRef: record ? record.id : null, ...(result.code ? { code: result.code } : {}), ...(result.reason ? { reason: result.reason } : {}) }
+                });
+            } catch (error) {
+                logger.error?.(`[manager] could not append the audit record for ${operation}: ${error && error.code ? error.code : 'error'}`);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * A privileged step for the ledger: `done`, `skipped` (not requested, or
+     * the operator's system does not allow it, with `fallbackCode`), `deferred`
+     * (no helper on this platform) or a thrown failure.
+     */
+    async function privilegedStep(operation, { enabled = true, input = null, record = null, ctx = null, requestDir = null, fallbackCode = null } = {}) {
+        if (!enabled) return { status: 'skipped', code: 'NOT_REQUESTED' };
+        const result = await runPrivileged(operation, input, { record, ctx, requestDir });
+        if (result.status === 'deferred') return { status: 'deferred', code: 'NOT_IMPLEMENTED', detail: { privileged: operation } };
+        if (result.status === 'fallback') {
+            return { status: 'skipped', code: fallbackCode || result.reason, detail: { privileged: operation, reason: result.reason, ...(result.manual ? { manual: result.manual } : {}) } };
+        }
+        if (result.status === 'failed') {
+            throw new ManagerError(409, result.code || 'HELPER_FAILED', result.message || 'The privileged helper failed.', { privileged: operation, log: result.log || [] });
+        }
+        return { status: 'done', detail: { privileged: operation, outcome: result.outcome, via: result.via || null, log: result.log || [] } };
     }
 
     // ----------------------------------------------------------- removals
@@ -497,6 +578,9 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
         exclusiveDependencies,
         releaseSection,
         serviceKindForHost,
+        privilegedAvailable,
+        unitNames,
+        runPrivileged,
         privilegedStep,
         payloadRemovals,
         removeOwnedPath,

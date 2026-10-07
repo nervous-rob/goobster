@@ -26,6 +26,23 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+case "$(uname -m)" in
+    aarch64|arm64) BOOTSTRAP_ARCH=arm64 ;;
+    x86_64|amd64) BOOTSTRAP_ARCH=x64 ;;
+    *) BOOTSTRAP_ARCH="" ;;
+esac
+if [[ -n "${BOOTSTRAP_ARCH}" ]]; then
+    BOOTSTRAP_FILE="$(ls -1 "${REPO_DIR}"/dist/bootstrap/goobster-*-linux-"${BOOTSTRAP_ARCH}"*.run 2>/dev/null | head -n 1 || true)"
+    echo "==> Note: the recommended Linux installer is the self-extracting bootstrapper:"
+    if [[ -n "${BOOTSTRAP_FILE}" ]]; then
+        echo "    sh ${BOOTSTRAP_FILE}"
+    else
+        echo "    goobster-<version>-linux-${BOOTSTRAP_ARCH}.run   (build it: node scripts/package-bootstrap.js --target linux-${BOOTSTRAP_ARCH} --payload <payload> --out dist/bootstrap)"
+    fi
+    echo "    See documentation/linux_install.md. Continuing with the source-checkout install."
+fi
+
 INSTALL_SERVICE=false
 INSTALL_AUTO_UPDATE=false
 UPDATE_ONLY=false
@@ -138,6 +155,11 @@ node scripts/initDb.js
 if [[ "${INSTALL_SERVICE}" == true ]]; then
     echo "==> Installing systemd service..."
     SERVICE_FILE="/etc/systemd/system/goobster.service"
+    if [[ -f "${SERVICE_FILE}" ]] && grep -q '^X-Goobster-Installation=' "${SERVICE_FILE}"; then
+        echo "==> ${SERVICE_FILE} was registered by the Goobster installer (it carries an X-Goobster-Installation marker)." >&2
+        echo "    It is left as it is. Change the installation with: goobster-manager repair|reconfigure|uninstall" >&2
+        exit 73
+    fi
     sed -e "s|/home/pi/goobster|${REPO_DIR}|g" \
         -e "s|User=pi|User=$(whoami)|" \
         -e "s|/usr/bin/node|$(command -v node)|g" \

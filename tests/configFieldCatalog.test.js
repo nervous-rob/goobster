@@ -195,7 +195,7 @@ describe('inventory against the runtime modules', () => {
         try {
             jest.isolateModules(() => {
                 jest.doMock('dotenv', () => ({ config: () => ({}) }));
-                jest.doMock('../config.json', () => ({}));
+                jest.doMock('@goobster/core/config/configJson', () => ({ load: () => ({}), configJsonPath: () => '' }));
                 for (const field of named) {
                     const [modulePath, valuePath] = field.runtime.split('#');
                     const mod = require(`@goobster/core/${modulePath}`);

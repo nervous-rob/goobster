@@ -85,6 +85,7 @@ const GROUPS = [
             'databaseRoutes',
             'backupOperations',
             'maintenanceCli',
+            'privilegedHelper', 'linuxService', 'bootstrapStage', 'bootstrapCli',
             'presenceService',
             'reportIntegrations',
             'safeFetch',

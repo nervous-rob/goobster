@@ -11,7 +11,7 @@ require('dotenv').config();
 
 let fileConfig = {};
 try {
-    fileConfig = require('../../../config.json');
+    fileConfig = require('./configJson').load();
 } catch {
     // config.json is optional (env-only deployments); never crash at import time.
 }

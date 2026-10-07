@@ -101,6 +101,7 @@
                 "database": { "$ref": "#/definitions/newDatabase" },
                 "release": { "$ref": "#/definitions/release" },
                 "runtimeUser": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" },
+                "createRuntimeUser": { "type": "boolean", "description": "Create `runtimeUser` as a no-login system account through the privileged helper; needs the installer to run as root." },
                 "config": { "$ref": "#/definitions/config" },
                 "registerService": { "type": "boolean" }
             }
