@@ -16,6 +16,7 @@ module.exports = {
     packages: require('./packages'),
     names: require('./names'),
     mounts: require('./mounts'),
+    paths: require('./paths'),
     scram: require('./scram'),
     runner: require('./runner'),
     inventory: require('./inventory'),
