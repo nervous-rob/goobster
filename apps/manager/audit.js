@@ -23,7 +23,8 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.maintenance.enter', 'manager.maintenance.release',
     'manager.config.set',
     'manager.defaults.set',
-    'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall'
+    'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
+    'manager.data.reset'
 ]);
 
 /**
@@ -97,7 +98,7 @@ async function ingest({ db, audit, journal, pending, result }) {
             action: entry.action,
             actor: entry.actor,
             target: entry.operationId,
-            detail: { source: 'manager', outcome: entry.outcome, via: entry.via || null, at: entry.at, ...(entry.forced === true ? { forced: true } : {}) }
+            detail: { ...(entry.detail || {}), source: 'manager', outcome: entry.outcome, via: entry.via || null, at: entry.at, ...(entry.forced === true ? { forced: true } : {}) }
         });
         if (id == null) {
             result.deferred = true;

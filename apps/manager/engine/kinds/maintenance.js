@@ -23,10 +23,10 @@ const { createBarrier, DEFAULT_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS, MAX_TIMEOUT
 const ENTER_KEYS = new Set(['reason', 'timeoutSeconds', 'expectedRevision']);
 const RELEASE_KEYS = new Set(['operationId', 'fence', 'force', 'acknowledgeMutation']);
 const REASON_RE = /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}$/;
-const FORCE_VIA = ['bridge', 'recovery'];
+const FORCE_VIA = ['bridge', 'recovery', 'local'];
 
 function allowed(state, via) {
-    if (state.state === 'claimed') return ['bridge', 'setup', 'recovery'].includes(via);
+    if (state.state === 'claimed') return ['bridge', 'setup', 'recovery', 'local'].includes(via);
     if (state.state === 'recovery') return via === 'recovery';
     return false;
 }
@@ -160,7 +160,7 @@ function createMaintenanceKinds({ settings, fs = nodeFs, now = () => new Date(),
     function assertForceAllowed(record) {
         if (record.plan.force === true && !FORCE_VIA.includes(record.via)) {
             throw new ManagerError(403, 'FORCE_REQUIRES_OPERATOR',
-                'A forced release needs an authenticated operator (the bridge or the recovery credential), not a setup session.');
+                'A forced release needs an authenticated operator (the bridge, the recovery credential or the local CLI), not a setup session.');
         }
     }
 
