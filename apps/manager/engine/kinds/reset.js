@@ -403,6 +403,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     tables: {
                         cleared: described.tables.cleared.length,
                         partial: described.tables.partial.length,
+                        cascading: described.tables.cascading.length,
                         kept: described.tables.kept.map(entry => entry.table),
                         recreated: described.tables.recreated.map(entry => entry.table)
                     },

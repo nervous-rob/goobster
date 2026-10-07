@@ -27,6 +27,7 @@ function describePreview(preview) {
     lines.push(`  scope      ${preview.scope === 'instance' ? 'every application table, the vector index and every owned file set' : `the data of the dormant feature "${preview.feature}"`}`);
     lines.push(`  tables     ${preview.tables.cleared.length} emptied${preview.tables.partial.length ? `, ${preview.tables.partial.length} partly (shared rows)` : ''}`);
     for (const item of preview.tables.partial) lines.push(`    ${item.op} ${item.table}${item.where ? ` where ${item.where}` : ''}${item.column ? ` (${item.column})` : ''}`);
+    if (preview.tables.cascading.length) lines.push(`  cascades   ${preview.tables.cascading.map(item => `${item.table}${item.op === 'set-null' ? ' (link cleared)' : ''}`).join(', ')}`);
     if (preview.tables.kept.length) lines.push(`  kept       ${preview.tables.kept.map(item => item.table).join(', ')}`);
     if (preview.tables.recreated.length) lines.push(`  recreated  ${preview.tables.recreated.map(item => item.table).join(', ')}`);
     lines.push(`  vectors    ${preview.derived.vectorIndex ? 'the whole vector index' : 'orphans only'}`);

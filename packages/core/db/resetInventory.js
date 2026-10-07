@@ -512,6 +512,38 @@ function planInstance(inventory) {
     return plan;
 }
 
+/**
+ * Tables a plan reaches only through foreign keys: rows that go with a
+ * deleted parent (`ON DELETE CASCADE`, transitively) or lose a link to it
+ * (`ON DELETE SET NULL`), listed so the preview and the doc name them
+ * instead of leaving them to the database.
+ */
+function cascadeReach(inventory, steps) {
+    const explicit = new Set(steps.map(step => step.table));
+    const reach = new Map();
+    const seen = new Set(steps.filter(step => step.op !== 'set-null').map(step => step.table));
+    const queue = [...seen];
+    while (queue.length > 0) {
+        const parent = queue.shift();
+        for (const table of inventory.tables) {
+            if (table.name === parent || explicit.has(table.name)) continue;
+            for (const ref of table.references) {
+                if (ref.refTable !== parent) continue;
+                const cascade = /CASCADE/i.test(ref.onDelete);
+                if (!cascade && !/SET\s+NULL/i.test(ref.onDelete)) continue;
+                if (cascade || !reach.has(table.name)) {
+                    reach.set(table.name, { table: table.name, op: cascade ? 'delete' : 'set-null', via: parent, column: ref.column });
+                }
+                if (cascade && !seen.has(table.name)) {
+                    seen.add(table.name);
+                    queue.push(table.name);
+                }
+            }
+        }
+    }
+    return [...reach.values()].sort((a, b) => a.table.localeCompare(b.table));
+}
+
 function planFeature(inventory, feature) {
     const owned = inventory.tables.filter(table => table.owner === feature).map(table => table.name);
     const ownedSet = new Set(owned);
@@ -549,6 +581,7 @@ function planFeature(inventory, feature) {
         tables: {
             cleared: owned,
             partial: steps.filter(step => step.op !== 'delete-all').map(step => ({ table: step.table, op: step.op, ...(step.where ? { where: step.where } : {}), ...(step.column ? { column: step.column } : {}), note: step.note })),
+            cascading: cascadeReach(inventory, steps),
             kept: [],
             recreated: []
         },
@@ -586,6 +619,7 @@ function describePlan(plan, { inventory, installationId = null, counts = null, f
         tables: {
             cleared: plan.tables.cleared.map(name => ({ table: name, ...(counts && counts[name] !== undefined ? { rows: counts[name] } : {}) })),
             partial: plan.tables.partial || [],
+            cascading: plan.tables.cascading || [],
             kept: plan.tables.kept,
             recreated: plan.tables.recreated
         },
