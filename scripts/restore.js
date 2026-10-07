@@ -3,6 +3,11 @@
  * npm run restore -- <archive dir> [--force] [--accept-schema-change]
  *                                  [--without-config] [--passphrase-file <path>]
  *
+ * The developer path: it composes the same `backupService` primitives as the
+ * installation manager's `goobster-manager restore` and the `backup.restore`
+ * operation, which add the maintenance barrier, the safety backup, durable
+ * sub-steps and the audit record (documentation/backup_and_restore.md).
+ *
  * Restores a backup archive into THIS installation. Stop the bot and the
  * api first. Runbook: documentation/backup_and_restore.md.
  *
@@ -45,7 +50,8 @@ function usage() {
   --passphrase-file <path>  Read the passphrase from the first line of a file
                             (or set GOOBSTER_BACKUP_PASSPHRASE; otherwise you are prompted)
 
-Stop the bot and the api before restoring. The instance comes back paused.`);
+Stop the bot and the api before restoring. The instance comes back paused.
+A managed installation: goobster-manager restore <dir> --confirm <installationId> (fences the writers for you).`);
 }
 
 async function main() {
