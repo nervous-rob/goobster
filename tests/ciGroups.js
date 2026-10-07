@@ -86,6 +86,7 @@ const GROUPS = [
             'dockerDaemon', 'dockerPostgresKinds',
             'launchdService', 'darwinHelper', 'darwinBootstrapCli', 'darwinBootstrapStage',
             'windowsService', 'windowsHelper', 'windowsBootstrapCli', 'packageBootstrapWin32',
+            'releaseIndex', 'releaseArtifacts', 'releaseManagerTrust', 'releaseWorkflow',
             'presenceService',
             'reportIntegrations',
             'safeFetch',
