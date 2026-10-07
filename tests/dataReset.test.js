@@ -210,7 +210,7 @@ async function harness({ off = null, hooks = {}, now = () => new Date(), env = {
             db: () => seams.db || db
         }
     }));
-    const manager = createManager({ settings, logger: silent, extraKinds: kindMakers, hooks: { beforeStep: async info => { if (hooks.beforeStep) await hooks.beforeStep(info); } }, now });
+    const manager = createManager({ settings, logger: silent, extraKinds: kindMakers, reconcileDeps: { loadDb: () => ({ get: db.get, all: db.all, run: db.run, insert: db.insert, transaction: db.transaction, engine: db.engine }) }, hooks: { beforeStep: async info => { if (hooks.beforeStep) await hooks.beforeStep(info); } }, now });
     const booted = await manager.init();
     if (recorded) {
         manager.store.createInstallation({
