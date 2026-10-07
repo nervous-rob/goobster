@@ -251,7 +251,27 @@ Work, in order:
    cost; keys with links, live probes and restricted-permission writes to
    `config.json`; database (SQLite only in this phase); instance defaults;
    review and progress; first-run check.
+
+   **Status (P3.3, #329): engine and CLI built, no wizard screens yet.**
+   `documentation/manager_install.md` is the reference. Done: the version 2
+   installation record with explicit ownership; read-only discovery of
+   payload, Raspberry Pi script, PM2, Docker and manual installs; preflight;
+   the `install.new`, `install.reconfigure`, `install.repair` and
+   `install.uninstall` kinds and the managed form of `adopt` (with updater
+   reconcile); resume after interruption; uninstall that keeps data by
+   default and writes a tombstone. Not done: the wizard screens (item 3
+   itself), network download and archive sources, and every privileged
+   operation (`service.register`, `service.unregister`, `updater.disable`,
+   `user.create` answer 501, so no OS service registration has been tested).
 4. Headless CLI running the same engine (answers file or prompts).
+
+   **Status (P3.3, #329): built.** `apps/manager/cli.js` (`install`,
+   `adopt`, `reconfigure`, `repair`, `uninstall`, `plan`, `status`,
+   `discover`, `schema`) takes a mode 0600 answers file validated against
+   `apps/manager/install/answers.schema.json` or prompts, supports
+   `--dry-run` and `--json`, refuses secrets on the command line, and
+   exits 0/2/3/4/5 as documented. Proven on Linux x64 against throwaway
+   directories only.
 5. Bootstrappers: Windows NSIS, macOS pkg, Linux script and AppImage;
    privileged operations limited to service registration and package
    installation; the installation registry per user; repair keeps `data/`

@@ -172,6 +172,15 @@ is refused with `409 ADOPT_NEEDS_CONFIRMATION` until the input says
 `installation.json.unreadable-<time>`, never deleted. A usable store is
 `409 ALREADY_INSTALLED`.
 
+`adopt` also has a managed form for an instance found on the host (a
+Raspberry Pi script install, a manual checkout, PM2, Docker): with a
+`candidateId` or `roots` it records the instance in place, reconciles its
+updater (cron lines are commented reversibly, a systemd timer needs the
+guarded `scripts/auto-update.sh` and the privileged helper, a PM2 watch is a
+conflict) and moves nothing. The install, reconfigure, repair and uninstall
+kinds, the headless CLI (`apps/manager/cli.js`) and the version 2 installation
+record are in `documentation/manager_install.md`.
+
 ## Operations: the setup engine
 
 `apps/manager/engine/` is the one engine the wizard, the headless CLI and
