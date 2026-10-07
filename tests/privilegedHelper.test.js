@@ -458,7 +458,7 @@ describe('what Linux does not do', () => {
     });
 
     test('another platform has no helper yet', () => {
-        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: [] }), { platform: 'win32' });
+        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: [] }), { platform: 'aix' });
         expect(reply).toMatchObject({ ok: false, code: 'PLATFORM_UNSUPPORTED' });
     });
 
@@ -747,6 +747,8 @@ describe('helper integrity', () => {
                 // darwin.js's manager half (transport) loads elevate lazily; the helper process never calls it.
                 if (target === './elevate' && path.basename(file) === 'darwin.js') continue;
                 expect(target.startsWith('.')).toBe(true);
+                // The other platforms' modules are loaded lazily, only on their own platform, against their own HELPER_FILES.
+                if (path.basename(file) === 'helper.js' && /^\.\/(win32|darwin)$/.test(target)) continue;
                 let resolved = path.resolve(path.dirname(file), target);
                 if (!resolved.endsWith('.js')) resolved += '.js';
                 queue.push(resolved);
@@ -766,13 +768,13 @@ describe('the dispatcher', () => {
 
     test('run() reports the implemented set per platform', () => {
         expect(privileged.describe('linux')).toMatchObject({ implemented: true, implementedOperations: ['service.register', 'service.unregister', 'updater.disable', 'user.create'] });
-        expect(privileged.describe('win32')).toMatchObject({ implemented: false });
+        expect(privileged.describe('aix')).toMatchObject({ implemented: false });
         expect(privileged.isImplemented('package.install', 'linux')).toBe(false);
     });
 
     test('run() throws 501 for an operation or a platform with no helper, 404 for an unknown name, 400 for a refused input', async () => {
         await expect(privileged.run('package.install', { names: [] }, { platform: 'linux' })).rejects.toMatchObject({ status: 501 });
-        await expect(privileged.run('service.register', {}, { platform: 'win32' })).rejects.toMatchObject({ status: 501 });
+        await expect(privileged.run('service.register', {}, { platform: 'aix' })).rejects.toMatchObject({ status: 501 });
         await expect(privileged.run('shell.exec', {}, {})).rejects.toMatchObject({ status: 404 });
         await expect(privileged.run('user.create', { name: 'root' }, { platform: 'linux' })).rejects.toMatchObject({ status: 400 });
     });

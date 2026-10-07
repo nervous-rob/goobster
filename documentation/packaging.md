@@ -430,10 +430,13 @@ payload layer still starts) for `install.new`, `install.reconfigure` and
 `install.repair`, and refuses a payload that does not verify before it
 writes anything. It reads only a local payload directory; the network
 download is a named hook for the bootstrappers. The bootstrappers (#331-#333) carry the payload, call `verifyPayload` before
-the first start, and register the service. The Linux one is built
-([linux_install.md](linux_install.md)): the payload carries the manager
-(`bin/goobster-manager`, `apps/manager`), and `scripts/package-bootstrap.js`
-wraps the payload in a `.run` and an AppImage without changing a byte of it.
+the first start, and register the service. The payload carries the manager
+(`bin/goobster-manager`, `apps/manager`); `scripts/package-bootstrap.js` wraps
+it in a `.run` and an AppImage ([linux_install.md](linux_install.md)),
+`scripts/package-bootstrap-win32.js` in an NSIS installer
+([windows_install.md](windows_install.md)) and
+`scripts/package-bootstrap-darwin.js` in a `.pkg` and a per-user `.tar.gz`
+([macos_install.md](macos_install.md)), none of them changing a byte of it.
 Production signing keys are #341.
 
 ## Building

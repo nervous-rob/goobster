@@ -1,6 +1,6 @@
 {
     "version": 1,
-    "note": "Tools the Linux bootstrap build downloads, pinned by URL and SHA-256. A download that does not match its pin is discarded and the AppImage is skipped with APPIMAGE_SKIPPED; nothing unpinned is ever executed. Update a pin only after checking the new release's own checksums.",
+    "note": "Tools the bootstrap builds download, pinned by URL and SHA-256. A download that does not match its pin is discarded and the artifact is skipped with APPIMAGE_SKIPPED (Linux) or INSTALLER_SKIPPED (Windows); nothing unpinned is ever executed. Update a pin only after checking the new release's own checksums.",
     "appimagetool": {
         "version": "1.9.0",
         "source": "https://github.com/AppImage/appimagetool/releases/tag/1.9.0",
@@ -24,5 +24,13 @@
             "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64",
             "sha256": "b4ff0030242d0c3bb12ce40541828303cf167493f4793456f0436edd6255c39d"
         }
+    },
+    "winsw": {
+        "version": "2.12.0",
+        "source": "https://github.com/winsw/winsw/releases/tag/v2.12.0",
+        "note": "The Windows service host (WinSW, .NET Framework 4.x build: runs on a stock Windows 10/11 and Server 2016+). Upstream publishes no checksum for this release; the hash was computed from the release asset and cross-checked against independent Scoop package manifests that pin the same file. The helper (apps/manager/privileged/win32.js) compares the executable against windowsServiceXml.WINSW before it registers anything; tests/windowsService.test.js keeps the two equal.",
+        "file": "WinSW.NET4.exe",
+        "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET4.exe",
+        "sha256": "923111c7142b3dc783a3c722b19b8a21bcb78222d7a136ac33f0ca8a29f4cb66"
     }
 }

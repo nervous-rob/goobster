@@ -205,7 +205,7 @@ describe('the platform surface', () => {
         expect(sandboxed.code).toBe(1);
         expect(sandboxed.reply).toMatchObject({ ok: false, code: 'RUNTIME_USER_MISSING' });
         expect(thrown(() => darwin.createHandler({ sandbox: true, commandDirs: [mac.bin], exec: mac.exec }).handle('updater.disable', {}))).toMatchObject({ code: 'NOT_IMPLEMENTED' });
-        expect(helper.execute(request, { platform: 'win32', deps: {} }).reply).toMatchObject({ ok: false, code: 'PLATFORM_UNSUPPORTED' });
+        expect(helper.execute(request, { platform: 'aix', deps: {} }).reply).toMatchObject({ ok: false, code: 'PLATFORM_UNSUPPORTED' });
         expect(darwin.sandboxDeps('/tmp/x')).toEqual({ sandbox: true, daemonDir: '/tmp/x/Library/LaunchDaemons', agentDir: '/tmp/x/Library/LaunchAgents', commandDirs: ['/tmp/x/bin'] });
     });
 

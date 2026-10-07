@@ -38,6 +38,7 @@ const serviceRecord = require('./serviceRecord');
 
 const DEFINITIONS = Object.freeze({
     systemd: require('./systemdService'),
+    'windows-service': require('./windowsService'),
     launchd: require('./launchdService')
 });
 

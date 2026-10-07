@@ -38,12 +38,13 @@ const INPUT_SHAPES = Object.freeze({
 /** Operations each platform helper implements; the rest answer 501. */
 const IMPLEMENTED = Object.freeze({
     linux: Object.freeze(['service.register', 'service.unregister', 'updater.disable', 'user.create']),
-    win32: Object.freeze([]),
+    win32: Object.freeze(['service.register', 'service.unregister']),
     darwin: Object.freeze(['service.register', 'service.unregister', 'user.create'])
 });
 
 const PLATFORM_MODULES = Object.freeze({
     linux: () => require('./privileged/linux'),
+    win32: () => require('./privileged/win32'),
     darwin: () => require('./privileged/darwin')
 });
 
