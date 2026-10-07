@@ -47,7 +47,7 @@ Feature id: `core`. Chat, the portal shell and operator pages, settings, privacy
 
 - **Kind:** always available
 - **Depends on:** nothing
-- **Owns:** 38 slash commands; 20 chat tools (`consultDocs`, `echoMessage`, `executePlan`, `fetchWebFile`, `findImages`, `forgetFact`, `generateImage`, `lookupNotes`, `manageAutomations`, `manageParlor`, `performSearch`, `readNotionPage`, `rememberFact`, `saveArtifact`, `scheduleFollowUp`, `searchNotion`, `showSavedFiles`, `trackAttention`, `watchFor`, `web_search`); 7 MCP tools (`get_inbox_item`, `list_docs`, `list_facts`, `list_inbox`, `read_doc`, `search_docs`, `search_memories`); 12 portal rooms (`activity`, `chat`, `decks`, `discussions`, `docs`, `home`, `host`, `people`, `settings`, `share`, `tools`, `usage`); 13 guided tours; 13 portal route groups; 1 WebSocket path (`/api/app/parlor/live`)
+- **Owns:** 38 slash commands; 20 chat tools (`consultDocs`, `echoMessage`, `executePlan`, `fetchWebFile`, `findImages`, `forgetFact`, `generateImage`, `lookupNotes`, `manageAutomations`, `manageParlor`, `performSearch`, `readNotionPage`, `rememberFact`, `saveArtifact`, `scheduleFollowUp`, `searchNotion`, `showSavedFiles`, `trackAttention`, `watchFor`, `web_search`); 7 MCP tools (`get_inbox_item`, `list_docs`, `list_facts`, `list_inbox`, `read_doc`, `search_docs`, `search_memories`); 12 portal rooms (`activity`, `chat`, `decks`, `discussions`, `docs`, `home`, `host`, `people`, `settings`, `share`, `tools`, `usage`); 13 guided tours; 14 portal route groups; 1 WebSocket path (`/api/app/parlor/live`)
 - **System dependencies:** `ollama`, `sharp`, `sqlite-vec`
 - **Documentation:** [architecture.md](architecture.md), [feature_inventory.md](feature_inventory.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.
@@ -349,7 +349,7 @@ Feature id: `discordActivity`. The Discord Embedded Activity transport. Depends 
 - **Kind:** feature
 - **Fresh install default:** on
 - **Depends on:** Discord (`discord`)
-- **Owns:** 1 portal route group; 1 WebSocket path (`/api/activity/ws`)
+- **Owns:** 2 portal route groups; 1 WebSocket path (`/api/activity/ws`)
 - **Switch today:** `activity.enabled`, default off.
 - **Host override:** `GOOBSTER_FEATURE_DISCORD_ACTIVITY=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
 - **Credentials:**
