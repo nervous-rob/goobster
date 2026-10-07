@@ -19,7 +19,7 @@ const path = require('node:path');
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-native-kinds-'));
 process.env.GOOBSTER_DB_PATH = path.join(ROOT, 'jest-own.sqlite');
 
-const { newHarness, drive, codeOf, tempDir } = require('./helpers/installFixture');
+const { newHarness, drive, codeOf, tempDir, makeRelease } = require('./helpers/installFixture');
 const fakeNative = require('./helpers/fakeNative');
 const { createFakeWorkers, waitFor, FAST_POLICY } = require('./helpers/fakeWorkers');
 const { discover } = require('@goobster/manager/install/discover');
@@ -179,6 +179,33 @@ const APPROVED = { installPackages: true };
 const provision = (env, input = {}, options = {}) => drive(env, 'database.native.provision', { ...APPROVED, dataDirectory: env.dataDirectory, ...input }, { auth: BRIDGE, ...options });
 const stepNames = operation => [...new Set(operation.steps.map(step => step.name))].filter(name => name !== 'validate');
 const journalText = harness => JSON.stringify(harness.manager.journal.list()) + JSON.stringify(harness.manager.journal.readAudit().entries);
+
+/* =============================================================== registration */
+
+describe('registration', () => {
+    test('the audit actions exist on both sides and the kinds are registered and public', async () => {
+        for (const kind of KINDS) {
+            expect(MANAGER_AUDIT_ACTIONS).toContain(`manager.${kind}`);
+            expect(operatorAudit.ACTIONS.has(`manager.${kind}`)).toBe(true);
+        }
+        for (const operation of ['create', 'control', 'remove', 'relocate']) {
+            expect(MANAGER_AUDIT_ACTIONS).toContain(`manager.privileged.postgres.cluster.${operation}`);
+            expect(operatorAudit.ACTIONS.has(`manager.privileged.postgres.cluster.${operation}`)).toBe(true);
+        }
+        const env = await setup({ workers: false });
+        const kinds = require('@goobster/manager/engine/kinds/nativePostgres').createKinds({ settings: env.settings });
+        expect(kinds.map(item => [item.kind, item.public])).toEqual(KINDS.map(kind => [kind, true]));
+        for (const kind of KINDS) expect(env.manager.engine.kinds).toContain(kind);
+    }, 60000);
+
+    test('an installation nobody has claimed has nothing to attach a database to', async () => {
+        const fake = fakeNative.create();
+        fake.install();
+        cleanups.push(() => fake.restore());
+        const bare = await newHarness({ root: scratch('unclaimed') });
+        expect(await codeOf(bare.manager.engine.plan('database.native.provision', {}, BRIDGE, { internal: true }))).toBe('STATE_NOT_ALLOWED');
+    }, 60000);
+});
 
 describe('database.native.provision', () => {
     test('installs the packages, creates the cluster and the role, applies the schema and stages the URL', async () => {
@@ -370,17 +397,19 @@ describe('database.native.provision: what blocks it before anything changes', ()
     }, 90000);
 
     test('a host whose pg_dump is older than the server blocks until the operator acknowledges it', async () => {
-        const env = await setup({ workers: false, machine: { installed: ['postgresql-client-16'], flags: {} } });
-        env.fake.set({ pgDump: '16.4' });
-        const dry = await provision(env, { installPackages: true }, { apply: false });
-        const finding = dry.planned.plan.findings.find(item => /^BACKUP_TOOLS/.test(item.code));
-        if (finding && finding.severity === 'block') {
-            expect(dry.planned.plan.ok).toBe(false);
-            const ack = await provision(env, { acknowledgeBackupTools: true }, { apply: false });
-            expect(ack.planned.plan.ok).toBe(true);
-        } else {
-            expect(dry.planned.plan.backupTools).toBeTruthy();
-        }
+        const env = await setup({ workers: false, machine: { installed: ['postgresql-17', 'postgresql-common', 'postgresql-client-17', 'postgresql-17-pgvector', 'postgresql-contrib'] } });
+        env.fake.set({ pgDumpVersion: '16.4' });
+        const dry = await provision(env, { installPackages: false }, { apply: false });
+        const finding = dry.planned.plan.findings.find(item => item.code === 'BACKUP_TOOLS_MISMATCH');
+        expect(finding).toMatchObject({ severity: 'block' });
+        expect(dry.planned.plan.ok).toBe(false);
+        const ack = await provision(env, { installPackages: false, acknowledgeBackupTools: true }, { apply: false });
+        expect(ack.planned.plan.findings.find(item => item.code === 'BACKUP_TOOLS_MISMATCH')).toMatchObject({ severity: 'warn' });
+        expect(ack.planned.plan.ok).toBe(true);
+
+        env.fake.flag('noPgDump');
+        const missing = await provision(env, { installPackages: false }, { apply: false });
+        expect(missing.planned.plan.findings.map(item => item.code)).toContain('BACKUP_TOOLS_MISSING');
     }, 90000);
 
     test('an unsupported distribution and a missing elevation are blocks with their own codes', async () => {
@@ -397,3 +426,235 @@ describe('database.native.provision: what blocks it before anything changes', ()
     }, 120000);
 });
 
+
+/* ============================================================ resume and failure */
+
+describe('an interrupted or failing provision', () => {
+    test('a cluster that failed to be created leaves the record at an earlier step; the retry resumes with the same cluster and no duplicate packages', async () => {
+        const env = await setup({ workers: false });
+        env.fake.flag('createFails');
+        const failure = await provision(env).catch(error => error);
+        expect(failure.code).toBeTruthy();
+        expect(env.overlay().values.GOOBSTER_NATIVE_DB_URL).toBeUndefined();
+        expect(env.record().step).not.toBe('verified');
+        env.fake.flag('createFails', false);
+        fs.chmodSync(env.dataDirectory, 0o755); // the real helper hands the directory to the postgres account; the sandbox cannot chown
+        env.fake.clearCalls();
+        const { planned, applied } = await provision(env);
+        expect(applied.operation.status).toBe('applied');
+        expect(planned.plan.findings.map(item => item.code)).toContain('RESUME');
+        expect(env.fake.calls().filter(call => call.program === 'apt-get' && call.args.includes('install'))).toEqual([]);
+        expect(env.fake.state().clusters.filter(item => item.name === 'goobster')).toHaveLength(1);
+        expect(env.record().step).toBe('verified');
+    }, 120000);
+
+    test('a failing package installation changes nothing else and is reported without the program output', async () => {
+        const env = await setup({ workers: false });
+        env.fake.flag('aptFails');
+        const failure = await provision(env).catch(error => error);
+        expect(failure.code).toBeTruthy();
+        expect(env.fake.state().clusters).toEqual([]);
+        expect(env.overlay().values.GOOBSTER_NATIVE_DB_URL).toBeUndefined();
+        expect(JSON.stringify(failure)).not.toMatch(/postgres:\/\//);
+    }, 90000);
+});
+
+/* ============================================================ start, stop, repair */
+
+describe('start, stop and repair', () => {
+    const clusterOf = env => env.fake.state().clusters.find(item => item.name === 'goobster');
+
+    test('stop and start act on the one cluster; stopping while the installation uses it needs acknowledgeInUse', async () => {
+        const env = await setup();
+        await provision(env);
+        expect(clusterOf(env).online).toBe(true);
+        const stopped = await drive(env, 'database.native.stop', {}, { auth: BRIDGE });
+        expect(stopped.applied.result).toMatchObject({ stopped: true });
+        expect(clusterOf(env).online).toBe(false);
+        const again = await drive(env, 'database.native.stop', {}, { auth: BRIDGE });
+        expect(again.applied.result).toMatchObject({ stopped: true, changed: false });
+        const started = await drive(env, 'database.native.start', {}, { auth: BRIDGE });
+        expect(started.applied.result).toMatchObject({ running: true, ready: true });
+        expect(clusterOf(env).online).toBe(true);
+
+        await drive(env, 'database.connect', { connection: { owned: 'native' }, release: true }, { auth: BRIDGE });
+        const refused = await drive(env, 'database.native.stop', {}, { auth: BRIDGE }).catch(error => error);
+        expect(refused.code).toBe('PREFLIGHT_FAILED');
+        expect(refused.details.findings.map(item => item.code)).toContain('DATABASE_IN_USE');
+        expect(clusterOf(env).online).toBe(true);
+        const acknowledged = await drive(env, 'database.native.stop', { acknowledgeInUse: true }, { auth: BRIDGE });
+        expect(acknowledged.applied.operation.status).toBe('applied');
+        expect(clusterOf(env).online).toBe(false);
+        for (const call of env.fake.mutations().filter(item => item.program === 'pg_ctlcluster' && ['start', 'stop'].includes(item.args[2]))) expect(call.args).toContain('goobster');
+        const entry = env.manager.journal.readAudit().entries.find(item => item.action === 'manager.database.native.stop');
+        expect(JSON.stringify(entry)).not.toMatch(/postgres:\/\/|password|5432/);
+    }, 180000);
+
+    test('start, stop and repair without a record say there is nothing to manage', async () => {
+        const env = await setup({ workers: false });
+        for (const kind of ['database.native.start', 'database.native.stop', 'database.native.repair']) {
+            const failure = await drive(env, kind, {}, { auth: BRIDGE }).catch(error => error);
+            expect(failure.code).toMatch(/NO_NATIVE_DATABASE|PREFLIGHT_FAILED/);
+        }
+        expect(env.fake.mutations()).toEqual([]);
+    }, 60000);
+
+    test('control kinds reject unknown fields', async () => {
+        const env = await setup({ workers: false });
+        await provision(env);
+        expect(await codeOf(drive(env, 'database.native.start', { force: true }, { auth: BRIDGE, apply: false }))).toBe('INVALID_INPUT');
+        expect(await codeOf(drive(env, 'database.native.repair', { reinit: true }, { auth: BRIDGE, apply: false }))).toBe('INVALID_INPUT');
+    }, 90000);
+
+    test('repair of a healthy running cluster does nothing', async () => {
+        const env = await setup({ workers: false });
+        await provision(env);
+        env.fake.clearCalls();
+        const { planned, applied } = await drive(env, 'database.native.repair', {}, { auth: BRIDGE });
+        expect(planned.plan.action).toBe('none');
+        expect(applied.operation.status).toBe('applied');
+        expect(env.fake.mutations()).toEqual([]);
+    }, 90000);
+
+    test('repair of a stopped cluster converges and starts it; the data directory is never recreated', async () => {
+        const env = await setup({ workers: false });
+        await provision(env);
+        const dataBefore = env.fake.snapshot(env.dataDirectory);
+        await drive(env, 'database.native.stop', {}, { auth: BRIDGE });
+        env.fake.clearCalls();
+        const dry = await drive(env, 'database.native.repair', {}, { auth: BRIDGE, apply: false });
+        expect(dry.planned.plan).toMatchObject({ action: 'converge', storageKept: true, ok: true });
+        expect(dry.planned.plan.reasons).toContain('STOPPED');
+        const { applied } = await drive(env, 'database.native.repair', {}, { auth: BRIDGE });
+        expect(applied.result).toMatchObject({ repaired: true, ready: true });
+        expect(clusterOf(env).online).toBe(true);
+        expect(env.fake.calls().filter(call => ['pg_createcluster', 'initdb', 'pg_dropcluster'].includes(call.program))).toEqual([]);
+        expect(env.fake.snapshot(env.dataDirectory)).toEqual(dataBefore);
+    }, 120000);
+
+    test('repair refuses a cluster whose configuration is gone (Debian), and a recorded major that no longer matches the pin is MAJOR_UPGRADE_IS_MANUAL', async () => {
+        const env = await setup({ workers: false });
+        await provision(env);
+        const world = env.fake.state();
+        env.fake.set({ clusters: world.clusters.filter(item => item.name !== 'goobster') });
+        env.fake.clearCalls();
+        const gone = await drive(env, 'database.native.repair', {}, { auth: BRIDGE, apply: false });
+        expect(gone.planned.plan.ok).toBe(false);
+        expect(gone.planned.plan.blocks.map(item => item.code)).toContain('CLUSTER_MISSING');
+        expect(await codeOf(drive(env, 'database.native.repair', {}, { auth: BRIDGE }))).toBe('PREFLIGHT_FAILED');
+        expect(env.fake.mutations()).toEqual([]);
+
+        env.fake.set({ clusters: world.clusters });
+        nativeState.update(env.settings.storeDir, { major: 16 });
+        const major = await drive(env, 'database.native.repair', {}, { auth: BRIDGE, apply: false });
+        expect(major.planned.plan.blocks.map(item => item.code)).toContain('MAJOR_UPGRADE_IS_MANUAL');
+    }, 120000);
+
+    test('on a Red Hat family host the cluster has its own unit, which start, stop and repair use', async () => {
+        const env = await setup({ workers: false, machine: { distro: 'rocky' } });
+        await provision(env);
+        const record = env.record();
+        expect(record.family).toBe('rhel');
+        expect(record.cluster.service).toMatch(/^postgresql17-goobster(-[0-9a-f]{8})?\.service$/);
+        await drive(env, 'database.native.stop', {}, { auth: BRIDGE });
+        expect(env.fake.calls().some(call => call.program === 'systemctl' && call.args.includes('stop') && call.args.includes(record.cluster.service))).toBe(true);
+        await drive(env, 'database.native.start', {}, { auth: BRIDGE });
+        const { applied } = await drive(env, 'database.native.repair', {}, { auth: BRIDGE });
+        expect(applied.operation.status).toBe('applied');
+        for (const call of env.fake.mutations().filter(item => item.program === 'systemctl')) expect(call.args.join(' ')).not.toMatch(/\bpostgresql(\.service)?\b(?!-)/);
+    }, 180000);
+});
+
+/* ================================================================== relocate */
+
+describe('database.native.relocate', () => {
+    const backupDouble = (calls = []) => ({
+        createBackup: async (args) => { calls.push(args); return { dir: path.join(args.destDir, 'archive') }; },
+        verifyBackup: () => ({ tables: 3, files: 2 }),
+        tableCounts: async () => ({ users: 0 })
+    });
+
+    async function provisioned(extra = {}) {
+        const calls = [];
+        const env = await setup({ nativeDeps: { backupService: () => backupDouble(calls), ...extra } });
+        await provision(env);
+        await drive(env, 'database.connect', { connection: { owned: 'native' }, release: true }, { auth: BRIDGE });
+        return { env, calls };
+    }
+
+    const enter = async env => {
+        const held = (await env.manager.engine.run('maintenance.enter', { reason: 'native database change', timeoutSeconds: 10 }, BRIDGE)).result;
+        return { operationId: held.operationId, fence: held.fence };
+    };
+
+    test('the guards: a held maintenance barrier and a backup are required; the old and overlapping directories are refused', async () => {
+        const { env } = await provisioned();
+        const target = path.join(env.fake.dir, 'srv', 'moved');
+        const input = { target, backup: { dir: scratch('backup'), skipConfig: true } };
+        expect(await codeOf(drive(env, 'database.native.relocate', input, { auth: BRIDGE, apply: false }))).toBe('MAINTENANCE_REQUIRED');
+        const maintenance = await enter(env);
+        expect(await codeOf(drive(env, 'database.native.relocate', { target, maintenance }, { auth: BRIDGE, apply: false }))).toBe('BACKUP_REQUIRED');
+        expect(await codeOf(drive(env, 'database.native.relocate', { ...input, maintenance: { ...maintenance, fence: maintenance.fence + 9 } }, { auth: BRIDGE }))).toBe('MAINTENANCE_NOT_HELD');
+        for (const bad of [env.dataDirectory, path.join(env.dataDirectory, 'inner'), path.dirname(env.dataDirectory), '/var/lib/postgresql/17/main']) {
+            const outcome = await drive(env, 'database.native.relocate', { ...input, target: bad, maintenance }, { auth: BRIDGE, apply: false }).catch(error => error);
+            if (outcome.code) expect(outcome.code).toMatch(/INVALID|PATH|DATA_DIRECTORY|PREFLIGHT/);
+            else expect(outcome.planned.plan.ok).toBe(false);
+        }
+    }, 180000);
+
+    test('backs up first, moves the data, keeps the original directory, starts the cluster there and leaves the barrier held', async () => {
+        const { env, calls } = await provisioned();
+        const maintenance = await enter(env);
+        const original = env.dataDirectory;
+        const originalFiles = env.fake.snapshot(original);
+        const target = path.join(env.fake.dir, 'srv', 'moved');
+        const dest = scratch('backup');
+        env.fake.clearCalls();
+        const { planned, applied } = await drive(env, 'database.native.relocate', { target, backup: { dir: dest, skipConfig: true }, maintenance }, { auth: BRIDGE });
+        expect(stepNames(applied.operation)).toEqual(['preflight', 'backup', 'relocate', 'verify-database']);
+        expect(planned.plan).toMatchObject({ effect: 'relocate-native-database', originalKept: true, from: original, to: target });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].destDir).toBe(dest);
+        const mutating = env.fake.mutations();
+        expect(mutating.length).toBeGreaterThan(0);
+        expect(env.record().cluster.dataDirectory).toBe(target);
+        expect(env.record().relocation || null).toBeNull();
+        expect(fs.existsSync(path.join(target, 'PG_VERSION'))).toBe(true);
+        expect(env.fake.snapshot(original)).toEqual(originalFiles);
+        expect(env.fake.state().clusters.find(item => item.name === 'goobster').online).toBe(true);
+        expect(applied.result).toMatchObject({ relocated: true, backupVerified: true, originalKept: true, barrier: 'held' });
+        expect(env.barrier()).toMatchObject({ active: true, operationId: maintenance.operationId });
+        const entry = env.manager.journal.readAudit().entries.find(item => item.action === 'manager.database.native.relocate');
+        expect(entry.detail).toMatchObject({ cluster: 'goobster', backupVerified: true, moved: true });
+        expect(JSON.stringify(entry)).not.toMatch(new RegExp(`${target}|postgres://|5432`));
+    }, 180000);
+
+    test('a backup that cannot be verified stops the move before the cluster is touched', async () => {
+        const failing = { createBackup: async () => { throw Object.assign(new Error('disk'), { code: 'ENOSPC' }); }, verifyBackup: () => ({}), tableCounts: async () => ({}) };
+        const { env } = await provisioned({ backupService: () => failing });
+        const maintenance = await enter(env);
+        env.fake.clearCalls();
+        const failure = await drive(env, 'database.native.relocate', { target: path.join(env.fake.dir, 'srv', 'moved'), backup: { dir: scratch('backup'), skipConfig: true }, maintenance }, { auth: BRIDGE }).catch(error => error);
+        expect(failure.code).toBe('BACKUP_FAILED');
+        expect(env.fake.mutations()).toEqual([]);
+        expect(env.record().cluster.dataDirectory).toBe(env.dataDirectory);
+        expect(env.record().relocation || null).toBeNull();
+    }, 180000);
+
+    test('an interrupted copy leaves the original serving; repeating the move completes it', async () => {
+        const { env } = await provisioned();
+        const maintenance = await enter(env);
+        const target = path.join(env.fake.dir, 'srv', 'moved');
+        const input = { target, backup: { dir: scratch('backup'), skipConfig: true }, maintenance };
+        env.fake.flag('cpInterrupt');
+        const failure = await drive(env, 'database.native.relocate', input, { auth: BRIDGE }).catch(error => error);
+        expect(failure.code).toBeTruthy();
+        expect(env.record().cluster.dataDirectory).toBe(env.dataDirectory);
+        expect(fs.existsSync(path.join(env.dataDirectory, 'PG_VERSION'))).toBe(true);
+        env.fake.flag('cpInterrupt', false);
+        if (fs.existsSync(target)) fs.chmodSync(target, 0o755); // the real helper hands the directory to the postgres account; the sandbox cannot chown
+        const again = await drive(env, 'database.native.relocate', input, { auth: BRIDGE });
+        expect(again.applied.operation.status).toBe('applied');
+        expect(env.record().cluster.dataDirectory).toBe(target);
+    }, 180000);
+});
