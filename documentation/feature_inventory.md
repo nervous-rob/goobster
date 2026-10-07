@@ -255,7 +255,9 @@ Everything else is refused while its owner is off: `/api/app/projects*` and
 `/observatory*` (projects, with the run/render/job routes owned by
 observatory), `/spitball/*` (knowledge; lenses, expeditions, briefs and
 note evidence are expeditions), `/note-attachments*` (knowledge),
-`/exchange/*`, `/voice/*`, `/studio/*` (music), `/push*`, `/mcp*`, the
+`/exchange/*`, `/voice/*`, `/studio/*` (music), `/push*` (except
+`DELETE /push/subscriptions`, which is core so a subscription can always be
+removed), `/mcp*`, the
 Discord OAuth routes, public Observatory share links
 (`/app/observatory/share/*`), `/api/activity/*`, `/api/webhooks/github`,
 `/api/webhooks/cursor`, `/api/screen/*`, `/companion*`, `/api/gba-run/*`,

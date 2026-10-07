@@ -312,6 +312,22 @@ describe('portal: one feature turned off at a time', () => {
         expect(sideEffects()).toEqual(NO_EFFECTS);
     });
 
+    test('with push off a person can still remove their subscription ("disabled is not deleted"), but cannot add one or send a test', async () => {
+        useOff('push');
+        resetSpies();
+        expect(inventory.ownerOf('route', 'DELETE /api/app/push/subscriptions')).toEqual({ owner: 'core', alsoRequires: [] });
+        expect(featureGate.routeBlock('/api/app/push/subscriptions', 'DELETE', features)).toBeNull();
+        for (const [method, reqPath] of [['POST', '/api/app/push/subscriptions'], ['POST', '/api/app/push/test'], ['GET', '/api/app/push']]) {
+            expect({ method, reqPath, blocked: featureGate.routeBlock(reqPath, method, features) }).toEqual({ method, reqPath, blocked: 'push' });
+            const refused = await call(method, reqPath, { headers: { Cookie: cookie }, body: method === 'POST' ? {} : undefined });
+            expect(refused.status).toBe(404);
+            expect(refused.json).toEqual(expect.objectContaining({ error: expect.objectContaining({ code: 'FEATURE_UNAVAILABLE' }), feature: 'push' }));
+        }
+        const removal = await call('DELETE', '/api/app/push/subscriptions', { headers: { Cookie: cookie }, body: {} });
+        expect(removal.json?.error?.code).not.toBe('FEATURE_UNAVAILABLE');
+        expect(removal.status).not.toBe(404);
+    });
+
     test('a route whose owner is active is never refused by the gate', () => {
         useOff('exchange', 'mcp', 'push');
         for (const route of table) {

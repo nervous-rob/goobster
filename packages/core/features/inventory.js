@@ -364,6 +364,7 @@ const routeRules = [
     { pattern: /^\/api\/app\/exchange\//, owner: 'exchange' },
     { pattern: /^\/api\/app\/voice\//, owner: 'voice' },
     { pattern: /^\/api\/app\/studio\//, owner: 'music' },
+    { method: 'DELETE', pattern: /^\/api\/app\/push\/subscriptions$/, owner: 'core' },
     { pattern: /^\/api\/app\/push(?:\/|$)/, owner: 'push' },
     { pattern: /^\/api\/app\/mcp(?:\/|$)/, owner: 'core' },
     { method: 'GET', pattern: /^\/api\/app\/auth\/(?:login|link\/discord|callback)$/, owner: 'discord' },
