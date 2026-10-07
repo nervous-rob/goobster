@@ -357,6 +357,20 @@ the command set change on restart, interactions are refused live.
 - `messageCreate`: gates `#06` (cursor) and `#10` (gba) are skipped when
   their owner is off; the other ten and their order are untouched
   (`// messageCreate#NN` markers, asserted by the spec).
+- The Activity casino: the Activity transport is `discordActivity`, but
+  everything it carries over its socket is the table-game protocol
+  (`join`, `sit`, `action`, the bot invite, balances) and its one content
+  route is the casino lounge music, so those two claims carry
+  `alsoRequires: ['gambling']` (`/api/activity/ws` in `wsPaths`, `GET
+  /api/activity/music/casino` in `routeRules`; `economy` off blocks them
+  through `gambling`'s hard dependency). The auth and client-file routes
+  stay `discordActivity` alone. `apps/bot/web/server.js` builds
+  `TableManager` and `BotPlayer` and replays the escrow journal
+  (`recoverFromJournal`) only when the `table_games` table claim is
+  available (owner `gambling`, also `discordActivity`); otherwise no wager
+  can move points, the socket is never attached (its upgrade is a plain
+  404) and the handler refuses any table message with the standard
+  `FEATURE_UNAVAILABLE` frame.
 
 Specs: `tests/featureGatingCommands.test.js` and
 `tests/featureGatingRuntime.test.js` (no-file baseline equals the

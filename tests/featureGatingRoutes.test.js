@@ -699,6 +699,32 @@ describe('bot public server', () => {
         expect(handles.botPlayer).toBeNull();
     });
 
+    test.each([
+        ['the fresh preset (economy, exchange and gambling off)', ['economy', 'exchange', 'gambling']],
+        ['gambling alone', ['gambling']],
+        ['economy alone (gambling depends on it)', ['economy']]
+    ])('with %s the casino is not built: no TableManager, BotPlayer or journal replay, the Activity shell stays up', async (label, off) => {
+        useOff(...off);
+        await boot();
+        expect(TableManager).not.toHaveBeenCalled();
+        expect(BotPlayer).not.toHaveBeenCalled();
+        expect(handles.tableManager).toBeNull();
+        expect(handles.botPlayer).toBeNull();
+        expect((await hit('GET', '/api/activity/config')).status).toBe(200);
+        const music = await hit('GET', '/api/activity/music/casino');
+        expect(music.status).toBe(404);
+        expect(music.json).toEqual({ error: 'FEATURE_UNAVAILABLE', feature: 'gambling' });
+    });
+
+    test('with economy and gambling on (exchange off) the casino is built and its journal replayed', async () => {
+        useOff('exchange');
+        await boot();
+        expect(TableManager).toHaveBeenCalledTimes(1);
+        expect(BotPlayer).toHaveBeenCalledTimes(1);
+        const manager = TableManager.mock.results[0].value;
+        expect(manager.recoverFromJournal).toHaveBeenCalledTimes(1);
+    });
+
     test('with screen vision and the GBA harness off their session managers are configured disabled', async () => {
         useOff('screenVision', 'gba');
         await boot();

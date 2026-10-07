@@ -378,6 +378,7 @@ const routeRules = [
     { method: 'GET', pattern: /^\/api\/app\/events$/, owner: 'core' },
     { pattern: /^\/app(?:\/|$)/, owner: 'core' },
 
+    { method: 'GET', pattern: /^\/api\/activity\/music\/casino$/, owner: 'discordActivity', alsoRequires: ['gambling'] },
     { pattern: /^\/api\/activity\//, owner: 'discordActivity' },
     { method: 'POST', pattern: /^\/api\/webhooks\/github$/, owner: 'github' },
     { method: 'POST', pattern: /^\/api\/webhooks\/cursor$/, owner: 'cursor' },
@@ -402,7 +403,7 @@ const wsPaths = {
     '/api/app/parlor/live': 'core',
     '/api/app/voice/live': 'voice',
     '/api/app/studio/live': 'music',
-    '/api/activity/ws': 'discordActivity',
+    '/api/activity/ws': { owner: 'discordActivity', alsoRequires: ['gambling'] },
     '/api/screen/ws': 'screenVision',
     '/api/gba-run/ws': 'gba'
 };
