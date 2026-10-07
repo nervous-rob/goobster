@@ -196,7 +196,11 @@ endgroup
 
 group "5. reconfigure (the logs root moves, the unit is rewritten)"
 MOVED_LOGS="$BASE/logs moved"
-if [ "$SYSTEMD" -eq 0 ]; then stop_supervisor_by_hand; fi
+if [ "$SYSTEMD" -eq 0 ]; then
+    stop_supervisor_by_hand
+    # With a registered service the helper creates and hands over a new root; by hand that is the operator's step.
+    install -d -o goobster -g goobster -m 0750 "$MOVED_LOGS"
+fi
 write_private "$WORK/reconfigure.json" "{\"roots\":{\"logs\":\"$MOVED_LOGS\"}}"
 manager reconfigure --answers "$WORK/reconfigure.json" --yes > "$REPORTS/reconfigure.log" 2>&1 || { tail -30 "$REPORTS/reconfigure.log"; fail "reconfigure failed"; }
 pass "reconfigure finished"

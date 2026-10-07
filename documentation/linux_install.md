@@ -289,7 +289,10 @@ sudo /opt/goobster/current/bin/goobster-manager uninstall   --answers uninstall.
 - `reconfigure.json`: the layout, the roots or config values to change, for
   example `{"roots": {"logs": "/srv/goobster logs"}}`. When the roots change and
   the installer registered the service, the unit is rewritten and the service must
-  be restarted (`sudo systemctl restart goobster`).
+  be restarted (`sudo systemctl restart goobster`); the privileged helper creates
+  the new root and hands it to the service account. When you run the manager by
+  hand as another account, create the new directory for that account yourself
+  before you restart.
 - `uninstall.json`: `{"keepData": true}` removes the service, the payload and
   the manager's ownership record and keeps the data, config, cache and logs.
   `{"keepData": false}` with `--delete-data --confirm <installation id>` also
