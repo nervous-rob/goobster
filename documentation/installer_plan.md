@@ -383,6 +383,10 @@ Work:
    service registration. See [backup_and_restore.md](backup_and_restore.md),
    [setup_wizard.md](setup_wizard.md) and
    [host_operations.md](host_operations.md).
+   PR [#366](https://github.com/nervous-rob/goobster/pull/366) (stacked on
+   #365): SQLite full suite 279 suites / 5605 passed; Postgres `core` 2231,
+   `portal` 1124 and `privacy` 325 passed in isolated schemas; Playwright
+   250 passed; lint, smoke, docs and group inventory green.
 5. Postgres: existing server (version and `vector` checks, create database
    and extension, host, port, bind), explicitly chosen Docker container
    (the compose pgvector image), managed native install on Linux (from
@@ -407,6 +411,11 @@ Work:
    storage edits for a server the manager owns, cluster tuning and
    PostgreSQL major upgrades. See
    [database_connection.md](database_connection.md).
+   PR [#365](https://github.com/nervous-rob/goobster/pull/365) (stacked on
+   #363, merging #362): SQLite full suite 276 suites / 5551 passed; Postgres
+   `core` 2186 and `portal` 1116 passed in isolated schemas, the real-server
+   blocks 122 passed as a superuser; Playwright 239 passed; lint, smoke,
+   docs and group inventory green.
 
 Acceptance: every operation refuses to start while another holds the
 lock; an interrupted restore or migration recovers to a stated state;
