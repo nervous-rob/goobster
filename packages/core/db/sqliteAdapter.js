@@ -19,6 +19,8 @@ const DEFAULT_DB_PATH = path.join(require('../runtimePaths').dataDir, 'goobster.
 
 let db = null;
 let vecLoaded = false;
+/** The maintenance fence (runtime/maintenance.js): the connection refuses writes at the engine level. */
+let readOnly = false;
 
 const txContext = new AsyncLocalStorage();
 
@@ -61,8 +63,15 @@ function getDb() {
     // CREATE TABLE text can lag behind it, and the first pass skipped
     // tables that did not exist yet.
     applyColumnMigrations(db);
+    if (readOnly) db.pragma('query_only = ON');
 
     return db;
+}
+
+/** Engine-level backstop behind the facade's maintenance fence: `PRAGMA query_only`. */
+function setReadOnly(on) {
+    readOnly = Boolean(on);
+    if (db) db.pragma(`query_only = ${readOnly ? 'ON' : 'OFF'}`);
 }
 
 /**
@@ -573,6 +582,7 @@ module.exports = {
     insert,
     transaction,
     closeConnection,
+    setReadOnly,
     withAdvisoryLock,
     describeStorage,
     listTables,

@@ -96,6 +96,10 @@ A restored installation starts with **scheduled work on hold**: `runtime/coreRun
 
 The Host room shows the pause (since when, from which archive, what was interrupted), the last restore, and the last resume with what it skipped. Resume is idempotent: calling it on a running instance skips nothing new.
 
+### Restore and the maintenance barrier
+
+A restore will run inside the manager's maintenance barrier (installer plan Phase 4.4; [maintenance_barrier.md](maintenance_barrier.md)), and the paused-after-recovery policy above is separate from releasing that barrier: releasing maintenance does not resume a paused instance.
+
 ### Moving between engines
 
 An archive restores only onto the engine that made it. To move SQLite data to Postgres: restore onto a SQLite installation, then run `npm run migrate-to-postgres` ([postgres_setup.md](postgres_setup.md)). There is no Postgres → SQLite path.

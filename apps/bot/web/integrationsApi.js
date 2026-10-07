@@ -11,6 +11,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const integrationsConfig = require('@goobster/core/config/integrationsConfig');
 const repoWatchService = require('@goobster/core/services/repoWatchService');
+const { maintenanceGate } = require('@goobster/core/web/maintenanceGate');
 
 /**
  * Constant-time check of an HMAC-SHA256 signature header ("sha256=<hex>").
@@ -43,6 +44,11 @@ function integrationsWebhooksEnabled() {
 function createIntegrationsApp({ client, logger = console }) {
     const app = express();
     app.disable('x-powered-by');
+
+    // Maintenance barrier: answer 503 with Retry-After so GitHub and Cursor
+    // redeliver once the installation is back, instead of accepting a
+    // delivery that would write.
+    app.use(maintenanceGate());
 
     // Raw body is required for signature verification; parse JSON afterwards.
     const rawJson = express.raw({ type: () => true, limit: '1mb' });

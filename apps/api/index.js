@@ -40,6 +40,7 @@ const logger = require('@goobster/core/utils/logger');
 const { getConnection, closeConnection } = require('@goobster/core/db');
 const db = require('@goobster/core/db');
 const discordConfig = require('@goobster/core/config/discordConfig');
+const maintenanceGate = require('@goobster/core/web/maintenanceGate');
 const { createApiApp, attachApiWebSockets, resolveRuntimeMode, DEFAULT_API_PORT } = require('./server');
 
 const configPath = require('@goobster/core/runtimePaths').configJsonPath;
@@ -110,12 +111,40 @@ async function main() {
         sandboxService?.pauseNewWork();
     });
 
+    // The maintenance barrier (documentation/maintenance_barrier.md): admission
+    // is already closed when this runs; drain the requests and runs in flight,
+    // stop the scheduled runtime, and let the lifecycle set the database fence.
+    lifecycle.onMaintenance({
+        name: 'api',
+        async drain({ boundMs }) {
+            const pending = [lifecycle.settle([{
+                name: 'httpRequests',
+                drain: () => maintenanceGate.drainRequests()
+            }], lifecycle.contractBoundMs('integrationAction', boundMs))];
+            if (sandboxService) {
+                sandboxService.pauseNewWork();
+                pending.push(lifecycle.settle([{
+                    name: 'sandboxRun',
+                    drain: () => sandboxService.drainRuns(),
+                    interrupt: () => sandboxService.interruptRunning()
+                }], lifecycle.contractBoundMs('sandboxRun', boundMs)));
+            }
+            pending.push(runtime.enterMaintenance(boundMs));
+            await Promise.all(pending);
+        },
+        async resume() {
+            sandboxService?.resumeNewWork?.();
+            await runtime.resumeFromMaintenance();
+        }
+    });
+
     const port = Number(process.env.GOOBSTER_API_PORT) || DEFAULT_API_PORT;
     const server = app.listen(port, () => {
         logger.info(`Goobster api listening on port ${port} `
             + `(portal ${webAppContext.devMode ? 'DEV MODE - auth bypass on' : 'enabled'} at /app)`);
         lifecycle.acknowledgeReady();
     });
+    maintenanceGate.guardUpgrades(server);
     attachApiWebSockets(server, webAppContext);
     logger.info('Parlor Live enabled: WS /api/app/parlor/live');
 

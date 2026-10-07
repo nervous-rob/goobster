@@ -18,7 +18,14 @@
  * "Stop new work" is not the operator *paused* flag
  * (instanceStateService): pausing is a durable operator decision shared by
  * every process; stopping new work is this process getting ready to exit.
- * The maintenance barrier (#334) builds on `pauseNewWork()`.
+ *
+ * The maintenance barrier (documentation/maintenance_barrier.md) is a third,
+ * reversible thing: `enterMaintenance({ fence })` closes admission, lets the
+ * app's registered handlers drain, sets the database fence and acknowledges
+ * the fence to the manager; `resumeMaintenance({ fence })` undoes it. Requests
+ * arrive through the control file (`maintenance` / `resume`), and the manager
+ * store is the fallback truth (`<store>/maintenance.json`), also read at boot:
+ * a process that starts while maintenance is active never starts a writer.
  *
  * Requiring this module installs nothing; `install()` does.
  */
@@ -27,6 +34,7 @@ const nodeFs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const revisionAck = require('./revisionAck');
+const maintenance = require('./maintenance');
 
 const EXIT_RESTART = 75;
 const STOP_NEW_WORK_SIGNAL = 'SIGUSR2';
@@ -36,6 +44,8 @@ const SUPERVISORS = ['manager', 'systemd', 'pm2', 'docker', 'none'];
 const CONTROL_POLL_MS = 1000;
 const PARENT_POLL_MS = 2000;
 const OFF_WORDS = new Set(['0', 'false', 'no', 'off']);
+/** Control-file request types: the restart flow's two, and the maintenance barrier's two (carrying `fence`). */
+const REQUEST_TYPES = Object.freeze(['stop-new-work', 'restart', 'maintenance', 'resume']);
 
 /**
  * Declared shutdown contract per kind of long-running work (audit L1).
@@ -127,7 +137,7 @@ function readJsonFile(file, fs) {
 /**
  * The manager's requests to a worker it does not signal directly.
  *   boot     { revision, staged }  what the next start of this worker runs
- *   request  { id, type: 'stop-new-work'|'restart', revision, drainSeconds, at } | null
+ *   request  { id, type: 'stop-new-work'|'restart'|'maintenance'|'resume', revision, drainSeconds, at, fence? } | null
  */
 function normalizeControl(value, worker) {
     if (!isPlainObject(value) || value.version !== CONTROL_VERSION || value.worker !== worker) return null;
@@ -136,7 +146,7 @@ function normalizeControl(value, worker) {
         : null;
     let request = null;
     if (isPlainObject(value.request)
-        && ['stop-new-work', 'restart'].includes(value.request.type)
+        && REQUEST_TYPES.includes(value.request.type)
         && typeof value.request.id === 'string'
         && typeof value.request.at === 'string') {
         request = {
@@ -144,7 +154,8 @@ function normalizeControl(value, worker) {
             type: value.request.type,
             revision: Number.isInteger(value.request.revision) ? value.request.revision : null,
             drainSeconds: Number.isInteger(value.request.drainSeconds) ? value.request.drainSeconds : DRAIN_BOUND_SECONDS,
-            at: value.request.at
+            at: value.request.at,
+            ...(Number.isInteger(value.request.fence) && value.request.fence >= 0 ? { fence: value.request.fence } : {})
         };
     }
     return { version: CONTROL_VERSION, worker, boot, request };
@@ -253,6 +264,9 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         restarting: false
     };
     const listeners = new Set();
+    const maintenanceHandlers = [];
+    let entering = null;
+    let ctx = { env: process.env, fs: nodeFs };
     const timers = [];
     let shutdownFn = null;
     let logger = console;
@@ -264,6 +278,7 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
      */
     function boot({ worker, env = process.env, fs = nodeFs, log = console } = {}) {
         logger = log;
+        ctx = { env, fs };
         state.worker = worker;
         state.supervisor = detectSupervisor({ env, fs });
         const resolved = bootRevision({ worker, env, fs });
@@ -277,7 +292,85 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
                 logger.warn?.(`[lifecycle] revision ${resolved.revision} asked for staged features but they are not there (${adopted.reason}); running data/features.json`);
             }
         }
+        // Before anything can open a writer: a start during maintenance stays fenced.
+        const fenced = maintenance.engageFromStore({ env, fs });
+        if (fenced.engaged) {
+            logger.warn?.(`[lifecycle] maintenance is active (fence ${fenced.fence}${fenced.status === 'unreadable' ? ', store unreadable' : ''}): this process starts no writers`);
+            if (worker && revisionAck.isWorkerName(worker)) {
+                maintenance.acknowledgeFence({ worker, fence: fenced.fence, state: 'fenced', env, fs, logger }).catch(() => {});
+            }
+        }
         return { worker, supervisor: state.supervisor, revision: state.revision, staged: state.staged };
+    }
+
+    /**
+     * What this app does for maintenance, registered once at start-up.
+     *   drain({ fence, boundMs })   stop opening work and let the running work reach its contract
+     *   interrupt()                 cut what the bound left running
+     *   resume({ fence })           start again after the fence was released
+     * Handlers run together, bounded by the request's drain window.
+     */
+    function onMaintenance(handler) {
+        const entry = { name: String(handler.name || 'app').slice(0, 32), ...handler };
+        maintenanceHandlers.push(entry);
+        return () => {
+            const index = maintenanceHandlers.indexOf(entry);
+            if (index >= 0) maintenanceHandlers.splice(index, 1);
+        };
+    }
+
+    /**
+     * Fence this process for `fence`: admission closes at once, the handlers
+     * drain (bounded), the database fence is set, and only then is the fence
+     * acknowledged (file, plus the HTTP echo when the manager gave a URL).
+     * Idempotent per fence.
+     */
+    function enterMaintenance({ fence, drainSeconds = DRAIN_BOUND_SECONDS } = {}) {
+        if (!Number.isInteger(fence) || fence < 0) return Promise.reject(new Error('lifecycle: maintenance needs a fence'));
+        if (entering && entering.fence === fence) return entering.promise;
+        if (maintenance.isFenced() && maintenance.currentFence() === fence) {
+            return maintenance.acknowledgeFence({ worker: state.worker, fence, state: 'fenced', ...ctx, logger })
+                .then(() => ({ fence, already: true, results: [] }));
+        }
+        const promise = (async () => {
+            maintenance.begin(fence);
+            const boundMs = Math.max(0, Number.isFinite(Number(drainSeconds)) ? Number(drainSeconds) * 1000 : DRAIN_BOUND_SECONDS * 1000);
+            const tasks = maintenanceHandlers.filter(handler => typeof handler.drain === 'function').map(handler => ({
+                name: handler.name,
+                drain: ms => handler.drain({ fence, boundMs: ms }),
+                interrupt: handler.interrupt
+            }));
+            const results = await settle(tasks, boundMs);
+            const cut = results.filter(result => result.outcome !== 'settled');
+            if (cut.length > 0) logger.warn?.(`[lifecycle] maintenance drain bound reached; interrupted: ${cut.map(result => result.name).join(', ')}`);
+            maintenance.fenceDb(fence);
+            await maintenance.acknowledgeFence({ worker: state.worker, fence, state: 'fenced', ...ctx, logger });
+            logger.info?.(`[lifecycle] maintenance fence ${fence} set: admission closed, writes refused`);
+            return { fence, results };
+        })();
+        entering = { fence, promise };
+        const clear = () => { if (entering && entering.promise === promise) entering = null; };
+        promise.then(clear, clear);
+        return promise;
+    }
+
+    /** Lift the fence (the manager released it), start what the handlers stopped, acknowledge `resumed`. */
+    async function resumeMaintenance({ fence = null } = {}) {
+        if (entering) await entering.promise.catch(() => {});
+        if (!maintenance.release(fence)) return { resumed: false };
+        for (const handler of [...maintenanceHandlers].reverse()) {
+            if (typeof handler.resume !== 'function') continue;
+            try {
+                await handler.resume({ fence });
+            } catch (error) {
+                logger.error?.(`[lifecycle] ${handler.name} could not resume after maintenance: ${error && (error.code || error.name)}`);
+            }
+        }
+        if (Number.isInteger(fence)) {
+            await maintenance.acknowledgeFence({ worker: state.worker, fence, state: 'resumed', ...ctx, logger });
+        }
+        logger.info?.('[lifecycle] maintenance released: writes are allowed again');
+        return { resumed: true };
     }
 
     /**
@@ -341,7 +434,10 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         if (childOfManager && proc.platform !== 'win32') {
             proc.on(STOP_NEW_WORK_SIGNAL, () => pauseNewWork({ reason: 'lifecycle', announced: true, drainSeconds }));
         }
-        if (worker && (!childOfManager || proc.platform === 'win32')) {
+        if (worker) {
+            // A POSIX child of the manager gets stop-new-work by signal; every
+            // worker (child or not) reads maintenance requests from the file.
+            const restartByFile = !childOfManager || proc.platform === 'win32';
             const seen = new Set();
             const bootIso = new Date(state.bootedAt).toISOString();
             const initial = readControl(worker, { env, fs });
@@ -349,14 +445,20 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
             const poll = setTimer(() => {
                 const control = readControl(worker, { env, fs });
                 const request = control && control.request;
-                if (!request || seen.has(request.id)) return;
-                seen.add(request.id);
-                if (request.type === 'stop-new-work') {
-                    pauseNewWork({ reason: 'lifecycle', announced: true, drainSeconds: request.drainSeconds });
-                } else if (request.type === 'restart') {
-                    pauseNewWork({ reason: 'lifecycle', announced: true, drainSeconds: request.drainSeconds });
-                    requestRestart('manager');
+                if (request && !seen.has(request.id)) {
+                    seen.add(request.id);
+                    if (request.type === 'maintenance' && Number.isInteger(request.fence)) {
+                        enterMaintenance({ fence: request.fence, drainSeconds: request.drainSeconds }).catch(() => {});
+                    } else if (request.type === 'resume') {
+                        resumeMaintenance({ fence: Number.isInteger(request.fence) ? request.fence : null }).catch(() => {});
+                    } else if (restartByFile && request.type === 'stop-new-work') {
+                        pauseNewWork({ reason: 'lifecycle', announced: true, drainSeconds: request.drainSeconds });
+                    } else if (restartByFile && request.type === 'restart') {
+                        pauseNewWork({ reason: 'lifecycle', announced: true, drainSeconds: request.drainSeconds });
+                        requestRestart('manager');
+                    }
                 }
+                reconcileMaintenanceFromStore(env, fs);
             }, CONTROL_POLL_MS);
             poll?.unref?.();
             timers.push(poll);
@@ -372,6 +474,23 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
             }, PARENT_POLL_MS);
             watch?.unref?.();
             timers.push(watch);
+        }
+    }
+
+    /**
+     * The manager store is the truth for maintenance, the control file only a
+     * nudge: a lost request, or a worker that missed a release, still ends in
+     * the right state within one poll.
+     */
+    function reconcileMaintenanceFromStore(env, fs) {
+        if (entering) return;
+        const stored = maintenance.readStore({ env, fs });
+        if (stored.status === 'active') {
+            if (!maintenance.isFenced() || maintenance.currentFence() !== stored.fence) {
+                enterMaintenance({ fence: stored.fence }).catch(() => {});
+            }
+        } else if (stored.status !== 'unreadable' && maintenance.isActive()) {
+            resumeMaintenance({ fence: maintenance.currentFence() }).catch(() => {});
         }
     }
 
@@ -420,7 +539,8 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
             revision: state.revision,
             staged: state.staged,
             newWorkPaused: Boolean(state.paused),
-            announced: Boolean(state.paused && state.paused.announced)
+            announced: Boolean(state.paused && state.paused.announced),
+            maintenance: maintenance.snapshot()
         };
     }
 
@@ -430,6 +550,9 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         pauseNewWork,
         onPauseNewWork,
         newWorkPaused,
+        onMaintenance,
+        enterMaintenance,
+        resumeMaintenance,
         drainBoundMs,
         restartNotice,
         requestRestart,
@@ -446,6 +569,7 @@ Object.assign(module.exports, {
     CONTROL_VERSION,
     STAGED_VERSION,
     SUPERVISORS,
+    REQUEST_TYPES,
     CONTRACTS,
     DRAIN_BOUND_SECONDS,
     contractBoundMs,

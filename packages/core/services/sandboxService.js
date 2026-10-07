@@ -147,6 +147,11 @@ class SandboxService {
         this._admitting = false;
     }
 
+    /** Admit runs again (the maintenance barrier was released; a restart never calls this). */
+    resumeNewWork() {
+        this._admitting = true;
+    }
+
     /** Settles once every run this process admitted has finished. */
     async drainRuns() {
         await Promise.allSettled([...this._running].map(entry => entry.promise));

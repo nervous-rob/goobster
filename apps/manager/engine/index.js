@@ -177,7 +177,8 @@ function createEngine({ journal, lock, kinds, currentState, context = {}, hooks 
                 actor: record.actor,
                 operationId: record.id,
                 outcome,
-                via: record.via
+                via: record.via,
+                forced: Boolean(record.plan && record.plan.force === true)
             });
             if (onAudit) onAudit(entry);
         } catch (error) {

@@ -112,6 +112,9 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     if (booted.recovered.length > 0) {
         logger.warn(`[manager] ${booted.recovered.length} interrupted operation(s) marked failed.`);
     }
+    if (booted.maintenance && booted.maintenance.active) {
+        logger.warn(`[manager] a maintenance barrier is up (fence ${booted.maintenance.fence ?? 'unknown'}${booted.maintenance.stale ? ', left by an earlier manager' : ''}${booted.maintenance.problem ? `, state ${booted.maintenance.problem}` : ''}); it is kept as it is until an operator releases it.`);
+    }
     logger.info(`[manager] state: ${booted.state.state}${booted.state.reason ? ` (${booted.state.reason})` : ''}`);
     if (booted.bootstrap) {
         printCredential(stdout, 'First-time setup credential', booted.bootstrap, { reveal: Boolean(stdout.isTTY) });

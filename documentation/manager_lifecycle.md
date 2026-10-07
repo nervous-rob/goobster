@@ -411,9 +411,14 @@ does the same as the units; Ctrl-C stops the workers first.
   register: the manager is the service, `--supervise`, the supervisor env
   value, a stop timeout of at least drain + 15 s + margin, and the manager
   alone receives the stop signal.
-- **#334 (maintenance barrier):** build on the worker's
-  `lifecycle.pauseNewWork()` / `onPauseNewWork()` and `coreRuntime`'s
-  `pauseNewWork()` / `settleInFlight()` - not on the *paused* flag.
+- **#334 (maintenance barrier):** done in
+  [maintenance_barrier.md](maintenance_barrier.md). It reuses this worker
+  contract (the control file, the one-second poll, the drain bounds) with a
+  separate `maintenance` / `resume` request that carries a fencing token,
+  `lifecycle.onMaintenance()` for what a worker stops, and `coreRuntime`'s
+  `enterMaintenance()` / `resumeFromMaintenance()`; it is not the *paused*
+  flag. `lifecycle.apply` refuses `MAINTENANCE_ACTIVE` while the barrier is
+  up.
 
 ## Tests
 
@@ -430,4 +435,7 @@ adapter, a real `node` process group on Linux, the restarting notice),
 store nothing) and `tests/workInterruption.test.js` (expedition cycles run
 once across a restart, sandbox `RESTARTING`/`INTERRUPTED`, the voice
 notice, runtime drain and per-contract bounds, on SQLite and Postgres).
-All run in the `core` CI group.
+All run in the `core` CI group. The maintenance barrier's worker side and
+fence are covered by `tests/maintenanceBarrier.test.js` and
+`tests/maintenanceFence.test.js` (see
+[maintenance_barrier.md](maintenance_barrier.md)).

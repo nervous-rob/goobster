@@ -68,6 +68,8 @@ const GROUPS = [
             'workInterruption',
             'installEngine',
             'installCli',
+            'maintenanceBarrier',
+            'maintenanceFence',
             'presenceService',
             'reportIntegrations',
             'safeFetch',

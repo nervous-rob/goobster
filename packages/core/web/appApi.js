@@ -23,6 +23,7 @@ const express = require('express');
 const { createWebAppContext } = require('./appContext');
 const { createAppHelpers, originGuard, parseCookies, sendError, SESSION_COOKIE } = require('./appHelpers');
 const featureGate = require('./featureGate');
+const { maintenanceGate } = require('./maintenanceGate');
 const { attachWebAppWebSocket } = require('./appWebsocket');
 const { mountAuth } = require('./routes/auth');
 const { mountAccount } = require('./routes/account');
@@ -101,6 +102,9 @@ function createWebAppApp(ctx) {
     const app = express.Router();
     const helpers = createAppHelpers(ctx);
     app.use(featureGateMiddleware(ctx));
+    // Maintenance barrier (documentation/maintenance_barrier.md): every
+    // mutating portal request is a 503 while the process is fenced.
+    app.use(maintenanceGate({ only: PORTAL_PATH }));
     // Scoped parser (activityApi pattern): a router-wide parser would eat
     // request bodies destined for the raw-body webhook receivers. The limit
     // covers vision attachments (up to 4 base64 data URLs per message) and
