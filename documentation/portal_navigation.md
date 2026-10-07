@@ -34,7 +34,7 @@ entry declares:
 | `group` | `primary` (sidebar), `tools` (cards under Tools), `account` (footer), `public` (share viewer). |
 | `parent` | For specialist rooms: the primary entry that lights up (`tools`). |
 | `atmosphere` | The `room-*` body class the stylesheet paints. |
-| `requires` | `{ feature: 'projects' }` (Projects: organization, on by default), `{ feature: 'observatory' }` (code execution), `{ discord: true }` or `{ operator: true }`. A hidden room is not a forbidden one - a direct URL still resolves and explains itself. |
+| `requires` | The catalog feature ids the destination needs: `{ feature: 'projects' }`, `{ feature: ['exchange', 'discord'] }` (one id or a list), the older `{ discord: true }` (the `discord` feature), or `{ operator: true }` (the host role). A view (Knowledge → Research needs `expeditions`) declares its own. Availability is per installation: see [Feature availability](#feature-availability). A hidden room is not a forbidden one - a direct URL still resolves and explains itself. |
 | `legacyIds` | Older room names (`study`, `noticed`, `mtga`, …) accepted by the `#room/id` hash scheme and the start-page preference. |
 | `count` | Which badge the entry shows (`inbox` = Inbox unread count; `people` = pending friend requests plus unread direct messages, `me.people`). `roomBadgeCount(room, me)` in the typed façade is the one place that reads it. |
 | `tutorials` | The stable tutorial ids from [the guided-tutorial spec](guided_tutorials_spec.md) that belong to this room - all 28, each listed exactly once. |
@@ -49,6 +49,42 @@ start-page select and the legacy hash redirect all read from the registry. TanSt
 `apps/web/src/main.tsx`: the registry decides names and path equivalences,
 never route parameters. `rooms.ts` is the typed ESM façade; the `.cjs` file
 exists so `tests/portalRooms.test.js` can `require()` it.
+
+## Feature availability
+
+Which features an installation has is a fact about the installation, not
+the person ([feature_state.md](feature_state.md); every feature and what it
+owns is in [features.md](features.md)). The portal reads it once per session
+from `GET /api/app/features` (the sanitized status: `active` and structured
+`reasons` per feature, never a path, key or value) beside `me`, and keeps the
+legacy `me.features` / `me.discord` booleans as a fallback when that request
+fails, so navigation never blanks. With no `data/features.json` the reported
+value equals those legacy switches, so a default installation renders as it
+always has.
+
+Rooms, nested views and tutorials declare the features they need as data
+(`requires.feature`); `tests/featureGatingPortal.test.js` fails when a
+declaration drifts from the feature inventory or the catalog. The helpers
+live in `rooms.cjs` (backed by `featureStatus.cjs`) so Jest covers them:
+
+| Surface | When a required feature is not active |
+|---|---|
+| Sidebar and Home doors | `isRoomAvailable` omits the room. |
+| Nested views | `availableViews` omits the tab (Knowledge → Research needs `expeditions`). |
+| Tools cards | `toolCards` keeps the card, marks it unavailable, says why in one sentence from the server's reason code (a dependency is named by its catalog title) and links to the docs page that explains it. |
+| A deep link or old bookmark | `routeUnavailability` resolves the address to a "Not available on this installation" state **inside the shell** (the room name, the reason, a way back and the docs link). It is not a blank page, a redirect or an error toast; nothing failed. |
+| Guided tours | Listed as unavailable with the reason, never launched, never marked complete; saved progress stays. See [guided_tutorials_spec.md](guided_tutorials_spec.md#availability). |
+| Goobster's own docs | `consultDocs` annotates a doc about an inactive feature; see [self_knowledge.md](self_knowledge.md#feature-availability). |
+
+Three states are never conflated: **available**, **unavailable on this
+installation** (the host's state, above) and **hidden by this account**
+(`appearance.hiddenToolRooms`, a preference that changes nothing about
+availability and is not described as unavailable). Disabled is not deleted:
+projects, notes, tour progress and settings stay in place and return when the
+host turns the feature back on. A feature that was just switched off is
+picked up on the next load (the status is cached for the session for a few
+minutes); the server refuses its routes whenever the installation enforces
+the state, so a stale client cannot reach a disabled feature.
 
 ## Canonical routes and aliases
 
@@ -182,11 +218,15 @@ the notice shows on the row. Neither action moves to the other view.
 `/tools` is a landing page of cards for the specialist rooms. Three states
 stay visually distinct:
 
-- **Host-unavailable.** `isRoomAvailable` / `unavailableReason` (`requires.feature`,
-  `requires.operator`, `requires.discord` against `me.discord.enabled`).
-  The card is not a link and says why — the Trading game on an installation
-  with no Discord adapter, for instance. Hiding a tool does not change
-  this reason, and this reason does not hide the tool.
+- **Host-unavailable.** `toolCards` / `roomUnavailability` (`requires.feature`
+  against the reported feature status, `requires.operator`; the legacy
+  `me.discord.enabled` is the fallback).
+  The card is not a link, is marked "Not available on this installation",
+  says why in one sentence (the Trading game on an installation with no
+  Discord adapter, Exchange waiting on Economy, Music turned off by a host
+  setting) and links to the docs page that explains how a host turns it on.
+  Hiding a tool does not change this reason, and this reason does not hide
+  the tool.
 - **Hidden by this account.** `appearance.hiddenToolRooms` is the set of
   tool-room ids (`music`, `trading`, `decks`) the person has hidden.
   `userSettingsSchema.TOOL_ROOM_IDS` is the allow-list; the registry's
@@ -306,6 +346,15 @@ only registers the routes they land on.
   start-page parity and mapping, legacy hash targets, tool-room id parity
   with `userSettingsSchema.TOOL_ROOM_IDS`, and `catalogTools` (hiding
   drops a card and leaves `isRoomAvailable` / `unavailableReason` alone).
+- `tests/featureGatingPortal.test.js` - #321: room, view and tutorial
+  feature ids against the feature inventory and catalog; the availability
+  helpers (navigation, nested views, Tools cards, deep links, user-hidden
+  versus unavailable, the legacy fallback); unavailable tours; the self-docs
+  annotation; and `documentation/features.md` freshness.
+- `e2e/featureAvailability.spec.js` - a second portal instance with a
+  `features.json` (and a `GOOBSTER_FEATURE_MUSIC=0` instance) proves the
+  enabled, host-disabled, user-hidden, unavailable-tour and re-enable
+  journeys without touching the shared server.
 - `tests/activityCorrelation.test.js` - one `_contact` is one unread inbox
   row that names every notice, and each notice names that row; archive
   stays an inbox action and shows on the notice; dismiss, snooze and act

@@ -12,6 +12,11 @@ function kindLabel(kind) {
     return kind === 'skill' ? 'skill guide' : kind;
 }
 
+/** One short line, computed at query time, for a doc whose feature is inactive here. */
+function availabilityLine(unavailable) {
+    return unavailable ? `\n${unavailable.note}` : '';
+}
+
 function formatSearch(query, { mode, results }) {
     if (results.length === 0) {
         return `DOCS — nothing in your documentation matches "${query}". `
@@ -20,7 +25,7 @@ function formatSearch(query, { mode, results }) {
     const lines = [`DOCS — ${results.length} result(s) for "${query}" (${mode} ranking). Cite the doc you rely on by title.`];
     let used = lines[0].length;
     for (const [i, hit] of results.entries()) {
-        const header = `\n[${i + 1}] ${hit.headingPath} — ${kindLabel(hit.kind)}, ${hit.relPath} (read more: action="read", slug="${hit.slug}")`;
+        const header = `\n[${i + 1}] ${hit.headingPath} — ${kindLabel(hit.kind)}, ${hit.relPath} (read more: action="read", slug="${hit.slug}")${availabilityLine(hit.unavailable)}`;
         const body = hit.content;
         if (used + header.length + body.length > MAX_SEARCH_CHARS && i > 0) {
             lines.push(`\n… ${results.length - i} more result(s) omitted for length; narrow the query or read a doc directly.`);
@@ -55,6 +60,7 @@ function formatList(docs, kind) {
             let line = `- ${doc.title} (slug: ${doc.slug})`;
             if (doc.summary) line += ` — ${doc.summary}`;
             if (doc.useWhen) line += `\n  Use when: ${doc.useWhen}`;
+            if (doc.unavailable) line += `\n  ${doc.unavailable.note}`;
             if (used + line.length > MAX_LIST_CHARS) {
                 lines.push('- … more omitted for length; filter by kind.');
                 return lines.join('\n');
@@ -72,6 +78,7 @@ function formatRead(ref, result, section) {
     }
     const { doc, window, sectionMatched, sections } = result;
     const header = [`DOCS — ${doc.title} (${kindLabel(doc.kind)}, ${doc.relPath})`];
+    if (doc.unavailable) header.push(doc.unavailable.note);
     if (section && !sectionMatched) {
         header.push(`No section matches "${section}"; showing the whole document. Sections: ${sections.slice(0, 30).join(' | ')}`);
     } else if (section) {

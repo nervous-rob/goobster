@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
@@ -30,6 +30,20 @@ export function SessionProvider({ children, boundKey, onAccount }: {
     const error = query.error ? (query.error as ApiError) : query.data ? null : lastError.current.error;
     const initialLoad = query.isPending && !error;
     const me = error ? null : query.data || null;
+    // What this installation can do (#321): fetched once per signed-in
+    // session and merged into `me`, so rooms, cards and tours ask one
+    // object. A failed request leaves `featureStatus` null and the legacy
+    // `me.features` flags keep deciding; it never blanks the navigation.
+    const featuresQuery = useQuery({
+        queryKey: keys.features,
+        queryFn: () => api.features(),
+        enabled: Boolean(me),
+        retry: false,
+        staleTime: 5 * 60_000
+    });
+    const featureStatus = featuresQuery.data ?? null;
+    const viewer = useMemo<Me | null>(() => (me ? { ...me, featureStatus } : null), [me, featureStatus]);
+    const featuresPending = Boolean(me) && featuresQuery.isPending;
     const nextKey = sessionKey(me);
     const refetch = query.refetch;
     // The host let the person in: ask /me again right away instead of
@@ -42,6 +56,9 @@ export function SessionProvider({ children, boundKey, onAccount }: {
     if (initialLoad) {
         return <div className="login"><div className="empty">Looking around…</div></div>;
     }
+    if (featuresPending) {
+        return <div className="login"><div className="empty">Looking around…</div></div>;
+    }
     if (error && error.status === 403) {
         return <NoAccountPage error={error} onApproved={onApproved} />;
     }
@@ -49,7 +66,7 @@ export function SessionProvider({ children, boundKey, onAccount }: {
         return <div className="login"><div className="empty">{error.message}</div></div>;
     }
     return (
-        <SessionContext.Provider value={me}>
+        <SessionContext.Provider value={viewer}>
             {children}
         </SessionContext.Provider>
     );

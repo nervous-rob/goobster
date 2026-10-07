@@ -45,11 +45,20 @@ Each file becomes one **document** with a stable slug derived from its path
 | `summary` | front matter `summary`, else the first paragraph |
 | `useWhen` | front matter `when` (skill guides: when the procedure applies) |
 | `tags` | front matter `tags` |
+| `feature` | front matter `feature: <catalog id>` (see [Feature availability](#feature-availability)) |
 
 The body is split into **chunks** at headings (fenced code is never split or
 mistaken for a heading), small neighbouring sections are merged and oversized
 ones split on blank lines, aiming at ~1,800 characters. Every chunk carries a
 `Title > Section > Subsection` breadcrumb and a content hash.
+
+## Feature availability
+
+A document about a feature carries `feature: <id>` in its front matter (the ids in `packages/core/features/catalog.js`; the docs each feature lists are the ones tagged, and an unknown id is dropped with a seed warning). The seed stores the tag with the document's other tags; it does not store availability. `consultDocs` decides at **query time**, from the live feature state of this installation, whether a document's feature is active, and when it is not, adds one short line to that document's `search` hit, `read` header and `list` entry:
+
+> Not available on this installation: Sandbox is turned off on this installation. The doc still explains how to enable it.
+
+Docs are never hidden or removed for being unavailable: they are how an operator learns to turn the feature on, and Goobster can answer "how do I enable X" on an installation where X is off. The note names the first reason (turned off, left out of this installation, turned off by a host setting, waiting on a named dependency, or the feature settings could not be read). With no `data/features.json` the reported state equals today's legacy switches, so a default installation sees the same notes its legacy switches imply. Docs not tied to one feature (and the three that span several: `identity.md`, `independent_runtime.md`, `pwa.md`) carry no tag and no note. [features.md](features.md) lists every feature and its documents.
 
 ## When seeding happens
 
@@ -165,6 +174,8 @@ same way; `kind: skill` makes a note a procedure.
   is invisible to Goobster. Keep docs current and keep skill guides accurate to
   the tools they name.
 
-Tests: `tests/selfDocs.test.js` (parsing, chunking, idempotent seeding, hybrid
+Tests: `tests/featureGatingPortal.test.js` (feature front matter, the query-time
+annotation, an idempotent seed with the tag, keyword search with no keys),
+`tests/selfDocs.test.js` (parsing, chunking, idempotent seeding, hybrid
 search with an injected embedder, reading, listing, the tool's formatting, and
 the real-corpus validation).

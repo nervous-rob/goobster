@@ -561,9 +561,11 @@ Recorded as `knownGaps` in `inventory.js` so they are not lost:
 - #319: MCP enablement is boot-time only and the `observatory` tool needs
   an action-aware reduced definition. (`toolsRegistry.execute()` and the
   MCP brief tools and resource are gated.)
-- #321: tutorial `knowledge.research` has no `requires`; `projects.runs`
-  needs observatory and `trading.basics` needs exchange; unmet tutorials
-  are omitted instead of reported unavailable.
+- #321 (closed): the tutorial catalog now declares `knowledge.research`
+  (expeditions), `projects.runs` (projects and observatory) and
+  `trading.basics` (exchange and discord), and an unmet tutorial is
+  reported unavailable instead of omitted. See
+  [portal_navigation.md](portal_navigation.md#feature-availability).
 - #322: `screen_vision_clients`, `agent_runs`, `repo_watches`,
   `integration_audit` and `pending_integration_actions` are not reached by
   `privacyService.forgetUser`; account export omits economy, exchange,

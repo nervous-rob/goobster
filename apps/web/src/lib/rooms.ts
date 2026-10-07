@@ -2,11 +2,18 @@
 // and resolvers live in rooms.cjs (Jest requires it directly); the types
 // live here.
 import registry from './rooms.cjs';
+import featureRegistry from './featureStatus.cjs';
+import type { FeatureReason, FeatureStatus } from './types';
 
 export type RoomGroup = 'primary' | 'tools' | 'account' | 'public';
 
+/**
+ * What a room or view needs: catalog feature ids (one or a list; see
+ * packages/core/features/catalog.js), the operator role, or the older
+ * `discord` flag (the `discord` feature).
+ */
 export type RoomRequirement = {
-    feature?: 'projects' | 'observatory' | 'spitball';
+    feature?: string | string[];
     operator?: boolean;
     discord?: boolean;
 };
@@ -31,6 +38,7 @@ export type RoomView<Id extends RoomViewId = RoomViewId> = {
     path?: string;
     segment?: string;
     legacyIds?: string[];
+    requires?: RoomRequirement;
 };
 
 export type ActivityView = RoomView<ActivityViewId>;
@@ -78,9 +86,24 @@ export type StartPageOption = { value: StartPage; label: string };
 /** The slice of `Me` the registry needs to decide availability. */
 export type RoomViewer = {
     features?: { projects?: boolean; observatory?: boolean; spitball?: boolean };
+    featureStatus?: FeatureStatus | null;
     identity?: { operator?: boolean };
     discord?: { enabled?: boolean };
 } | null | undefined;
+
+/** Why a destination is unavailable: the host-only role, or the first inactive feature with the server's reason codes. */
+export type Unavailability =
+    | { kind: 'operator'; sentence: string }
+    | {
+        kind: 'feature'; feature: string; title: string; reasons: FeatureReason[]; sentence: string;
+        docSlug: string | null; docPath: string | null;
+    };
+
+export type RouteUnavailability = Extract<Unavailability, { kind: 'feature' }> & {
+    level: 'room' | 'view'; room: Room; view: RoomView | null;
+};
+
+export type ToolCard = { room: Room; available: boolean; unavailable: Unavailability | null };
 
 type Registry = {
     ROOMS: Room[];
@@ -106,8 +129,15 @@ type Registry = {
     resolveKnowledgeView: (pathname: string) => KnowledgeViewId | null;
     atmosphereFor: (roomId: string) => string;
     roomDisplayName: (pathname: string) => string;
+    requiredFeatures: (requires: RoomRequirement | null | undefined) => string[];
     isRoomAvailable: (room: Room, me: RoomViewer) => boolean;
+    roomUnavailability: (room: Room, me: RoomViewer) => Unavailability | null;
     unavailableReason: (room: Room, me: RoomViewer) => string | null;
+    isViewAvailable: (room: Room, view: RoomView, me: RoomViewer) => boolean;
+    viewUnavailability: (room: Room, view: RoomView, me: RoomViewer) => Unavailability | null;
+    availableViews: (room: Room, me: RoomViewer) => RoomView[];
+    routeUnavailability: (pathname: string, me: RoomViewer) => RouteUnavailability | null;
+    toolCards: (hiddenIds: readonly string[] | null | undefined, me: RoomViewer) => ToolCard[];
     startPageTarget: (value: string | null | undefined) => string | null;
     startPageOptionFor: (value: string | null | undefined) => StartPage;
     legacyHashTarget: (hash: string) => string | null;
@@ -137,8 +167,15 @@ export const resolvePeopleView = rooms.resolvePeopleView;
 export const resolveKnowledgeView = rooms.resolveKnowledgeView;
 export const atmosphereFor = rooms.atmosphereFor;
 export const roomDisplayName = rooms.roomDisplayName;
+export const requiredFeatures = rooms.requiredFeatures;
 export const isRoomAvailable = rooms.isRoomAvailable;
+export const roomUnavailability = rooms.roomUnavailability;
 export const unavailableReason = rooms.unavailableReason;
+export const isViewAvailable = rooms.isViewAvailable;
+export const viewUnavailability = rooms.viewUnavailability;
+export const availableViews = rooms.availableViews;
+export const routeUnavailability = rooms.routeUnavailability;
+export const toolCards = rooms.toolCards;
 export const startPageTarget = rooms.startPageTarget;
 export const startPageOptionFor = rooms.startPageOptionFor;
 export const legacyHashTarget = rooms.legacyHashTarget;
@@ -180,3 +217,21 @@ export function roomBadgeCount(room: Room, me: { inbox?: { unread?: number }; pe
     if (room.count === 'people') return (me?.people?.pending || 0) + (me?.people?.unread || 0);
     return 0;
 }
+
+type FeatureRegistry = {
+    featureTitle: (id: string) => string;
+    featureActive: (viewer: RoomViewer, id: string) => boolean;
+    featureAvailability: (viewer: RoomViewer, id: string) => { id: string; active: boolean; reasons: FeatureReason[] };
+    reasonSentence: (id: string, reasons: FeatureReason[]) => string;
+    featureDocSlug: (id: string) => string | null;
+    featureDocPath: (id: string) => string | null;
+};
+
+const featureStatus = featureRegistry as unknown as FeatureRegistry;
+
+export const featureTitle = featureStatus.featureTitle;
+export const featureActive = featureStatus.featureActive;
+export const featureAvailability = featureStatus.featureAvailability;
+export const reasonSentence = featureStatus.reasonSentence;
+export const featureDocSlug = featureStatus.featureDocSlug;
+export const featureDocPath = featureStatus.featureDocPath;

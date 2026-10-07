@@ -15,6 +15,7 @@ import { TransferNoteModal, type TransferTarget } from './TransferNoteModal';
 import { TYPE_COLORS } from '../renderers/graph.js';
 import { CURATION_LABEL, CurationBadge } from '../rooms/knowledge/graphParts';
 import type { Curation, CurationView, UserNote, NotesPayload } from '../lib/types';
+import { featureActive } from '../lib/rooms';
 
 type SortKey = 'updated' | 'label' | 'type';
 
@@ -77,7 +78,7 @@ export function NotesTab({
     // Explicit transfers (ADR 0010) start from the caller's own notes only,
     // and never from distilled memory - the server refuses the same rows.
     const personal = isPersonalScope(scope);
-    const projectsOn = me.features?.projects !== false;
+    const projectsOn = featureActive(me, 'projects');
 
     // The curation chip only means something under "All retained knowledge".
     const effectiveCuration = view === 'all' ? curation : '';

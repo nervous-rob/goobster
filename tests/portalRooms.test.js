@@ -273,7 +273,7 @@ describe('availability', () => {
     test('explains why a room is unavailable', () => {
         expect(rooms.unavailableReason(trading, { discord: { enabled: false } })).toMatch(/not connected to Discord/);
         expect(rooms.unavailableReason(host, { identity: { operator: false } })).toMatch(/host/);
-        expect(rooms.unavailableReason(projects, { features: {} })).toMatch(/not enabled/);
+        expect(rooms.unavailableReason(projects, { features: {} })).toMatch(/Projects is turned off on this installation/);
         expect(rooms.unavailableReason(projects, { features: { projects: true } })).toBeNull();
     });
 
