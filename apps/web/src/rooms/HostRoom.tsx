@@ -15,6 +15,7 @@ import { FeaturesPage } from './host/FeaturesPage';
 import { ConnectionsPage, DefaultsPage } from './host/ConfigPages';
 import { LifecyclePanel } from './host/LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './host/ManagerCard';
+import { DatabaseCard, DatabasePage } from './host/DatabasePage';
 import { InstallationCard, InstallationPage } from './host/InstallationPage';
 import { MaintenanceCard, MaintenancePage } from './host/MaintenancePage';
 
@@ -684,6 +685,7 @@ const HOST_PAGES = [
     { id: 'connections', name: 'Connections' },
     { id: 'defaults', name: 'Instance Defaults' },
     { id: 'installation', name: 'Installation' },
+    { id: 'database', name: 'Database' },
     { id: 'maintenance', name: 'Maintenance' }
 ] as const;
 type HostPageId = typeof HOST_PAGES[number]['id'];
@@ -697,6 +699,7 @@ function OverviewPage() {
             <LimitsPanel />
             <LifecyclePanel enabled={usable} />
             <InstallationCard />
+            <DatabaseCard />
             <MaintenanceCard />
             <SignupPanel />
             <InvitesPanel />
@@ -737,6 +740,7 @@ export function HostRoom() {
                 {operator && page === 'connections' && <ConnectionsPage />}
                 {operator && page === 'defaults' && <DefaultsPage />}
                 {operator && page === 'installation' && <InstallationPage />}
+                {operator && page === 'database' && <DatabasePage />}
                 {operator && page === 'maintenance' && <MaintenancePage />}
             </div>
         </main>

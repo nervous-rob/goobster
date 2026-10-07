@@ -18,17 +18,20 @@ function sqlitePathOf(roots, settings) {
 }
 
 /**
- * @param {{ roots: Object, settings: Object, database: { engine: string } }} params
+ * @param {{ roots: Object, settings: Object, database: { engine: string }, url?: string }} params
+ *   `url` names the Postgres database explicitly (the connection wizard's, before it is saved anywhere);
+ *   without it the manager's `settings.dbUrl` is used. It travels in the child's environment, never argv.
  * @returns {Promise<{ engine: string, tables: number }>}
  */
-function initDatabase({ roots, settings, database, execFile = childProcess.execFile }) {
+function initDatabase({ roots, settings, database, url = null, execFile = childProcess.execFile }) {
     const env = { ...process.env, GOOBSTER_DATA_DIR: roots.data, GOOBSTER_WORKSPACE_ROOT: roots.code };
     if (database.engine === 'sqlite') {
         delete env.GOOBSTER_DB_URL;
         env.GOOBSTER_DB_PATH = sqlitePathOf(roots, settings);
     } else {
-        env.GOOBSTER_DB_URL = settings.dbUrl;
+        env.GOOBSTER_DB_URL = url || settings.dbUrl;
         delete env.GOOBSTER_DB_PATH;
+        if (url) delete env.GOOBSTER_PG_TEST_ISOLATE;
     }
     return new Promise((resolve, reject) => {
         execFile(process.execPath, [CHILD], { env, timeout: TIMEOUT_MS, maxBuffer: 1 << 16 }, (error, stdout) => {

@@ -2,7 +2,7 @@ import { api } from '../lib/api';
 import type { HostLifecycle, InstallOperation, InstallOperationKind } from '../lib/types';
 import type { FirstRun, WizardTransport } from './transport';
 
-const INSTALL_KINDS: string[] = ['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall', 'backup.create', 'backup.restore', 'data.reset'];
+const INSTALL_KINDS: string[] = ['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall', 'backup.create', 'backup.restore', 'data.reset', 'database.provision', 'database.schema.apply', 'database.connect'];
 
 /**
  * The maintenance journeys inside the portal: the same transport interface

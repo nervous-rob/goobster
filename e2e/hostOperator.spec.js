@@ -110,7 +110,7 @@ test.describe('Host pages change the installation through the manager', () => {
         await login(page, { userId: OPERATOR, name: OPERATOR_NAME });
         await openFeatures(page);
         const tabs = page.getByRole('navigation', { name: 'Host pages' });
-        await expect(tabs.getByRole('link')).toHaveText(['Overview', 'Features', 'Connections', 'Instance Defaults', 'Installation', 'Maintenance']);
+        await expect(tabs.getByRole('link')).toHaveText(['Overview', 'Features', 'Connections', 'Instance Defaults', 'Installation', 'Database', 'Maintenance']);
         await expect(tabs.locator('[aria-current="page"]')).toHaveText('Features');
 
         const music = page.getByRole('checkbox', { name: /for Music/ });

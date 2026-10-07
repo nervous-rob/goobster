@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { useCallback } from 'react';
 import { AnswersProvider } from '../../setup/answers';
+import { DatabaseJourney } from '../../setup/journeys/Database';
 import { Maintain } from '../../setup/journeys/Maintain';
 import { Reconfigure } from '../../setup/journeys/Reconfigure';
 import { Repair } from '../../setup/journeys/Repair';
@@ -13,7 +14,7 @@ import { LifecyclePanel } from './LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './ManagerCard';
 
 const ANSWERS_KEY = 'goobster-portal-installation-answers';
-const JOURNEYS = new Set(['reconfigure', 'repair', 'uninstall']);
+const JOURNEYS = new Set(['reconfigure', 'repair', 'uninstall', 'database']);
 
 /**
  * Overview card: the three things you can do to the installation. Each opens
@@ -50,10 +51,10 @@ export function InstallationPage() {
     const journey = place.journey;
     let body;
     if (JOURNEYS.has(journey)) {
-        const props = { step: place.step || (journey === 'uninstall' ? 'choose' : journey === 'repair' ? 'scope' : 'edit'), id: place.id, go: goJourney(journey) };
+        const props = { step: place.step || (journey === 'uninstall' ? 'choose' : journey === 'repair' ? 'scope' : journey === 'database' ? 'status' : 'edit'), id: place.id, go: goJourney(journey) };
         body = journey === 'reconfigure'
             ? <Reconfigure {...props} restartPanel={<LifecyclePanel title="Restart" enabled={usable} />} />
-            : journey === 'repair' ? <Repair {...props} /> : <Uninstall {...props} />;
+            : journey === 'repair' ? <Repair {...props} /> : journey === 'database' ? <DatabaseJourney {...props} /> : <Uninstall {...props} />;
     } else {
         body = <Maintain go={(next, step) => go({ journey: next === 'maintain' ? 'maintain' : next, step })} />;
     }

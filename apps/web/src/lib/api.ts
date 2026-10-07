@@ -3,6 +3,7 @@ import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThr
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
+import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -148,6 +149,9 @@ export const api = {
     hostConfig: () => request<HostConfigReport>('/api/app/admin/host/config'),
     hostProbe: (body: { target: string; useSaved?: boolean; credential?: string }) =>
         request<HostProbeOutcome>('/api/app/admin/host/config/probe', { method: 'POST', body }),
+    hostDatabaseStatus: () => request<DatabaseStatus>('/api/app/admin/host/database/status'),
+    hostDatabaseTest: (connection: DatabaseConnectionBody) =>
+        request<DatabaseReport>('/api/app/admin/host/database/test', { method: 'POST', body: { connection } }),
     hostPreview: (kind: HostOperationKind, input: unknown) =>
         request<HostPreview>('/api/app/admin/host/operations', { method: 'POST', body: { kind, input } }),
     hostApply: (id: string) =>

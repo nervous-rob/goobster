@@ -165,6 +165,14 @@ async function inspectPostgres(url, { connect = defaultConnect } = {}) {
                  WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')`, [wanted]
             )).rows[0].n)
             : 0;
+        const layout = schemaRow ? await schemaLayout(client, wanted) : { tables: [], otherRelations: [] };
+        const connectPrivilege = (await client.query(`SELECT has_database_privilege(current_database(), 'CONNECT') AS ok`)).rows[0].ok;
+        const capabilities = (await client.query(
+            `SELECT COALESCE((SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user), false) AS create_db,
+                    COALESCE((SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user), false) AS create_role`
+        )).rows[0];
+        const versionText = String((await client.query('SHOW server_version')).rows[0].server_version || '').split(' ')[0].slice(0, 40);
+        const tls = await tlsOfSession(client);
         const extensions = {};
         const available = (await client.query(
             `SELECT a.name, a.installed_version, COALESCE(v.trusted, false) AS trusted
@@ -191,14 +199,57 @@ async function inspectPostgres(url, { connect = defaultConnect } = {}) {
             canCreateInDatabase: Boolean(privileges.database_create),
             canCreateInSchema: Boolean(privileges.schema_create),
             relationCount: relations,
+            tables: layout.tables,
+            otherRelations: layout.otherRelations,
             extensions,
-            freeBytes: space
+            freeBytes: space,
+            serverVersionText: versionText,
+            canConnect: Boolean(connectPrivilege),
+            canCreateDatabase: Boolean(capabilities.create_db),
+            canCreateRole: Boolean(capabilities.create_role),
+            tls
         };
     } catch (error) {
         return { ...base, reachable: false, code: causeOf(error) };
     } finally {
         try { await client.query('ROLLBACK'); } catch { }
         try { await client.end(); } catch { }
+    }
+}
+
+const MAX_TABLES = 600;
+const MAX_OTHER = 50;
+
+/**
+ * Table names with their column names, and the names of everything else in the
+ * schema that is not one of ours to judge (views, materialized views, foreign
+ * tables, sequences). Catalog reads only; names, never rows.
+ */
+async function schemaLayout(client, schema) {
+    const found = (await client.query(
+        `SELECT c.relname AS name, c.relkind AS kind,
+                COALESCE(array_agg(a.attname::text ORDER BY a.attnum) FILTER (WHERE a.attnum > 0 AND NOT a.attisdropped), '{}') AS columns
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         LEFT JOIN pg_attribute a ON a.attrelid = c.oid
+         WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+         GROUP BY c.relname, c.relkind
+         ORDER BY c.relname
+         LIMIT $2`, [schema, MAX_TABLES + MAX_OTHER]
+    )).rows;
+    return {
+        tables: found.filter(row => row.kind === 'r' || row.kind === 'p').slice(0, MAX_TABLES).map(row => ({ name: row.name, columns: row.columns })),
+        otherRelations: found.filter(row => !(row.kind === 'r' || row.kind === 'p')).slice(0, MAX_OTHER).map(row => ({ name: row.name, kind: row.kind }))
+    };
+}
+
+/** Whether this very session is encrypted (`pg_stat_ssl` shows it for the caller's own backend). */
+async function tlsOfSession(client) {
+    try {
+        const row = (await client.query('SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid()')).rows[0];
+        return row ? { encrypted: Boolean(row.ssl), protocol: row.ssl ? String(row.version || '').slice(0, 16) || null : null } : { encrypted: null, protocol: null };
+    } catch {
+        return { encrypted: null, protocol: null };
     }
 }
 
@@ -215,6 +266,7 @@ async function freeSpace(client, local) {
 }
 
 function causeOf(error) {
+    if (error && /does not support SSL/i.test(String(error.message || ''))) return 'SSL_NOT_SUPPORTED';
     const code = error && (error.code || (Array.isArray(error.errors) && error.errors[0] && error.errors[0].code));
     return String(code || 'CONNECT_FAILED').slice(0, 40);
 }

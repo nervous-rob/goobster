@@ -61,10 +61,20 @@ the page; nothing on the machine changes until the review.
 4. **Connections**: the owner account (login name and password, no Discord
    needed), then every integration key and the optional local Ollama, with
    its own **Test connection**. Every one is optional.
-5. **Database**: where the SQLite file lives (the data folder, the settings
-   file and the manager records belong to the running manager and are shown,
-   not edited). Postgres is listed and disabled with the sentence "Available
-   in a later version of this installer".
+5. **Database**: which engine, with guidance by workload and no user-count
+   thresholds (one machine: SQLite; the bot and portal apart: PostgreSQL is
+   required; many servers or several heavy features: consider PostgreSQL).
+   SQLite shows where the file lives (the data folder, the settings file and
+   the manager records belong to the running manager and are shown, not
+   edited). **An existing PostgreSQL server** shows the connection form (host,
+   port, database, schema, user, password, TLS mode, CA file), a read-only
+   **Test connection**, an optional **Prepare the server** panel (an
+   administrator's credential used once; the ticked actions only) and a
+   read-only note of where the data is stored. Continue unlocks when a test of
+   exactly the current settings says the server can be used. A server the
+   installer would set up itself (Docker or a native package) is listed and
+   disabled with the sentence "Available in a later version of this
+   installer". See [database_connection.md](database_connection.md).
 6. **Defaults**: the installation's and the assistant's names, and what a
    new person inherits. The defaults are saved right after the database is
    created.
@@ -100,6 +110,14 @@ The layout is chosen for you: `standalone` when no Discord token is given,
   **Stop Goobster** button first. From the portal the page explains that the
   portal is one of those programs and cannot remove itself; finish from the
   manager with a recovery credential.
+
+- **Database** (`#/database/status`, **Installation → Database…**, test id
+  `action-database`; in the portal **Host → Database**) shows the engine and
+  the connection in effect (never the password) and offers **Connect to a
+  PostgreSQL server…** and **Update the schema…**. It names the three
+  different jobs - connection setup, schema update and PostgreSQL server
+  upgrade - and says that a SQLite database that holds data moves with the
+  migration, not here. See [database_connection.md](database_connection.md).
 
 Every journey shows the plan before anything changes and a per-step
 progress afterwards. A failure says which step stopped, what was kept, and
@@ -241,14 +259,15 @@ manager operation.
 
 ## What is not here yet
 
-- **Postgres.** Shown, disabled, with "Available in a later version of this
-  installer". The phase 4 database section adds it.
+- **A PostgreSQL server the installer sets up itself** (a Docker container
+  or a native package): shown, disabled, with "Available in a later version
+  of this installer". An existing server is supported
+  ([database_connection.md](database_connection.md)).
 - **Registering Goobster as a service** at boot (#331-#333). The plan says
   "Starts at boot: No" and the first-run page starts the workers from the
   manager; after a reboot start the manager again.
-- **A database chooser** (Postgres setup from the wizard) and a backup
-  scheduler. Migration shows its status and a read-only preflight; the
-  copy itself is the command line (`db migrate`).
+- **A backup scheduler.** Backups are taken on demand from the Backup
+  journey or `goobster-manager backup`.
 - Moving the program or data folder, network download and archive
   sources, and production signing keys (#341).
 - The wizard reads provider and identity settings the way each service does
@@ -273,4 +292,6 @@ with a wrong passphrase, the confirmation, the barrier release with
 acknowledgement and a restore without config, a reset that is refused with
 the barrier released again, the instance scope pointing at the command line,
 the migration status and a preflight whose URL is not retained, and a member
-refused by the Host proxies.
+refused by the Host proxies. `e2e/databaseWizard.spec.js` drives the Database
+step, the Database journeys and the Host Database page (the PostgreSQL parts
+only when a server is configured).

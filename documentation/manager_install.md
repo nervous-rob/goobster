@@ -114,7 +114,15 @@ credential), or claimed and asked locally/over a session. Steps:
   crash cannot leave a database with no owner.
 - `init-db` opens the database in a child process, applies the schema and
   counts tables; for Postgres it connects to an existing database and never
-  creates or drops one.
+  creates or drops one. A Postgres install carries the connection in the
+  `database` answer (`{ "engine": "postgres", "connection": { host, port,
+  database, schema, user, password, tls } }`; the password only from the
+  answers file, a prompt or `GOOBSTER_DB_PASSWORD_FILE`): preflight probes
+  the server read only and blocks on anything the probe blocks on
+  (including a schema that holds foreign tables), `init-db` applies the
+  schema to an empty or older Goobster schema and writes the connection to
+  the manager's environment overlay, and the plan shows the server without
+  its password. See [database_connection.md](database_connection.md).
 - `write-config` writes the supplied config fields through the field
   catalog (secrets by value, from the answers file or the prompt, never from
   argv); `write-features` writes `data/features.json` for the selection.

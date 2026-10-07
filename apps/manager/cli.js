@@ -15,6 +15,7 @@
  *                                                 replace the database, files and config.json from an archive
  *   goobster-manager status | discover | schema
  *   goobster-manager migrate preflight|run|rollback|status [options]   SQLite -> Postgres (documentation/db_migration.md)
+ *   goobster-manager database test|provision|schema|connect|status [options]   an existing Postgres server (documentation/database_connection.md)
  *
  *   --answers <file>   the operation's input as JSON (apps/manager/install/answers.schema.json);
  *                      the file may hold secrets and must be mode 0600
@@ -55,6 +56,7 @@ const { readTombstone } = require('./install/tombstone');
 const { discover } = require('./install/discover');
 const { lazy } = require('./lazy');
 const cliView = require('./migration/cliView');
+const databaseCli = require('./database/cli');
 const { migrationStatus } = require('./migration/status');
 const environmentOverlay = require('./environment');
 
@@ -62,7 +64,7 @@ const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
-const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'backup', 'restore', 'help']);
+const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'backup', 'restore', 'database', 'help']);
 const MIGRATE_KIND = Object.freeze({ preflight: 'db.migrate.preflight', run: 'db.migrate', rollback: 'db.migrate.rollback' });
 const LOCAL_AUTH = Object.freeze({ principal: 'local:cli', via: 'local' });
 const MAX_ANSWERS_BYTES = 256 * 1024;
@@ -153,15 +155,20 @@ function parseArgs(argv) {
         if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'migrate status takes no answers.');
     } else if (command === 'backup' || command === 'restore') {
         require('./cliBackup').checkArgs(command, flags, positional, CliError);
+    } else if (command === 'database') {
+        flags.sub = positional.shift() || '';
+        if (!databaseCli.SUBCOMMANDS.includes(flags.sub)) throw new CliError('USAGE', 'database needs a command: test, provision, schema, connect or status.');
+        if (flags.dryRun) throw new CliError('USAGE', 'database has no --dry-run: "database test" is the read-only check.');
+        if (flags.answers && flags.sub === 'status') throw new CliError('USAGE', 'database status takes no answers.');
     } else if (flags.release) {
-        throw new CliError('USAGE', '--release only applies to migrate and restore.');
+        throw new CliError('USAGE', '--release only applies to migrate, restore and database connect.');
     }
     if (positional.length) throw new CliError('USAGE', 'Unexpected argument; values go in --answers or at the prompt.');
     if (flags.confirm && !flags.deleteData && command !== 'reset' && command !== 'migrate' && command !== 'restore') throw new CliError('USAGE', '--confirm belongs to --delete-data, reset, migrate or restore.');
     if ((flags.out || flags.passphraseFile || flags.includeConfig || flags.withoutConfig || flags.acceptSchemaChange) && command !== 'backup' && command !== 'restore') throw new CliError('USAGE', '--out, --passphrase-file, --include-config, --without-config and --accept-schema-change belong to backup and restore.');
     if ((flags.scope || flags.feature || flags.backupDir) && command !== 'reset') throw new CliError('USAGE', '--scope, --feature and --backup-dir belong to reset.');
     if ((flags.force || flags.acknowledgeMutation) && command !== 'release') throw new CliError('USAGE', '--force and --acknowledge-mutation belong to release.');
-    if (flags.release && command !== 'migrate' && command !== 'restore') throw new CliError('USAGE', '--release belongs to migrate and restore.');
+    if (flags.release && command !== 'migrate' && command !== 'restore' && !(command === 'database' && flags.sub === 'connect')) throw new CliError('USAGE', '--release belongs to migrate, restore and database connect.');
     if (flags.deleteData && command !== 'uninstall') throw new CliError('USAGE', '--delete-data only applies to uninstall.');
     return { command, flags };
 }
@@ -440,6 +447,14 @@ async function run(argv, io = {}) {
                 prompter: null,
                 setPrompter: (value) => { prompter = value; },
                 cli: { CliError, EXIT, LOCAL_AUTH, loadAnswers, answersInput, createPrompter }
+            });
+        }
+
+        if (command === 'database') {
+            return await databaseCli.run({
+                sub: flags.sub, flags, fs, io, baseEnv, out, progress, secrets, finish, json,
+                makePrompter: () => { prompter = createPrompter({ input: stdin, output: stderr }); return prompter; },
+                cli: { CliError, EXIT, LOCAL_AUTH, loadAnswers, answersInput }
             });
         }
 
@@ -779,6 +794,11 @@ function usage() {
         '  backup inspect <dir>   what an archive holds and whether it can be restored here (read only)',
         '  restore <dir>   replace the database, files and config.json from an archive: --confirm <installationId>,',
         '               --without-config or the passphrase (--passphrase-file or a hidden prompt), --accept-schema-change, --release',
+        '  database test       read-only probe of an existing Postgres server (the password: prompt, answers file or GOOBSTER_DB_PASSWORD_FILE)',
+        '  database provision  create the database, role, schema, extensions and grants you tick, with an administrative credential used once',
+        '  database schema     apply Goobster\'s schema to an empty (or older Goobster) schema',
+        '  database connect    point this installation at the server (--release also releases the barrier); SQLite with data is `migrate`',
+        '  database status     the connection in effect and the engine (read only)',
         '',
         'Options',
         '  --answers <file>   JSON answers (mode 0600; may hold secrets); without it the CLI asks',

@@ -255,6 +255,25 @@ was kept. The browser holds no manager credential. Uninstall cannot finish
 from here while the portal runs, because the portal is one of the programs it
 removes; the page says so and points at the manager's own page.
 
+## Database (#338)
+
+The **Database** page (`/host/database`, and a card on the Overview) shows
+which engine the installation uses and the connection in effect without its
+password, and offers **Connect to a PostgreSQL server…** and **Update the
+schema…** over the same journey the manager's own page runs
+(`documentation/database_connection.md`). The Host routes:
+
+- `GET /api/app/admin/host/database/status`: the manager's status (no URL, no
+  password, no path).
+- `POST /api/app/admin/host/database/test`: `{ connection }`, the read-only
+  probe. The password is in this request only; it is forwarded to the manager
+  and never kept. The manager's route allows 12 tests a minute.
+- `POST /operations` also accepts `database.provision`,
+  `database.schema.apply` and `database.connect`; applying one writes the
+  audit row `host.database.apply` with counts and names (the action ids, the
+  database and schema), never a connection, a password or an elevated
+  credential.
+
 ## Maintenance: backup, restore, reset, migration (#337)
 
 The **Maintenance** page (`/host/maintenance`, and a card on the Overview)
