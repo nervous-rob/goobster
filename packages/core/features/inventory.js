@@ -419,6 +419,7 @@ const staticAssets = {
     '/app/manifest.webmanifest': 'core',
     '/app/sw.js': 'core',
     '/app/offline.html': 'core',
+    '/app/style.css': 'core',
     '/app/liveAudioWorklet.js': 'core',
     '/app/icons': 'core',
     '/app/screenshots': 'core',
