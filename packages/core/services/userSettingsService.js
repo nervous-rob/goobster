@@ -23,6 +23,7 @@ const memeMode = require('../utils/memeMode');
 const attentionPolicyService = require('./attentionPolicyService');
 const userIntegrationService = require('./userIntegrationService');
 const aiService = require('./aiService');
+const instanceDefaults = require('./instanceDefaultsService');
 const eventBusService = require('./eventBusService');
 const { listAccents, legalizeAccent } = require('../utils/ttsAccent');
 const {
@@ -120,7 +121,8 @@ class UserSettingsService {
             retentionDays,
             integrationsList,
             userSettingsRow,
-            userAccountRow
+            userAccountRow,
+            defaultsDoc
         ] = await Promise.all([
             guildSettings.getGuildAI(dmScope).catch(() => ({})),
             guildSettings.getBotNickname(dmScope).catch(() => null),
@@ -133,10 +135,15 @@ class UserSettingsService {
             guildSettings.getMemoryRetentionDays(dmScope).catch(() => null),
             userIntegrationService.list(userId).catch(() => []),
             db.get('SELECT preferencesJson FROM user_settings WHERE userId = @userId', { userId }).catch(() => null),
-            db.get('SELECT discordUsername, username, avatar FROM users WHERE discordId = @userId', { userId }).catch(() => null)
+            db.get('SELECT discordUsername, username, avatar FROM users WHERE discordId = @userId', { userId }).catch(() => null),
+            instanceDefaults.get().catch(() => ({}))
         ]);
 
-        const customPrefs = parsePreferences(userSettingsRow?.preferencesJson);
+        const { prefs: customPrefs, sources: defaultSources } = instanceDefaults.overlayPreferences(
+            parsePreferences(userSettingsRow?.preferencesJson),
+            instanceDefaults.explicitPreferences(userSettingsRow?.preferencesJson),
+            defaultsDoc
+        );
         const profilePrefs = pickSectionPrefs(customPrefs, 'profile');
 
         // --- 1. Profile Section ---
@@ -185,9 +192,13 @@ class UserSettingsService {
             && aiCurrent.model === preset.model
             && aiCurrent.reasoningEffort === 'high';
 
-        const effectiveProviderKey = aiCurrent.provider || aiService.getProvider();
+        const chatDefault = instanceDefaults.resolveChat(aiCurrent, defaultsDoc, {
+            configuredProviders: providers.filter(p => p.configured).map(p => p.key),
+            hostProvider: aiService.getProvider()
+        });
+        const effectiveProviderKey = chatDefault.provider || aiService.getProvider();
         const effectiveProviderEntry = providers.find(p => p.key === effectiveProviderKey) || null;
-        const effectiveModel = aiCurrent.model || effectiveProviderEntry?.chatModel || aiService.getDefaultModel();
+        const effectiveModel = chatDefault.model || effectiveProviderEntry?.chatModel || aiService.getDefaultModel();
         const modelState = aiService.describeModel(effectiveProviderKey, effectiveModel, aiCurrent.reasoningEffort);
         const effectiveReasoning = modelState.effectiveEffort;
 
@@ -211,9 +222,10 @@ class UserSettingsService {
                 ...pickSectionPrefs(customPrefs, 'chat')
             },
             sources: {
-                provider: aiCurrent.provider ? 'user-override' : 'host-default',
-                model: aiCurrent.model ? 'user-override' : 'provider-default',
-                reasoningEffort: aiCurrent.reasoningEffort ? 'user-override' : 'default'
+                provider: chatDefault.providerSource,
+                model: chatDefault.modelSource,
+                reasoningEffort: aiCurrent.reasoningEffort ? 'user-override' : 'default',
+                ...(defaultSources.usageAlertTokens ? { usageAlertTokens: defaultSources.usageAlertTokens } : {})
             },
             appliesTo: SECTION_METADATA.chat.appliesTo,
             providers,
@@ -313,6 +325,7 @@ class UserSettingsService {
             },
             sources: {
                 retention: retentionDays ? 'user-retention-window' : 'forever',
+                ...(defaultSources.chatHistoryRetentionDays ? { chatHistoryRetentionDays: defaultSources.chatHistoryRetentionDays } : {}),
                 defaultNewChatPrivacy: customPrefs.defaultNewChatPrivacy !== PREFERENCE_DEFAULTS.defaultNewChatPrivacy
                     ? 'account-preference' : 'default'
             },
@@ -327,7 +340,8 @@ class UserSettingsService {
             values: appearancePrefs,
             effective: appearancePrefs,
             sources: {
-                theme: customPrefs.theme !== PREFERENCE_DEFAULTS.theme ? 'account-preference' : 'default',
+                theme: defaultSources.theme || (customPrefs.theme !== PREFERENCE_DEFAULTS.theme ? 'account-preference' : 'default'),
+                ...(defaultSources.startPage ? { startPage: defaultSources.startPage } : {}),
                 linkByTag: customPrefs.linkByTag !== PREFERENCE_DEFAULTS.linkByTag ? 'account-preference' : 'default'
             },
             appliesTo: SECTION_METADATA.appearance.appliesTo
@@ -445,7 +459,12 @@ class UserSettingsService {
             'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
             { userId }
         );
-        return parsePreferences(row?.preferencesJson);
+        const defaults = await instanceDefaults.get().catch(() => ({}));
+        return instanceDefaults.overlayPreferences(
+            parsePreferences(row?.preferencesJson),
+            instanceDefaults.explicitPreferences(row?.preferencesJson),
+            defaults
+        ).prefs;
     }
 
     _collectPreferencePatch(section, changes) {
@@ -476,7 +495,7 @@ class UserSettingsService {
             'SELECT preferencesJson FROM user_settings WHERE userId = @userId',
             { userId }
         );
-        const prefs = parsePreferences(row?.preferencesJson);
+        const prefs = instanceDefaults.explicitPreferences(row?.preferencesJson);
         Object.assign(prefs, patch);
         await handle.run(
             `INSERT INTO user_settings (userId, schemaVersion, preferencesJson, updatedAt)

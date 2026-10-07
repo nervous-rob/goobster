@@ -69,7 +69,7 @@ describe('config: default interpreter resolution', () => {
         }
         try {
             jest.isolateModules(() => {
-                jest.doMock('../config.json', () => ({ sandbox }), { virtual: true });
+                jest.doMock('../packages/core/config/configJson', () => ({ load: () => ({ sandbox }) }));
                 mod = require('@goobster/core/config/sandboxConfig');
             });
         } finally {

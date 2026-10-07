@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { PermissionFlagsBits } = require('discord.js');
 const MusicService = require('@goobster/core/services/voice/musicService');
 const { ProgressTracker } = require('@goobster/core/utils');
-const config = require('../../../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 const path = require('path');
 const fs = require('fs').promises;
 
