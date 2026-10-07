@@ -122,7 +122,7 @@ export function Backup({ step, id, go }: { step: string; id: string | null; go: 
                     <label htmlFor="backup-dir">Where to write it</label>
                     <input id="backup-dir" className="input" value={dir} spellCheck={false} data-testid="backup-dir"
                         onChange={(event) => { setTouched(true); setDir(event.target.value); }} />
-                    <span className="hint">A folder outside the data folder. It is created if it does not exist. Suggested from this installation&apos;s locations{status.data?.engine ? ` (${status.data.engine} database)` : ''}.</span>
+                    <span className="hint">A folder outside the manager&apos;s store and the data folders it copies. The backup goes in a dated folder inside it; the folder is created if it does not exist. Suggested from this installation&apos;s locations{status.data?.engine ? ` (${status.data.engine} database)` : ''}.</span>
                 </div>
                 <label className="wizard-choice">
                     <input type="checkbox" checked={includeConfig} onChange={(event) => setIncludeConfig(event.target.checked)} data-testid="backup-include-config" />

@@ -55,10 +55,10 @@ function Hub() {
                 <li><strong>Migration</strong>: SQLite to Postgres. Status and the rollback boundary here; the move itself is a command.</li>
             </ul>
             <div className="wizard-actions" data-testid="maintenance-actions">
-                <Link to="/host/$page" params={{ page: 'maintenance' }} hash="/backup/form" className="btn" data-testid="maintenance-backup">Backup…</Link>
-                <Link to="/host/$page" params={{ page: 'maintenance' }} hash="/restore/source" className="btn" data-testid="maintenance-restore">Restore…</Link>
-                <Link to="/host/$page" params={{ page: 'maintenance' }} hash="/reset/scope" className="btn" data-testid="maintenance-reset">Reset…</Link>
-                <Link to="/host/$page" params={{ page: 'maintenance' }} hash="/migration/status" className="btn" data-testid="maintenance-migration">Migration…</Link>
+                <a href="#/backup/form" className="btn" data-testid="maintenance-backup">Backup…</a>
+                <a href="#/restore/source" className="btn" data-testid="maintenance-restore">Restore…</a>
+                <a href="#/reset/scope" className="btn" data-testid="maintenance-reset">Reset…</a>
+                <a href="#/migration/status" className="btn" data-testid="maintenance-migration">Migration…</a>
             </div>
         </div>
     );

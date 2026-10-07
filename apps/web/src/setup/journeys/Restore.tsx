@@ -40,7 +40,7 @@ type RestoreResult = {
 const BLOCK_TEXT: Record<string, string> = {
     ENGINE_MISMATCH: 'This archive was made on a different database engine than this installation uses. A restore never converts between them.',
     ARCHIVE_INCOMPLETE: 'The archive is incomplete or damaged (a file is missing or does not match its checksum).',
-    ARCHIVE_INSIDE_DATA: 'The archive is inside this installation\'s data folder, which a restore replaces. Copy it somewhere else first.',
+    ARCHIVE_INSIDE_DATA: 'The archive is inside the manager\'s store or a data folder that a restore replaces. Copy it somewhere else first.',
     NOT_INSTALLED: 'There is no installation record to restore into.'
 };
 
@@ -171,7 +171,7 @@ export function Restore({ step, id, go }: { step: string; id: string | null; go:
                         </div>
                     )}
                     <StepNav onBack={() => { planner.reset(); setConfirm(''); go('options'); }}
-                        onNext={confirmed && phase.kind === 'ready' ? () => { setPassphrase(''); setConfirm(''); go('progress', phase.operation.id); } : undefined}
+                        onNext={() => { if (phase.kind === 'ready') { setPassphrase(''); setConfirm(''); go('progress', phase.operation.id); } }}
                         nextLabel="Restore now" nextDisabled={!confirmed} />
                 </StepFrame>
             </JourneyFrame>
