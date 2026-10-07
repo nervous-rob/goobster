@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'sup-325-supervisor-'));
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-supervisor-'));
 
 const { resolveSettings } = require('@goobster/manager/settings');
 const { createManager } = require('@goobster/manager/manager');
