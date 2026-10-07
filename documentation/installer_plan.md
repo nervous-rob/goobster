@@ -263,7 +263,8 @@ Work, in order:
    default and writes a tombstone. Not done: network download and archive
    sources, and every privileged
    operation (`service.register`, `service.unregister`, `updater.disable`,
-   `user.create` answer 501, so no OS service registration has been tested).
+   `user.create` answered 501 at that point; the Linux implementation is P3.7
+   below).
    **Status (P3.4, #330): the wizard screens are built** (PR
    [#363](https://github.com/nervous-rob/goobster/pull/363), stacked on #360:
    SQLite 265 suites / 5251 passed, Postgres `core` 1949 and `portal` 1116,
@@ -274,8 +275,9 @@ Work, in order:
    page for Reconfigure, Repair and Uninstall through the bridge. Both run the
    same engine, kinds and field components as the CLI. New manager kinds:
    `owner.create`, `lifecycle.start`, `lifecycle.stop`. Postgres is shown
-   disabled; service registration (#331-#333) and maintenance, reset and
-   migration (#334-#336) are not wired in. Proven on Linux x64 in Playwright
+   disabled; OS service registration is not driven from the page (the Linux
+   bootstrapper registers it, `documentation/linux_install.md`) and maintenance,
+   reset and migration (#334-#336) are not wired in. Proven on Linux x64 in Playwright
    against throwaway directories and a fake Ollama.
 4. Headless CLI running the same engine (answers file or prompts).
 
@@ -292,6 +294,37 @@ Work, in order:
    installation; the installation registry per user; repair keeps `data/`
    and `config.json`; uninstall keeps them unless the operator explicitly
    chooses to delete data, with the privacy consequence stated.
+
+   **Status (P3.7, #333): the Linux bootstrapper is built; Windows (#331)
+   and macOS (#332) are separate.** `documentation/linux_install.md` is the
+   reference. The payload now carries the manager (`bin/goobster-manager`);
+   `scripts/package-bootstrap.js` builds a deterministic self-extracting
+   `.run` and an AppImage (appimagetool pinned by SHA-256) from it; both start
+   the manager's `install.new` from the embedded payload, with the wizard on
+   `127.0.0.1:3400` or headless from an answers file. The privileged helper
+   (`apps/manager/privileged/`) implements `service.register`,
+   `service.unregister`, `user.create` and `updater.disable` on Linux (one JSON
+   document on stdin, `sudo -n` then `pkexec`, files hash-checked against the
+   payload manifest before an elevated start); `package.install` stays
+   `NOT_IMPLEMENTED` - system dependencies are reported, never installed.
+   Registration writes a marker-bearing systemd unit and records it in the
+   manager's store; without systemd or rights the install finishes in the manual
+   manager fallback. Raspberry Pi installs are adopted with their updater
+   disabled. Proven locally on Linux x64 without systemd (the same journey,
+   `scripts/linux-bootstrap-proof.sh --no-systemd`, 29 checks) and by Jest
+   (`tests/privilegedHelper.test.js`, `linuxService.test.js`,
+   `bootstrapStage.test.js`, `bootstrapCli.test.js`). `systemctl enable --now`
+   on a real systemd, on x64 and arm64, is proven only by
+   `.github/workflows/linux-bootstrap.yml`. Unsigned development builds only
+   (`-dev`); release signing keys are #341. PR
+   [#367](https://github.com/nervous-rob/goobster/pull/367) (stacked on #366,
+   merging the B1 loader #364): SQLite full suite 284 suites / 5751 passed;
+   Postgres `core` 2377 and `portal` 1124 passed in isolated schemas; Playwright
+   250 passed; lint, smoke, docs and group inventory green; the `--no-systemd`
+   journey 29/29 against a payload rebuilt from the branch head; the rendered
+   unit passes `systemd-analyze verify`. A checkout unit keeps
+   `ProtectSystem=full` (the pre-installer Pi unit); a payload unit is `strict`
+   with `XDG_CACHE_HOME` pointed at the cache root.
 
 Acceptance: selective-installation tests prove an excluded feature's
 files, dependencies and frontend bundle are absent; Playwright journeys

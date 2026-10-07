@@ -141,6 +141,10 @@ async function runPreflight({
     arch = process.arch,
     abi = process.versions.modules,
     runtimeUser = null,
+    createRuntimeUser = false,
+    registerService = false,
+    unitNames = [],
+    euid = typeof process.geteuid === 'function' ? process.geteuid() : null,
     home = os.homedir(),
     managerListening = false,
     includeManagerPort = true,
@@ -202,16 +206,21 @@ async function runPreflight({
         if (POSIX) {
             try {
                 const store = fs.statSync(roots.managerStore);
-                if (typeof process.getuid === 'function' && store.uid !== process.getuid()) push(block('STORE_NOT_OWNED', 'the manager store belongs to another user'));
+                if (typeof process.getuid === 'function' && process.getuid() !== 0 && store.uid !== process.getuid()) push(block('STORE_NOT_OWNED', 'the manager store belongs to another user'));
                 else if ((store.mode & 0o077) !== 0) push(warn('STORE_NOT_OWNER_ONLY', 'the manager store is readable by others; the manager restricts it when it starts'));
             } catch { }
         }
         const current = (() => { try { return os.userInfo().username; } catch { return null; } })();
-        if (runtimeUser && current && runtimeUser !== current) {
-            push(block('RUNTIME_USER_MISMATCH', 'the installer runs as another user than the runtime user; run it as that user (creating one is the privileged user.create step)'));
+        if (runtimeUser && createRuntimeUser && current && runtimeUser !== current && euid !== 0) {
+            push(block('CREATE_USER_NEEDS_ROOT', 'creating the runtime account needs the installer to run as root (for example with sudo); run it that way, or leave the dedicated account out'));
+        } else if (runtimeUser && current && runtimeUser !== current && euid !== 0 && !createRuntimeUser) {
+            push(block('RUNTIME_USER_MISMATCH', 'the installer runs as another user than the runtime user; run it as that user, or as root (creating the account is the privileged user.create step)'));
         }
-        if (POSIX && typeof process.getuid === 'function' && process.getuid() === 0) {
+        if (POSIX && typeof process.getuid === 'function' && process.getuid() === 0 && !runtimeUser) {
             push(warn('RUNNING_AS_ROOT', 'the installer is running as root; the application should run as an unprivileged user'));
+        }
+        if (registerService && kind === 'install.new' && unitNames.length > 0) {
+            push(block('SERVICE_DUPLICATE', `a service named ${unitNames.slice(0, 3).join(', ')} already exists on this machine and was not registered by this installation; adopt that installation, remove the service, or install without registering one`));
         }
     }
 

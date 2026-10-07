@@ -407,10 +407,12 @@ does the same as the units; Ctrl-C stops the workers first.
   called with `[{ id, to }]` at apply and again at commit and returns
   `{ staged: [] }`; payload staging for newly activated features plugs in
   there, and a throw fails the restart before any worker is touched.
-- **#331 (OS service registration):** the units above are the shapes to
+- **#331-#333 (OS service registration):** the units above are the shapes to
   register: the manager is the service, `--supervise`, the supervisor env
   value, a stop timeout of at least drain + 15 s + margin, and the manager
-  alone receives the stop signal.
+  alone receives the stop signal. The Linux unit is done (#333,
+  [linux_install.md](linux_install.md)): `apps/manager/platform/systemdUnit.js`
+  renders it, `deploy/goobster.service` is its reference output.
 - **#334 (maintenance barrier):** done in
   [maintenance_barrier.md](maintenance_barrier.md). It reuses this worker
   contract (the control file, the one-second poll, the drain bounds) with a

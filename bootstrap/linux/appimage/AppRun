@@ -1,0 +1,19 @@
+#!/bin/sh
+# Goobster AppImage entry (documentation/linux_install.md).
+# Starts the manager's bootstrap from the payload embedded in this image and
+# opens the setup wizard in the default browser (xdg-open), or prints the URL.
+HERE=$(dirname "$(readlink -f "$0")")
+SHARE="$HERE/usr/share/goobster"
+PAYLOAD="$SHARE/payload"
+NODE="$PAYLOAD/runtime/bin/node"
+ENTRY="$PAYLOAD/app/apps/manager/bootstrap/index.js"
+if [ ! -x "$NODE" ] || [ ! -f "$ENTRY" ]; then
+    echo "goobster: this AppImage is incomplete (no embedded payload)." >&2
+    exit 4
+fi
+KEY=
+if [ -f "$SHARE/release-key.pem" ]; then KEY="$SHARE/release-key.pem"; fi
+if [ -n "$KEY" ]; then
+    exec "$NODE" "$ENTRY" --payload "$PAYLOAD" --payload-digest '@PAYLOAD_DIGEST@' --build '@BUILD@' --signed '@SIGNED@' --public-key "$KEY" --appimage --open-browser "$@"
+fi
+exec "$NODE" "$ENTRY" --payload "$PAYLOAD" --payload-digest '@PAYLOAD_DIGEST@' --build '@BUILD@' --signed '@SIGNED@' --appimage --open-browser "$@"

@@ -429,6 +429,12 @@ describe('baseline: no state file equals the effective legacy value read from th
         try {
             jest.isolateModules(() => {
                 jest.doMock(CONFIG_JSON, () => JSON.parse(JSON.stringify(config)));
+                // Config modules read the file through the shared loader (packaging_proof B1), not require().
+                jest.doMock('@goobster/core/config/configJson', () => ({
+                    load: () => JSON.parse(JSON.stringify(config)),
+                    configJsonPath: () => CONFIG_JSON,
+                    ConfigJsonError: Error
+                }));
                 const modules = {
                     discord: require('@goobster/core/config/discordConfig'),
                     push: require('@goobster/core/config/pushConfig'),
@@ -480,6 +486,7 @@ describe('baseline: no state file equals the effective legacy value read from th
             });
         } finally {
             jest.dontMock(CONFIG_JSON);
+            jest.dontMock('@goobster/core/config/configJson');
             for (const key of ENV_KEYS) {
                 if (saved[key] === undefined) delete process.env[key];
                 else process.env[key] = saved[key];

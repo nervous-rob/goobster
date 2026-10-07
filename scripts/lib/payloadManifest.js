@@ -31,11 +31,11 @@ const { MANIFEST_VERSION, CORE, canonicalJson, closeOverRequires, selectPayload 
 const { createOwnerMatcher } = require('../../packages/core/features/payloadGlob');
 
 /** Repository trees whose files are attributed to an owner. */
-const SOURCE_ROOTS = ['packages/core', 'apps/bot', 'apps/api', 'apps/mcp', 'apps/sandbox', 'apps/web/src', 'campaigns', 'clients'];
+const SOURCE_ROOTS = ['packages/core', 'apps/bot', 'apps/api', 'apps/manager', 'apps/mcp', 'apps/sandbox', 'apps/web/src', 'campaigns', 'clients'];
 /** Server trees the require graph walks (the portal client is chunked by Vite instead). */
-const SERVER_ROOTS = ['packages/core', 'apps/bot', 'apps/api', 'apps/mcp', 'apps/sandbox', 'clients'];
+const SERVER_ROOTS = ['packages/core', 'apps/bot', 'apps/api', 'apps/manager', 'apps/mcp', 'apps/sandbox', 'clients'];
 /** Workspaces whose production dependency trees the payload installs. */
-const PAYLOAD_WORKSPACES = ['packages/core', 'apps/api'];
+const PAYLOAD_WORKSPACES = ['packages/core', 'apps/api', 'apps/manager'];
 const SANDBOX_WORKSPACE = 'apps/sandbox';
 /**
  * Trees that only run inside one adapter's process: apps/bot is the Discord
@@ -352,7 +352,7 @@ function computeOwnership({ root, catalog, files, lock, target, withSandbox = tr
 /** Repository source path -> payload path (null when the payload does not carry it). */
 function payloadPathOf(repoPath) {
     if (repoPath.startsWith('packages/core/')) return `app/node_modules/@goobster/core/${repoPath.slice('packages/core/'.length)}`;
-    if (repoPath.startsWith('apps/api/') || repoPath.startsWith('apps/sandbox/')) return `app/${repoPath}`;
+    if (repoPath.startsWith('apps/api/') || repoPath.startsWith('apps/manager/') || repoPath.startsWith('apps/sandbox/')) return `app/${repoPath}`;
     if (/^(documentation|campaigns|clients)\//.test(repoPath)) return `app/${repoPath}`;
     return null;
 }
@@ -367,7 +367,7 @@ function repoPathOf(payloadPath) {
     if (payloadPath.startsWith('app/node_modules/')) return null;
     const rel = payloadPath.startsWith('app/') ? payloadPath.slice(4) : null;
     if (!rel) return null;
-    if (/^apps\/(api|sandbox)\//.test(rel) && !rel.includes('/node_modules/')) return rel;
+    if (/^apps\/(api|manager|sandbox)\//.test(rel) && !rel.includes('/node_modules/')) return rel;
     if (/^(documentation|campaigns|clients|scripts)\//.test(rel)) return rel;
     return null;
 }

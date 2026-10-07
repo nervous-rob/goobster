@@ -1,0 +1,226 @@
+name: Linux bootstrap
+
+# Issue #333 (installer epic #315, installer plan Phase 3 item 7). Builds the
+# Linux bootstrap artifacts - the self-extracting `.run` and the AppImage -
+# from the release payload on x64 and arm64, then proves on a real systemd
+# machine that they install, register and run the service, survive a
+# re-run and an interruption, reconfigure, repair and uninstall.
+#
+# `scripts/linux-bootstrap-proof.sh` is the journey; this file only builds,
+# runs it and keeps the evidence. The service half (`systemctl enable --now`,
+# the unit, the service account) cannot be exercised on a developer machine
+# without a booted systemd, so this workflow is where it is proven.
+#
+# Not a release pipeline: the payload is signed with a throwaway development
+# key, so every artifact is labelled `-dev` and carries the unsigned-build
+# notice. Nothing is published; the artifacts are kept for a few days.
+# Documentation: documentation/linux_install.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      linux_arm64:
+        description: 'Include linux-arm64 (ubuntu-24.04-arm). Untick if the repository has no access to GitHub-hosted arm64 runners; the job would otherwise queue forever.'
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - 'bootstrap/**'
+      - 'apps/manager/**'
+      - 'scripts/package-*'
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/linux-bootstrap-proof.sh'
+      - 'scripts/lib/bootstrapStage.js'
+      - 'scripts/lib/payload*'
+      - 'deploy/goobster.service'
+      - 'scripts/install-rpi.sh'
+      - 'documentation/linux_install.md'
+      - '.github/workflows/linux-bootstrap.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/*/package.json'
+      - 'apps/*/package.json'
+  push:
+    branches: [main]
+    paths:
+      - 'bootstrap/**'
+      - 'scripts/package-bootstrap.js'
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/linux-bootstrap-proof.sh'
+      - 'apps/manager/privileged/**'
+      - 'apps/manager/platform/**'
+      - 'apps/manager/bootstrap/**'
+      - '.github/workflows/linux-bootstrap.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: plan matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        env:
+          INCLUDE_ARM64: ${{ github.event_name != 'workflow_dispatch' && vars.PACKAGING_PROOF_LINUX_ARM64 != 'false' || inputs.linux_arm64 == true }}
+        run: |
+          entries='{"target":"linux-x64","runner":"ubuntu-24.04"}'
+          if [ "$INCLUDE_ARM64" = "true" ]; then
+            entries="$entries"',{"target":"linux-arm64","runner":"ubuntu-24.04-arm"}'
+          else
+            echo "::notice::linux-arm64 is NOT part of this run; that target stays unverified."
+          fi
+          echo "matrix={\"include\":[$entries]}" >> "$GITHUB_OUTPUT"
+
+  bootstrap:
+    name: ${{ matrix.target }} (${{ matrix.runner }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Output locations (outside the checkout)
+        shell: bash
+        run: |
+          {
+            echo "PAYLOAD=$RUNNER_TEMP/goobster-payload"
+            echo "REPORTS=$RUNNER_TEMP/goobster-reports"
+            echo "ARTIFACTS=$RUNNER_TEMP/goobster-bootstrap"
+            echo "TOOLS=$RUNNER_TEMP/goobster-bootstrap-tools"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      - name: Build the payload (development-signed)
+        run: node scripts/package-runtime.js --target "$TARGET" --out "$PAYLOAD" --report-dir "$REPORTS" --force --dev-sign
+
+      - name: The payload carries the manager and passes its own smoke check
+        run: |
+          test -x "$PAYLOAD/bin/goobster-manager"
+          test -f "$PAYLOAD/app/apps/manager/bootstrap/index.js"
+          env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+            "$PAYLOAD/runtime/bin/node" "$PAYLOAD/app/scripts/package-smoke.js" \
+            --public-key "$REPORTS/payload-dev-key-$TARGET.pub.pem" \
+            --report "$REPORTS/package-smoke-$TARGET.json" 2>&1 | tee "$REPORTS/package-smoke-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Build the .run and the AppImage (a skipped AppImage fails the job)
+        run: |
+          node scripts/package-bootstrap.js --target "$TARGET" --payload "$PAYLOAD" --out "$ARTIFACTS" \
+            --tools-dir "$TOOLS" --require-appimage 2>&1 | tee "$REPORTS/package-bootstrap-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The .run is reproducible and verifies
+        run: |
+          run="$(ls "$ARTIFACTS"/goobster-*-"$TARGET"-dev.run)"
+          sh "$run" --verify
+          sh "$run" --info
+          node scripts/package-bootstrap.js --target "$TARGET" --payload "$PAYLOAD" --out "$RUNNER_TEMP/goobster-bootstrap-again" --no-appimage > /dev/null
+          cmp "$run" "$RUNNER_TEMP/goobster-bootstrap-again/$(basename "$run")"
+          sha256sum "$ARTIFACTS"/* | tee "$REPORTS/sha256-$TARGET.txt"
+
+      - name: Tools the journey uses
+        run: sudo apt-get install -y --no-install-recommends jq iproute2 curl util-linux
+
+      - name: systemd on this runner
+        run: |
+          systemctl --version | head -1
+          systemctl is-system-running || true
+          test -d /run/systemd/system
+
+      - name: Service journey on real systemd (root, roots with spaces, data root apart from the code root)
+        run: |
+          run="$(ls "$ARTIFACTS"/goobster-*-"$TARGET"-dev.run)"
+          sudo -E bash scripts/linux-bootstrap-proof.sh --run "$run" --payload "$PAYLOAD" \
+            --work "/opt/goobster proof" --reports "$REPORTS/journey" 2>&1 | tee "$REPORTS/linux-bootstrap-proof-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The journey leaves nothing registered
+        if: always()
+        run: |
+          systemctl list-unit-files 'goobster*' --no-legend | tee "$REPORTS/unit-files-after-$TARGET.txt"
+          test ! -e /etc/systemd/system/goobster.service
+
+      - name: Person-profile install from the AppImage (no root, no service), run, uninstall
+        run: |
+          image="$(ls "$ARTIFACTS"/Goobster-*-dev.AppImage)"
+          chmod +x "$image"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          "$image" --help | tee "$REPORTS/appimage-help-$TARGET.txt"
+          grep -q 'Goobster installer' "$REPORTS/appimage-help-$TARGET.txt"
+          home="$RUNNER_TEMP/person home"
+          mkdir -p "$home"
+          answers="$RUNNER_TEMP/person-answers.json"
+          printf '{"ownerLabel":"appimage proof","registerService":false}\n' > "$answers"
+          chmod 600 "$answers"
+          GOOBSTER_HOME="$home" "$image" --headless --answers "$answers" --yes 2>&1 | tee "$REPORTS/appimage-install-$TARGET.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          code="$home/code"
+          test -x "$code/current/bin/goobster-manager"
+          GOOBSTER_PAYLOAD_DEV_UNSIGNED=1 "$code/current/bin/goobster-manager" status | tee "$REPORTS/appimage-status-$TARGET.txt"
+          "$code/current/bin/goobster-manager" --supervise > "$REPORTS/appimage-supervisor-$TARGET.log" 2>&1 &
+          supervisor=$!
+          for _ in $(seq 1 90); do curl -fsS -m 3 http://127.0.0.1:3100/health | grep -q '"status":"healthy"' && break; sleep 1; done
+          curl -fsS -m 5 http://127.0.0.1:3100/health | grep -q '"status":"healthy"'
+          kill -TERM "$supervisor"
+          for _ in $(seq 1 60); do kill -0 "$supervisor" 2>/dev/null || break; sleep 1; done
+          printf '{"keepData":false}\n' > "$answers"
+          id="$(jq -r .installationId "$home/data/manager/installation.json")"
+          "$code/current/bin/goobster-manager" uninstall --answers "$answers" --delete-data --confirm "$id" --yes
+          test ! -e "$code/current"
+          test ! -e "$home/data/goobster.sqlite"
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Linux bootstrap ($TARGET, development build)"
+            echo
+            echo '| Artifact | SHA-256 |'
+            echo '| --- | --- |'
+            if [ -f "$REPORTS/sha256-$TARGET.txt" ]; then awk '{printf "| %s | `%s` |\n", $2, $1}' "$REPORTS/sha256-$TARGET.txt" | sed "s#$ARTIFACTS/##"; fi
+            echo
+            echo "Journey: $(grep -c '^PASS:' "$REPORTS/linux-bootstrap-proof-$TARGET.log" 2>/dev/null || echo 0) checks passed, $(grep -c '^FAIL:' "$REPORTS/linux-bootstrap-proof-$TARGET.log" 2>/dev/null || echo 0) failed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bootstrap-reports-${{ matrix.target }}
+          path: ${{ runner.temp }}/goobster-reports
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload the development artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bootstrap-dev-${{ matrix.target }}
+          path: ${{ runner.temp }}/goobster-bootstrap
+          if-no-files-found: error
+          retention-days: 3

@@ -270,9 +270,12 @@ manager operation.
   existing server ([database_connection.md](database_connection.md)) and a
   Docker container the installer manages
   ([docker_postgres.md](docker_postgres.md)) are supported.
-- **Registering Goobster as a service** at boot (#331-#333). The plan says
-  "Starts at boot: No" and the first-run page starts the workers from the
-  manager; after a reboot start the manager again.
+- **Registering Goobster as a service** from the page. On Linux the
+  bootstrapper registers a systemd service as part of the install
+  ([linux_install.md](linux_install.md)) and the finished page says whether it did
+  or shows the command that starts the manager by hand; elsewhere (#331, #332)
+  the plan still says "Starts at boot: No" and the first-run page starts the
+  workers from the manager, so after a reboot start the manager again.
 - **A backup scheduler.** Backups are taken on demand from the Backup
   journey or `goobster-manager backup`.
 - Moving the program or data folder, network download and archive

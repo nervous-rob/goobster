@@ -148,6 +148,52 @@ export function StepList({ planned, done, status, failedStep }: { planned: strin
     );
 }
 
+interface ServiceResult {
+    registered?: boolean;
+    fallback?: boolean;
+    unit?: string;
+    runtimeUser?: string;
+    reason?: string;
+    foreground?: string;
+    boot?: string[];
+}
+
+function serviceOf(result: Record<string, unknown> | null | undefined): ServiceResult | null {
+    const service = result ? result.service : null;
+    return service && typeof service === 'object' ? (service as ServiceResult) : null;
+}
+
+/** What happened to the operating-system service after an install: registered, or the exact way to run it by hand. */
+export function ServiceOutcome({ result }: { result: Record<string, unknown> | null | undefined }) {
+    const service = serviceOf(result);
+    if (!service) return null;
+    if (service.registered) {
+        return (
+            <p role="status" className="wizard-success" data-testid="service-registered">
+                Goobster is registered as the service <code>{service.unit || 'goobster.service'}</code>{service.runtimeUser ? <> and runs as <code>{service.runtimeUser}</code></> : null}.
+                Check it with <code>systemctl status goobster</code>; its log is <code>journalctl -u goobster</code>.
+            </p>
+        );
+    }
+    if (!service.fallback || !service.foreground) return null;
+    return (
+        <div className="wizard-callout" role="status" data-testid="service-manual">
+            <p>
+                <strong>The installation is complete, but it is not registered as a service on this machine</strong>
+                {service.reason ? <> (<code>{service.reason}</code>)</> : null}. Start it by hand in a terminal:
+            </p>
+            <pre><code>{service.foreground}</code></pre>
+            {service.boot && service.boot.length > 0 && (
+                <>
+                    <p>To have it start at boot, run as an administrator:</p>
+                    <pre><code>{service.boot.join('\n')}</code></pre>
+                </>
+            )}
+            <p className="hint">Closing this page does not stop it once it is running.</p>
+        </div>
+    );
+}
+
 export function Tunnel({ port = 3400 }: { port?: number | null }) {
     const shown = port ?? 3400;
     return (

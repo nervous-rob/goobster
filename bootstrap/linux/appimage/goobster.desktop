@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Goobster Setup
+Comment=Install and manage a self-hosted Goobster
+Exec=AppRun
+Icon=goobster
+Categories=Utility;
+Terminal=true
