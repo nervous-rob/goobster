@@ -39,6 +39,7 @@
 .wizard-choice { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
 .wizard-choice[aria-disabled='true'] { opacity: 0.6; cursor: default; }
 .wizard-choice input { margin-top: 4px; }
+.wizard-choice > span, .wizard-choice > strong { min-width: 0; overflow-wrap: anywhere; }
 
 .wizard-nav { display: flex; gap: 10px; justify-content: space-between; flex-wrap: wrap; margin-top: 8px; }
 .wizard-actions { display: flex; gap: 10px; flex-wrap: wrap; }
