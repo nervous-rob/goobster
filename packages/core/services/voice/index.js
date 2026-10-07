@@ -1,6 +1,7 @@
 const { EventEmitter } = require('events');
 const ElevenLabsTTSService = require('./elevenLabsTTSService');
 const { features } = require('../../features/featureState');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
 
 class VoiceService extends EventEmitter {
@@ -27,19 +28,22 @@ class VoiceService extends EventEmitter {
             // Music playback and ambience belong to the music feature: while it is
             // enforced off neither is built (MusicService probes ffmpeg and
             // creates the SpotDL wrapper in its constructor) and both stay null,
-            // which every consumer already treats as "not available".
-            if (!features.enforcedOff('music')) {
-                const MusicService = require('./musicService');
+            // which every consumer already treats as "not available". A
+            // payload without the music modules leaves them null the same way.
+            const MusicService = features.enforcedOff('music')
+                ? null
+                : requireOptional('./musicService', { feature: 'music' });
+            if (MusicService) {
                 this.musicService = new MusicService(this.config);
                 this.musicService.on('stateUpdate', (state) => {
                     this.emit('musicStateUpdate', state);
                 });
 
                 // Ambient sound generation also requires ElevenLabs (optional)
-                if (hasElevenLabs) {
-                    const AmbientService = require('./ambientService');
-                    this.ambientService = new AmbientService(this.config);
-                }
+                const AmbientService = hasElevenLabs
+                    ? requireOptional('./ambientService', { feature: 'music' })
+                    : null;
+                if (AmbientService) this.ambientService = new AmbientService(this.config);
             }
             
             this._isInitialized = true;

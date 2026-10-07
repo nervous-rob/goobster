@@ -9,8 +9,9 @@
  *   installed -> requested -> environment -> dependencies
  * with `configured` reported alongside, never as a refusal.
  *
- * - `installed`   the payload is present (always true in Phase 1; a file may
- *                 say false and is honoured).
+ * - `installed`   the payload is present. Whoever installs a reduced payload
+ *                 (documentation/packaging.md) writes false for the features
+ *                 it leaves out; without a file everything reports true.
  * - `configured`  required keys and dependencies exist right now. Derived
  *                 from env/config on every snapshot, never persisted. It does
  *                 not gate: an unconfigured feature keeps its surfaces and

@@ -30,6 +30,8 @@
 
 const { CronExpressionParser } = require('cron-parser');
 const db = require('../db');
+const dormantData = require('./dormantDataService');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const { validateCron } = require('./automationManagerService');
 const sandboxConfig = require('../config/sandboxConfig');
 const { assessUrl, SafeFetchError } = require('../utils/safeFetch');
@@ -241,7 +243,9 @@ class ProjectTriggerService {
     }
 
     _requestService() {
-        return this._sandboxRequests || require('./sandboxRequestService');
+        const requests = this._sandboxRequests || requireOptional('./sandboxRequestService', { feature: 'sandbox' });
+        if (!requests) throw new ProjectTriggerError(404, 'FEATURE_UNAVAILABLE', 'The sandbox is not installed on this server.');
+        return requests;
     }
 
     _chatService() {
@@ -1655,16 +1659,7 @@ class ProjectTriggerService {
 
     /** /forget-me: every trigger belonging to the user (deliveries cascade; made explicit). */
     async forgetUser(userId) {
-        await db.run(
-            `DELETE FROM project_trigger_deliveries
-             WHERE triggerId IN (SELECT id FROM project_triggers WHERE userId = @userId)`,
-            { userId }
-        );
-        const triggers = (await db.run(
-            'DELETE FROM project_triggers WHERE userId = @userId',
-            { userId }
-        )).changes;
-        return { triggers };
+        return dormantData.forgetProjectTriggers(userId);
     }
 
     async countUser(userId) {

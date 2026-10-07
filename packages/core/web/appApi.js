@@ -29,8 +29,6 @@ const { mountAccount } = require('./routes/account');
 const { mountAdmin } = require('./routes/admin');
 const { mountChat } = require('./routes/chat');
 const { mountVoiceTasks } = require('./routes/voiceTasks');
-const { mountProjects } = require('./routes/projects');
-const { mountSpitball } = require('./routes/spitball');
 const { mountWorkspace } = require('./routes/workspace');
 const { mountParlor } = require('./routes/parlor');
 const { mountEventsStatic } = require('./routes/eventsStatic');
@@ -39,13 +37,29 @@ const { mountInbox } = require('./routes/inbox');
 const { mountPeople } = require('./routes/people');
 const { mountFollowedSources } = require('./routes/followedSources');
 const { mountTutorials } = require('./routes/tutorials');
-const { mountStudio } = require('./routes/studio');
-const { mountPush } = require('./routes/push');
 const { mountMcp } = require('./routes/mcp');
-const { mountNoteAttachments } = require('./routes/noteAttachments');
 const { mountFeatures } = require('./routes/features');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const PORTAL_PATH = /^\/(?:api\/app|app)(?:\/|$)/i;
+
+/**
+ * Route modules that belong to an optional feature. A payload without the
+ * feature does not carry the file; its URLs then fall through to the 404
+ * the feature gate gives a disabled feature.
+ */
+const OPTIONAL_ROUTES = {
+    projects: () => requireOptional('./routes/projects', { feature: 'projects' })?.mountProjects,
+    spitball: () => requireOptional('./routes/spitball', { feature: 'knowledge' })?.mountSpitball,
+    noteAttachments: () => requireOptional('./routes/noteAttachments', { feature: 'knowledge' })?.mountNoteAttachments,
+    studio: () => requireOptional('./routes/studio', { feature: 'music' })?.mountStudio,
+    push: () => requireOptional('./routes/push', { feature: 'push' })?.mountPush
+};
+
+function mountOptional(name, app, ctx, helpers) {
+    const mount = OPTIONAL_ROUTES[name]();
+    if (mount) mount(app, ctx, helpers);
+}
 
 /**
  * The portal's one feature gate, driven by the inventory's ordered
@@ -103,9 +117,9 @@ function createWebAppApp(ctx) {
     mountAdmin(app, ctx, helpers);
     mountChat(app, ctx, helpers);
     mountVoiceTasks(app, ctx, helpers);
-    mountProjects(app, ctx, helpers);
-    mountSpitball(app, ctx, helpers);
-    mountNoteAttachments(app, ctx, helpers);
+    mountOptional('projects', app, ctx, helpers);
+    mountOptional('spitball', app, ctx, helpers);
+    mountOptional('noteAttachments', app, ctx, helpers);
     mountWorkspace(app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
@@ -113,8 +127,8 @@ function createWebAppApp(ctx) {
     mountPeople(app, ctx, helpers);
     mountFollowedSources(app, ctx, helpers);
     mountTutorials(app, ctx, helpers);
-    mountStudio(app, ctx, helpers);
-    mountPush(app, ctx, helpers);
+    mountOptional('studio', app, ctx, helpers);
+    mountOptional('push', app, ctx, helpers);
     mountMcp(app, ctx, helpers);
     // Last: the static client + API 404 fallback
     mountEventsStatic(app, ctx, helpers);

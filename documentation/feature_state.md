@@ -41,7 +41,7 @@ requireSurface('command', 'economy/wheel.js');   // null, or { ok: false, code: 
 
 | State | Meaning | Where it comes from |
 |---|---|---|
-| installed | The feature's payload is present. Always `true` in Phase 1 (there are no selective payloads yet), but a file may say `false` and it is honoured: an uninstalled feature is never active, whatever the operator or the environment says. | `features.<id>.installed` in the file; `true` without a file. |
+| installed | The feature's payload is present. Whoever installs a reduced payload (`documentation/packaging.md`) writes `false` here for every feature the selection leaves out; without that file the legacy rule reports `true` for everything (the absent feature's seams then still find nothing to load). A `false` is honoured: an uninstalled feature is never active, whatever the operator or the environment says. | `features.<id>.installed` in the file; `true` without a file. |
 | configured | The keys and dependencies the feature needs exist right now. Informational: it is reported (`configured` and `warnings`) but never decides whether the feature is active. Derived on every snapshot from env and `config.json`, never persisted, so it cannot go stale. | `apiKeys` marked `required` in the descriptor; the mail provider rule; the half-set VAPID pair; system dependencies when a probe is supplied. |
 | active | The operator's requested enablement as of the last applied restart (the startup snapshot). | `features.<id>.active` in the file; without a file, the effective legacy switch. |
 | pending | A requested change that has not been applied yet. Never affects the running process. | `features.<id>.pendingActive` in the file, when it differs from `active`. |

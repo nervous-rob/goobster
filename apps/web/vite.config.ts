@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, normalizePath, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const docsBuilder = createRequire(import.meta.url)('./docs/build.cjs');
+const requireCjs = createRequire(import.meta.url);
+const docsBuilder = requireCjs('./docs/build.cjs');
+const frontendChunks = requireCjs('../../scripts/lib/frontendChunks.js');
 
 /** Only the explicit shipped Markdown manifest can enter the public bundle. */
 function documentationPlugin(): Plugin {
@@ -61,8 +63,65 @@ function stableCssPlugin(): Plugin {
     };
 }
 
+/**
+ * Feature boundaries in the bundle (scripts/lib/frontendChunks.js): label the
+ * module graph once it is built, then name every chunk (and its stylesheet)
+ * that only one feature's rooms reach `assets/feature-<id>-…`. Rollup's own
+ * code splitting is unchanged; only the file names carry the owner.
+ */
+function featureChunksPlugin(): Plugin {
+    const rooms = requireCjs('./src/lib/rooms.cjs');
+    const catalog = requireCjs('../../packages/core/features/catalog.js');
+    // Rollup module ids are posix paths on every platform; so must be the keys we look them up by.
+    const entries = new Map<string, string>(frontendChunks.featureRouteModules(rooms)
+        .map(({ module, feature }: { module: string; feature: string }) => [normalizePath(path.join(root, 'src', module)), feature]));
+    const requires = frontendChunks.requiresOf(catalog);
+    let labels = new Map<string, string>();
+    const featureOf = (moduleIds: readonly string[]) => frontendChunks.chunkFeature(moduleIds, labels) as string | null;
+    return {
+        name: 'goobster-feature-chunks',
+        apply: 'build',
+        buildEnd() {
+            for (const module of entries.keys()) {
+                if (!this.getModuleInfo(module)) this.error(`lib/rooms.cjs names ${path.relative(root, module)}, which the build never loaded`);
+            }
+            labels = frontendChunks.labelModules({
+                moduleIds: this.getModuleIds(),
+                getModuleInfo: (id: string) => this.getModuleInfo(id),
+                entries,
+                requires
+            });
+        },
+        closeBundle(error?: Error) {
+            // Rollup also runs this hook after a failed build; the dist is not there then, and the build error is the one to report.
+            if (error) return;
+            const dist = path.join(root, 'dist');
+            const frontend = Object.fromEntries(catalog.FEATURE_IDS.map((id: string) => [id, catalog.FEATURES[id].payload?.frontend || []]));
+            const analysis = frontendChunks.analyseDist(dist, { requires, frontend });
+            if (analysis.violations.length) {
+                this.error(`feature chunk closure broken: ${JSON.stringify(analysis.violations.slice(0, 10))}`);
+            }
+            frontendChunks.writeFeatureChunks(dist, analysis);
+        },
+        outputOptions(options) {
+            return {
+                ...options,
+                chunkFileNames: (chunk) => {
+                    const feature = featureOf(chunk.moduleIds);
+                    return feature ? `assets/feature-${feature}-[name]-[hash].js` : 'assets/[name]-[hash].js';
+                },
+                assetFileNames: (asset) => {
+                    const origin = (asset.originalFileNames || [])[0];
+                    const feature = origin && /\.css$/.test(asset.names?.[0] || '') ? featureOf([normalizePath(path.resolve(root, origin))]) : null;
+                    return feature ? `assets/feature-${feature}-[name]-[hash][extname]` : 'assets/[name]-[hash][extname]';
+                }
+            };
+        }
+    };
+}
+
 export default defineConfig({
-    plugins: [react(), stableCssPlugin(), documentationPlugin()],
+    plugins: [react(), stableCssPlugin(), documentationPlugin(), featureChunksPlugin()],
     base: '/app/',
     resolve: {
         alias: {
@@ -82,6 +141,7 @@ export default defineConfig({
     build: {
         outDir: 'dist',
         emptyOutDir: true,
-        sourcemap: true
+        sourcemap: true,
+        manifest: true
     }
 });

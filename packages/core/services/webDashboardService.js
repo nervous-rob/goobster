@@ -15,6 +15,7 @@
  */
 
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const memoryService = require('./memoryService');
 const privacyService = require('./privacyService');
 const factsService = require('./factsService');
@@ -469,10 +470,10 @@ class WebDashboardService {
 
         let observatory = { enabled: false };
         try {
-            const observatoryService = require('./observatoryService');
+            const observatoryService = requireOptional('./observatoryService', { feature: 'projects' });
             // The Home card is about organizing projects, which does not
             // need code execution (ADR 0009).
-            if (observatoryService.organizationEnabled) {
+            if (observatoryService?.organizationEnabled) {
                 const projects = await observatoryService.listProjects(userId);
                 observatory = {
                     enabled: true,

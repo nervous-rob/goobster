@@ -17,6 +17,7 @@
 const db = require('../db');
 const pushConfig = require('../config/pushConfig');
 const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 /** Devices per person; the oldest unseen row is pruned past this. */
 const MAX_DEVICES = 8;
@@ -289,7 +290,8 @@ class PushService {
     }
 
     _senderInstance() {
-        if (!this._sender) this._sender = require('web-push');
+        if (!this._sender) this._sender = requireOptional('web-push', { feature: 'push' });
+        if (!this._sender) throw new Error('Web Push delivery is not installed on this instance.');
         return this._sender;
     }
 

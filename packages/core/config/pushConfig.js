@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
 const { dataDir } = require('../runtimePaths');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 // config.json is optional (env-only deployments); never crash at import time.
 let fileConfig = {};
@@ -98,7 +99,8 @@ function readKeyFile() {
 
 function generateKeyFile() {
     try {
-        const webPush = require('web-push');
+        const webPush = requireOptional('web-push', { feature: 'push' });
+        if (!webPush) return null;
         const keys = webPush.generateVAPIDKeys();
         fs.mkdirSync(path.dirname(KEY_FILE), { recursive: true });
         fs.writeFileSync(KEY_FILE, JSON.stringify({

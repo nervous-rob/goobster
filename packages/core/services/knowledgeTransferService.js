@@ -20,6 +20,7 @@ const logger = require('../utils/logger');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const { dmScopeId } = require('../utils/dmScope');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const { MAX_LABEL_LENGTH, MAX_CONTENT_LENGTH, MAX_TAGS_PER_NODE } = kgConfig;
 
@@ -204,7 +205,8 @@ class KnowledgeTransferService {
 
     async _displayName(userId) {
         if (!userId) return null;
-        return (await require('./projectService')._displayName(userId)) || null;
+        const projects = requireOptional('./projectService', { feature: 'projects' });
+        return (await projects?._displayName(userId)) || null;
     }
 
     // --- Actions -----------------------------------------------------------
@@ -283,7 +285,8 @@ class KnowledgeTransferService {
 
     async _addNoteToProject({ userId, nodeId, project, owner, mode }) {
         const cleanMode = mode === 'reference' ? 'reference' : 'copy';
-        const projectService = require('./projectService');
+        const projectService = requireOptional('./projectService', { feature: 'projects' });
+        if (!projectService) throw new KnowledgeTransferError(404, 'FEATURE_UNAVAILABLE', 'Projects are not installed on this server.');
         const row = await projectService.resolveProject({ userId, project, owner });
         // Serialize transfers into this project, including first publication.
         // SQLite's write transaction already provides this exclusion.

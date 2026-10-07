@@ -24,6 +24,7 @@
  */
 
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const attentionService = require('./attentionService');
 const attentionPolicyService = require('./attentionPolicyService');
 const attentionWatchService = require('./attentionWatchService');
@@ -119,7 +120,8 @@ class PersonalHeartbeatService {
         // pass, so it follows the same gate (projects owns it).
         if (surfaceActive('runtimeStep', 'missionReconcile')) {
             try {
-                const missions = require('./projectMissionService');
+                const missions = requireOptional('./projectMissionService', { feature: 'projects' });
+                if (!missions) throw new Error('the projects module is not installed');
                 const starting = await missions.reconcileStartingSteps();
                 const running = await missions.reconcileRunningSteps();
                 if (starting > 0 || running > 0) {

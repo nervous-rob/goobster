@@ -25,6 +25,7 @@ const {
 const { getBotPreferredName } = require('@goobster/core/utils/guildContext');
 const activityService = require('@goobster/core/services/activityService');
 const { surfaceActive } = require('@goobster/core/features/gate');
+const requireOptional = require('@goobster/core/utils/optionalModule').forModule(module);
 
 /*
  * The guild message gates run in the order of the `// messageCreate#NN` marker
@@ -131,8 +132,8 @@ module.exports = {
         // directly in the run channel still works. Owned by the GBA feature.
         try {
             if (surfaceActive('eventGate', GATE_GBA_ADVICE)) {
-                const gbaRunService = require('@goobster/core/services/gbaRunService');
-                if (await gbaRunService.maybeCaptureAdvice(message)) return;
+                const gbaRunService = requireOptional('@goobster/core/services/gbaRunService', { feature: 'gba' });
+                if (gbaRunService && await gbaRunService.maybeCaptureAdvice(message)) return;
             }
         } catch (error) {
             console.error('GBA run advice capture failed:', error);

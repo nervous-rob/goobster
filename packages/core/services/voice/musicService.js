@@ -26,7 +26,6 @@ const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@disco
 const config = require('../../config/configJson').load();
 const SpotDLService = require('../spotdl/spotdlService');
 const { parseTrackName } = require('../../utils/musicUtils');
-const { EmbedBuilder } = require('discord.js');
 const { generateMusic, resolveApiKey } = require('./elevenLabsAudioService');
 
 // Length of generated mood-music tracks; also drives loop crossfade timing.

@@ -38,6 +38,7 @@
 
 const { pcmRms } = require('./voice/pcmUtils');
 const { dmScopeId } = require('../utils/dmScope');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 // Live audio arrives as 16kHz mono s16le PCM (32 bytes/ms)
 const SAMPLE_RATE = 16000;
@@ -103,7 +104,7 @@ class ParlorLiveService {
     }
 
     _webVoice() {
-        return this._deps.webVoice || require('./webVoiceService');
+        return this._deps.webVoice || requireOptional('./webVoiceService', { feature: 'voice' });
     }
 
     _usage() {
@@ -139,7 +140,8 @@ class ParlorLiveService {
         const key = this._elevenLabsKey();
         if (!key) return null;
         if (!this._directTts) {
-            const ElevenLabsTTSService = require('./voice/elevenLabsTTSService');
+            const ElevenLabsTTSService = requireOptional('./voice/elevenLabsTTSService', { feature: 'voice' });
+            if (!ElevenLabsTTSService) return null;
             const direct = new ElevenLabsTTSService({ elevenlabs: { apiKey: key } });
             this._directTts = direct.disabled ? null : direct;
         }
@@ -148,8 +150,9 @@ class ParlorLiveService {
 
     _createScribe(opts) {
         if (this._deps.createScribe) return this._deps.createScribe(opts);
-        const { ScribeRealtimeConnection } = require('./voice/scribeRealtimeService');
-        return new ScribeRealtimeConnection(opts);
+        const scribe = requireOptional('./voice/scribeRealtimeService', { feature: 'voice' });
+        if (!scribe) throw new ParlorLiveError(503, 'VOICE_UNAVAILABLE', 'Live voice is not installed on this server.');
+        return new scribe.ScribeRealtimeConnection(opts);
     }
 
     /**
@@ -160,7 +163,9 @@ class ParlorLiveService {
      * @returns {{ live: boolean }}
      */
     capabilities() {
-        return { live: Boolean(this._elevenLabsKey()) };
+        const voiceInstalled = Boolean(this._deps.createScribe)
+            || Boolean(requireOptional('./voice/scribeRealtimeService', { feature: 'voice' }));
+        return { live: voiceInstalled && Boolean(this._elevenLabsKey()) };
     }
 
     /**
@@ -546,7 +551,7 @@ class ParlorLiveService {
 
         // Fallback: batch-transcribe the buffered PCM when realtime STT
         // produced nothing because of an ERROR (not because of silence).
-        if (utterance.scribeFailed && !transcript) {
+        if (utterance.scribeFailed && !transcript && this._webVoice()) {
             try {
                 const wav = this._buildWav(Buffer.concat(utterance.chunks, utterance.totalBytes));
                 const result = await this._webVoice().transcribe({
@@ -750,8 +755,9 @@ class ParlorLiveService {
      */
     async _enqueueSpeech(session, { personaId, personaName, content }) {
         if (session.destroyed) return;
-        const { speechTextFromMarkdown } = require('./webVoiceService');
-        const speakable = speechTextFromMarkdown(content);
+        const webVoice = requireOptional('./webVoiceService', { feature: 'voice' });
+        if (!webVoice) return;
+        const speakable = webVoice.speechTextFromMarkdown(content);
         if (!speakable) return;
         session.speechQueue.push({ personaId, personaName, text: speakable });
         await this._pumpSpeech(session);

@@ -18,6 +18,8 @@
 
 const crypto = require('node:crypto');
 const db = require('../db');
+const dormantData = require('./dormantDataService');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const { dmScopeId } = require('../utils/dmScope');
 const domainEventBus = require('./domainEventBus');
 const logger = require('../utils/logger');
@@ -266,7 +268,11 @@ class ProjectMissionService {
     }
 
     _expeditions() {
-        return this._spitball || require('./spitballExpeditionService');
+        const expeditions = this._spitball || requireOptional('./spitballExpeditionService', { feature: 'expeditions' });
+        if (!expeditions) {
+            throw new ProjectMissionError(404, 'FEATURE_UNAVAILABLE', 'Research expeditions are not installed on this server.');
+        }
+        return expeditions;
     }
 
     _watchService() {
@@ -1331,7 +1337,7 @@ class ProjectMissionService {
 
     _ignoreChildCancel(error) {
         const code = error?.code || '';
-        if (code === 'NOT_FOUND' || code === 'BAD_STATE' || code === 'NOT_RUNNING') return true;
+        if (code === 'NOT_FOUND' || code === 'BAD_STATE' || code === 'NOT_RUNNING' || code === 'FEATURE_UNAVAILABLE') return true;
         return /not running|not found|not (a )?paused|already/i.test(error?.message || '');
     }
 
@@ -1509,7 +1515,7 @@ class ProjectMissionService {
             }
         }
         try {
-            require('./spitballExpeditionRunner').kick(row.id);
+            requireOptional('./spitballExpeditionRunner', { feature: 'expeditions' })?.kick(row.id);
         } catch { /* runner is optional in tests */ }
     }
 
@@ -1613,7 +1619,7 @@ class ProjectMissionService {
                         await expeditions.continueExpedition(out.expeditionId, { userId });
                     }
                     try {
-                        require('./spitballExpeditionRunner').kick(out.expeditionId);
+                        requireOptional('./spitballExpeditionRunner', { feature: 'expeditions' })?.kick(out.expeditionId);
                     } catch { /* runner is optional in tests */ }
                 }
             } else if (step.kind === 'job' && (params.asset || params.assetSlug || params.slug)) {
@@ -2263,14 +2269,7 @@ class ProjectMissionService {
     }
 
     async forgetUser(userId) {
-        if (!userId) return { missions: 0, decisions: 0 };
-        const decisions = (await db.run(
-            'DELETE FROM project_decisions WHERE userId = @userId', { userId }
-        )).changes;
-        const missions = (await db.run(
-            'DELETE FROM project_missions WHERE userId = @userId', { userId }
-        )).changes;
-        return { missions, decisions };
+        return dormantData.forgetProjectMissions(userId);
     }
 
     async countUser(userId) {

@@ -120,7 +120,7 @@ async function buildArchive({ userId, data, settings, destination, signal, limit
     }
     const position = new Map(Object.values(data).flatMap(rows => rows.map((row, i) => [row, i])));
     const fileCopies = new Map();
-    const projectRoot = require('../services/projectService').PROJECTS_ROOT;
+    const projectRoot = require('../services/dormantDataService').PROJECTS_ROOT;
     const uploadRoot = require('./webUploads').userUploadDir(userId);
     const artifactRoot = require('./kgArtifactStorage').ARTIFACTS_ROOT;
     const projects = data.observatory_projects;

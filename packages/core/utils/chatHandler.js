@@ -14,6 +14,7 @@
  * keep working.
  */
 const db = require('../db');
+const requireOptional = require('./optionalModule').forModule(module);
 const { getPersonalityDirective, getGuildAI, getMonologueMode, MONOLOGUE_MODE } = require('./guildSettings');
 const aiService = require('../services/aiService');
 const imageDetectionHandler = require('./imageDetectionHandler');
@@ -436,8 +437,8 @@ async function runChatInteraction(interaction, thread = null) {
         let screenLine = null;
         if (depth !== 'light') {
             try {
-                const screenVisionService = require('../services/screenVisionService');
-                const screenContext = await screenVisionService.buildUserScreenContext({
+                const screenVisionService = requireOptional('../services/screenVisionService', { feature: 'screenVision' });
+                const screenContext = await screenVisionService?.buildUserScreenContext({
                     userId: interaction.user.id,
                     userName: userPreferredName,
                     member: interaction.member

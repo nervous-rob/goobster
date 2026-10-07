@@ -121,6 +121,10 @@ function mountEventsStatic(app, ctx, h) {
     // exposes no other file or route (control buttons stay inert because
     // the owner-session probe fails for viewers).
     app.get('/app/observatory/share/:token', async (req, res) => {
+        if (!ctx.observatory) {
+            sendError(res, 404, 'NOT_FOUND', 'No such dashboard.');
+            return;
+        }
         try {
             const { html } = await ctx.observatory.getSharedDashboard(req.params.token);
             res.status(200).type('html').send(html);

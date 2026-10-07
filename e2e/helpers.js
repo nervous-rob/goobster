@@ -76,7 +76,9 @@ function createSecondServer({ port, dataDir = null } = {}) {
         const stateFile = path.join(dir, 'features.json');
         if (features) {
             const entries = {};
-            for (const [id, active] of Object.entries(features)) entries[id] = { installed: true, active };
+            for (const [id, value] of Object.entries(features)) {
+                entries[id] = value && typeof value === 'object' ? value : { installed: true, active: value };
+            }
             fs.writeFileSync(stateFile, JSON.stringify({
                 version: 1, revision: 1, updatedAt: '2026-10-06 21:14:02', origin: 'operator', features: entries
             }));

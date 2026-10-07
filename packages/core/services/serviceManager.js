@@ -1,5 +1,6 @@
 const { EventEmitter } = require('events');
 const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 /**
  * The shared voice stack (TTS, Discord music playback, ambience).
@@ -35,12 +36,12 @@ let instance = null;
 
 function getVoiceService() {
     if (instance) return instance;
-    if (features.enforcedOff('voice')) {
+    const VoiceService = features.enforcedOff('voice') ? null : requireOptional('./voice', { feature: 'voice' });
+    if (!VoiceService) {
         instance = new InactiveVoiceService();
         return instance;
     }
 
-    const VoiceService = require('./voice');
     const config = require('../config/configJson').load();
     instance = new VoiceService(config);
     instance.initialize().catch(error => {

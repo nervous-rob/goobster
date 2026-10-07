@@ -48,10 +48,14 @@ const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const observatoryConfig = require('../config/observatoryConfig');
 const { features } = require('../features/featureState');
-const sandboxService = require('./sandboxService');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
+// Organisation works without the sandbox; only execution needs it.
+const sandboxService = requireOptional('./sandboxService', { feature: 'sandbox' });
 const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
+const dormantData = require('./dormantDataService');
 const { windowLines } = require('../utils/toolResultWindow');
 const { makeRunnerId, makeLeaseToken, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
 const {
@@ -88,13 +92,7 @@ const JOB_ERROR_CODES = Object.freeze({
 /** How long a live owner has to observe cancelRequested after a stale reap. */
 const STOP_ACK_MS = 1500;
 
-const PROJECTS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'projects');
-/**
- * Dashboards live OUTSIDE the workspace on purpose: the workspace is
- * bind-mounted writable into snippet runs, and a served dashboard is
- * trusted HTML - a snippet must never be able to author it.
- */
-const DASHBOARDS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'dashboards');
+const { PROJECTS_ROOT, DASHBOARDS_ROOT, USER_ID_PATTERN } = dormantData;
 /** The render convention: numbered frames in this run subdirectory. */
 const FRAME_PATTERN = /^frame_\d+\.png$/;
 const RENDERS_DIR = 'renders';
@@ -110,7 +108,6 @@ const MAX_NAME_LENGTH = 60;
 const MAX_DESCRIPTION_LENGTH = 600;
 const SLUG_MAX_LENGTH = 48;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Default inbox project for migrated Workshop pins (Phase 2). */
 const WORKSHOP_SLUG = 'workshop';
 const WORKSHOP_NAME = 'Workshop';
@@ -311,7 +308,7 @@ class ObservatoryService {
      * second term is always true, so this is the legacy value unchanged.
      */
     get executionEnabled() {
-        return this.config.enabled === true && this.sandbox.enabled === true
+        return this.config.enabled === true && this.sandbox?.enabled === true
             && !features.enforcedOff('observatory');
     }
 
@@ -893,25 +890,7 @@ class ObservatoryService {
      * Fire-and-forget per delivery; a closed DM is not an error.
      */
     async notifyProjectsGone(notices, gateway = null, client = null) {
-        const resolved = toGateway(gateway || client);
-        if (!Array.isArray(notices) || notices.length === 0) return;
-        const inboxService = require('./inboxService');
-        for (const notice of notices) {
-            const line = `🔭 The project "${notice.name || notice.slug}" has been deleted by its owner.`;
-            for (const memberId of notice.memberIds || []) {
-                try {
-                    await inboxService.deliver({
-                        userId: memberId,
-                        kind: 'project',
-                        title: `Project "${notice.name || notice.slug}" was deleted`,
-                        body: line,
-                        source: { type: 'project', id: notice.slug || notice.name },
-                        link: '/projects',
-                        discord: resolved ? { gateway: resolved, payload: { content: line } } : false
-                    });
-                } catch { /* a notice is best effort */ }
-            }
-        }
+        await dormantData.notifyProjectsGone(notices, gateway, client);
     }
 
     /**
@@ -3613,7 +3592,7 @@ class ObservatoryService {
     }
 
     _inviteMessage({ inviteId, inviterName, name }) {
-        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = discord;
         let appUrl = null;
         try {
             const publicUrl = require('../config/configJson').load().webapp?.publicUrl;
@@ -3821,66 +3800,9 @@ class ObservatoryService {
      * @param {string} userId
      */
     async forgetUser(userId) {
-        const owned = await db.all(
-            'SELECT id, name, slug FROM observatory_projects WHERE userId = @userId',
-            { userId }
-        );
-        const notifyMembers = [];
-        for (const project of owned) {
-            const members = await db.all(
-                'SELECT userId FROM project_members WHERE projectId = @id',
-                { id: project.id }
-            );
-            if (members.length) {
-                notifyMembers.push({
-                    name: project.name,
-                    slug: project.slug,
-                    memberIds: members.map(m => m.userId)
-                });
-            }
-            await this._deleteProjectKnowledge({
-                id: project.id,
-                ownerId: userId,
-                userId
-            });
-        }
-
-        const running = await db.all(
-            `SELECT id FROM observatory_jobs
-             WHERE status = 'RUNNING' AND (
-                 userId = @userId
-                 OR projectId IN (SELECT id FROM observatory_projects WHERE userId = @userId)
-             )`,
-            { userId }
-        );
-        for (const row of running) {
-            this._jobs.get(row.id)?.controller.abort();
-        }
-
-        const memberships = (await db.run(
-            'DELETE FROM project_members WHERE userId = @userId', { userId }
-        )).changes;
-        const invites = (await db.run(
-            'DELETE FROM project_invites WHERE inviteeId = @userId', { userId }
-        )).changes;
-        const shareLinks = (await db.run(
-            'DELETE FROM observatory_share_links WHERE userId = @userId', { userId }
-        )).changes;
-        const jobs = (await db.run(
-            'DELETE FROM observatory_jobs WHERE userId = @userId', { userId }
-        )).changes;
-        const projects = (await db.run(
-            'DELETE FROM observatory_projects WHERE userId = @userId', { userId }
-        )).changes;
-        if (USER_ID_PATTERN.test(String(userId || ''))) {
-            try {
-                fs.rmSync(path.join(PROJECTS_ROOT, String(userId)), { recursive: true, force: true });
-            } catch { /* best effort */ }
-            try {
-                fs.rmSync(path.join(DASHBOARDS_ROOT, String(userId)), { recursive: true, force: true });
-            } catch { /* best effort */ }
-        }
-        return { projects, jobs, shareLinks, memberships, invites, notifyMembers };
+        return dormantData.forgetProjects(userId, {
+            abortJob: jobId => this._jobs.get(jobId)?.controller.abort()
+        });
     }
 
     /**
@@ -3888,35 +3810,7 @@ class ObservatoryService {
      * @param {string} userId
      */
     async countUserData(userId) {
-        const projects = (await db.get(
-            'SELECT COUNT(*) AS c FROM observatory_projects WHERE userId = @userId', { userId }
-        )).c;
-        const jobs = (await db.get(
-            'SELECT COUNT(*) AS c FROM observatory_jobs WHERE userId = @userId', { userId }
-        )).c;
-        const shareLinks = (await db.get(
-            'SELECT COUNT(*) AS c FROM observatory_share_links WHERE userId = @userId', { userId }
-        )).c;
-        const memberships = (await db.get(
-            'SELECT COUNT(*) AS c FROM project_members WHERE userId = @userId', { userId }
-        )).c;
-        const invites = (await db.get(
-            'SELECT COUNT(*) AS c FROM project_invites WHERE inviteeId = @userId', { userId }
-        )).c;
-        let workspaceDirs = 0;
-        if (USER_ID_PATTERN.test(String(userId || ''))) {
-            for (const root of [PROJECTS_ROOT, DASHBOARDS_ROOT]) {
-                try {
-                    if (fs.existsSync(path.join(root, String(userId)))) workspaceDirs++;
-                } catch { /* unreadable = uncounted */ }
-            }
-        }
-        const projectNodes = (await db.get(
-            `SELECT COUNT(*) AS c FROM kg_nodes
-             WHERE guildId = @dmScope AND scopeKey LIKE 'PROJECT:%'`,
-            { dmScope: dmScopeId(userId) }
-        )).c;
-        return { projects, jobs, shareLinks, memberships, invites, workspaceDirs, projectNodes };
+        return dormantData.countProjects(userId);
     }
 }
 

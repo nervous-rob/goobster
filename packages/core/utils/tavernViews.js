@@ -1,5 +1,5 @@
 const path = require('node:path');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
+const { discord } = require('./optionalModule');
 const { STATS, CALLINGS, NPCS } = require('../services/tavern/content');
 
 const TAVERN_COLOR = 0xc27c2b;   // hearth-light amber
@@ -49,7 +49,7 @@ function questSummary(quest) {
 
 /** The /tavern status Common Room embed. */
 function tavernStatus(status, guildName) {
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle('🍺 The Goobster Tavern')
         .setDescription(
@@ -89,7 +89,7 @@ function tavernStatus(status, guildName) {
  * of the chapter that must be completed first (locked entries show it).
  */
 function questBoard(quests, locks = {}) {
-    return new EmbedBuilder()
+    return new discord.EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle('📜 The Quest Board')
         .setDescription('Pinned notices, in Marnie\'s tidy hand. Start one with `/adventure join quest:<name>`.')
@@ -103,7 +103,7 @@ function questBoard(quests, locks = {}) {
 
 /** An NPC card, with the viewer's standing when it has moved off neutral. */
 function npcCard(npc, standing = null) {
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle(`${npc.emoji} ${npc.name} — ${npc.title}`)
         .setDescription(`${npc.description}\n\n*“${npc.line}”*`)
@@ -119,7 +119,7 @@ function npcCard(npc, standing = null) {
 
 /** A member's Guest Room: their description plus trophies from their sheet. */
 function roomEmbed({ user, description, character, relationships = [] }) {
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle(`🚪 ${character ? character.name : user.displayName || user.username}'s Guest Room`)
         .setDescription(description || '*An unclaimed room: bare boards, a made bed, a window that shows different weather each day. `/tavern room-edit` to move in.*');
@@ -149,7 +149,7 @@ function worldEmbed(world, guildName) {
         location: '🗺️ Locations', faction: '🏳️ Factions', event: '📯 Events',
         artifact: '🏺 Artifacts', character: '🧑‍🤝‍🧑 Figures'
     };
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(SCENE_COLOR)
         .setTitle('🗺️ The Map Room')
         .setDescription('What this server\'s adventures have written into the shared world. `/world lore name:` for the full entry.');
@@ -172,7 +172,7 @@ function worldEmbed(world, guildName) {
 /** One full lore entry. */
 function loreEmbed(lore) {
     const KIND_EMOJI = { location: '🗺️', faction: '🏳️', event: '📯', artifact: '🏺', character: '🧑' };
-    return new EmbedBuilder()
+    return new discord.EmbedBuilder()
         .setColor(SCENE_COLOR)
         .setTitle(`${KIND_EMOJI[lore.kind] || '📜'} ${lore.name}`)
         .setDescription(lore.content)
@@ -185,7 +185,7 @@ function characterSheet(character, { asProfile = false } = {}) {
     const statLine = Object.values(STATS)
         .map(stat => `${stat.emoji} **${stat.name}** +${character[stat.key]}`)
         .join('  ');
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle(`${calling?.emoji || '🎲'} ${character.name}`)
         .setDescription(
@@ -224,7 +224,7 @@ function characterSheet(character, { asProfile = false } = {}) {
 
 /** The recruiting message for a party, with Join/Begin buttons. */
 function partyMessage(adventure, quest, members) {
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(TAVERN_COLOR)
         .setTitle(`⚔️ Party forming: ${quest.title}`)
         .setDescription(quest.hook.trim())
@@ -241,17 +241,17 @@ function partyMessage(adventure, quest, members) {
         )
         .setFooter({ text: 'You need a character to join: /character create' });
 
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
+    const row = new discord.ActionRowBuilder().addComponents(
+        new discord.ButtonBuilder()
             .setCustomId(`join_tavern_${adventure.id}`)
             .setLabel('Join the party')
             .setEmoji('🍻')
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
+            .setStyle(discord.ButtonStyle.Primary),
+        new discord.ButtonBuilder()
             .setCustomId(`begin_tavern_${adventure.id}`)
             .setLabel('Begin the adventure')
             .setEmoji('🗡️')
-            .setStyle(ButtonStyle.Success)
+            .setStyle(discord.ButtonStyle.Success)
             .setDisabled(members.length < quest.players.min)
     );
     return { embeds: [embed], components: [row] };
@@ -264,7 +264,7 @@ function enemyBar(current, max) {
 
 /** A live scene: narration, clocks, party, spotlight, options, combat, art. */
 function sceneMessage({ adventure, quest, scene, members, options, spotlightUserId, lead, artPath = null, enemies = [], telegraphs = {} }) {
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(SCENE_COLOR)
         .setTitle(`📖 ${quest.title} — ${scene.title}`)
         .setDescription((lead ? `${lead}\n\n` : '') + scene.text.trim());
@@ -272,7 +272,7 @@ function sceneMessage({ adventure, quest, scene, members, options, spotlightUser
     const files = [];
     if (artPath) {
         const fileName = `${quest.id}-${path.basename(artPath)}`;
-        files.push(new AttachmentBuilder(artPath, { name: fileName }));
+        files.push(new discord.AttachmentBuilder(artPath, { name: fileName }));
         embed.setImage(`attachment://${fileName}`);
     }
 
@@ -295,24 +295,24 @@ function sceneMessage({ adventure, quest, scene, members, options, spotlightUser
 
     const rows = [];
     if (enemies.length > 0) {
-        rows.push(new ActionRowBuilder().addComponents(
+        rows.push(new discord.ActionRowBuilder().addComponents(
             enemies.slice(0, 4).map(enemy =>
-                new ButtonBuilder()
+                new discord.ButtonBuilder()
                     .setCustomId(`atk_tavern_${adventure.id}-${enemy.id}`)
                     .setLabel(`Attack ${enemy.name}`.slice(0, 80))
                     .setEmoji('⚔️')
-                    .setStyle(ButtonStyle.Danger))
+                    .setStyle(discord.ButtonStyle.Danger))
         ));
     }
     for (let i = 0; i < options.length; i += 4) {
-        rows.push(new ActionRowBuilder().addComponents(
+        rows.push(new discord.ActionRowBuilder().addComponents(
             options.slice(i, i + 4).map(option => {
-                const button = new ButtonBuilder()
+                const button = new discord.ButtonBuilder()
                     .setCustomId(`opt_tavern_${adventure.id}-${option.key}`)
                     .setLabel(option.label.slice(0, 80))
                     .setStyle(option.goto !== undefined || option.end !== undefined
-                        ? ButtonStyle.Secondary
-                        : ButtonStyle.Primary);
+                        ? discord.ButtonStyle.Secondary
+                        : discord.ButtonStyle.Primary);
                 if (option.emoji) button.setEmoji(option.emoji);
                 return button;
             })
@@ -344,12 +344,12 @@ function checkResultMessage(result, adventureId) {
 
     const message = { content: parts.join('\n'), components: [] };
     if (result.canReroll) {
-        message.components.push(new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
+        message.components.push(new discord.ActionRowBuilder().addComponents(
+            new discord.ButtonBuilder()
                 .setCustomId(`spark_tavern_${adventureId}`)
                 .setLabel('Spend 1 Spark to reroll')
                 .setEmoji('✨')
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(discord.ButtonStyle.Secondary)
         ));
     }
     return message;
@@ -358,7 +358,7 @@ function checkResultMessage(result, adventureId) {
 /** The completion embed for an ending. */
 function endingMessage(quest, ended, { polishedRecap = null } = {}) {
     const ending = ended.ending || { title: ended.endingId, text: '' };
-    const embed = new EmbedBuilder()
+    const embed = new discord.EmbedBuilder()
         .setColor(ENDING_COLOR)
         .setTitle(`🏁 ${quest.title} — ${ending.title}`)
         .setDescription(ending.text.trim() || '*The tale ends, as tales do, in the telling.*');
@@ -378,7 +378,7 @@ function endingMessage(quest, ended, { polishedRecap = null } = {}) {
 
 /** A stored recap embed. */
 function recapEmbed(recap, questTitle) {
-    return new EmbedBuilder()
+    return new discord.EmbedBuilder()
         .setColor(ENDING_COLOR)
         .setTitle(`📚 Recap: ${questTitle}`)
         .setDescription(recap.content.slice(0, 4000))

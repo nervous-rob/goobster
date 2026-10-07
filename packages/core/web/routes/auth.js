@@ -513,9 +513,9 @@ function mountAuth(app, ctx, h) {
                 features: {
                     // Organizing projects (the Projects room) is separate
                     // from running code in them (ADR 0009).
-                    projects: ctx.observatory.organizationEnabled !== false,
-                    observatory: (ctx.observatory.executionEnabled ?? ctx.observatory.enabled) === true,
-                    spitball: ctx.spitball.enabled === true
+                    projects: Boolean(ctx.observatory) && ctx.observatory.organizationEnabled !== false,
+                    observatory: (ctx.observatory?.executionEnabled ?? ctx.observatory?.enabled) === true,
+                    spitball: ctx.spitball?.enabled === true
                 }
             });
         } catch (error) {

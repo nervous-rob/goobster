@@ -1,4 +1,5 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 const db = require('../db');
 const integrationAudit = require('./integrationAudit');
 const approvalExecutor = require('../utils/approvalExecutor');
@@ -20,6 +21,13 @@ const SAFE_RETRY_CODES = new Set([
     'FORBIDDEN',
     'RATE_LIMITED'
 ]);
+
+/** A pre-submission refusal: the feature's module is not in this payload. */
+function notInstalled(what) {
+    const error = new Error(`${what} is not installed on this server.`);
+    error.code = 'PRE_SUBMISSION';
+    return error;
+}
 
 function isSafeToRetry(error) {
     return Boolean(error && (error.safeToRetry === true || SAFE_RETRY_CODES.has(error.code)));
@@ -45,15 +53,15 @@ class IntegrationActionService {
         );
         const id = Number(result);
 
-        const embed = new EmbedBuilder()
+        const embed = new discord.EmbedBuilder()
             .setColor(0xf0b429)
             .setTitle(type === 'agent-launch' ? '🤖 Launch a Cursor agent?' : '🐛 Create a GitHub issue?')
             .setDescription(this._describe(type, payload))
             .setFooter({ text: 'Requires Manage Server • expires in 15 minutes' });
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`approve_intaction_${id}`).setLabel('Confirm').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`deny_intaction_${id}`).setLabel('Cancel').setStyle(ButtonStyle.Danger)
+        const row = new discord.ActionRowBuilder().addComponents(
+            new discord.ButtonBuilder().setCustomId(`approve_intaction_${id}`).setLabel('Confirm').setStyle(discord.ButtonStyle.Success),
+            new discord.ButtonBuilder().setCustomId(`deny_intaction_${id}`).setLabel('Cancel').setStyle(discord.ButtonStyle.Danger)
         );
 
         return { id, message: { embeds: [embed], components: [row] } };
@@ -118,7 +126,7 @@ class IntegrationActionService {
         if (pending.guildId !== interaction.guildId) {
             return { content: '❌ This request belongs to a different server.', embeds: [], components: [] };
         }
-        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+        if (!interaction.memberPermissions?.has(discord.PermissionFlagsBits.ManageGuild)) {
             // Leave the buttons up for someone who can confirm.
             await interaction.followUp({ content: '❌ You need Manage Server permission to resolve this.', ephemeral: true });
             return null;
@@ -214,9 +222,10 @@ class IntegrationActionService {
     }
 
     async _executeAgentLaunch(pending, interaction) {
-        const cursorAgentService = require('./cursorAgentService');
-        const repoWatchService = require('./repoWatchService');
+        const cursorAgentService = requireOptional('./cursorAgentService', { feature: 'cursor' });
+        const repoWatchService = requireOptional('./repoWatchService', { feature: 'github' });
         const { repo, prompt, branch = null } = pending.payload;
+        if (!cursorAgentService || !repoWatchService) throw notInstalled('Cursor agents');
 
         if (!await repoWatchService.isRepoAllowed(pending.guildId, repo)) {
             const err = new Error(`${repo} is no longer allowlisted in this server.`);
@@ -249,7 +258,7 @@ class IntegrationActionService {
         // the confirmation message.
         const thread = await tracker?.openThread({ message: interaction.message, agentId: agent.id, prompt });
 
-        const embed = new EmbedBuilder()
+        const embed = new discord.EmbedBuilder()
             .setColor(0x5865f2)
             .setTitle(`🤖 Agent launched: ${agent.name || String(prompt).slice(0, 80)}`)
             .setURL(agent.url || null)
@@ -265,7 +274,8 @@ class IntegrationActionService {
     }
 
     async _executeIssueCreate(pending, interaction) {
-        const githubService = require('./githubService');
+        const githubService = requireOptional('./githubService', { feature: 'github' });
+        if (!githubService) throw notInstalled('GitHub support');
         const { repo, title, body = '' } = pending.payload;
 
         const issue = await githubService.createIssue(repo, { title, body });
@@ -277,7 +287,7 @@ class IntegrationActionService {
             action: 'github.issue-create', detail: { repo, number: issue.number, via: 'chat-tool' }
         });
 
-        const embed = new EmbedBuilder()
+        const embed = new discord.EmbedBuilder()
             .setColor(0x2ea043)
             .setTitle(`🐛 Issue created: #${issue.number} ${issue.title}`.slice(0, 250))
             .setURL(issue.html_url)
