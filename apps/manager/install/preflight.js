@@ -306,4 +306,4 @@ async function runPreflight({
     return { ok: !findings.some(item => item.severity === 'block'), findings };
 }
 
-module.exports = { runPreflight, defaultProbePort, portsFor };
+module.exports = { runPreflight, defaultProbePort, portsFor, freeBytes, directorySize, ancestorExists };

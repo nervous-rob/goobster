@@ -118,7 +118,24 @@ function validRelease(value) {
     if (!value || typeof value !== 'object') return undefined;
     if (!isText(value.releaseId, 200) || !isText(value.version, 100) || !isText(value.target, 100)) return undefined;
     if (!Array.isArray(value.features) || value.features.some(id => !isText(id, 100))) return undefined;
-    return { releaseId: value.releaseId, version: value.version, target: value.target, features: [...value.features] };
+    if (value.schemaFingerprint !== undefined && !(typeof value.schemaFingerprint === 'string' && /^[0-9a-f]{64}$/.test(value.schemaFingerprint))) return undefined;
+    return {
+        releaseId: value.releaseId,
+        version: value.version,
+        target: value.target,
+        features: [...value.features],
+        ...(value.schemaFingerprint ? { schemaFingerprint: value.schemaFingerprint } : {})
+    };
+}
+
+/**
+ * The update policy (documentation/manager_update.md): optional in the record, `null` when the
+ * operator was never asked. The shape is checked by update/policy.js; this layer only keeps a
+ * malformed one from being sealed.
+ */
+function validUpdate(value) {
+    if (value === undefined || value === null) return null;
+    return require('../update/policy').normalise(value, { strict: true });
 }
 
 function validDatabase(value) {
@@ -140,6 +157,12 @@ function readInstallFields(raw) {
     const updater = validUpdater(raw.updater);
     const release = validRelease(raw.release === undefined ? null : raw.release);
     const database = validDatabase(raw.database);
+    let update;
+    try {
+        update = validUpdate(raw.update);
+    } catch {
+        return { ok: false };
+    }
     if (!roots || !owned || !updater || release === undefined || !database) return { ok: false };
     if (raw.runtimeUser !== undefined && raw.runtimeUser !== null && !isText(raw.runtimeUser, 100)) return { ok: false };
     return {
@@ -152,6 +175,7 @@ function readInstallFields(raw) {
             updater,
             release,
             database,
+            ...(update ? { update } : {}),
             updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null
         }
     };
