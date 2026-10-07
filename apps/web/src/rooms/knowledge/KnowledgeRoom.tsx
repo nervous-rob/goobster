@@ -1,7 +1,7 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { useMe } from '../../hooks/useSession';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
-import { ROOM_BY_ID, resolveKnowledgeView } from '../../lib/rooms';
+import { ROOM_BY_ID, availableViews, resolveKnowledgeView } from '../../lib/rooms';
 import { MenuButton } from '../../shell/MenuButton';
 import { KnowledgeScopeProvider, useKnowledgeScope } from './scope';
 
@@ -28,9 +28,7 @@ function KnowledgeShell() {
     const { scopes, scopeId, setScopeId } = useKnowledgeScope();
     const pathname = useRouterState({ select: (s) => s.location.pathname });
     const current = resolveKnowledgeView(pathname) || 'notes';
-    const views = (ROOM_BY_ID.knowledge.views || []).filter((view) => (
-        view.id !== 'research' || Boolean(me.features?.spitball)
-    ));
+    const views = availableViews(ROOM_BY_ID.knowledge, me);
 
     return (
         <main className="pane next-pane is-in" id="pane-library">

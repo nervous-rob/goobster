@@ -518,6 +518,16 @@ describe('restore into a fresh installation', () => {
 });
 
 describe('paused runtime and resume', () => {
+    // Steps are gated by feature ownership; this suite exercises the pause
+    // machinery, so every feature the runtime owns is switched on.
+    const { features } = require('@goobster/core/features/featureState');
+    beforeAll(() => {
+        features._resetForTests({ env: {}, config: { sandbox: { enabled: true }, observatory: { enabled: true } } });
+    });
+    afterAll(() => {
+        features._resetForTests({});
+    });
+
     function fakeDeps(log) {
         const worker = (name) => ({ start: () => log.push(`start:${name}`), stop: () => log.push(`stop:${name}`), close: () => log.push(`stop:${name}`) });
         class FakeAutomation { start() { log.push('start:automation'); } stop() { log.push('stop:automation'); } }

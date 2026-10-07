@@ -7,7 +7,7 @@
  */
 
 const { handleMessage, attachStdio } = require('./protocol');
-const { surfaceFor } = require('./surface');
+const { surfaceFor, mcpServing, NOT_SERVING } = require('./surface');
 const { consume } = require('./rateLimit');
 const mcpConfig = require('../config/mcpConfig');
 const { SERVER_INFO } = require('./http');
@@ -20,11 +20,23 @@ const { SERVER_INFO } = require('./http');
  * @param {(line: string) => void} [params.log] stderr
  */
 function serveStdio({ session, input = process.stdin, output = process.stdout, log = () => {} }) {
+    if (!mcpServing()) {
+        // A server whose feature is off does not read a single message.
+        log(NOT_SERVING);
+        return Promise.resolve();
+    }
     const surface = surfaceFor(session);
     return attachStdio({
         input,
         output,
         onMessage: async (message) => {
+            if (!mcpServing()) {
+                const id = message && typeof message === 'object' ? message.id ?? null : null;
+                return {
+                    kind: 'response',
+                    body: { jsonrpc: '2.0', id, error: { code: -32000, message: NOT_SERVING } }
+                };
+            }
             if (!consume(`mcp:${session.id}`, mcpConfig.requestsPerMinute)) {
                 const id = message && typeof message === 'object' ? message.id ?? null : null;
                 return {

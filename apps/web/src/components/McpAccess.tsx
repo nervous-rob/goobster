@@ -99,7 +99,7 @@ export function McpAccess() {
                     your docs, memories, knowledge, projects, inbox, and research. A documentation-only token
                     reads the manual and nothing private. Tokens expire unless you choose otherwise.
                     {data && !data.enabled && (
-                        <> The endpoint is off until <code>mcp.enabled</code> is true in config.json and Goobster restarts. Tokens you create here start working then.</>
+                        <> The endpoint is off until the host turns the <code>mcp</code> feature on (<code>mcp.enabled</code> in config.json or the feature state file) and Goobster restarts. Tokens you create here start working then.</>
                     )}
                     {data?.enabled && <> The server is on at <code>{data.endpoint}</code>.</>}
                 </div>

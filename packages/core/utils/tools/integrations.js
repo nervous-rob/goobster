@@ -782,6 +782,11 @@ module.exports = {
                             interactionContext
                         });
                         
+                        // A switched-off tool is a failed step, never "completed".
+                        if (result && typeof result === 'object' && result.code === require('../../features/gate').FEATURE_UNAVAILABLE) {
+                            throw new Error('that tool is not available on this installation');
+                        }
+
                         // Store result for future steps
                         stepResults[`step${stepNum}`] = result;
                         totalStepsExecuted++;

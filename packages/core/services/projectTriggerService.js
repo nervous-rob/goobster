@@ -42,6 +42,7 @@ const {
     resolveOutputContract,
     summarizeContractFailure
 } = require('../utils/outputContract');
+const { blockingAmong, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const MAX_NAME = 80;
 const MAX_OUTCOME = 240;
@@ -52,6 +53,8 @@ const MAX_CHAIN_WALK = 64;
 const EVENT_TOPICS = new Set(['job_completed', 'job_failed', 'job_settled']);
 const ACTIONS = new Set(['run_script', 'render', 'fetch_data', 'agent_prompt']);
 const KINDS = new Set(['cron', 'event']);
+/** The feature whose execution an action needs; agent_prompt rides the (separately gated) chat tools. */
+const ACTION_FEATURE = Object.freeze({ run_script: 'observatory', render: 'observatory', fetch_data: 'observatory' });
 
 /** project_trigger_deliveries.status values. */
 const DELIVERY = Object.freeze({
@@ -1017,7 +1020,7 @@ class ProjectTriggerService {
             const current = await db.get('SELECT status FROM project_trigger_deliveries WHERE id = @id', { id: row.id });
             return current?.status ?? null;
         }
-        if (status === DELIVERY.FAILED) {
+        if (status === DELIVERY.FAILED && dispatch.code !== FEATURE_UNAVAILABLE) {
             // One ledger row per failed relay (documentation/work_ledger.md);
             // the detail is the dispatcher's own phrase, never job output.
             await require('./workFailureService').note({
@@ -1236,7 +1239,9 @@ class ProjectTriggerService {
         for (const trigger of due) {
             if (!await this.claimDueCronRun(trigger, { client })) continue;
             try {
-                await this._executeAction(trigger, { client });
+                const dispatch = await this._executeAction(trigger, { client });
+                // A refused fire never ran: the outcome says why, lastRun stays as it was.
+                if (dispatch?.code === FEATURE_UNAVAILABLE) continue;
                 await this._markCronRan(trigger.id);
                 fired++;
             } catch (error) {
@@ -1428,12 +1433,25 @@ class ProjectTriggerService {
             const label = extra.label
                 || (status === DISPATCH.DELIVERED ? 'ok' : status === DISPATCH.RETRYABLE ? 'deferred' : status);
             await this._recordOutcome(trigger.id, outcomeText(label, detail));
-            return { status, detail, childJobId: extra.childJobId ?? null };
+            return { status, detail, childJobId: extra.childJobId ?? null, code: extra.code ?? null };
         };
         // Reconcile before validating today's asset/config: an existing
         // child already froze its code and contract at the original fire.
         const recovered = await this._recoverEventChild(trigger, sourceJob, report);
         if (recovered) return recovered;
+        const blocking = ACTION_FEATURE[trigger.action] ? blockingAmong([ACTION_FEATURE[trigger.action]]) : null;
+        if (blocking) {
+            await require('./workFailureService').note({
+                kind: 'trigger',
+                workId: trigger.id,
+                actor: trigger.userId || null,
+                phase: 'dispatch',
+                code: FEATURE_UNAVAILABLE,
+                reason: `feature ${blocking} is not available on this installation`
+            });
+            return await report(DISPATCH.FAILED, `${FEATURE_UNAVAILABLE}: ${blocking} is not available`,
+                { label: 'failed', code: FEATURE_UNAVAILABLE });
+        }
         const projectRow = await db.get(
             'SELECT id, slug, name, userId FROM observatory_projects WHERE id = @id',
             { id: trigger.projectId }

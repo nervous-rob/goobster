@@ -25,6 +25,7 @@ const {
     SLASH_PROTOCOL_BAN,
     richRenderingContract,
     spokenReplyContract,
+    featureAvailabilityLine,
     personalityDirectiveBlock
 } = require('./promptFragments');
 
@@ -347,6 +348,7 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
     }
 
     parts.push(conversationalContract({ mode, canLookup }));
+    parts.push(featureAvailabilityLine(unavailableFeatureTitles()));
 
     if (mode === 'voice' && hasTextChannel) {
         parts.push('You can also generate images, schedule follow-ups, and manage automations; those land in the linked text channel.');
@@ -425,6 +427,33 @@ NAMES: You are "${botName || 'Goobster'}". The person you are talking to is "${u
     };
 }
 
+/**
+ * Titles of the switched-off features that own, or are also required by, a
+ * model tool. Derived from the inventory and the live feature state, so there
+ * is no list to keep in step; features the model has no tool for (mail, MCP,
+ * the Activity) are not worth a prompt line.
+ * @returns {string[]}
+ */
+function unavailableFeatureTitles() {
+    try {
+        const { features } = require('../../features/featureState');
+        const inventory = require('../../features/inventory');
+        const catalog = require('../../features/catalog');
+        const withTools = new Set();
+        for (const name of Object.keys(inventory.aiTools)) {
+            const claim = inventory.ownerOf('aiTool', name);
+            if (!claim) continue;
+            for (const id of [claim.owner, ...claim.alsoRequires]) withTools.add(id);
+        }
+        return features.enforcedUnavailable()
+            .filter(entry => withTools.has(entry.id))
+            .map(entry => catalog.get(entry.id)?.title)
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
 module.exports = {
     BUDGETS,
     classifyDepth,
@@ -432,5 +461,6 @@ module.exports = {
     retrieveNotes,
     formatRetrievedBlock,
     conversationalContract,
+    unavailableFeatureTitles,
     buildConversationalPrompt
 };

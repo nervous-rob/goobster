@@ -15,7 +15,35 @@ export type TokenUsage = TokenLimits & {
 };
 export type AdminLimits = TokenLimits & { accounts: Array<TokenUsage & { principalId: string; displayName: string }> };
 
+/** One reason a feature is not active (codes only; the server never sends detail values). */
+export type FeatureReason = {
+    code: 'NOT_INSTALLED' | 'DISABLED' | 'ENV_OFF' | 'DEPENDENCY_INACTIVE' | 'STATE_ERROR' | 'UNKNOWN_FEATURE';
+    dependency?: string;
+};
+
+/** The sanitized per-feature state from `GET /api/app/features`; `active` is the reported value the portal acts on. */
+export type FeatureStatusEntry = {
+    installed: boolean;
+    configured: boolean;
+    active: boolean;
+    pending: boolean;
+    requested: boolean;
+    pendingActive: boolean | null;
+    reasons: FeatureReason[];
+    warnings: Array<{ code: string }>;
+};
+
+export type FeatureStatus = {
+    source: string;
+    revision: number | null;
+    origin: string | null;
+    error: { code: string } | null;
+    features: Record<string, FeatureStatusEntry>;
+};
+
 export type Me = {
+    /** Added client-side from `GET /api/app/features`; null when that request failed (the legacy `features` flags then decide). */
+    featureStatus?: FeatureStatus | null;
     limits?: TokenUsage;
     sessionId?: number;
     user: { id: string; name: string; avatar: string | null };
@@ -1191,6 +1219,9 @@ export type TutorialCatalogEntry = {
     version: number;
     title: string;
     hostOnly: boolean;
+    /** False when the tour's feature is not available on this installation; it stays listed but cannot be launched. */
+    available?: boolean;
+    unavailable?: { feature: string; reasons: FeatureReason[] } | null;
     stepIds: string[];
     steps: Array<{
         id: string;

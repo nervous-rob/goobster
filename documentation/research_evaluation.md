@@ -1,4 +1,5 @@
 ---
+feature: expeditions
 title: Owner-judged research evaluation
 kind: guide
 summary: The versioned 30-question fixed-evidence baseline, explicit live-run opt-in, isolated cost ledger, generated artifacts and owner review procedure. A successful test run is not a research-quality pass.

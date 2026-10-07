@@ -15,6 +15,8 @@
 const { dmScopeId } = require('../utils/dmScope');
 const mcpConfig = require('../config/mcpConfig');
 const { KINDS } = require('../services/selfDocsService');
+const { surfaceActive, GateError } = require('../features/gate');
+const { features } = require('../features/featureState');
 
 const READ_ONLY = {
     readOnlyHint: true,
@@ -162,6 +164,21 @@ const TOOLS = [
  */
 const DOC_TOOLS = Object.freeze(['list_docs', 'search_docs', 'read_doc']);
 
+/**
+ * Whether the installation's feature state offers this MCP tool: its owning
+ * feature, and any feature it also requires, must be active. Evaluated on
+ * every listing and every call, never cached. A tool nobody owns fails
+ * closed rather than being served.
+ */
+function toolAvailable(name) {
+    try {
+        return surfaceActive('mcpTool', name);
+    } catch (error) {
+        if (error instanceof GateError) return false;
+        throw error;
+    }
+}
+
 function allowedToolNames(scope = 'read') {
     if (scope === 'read') return TOOLS.map(entry => entry.name);
     if (scope === 'docs') return [...DOC_TOOLS];
@@ -171,12 +188,12 @@ function allowedToolNames(scope = 'read') {
 function toolDescriptors({ scope = 'read' } = {}) {
     const allowed = new Set(allowedToolNames(scope));
     return TOOLS
-        .filter(entry => allowed.has(entry.name))
+        .filter(entry => allowed.has(entry.name) && toolAvailable(entry.name))
         .map(entry => ({ ...entry, annotations: { ...entry.annotations } }));
 }
 
 function toolNames() {
-    return TOOLS.map(entry => entry.name);
+    return TOOLS.filter(entry => toolAvailable(entry.name)).map(entry => entry.name);
 }
 
 function asText(text, isError = false) {
@@ -544,6 +561,13 @@ async function callTool(userId, name, args, { scope = 'read' } = {}) {
         error.publicMessage = `This token's "${scope}" scope does not include ${name}.`;
         throw error;
     }
+    // After the token's own scope, before any handler (and so any read) runs.
+    if (!toolAvailable(name)) {
+        const error = new Error('tool unavailable');
+        error.rpcCode = -32602;
+        error.publicMessage = `${name} is not available on this installation.`;
+        throw error;
+    }
     try {
         return await handler(userId, args || {});
     } catch (error) {
@@ -557,7 +581,7 @@ async function callTool(userId, name, args, { scope = 'read' } = {}) {
 
 function describeServer() {
     return {
-        enabled: mcpConfig.enabled,
+        enabled: features.isActive('mcp'),
         endpoint: mcpConfig.path,
         readOnly: true,
         tools: toolNames(),
@@ -571,6 +595,7 @@ module.exports = {
     toolDescriptors,
     toolNames,
     allowedToolNames,
+    toolAvailable,
     callTool,
     clip,
     includeOperatorDocs,

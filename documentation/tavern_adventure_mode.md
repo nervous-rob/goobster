@@ -1,3 +1,7 @@
+---
+feature: tavern
+---
+
 # The Goobster Tavern + Adventure Mode ("Tavern Alpha")
 
 The Goobster Tavern is a persistent social hub: a magical inn between worlds with

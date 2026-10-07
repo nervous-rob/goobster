@@ -22,6 +22,8 @@
 const express = require('express');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const { mountMcpIfEnabled } = require('@goobster/core/mcp/http');
+const mcpConfig = require('@goobster/core/config/mcpConfig');
+const featureGate = require('@goobster/core/web/featureGate');
 const { RemoteGateway, DisabledGateway } = require('@goobster/core/gateway');
 const discordConfig = require('@goobster/core/config/discordConfig');
 
@@ -88,7 +90,12 @@ function createApiApp({ config = {}, gateway = null, mode = undefined, logger = 
         });
     });
 
-    mountMcpIfEnabled(app, { logger });
+    // The portal gates its own routes inside createWebAppApp; the MCP endpoint
+    // is the one other feature surface this app hosts. A stable 404 answers
+    // while it is off (also after a refresh), and it is not mounted at all
+    // when the installation turned it off.
+    app.use(mcpConfig.path, featureGate.ownerGate('mcp'));
+    if (featureGate.mountable('mcp')) mountMcpIfEnabled(app, { logger });
 
     const webAppContext = createWebAppContext({
         client: null,

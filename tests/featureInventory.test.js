@@ -95,6 +95,12 @@ describe('feature inventory module', () => {
         expect(ownerOf('route', 'POST /api/app/projects/:slug/chat').owner).toBe('observatory');
         expect(ownerOf('route', '/api/app/projects/:slug/chat', 'GET')).toEqual({ owner: 'projects', alsoRequires: [] });
         expect(ownerOf('route', 'GET /api/app/not-a-router')).toBeNull();
+        expect(ownerOf('eventGate', 'musicTrackStarted')).toEqual({ owner: 'music', alsoRequires: ['voice'] });
+        expect(ownerOf('eventGate', 'musicTrackEnded')).toEqual({ owner: 'music', alsoRequires: ['voice'] });
+        expect(ownerOf('wsPath', '/api/activity/ws')).toEqual({ owner: 'discordActivity', alsoRequires: ['gambling'] });
+        expect(ownerOf('route', 'GET /api/activity/music/casino')).toEqual({ owner: 'discordActivity', alsoRequires: ['gambling'] });
+        expect(ownerOf('route', 'GET /api/activity/config')).toEqual({ owner: 'discordActivity', alsoRequires: [] });
+        expect(ownerOf('table', 'table_games')).toEqual({ owner: 'gambling', alsoRequires: ['discordActivity'] });
         expect(() => ownerOf('banana', 'x')).toThrow(/unknown kind/);
     });
 });
@@ -212,6 +218,26 @@ describe('feature graph', () => {
             if (!/^#\d+$/.test(gap.issue) || !gap.surface || !gap.note) problems.push(`knownGaps entry is malformed: ${JSON.stringify(gap)}`);
         }
         expect(problems).toEqual([]);
+    });
+});
+
+describe('known gaps', () => {
+    test('every remaining row names the issue that will close it (a cheap guard against rot)', () => {
+        expect(knownGaps.length).toBeGreaterThan(0);
+        for (const gap of knownGaps) {
+            expect({ surface: gap.surface, issue: gap.issue }).toEqual({ surface: gap.surface, issue: expect.stringMatching(/^#\d+$/) });
+            expect(typeof gap.note).toBe('string');
+            expect(gap.note.length).toBeGreaterThan(0);
+        }
+    });
+
+    test('rows that were fixed are not carried any more', () => {
+        const surfaces = knownGaps.map((gap) => gap.surface);
+        expect(surfaces).not.toContain('runtimeSteps');
+        expect(surfaces).not.toContain('aiTools');
+        expect(surfaces).not.toContain('interactionTypes.collector:clear_search_button');
+        expect(surfaces).not.toContain('runtimeSteps.exchangeRiskEngine');
+        expect(surfaces).not.toContain('mcpResources.goobster://briefs/{id}');
     });
 });
 
@@ -565,12 +591,9 @@ describe('data model and portal catalogs', () => {
         assertSameSet('tutorials', TUTORIALS.map((tutorial) => tutorial.id), Object.keys(tutorials), 'tutorials');
         for (const tutorial of TUTORIALS) {
             const claim = ownerOf('tutorial', tutorial.id);
-            if (tutorial.requires?.discord) {
-                expect({ tutorial: tutorial.id, discord: claim.alsoRequires.includes('discord') }).toEqual({ tutorial: tutorial.id, discord: true });
-            }
-            if (tutorial.requires?.feature === 'projects') {
-                expect({ tutorial: tutorial.id, owner: claim.owner }).toEqual({ tutorial: tutorial.id, owner: 'projects' });
-            }
+            const declared = [].concat(tutorial.requires?.feature || []).filter((id) => id !== 'core').sort();
+            const claimed = [claim.owner, ...claim.alsoRequires].filter((id) => id !== 'core').sort();
+            expect({ tutorial: tutorial.id, features: declared }).toEqual({ tutorial: tutorial.id, features: claimed });
         }
     });
 });

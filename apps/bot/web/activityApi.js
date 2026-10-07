@@ -28,6 +28,8 @@ const { WebSocketServer } = require('ws');
 const economyService = require('@goobster/core/services/economyService');
 const { generateMusic, resolveApiKey } = require('@goobster/core/services/voice/elevenLabsAudioService');
 const { toGateway, isGatewayUnavailable } = require('@goobster/core/gateway');
+const featureGate = require('@goobster/core/web/featureGate');
+const gateSurface = require('@goobster/core/features/gate');
 
 const DISCORD_API = 'https://discord.com/api';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -95,6 +97,17 @@ async function assertActivityGuildAccess({ gateway, guildId, userId, devMode = f
         }
         throw error;
     }
+}
+
+/**
+ * The feature blocking the casino (the `table_games` surface: gambling, the
+ * economy it needs, and the Activity), or null when tables may be served.
+ * Checked per request so a refresh() that turns gambling off also stops an
+ * already-attached socket and the casino music route.
+ */
+function tableGamesBlock() {
+    const refusal = gateSurface.requireSurface('table', 'table_games');
+    return refusal ? refusal.feature : null;
 }
 
 /** Everything the activity backend needs, wired once at startup. */
@@ -215,6 +228,11 @@ function createActivityApp(ctx) {
     // Looping background music for the casino (generated + cached on first
     // request). 404 = no music available; the client degrades silently.
     app.get('/api/activity/music/casino', async (req, res) => {
+        const blocking = tableGamesBlock();
+        if (blocking) {
+            featureGate.sendUnavailable(res, blocking);
+            return;
+        }
         try {
             const file = await ensureCasinoMusic(ctx);
             if (!file) {
@@ -274,12 +292,17 @@ function attachActivityWebSocket(server, ctx) {
             return;
         }
         if (pathname !== '/api/activity/ws') return; // another handler's upgrade
+        if (featureGate.wsBlock(pathname)) {
+            featureGate.rejectUpgrade(socket);
+            return;
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
             wss.emit('connection', ws, request);
         });
     });
 
     wss.on('connection', (socket) => {
+        featureGate.guardOpenSocket(socket, '/api/activity/ws');
         let joined = null; // { session, table, unsubscribe }
 
         const send = (message) => {
@@ -293,6 +316,12 @@ function attachActivityWebSocket(server, ctx) {
                 message = JSON.parse(raw.toString());
             } catch {
                 sendError('BAD_JSON', 'Messages must be JSON.');
+                return;
+            }
+
+            const blocking = tableGamesBlock();
+            if (blocking) {
+                send(featureGate.unavailableFrame(blocking));
                 return;
             }
 

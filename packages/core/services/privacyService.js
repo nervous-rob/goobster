@@ -28,12 +28,18 @@ const { dmScopeId } = require('../utils/dmScope');
  *   queued Study follow-ups (web_chat_queue),
  *   cached new-chat suggestions (web_suggested_queries),
  *   and the user's Observatory (project registry, job records, and the
- *   whole on-disk workspace tree; live jobs are cancelled first).
+ *   whole on-disk workspace tree; live jobs are cancelled first), the
+ *   developer-integration footprint (Cursor agent runs with their prompts,
+ *   queued GitHub/Cursor confirmations the user requested, the screen-vision
+ *   companion pairing) and the push devices.
  * - ANONYMIZE: usage_log / command_log / guild_activity rows (userId nulled,
  *   counts kept), work_failures / resource_events / operator_audit (actor,
  *   payer and target nulled, rows kept), usage_reservations where someone
  *   else pays (actor nulled; the person's own paid rows are deleted),
- *   tavern adventure createdBy, and tavern log attribution.
+ *   tavern adventure createdBy, tavern log attribution, integration_audit
+ *   userId, repo_watches createdBy, the resolver of someone else's pending
+ *   integration action, and kg_reflection_runs requestedBy (the guild-wide
+ *   record keeps its counts and loses the person).
  * - REVIEW: GUILD-subject facts, conversation_summaries, follow-up notes,
  *   internal-monologue thoughts/scratchpad notes, knowledge-graph nodes,
  *   and tavern adventure-log prose that mention the user by name without
@@ -346,6 +352,22 @@ class PrivacyService {
             { userId }
         );
 
+        // Developer integrations (GitHub / Cursor) and the screen-vision
+        // companion: counts and labels only, never a prompt or a token hash.
+        const developer = await db.get(
+            `SELECT
+                 (SELECT COUNT(*) FROM agent_runs WHERE userId = @userId) AS agentRuns,
+                 (SELECT COUNT(*) FROM pending_integration_actions
+                  WHERE requestedBy = @userId) AS pendingActions,
+                 (SELECT COUNT(*) FROM integration_audit WHERE userId = @userId) AS auditEntries,
+                 (SELECT COUNT(*) FROM repo_watches WHERE createdBy = @userId) AS repoWatches`,
+            { userId }
+        );
+        const screenVision = await db.get(
+            'SELECT label, createdAt, lastConnectedAt FROM screen_vision_clients WHERE userId = @userId',
+            { userId }
+        );
+
         // Pinned Workshop applets (bot-wide personal data, like conversations)
         const applets = await db.get(
             'SELECT COUNT(*) AS c FROM web_applets WHERE userId = @userId',
@@ -583,6 +605,15 @@ class PrivacyService {
                 account: row.accountLabel || null,
                 connectedAt: row.createdAt
             })),
+            developerIntegrations: {
+                agentRuns: Number(developer?.agentRuns || 0),
+                pendingActions: Number(developer?.pendingActions || 0),
+                auditEntries: Number(developer?.auditEntries || 0),
+                repoWatches: Number(developer?.repoWatches || 0)
+            },
+            screenVision: screenVision
+                ? { paired: true, label: screenVision.label || null, pairedAt: screenVision.createdAt, lastConnectedAt: screenVision.lastConnectedAt || null }
+                : { paired: false, label: null, pairedAt: null, lastConnectedAt: null },
             // Browsers enrolled for push (a count; endpoints are never shown).
             pushDevices: await require('./pushService').countForUser(userId),
             tavernCharacter: tavernCharacter || null,
@@ -1003,6 +1034,34 @@ class PrivacyService {
                 'DELETE FROM user_integrations WHERE userId = @userId', { userId }
             )).changes;
 
+            // Developer integrations. Agent runs carry the prompt the person
+            // wrote and queued confirmations carry the issue or task text, so
+            // both go. The audit trail, a repo watch's creator and a
+            // reflection run's requester are guild-wide records: the row
+            // stays, the person leaves it (same rule as operator_audit).
+            counts.agentRuns = (await db.run(
+                'DELETE FROM agent_runs WHERE userId = @userId', { userId }
+            )).changes;
+            counts.pendingIntegrationActions = (await db.run(
+                'DELETE FROM pending_integration_actions WHERE requestedBy = @userId', { userId }
+            )).changes;
+            counts.anonymizedIntegrationResolver = (await db.run(
+                'UPDATE pending_integration_actions SET resolvedBy = NULL WHERE resolvedBy = @userId', { userId }
+            )).changes;
+            counts.anonymizedIntegrationAudit = (await db.run(
+                'UPDATE integration_audit SET userId = NULL WHERE userId = @userId', { userId }
+            )).changes;
+            counts.anonymizedRepoWatches = (await db.run(
+                'UPDATE repo_watches SET createdBy = NULL WHERE createdBy = @userId', { userId }
+            )).changes;
+            counts.anonymizedReflectionRuns = (await db.run(
+                'UPDATE kg_reflection_runs SET requestedBy = NULL WHERE requestedBy = @userId', { userId }
+            )).changes;
+            // The companion pairing is a bearer credential for the person's screen.
+            counts.screenVisionClients = (await db.run(
+                'DELETE FROM screen_vision_clients WHERE userId = @userId', { userId }
+            )).changes;
+
             // The MTGA deck library: decks first (their card rows cascade),
             // then the folders that grouped them.
             counts.mtga = (await db.run(
@@ -1138,6 +1197,14 @@ class PrivacyService {
 
             return counts;
         });
+
+        // A companion that is still connected would keep a live session on a
+        // pairing that no longer exists; dropping it touches memory only.
+        const screenVision = require('./screenVisionService');
+        await screenVision.unlink(userId);
+        for (const [code, entry] of [...screenVision.pairCodes]) {
+            if (String(entry.userId) === String(userId)) screenVision.pairCodes.delete(code);
+        }
 
         // Derived vectors must not outlive the memories they were computed
         // from: drop vec-index entries orphaned by the deletion above.
@@ -1478,6 +1545,24 @@ class PrivacyService {
             project_decisions: (await db.get(
                 'SELECT COUNT(*) AS c FROM project_decisions WHERE userId = @userId', { userId }
             )).c,
+            agent_runs: (await db.get(
+                'SELECT COUNT(*) AS c FROM agent_runs WHERE userId = @userId', { userId }
+            )).c,
+            pending_integration_actions: (await db.get(
+                'SELECT COUNT(*) AS c FROM pending_integration_actions WHERE requestedBy = @userId OR resolvedBy = @userId', { userId }
+            )).c,
+            integration_audit: (await db.get(
+                'SELECT COUNT(*) AS c FROM integration_audit WHERE userId = @userId', { userId }
+            )).c,
+            repo_watches: (await db.get(
+                'SELECT COUNT(*) AS c FROM repo_watches WHERE createdBy = @userId', { userId }
+            )).c,
+            screen_vision_clients: (await db.get(
+                'SELECT COUNT(*) AS c FROM screen_vision_clients WHERE userId = @userId', { userId }
+            )).c,
+            kg_reflection_runs: (await db.get(
+                'SELECT COUNT(*) AS c FROM kg_reflection_runs WHERE requestedBy = @userId', { userId }
+            )).c,
             sandbox_requests: (await db.get(
                 'SELECT COUNT(*) AS c FROM sandbox_requests WHERE userId = @userId', { userId }
             )).c,
@@ -1502,6 +1587,12 @@ class PrivacyService {
             sandbox_packages_attributed: (await db.get(
                 `SELECT COUNT(*) AS c FROM sandbox_packages
                  WHERE requestedBy = @userId OR approvedBy = @userId`, { userId }
+            )).c,
+            prediction_markets_attributed: (await db.get(
+                'SELECT COUNT(*) AS c FROM prediction_markets WHERE createdBy = @userId', { userId }
+            )).c,
+            tavern_adventures_attributed: (await db.get(
+                'SELECT COUNT(*) AS c FROM tavern_adventures WHERE createdBy = @userId', { userId }
             )).c,
             // Not tables: files still on disk keyed by the user
             observatory_workspaces: (await require('./observatoryService').countUserData(userId)).workspaceDirs,

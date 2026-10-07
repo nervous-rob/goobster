@@ -18,6 +18,7 @@ const fileTools = require('./tools/files');
 const selfDocsTools = require('./tools/selfDocs');
 const selfDocsConfig = require('../config/selfDocsConfig');
 const { isIncognitoToolBlocked } = require('./toolPrivacy');
+const { surfaceActive, requireSurface, GateError, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const catalog = {
     ...observatoryTools,
@@ -92,6 +93,37 @@ for (const name of TOOL_ORDER) {
     tools[name] = catalog[name];
 }
 
+const warnedUnclaimed = new Set();
+
+/**
+ * Whether the installation's feature state lets the model see (and call)
+ * this tool. A tool with no inventory claim fails closed with one warning
+ * instead of taking every chat turn down with it; the inventory spec is
+ * what normally catches the missing claim.
+ */
+function featureAllows(name) {
+    try {
+        return surfaceActive('aiTool', name);
+    } catch (error) {
+        if (!(error instanceof GateError)) throw error;
+        if (!warnedUnclaimed.has(name)) {
+            warnedUnclaimed.add(name);
+            console.warn(`[tools] ${name} is hidden: no feature owns it (packages/core/features/inventory.js).`);
+        }
+        return false;
+    }
+}
+
+/** The unavailable result for a tool, or null when its feature state allows it. Never throws for a claimed tool. */
+function featureRefusal(name) {
+    try {
+        return requireSurface('aiTool', name);
+    } catch (error) {
+        if (!(error instanceof GateError)) throw error;
+        return { ok: false, code: FEATURE_UNAVAILABLE, feature: null, reasons: [{ code: 'UNCLAIMED_SURFACE' }] };
+    }
+}
+
 module.exports = {
     TOOL_ORDER,
 
@@ -109,7 +141,11 @@ module.exports = {
      *   to drive an Observatory project could never touch it at run time.
      */
     async getDefinitions(names, { isWeb = false, isAutomation = false } = {}) {
-        let definitions = TOOL_ORDER.map(name => tools[name].definition);
+        // Feature state first: a tool whose owning feature (or a feature it
+        // also requires) is off is never offered. The filters below are the
+        // operational checks that still apply to an active feature (the
+        // sandbox/observatory enable switch and the web-only scope).
+        let definitions = TOOL_ORDER.filter(featureAllows).map(name => tools[name].definition);
         const trustedSurface = isWeb || isAutomation;
         const sandboxOffered = sandboxService.enabled
             && (sandboxConfig.scope === 'everywhere' || trustedSurface);
@@ -156,6 +192,11 @@ module.exports = {
 
     async execute(name, args) {
         if (!tools[name]) throw new Error(`Unknown tool: ${name}`);
+        // Independent of discovery: a stale name from a model response, a
+        // saved plan or a direct caller is refused before any side effect,
+        // approval or admission.
+        const refusal = featureRefusal(name);
+        if (refusal) return refusal;
         if (isIncognitoToolBlocked(name, args?.interactionContext)) {
             return '❌ Saving memories and files is disabled in incognito. Use a regular chat to save this content.';
         }

@@ -15,6 +15,7 @@ process.env.GOOBSTER_DB_PATH = path.join(os.tmpdir(), `goobster-runcode-test-${p
 // tool gate only needs the registry itself.
 
 const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+const { features } = require('@goobster/core/features/featureState');
 const sandboxConfig = require('@goobster/core/config/sandboxConfig');
 
 const names = (defs) => defs.map(d => d.name);
@@ -30,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
     sandboxConfig.enabled = original.enabled;
+    features.refresh();
     sandboxConfig.scope = original.scope;
     sandboxConfig.requireStrongIsolation = original.requireStrongIsolation;
 });
@@ -37,12 +39,14 @@ afterEach(() => {
 describe('getDefinitions gating', () => {
     test('runCode is absent when the sandbox is disabled', async () => {
         sandboxConfig.enabled = false;
+        features.refresh();
         expect(names(await toolsRegistry.getDefinitions())).not.toContain('runCode');
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).not.toContain('runCode');
     });
 
     test('scope "everywhere" offers runCode in any text-chat context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'everywhere';
         expect(names(await toolsRegistry.getDefinitions())).toContain('runCode');
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: true }))).toContain('runCode');
@@ -50,6 +54,7 @@ describe('getDefinitions gating', () => {
 
     test('scope "web" offers runCode only in the web app', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'web';
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false }))).not.toContain('runCode');
         expect(names(await toolsRegistry.getDefinitions())).not.toContain('runCode');
@@ -58,6 +63,7 @@ describe('getDefinitions gating', () => {
 
     test('scope "web" also trusts unattended automation turns', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'web';
         expect(names(await toolsRegistry.getDefinitions(undefined, { isAutomation: true }))).toContain('runCode');
         expect(names(await toolsRegistry.getDefinitions(undefined, { isWeb: false, isAutomation: false })))
@@ -66,6 +72,7 @@ describe('getDefinitions gating', () => {
 
     test('a name allowlist (e.g. the voice subset) never smuggles runCode in', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'everywhere';
         const defs = await toolsRegistry.getDefinitions(['performSearch', 'checkPoints']);
         expect(names(defs)).not.toContain('runCode');
@@ -73,6 +80,7 @@ describe('getDefinitions gating', () => {
 
     test('the runCode definition is well-formed when offered', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'everywhere';
         const def = (await toolsRegistry.getDefinitions()).find(d => d.name === 'runCode');
         expect(def).toBeTruthy();
@@ -85,6 +93,7 @@ describe('getDefinitions gating', () => {
 describe('file delivery', () => {
     test('EVERY produced file is attached to the chat, not just images', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'everywhere';
         const sent = [];
         const interactionContext = {
@@ -110,6 +119,7 @@ describe('file delivery', () => {
 
     test('a failed chat delivery never fails the tool result', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'everywhere';
         const interactionContext = {
             channelId: '123456789',
@@ -130,6 +140,7 @@ describe('file delivery', () => {
 describe('turn abort (Stop button / watchdog)', () => {
     test('an aborted turn kills the running code instead of waiting out the wall clock', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'everywhere';
         const controller = new AbortController();
         const startedAt = Date.now();
@@ -153,14 +164,32 @@ describe('turn abort (Stop button / watchdog)', () => {
 });
 
 describe('execute gating (defense in depth)', () => {
-    test('refuses when disabled', async () => {
+    test('with no features.json the legacy switch keeps its own refusal (behaviour unchanged)', async () => {
         sandboxConfig.enabled = false;
+        features.refresh();
         const out = await toolsRegistry.execute('runCode', { language: 'python', code: 'print(1)' });
         expect(out).toMatch(/disabled/i);
     });
 
+    test('refuses with the stable feature-unavailable result when the feature is enforced off', async () => {
+        sandboxConfig.enabled = true;
+        features._resetForTests({ env: { GOOBSTER_FEATURE_SANDBOX: '0' }, config: { sandbox: { enabled: true } } });
+        const out = await toolsRegistry.execute('runCode', { language: 'python', code: 'print(1)' });
+        expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'sandbox' });
+        features._resetForTests();
+    });
+
+    test('the tool still refuses on its own when the feature state says active but the switch is off', async () => {
+        sandboxConfig.enabled = false;
+        features._resetForTests({ env: {}, config: { sandbox: { enabled: true } } });
+        const out = await toolsRegistry.execute('runCode', { language: 'python', code: 'print(1)' });
+        expect(out).toMatch(/disabled/i);
+        features._resetForTests();
+    });
+
     test('web-scoped tool refuses a non-web context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'web';
         const out = await toolsRegistry.execute('runCode', {
             language: 'python',
@@ -172,6 +201,7 @@ describe('execute gating (defense in depth)', () => {
 
     test('web-scoped tool accepts an unattended automation context', async () => {
         sandboxConfig.enabled = true;
+        features.refresh();
         sandboxConfig.scope = 'web';
         const out = await toolsRegistry.execute('runCode', {
             language: 'bash',

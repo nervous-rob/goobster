@@ -1,3 +1,7 @@
+---
+feature: sandbox
+---
+
 # Code Sandbox (`runCode` tool)
 
 Goobster can write and run small snippets of code for a user and hand back the

@@ -14,9 +14,137 @@ const perplexityService = require('@goobster/core/services/perplexityService');
 const aiService = require('@goobster/core/services/aiService');
 const { chunkMessage } = require('@goobster/core/utils');
 const { getPrompt, getPromptWithGuildPersonality } = require('@goobster/core/utils/memeMode');
+const inventory = require('@goobster/core/features/inventory');
+const { features } = require('@goobster/core/features/featureState');
+const { requireSurface, unavailableResult } = require('@goobster/core/features/gate');
+const { featureCommandFilter } = require('@goobster/core/utils/commandDeployment');
+
+const UNAVAILABLE_TEXT = 'That feature is not available on this installation.';
+const COLLECTOR_PREFIX = 'collector:';
+
+/**
+ * `intaction` buttons are core dispatch, but the pending row decides which
+ * feature the action belongs to (documentation/feature_inventory.md S1).
+ */
+const INTEGRATION_ACTION_OWNERS = {
+    'agent-launch': 'cursor',
+    'github-issue': 'github'
+};
+
+/**
+ * Router tokens whose pending row can still be cleared with the feature off:
+ * a Deny / Cancel press only resolves the pending row (nothing executes), so
+ * it is let through; Approve / Confirm, which runs the work, is refused.
+ * "Disabled is not deleted": otherwise the rows could never be closed.
+ */
+const RESOLVE_ONLY_ACTIONS = {
+    sbxreq: ['deny'],
+    intaction: ['deny']
+};
+
+function claimedToken(token) {
+    return typeof token === 'string'
+        && Object.prototype.hasOwnProperty.call(inventory.interactionTypes, token);
+}
+
+/**
+ * Resolve a customId to its inventory row. The full id is tried first
+ * (`collector:<id>`: buttons that a command's own collector handles and the
+ * router must never touch, e.g. `clear_search_button`, whose second segment
+ * would otherwise parse as the `search` router token); then the router token.
+ * @returns {{ key: string, collector: boolean }|null}
+ */
+function resolveInteractionSurface(customId) {
+    const exact = `${COLLECTOR_PREFIX}${customId}`;
+    if (claimedToken(exact)) return { key: exact, collector: true };
+    const token = String(customId).split('_')[1];
+    if (claimedToken(token)) return { key: token, collector: false };
+    return null;
+}
+
+/** The unavailable result for an `intaction` button whose pending action belongs to a feature that is off, else null. */
+async function integrationActionRefusal(customId) {
+    const requestId = Number(String(customId).split('_')[2]);
+    if (!Number.isInteger(requestId)) return null;
+    // Nothing either owner could refuse: no extra read on a default install.
+    if (!Object.values(INTEGRATION_ACTION_OWNERS).some(owner => features.enforcedOff(owner))) return null;
+    try {
+        const db = require('@goobster/core/db');
+        const row = await db.get('SELECT type FROM pending_integration_actions WHERE id = @id', { id: requestId });
+        const owner = row && INTEGRATION_ACTION_OWNERS[row.type];
+        if (owner && features.enforcedOff(owner)) return unavailableResult(owner);
+    } catch {
+        // The service reports its own database problems.
+    }
+    return null;
+}
+
+/**
+ * Ephemeral standard refusal. Never throws; a dead interaction token is not
+ * an error worth surfacing.
+ */
+async function replyUnavailable(interaction) {
+    const payload = { content: UNAVAILABLE_TEXT, ephemeral: true, allowedMentions: { parse: [] } };
+    try {
+        if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+        else await interaction.reply(payload);
+    } catch (error) {
+        console.warn('Could not send the feature-unavailable reply:', error.message);
+    }
+}
+
+/**
+ * Component/modal gate. Resolves the owner before any handler runs.
+ * @returns {Promise<{ handled: boolean }>} `handled` = nothing else may touch this interaction
+ *   (refused, or owned by a command's own collector)
+ */
+async function gateComponentInteraction(interaction) {
+    const surface = resolveInteractionSurface(interaction.customId);
+    if (!surface) return { handled: false };
+    const action = String(interaction.customId).split('_')[0];
+    if ((RESOLVE_ONLY_ACTIONS[surface.key] || []).includes(action)) return { handled: surface.collector };
+    let refusal = requireSurface('interactionType', surface.key);
+    if (!refusal && surface.key === 'intaction') refusal = await integrationActionRefusal(interaction.customId);
+    if (refusal) {
+        await replyUnavailable(interaction);
+        return { handled: true, refusal };
+    }
+    return { handled: surface.collector };
+}
+
+/**
+ * A slash command, autocomplete or context menu whose command file was left
+ * out of this process because its feature is not active (Discord can still
+ * hold the old registration for a while). Replies ephemerally and returns
+ * true; a command name nothing claims is left to the caller's usual path.
+ * @param {Object} interaction
+ * @param {Map<string, { kind: string, key: string }>} nameIndex from commandNameIndex()
+ */
+async function refuseUnavailableCommand(interaction, nameIndex) {
+    const entry = nameIndex.get(interaction.commandName);
+    if (!entry) return false;
+    let available;
+    try {
+        available = featureCommandFilter(entry.kind, entry.key);
+    } catch {
+        available = false;
+    }
+    if (available) return false;
+    if (typeof interaction.isAutocomplete === 'function' && interaction.isAutocomplete()) {
+        try { await interaction.respond([]); } catch { /* the autocomplete window closed */ }
+        return true;
+    }
+    await replyUnavailable(interaction);
+    return true;
+}
 
 module.exports = {
     name: 'interactionCreate',
+    UNAVAILABLE_TEXT,
+    resolveInteractionSurface,
+    gateComponentInteraction,
+    refuseUnavailableCommand,
+    replyUnavailable,
     async execute(interaction) {
         let interactionState = {
             deferred: false,
@@ -25,6 +153,17 @@ module.exports = {
         };
 
         try {
+            // Stale buttons/modals/selects of a disabled feature are refused
+            // before any handler (or database write) runs; ids a command's own
+            // collector owns are never routed here.
+            const isComponent = interaction.isButton()
+                || (typeof interaction.isMessageComponent === 'function' && interaction.isMessageComponent())
+                || (typeof interaction.isModalSubmit === 'function' && interaction.isModalSubmit());
+            if (isComponent && interaction.customId) {
+                const gated = await gateComponentInteraction(interaction);
+                if (gated.handled) return;
+            }
+
             // Handle button interactions
             if (interaction.isButton()) {
                 const [action, type, requestId] = interaction.customId.split('_');

@@ -1,3 +1,7 @@
+---
+feature: music
+---
+
 # Music Generation System Documentation
 
 ## Overview

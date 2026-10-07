@@ -80,6 +80,35 @@ A surface owned by one feature that also lists `alsoRequires` (for example
 the music playback commands: music, voice and discord) is available only when
 all of them are; `requireSurface` reports the first one that is not.
 
+### Reported versus enforced
+
+`isActive(id)` and `availability(id)` *report* the effective value. The
+execution surfaces (commands, steps, tools, MCP, routes, sockets) do not
+refuse on that value directly; they ask `enforcedOff(id)` through
+`gate.surfaceActive` / `requireSurface`, and a refusal is **enforced** only
+when one of these holds:
+
+- a usable `data/features.json` is in force (the installation has adopted
+  explicit feature state), or
+- `GOOBSTER_FEATURE_<ID>` forces the feature off, or
+- a hard dependency of the feature is itself enforced off.
+
+Without a state file nothing new is refused: a legacy-off feature is
+reported inactive (so `status()`, the seed and the manager see it), but its
+surfaces keep exactly the answer the existing code gives today (an
+unmounted router, a command that replies "not enabled", the MCP token
+routes that stay open so a token can be revoked). That is how the
+compatibility rule "no `features.json` means today's behaviour" holds by
+construction at every surface. `enforcedUnavailable()` is the list the
+surfaces refuse (the prompt line uses it); `unavailable()` is the reported
+list. MCP is the one feature that serves by the reported value
+(`features.isActive('mcp')`, read by the HTTP mount, the surface, the stdio
+entry and the portal's `enabled` field alike), so a state file may switch it
+on beyond its legacy default-off `mcp.enabled` switch; that is the adoption
+path for a default-off adapter. Adoption, the first write of the file, turns
+enforcement on for every
+feature at the next startup snapshot.
+
 ## `data/features.json`
 
 The path is `path.join(runtimePaths.dataDir, 'features.json')`
@@ -321,3 +350,14 @@ features._resetForTests({ config: { token: 'x' }, env: {} });   // the singleton
 `tests/featureCatalog.test.js` keeps the catalog in step with the inventory
 and the repository (documentation paths, env var names and config sections
 must exist). `tests/featureState.test.js` covers everything in this document.
+
+## Consumers
+
+The first consumers of `gate.surfaceActive` and `requireSurface`:
+
+- `toolsRegistry.getDefinitions()` (discovery) and `toolsRegistry.execute()` (dispatch, which returns the `FEATURE_UNAVAILABLE` result), `runAgentLoop` (terminal observation) and the `UNAVAILABLE HERE:` prompt line built from `features.enforcedUnavailable()`: see `documentation/agent_orchestration.md`.
+- The MCP surface (`packages/core/mcp/surface.js`, `tools.js`, `resources.js`, `http.js`, `stdio.js`) and `apps/mcp`, per request: see `documentation/mcp.md`.
+- The network edge: `packages/core/web/featureGate.js` (portal middleware in `appApi.js`, the live-socket upgrade and message hooks in `appWebsocket.js`, the bot's public-server mounts in `apps/bot/web/server.js`, the api app) and `GET /api/app/features`: see `documentation/feature_inventory.md` § R1.
+- The Discord process: command load and deploy through `commandDeployment.listCommandFiles` + `featureCommandFilter` (one filter for both, deploy hash over the served set), stale slash/context-menu/component/modal refusals in `apps/bot/events/interactionCreate.js`, `coreRuntime.step(name, fn, { feature })` with `skipped:feature` reporting and the bundled-step branch gates, the lazy `serviceManager.voiceService`, the listeners in `apps/bot/index.js` and the `messageCreate` gates `#06`/`#10`: see `documentation/feature_inventory.md` § S1.
+
+Covered by `tests/featureGatingTools.test.js`, `tests/featureGatingMcp.test.js`, `tests/featureGatingRoutes.test.js`, `tests/featureGatingWebsocket.test.js`, `tests/featureGatingCommands.test.js` and `tests/featureGatingRuntime.test.js`.
