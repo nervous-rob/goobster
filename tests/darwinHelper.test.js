@@ -596,6 +596,20 @@ describe('elevation()', () => {
         expect(darwin.elevation({ euid: 501, scope: 'user' })).toEqual({ kind: 'user', prefix: [] });
     });
 
+    test('the request itself decides: a LaunchAgent registration or removal is the person\'s even with no sudo and no graphical session', () => {
+        const probe = () => 1;
+        const noTool = { euid: 501, fs: fsWith('/usr/bin/sudo'), probe, aqua: () => false };
+        expect(darwin.elevation({ ...noTool, operation: 'service.register', input: { scope: 'user', name: 'goobster' } })).toEqual({ kind: 'user', prefix: [] });
+        expect(darwin.elevation({ ...noTool, operation: 'service.register', input: { scope: 'machine', name: 'goobster' } })).toEqual({ kind: 'none', prefix: [], reason: 'NO_ELEVATION_TOOL' });
+        expect(darwin.elevation({ ...noTool, operation: 'service.register', input: { name: 'goobster' } })).toEqual({ kind: 'none', prefix: [], reason: 'NO_ELEVATION_TOOL' });
+        expect(darwin.elevation({ ...noTool, operation: 'user.create', input: { name: '_goobster' } })).toEqual({ kind: 'none', prefix: [], reason: 'NO_ELEVATION_TOOL' });
+        const emptyDaemons = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-daemons-'));
+        expect(darwin.elevation({ ...noTool, operation: 'service.unregister', input: { name: 'goobster' }, daemonDir: emptyDaemons })).toEqual({ kind: 'user', prefix: [] });
+        fs.writeFileSync(path.join(emptyDaemons, 'io.goobster.goobster.plist'), '<plist/>');
+        expect(darwin.elevation({ ...noTool, operation: 'service.unregister', input: { name: 'goobster' }, daemonDir: emptyDaemons })).toEqual({ kind: 'none', prefix: [], reason: 'NO_ELEVATION_TOOL' });
+        fs.rmSync(emptyDaemons, { recursive: true, force: true });
+    });
+
     test('sudo that answers without a password is used, with a fixed prefix', () => {
         const probe = jest.fn(() => 0);
         const plan = darwin.elevation({ euid: 501, fs: fsWith('/usr/bin/sudo'), probe, aqua: () => true });

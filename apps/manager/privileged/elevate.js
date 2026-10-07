@@ -18,7 +18,8 @@
  * The platform module (`./linux.js`, and its siblings for the other platforms)
  * supplies what differs per platform: `elevation()` (how to start the helper
  * with rights: `{ kind, prefix, reason? }`, `kind` 'root' when already there,
- * 'none' when there is no way), `manualCommand()`, `serviceFacts()` (is the
+ * 'none' when there is no way, 'user' when the request at hand needs none; it
+ * receives `{ env, fs, operation, input }`), `manualCommand()`, `serviceFacts()` (is the
  * service manager there and running), `HELPER_FILES` (the files the elevated
  * process runs, for the manifest check), and optionally `transport()` (when
  * the elevation tool cannot pass stdin/stdout: the request and the reply go
@@ -167,7 +168,9 @@ async function runHelper({ operation, input, implementation, env = process.env, 
         const state = facts || serviceFactsOf(implementation, { fs, env });
         if (!state.available) return { status: 'fallback', reason: state.reason || 'SERVICE_MANAGER_UNAVAILABLE', detail: { serviceManager: state.state || null, systemd: state.state || null } };
     }
-    const plan = elevation || implementation.elevation({ env, fs });
+    // The request goes along so a platform can answer `user` for an operation that needs no
+    // rights at all (a per-user launchd agent) instead of hunting for an elevation tool.
+    const plan = elevation || implementation.elevation({ env, fs, operation, input: checked });
     const request = protocol.buildRequest(operation, checked);
     if (plan.kind === 'none') {
         let manual = null;

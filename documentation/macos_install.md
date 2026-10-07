@@ -254,7 +254,11 @@ removes a plist. It never touches any other job.
 sudo '/opt/goobster/code/current/runtime/bin/node' '/opt/goobster/code/current/app/apps/manager/privileged/helper.js' < '<request file>'
 ```
 
-A per-user registration needs none of this: the helper runs as you. Before an
+A per-user registration needs none of this: the manager reads the request
+before it looks for an elevation tool, and a LaunchAgent's registration or
+removal runs the helper as you, even over SSH with no `sudo` and no graphical
+session (with no login session the agent is written and loads at the next
+login). Before an
 elevated start the manager checks the SHA-256 of the helper's files and of the
 bundled Node against `payload-manifest.json`; a mismatch is `HELPER_UNVERIFIED`
 and nothing is started. Each privileged operation writes a

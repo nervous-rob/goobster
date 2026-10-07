@@ -605,13 +605,17 @@ function defaultAqua({ env, fs }) {
  * @param {number|null} [params.euid]
  * @param {Function} [params.probe]  `(file, args) => exit status`, to ask `sudo -n true`
  * @param {Function} [params.aqua]   `({ env, fs }) => boolean`, whether a graphical login session can show the administrator prompt
- * @param {'machine'|'user'} [params.scope] `user`: a per-user registration, which needs none (the runner of the elevate module
- *   does not pass the request to `elevation()` yet, so `transport()` makes the same decision from the request itself)
+ * @param {string} [params.operation]  the request at hand, as ./elevate.js passes it
+ * @param {Object} [params.input]      its validated input
+ * @param {'machine'|'user'} [params.scope] `user`: a per-user registration, which needs no rights; derived from the
+ *   request when one is given (`needsRoot`), so a person's LaunchAgent is registered without sudo or a prompt
+ * @param {string} [params.daemonDir]  tests
  * @returns {{ kind: 'root'|'sudo'|'osascript'|'user'|'none', prefix: string[], reason?: string }}
  */
-function elevation({ env = process.env, euid = typeof process.geteuid === 'function' ? process.geteuid() : null, fs = nodeFs, probe = null, aqua = null, scope = 'machine' } = {}) {
+function elevation({ env = process.env, euid = typeof process.geteuid === 'function' ? process.geteuid() : null, fs = nodeFs, probe = null, aqua = null, operation = null, input = null, scope = null, daemonDir = undefined } = {}) {
     if (euid === 0) return { kind: 'root', prefix: [] };
-    if (scope === 'user') return { kind: 'user', prefix: [] };
+    const wanted = scope || (operation ? (needsRoot({ operation, input: input || {} }, { fs, daemonDir }) ? 'machine' : 'user') : 'machine');
+    if (wanted === 'user') return { kind: 'user', prefix: [] };
     const sudo = onSystemPath('sudo', fs);
     if (sudo && (probe || defaultProbe)(sudo, ['-n', 'true']) === 0) return { kind: 'sudo', prefix: [sudo, '-n', '--'] };
     if ((aqua || defaultAqua)({ env, fs })) return { kind: 'osascript', prefix: [] };

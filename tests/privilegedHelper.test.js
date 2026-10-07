@@ -617,6 +617,24 @@ describe('the manager-side runner', () => {
         expect(JSON.parse(fs.readFileSync(requestFile, 'utf8')).operation).toBe('user.create');
     });
 
+    test('the platform\'s elevation() sees the operation and the validated input, so it can answer that none is needed', async () => {
+        const seen = [];
+        const implementation = {
+            ...linux,
+            elevation: (params) => {
+                seen.push(params);
+                return { kind: 'none', prefix: [], reason: 'TEST' };
+            }
+        };
+        const result = await elevate.runHelper({ operation: 'user.create', input: userInput(roots), implementation, spawn: jest.fn() });
+        expect(result).toMatchObject({ status: 'fallback', reason: 'ELEVATION_UNAVAILABLE', detail: { why: 'TEST' } });
+        expect(seen).toHaveLength(1);
+        expect(seen[0].operation).toBe('user.create');
+        expect(seen[0].input).toMatchObject({ name: userInput(roots).name, roots: roots });
+        expect(seen[0].env).toBeDefined();
+        expect(seen[0].fs).toBeDefined();
+    });
+
     test('an input the shape rules refuse is a thrown refusal, never a spawn', async () => {
         const spawn = jest.fn();
         await expect(elevate.runHelper({ operation: 'service.register', input: { ...registerInput(roots), name: 'Bad Name' }, implementation: linux, spawn, elevation: { kind: 'root', prefix: [] }, facts: { available: true } }))
