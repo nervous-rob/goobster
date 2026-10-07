@@ -5,6 +5,7 @@ const { isDmScopeId } = require('../utils/dmScope');
 const workContext = require('../utils/workContext');
 const { toGateway } = require('../gateway');
 const { isInboxChannelId } = require('./inboxService');
+const { surfaceActive } = require('../features/gate');
 
 class AutomationService {
     /**
@@ -584,6 +585,12 @@ class AutomationService {
     }
 
     async executeWheel(automation, channel) {
+        // The Wheel needs gambling and the exchange; a disabled installation
+        // spins nothing, posts nothing and records no failure.
+        if (!surfaceActive('command', 'economy/wheel.js')) {
+            console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
+            return;
+        }
         const wheelService = require('./exchange/wheelService');
         const economyService = require('./economyService');
         const { buildWheelEmbed, resolveNames } = require('./exchange/wheelPresenter');
