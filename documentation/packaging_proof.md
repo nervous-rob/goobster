@@ -23,9 +23,9 @@ labelled **unverified**.
 
 | Target | Runner label | Executed smoke run | Status |
 |---|---|---|---|
-| linux-x64 | `ubuntu-24.04` | yes: local VM (Ubuntu 24.04, glibc 2.39) and CI run 37549366723 (in place, relocated, read-only data, all five `required` distro containers) | **passed with known gap B1** |
-| linux-arm64 | `ubuntu-24.04-arm` | yes: CI run 37549366723 (in place, relocated, read-only data; Bookworm, Ubuntu 24.04 and AlmaLinux 9 containers pass) | **passed with known gaps B1, B2**: Debian 11 and Ubuntu 20.04 containers fail to load `sodium-native` (`GLIBC_2.33` not found), confirming the arm64 floor; the workflow now expects those two to fail on arm64 |
-| win32-x64 | `windows-2022` | CI run 37549366723: payload built; the first smoke run stopped at `paths.separateRoots` | **unverified at the smoke level**: the check compared drives with `path.relative` (`D:\a\_temp` payload vs `C:\Users\...\Temp` data root) and reported a false "inside the payload"; fixed in `package-smoke.js`, needs the next CI run |
+| linux-x64 | `ubuntu-24.04` | yes: local VM (Ubuntu 24.04, glibc 2.39) and CI runs 37549366723, 37554176247 (in place, relocated, read-only data, all five `required` distro containers) | **passed with known gap B1** |
+| linux-arm64 | `ubuntu-24.04-arm` | yes: CI runs 37549366723, 37554176247 (in place, relocated, read-only data; Bookworm, Ubuntu 24.04 and AlmaLinux 9 containers pass) | **passed with known gaps B1, B2**: Debian 11 and Ubuntu 20.04 containers fail to load `sodium-native` (`GLIBC_2.33` not found), confirming the arm64 floor; the workflow expects those two to fail on arm64 |
+| win32-x64 | `windows-2022` | yes: CI run 37554176247 (in place and relocated, both `PASS_WITH_KNOWN_GAPS`; every native, wasm, sqlite-vec and standalone-api check passed). The first run, 37549366723, stopped at `paths.separateRoots`: the check compared drives with `path.relative` (`D:\a\_temp` payload vs `C:\Users\...\Temp` data root) and reported a false "inside the payload"; fixed in `package-smoke.js` | **passed with known gap B1** |
 | darwin-x64 | `macos-15-intel` | yes: CI run 37549366723 (in place, relocated, read-only data) | **passed with known gap B1** |
 | darwin-arm64 | `macos-15` | yes: CI run 37549366723 (in place, relocated, read-only data) | **passed with known gap B1** |
 
