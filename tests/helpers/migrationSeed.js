@@ -198,4 +198,41 @@ function createSeededSqlite(file, { dataDir }) {
     }
 }
 
-module.exports = { createSeededSqlite, DIMS, GUILD, USER, USER_B };
+/**
+ * A connection to `schema` as a role that cannot CREATE in it. A superuser
+ * bypasses privilege checks, so revoking from CURRENT_USER proves nothing
+ * when the suite's role is one (CI's pgvector container bootstraps the test
+ * role as the superuser); then a throwaway LOGIN role with USAGE only is
+ * created and its URL returned. A plain role is just revoked. The returned
+ * `cleanup` drops whatever was created, in either order with the schema.
+ * @param {import('pg').Client} admin a connected client on the suite's role
+ * @param {string} baseUrl the suite's connection URL without a query string
+ * @param {string} schema
+ * @returns {Promise<{ url: string, cleanup: () => Promise<void> }>}
+ */
+async function lockedSchemaUrl(admin, baseUrl, schema) {
+    const me = (await admin.query('SELECT rolsuper FROM pg_roles WHERE rolname = current_user')).rows[0] || {};
+    const search = `?options=${encodeURIComponent(`-c search_path=${schema},public`)}`;
+    if (!me.rolsuper) {
+        await admin.query(`REVOKE CREATE ON SCHEMA ${schema} FROM CURRENT_USER`);
+        return { url: `${baseUrl}${search}`, cleanup: async () => { } };
+    }
+    const role = `${schema}_locked`;
+    const password = `pw_${schema}`;
+    await admin.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+    await admin.query(`GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
+    const url = new URL(baseUrl);
+    url.username = role;
+    url.password = password;
+    return {
+        url: `${url.toString()}${search}`,
+        cleanup: async () => {
+            try {
+                await admin.query(`REVOKE ALL ON SCHEMA ${schema} FROM ${role}`);
+                await admin.query(`DROP ROLE IF EXISTS ${role}`);
+            } catch { }
+        }
+    };
+}
+
+module.exports = { createSeededSqlite, lockedSchemaUrl, DIMS, GUILD, USER, USER_B };

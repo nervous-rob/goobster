@@ -21,7 +21,7 @@ const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-db-migration-'));
 process.env.GOOBSTER_DB_PATH = path.join(ROOT, 'jest-own.sqlite');
 
 const { newHarness, drive, codeOf, tempDir } = require('./helpers/installFixture');
-const { createSeededSqlite, USER } = require('./helpers/migrationSeed');
+const { createSeededSqlite, lockedSchemaUrl, USER } = require('./helpers/migrationSeed');
 const { createFakeWorkers, waitFor, FAST_POLICY } = require('./helpers/fakeWorkers');
 const { discover } = require('@goobster/manager/install/discover');
 const { createSupervisor } = require('@goobster/manager/lifecycle/supervisor');
@@ -138,6 +138,7 @@ async function targetSchema() {
     const handle = {
         name,
         url,
+        admin,
         query,
         tables,
         count: async table => Number((await query(`SELECT COUNT(*) AS c FROM ${name}."${table}"`))[0].c),
@@ -461,8 +462,9 @@ withPostgres('the operation against a Postgres schema', () => {
         expect(await target.tables()).toEqual(['occupied']);
 
         const locked = await targetSchema();
-        await locked.query(`REVOKE CREATE ON SCHEMA ${locked.name} FROM CURRENT_USER`);
-        const denied = await drive(env, 'db.migrate', input(env, locked)).catch(e => e);
+        const lockedRole = await lockedSchemaUrl(locked.admin, BASE_URL, locked.name);
+        cleanups.push(lockedRole.cleanup);
+        const denied = await drive(env, 'db.migrate', input(env, { ...locked, url: lockedRole.url })).catch(e => e);
         expect(denied.code).toBe('PREFLIGHT_FAILED');
         expect(denied.details.findings.map(item => item.code)).toContain('TARGET_NO_CREATE_PRIVILEGE');
 

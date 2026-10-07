@@ -19,7 +19,7 @@ const { Client } = require('pg');
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-db-inspect-'));
 process.env.GOOBSTER_DB_PATH = path.join(ROOT, 'jest-own.sqlite');
 
-const { createSeededSqlite } = require('./helpers/migrationSeed');
+const { createSeededSqlite, lockedSchemaUrl } = require('./helpers/migrationSeed');
 const { inspectSqlite, inspectPostgres, inspectAll, classify, REQUIRED_EXTENSIONS, MIN_SERVER_VERSION } = require('@goobster/core/db/migration/inspect');
 const { describeTarget, publicTarget, redactText, schemaFromOptions } = require('@goobster/core/db/migration/target');
 const { expectedSchema, isCopyable, topologicalOrder, quoteIdent } = require('@goobster/core/db/migration/schemaModel');
@@ -351,8 +351,9 @@ withPostgres('the Postgres target', () => {
     test('a role that cannot create in the schema is a block', async () => {
         const { file } = seeded('pg-locked');
         const target = await schemaTarget();
-        await target.admin.query(`REVOKE CREATE ON SCHEMA ${target.name} FROM CURRENT_USER`);
-        const report = await inspectAll({ sqlitePath: file, url: target.url });
+        const locked = await lockedSchemaUrl(target.admin, BASE_URL, target.name);
+        cleanups.push(locked.cleanup);
+        const report = await inspectAll({ sqlitePath: file, url: locked.url });
         expect(report.blocks.map(item => item.code)).toContain('TARGET_NO_CREATE_PRIVILEGE');
         expect(report.target.canCreateInSchema).toBe(false);
     });
