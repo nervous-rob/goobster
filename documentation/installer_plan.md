@@ -212,6 +212,31 @@ Work, in order:
 2. Payload builder: resolves the selected features to files and exclusive
    dependencies (ffmpeg for Voice, the python venv for Music, the sandbox
    runner), builds the frontend with only the selected rooms.
+
+   **Status (P3.2, #328): built; reduced payloads proven on Linux x64
+   only.** These parts are done; `documentation/packaging.md` is the
+   reference:
+   - the signed release manifest (version 1) with an owner for every file
+     and dependency;
+   - `selectPayload` and the `--profile` / `--features` flags of
+     `scripts/package-runtime.js`;
+   - lazy seams (`requireOptional`, the `discord` accessor) so reduced
+     trees load;
+   - per-feature portal chunks with an unavailable state when one is
+     missing;
+   - `verifyPayload`, staging and atomic activation with rollback;
+   - Ed25519 signing with a labelled development mode;
+   - feature add/remove that never touches `data/`, `config.json`, logs,
+     cache or the manager store, and only audits system dependencies.
+
+   Findings B5 (unreferenced GPL packages are left out of every payload)
+   and B6 (`discord.js` is exclusive to the Discord adapter) are closed for
+   the payload. The `reduced` job in `.github/workflows/packaging-proof.yml`
+   builds minimal, voice and projects+sandbox payloads on `ubuntu-24.04`,
+   and runs routes, dormant-data and tamper probes against them. Reduced
+   payloads on the other four targets are unverified. Production signing
+   keys are #341. The wizard (#329) and the bootstrappers (#331) consume
+   the seams listed in `documentation/packaging.md`, "The manager seam".
 3. Wizard screens, each with an "about this" panel: mode (install,
    reconfigure, repair, uninstall); features with size, dependencies and
    cost; keys with links, live probes and restricted-permission writes to

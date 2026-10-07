@@ -48,8 +48,10 @@ The payload is the **standalone no-Discord portal and API**
 (`apps/api` in standalone mode, `GOOBSTER_RUNTIME_MODE=standalone`; see
 `documentation/independent_runtime.md`). It is deliberately the smallest
 server that still exercises every native module the installer will
-promise. It is not the full bot payload; the selective payload builder is
-Phase 3 item 2 (#328).
+promise. It is not the full bot payload. Feature selection on top of it
+(reduced payloads, the signed release manifest, staging and verification)
+is Phase 3 item 2 (#328) and is described in `documentation/packaging.md`;
+with no selection flags the recipe below still builds this full payload.
 
 Layout, produced by `scripts/package-runtime.js`:
 
@@ -60,9 +62,13 @@ Layout, produced by `scripts/package-runtime.js`:
   app/                       code root (GOOBSTER_WORKSPACE_ROOT), treated as read-only
     node_modules/            production dependencies with their prebuilt natives
     apps/api, apps/web/dist, documentation/, campaigns/, clients/
-    scripts/package-smoke.js, scripts/lib/nativeBinaryInfo.js
+    scripts/package-smoke.js, scripts/lib/nativeBinaryInfo.js, scripts/lib/payloadStage.js
   payload-manifest.json      SHA-256 of every file, native binary facts, licences,
-                             a deterministic payloadDigest (no timestamps)
+                             a deterministic payloadDigest (no timestamps); since
+                             #328 also the release manifest v1 (owners, groups,
+                             dependencies, chunks), see documentation/packaging.md
+  payload-manifest.sig       Ed25519 signature (only with --dev-sign or package-sign.js)
+  payload-selection.json     the features this copy carries (reduced payloads only)
 ```
 
 Separate roots, set by the launcher: code is `app/` (read-only);
@@ -129,6 +135,15 @@ and writes a JSON report that contains no secrets. Checks, in order:
 - `config.relocatable`: an empirical probe; reports `known-gap` B1 today.
 - `payload.unmodifiedAfterRun`: manifest re-verified after the run, proving
   the code root was never written to.
+
+Since #328 the smoke check also runs `payload.verify` (the release
+verifier, labelled "UNSIGNED DEVELOPMENT PAYLOAD" without `--public-key`) and
+`payload.exclusive-absence` (excluded files, dependency directories and
+chunks absent, selected ones present, no unreferenced dependency). Optional
+`--routes` and `--dormant-probe <dir>` modes boot the API with the
+selection's feature state and probe dormant data. Native checks for
+packages a reduced selection leaves out report `skip`. Details are in
+`documentation/packaging.md`.
 
 `--read-only-data` runs the same with a read-only data directory and expects
 an actionable failure (the script adds the advice) rather than a stack trace.
@@ -355,6 +370,43 @@ macOS and Windows jobs also print `codesign` / `spctl` and Authenticode
 information as informational steps. They do not gate, because nothing is
 signed yet.
 
+### Reduced payloads (linux-x64 only)
+
+The `reduced` job (#328) runs on `ubuntu-24.04` only. It builds three
+feature-selected payloads with `scripts/package-runtime.js`:
+
+- `--profile minimal --dev-sign`: core only, signed with a throwaway key
+  whose private half is deleted after signing;
+- `--features voice`: unsigned;
+- `--features projects,sandbox`: unsigned, and it carries `apps/sandbox`.
+
+For each payload it runs the smoke check with `--routes` and
+`--dormant-probe` twice, both times with the bundled Node and a restricted
+`PATH`: once in place, and once from a read-only relocated copy in a path
+with spaces and non-ASCII characters. Each run checks:
+
+- `/health` and `/api/app/features`;
+- that a selected feature's route answers and an excluded one returns 404;
+- export and erasure of dormant rows left in optional-feature tables, with
+  the feature modules absent.
+
+It then runs the verifier shipped in the minimal payload against damaged
+copies, and each must be refused with its code:
+
+| Damage | Expected code |
+|---|---|
+| one byte flipped | `INCOMPLETE` |
+| archive truncated mid-file, then extracted | `INCOMPLETE` |
+| wrong target in an unsigned manifest | `TARGET_MISMATCH` |
+| wrong target in a signed manifest | `SIGNATURE_INVALID` |
+| an excluded dependency put back | `EXTRA_FILE` |
+| an unsigned payload outside development mode | `UNSIGNED_DEV_ONLY` |
+
+The job summary tabulates the verdicts and the tamper results, and the
+reports are uploaded as `packaging-proof-reduced-linux-x64`. Reduced
+payloads on the other four targets are **unverified**: the matrix jobs
+there still build and smoke the full payload only.
+
 What CI **cannot** show, and must be checked by other means before a
 release: a clean Windows machine without the VC++ redistributable;
 Gatekeeper and SmartScreen behaviour (a payload built in place on a runner
@@ -427,9 +479,16 @@ Hosted runners cannot prove this.
 Findings, not legal advice:
 
 - `play-dl` (1.9.7) and `play-audio` (0.5.2) are **GPL-3.0** and are
-  declared in `package.json` but referenced by no source file, so they can
-  be removed from the manifests instead of redistributed. They ship in the
-  payload today because they are production dependencies.
+  declared in `package.json` but referenced by no source file. **Closed for
+  the payload by #328:** the ownership graph reports them as unreferenced
+  (`play-dl`: declared by `packages/core` but imported by no source file;
+  `play-audio`: only required by `play-dl`), `scripts/package-runtime.js`
+  deletes them from every payload before hashing, so they are in neither
+  the catalogue nor the licence list, and the smoke check's
+  `payload.exclusive-absence` fails if either directory is present. They are
+  still declared in `packages/core/package.json` and the lockfile; removing
+  them there (`npm uninstall -w @goobster/core play-dl play-audio`) is left
+  to the maintainers of the manifests.
 - libvips and the libraries sharp bundles with it are LGPL-3.0 and similar.
   They are shipped as separate shared libraries in `sharp/vendor`, which
   keeps them replaceable; sharp's own `THIRD-PARTY-NOTICES.md` is shipped in
@@ -442,12 +501,21 @@ Findings, not legal advice:
 
 ### B6
 
-**`discord.js` is loaded by the "no-Discord" path.** The portal application
-code (`packages/core/web/appApi.js` and its imports) still requires
-`discord.js`, so the standalone payload ships it and its dependency tree
-even though no Discord connection is made. It matters for #328 (selective
-packaging): excluding the Discord adapter needs that import made lazy, or
-`discord.js` stays in the base payload.
+**`discord.js` was loaded by the "no-Discord" path.** The portal application
+code (`packages/core/web/appApi.js` and its imports) required `discord.js`,
+so the standalone payload shipped it and its dependency tree even though no
+Discord connection is made. **Closed by #328:** no core or API module
+imports `discord.js` at the top any more. Core code that builds embeds,
+buttons or permission checks reads them from the lazy `discord` accessor
+in `packages/core/utils/optionalModule.js` (`discord.EmbedBuilder`), which
+loads the library on first use and throws `GatewayDisabledError`
+(`DISCORD_DISABLED`) when it is absent. The release manifest
+shows `discord.js` and 15 more packages (the `@discordjs/*` REST and gateway
+packages, `@sapphire/*`, `lodash`, `ts-mixer`, ...) as exclusive to
+`discord`. A minimal or voice payload carries none of them, and
+`tests/payloadReduced.test.js` boots `apps/api` from a tree without them.
+The full payload still carries them, because the full selection includes
+`discord`.
 
 ### Other observations
 
@@ -510,8 +578,13 @@ tracked in #262; no certificate was bought or requested here).
 - Audit upstream assets for all five targets without executing them:
   `node scripts/package-audit-upstream.js --out audit.json`.
 - Unit-tested rules (payload content rules, binary targets, install-log
-  analysis, ELF, Mach-O and PE readers):
+  analysis, ELF, Mach-O and PE readers, the selection flags):
   `npx jest tests/packagePayloadRules.test.js`.
+- A reduced payload for the host:
+  `node scripts/package-runtime.js --profile minimal --dev-sign --out <dir> --report-dir <reports> --force`,
+  then
+  `<dir>/runtime/bin/node <dir>/app/scripts/package-smoke.js --public-key <reports>/payload-dev-key-<target>.pub.pem --routes`.
+  Selection, verification and signing are in `documentation/packaging.md`.
 - To change the Node pin, edit `scripts/package-node-pins.json` with the
   new version and the five SHA-256 values from the published
   `SHASUMS256.txt`, re-run the audit, and re-run the CI matrix.
