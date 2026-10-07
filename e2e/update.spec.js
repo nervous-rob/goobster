@@ -44,7 +44,9 @@ test.afterEach(async ({ page }, testInfo) => {
 async function screenshot(page, name) {
     try {
         fs.mkdirSync(ARTIFACTS, { recursive: true });
-        await page.screenshot({ path: path.join(ARTIFACTS, `342-${name}.png`), fullPage: true });
+        const panel = page.getByTestId('host-updates');
+        await panel.scrollIntoViewIfNeeded();
+        await panel.screenshot({ path: path.join(ARTIFACTS, `342-${name}.png`) });
     } catch { /* artifacts are optional */ }
 }
 
