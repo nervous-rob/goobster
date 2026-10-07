@@ -14,6 +14,7 @@
 const routes = [
     require('./routes/lifecycle').mountLifecycleRoutes,
     require('./routes/maintenance').mountMaintenanceRoutes,
+    require('./routes/reset').mountResetRoutes,
     require('./routes/config').createConfigMount(),
     require('./routes/migrate').mountMigrateRoutes
 ];
@@ -25,6 +26,7 @@ const kinds = [
     require('./engine/kinds/config').createKinds,
     require('./engine/kinds/defaults').createKinds,
     require('./engine/kinds/install').createKinds,
+    require('./engine/kinds/reset').createKinds,
     require('./engine/kinds/migrate').createKinds
 ];
 

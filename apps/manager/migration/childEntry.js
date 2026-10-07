@@ -77,13 +77,19 @@ const OPS = {
             logger: { info() { }, warn() { }, error() { } }
         });
         const counts = await backupService.tableCounts();
-        const verdict = backupService.verifyBackup(dir, { expectCounts: counts });
+        let problems = [];
+        try {
+            backupService.verifyBackup(dir, { expectCounts: counts });
+        } catch (error) {
+            if (!error || error.code !== 'UNVERIFIED') throw error;
+            problems = Array.isArray(error.problems) ? error.problems : ['UNVERIFIED'];
+        }
         const exempt = backupService.COUNT_EXEMPT;
         return {
             archive: path.basename(dir),
-            verified: verdict.ok,
-            fingerprintMatches: verdict.fingerprintMatches,
-            mismatchedTables: verdict.mismatches.slice(0, 20).map(item => item.table),
+            verified: problems.length === 0,
+            fingerprintMatches: !problems.includes('FINGERPRINT_MISMATCH'),
+            mismatchedTables: problems.filter(code => code.startsWith('COUNT_MISMATCH:')).slice(0, 20).map(code => code.slice('COUNT_MISMATCH:'.length)),
             tables: Object.keys(counts).filter(name => !exempt.has(name)).length,
             rows: Object.entries(counts).filter(([name]) => !exempt.has(name)).reduce((sum, [, n]) => sum + n, 0),
             configIncluded: Boolean(manifest.config && manifest.config.included),

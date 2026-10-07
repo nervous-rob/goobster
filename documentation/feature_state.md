@@ -326,6 +326,16 @@ active but reports `configured: false` and a `NOT_CONFIGURED` warning for
 shows `source: "none"` and `error: { "code": "UNSUPPORTED_VERSION", ... }`,
 availability is the legacy answer, and the file is left exactly as it was.
 
+## Disabling is not purging
+
+Turning a feature off never deletes its data: its tables, files and shared-table
+rows stay, and turning it on again finds them. Removing a dormant feature's data
+is a separate, typed and backed-up operation, `data.reset` with
+`scope: 'feature'` ([data_reset.md](data_reset.md)). It refuses a feature that
+`isActive` reports as active (`FEATURE_ACTIVE`) and a `features.json` it cannot
+read (`FEATURE_STATE_UNREADABLE`); disable the feature, restart so the file
+decides, then purge. A purge does not edit `features.json`.
+
 ## System dependencies
 
 The catalog records each feature's system dependencies from the inventory

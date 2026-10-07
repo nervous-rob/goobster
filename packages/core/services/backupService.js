@@ -333,41 +333,64 @@ function inspectBackup(dir) {
 }
 
 /**
- * Check a freshly written archive against the live database it came from:
- * the manifest is valid, its schema fingerprint is this code's, and (for a
- * SQLite archive) the snapshot file itself opens read-only and holds the
- * expected row count per table. Reads the archive only.
+ * Check that an archive is complete and describes the data it is supposed
+ * to: the manifest is valid, the database snapshot exists and is not empty,
+ * every file set the manifest lists is present with the recorded file
+ * count, the schema fingerprint is this code's, and (when `expectCounts`
+ * is given) every table count equals the live count - counted inside the
+ * SQLite snapshot itself when the archive holds one, otherwise against the
+ * counts the manifest recorded. Reads the archive only; never writes. A
+ * backup that fails this is not a safety net.
  * @param {string} dir
- * @param {{ expectCounts: Record<string, number> }} options live row counts to compare against
- * @returns {{ ok: boolean, fingerprintMatches: boolean, mismatches: Array<{ table: string, expected: number, actual: number|null }>, manifest: Object }}
+ * @param {Object} [options]
+ * @param {Object<string, number>} [options.expectCounts] live table counts to compare with
+ * @param {string} [options.expectFingerprint] defaults to schemaFingerprint()
+ * @returns {{ manifest: Object, tables: number, files: number }}
+ * @throws {BackupError} code UNVERIFIED with `problems` (codes only, no paths or rows)
  */
-function verifyBackup(dir, { expectCounts } = {}) {
+function verifyBackup(dir, { expectCounts = null, expectFingerprint = schemaFingerprint() } = {}) {
     const manifest = inspectBackup(dir);
-    const fingerprintMatches = manifest.schemaFingerprint === schemaFingerprint();
-    const mismatches = [];
-    if (manifest.database.kind === 'sqlite-file') {
-        const Database = require('better-sqlite3');
-        const snapshot = new Database(path.join(dir, manifest.database.file), { readonly: true, fileMustExist: true });
+    const problems = [];
+    const snapshotPath = path.join(dir, manifest.database.file);
+    if (countFiles(snapshotPath).bytes === 0) problems.push('SNAPSHOT_EMPTY');
+    if (manifest.schemaFingerprint !== expectFingerprint) problems.push('FINGERPRINT_MISMATCH');
+    for (const entry of manifest.files || []) {
+        const target = path.join(dir, entry.archivePath);
+        if (!fs.existsSync(target)) problems.push(`FILES_MISSING:${entry.id}`);
+        else if (countFiles(target).files !== entry.files) problems.push(`FILES_COUNT:${entry.id}`);
+    }
+    if (expectCounts) {
+        const recorded = manifest.tables || {};
+        let actualOf = (table) => recorded[table];
+        let snapshot = null;
+        if (manifest.database.kind === 'sqlite-file' && !problems.includes('SNAPSHOT_EMPTY')) {
+            const Database = require('better-sqlite3');
+            try {
+                snapshot = new Database(snapshotPath, { readonly: true, fileMustExist: true });
+                actualOf = (table) => {
+                    try {
+                        return snapshot.prepare(`SELECT COUNT(*) AS c FROM ${/^[a-z_][a-z0-9_]*$/i.test(table) ? table : `"${table.replace(/"/g, '""')}"`}`).get().c;
+                    } catch {
+                        return undefined;
+                    }
+                };
+            } catch {
+                problems.push('SNAPSHOT_UNREADABLE');
+            }
+        }
         try {
-            for (const [table, expected] of Object.entries(expectCounts || {})) {
+            for (const [table, expected] of Object.entries(expectCounts)) {
                 if (COUNT_EXEMPT.has(table)) continue;
-                let actual = null;
-                try {
-                    actual = snapshot.prepare(`SELECT COUNT(*) AS c FROM ${/^[a-z_][a-z0-9_]*$/.test(table) ? table : `"${table}"`}`).get().c;
-                } catch { }
-                if (actual !== expected) mismatches.push({ table, expected, actual });
+                if (actualOf(table) !== expected) problems.push(`COUNT_MISMATCH:${table}`);
             }
         } finally {
-            snapshot.close();
-        }
-    } else {
-        for (const [table, expected] of Object.entries(expectCounts || {})) {
-            if (COUNT_EXEMPT.has(table)) continue;
-            const recorded = manifest.tables ? manifest.tables[table] : undefined;
-            if (recorded !== expected) mismatches.push({ table, expected, actual: recorded === undefined ? null : recorded });
+            if (snapshot) snapshot.close();
         }
     }
-    return { ok: fingerprintMatches && mismatches.length === 0, fingerprintMatches, mismatches, manifest };
+    if (problems.length > 0) {
+        throw new BackupError('UNVERIFIED', `The backup could not be verified (${problems.join(', ')}).`, { problems });
+    }
+    return { manifest, tables: Object.keys(manifest.tables || {}).length, files: (manifest.files || []).length };
 }
 
 // --- Restore --------------------------------------------------------------

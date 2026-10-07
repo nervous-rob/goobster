@@ -275,19 +275,23 @@ describe('the backup archive', () => {
             expect(text).not.toContain('environment.json');
         }
 
-        const verified = backupService.verifyBackup(dir, { expectCounts: manifest.tables });
-        expect(verified).toMatchObject({ ok: true, fingerprintMatches: true, mismatches: [] });
+        const problemsOf = (run) => {
+            try {
+                run();
+            } catch (error) {
+                expect(error.code).toBe('UNVERIFIED');
+                return error.problems;
+            }
+            throw new Error('expected the backup to be refused');
+        };
+        expect(backupService.verifyBackup(dir, { expectCounts: manifest.tables })).toMatchObject({ files: 1 });
 
-        const wrong = backupService.verifyBackup(dir, { expectCounts: { ...manifest.tables, users: 3 } });
-        expect(wrong.ok).toBe(false);
-        expect(wrong.mismatches).toEqual([{ table: 'users', expected: 3, actual: manifest.tables.users }]);
-
-        const missing = backupService.verifyBackup(dir, { expectCounts: { no_such_table: 1 } });
-        expect(missing.mismatches).toEqual([{ table: 'no_such_table', expected: 1, actual: null }]);
+        expect(problemsOf(() => backupService.verifyBackup(dir, { expectCounts: { ...manifest.tables, users: 3 } }))).toEqual(['COUNT_MISMATCH:users']);
+        expect(problemsOf(() => backupService.verifyBackup(dir, { expectCounts: { no_such_table: 1 } }))).toEqual(['COUNT_MISMATCH:no_such_table']);
 
         const manifestFile = path.join(dir, 'manifest.json');
         fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, schemaFingerprint: 'stale' }));
-        expect(backupService.verifyBackup(dir, { expectCounts: manifest.tables })).toMatchObject({ ok: false, fingerprintMatches: false });
+        expect(problemsOf(() => backupService.verifyBackup(dir, { expectCounts: manifest.tables }))).toEqual(['FINGERPRINT_MISMATCH']);
 
         fs.writeFileSync(manifestFile, '{broken');
         expect(() => backupService.verifyBackup(dir, { expectCounts: {} })).toThrow();
@@ -306,13 +310,14 @@ describe('verifyBackup on a pg-dump archive', () => {
             tables: { users: 2, messages: 5 }, files: [], config: { included: false }
         };
         fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(base));
-        const result = backupService.verifyBackup(dir, { expectCounts: { users: 2, messages: 6, absent: 1 } });
-        expect(result.fingerprintMatches).toBe(false);
-        expect(result.ok).toBe(false);
-        expect(result.mismatches).toEqual([
-            { table: 'messages', expected: 6, actual: 5 },
-            { table: 'absent', expected: 1, actual: null }
-        ]);
+        let problems = null;
+        try {
+            backupService.verifyBackup(dir, { expectCounts: { users: 2, messages: 6, absent: 1 } });
+        } catch (error) {
+            expect(error.code).toBe('UNVERIFIED');
+            problems = error.problems;
+        }
+        expect(problems).toEqual(['FINGERPRINT_MISMATCH', 'COUNT_MISMATCH:messages', 'COUNT_MISMATCH:absent']);
     });
 });
 

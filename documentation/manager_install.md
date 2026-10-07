@@ -284,6 +284,17 @@ portal. It is audited as `manager.install.new`, `manager.install.reconfigure`,
 `manager.install.repair` and `manager.install.uninstall` (and `manager.adopt`),
 reconciled into `operator_audit` like every other manager operation.
 
+## Reset
+
+`goobster-manager reset` and `goobster-manager release` are the same local CLI
+for the data reset ([data_reset.md](data_reset.md)): `reset --scope instance`
+or `reset --scope feature --feature <id>` enters the maintenance barrier, runs
+the `data.reset` operation (a verified backup first, a typed confirmation of
+the installation id) and releases the barrier; `--dry-run` only prints the
+preview. The answers file takes a `reset` section (`scope`, `feature`,
+`backup.dir`, `backup.passphrase`, `confirm`), and the passphrase is never
+accepted on the command line. The audit action is `manager.data.reset`.
+
 ## Not done here
 
 - OS service registration, package installation, user creation and the

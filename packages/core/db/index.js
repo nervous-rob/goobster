@@ -206,6 +206,16 @@ async function listTables(options = {}) {
 }
 
 /**
+ * Return deleted space to the storage (SQLite: checkpoint and VACUUM;
+ * Postgres: nothing, autovacuum owns it). Used after a data reset.
+ * @returns {Promise<{ compacted: boolean }>}
+ */
+async function compactStorage() {
+    maintenance.assertWritable();
+    return getAdapter().compactStorage();
+}
+
+/**
  * Async-compatible connection getter kept so existing call sites that do
  * `await getConnection()` keep working during and after the migration.
  */
@@ -242,4 +252,5 @@ module.exports = {
     vecAvailable,
     describeStorage,
     listTables,
+    compactStorage,
 };

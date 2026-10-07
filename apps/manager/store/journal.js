@@ -39,14 +39,17 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
  * @property {{ code: string, message: string }} [error]
  */
 
-/** Numbers, booleans and short labels only; anything else is dropped. */
-function cleanAuditDetail(detail) {
+const DETAIL_KEY = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
+const DETAIL_TEXT = /^[A-Za-z0-9._:-]{1,64}$/;
+
+/** Short scalars under identifier-shaped keys, nothing else (an audit detail never holds a path or a row). */
+function cleanDetail(detail) {
     if (!files.isPlainObject(detail)) return null;
     const out = {};
-    for (const [key, value] of Object.entries(detail).slice(0, 16)) {
-        if (!/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(key)) continue;
+    for (const [key, value] of Object.entries(detail)) {
+        if (!DETAIL_KEY.test(key)) continue;
         if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) out[key] = value;
-        else if (typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}$/.test(value)) out[key] = value;
+        else if (typeof value === 'string' && DETAIL_TEXT.test(value)) out[key] = value;
     }
     return Object.keys(out).length > 0 ? out : null;
 }
@@ -142,9 +145,11 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
 
     /**
      * Append one audit record: `{ action, actor, operationId, outcome }`.
-     * Never a value, a credential or a label.
+     * Never a value, a credential or a label. `detail` is optional and only
+     * keeps short scalars (counts, flags, ids) under identifier-shaped keys.
      */
     function appendAudit({ action, actor = null, operationId, outcome, via = null, forced = false, detail = null }) {
+        const counts = cleanDetail(detail);
         const entry = {
             version: AUDIT_VERSION,
             action: String(action),
@@ -153,7 +158,7 @@ function createJournal({ store, fs = nodeFs, now = () => new Date() }) {
             outcome: String(outcome),
             via,
             ...(forced ? { forced: true } : {}),
-            ...(cleanAuditDetail(detail) ? { detail: cleanAuditDetail(detail) } : {}),
+            ...(counts ? { detail: counts } : {}),
             at: now().toISOString(),
             reconciledAt: null
         };

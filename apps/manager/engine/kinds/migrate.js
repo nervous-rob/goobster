@@ -341,7 +341,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
             },
             steps: stepsFor(),
             result: scratch => scratch.result || null,
-            auditDetail: scratch => scratch.audit || null
+            auditDetail: (record, scratch) => scratch.audit || null
         };
     }
 
@@ -766,7 +766,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 }
             ],
             result: scratch => scratch.result || null,
-            auditDetail: scratch => scratch.audit || null
+            auditDetail: (record, scratch) => scratch.audit || null
         };
     }
 

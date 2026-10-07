@@ -693,6 +693,15 @@ async function listTables({ includeDerived = false } = {}) {
     return result.rows.map(row => row.name);
 }
 
+/**
+ * Postgres reclaims deleted rows through autovacuum on the server's own
+ * schedule; reset never runs VACUUM against a server it shares.
+ * @returns {Promise<{ compacted: boolean }>}
+ */
+async function compactStorage() {
+    return { compacted: false };
+}
+
 module.exports = {
     engine: 'postgres',
     getDb,
@@ -706,6 +715,7 @@ module.exports = {
     setReadOnly,
     describeStorage,
     listTables,
+    compactStorage,
     rawQuery,
     listenNotifications,
     notificationChannel,

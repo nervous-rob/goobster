@@ -4,6 +4,10 @@
  *
  *   goobster-manager install|adopt|reconfigure|repair|uninstall [options]
  *   goobster-manager plan <command> [options]      same as --dry-run
+ *   goobster-manager reset --scope instance|feature [--feature <id>] [--dry-run] [--confirm <text>]
+ *                                                 empty the installation's data (documentation/data_reset.md)
+ *   goobster-manager release [--force] [--acknowledge-mutation]
+ *                                                 lift a maintenance barrier a reset left up
  *   goobster-manager status | discover | schema
  *   goobster-manager migrate preflight|run|rollback|status [options]   SQLite -> Postgres (documentation/db_migration.md)
  *
@@ -53,7 +57,7 @@ const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
-const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'plan', 'status', 'discover', 'schema', 'migrate', 'help']);
+const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'help']);
 const MIGRATE_KIND = Object.freeze({ preflight: 'db.migrate.preflight', run: 'db.migrate', rollback: 'db.migrate.rollback' });
 const LOCAL_AUTH = Object.freeze({ principal: 'local:cli', via: 'local' });
 const MAX_ANSWERS_BYTES = 256 * 1024;
@@ -64,14 +68,18 @@ const INVALID_CODES = new Set([
     'PUBLIC_KEY_UNREADABLE', 'ROOT_NOT_MOVABLE', 'REPAIR_SOURCE_REQUIRED', 'NOT_AN_INSTALLATION', 'CANDIDATE_NOT_FOUND', 'RELEASE_MISMATCH',
     'MANIFEST_MISSING', 'MANIFEST_INVALID', 'SIGNATURE_MISSING', 'SIGNATURE_INVALID', 'UNSIGNED_DEV_ONLY', 'PATH_TRAVERSAL', 'LINK_ESCAPES_ROOT',
     'TARGET_MISMATCH', 'ABI_MISMATCH', 'INCOMPLETE', 'EXTRA_FILE', 'VERSION_INCOMPATIBLE', 'SELECTION_UNAVAILABLE', 'NOTHING_TO_ADOPT',
-    'ANSWERS_INVALID', 'ANSWERS_PERMISSIONS', 'ANSWERS_UNREADABLE', 'SECRET_ON_ARGV', 'USAGE', 'INPUT_ENDED', 'PROVISIONING_NOT_ALLOWED'
+    'ANSWERS_INVALID', 'ANSWERS_PERMISSIONS', 'ANSWERS_UNREADABLE', 'SECRET_ON_ARGV', 'USAGE', 'INPUT_ENDED', 'PROVISIONING_NOT_ALLOWED',
+    'BACKUP_REQUIRED', 'PASSPHRASE_REQUIRED', 'CORE_NOT_PURGEABLE'
 ]);
 const REFUSED_CODES = new Set([
     'OPERATION_IN_PROGRESS', 'OWNERSHIP_TAMPERED', 'UNKNOWN_SERVICE_OWNER', 'UPDATER_CONFLICT', 'STATE_NOT_ALLOWED', 'ALREADY_INSTALLED',
     'EXISTING_INSTALLATION', 'NOT_INSTALLED', 'NOT_MANAGED', 'PATH_ESCAPE', 'WORKERS_RUNNING', 'REVISION_CONFLICT', 'STORE_UNUSABLE',
     'ADOPT_NEEDS_CONFIRMATION', 'CONFIG_UNREADABLE', 'PLAN_EXPIRED',
     'ALREADY_POSTGRES', 'ALREADY_MIGRATED', 'MIGRATION_IN_PROGRESS', 'MIGRATION_STATE_UNREADABLE', 'MAINTENANCE_NOT_HELD', 'WRITER_UNACKNOWLEDGED',
-    'STALE_MAINTENANCE', 'PHASE_NOT_ALLOWED', 'NOTHING_TO_ROLL_BACK', 'POSTGRES_HAS_WRITES', 'ROLLBACK_FOREIGN_OBJECTS', 'PLAN_INPUT_LOST'
+    'STALE_MAINTENANCE', 'PHASE_NOT_ALLOWED', 'NOTHING_TO_ROLL_BACK', 'POSTGRES_HAS_WRITES', 'ROLLBACK_FOREIGN_OBJECTS', 'PLAN_INPUT_LOST',
+    'MAINTENANCE_ACTIVE', 'RESTART_PENDING', 'WRITER_UNFENCEABLE',
+    'FOREIGN_TARGET', 'FEATURE_ACTIVE', 'BACKUP_UNVERIFIED', 'BACKUP_FAILED', 'BACKUP_DESTINATION_UNSAFE', 'FILE_SET_UNSAFE',
+    'INSTANCE_RESET_REQUIRES_LOCAL', 'MUTATION_NOT_COMPLETE', 'FENCE_MISMATCH', 'MAINTENANCE_NOT_ACTIVE'
 ]);
 
 class CliError extends Error {
@@ -84,11 +92,14 @@ class CliError extends Error {
 }
 
 // ---------------------------------------------------------------- arguments
-const VALUE_FLAGS = new Set(['--answers', '--confirm']);
-const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h']);
+const VALUE_FLAGS = new Map([['--answers', 'answers'], ['--confirm', 'confirm'], ['--scope', 'scope'], ['--feature', 'feature'], ['--backup-dir', 'backupDir']]);
+const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '-y', '--delete-data', '--json', '--release', '--help', '-h', '--force', '--acknowledge-mutation']);
 
 function parseArgs(argv) {
-    const flags = { answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, release: false, sub: null, help: false };
+    const flags = {
+        answers: null, dryRun: false, yes: false, deleteData: false, confirm: null, json: false, release: false, sub: null, help: false,
+        scope: null, feature: null, backupDir: null, force: false, acknowledgeMutation: false
+    };
     const positional = [];
     for (let index = 0; index < argv.length; index++) {
         const arg = String(argv[index]);
@@ -103,13 +114,15 @@ function parseArgs(argv) {
         if (VALUE_FLAGS.has(name)) {
             const value = inline !== undefined ? inline : argv[++index];
             if (value === undefined || String(value).startsWith('--')) throw new CliError('USAGE', `${name} needs a value.`);
-            flags[name === '--answers' ? 'answers' : 'confirm'] = String(value);
+            flags[VALUE_FLAGS.get(name)] = String(value);
         } else if (BOOLEAN_FLAGS.has(name) && inline === undefined) {
             if (name === '--dry-run') flags.dryRun = true;
             else if (name === '--yes' || name === '-y') flags.yes = true;
             else if (name === '--delete-data') flags.deleteData = true;
             else if (name === '--json') flags.json = true;
             else if (name === '--release') flags.release = true;
+            else if (name === '--force') flags.force = true;
+            else if (name === '--acknowledge-mutation') flags.acknowledgeMutation = true;
             else flags.help = true;
         } else {
             throw new CliError('USAGE', `Unknown option ${name}. Try "help".`);
@@ -119,7 +132,7 @@ function parseArgs(argv) {
     if (command === 'plan') {
         flags.dryRun = true;
         command = positional.shift() || '';
-        if (!KIND_OF[command]) throw new CliError('USAGE', 'plan needs a command: install, adopt, reconfigure, repair or uninstall.');
+        if (!KIND_OF[command] && command !== 'reset') throw new CliError('USAGE', 'plan needs a command: install, adopt, reconfigure, repair, uninstall or reset.');
     }
     if (!COMMANDS.includes(command)) throw new CliError('USAGE', `Unknown command "${command}". Try "help".`);
     if (command === 'migrate') {
@@ -133,7 +146,10 @@ function parseArgs(argv) {
         throw new CliError('USAGE', '--release only applies to migrate.');
     }
     if (positional.length) throw new CliError('USAGE', 'Unexpected argument; values go in --answers or at the prompt.');
-    if (flags.confirm && !flags.deleteData && command !== 'migrate') throw new CliError('USAGE', '--confirm belongs to --delete-data.');
+    if (flags.confirm && !flags.deleteData && command !== 'reset' && command !== 'migrate') throw new CliError('USAGE', '--confirm belongs to --delete-data, reset or migrate.');
+    if ((flags.scope || flags.feature || flags.backupDir) && command !== 'reset') throw new CliError('USAGE', '--scope, --feature and --backup-dir belong to reset.');
+    if ((flags.force || flags.acknowledgeMutation) && command !== 'release') throw new CliError('USAGE', '--force and --acknowledge-mutation belong to release.');
+    if (flags.release && command !== 'migrate') throw new CliError('USAGE', '--release belongs to migrate.');
     if (flags.deleteData && command !== 'uninstall') throw new CliError('USAGE', '--delete-data only applies to uninstall.');
     return { command, flags };
 }
@@ -393,6 +409,28 @@ async function run(argv, io = {}) {
             });
         }
 
+        if (command === 'reset' || command === 'release') {
+            return await require('./cliReset').run({
+                command,
+                flags,
+                io,
+                fs,
+                baseEnv,
+                stdin,
+                stderr,
+                stdinIsInteractive: Boolean(stdin && stdin.isTTY) || Boolean(io.stdin),
+                out,
+                progress,
+                finish,
+                report,
+                secrets,
+                json,
+                prompter: null,
+                setPrompter: (value) => { prompter = value; },
+                cli: { CliError, EXIT, LOCAL_AUTH, loadAnswers, answersInput, createPrompter }
+            });
+        }
+
         // ---------- input
         let input = null;
         if (KIND_OF[command]) {
@@ -501,7 +539,9 @@ async function run(argv, io = {}) {
             progress(`${view.code}: ${view.message}`);
             for (const finding of view.findings || []) progress(`  ${finding.code}: ${finding.detail}`);
         }
-        if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
+        const resetNotice = report.command === 'reset' ? require('./cliReset').failureNotice(error) : null;
+        if (resetNotice) progress(resetNotice);
+        else if (code === EXIT.INTERRUPTED) progress('The operation stopped part way. Run the same command again to resume; finished steps are skipped.');
         if (report.command === 'migrate' && error && error.code === 'STALE_MAINTENANCE') {
             progress('Clear it with "migrate rollback --confirm <installationId> --release" (it releases a barrier this CLI left behind), then run again.');
         }
@@ -690,6 +730,10 @@ function usage() {
         '  repair       put the recorded release back at the recorded roots; data and config are kept',
         '  uninstall    remove the code; data is kept unless --delete-data --confirm <installationId>',
         '  plan <cmd>   the same as <cmd> --dry-run',
+        '  reset        empty the installation\'s data: --scope instance, or --scope feature --feature <id> (a dormant feature)',
+        '               --dry-run shows the exact scope; --confirm <installationId[:feature]>; --backup-dir <dir>; the backup passphrase',
+        '               comes from the answers file or a hidden prompt',
+        '  release      lift a maintenance barrier a reset left up: --force --acknowledge-mutation',
         '  status       what the manager store says (read only)',
         '  discover     list existing installations on this host (read only)',
         '  schema       print the answers-file JSON schema',
