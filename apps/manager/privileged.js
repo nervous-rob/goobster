@@ -11,7 +11,27 @@
 
 const { ManagerError } = require('./errors');
 
-const PRIVILEGED_OPERATIONS = Object.freeze(['service.register', 'service.unregister', 'package.install']);
+const PRIVILEGED_OPERATIONS = Object.freeze([
+    'service.register',
+    'service.unregister',
+    'package.install',
+    'updater.disable',
+    'user.create'
+]);
+
+/**
+ * The input each operation will take when #331-#333 implement it. Declared
+ * here so the install engine can say which of its steps need privilege and
+ * the bootstrappers know what to build; nothing validates or runs it yet.
+ * Values are names of settings, never a credential.
+ */
+const INPUT_SHAPES = Object.freeze({
+    'service.register': { kind: "'systemd'|'windows-service'|'launchd'", name: 'string', layout: "'lite'|'standalone'|'paired'", codeRoot: 'absolute path', runtimeUser: 'string' },
+    'service.unregister': { kind: "'systemd'|'windows-service'|'launchd'", name: 'string', registeredBy: "'installer'" },
+    'package.install': { names: 'string[] (system dependency names from the release manifest)' },
+    'updater.disable': { mechanism: "'systemd-timer'|'cron-system'", unit: 'string', codeRoot: 'absolute path' },
+    'user.create': { name: 'string', home: 'absolute path', system: 'boolean' }
+});
 
 function isPrivileged(name) {
     return PRIVILEGED_OPERATIONS.includes(name);
@@ -29,4 +49,4 @@ function describe() {
     return { operations: [...PRIVILEGED_OPERATIONS], implemented: false };
 }
 
-module.exports = { PRIVILEGED_OPERATIONS, isPrivileged, request, describe };
+module.exports = { PRIVILEGED_OPERATIONS, INPUT_SHAPES, isPrivileged, request, describe };

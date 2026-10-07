@@ -36,7 +36,8 @@ const ACTIONS = new Set([
     // (documentation/host_operations.md); `target` is the manager operation id,
     // `detail` names features and fields, never a value.
     'host.features.apply', 'host.config.apply', 'host.defaults.apply',
-    'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart'
+    'host.lifecycle.apply', 'host.lifecycle.restart_now', 'host.lifecycle.cancel', 'host.lifecycle.restart',
+    'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall'
 ]);
 
 /** Keys that must never be persisted even when a caller passes them. */
