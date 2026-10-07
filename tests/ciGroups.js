@@ -210,6 +210,7 @@ const GROUPS = [
             'lookupNotesArtifacts',
             'memoryVecIndex',
             'monologueService',
+            'operatorRunbooksDocs',
             'projectKnowledge',
             'researchBrief',
             'selfDocs',
