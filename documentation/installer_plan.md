@@ -316,7 +316,15 @@ Work, in order:
    `bootstrapStage.test.js`, `bootstrapCli.test.js`). `systemctl enable --now`
    on a real systemd, on x64 and arm64, is proven only by
    `.github/workflows/linux-bootstrap.yml`. Unsigned development builds only
-   (`-dev`); release signing keys are #341.
+   (`-dev`); release signing keys are #341. PR
+   [#367](https://github.com/nervous-rob/goobster/pull/367) (stacked on #366,
+   merging the B1 loader #364): SQLite full suite 284 suites / 5751 passed;
+   Postgres `core` 2377 and `portal` 1124 passed in isolated schemas; Playwright
+   250 passed; lint, smoke, docs and group inventory green; the `--no-systemd`
+   journey 29/29 against a payload rebuilt from the branch head; the rendered
+   unit passes `systemd-analyze verify`. A checkout unit keeps
+   `ProtectSystem=full` (the pre-installer Pi unit); a payload unit is `strict`
+   with `XDG_CACHE_HOME` pointed at the cache root.
 
 Acceptance: selective-installation tests prove an excluded feature's
 files, dependencies and frontend bundle are absent; Playwright journeys
