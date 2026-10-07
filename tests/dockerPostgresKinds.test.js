@@ -50,8 +50,10 @@ afterEach(async () => {
 }, 60000);
 
 afterAll(() => {
-    for (const dir of cleanups.roots || []) fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(ROOT, { recursive: true, force: true });
+    // A root that still holds a file another account made (a container's cluster directory) is left behind rather than failing the suite.
+    for (const dir of [...(cleanups.roots || []), ROOT]) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* not ours to delete */ }
+    }
 });
 
 /* ------------------------------------------------------------------- scripted */
@@ -1073,13 +1075,27 @@ realDocker('a real Docker daemon and a real pgvector container (GOOBSTER_DOCKER_
         const env = await setup({ real: true, workers: false });
         retireAfter(env);
         const dir = path.join(scratch('real-path'), 'pg');
+        // The cluster directory belongs to the container's postgres account (0700): this process, when it
+        // is not root, can stat it but not enter or delete it. The contents are read through the container
+        // and the directory is scrubbed through a throwaway one afterwards.
+        cleanups.push(async () => {
+            try { docker('run', '--rm', '-v', `${dir}:/scrub`, 'postgres:16', 'rm', '-rf', '/scrub/pgdata'); } catch { /* nothing was created */ }
+        });
+        const pgdata = () => { try { return fs.statSync(path.join(dir, 'pgdata')); } catch { return null; } };
         const { applied } = await provision(env, { port, storage: { kind: 'path', path: dir } });
         expect(applied.operation.status).toBe('applied');
-        expect(fs.existsSync(path.join(dir, 'pgdata', 'PG_VERSION'))).toBe(true);
+        expect(fs.statSync(dir).mode & 0o777).toBe(0o755);
+        expect(pgdata()).not.toBeNull();
+        expect(pgdata().isDirectory()).toBe(true);
+        expect(docker('exec', env.names().container, 'cat', '/var/lib/postgresql/data/pgdata/PG_VERSION').trim()).toBe('17');
         expect(await query(env, 'SELECT 1 AS one')).toEqual([{ one: 1 }]);
         expect(docker('inspect', '--format', '{{.State.Running}}', unrelated).trim()).toBe('true');
+        const before = pgdata();
         await createDockerService({ settings: env.settings }).retire({ installationId: env.installation().installationId, remove: true });
-        expect(fs.existsSync(path.join(dir, 'pgdata', 'PG_VERSION'))).toBe(true);
+        const after = pgdata();
+        expect(after).not.toBeNull();
+        expect(after.ino).toBe(before.ino);
+        expect(after.uid).toBe(before.uid);
     }, 900000);
 
     test('an interrupted setup over a volume is resumed: the half-made container and volume are ours and are replaced', async () => {
