@@ -227,7 +227,7 @@ describe('service.register: the machine job', () => {
         const file = path.join(mac.daemonDir, `${LABEL}.plist`);
         expect(result).toMatchObject({ outcome: 'done', detail: { unit: `${LABEL}.plist`, label: LABEL, scope: 'machine', written: true, active: 'running' } });
         expect(mac.commands()).toEqual([
-            `chown root:wheel -- ${file}`,
+            `chown root:wheel ${file}`,
             `launchctl print system/${LABEL}`,
             `launchctl enable system/${LABEL}`,
             `launchctl bootstrap system ${file}`,
@@ -498,7 +498,7 @@ describe('user.create', () => {
         const chowns = mac.argvOf('chown');
         expect(chowns.length).toBe(result.detail.roots);
         for (const args of chowns) expect(args.slice(0, 3)).toEqual(['-R', '-h', '_goobster:201']);
-        const targets = chowns.map(args => args[4]);
+        const targets = chowns.map(args => args[3]);
         expect(targets).toEqual(expect.arrayContaining([roots.data, roots.cache, roots.logs]));
         expect(targets).not.toContain(roots.code);
     });
