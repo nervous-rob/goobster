@@ -767,10 +767,19 @@ withAdmin('the whole journey against a real server', () => {
         expect(again.planned.plan.noop).toBe(true);
 
         const published = journalText(env) + JSON.stringify(planned) + JSON.stringify(applied) + JSON.stringify(apply);
-        for (const secret of [elevated.password, APP_PASSWORD]) expect(published).not.toContain(secret);
+        expect(published).not.toContain(APP_PASSWORD);
         const everything = everythingUnder(env.root);
         expect(everything).not.toContain(APP_PASSWORD);
-        if (elevated.password) expect(everything).not.toContain(elevated.password);
+        // The suite's administrative password may be an ordinary word (CI's role is
+        // goobster/goobster, and "goobster-current" is a schema state), so look for
+        // it where a leaked credential would sit: in a URL or a password field.
+        if (elevated.password) {
+            for (const text of [published, everything]) {
+                expect(text).not.toContain(`:${elevated.password}@`);
+                expect(text).not.toContain(`:${encodeURIComponent(elevated.password)}@`);
+                expect(text).not.toMatch(new RegExp(`"password"\\s*:\\s*"${elevated.password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+            }
+        }
         expect(environment.read(env.settings.storeDir).present).toBe(false);
         await admin.end();
     }, 180000);
