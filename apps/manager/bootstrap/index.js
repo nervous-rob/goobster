@@ -319,6 +319,9 @@ async function run(argv, io = {}) {
     const stderr = io.stderr || process.stderr;
     const fs = io.fs || nodeFs;
     const env = io.env || process.env;
+    // Whatever umask the installer inherited, nothing it creates may be group- or world-writable:
+    // the code root is read by a service account that must not be able to change it.
+    if (typeof process.umask === 'function') process.umask(process.umask() | 0o022);
     try {
         const args = parseArgs(argv);
         if (args.help) {
