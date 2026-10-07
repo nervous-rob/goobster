@@ -176,6 +176,92 @@ and the knowledge rows inside the Spitball router are claimed without
 splitting the router files. The test asserts every mounted route matches a
 rule and every rule matches a route.
 
+#### How the rules are enforced (#320)
+
+`packages/core/web/featureGate.js` is the one enforcement point; it reads
+`routeRules` (and `wsPaths`, and `staticAssets` for a GET no rule claims),
+never a list of its own.
+
+- Portal: one middleware, first in `createWebAppApp`, before the body parser
+  and every router. A request whose owner (or an `alsoRequires` feature) is
+  off answers 404 before any handler body runs. A signed-in caller gets
+  `{ "error": { "code": "FEATURE_UNAVAILABLE", ... }, "feature": "<id>" }`
+  (the portal's own error shape); everyone else gets the answer a missing
+  `/api/app` route gives, so availability cannot be probed without a session.
+  Matching mirrors Express: HEAD answers as GET, case and a trailing slash
+  do not matter.
+- Bot public server and api app (`/api/activity`, `/activity`, `/`,
+  `/api/webhooks/*`, `/api/screen/*`, `/companion*`, `/api/gba-run/*`,
+  `/internal/gateway/*`, the MCP path): the same rules in front of every
+  mount, answering `404 { "error": "FEATURE_UNAVAILABLE", "feature": "<id>" }`
+  with no reasons. A feature that is off at startup is also not built at all:
+  no `TableManager`/`BotPlayer`, no screen-vision or GBA session manager
+  enabled, no MCP app, no webhook, internal-gateway or Activity router.
+- WebSockets: an upgrade on an off owner's path is a plain 404 before the
+  Origin rule, session lookup or connection lease, for everyone. An open
+  socket whose owner goes off after `refresh()` gets one
+  `{ "type": "error", "code": "FEATURE_UNAVAILABLE", "feature": "<id>" }`
+  frame and a 1008 close on its next message (the portal sockets also on
+  their next idle recheck); the message never reaches the feature.
+- `GET /api/app/features` (signed-in, core) returns `features.status()`
+  with reason and warning codes only, for the portal UI.
+
+Enforcement follows the state file. With no usable `data/features.json`
+(or an unusable one) the installation behaves as before the catalog: a
+feature whose legacy switch is off is inactive in the resolver, but its
+routes keep the answer the existing code gives (an unmounted router, the
+MCP token routes that stay open so a token can be revoked, Discord login's
+`LOGIN_UNAVAILABLE`). A refusal is enforced when the state file is in force,
+when `GOOBSTER_FEATURE_<ID>` forces the owner off, or when a dependency is
+enforced off. The rule is `featureState.enforcedOff`, shared with the tool,
+MCP, command and step gates through `features/gate.js` (see
+`documentation/feature_state.md`, "Reported versus enforced").
+
+Ownership change made while wiring this: the portal's MCP token management
+(`GET /api/app/mcp`, `POST /api/app/mcp/tokens`, `DELETE
+/api/app/mcp/tokens/:id`) is `core`, not `mcp`. Revoking a token is a
+management action that must stay reachable when the MCP transport is off;
+the transport itself (`/mcp` on the bot and api servers, stdio) is `mcp`.
+
+#### Routes reachable with everything off
+
+With every optional feature off the following still answer, because their
+rules are owned by `core` (or they are not claimed because they are not
+routes of a feature):
+
+- The portal shell and its files: `/app`, `/app/assets/*`,
+  `/app/vendor/katex/*`, `/app/sw.js`, `/app/manifest.webmanifest`,
+  `/app/offline.html`, `/app/liveAudioWorklet.js`, `/app/icons/*`,
+  `/app/screenshots/*`, `/app/share-target`. The client bundle is not split
+  per feature in this phase (physical exclusion is P3.2): feature rooms are
+  hidden by the UI from `/api/app/features`, and their static files are only
+  gated where a mount is feature-owned (`/activity/*`, `/` as the Activity
+  client, `/companion*`).
+- `/api/app/config`, `/me`, `/features`, `/auth/*` except the three Discord
+  OAuth routes (`login`, `link/discord`, `callback`, owned by `discord`),
+  `/account/*`, `/admin/*` (limits, invites, accounts, installation, audit,
+  instance state), `/settings/*` including account export and erasure,
+  `/privacy/*`, `/memory/*`, `/inbox/*`, `/usage`, `/home`, `/graph`, `/chat`,
+  `/share`, `/files`, `/tasks`, `/integrations/*` (credential routes),
+  `/attention`, `/applets`, `/mtga`, `/parlor/*` (and its WebSocket
+  `/api/app/parlor/live`), `/conversation-context`, `/people`, `/friends`,
+  `/dm`, `/followed-sources`, `/tutorials`, `/tutorial-preferences` and the
+  `/api/app/events` stream.
+- `GET /health` (bot and api) and the panel's `/api/status`, `/system`,
+  `/ai/models`, `/api/guilds/:id/memory/*`. The panel runs on its own
+  loopback server and is not gated by this layer.
+
+Everything else is refused while its owner is off: `/api/app/projects*` and
+`/observatory*` (projects, with the run/render/job routes owned by
+observatory), `/spitball/*` (knowledge; lenses, expeditions, briefs and
+note evidence are expeditions), `/note-attachments*` (knowledge),
+`/exchange/*`, `/voice/*`, `/studio/*` (music), `/push*`, `/mcp*`, the
+Discord OAuth routes, public Observatory share links
+(`/app/observatory/share/*`), `/api/activity/*`, `/api/webhooks/github`,
+`/api/webhooks/cursor`, `/api/screen/*`, `/companion*`, `/api/gba-run/*`,
+`/internal/gateway/*` and `/mcp`. The sandbox runner (`POST /run`,
+`/cancel`) is a separate process and is not gated here.
+
 ### S1 - runtime steps, startup side effects, events and interactions
 
 `packages/core/runtime/coreRuntime.js` has twenty `step()` calls. Thirteen

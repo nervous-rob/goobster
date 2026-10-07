@@ -35,11 +35,22 @@ function claim(kind, identifier, method) {
     return found;
 }
 
-/** The first of owner, then alsoRequires, that is inactive; null when the surface is available. */
+/**
+ * The first of owner, then alsoRequires, that is enforced off; null when
+ * the surface is available. Enforcement (not raw `isActive`) is the rule at
+ * every surface: with no usable `features.json` nothing new is refused and
+ * the legacy switches keep deciding exactly as before; see
+ * `featureState.enforcedOff`.
+ */
 function blockingFeature(kind, identifier, method) {
     const { owner, alsoRequires } = claim(kind, identifier, method);
-    for (const id of [owner, ...alsoRequires]) {
-        if (!features.isActive(id)) return id;
+    return blockingAmong([owner, ...alsoRequires]);
+}
+
+/** The first id in the list that is enforced off; null when all are available. */
+function blockingAmong(ids) {
+    for (const id of ids) {
+        if (features.enforcedOff(id)) return id;
     }
     return null;
 }
@@ -72,5 +83,6 @@ module.exports = {
     GateError,
     surfaceActive,
     requireSurface,
-    unavailableResult
+    unavailableResult,
+    blockingAmong
 };

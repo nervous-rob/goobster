@@ -164,11 +164,19 @@ describe('turn abort (Stop button / watchdog)', () => {
 });
 
 describe('execute gating (defense in depth)', () => {
-    test('refuses when disabled, as the stable feature-unavailable result', async () => {
+    test('with no features.json the legacy switch keeps its own refusal (behaviour unchanged)', async () => {
         sandboxConfig.enabled = false;
         features.refresh();
         const out = await toolsRegistry.execute('runCode', { language: 'python', code: 'print(1)' });
+        expect(out).toMatch(/disabled/i);
+    });
+
+    test('refuses with the stable feature-unavailable result when the feature is enforced off', async () => {
+        sandboxConfig.enabled = true;
+        features._resetForTests({ env: { GOOBSTER_FEATURE_SANDBOX: '0' }, config: { sandbox: { enabled: true } } });
+        const out = await toolsRegistry.execute('runCode', { language: 'python', code: 'print(1)' });
         expect(out).toMatchObject({ ok: false, code: 'FEATURE_UNAVAILABLE', feature: 'sandbox' });
+        features._resetForTests();
     });
 
     test('the tool still refuses on its own when the feature state says active but the switch is off', async () => {

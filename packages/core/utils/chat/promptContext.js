@@ -445,7 +445,7 @@ function unavailableFeatureTitles() {
             if (!claim) continue;
             for (const id of [claim.owner, ...claim.alsoRequires]) withTools.add(id);
         }
-        return features.unavailable()
+        return features.enforcedUnavailable()
             .filter(entry => withTools.has(entry.id))
             .map(entry => catalog.get(entry.id)?.title)
             .filter(Boolean);

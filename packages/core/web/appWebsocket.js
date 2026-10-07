@@ -8,6 +8,7 @@
 const { WebSocketServer } = require('ws');
 const { parseCookies, SESSION_COOKIE } = require('./appHelpers');
 const { authorizeSession, authorizedChannel, reserveConnection } = require('./liveAuthorization');
+const featureGate = require('./featureGate');
 
 const LIVE_WS_MAX_PAYLOAD = 2 * 1024 * 1024;
 const LIVE_WS_HEARTBEAT_MS = 30 * 1000;
@@ -23,6 +24,7 @@ const LIVE_WS_PATHS = new Set(['/api/app/parlor/live', '/api/app/voice/live', '/
  */
 function attachWebAppWebSocket(server, ctx) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: LIVE_WS_MAX_PAYLOAD });
+    const features = ctx.features;
 
     server.on('upgrade', async (request, socket, head) => {
         let pathname;
@@ -39,6 +41,13 @@ function attachWebAppWebSocket(server, ctx) {
             } catch { /* already gone */ }
             socket.destroy();
         };
+
+        // Before origin, session or lease: an unavailable feature answers
+        // exactly like a path nobody serves, whoever asks.
+        if (featureGate.wsBlock(pathname, features)) {
+            featureGate.rejectUpgrade(socket);
+            return;
+        }
 
         const origin = request.headers.origin;
         if (origin) {
@@ -68,6 +77,11 @@ function attachWebAppWebSocket(server, ctx) {
 
         wss.handleUpgrade(request, socket, head, (ws) => {
             ws.authorize = async () => {
+                const blocking = featureGate.wsBlock(pathname, features);
+                if (blocking) {
+                    ws.unavailableFeature = blocking;
+                    return false;
+                }
                 if (!(await authorizeSession(ctx, token, session, () => ws.readyState === 1))) return false;
                 await lease.renew();
                 if (ws.authorizeResource) await ws.authorizeResource();
@@ -82,7 +96,22 @@ function attachWebAppWebSocket(server, ctx) {
         const emit = socket.emit.bind(socket);
         const closeSocket = socket.close.bind(socket);
         const close = revoked => {
-            if (revoked) { closeSocket(4001, 'Session or membership revoked'); socket.terminate(); }
+            if (!revoked) return;
+            if (socket.unavailableFeature) {
+                if (socket.unavailableAnswered) return;
+                socket.unavailableAnswered = true;
+                // The feature went away after this connection opened: one
+                // stable frame, a policy close, and no further delivery.
+                try {
+                    send(JSON.stringify(featureGate.unavailableFrame(socket.unavailableFeature)));
+                    closeSocket(featureGate.CLOSE_POLICY, featureGate.FEATURE_UNAVAILABLE);
+                } catch { /* already closing */ }
+                const grace = setTimeout(() => socket.terminate(), 1000);
+                grace.unref?.();
+                return;
+            }
+            closeSocket(4001, 'Session or membership revoked');
+            socket.terminate();
         };
         const output = authorizedChannel({ authorize: socket.authorize, write: send, close });
         const input = authorizedChannel({

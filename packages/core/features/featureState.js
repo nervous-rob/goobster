@@ -355,6 +355,36 @@ function createFeatureState(options = {}) {
         return catalog.FEATURE_IDS.filter(id => !isActive(id)).map(availability);
     }
 
+    /**
+     * Whether the execution surfaces must refuse `id` right now.
+     *
+     * `isActive` reports the effective value, which with no usable state
+     * file is today's legacy switch. The existing code already honours those
+     * switches in its own way (an unmounted router, a command that answers
+     * "not enabled", a token route that stays open on purpose), and the
+     * compatibility rule is that an installation without `features.json`
+     * behaves exactly as before. So a refusal is enforced only when the
+     * state file is in force, when `GOOBSTER_FEATURE_<ID>` forces the
+     * feature off, or when a hard dependency is itself enforced off.
+     * Adoption (the first write) turns enforcement on for every feature.
+     */
+    function enforcedOff(id, seen = new Set()) {
+        if (isActive(id)) return false;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        const entries = snapshot().entries;
+        if (!Object.prototype.hasOwnProperty.call(entries, id)) return true;
+        if (snapshot().loaded.parsed) return true;
+        return entries[id].reasons.some(reason =>
+            reason.code === 'ENV_OFF'
+            || (reason.code === 'DEPENDENCY_INACTIVE' && reason.dependency && enforcedOff(reason.dependency, seen)));
+    }
+
+    /** The features the surfaces refuse right now (a subset of `unavailable()`). */
+    function enforcedUnavailable() {
+        return catalog.FEATURE_IDS.filter(id => enforcedOff(id)).map(availability);
+    }
+
     function status() {
         const { loaded, entries } = snapshot();
         const features = {};
@@ -521,6 +551,8 @@ function createFeatureState(options = {}) {
         isActive,
         availability,
         unavailable,
+        enforcedOff: (id) => enforcedOff(id),
+        enforcedUnavailable,
         status,
         seedFromLegacy,
         freshPreset,

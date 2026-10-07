@@ -365,10 +365,10 @@ const routeRules = [
     { pattern: /^\/api\/app\/voice\//, owner: 'voice' },
     { pattern: /^\/api\/app\/studio\//, owner: 'music' },
     { pattern: /^\/api\/app\/push(?:\/|$)/, owner: 'push' },
-    { pattern: /^\/api\/app\/mcp(?:\/|$)/, owner: 'mcp' },
+    { pattern: /^\/api\/app\/mcp(?:\/|$)/, owner: 'core' },
     { method: 'GET', pattern: /^\/api\/app\/auth\/(?:login|link\/discord|callback)$/, owner: 'discord' },
 
-    { pattern: /^\/api\/app\/(?:config|me|auth|account|admin|settings)(?:\/|$)/, owner: 'core' },
+    { pattern: /^\/api\/app\/(?:config|me|features|auth|account|admin|settings)(?:\/|$)/, owner: 'core' },
     { pattern: /^\/api\/app\/(?:chat|share|files|tasks)(?:\/|$)/, owner: 'core' },
     { pattern: /^\/api\/app\/(?:usage|integrations|memory|graph|home|privacy|attention|applets|mtga)(?:\/|$)/, owner: 'core' },
     { pattern: /^\/api\/app\/parlor\//, owner: 'core' },
