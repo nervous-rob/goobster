@@ -6,7 +6,13 @@ name: Packaging proof
 # Node. The full recipe, the evidence it produces and what it cannot prove are
 # in documentation/packaging_proof.md.
 #
-# Not a release pipeline: nothing here is signed, notarized or published.
+# The `reduced` job (issue #328, linux-x64 only) builds feature-selected
+# payloads and proves exclusive code and dependencies are absent, the API
+# still answers, dormant data stays exportable and erasable, and a tampered
+# payload is refused (documentation/packaging.md).
+#
+# Not a release pipeline: nothing here is signed with a release key, notarized
+# or published. The minimal payload carries a throwaway development signature.
 # Artifacts are JSON reports and logs, never the payload itself (~320 MiB).
 
 on:
@@ -20,7 +26,15 @@ on:
     paths:
       - 'scripts/package-*'
       - 'scripts/lib/package*'
+      - 'scripts/lib/payload*'
+      - 'scripts/lib/requireGraph.js'
+      - 'scripts/lib/frontendChunks.js'
       - 'scripts/lib/nativeBinaryInfo.js'
+      - 'packages/core/features/**'
+      - 'tests/helpers/reducedPayloadProbe.js'
+      - 'tests/helpers/dormantSeed.js'
+      - 'tests/helpers/loadRecorder.js'
+      - 'apps/web/vite.config.ts'
       - '.github/workflows/packaging-proof.yml'
       - 'package.json'
       - 'package-lock.json'
@@ -273,3 +287,159 @@ jobs:
           path: ${{ runner.temp }}/goobster-payload/payload-manifest.json
           retention-days: 14
           if-no-files-found: ignore
+
+  reduced:
+    name: reduced payloads (linux-x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TARGET: linux-x64
+      PROFILES: minimal voice projects-sandbox
+    steps:
+      - name: Output locations (outside the checkout)
+        shell: bash
+        run: |
+          echo "WORK=$RUNNER_TEMP/goobster-reduced" >> "$GITHUB_ENV"
+          echo "REPORTS=$RUNNER_TEMP/goobster-reduced-reports" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      # minimal carries a throwaway development signature (the private key is
+      # generated in a temp dir and deleted; only the public key is kept in the
+      # reports); the other two are unsigned and verified in labelled dev mode.
+      - name: Build minimal, voice and projects+sandbox payloads
+        shell: bash
+        run: |
+          node scripts/package-runtime.js --profile minimal --dev-sign --out "$WORK/minimal" --report-dir "$REPORTS/minimal" --force
+          node scripts/package-runtime.js --features voice --out "$WORK/voice" --report-dir "$REPORTS/voice" --force
+          node scripts/package-runtime.js --features projects,sandbox --out "$WORK/projects-sandbox" --report-dir "$REPORTS/projects-sandbox" --force
+          for name in $PROFILES; do
+            test -z "$(find "$WORK/$name" -type l)" || { echo "::error::symlinks in the $name payload"; exit 1; }
+            test ! -e "$WORK/$name/app/node_modules/discord.js" || { echo "::error::discord.js shipped in the $name payload"; exit 1; }
+          done
+          test ! -e "$WORK/minimal/app/node_modules/@discordjs/voice" || { echo "::error::the voice stack shipped in the minimal payload"; exit 1; }
+          test -e "$WORK/voice/app/node_modules/@discordjs/voice" || { echo "::error::the voice payload lacks @discordjs/voice"; exit 1; }
+          test -d "$WORK/projects-sandbox/app/apps/sandbox" || { echo "::error::the projects+sandbox payload lacks the sandbox runner"; exit 1; }
+
+      # The dormant-data probe is a test helper, not payload code; it runs from
+      # outside the payload against the payload's own node_modules.
+      - name: Stage the dormant-data probe
+        shell: bash
+        run: |
+          mkdir -p "$WORK/probe"
+          cp tests/helpers/reducedPayloadProbe.js tests/helpers/dormantSeed.js tests/helpers/loadRecorder.js "$WORK/probe/"
+
+      - name: Smoke each payload in place and relocated, bundled runtime only
+        shell: bash
+        run: |
+          if PATH=/usr/bin:/bin command -v node >/dev/null 2>&1; then echo "::error::a system node is visible"; exit 1; fi
+          NAME="Goobster d$(printf '\303\244')ta $(printf '\303\251')"
+          failures=0
+          for name in $PROFILES; do
+            key=()
+            if [ "$name" = minimal ]; then key=(--public-key "$REPORTS/minimal/payload-dev-key-$TARGET.pub.pem"); fi
+            env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+              "$WORK/$name/runtime/bin/node" "$WORK/$name/app/scripts/package-smoke.js" "${key[@]}" \
+              --routes --dormant-probe "$WORK/probe" \
+              --report "$REPORTS/package-smoke-$name.json" > "$REPORTS/package-smoke-$name.log" 2>&1 || failures=$((failures + 1))
+            DEST="$RUNNER_TEMP/$NAME/$name copy"
+            mkdir -p "$DEST" && cp -a "$WORK/$name/." "$DEST/" && chmod -R a-w "$DEST"
+            env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+              "$DEST/runtime/bin/node" "$DEST/app/scripts/package-smoke.js" "${key[@]}" \
+              --routes --dormant-probe "$WORK/probe" --instance-dir "$RUNNER_TEMP/$NAME/$name instance" \
+              --report "$REPORTS/package-smoke-$name-relocated.json" > "$REPORTS/package-smoke-$name-relocated.log" 2>&1 || failures=$((failures + 1))
+            chmod -R u+w "$DEST"
+          done
+          if [ "$failures" -ne 0 ]; then echo "::error::$failures reduced smoke run(s) failed; see the reports artifact"; exit 1; fi
+
+      # Every probe runs the verifier shipped inside the pristine minimal
+      # payload against a damaged copy and must get the named refusal code.
+      - name: Tampered payloads are refused
+        shell: bash
+        run: |
+          NODE="$WORK/minimal/runtime/bin/node"
+          VERIFY="$WORK/minimal/app/scripts/lib/payloadStage.js"
+          KEY="$REPORTS/minimal/payload-dev-key-$TARGET.pub.pem"
+          T="$RUNNER_TEMP/goobster-tamper"
+          mkdir -p "$T"
+          failures=0
+          expect() {
+            label="$1"; want="$2"; shift 2
+            out="$("$NODE" "$VERIFY" verify "$@")" || true
+            got="$(printf '%s' "$out" | "$NODE" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(r.ok?"OK":r.code)})')"
+            printf '%s\t%s\t%s\n' "$label" "$want" "$got" | tee -a "$REPORTS/tamper.tsv"
+            [ "$got" = "$want" ] || { echo "::error::$label: wanted $want, got $got"; failures=$((failures + 1)); }
+          }
+          retarget='const fs=require("fs");const p=process.argv[1];const m=JSON.parse(fs.readFileSync(p));m.target={id:"win32-x64",platform:"win32",arch:"x64"};fs.writeFileSync(p,JSON.stringify(m))'
+
+          expect "pristine (signed)" OK "$WORK/minimal" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          cp -a "$WORK/minimal" "$T/flip"
+          "$NODE" -e 'const fs=require("fs");const p=process.argv[1];const b=fs.readFileSync(p);b[100]^=1;fs.writeFileSync(p,b)' "$T/flip/app/node_modules/@goobster/core/services/aiService.js"
+          expect "one byte flipped" INCOMPLETE "$T/flip" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          (cd "$WORK/minimal" && tar -cf "$T/payload.tar" payload-manifest.json payload-manifest.sig payload-selection.json runtime app bin)
+          truncate -s $(( $(stat -c %s "$T/payload.tar") / 2 )) "$T/payload.tar"
+          mkdir -p "$T/truncated" && { tar -xf "$T/payload.tar" -C "$T/truncated" 2>/dev/null || true; }
+          expect "truncated archive" INCOMPLETE "$T/truncated" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          cp -a "$WORK/voice" "$T/retarget"
+          "$NODE" -e "$retarget" "$T/retarget/payload-manifest.json"
+          expect "wrong target (unsigned, dev mode)" TARGET_MISMATCH "$T/retarget" --target "$TARGET" --abi 127 --dev
+
+          cp -a "$WORK/minimal" "$T/retarget-signed"
+          "$NODE" -e "$retarget" "$T/retarget-signed/payload-manifest.json"
+          expect "wrong target (signed)" SIGNATURE_INVALID "$T/retarget-signed" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          cp -a "$WORK/minimal" "$T/extra"
+          mkdir -p "$T/extra/app/node_modules/discord.js" && echo '{}' > "$T/extra/app/node_modules/discord.js/package.json"
+          expect "excluded dependency put back" EXTRA_FILE "$T/extra" --target "$TARGET" --abi 127 --public-key "$KEY"
+
+          expect "unsigned outside dev mode" UNSIGNED_DEV_ONLY "$WORK/voice" --target "$TARGET"
+          if [ "$failures" -ne 0 ]; then exit 1; fi
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const dir = process.env.REPORTS;
+            const rows = [];
+            for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).sort() : []) {
+              if (!/^package-smoke-.*\.json$/.test(file)) continue;
+              const r = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+              const check = name => (r.checks.find(c => c.name === name) || {}).status || "-";
+              rows.push(`| ${file} | ${r.verdict} | ${(r.features || []).join(", ")} | ${check("payload.verify")} | ${check("payload.exclusive-absence")} | ${check("payload.routes")} | ${check("payload.dormantData")} |`);
+            }
+            let out = "### reduced payloads (linux-x64)\n\n| report | verdict | features | verify | exclusive-absence | routes | dormant data |\n|---|---|---|---|---|---|---|\n" + (rows.join("\n") || "| (no smoke report) | - | - | - | - | - | - |") + "\n";
+            const tamper = path.join(dir, "tamper.tsv");
+            if (fs.existsSync(tamper)) out += "\n| tamper probe | expected | got |\n|---|---|---|\n" + fs.readFileSync(tamper, "utf8").trim().split("\n").map(line => `| ${line.split("\t").join(" | ")} |`).join("\n") + "\n";
+            for (const name of (process.env.PROFILES || "").split(" ")) {
+              const build = path.join(dir, name, `package-build-${process.env.TARGET}.json`);
+              if (!fs.existsSync(build)) continue;
+              const b = JSON.parse(fs.readFileSync(build, "utf8"));
+              out += `\n${name}: ${(b.sizeBytes.total / 1048576).toFixed(0)} MiB, ${b.fileCount} files; excluded ${b.excluded.files} files, ${b.excluded.dependencies} dependency dirs (${b.excluded.exclusiveDependencies.length} exclusive), ${b.excluded.chunks} chunks; signed ${b.signed}\n`;
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out);
+          '
+
+      - name: Upload reports and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-proof-reduced-linux-x64
+          path: ${{ runner.temp }}/goobster-reduced-reports
+          retention-days: 14
+          if-no-files-found: warn
