@@ -3595,7 +3595,7 @@ class ObservatoryService {
         const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = discord;
         let appUrl = null;
         try {
-            const publicUrl = require('../../../config.json').webapp?.publicUrl;
+            const publicUrl = require('../config/configJson').load().webapp?.publicUrl;
             if (typeof publicUrl === 'string' && publicUrl) {
                 appUrl = `${publicUrl.replace(/\/+$/, '')}/app/`;
             }

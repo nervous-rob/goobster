@@ -12,7 +12,7 @@ const {
 
 let config = {};
 try {
-    config = require('../../../../config.json');
+    config = require('../../config/configJson').load();
 } catch {
     // Config is optional at module load time (e.g. during tests)
 }

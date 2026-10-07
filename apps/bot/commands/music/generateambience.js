@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const AmbientService = require('@goobster/core/services/voice/ambientService');
 const { ProgressTracker } = require('@goobster/core/utils');
-const config = require('../../../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 
 module.exports = {
     data: new SlashCommandBuilder()
