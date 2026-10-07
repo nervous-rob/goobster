@@ -34,7 +34,11 @@ Without `--supervise` the manager behaves exactly as described in
 [manager.md](manager.md): it supervises nothing, and `lifecycle.apply`
 answers `409 NOT_SUPERVISING`. The supervision modules load only when
 supervising, so the plain boot path stays free of them
-(`tests/managerBoot.test.js`).
+(`tests/managerBoot.test.js`). On an **unclaimed** installation the
+workers start only once first-time setup claimed it: a worker would create
+the application database, and a manager that sees one is no longer
+unclaimed ([manager.md](manager.md) § States), so the bootstrap credential
+would stop working.
 
 | Variable | Meaning |
 |---|---|

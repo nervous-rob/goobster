@@ -377,8 +377,27 @@ describe('the Inbox notice', () => {
     });
 });
 
+function postClaim(port, credential) {
+    const payload = JSON.stringify({ credential, label: 'Rob' });
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            agent: false,
+            host: '127.0.0.1',
+            port,
+            method: 'POST',
+            path: '/manager/api/claim',
+            headers: { host: `127.0.0.1:${port}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
+        }, (res) => {
+            res.resume();
+            res.on('end', () => resolve(res.statusCode));
+        });
+        req.on('error', reject);
+        req.end(payload);
+    });
+}
+
 describe('/manager/api/status lifecycle', () => {
-    test('--supervise adds { supervising, layout, workers } and stop reaps the workers; without it the shape says not supervising', async () => {
+    test('--supervise waits for the claim on an unclaimed installation, then adds { supervising, layout, workers }; stop reaps the workers; without it the shape says not supervising', async () => {
         const root = newRoot();
         const fakes = createFakeWorkers();
         const out = { write() {}, isTTY: false };
@@ -389,7 +408,16 @@ describe('/manager/api/status lifecycle', () => {
             supervisorOptions: { adapter: fakes.adapter, checkHealth: fakes.checkHealth, policy: FAST_POLICY, sandboxActive: () => false }
         });
         try {
-            await waitFor(async () => (await supervised.manager.status()).lifecycle.workers[0]?.ackedRevision === 0, { what: 'ack' });
+            expect(supervised.supervisor).toBeNull();
+            expect((await supervised.manager.status()).lifecycle).toEqual({ supervising: false, layout: null, workers: [] });
+            await new Promise(resolve => setTimeout(resolve, 1200));
+            expect(fakes.procs).toHaveLength(0);
+            expect((await supervised.manager.status()).state).toBe('unclaimed');
+
+            const credential = fs.readFileSync(path.join(root, 'data', 'manager', 'bootstrap-credential'), 'utf8').trim();
+            expect(await postClaim(supervised.server.address().port, credential)).toBe(200);
+            await waitFor(async () => (await supervised.manager.status()).lifecycle.workers[0]?.ackedRevision === 0, { what: 'ack', timeoutMs: 5000 });
+            expect(supervised.supervisor).not.toBeNull();
             const status = await supervised.manager.status();
             expect(status.lifecycle).toMatchObject({ supervising: true, layout: 'standalone' });
             expect(status.lifecycle.workers).toEqual([expect.objectContaining({ name: 'api', state: 'running' })]);

@@ -24,6 +24,7 @@ const { createManagerApp } = require('./server');
 const extensions = require('./extensions');
 
 const RECONCILE_INTERVAL_MS = 60_000;
+const CLAIM_POLL_MS = 1000;
 
 const HELP = `Goobster manager
 
@@ -140,25 +141,47 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     }
 
     let supervision = null;
+    let supervisionStarting = null;
+    let claimWatch = null;
+    let stopping = null;
     const baseStatus = manager.status;
     manager.status = async () => ({
         ...(await baseStatus()),
         lifecycle: supervision ? supervision.supervisor.summary() : { supervising: false, layout: null, workers: [] }
     });
-    if ((flags.has('--supervise') || settings.supervise) && manager.storeReady) {
+    const beginSupervision = async () => {
         const { startSupervision } = require('./lifecycle');
         supervision = await startSupervision({ manager, logger, ...supervisorOptions });
         const view = supervision.supervisor.summary();
         logger.info(`[manager] supervising the ${view.layout || 'unknown'} layout: ${view.workers.map(w => w.name).join(', ') || 'no workers'}`);
+    };
+    if ((flags.has('--supervise') || settings.supervise) && manager.storeReady) {
+        if (manager.currentState().state === 'unclaimed') {
+            // A worker would create the application database, and an
+            // unclaimed manager that sees one is no longer claimable.
+            logger.info('[manager] the installation is unclaimed: the workers start once first-time setup claimed it.');
+            claimWatch = setInterval(() => {
+                if (stopping || manager.currentState().state === 'unclaimed') return;
+                clearInterval(claimWatch);
+                claimWatch = null;
+                supervisionStarting = beginSupervision().catch((error) => {
+                    logger.error(`[manager] supervision could not start: ${error && (error.code || error.name)}`);
+                });
+            }, CLAIM_POLL_MS);
+            claimWatch.unref();
+        } else {
+            await beginSupervision();
+        }
     } else if (flags.has('--supervise') || settings.supervise) {
         logger.error('[manager] not supervising: the manager store cannot be written.');
     }
 
-    let stopping = null;
     const stop = () => {
         if (stopping) return stopping;
         stopping = (async () => {
             if (timer) clearInterval(timer);
+            if (claimWatch) clearInterval(claimWatch);
+            if (supervisionStarting) await supervisionStarting;
             if (supervision) {
                 const result = await supervision.stop();
                 const forced = result.workers.filter(w => w.forced).map(w => w.name);
@@ -168,7 +191,13 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         })();
         return stopping;
     };
-    return { code: 0, server, manager, supervisor: supervision ? supervision.supervisor : null, stop };
+    return {
+        code: 0,
+        server,
+        manager,
+        get supervisor() { return supervision ? supervision.supervisor : null; },
+        stop
+    };
 }
 
 if (require.main === module) {
