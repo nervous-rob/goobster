@@ -105,6 +105,7 @@ const GROUPS = [
             'featureGatingRoutes',
             'featureGatingWebsocket',
             'featureGatingPortal',
+            'frontendChunks',
             'friendService',
             'markdownRenderer',
             'documentationWiki',
