@@ -5,7 +5,7 @@ Goobster requires proper configuration of Discord bot credentials, database conn
 
 ## Configuration File
 
-Create a `config.json` file in the root directory with the following structure:
+Create a `config.json` file in the root directory with the following structure. To keep it somewhere else (an installed layout, a container volume), set `GOOBSTER_CONFIG_PATH` to the file; every part of Goobster reads it through one shared loader (`packages/core/config/configJson.js`) that honours that variable. A missing file reads as an empty configuration; a file that exists but is not valid JSON is an error (`CONFIG_INVALID_JSON`) rather than being ignored.
 
 ```json
 {
@@ -179,3 +179,7 @@ npm install
 npm run deploy-commands
 npm start
 ``` 
+
+## Changing settings with the manager
+
+`apps/manager` can show where every setting comes from (environment, `config.json` or the database), write `config.json` safely (validated, atomic, owner-only, with a revision check), try a provider key before it is saved, and set the defaults new people inherit - all without the application database. The complete setting list is the generated `documentation/config_reference.md`; how the manager reads and changes them is `documentation/manager_configuration.md`.

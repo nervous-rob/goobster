@@ -423,8 +423,13 @@ The manager (`apps/manager`, #323/#324) will drive this through a
 built-ins only. They never import `packages/core`, the manager or an app,
 and `packages/core` never imports them.
 
-The wizard (#329) picks the features and shows `planChange` output. The
-bootstrappers (#331) carry the payload, call `verifyPayload` before
+The manager's install engine (#329, `documentation/manager_install.md`)
+calls `verifyPayload`, `stageSelection`, `activate` and `recoverInstall`
+through `apps/manager/install/release.js` (lazy, so a manager without a
+payload layer still starts) for `install.new`, `install.reconfigure` and
+`install.repair`, and refuses a payload that does not verify before it
+writes anything. It reads only a local payload directory; the network
+download is a named hook for the bootstrappers. The bootstrappers (#331) carry the payload, call `verifyPayload` before
 the first start, and register the service. Production signing keys are
 #341.
 

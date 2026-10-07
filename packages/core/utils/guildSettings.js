@@ -285,6 +285,36 @@ async function getGuildAI(guildId) {
 }
 
 /**
+ * The AI settings a turn in this scope actually uses: the scope's own
+ * overrides, then the instance defaults for whatever is unset
+ * (instanceDefaultsService.resolveChat: the default provider only when it
+ * is configured here, the default model only for the provider that wins),
+ * then the host's global default. `getGuildAI` stays the raw view so
+ * settings UIs can still tell "chosen" from "inherited".
+ * @param {string} guildId - guild id or `dm:<userId>` scope
+ * @returns {Promise<{provider: string|null, model: string|null, reasoningEffort: string|null,
+ *   providerSource: string, modelSource: string}>}
+ */
+async function getEffectiveAI(guildId) {
+    const raw = await getGuildAI(guildId);
+    try {
+        const instanceDefaults = require('../services/instanceDefaultsService');
+        const aiService = require('../services/aiService');
+        const defaults = await instanceDefaults.getCached();
+        const resolved = instanceDefaults.resolveChat(raw, defaults, {
+            configuredProviders: aiService.listProviders().filter(p => p.configured).map(p => p.key),
+            hostProvider: aiService.getProvider()
+        });
+        return { ...raw, provider: resolved.provider, model: resolved.model,
+            providerSource: resolved.providerSource, modelSource: resolved.modelSource };
+    } catch (error) {
+        console.error('Error resolving instance AI defaults:', error.message);
+        return { ...raw, providerSource: raw.provider ? 'user-override' : 'host-default',
+            modelSource: raw.model ? 'user-override' : 'provider-default' };
+    }
+}
+
+/**
  * Sets per-guild AI overrides. Pass null values to clear back to defaults.
  * @param {string} guildId - The Discord guild ID
  * @param {Object} settings - { provider, model, reasoningEffort } (all optional)
@@ -617,6 +647,7 @@ module.exports = {
     getMonologueMode,
     setMonologueMode,
     getGuildAI,
+    getEffectiveAI,
     setGuildAI,
     getMemoryRetentionDays,
     setMemoryRetentionDays,
