@@ -122,6 +122,20 @@ describe('update.apply, the manager and its workers in one process', () => {
         expect(w.responder.requests.some(request => request.type === 'resume')).toBe(true);
     });
 
+    test('another maintenance operation holding the barrier stops the update before anything changes, and is left held', async () => {
+        const w = await world();
+        const { harness } = w;
+        const barrier = require('@goobster/manager/maintenance/barrier').createBarrier({ settings: harness.settings, fs, now: () => new Date(), logger: console });
+        barrier.begin({ operationId: 'restore-in-progress', actor: 'local:cli', via: 'local', reason: 'restore' });
+        const before = snapshot(path.join(harness.code, 'current'));
+        expect(await codeOf(apply(harness))).toBe('MAINTENANCE_ACTIVE');
+        expect(snapshot(path.join(harness.code, 'current'))).toBe(before);
+        expect(barrierOf(harness)).toMatchObject({ active: true, operationId: 'restore-in-progress' });
+        expect(update(harness, 'staged')).not.toBeNull();
+        expect(update(harness, 'handoff')).toBeNull();
+        expect(record(harness).release.version).toBe('2.4.0');
+    });
+
     test('with no data in the database there is no backup to take and the step says so', async () => {
         const w = await world({ child: { hasData: false } });
         const { applied } = await apply(w.harness);
