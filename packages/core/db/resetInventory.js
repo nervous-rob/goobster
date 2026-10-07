@@ -385,9 +385,10 @@ function dormantRootSegments() {
  * @param {Object} [options]
  * @param {string} [options.dataDir]
  * @param {string} [options.cacheDir]
+ * @param {string[]} [options.extraRoots] further roots the installation owns (for example a separate uploads root)
  * @param {string} [options.schemaSql]
  */
-function buildInventory({ dataDir = runtimePaths.dataDir, cacheDir = runtimePaths.cacheDir, schemaSql } = {}) {
+function buildInventory({ dataDir = runtimePaths.dataDir, cacheDir = runtimePaths.cacheDir, extraRoots = [], schemaSql } = {}) {
     const parsed = schemaSql === undefined ? loadSchema() : parseSchema(schemaSql);
     const order = deletionOrder(parsed);
     const byName = new Map();
@@ -400,6 +401,7 @@ function buildInventory({ dataDir = runtimePaths.dataDir, cacheDir = runtimePath
     return Object.freeze({
         dataDir,
         cacheDir,
+        allowedRoots: Object.freeze([dataDir, cacheDir, ...extraRoots].filter(Boolean)),
         tables: order.map(name => byName.get(name)),
         byName,
         order,
@@ -629,15 +631,25 @@ function countTree(target) {
     return { files, bytes };
 }
 
+function isInside(parent, child) {
+    const rel = path.relative(parent, child);
+    return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+}
+
 /**
  * Throw when a file set could take something that is never in scope: a
- * protected path inside it, or equal to it.
+ * set outside the installation's own roots, or one that contains (or is) a
+ * protected path.
  * @param {Array<{ id: string, path: string }>} sets
  * @param {string[]} protectedPaths
+ * @param {string[]} [allowedRoots] when given, every set must lie strictly inside one of these
  */
-function assertFileSetsSafe(sets, protectedPaths) {
+function assertFileSetsSafe(sets, protectedPaths, allowedRoots = null) {
     for (const set of sets) {
         const root = path.resolve(set.path);
+        if (allowedRoots && !allowedRoots.filter(Boolean).some(allowed => isInside(path.resolve(allowed), root))) {
+            throw new ResetPlanError('FILE_SET_UNSAFE', `The file set "${set.id}" is outside this installation's data roots; reset was refused.`, { set: set.id });
+        }
         for (const protectedPath of protectedPaths.filter(Boolean)) {
             const other = path.resolve(protectedPath);
             if (other === root || other.startsWith(root + path.sep)) {
