@@ -13,7 +13,8 @@
  *   fallbackFileName     the definition written to `<manager store>/` when
  *                        registration falls back to the operator's hands
  *   installedFileName(name)   the file the service manager keeps for `name`
- *   installedPath(name)       that file's absolute path (the ownership record)
+ *   installedPath(name, { roots })   that file's absolute path (the ownership record); a kind that keeps
+ *                        its definition inside the installation (the manager store) reads the roots
  *   render(params)       the service definition text: { name, installationId,
  *                        runtimeUser, codeRoot, roots, layout, mode, nodePath }
  *   manualInstructions({ codeRoot, mode, nodePath, unitFile })

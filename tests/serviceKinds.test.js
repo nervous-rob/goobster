@@ -36,7 +36,7 @@ function fakeWindowsKind() {
         serviceName: 'goobster',
         fallbackFileName: 'goobster-service.xml',
         installedFileName: (name) => `${name}.xml`,
-        installedPath: (name) => `/ProgramData/Goobster/${name}.xml`,
+        installedPath: (name, { roots }) => `${roots.managerStore}/service/${name}.xml`,
         render: ({ name, installationId, runtimeUser, codeRoot, mode }) => `<service id="${name}" marker="${installationId}" account="${runtimeUser}" code="${codeRoot}" mode="${mode}"/>\n`,
         manualInstructions: ({ codeRoot, unitFile }) => ({ foreground: `"${codeRoot}\\current\\bin\\goobster-manager" --supervise`, boot: [`sc.exe create goobster from ${unitFile}`], unitFile }),
         statusCommand: 'sc.exe query goobster',
@@ -144,7 +144,7 @@ describe('the install steps follow the kind definition', () => {
         expect(runner.calls[0].input).toMatchObject({ kind: 'windows-service', name: 'goobster', runtimeUser: 'goobster', codeRoot: harness.code, mode: 'payload' });
         expect(runner.calls[0].input).not.toHaveProperty('nodePath');
         const record = serviceRecord.readRecord(harness.settings.storeDir);
-        expect(record.services).toEqual([expect.objectContaining({ kind: 'windows-service', name: 'goobster', unitPath: '/ProgramData/Goobster/goobster.xml', registeredBy: 'installer' })]);
+        expect(record.services).toEqual([expect.objectContaining({ kind: 'windows-service', name: 'goobster', unitPath: `${harness.settings.storeDir}/service/goobster.xml`, registeredBy: 'installer' })]);
         expect(harness.manager.store.readInstallation().doc.owned.services).toEqual([{ kind: 'windows-service', name: 'goobster', registeredBy: 'installer' }]);
         expect(applied.result.service).toMatchObject({ registered: true, kind: 'windows-service', unit: 'goobster.xml', runtimeUser: 'goobster' });
     });

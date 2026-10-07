@@ -113,7 +113,7 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
         } catch { }
     }
 
-    function recordRegistration(def, ctx, doc) {
+    function recordRegistration(def, ctx, doc, t) {
         if (!doc.owned.services.some(item => item.kind === def.kind && item.name === def.serviceName)) {
             ctx.store.updateInstallation(draft => ({
                 ...draft,
@@ -123,7 +123,7 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
         serviceRecord.recordRegistered(storeDir(), {
             kind: def.kind,
             name: def.serviceName,
-            unitPath: def.installedPath(def.serviceName),
+            unitPath: def.installedPath(def.serviceName, { roots: rootsOf(t.roots) }),
             installationId: doc.installationId
         }, { now, fs });
     }
@@ -184,7 +184,7 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
                 warnings.push('ROOTS_ENV_NOT_WRITTEN');
             }
         }
-        recordRegistration(def, ctx, doc);
+        recordRegistration(def, ctx, doc, t);
 
         if (wantUser) {
             const created = await core.runPrivileged('user.create', {
