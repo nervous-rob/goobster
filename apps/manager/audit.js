@@ -30,6 +30,7 @@ const MANAGER_AUDIT_ACTIONS = Object.freeze([
     'manager.maintenance.enter', 'manager.maintenance.release',
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
     'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
+    'manager.database.docker.provision', 'manager.database.docker.start', 'manager.database.docker.stop', 'manager.database.docker.repair', 'manager.database.docker.reconfigure',
     'manager.data.reset',
     'manager.backup.create', 'manager.backup.restore',
     'manager.privileged.service.register', 'manager.privileged.service.unregister', 'manager.privileged.user.create',

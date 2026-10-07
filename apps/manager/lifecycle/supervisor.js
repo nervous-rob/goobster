@@ -47,6 +47,8 @@ const DEFAULT_POLICY = Object.freeze({
     lockWaitMs: 30_000,
     lockRetryMs: 250,
     conflictRetryMs: 5_000,
+    databaseWaitMs: 60_000,
+    databasePollMs: 1000,
     drainSeconds: coreLifecycle.DRAIN_BOUND_SECONDS,
     stopTimeoutMs: null
 });
@@ -226,6 +228,16 @@ function createSupervisor({
         return readDoc().current;
     }
 
+    /** A Docker database this manager owns must answer before a worker starts into it (documentation/docker_postgres.md); any other installation passes at once. */
+    async function databaseGate() {
+        if (policy.databaseGate) return policy.databaseGate();
+        try {
+            return await require('../docker/readiness').createReadiness({ settings, fs, now, logger }).waitReady({ timeoutMs: policy.databaseWaitMs, pollMs: policy.databasePollMs });
+        } catch {
+            return { owned: false, ready: true, code: null, reason: null };
+        }
+    }
+
     /**
      * Start one worker at `revision`. Resolves once the process is spawned
      * (or refused); readiness is watched separately.
@@ -263,6 +275,15 @@ function createSupervisor({
         }
 
         noteWorkerStart({ storeDir: settings.storeDir, fs, now });
+
+        const database = await databaseGate();
+        if (!database.ready) {
+            slot.state = 'conflict';
+            slot.lastCode = database.code;
+            logger.warn?.(`[manager] the Docker database is not ready (${database.reason}); not starting ${worker.name} until it answers`);
+            if (!slot.hold) slot.timer = later(() => launch(slot, { revision: currentRevision() }), policy.conflictRetryMs);
+            return generation;
+        }
 
         if (await checkHealth(worker.healthUrl)) {
             slot.state = 'conflict';

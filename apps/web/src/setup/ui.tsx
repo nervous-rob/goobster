@@ -115,6 +115,9 @@ const STEP_LABEL: Record<string, string> = {
     record: 'Update the record', 'retire-old': 'Retire the old version', 'unregister-service': 'Unregister the service',
     archive: 'Write the archive', maintenance: 'Hold maintenance (the application stops writing)', backup: 'Safety backup of what is there now',
     mutate: 'Replace the data', cutover: 'Restart onto the restored data', release: 'Release maintenance',
+    'docker-postgres': 'Set up the PostgreSQL in Docker', create: 'Create the network, storage and container', 'wait-healthy': 'Wait until the database answers',
+    provision: 'Create the application role and database', start: 'Start the container', stop: 'Stop the container', repair: 'Recreate the container over the same data',
+    recreate: 'Recreate the container over the same data', 'update-url': 'Point the connection at the new port',
     tombstone: 'Leave a marker', 'remove-code': 'Remove the program files', 'remove-data': 'Remove the data', 'remove-ownership': 'Remove the record'
 };
 

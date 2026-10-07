@@ -26,6 +26,10 @@ function Facts({ rows, testId }: { rows: Array<[string, ReactNode]>; testId?: st
 export function describeDatabase(plan: InstallOperation['plan']): ReactNode {
     const engine = plan.target?.database?.engine;
     if (engine === 'sqlite') return 'SQLite, one file in the data folder';
+    if (engine === 'postgres' && (plan as { dockerDatabase?: unknown }).dockerDatabase) {
+        const docker = (plan as { dockerDatabase: { names?: { container?: string; volume?: string }; request?: { port?: number; bind?: string } } }).dockerDatabase;
+        return <span data-testid="plan-database-docker">PostgreSQL in Docker, created by the installer: container <code>{docker.names?.container}</code> on <code>{docker.request?.bind}:{docker.request?.port}</code> <span className="hint">(kept when you uninstall, unless you ask otherwise)</span></span>;
+    }
     if (engine === 'postgres') {
         const target = (plan as { databaseTarget?: Target }).databaseTarget;
         return <span data-testid="plan-database-postgres">PostgreSQL on a server you run: <code>{where(target)}</code> <span className="hint">(never deleted by Goobster)</span></span>;

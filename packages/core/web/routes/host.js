@@ -32,7 +32,8 @@ const { createHostManagerClient, HostManagerError, PROBE_TIMEOUT_MS, INSTALL_TIM
 const BASE = '/api/app/admin/host';
 const INSTALL_KINDS = Object.freeze(['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall']);
 const MAINTENANCE_KINDS = Object.freeze(['backup.create', 'backup.restore', 'data.reset']);
-const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect']);
+const DOCKER_DATABASE_KINDS = Object.freeze(['database.docker.provision', 'database.docker.start', 'database.docker.stop', 'database.docker.repair', 'database.docker.reconfigure']);
+const DATABASE_KINDS = Object.freeze(['database.provision', 'database.schema.apply', 'database.connect', ...DOCKER_DATABASE_KINDS]);
 const KINDS = Object.freeze(['features.set', 'config.set', 'defaults.set', 'lifecycle.apply', ...INSTALL_KINDS, ...MAINTENANCE_KINDS, ...DATABASE_KINDS]);
 const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'features.set': 'host.features.apply',
@@ -48,7 +49,8 @@ const AUDIT_ACTION_FOR_KIND = Object.freeze({
     'data.reset': 'host.reset.apply',
     'database.provision': 'host.database.apply',
     'database.schema.apply': 'host.database.apply',
-    'database.connect': 'host.database.apply'
+    'database.connect': 'host.database.apply',
+    ...Object.fromEntries(DOCKER_DATABASE_KINDS.map(kind => [kind, 'host.database.apply']))
 });
 const LIFECYCLE_ACTIONS = Object.freeze({
     'restart-now': 'host.lifecycle.restart_now',
@@ -388,6 +390,17 @@ function mountHost(app, ctx, h) {
         return clean(result.body || {}, 0, 8);
     }));
 
+    /**
+     * The Docker database's daemon check and what the manager owns (documentation/docker_postgres.md).
+     * Read only; the optional `storage` is the absolute directory whose free space is reported.
+     */
+    app.get(`${BASE}/docker/status`, ...guard, route(async (req) => {
+        const storage = req.query && req.query.storage;
+        if (storage !== undefined && (typeof storage !== 'string' || storage.length > 1024)) throw fail(400, 'INVALID_INPUT', '"storage" must be an absolute directory path.');
+        const query = storage === undefined ? '' : `?storage=${encodeURIComponent(storage)}`;
+        return clean(await managerJson(req, 'GET', `/manager/api/docker/status${query}`, undefined, { timeoutMs: PROBE_TIMEOUT_MS }), 0, 8);
+    }));
+
     // --- Preview ----------------------------------------------------------------
 
     function featuresInput(input) {
@@ -570,9 +583,31 @@ function mountHost(app, ctx, h) {
                 database: plan.to ? { database: plan.to.database, schema: plan.to.schema, tls: (plan.to.tls && plan.to.tls.mode) || null } : null,
                 schema: (result && result.schema) || null
             };
+        // Resource names and counts only: no port, address, user, path, URL or password.
+        case 'database.docker.provision':
+            return {
+                operation: 'docker.provision',
+                names: dockerNames(plan),
+                mode: plan.mode || null,
+                done: (result && result.provisioned) === true
+            };
+        case 'database.docker.start':
+        case 'database.docker.stop':
+        case 'database.docker.repair':
+        case 'database.docker.reconfigure':
+            return {
+                operation: operation.kind.replace('database.', ''),
+                names: dockerNames(plan),
+                effect: plan.effect || null
+            };
         default:
             return {};
         }
+    }
+
+    function dockerNames(plan) {
+        const names = plan && plan.names && typeof plan.names === 'object' ? plan.names : {};
+        return { container: names.container || null, volume: names.volume || null, network: names.network || null };
     }
 
     app.post(`${BASE}/operations/:id/apply`, ...guard, route(async (req) => {
@@ -687,6 +722,7 @@ module.exports = {
     INSTALL_KINDS,
     MAINTENANCE_KINDS,
     DATABASE_KINDS,
+    DOCKER_DATABASE_KINDS,
     HOST_SWITCHES,
     GAMBLING_ATTESTATION_TEXT,
     KEEPS_DATA

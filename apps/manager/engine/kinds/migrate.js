@@ -34,6 +34,7 @@ const { createChildRunner } = require('../../migration/runChild');
 const { createMigrationState } = require('../../migration/state');
 const { validateOnTarget } = require('../../migration/validation');
 const { lazy } = require('../../lazy');
+const dockerOwned = require('../../docker/owned');
 
 // The manager boots with no database code loaded (tests/managerBoot.test.js): these load on first use.
 const targetLib = lazy('@goobster/core/db/migration/target');
@@ -58,7 +59,8 @@ function invalid(message) {
     return new ManagerError(400, 'INVALID_INPUT', message);
 }
 
-function parseTarget(value) {
+function parseTarget(value, context = null) {
+    if (context && dockerOwned.isRef(value)) value = { url: dockerOwned.stagedUrl(context.settings, context.fs) };
     exactKeys(value, new Set(['url']), '"target"');
     const url = textField(value.url, 'target.url', { max: 2048 });
     let description;
@@ -80,7 +82,7 @@ function parseMaintenance(value) {
 
 function parseMigrateInput(input, { fs, settings }) {
     exactKeys(input, new Set(['target', 'backup', 'provision', 'confirm', 'maintenance', 'expectedRevision', 'roots', 'release']));
-    const target = parseTarget(input.target);
+    const target = parseTarget(input.target, { settings, fs });
     exactKeys(input.backup, new Set(['dir', 'passphrase', 'skipConfig']), '"backup"');
     const skipConfig = parseBoolean(input.backup.skipConfig, 'backup.skipConfig', false);
     const dir = absolutePath(input.backup.dir, 'backup.dir');
@@ -186,7 +188,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
         allowed: preflightAllowed,
         plan(input, ctx) {
             exactKeys(input, new Set(['target']));
-            const target = parseTarget(input.target);
+            const target = parseTarget(input.target, { settings, fs });
             const doc = core.ownedInstall(ctx, { requireManaged: false });
             return {
                 plan: {

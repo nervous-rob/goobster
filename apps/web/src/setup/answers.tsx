@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { FieldDraft } from '../rooms/host/FieldControl';
-import { EMPTY_DATABASE, type DatabaseAnswer } from './database/model';
+import { EMPTY_DATABASE, EMPTY_DOCKER, type DatabaseAnswer } from './database/model';
 
 /**
  * Everything the person has typed in the wizard. Non-secret answers are kept
@@ -69,7 +69,7 @@ function load(key: string): Answers {
             ...parsed,
             roots: { ...EMPTY_ANSWERS.roots, ...(parsed.roots || {}) },
             owner: { ...EMPTY_OWNER, ...(parsed.owner || {}), password: '', repeat: '' },
-            database: { ...EMPTY_DATABASE, ...(parsed.database || {}), password: '' },
+            database: { ...EMPTY_DATABASE, ...(parsed.database || {}), docker: { ...EMPTY_DOCKER, ...(parsed.database?.docker || {}) }, password: '' },
             fields: parsed.fields || {},
             instanceDefaults: parsed.instanceDefaults || {},
             reenter: Array.isArray(parsed.reenter) ? parsed.reenter : []

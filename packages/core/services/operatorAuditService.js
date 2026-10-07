@@ -39,6 +39,8 @@ const ACTIONS = new Set([
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall',
     'manager.maintenance.enter', 'manager.maintenance.release',
     'manager.db.migrate.preflight', 'manager.db.migrate', 'manager.db.migrate.rollback',
+    'manager.database.provision', 'manager.database.schema.apply', 'manager.database.connect',
+    'manager.database.docker.provision', 'manager.database.docker.start', 'manager.database.docker.stop', 'manager.database.docker.repair', 'manager.database.docker.reconfigure',
     'manager.data.reset',
     'manager.lifecycle.start', 'manager.lifecycle.stop',
     'manager.owner.create',

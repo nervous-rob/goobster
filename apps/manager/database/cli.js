@@ -8,6 +8,7 @@
  *   database schema      database.schema.apply
  *   database connect     database.connect: point this installation at the server
  *   database status      the connection in effect, the engine, whether SQLite is empty
+ *   database docker ...  the PostgreSQL instance the installer owns in Docker (apps/manager/docker/cli.js)
  *
  * Secrets never come from argv (cli.js refuses any `--...password...` flag).
  * The application role's password comes from the answers file (mode 0600),
@@ -27,7 +28,7 @@ const { databaseStatus } = require('./state');
 const { createBarrier } = require('../maintenance/barrier');
 const input = require('./input');
 
-const SUBCOMMANDS = Object.freeze(['test', 'provision', 'schema', 'connect', 'status']);
+const SUBCOMMANDS = Object.freeze(['test', 'provision', 'schema', 'connect', 'status', 'docker']);
 const DEFINITION = Object.freeze({ test: 'database-test', provision: 'database-provision', schema: 'database-schema', connect: 'database-connect' });
 const KIND = Object.freeze({ provision: 'database.provision', schema: 'database.schema.apply', connect: 'database.connect' });
 const PASSWORD_FILE = 'GOOBSTER_DB_PASSWORD_FILE';
@@ -163,6 +164,8 @@ async function run(c) {
 async function runInner(c) {
     const { sub, flags, fs, io, env, out, progress, secrets, finish, json, makePrompter, cli } = c;
 
+    if (sub === 'docker') return require('../docker/cli').run(c);
+
     if (sub === 'status') {
         const settings = resolveSettings(env, { fs });
         const manager = createManager({ settings, fs, logger: { info() {}, warn() {}, error() {} } });
@@ -183,7 +186,7 @@ async function runInner(c) {
     let given;
     if (flags.answers) {
         given = cli.answersInput(cli.loadAnswers(flags.answers, fs), 'database', fs, DEFINITION[sub]);
-        if (given.connection && given.connection.password === undefined && env[PASSWORD_FILE]) {
+        if (given.connection && !given.connection.owned && given.connection.password === undefined && env[PASSWORD_FILE]) {
             given = { ...given, connection: { ...given.connection, password: readSecretFile(env[PASSWORD_FILE], { fs, cli, name: PASSWORD_FILE }) } };
         }
         if (given.elevated && given.elevated.password === undefined && env[ELEVATED_PASSWORD_FILE]) {

@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
 import { api } from '../../lib/api';
-import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus } from '../../lib/types';
+import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus } from '../../lib/types';
 import { managerRequest } from '../api';
 import { useTransport } from '../transport';
 
 export type DatabaseApi = {
     test: (connection: DatabaseConnectionBody) => Promise<DatabaseReport>;
     status: () => Promise<DatabaseStatus>;
+    dockerStatus: (storage?: string) => Promise<DockerStatus>;
 };
 
 /**
@@ -19,10 +20,12 @@ export function useDatabaseApi(): DatabaseApi {
     return useMemo<DatabaseApi>(() => (transport.mode === 'manager'
         ? {
             test: (connection) => managerRequest<DatabaseReport>('/database/test', { method: 'POST', body: { connection } }),
-            status: () => managerRequest<DatabaseStatus>('/database/status')
+            status: () => managerRequest<DatabaseStatus>('/database/status'),
+            dockerStatus: (storage) => managerRequest<DockerStatus>(`/docker/status${storage ? `?storage=${encodeURIComponent(storage)}` : ''}`)
         }
         : {
             test: (connection) => api.hostDatabaseTest(connection),
-            status: () => api.hostDatabaseStatus()
+            status: () => api.hostDatabaseStatus(),
+            dockerStatus: (storage) => api.hostDockerStatus(storage)
         }), [transport.mode]);
 }

@@ -5,8 +5,8 @@
  * Detects a source checkout with `data/goobster.sqlite` (manual), the
  * Raspberry Pi layout of `scripts/install-rpi.sh`, a PM2 app, a Docker
  * compose project and a payload install (`current/payload-manifest.json`).
- * It reads files and runs four read-only commands from a closed list
- * (`systemctl show`, `crontab -l`, `pm2 jlist`, `docker compose ls`); it
+ * It reads files and runs five read-only commands from a closed list
+ * (`systemctl show`, `crontab -l`, `pm2 jlist`, `docker compose ls`, and a label-filtered `docker ps`); it
  * writes nothing, installs nothing and never adopts what it finds - an
  * operator names one candidate to `adopt`.
  */
@@ -33,7 +33,8 @@ const READS = Object.freeze({
     'systemctl-timer': ['systemctl', ['show', UPDATE_TIMER, '--property=LoadState,ActiveState,UnitFileState']],
     crontab: ['crontab', ['-l']],
     'pm2-jlist': ['pm2', ['jlist']],
-    'docker-compose-ls': ['docker', ['compose', 'ls', '--all', '--format', 'json']]
+    'docker-compose-ls': ['docker', ['compose', 'ls', '--all', '--format', 'json']],
+    'docker-owned-databases': ['docker', ['ps', '--all', '--filter', 'label=io.goobster.manager=1', '--filter', 'label=io.goobster.role=postgres', '--format', '{{json .}}']]
 });
 
 /** @returns {(name: keyof typeof READS) => string|null} stdout, or null when the command is absent or fails */
@@ -193,6 +194,35 @@ function composeProjects(exec, fs) {
     return out;
 }
 
+/**
+ * Docker Postgres containers this manager created (documentation/docker_postgres.md),
+ * recognised by their labels alone: a report, not a candidate (a database is not an
+ * installation, and the paired compose detection above is unchanged).
+ */
+function ownedDatabases(exec) {
+    let text;
+    try {
+        text = exec('docker-owned-databases');
+    } catch {
+        return [];
+    }
+    if (!text) return [];
+    const out = [];
+    for (const line of String(text).split('\n')) {
+        let row;
+        try {
+            row = line.trim() ? JSON.parse(line) : null;
+        } catch {
+            row = null;
+        }
+        if (!row || typeof row.Names !== 'string') continue;
+        const labels = String(row.Labels || '');
+        const match = /(?:^|,)io\.goobster\.installation=([0-9a-f-]{36})(?:,|$)/i.exec(labels);
+        out.push({ container: row.Names.split(',')[0], installationId: match ? match[1].toLowerCase() : null, state: String(row.State || '') });
+    }
+    return out;
+}
+
 function addEvidence(candidate, ...codes) {
     for (const code of codes) if (!candidate.evidence.includes(code)) candidate.evidence.push(code);
 }
@@ -204,7 +234,7 @@ function addEvidence(candidate, ...codes) {
  * @param {Object} [options.env]
  * @param {string[]} [options.searchRoots] directories to look in besides the defaults
  * @param {(name: string) => string|null} [options.exec] read-only command runner (tests)
- * @returns {{ candidates: Array<Object>, searched: number }}
+ * @returns {{ candidates: Array<Object>, searched: number, dockerDatabases: Array<{ container: string, installationId: string|null, state: string }> }}
  */
 function discover({ fs = nodeFs, home = os.homedir(), env = process.env, searchRoots = [], exec = defaultExec } = {}) {
     const byRoot = new Map();
@@ -319,7 +349,7 @@ function discover({ fs = nodeFs, home = os.homedir(), env = process.env, searchR
         });
     }
     candidates.sort((a, b) => (a.roots.code < b.roots.code ? -1 : 1));
-    return { candidates, searched: seen.size };
+    return { candidates, searched: seen.size, dockerDatabases: ownedDatabases(exec) };
 }
 
 module.exports = { discover, candidateId, defaultExec, READS, MARKER_FILE, SERVICE_UNIT, UPDATE_TIMER };

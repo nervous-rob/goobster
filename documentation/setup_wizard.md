@@ -71,10 +71,16 @@ the page; nothing on the machine changes until the review.
    **Test connection**, an optional **Prepare the server** panel (an
    administrator's credential used once; the ticked actions only) and a
    read-only note of where the data is stored. Continue unlocks when a test of
-   exactly the current settings says the server can be used. A server the
-   installer would set up itself (Docker or a native package) is listed and
-   disabled with the sentence "Available in a later version of this
-   installer". See [database_connection.md](database_connection.md).
+   exactly the current settings says the server can be used. **PostgreSQL in Docker
+   (managed by this installer)** is enabled only after the Docker check
+   passes; otherwise it is disabled and the reason is shown next to it.
+   Choosing it shows the check, the port, listen address and storage form and
+   a preview of the container, volume and network names that will be created;
+   passwords are generated and never shown. A server the installer would set
+   up as a native package is listed and disabled with the sentence "Available
+   in a later version of this installer". See
+   [database_connection.md](database_connection.md) and
+   [docker_postgres.md](docker_postgres.md).
 6. **Defaults**: the installation's and the assistant's names, and what a
    new person inherits. The defaults are saved right after the database is
    created.
@@ -259,10 +265,11 @@ manager operation.
 
 ## What is not here yet
 
-- **A PostgreSQL server the installer sets up itself** (a Docker container
-  or a native package): shown, disabled, with "Available in a later version
-  of this installer". An existing server is supported
-  ([database_connection.md](database_connection.md)).
+- **A PostgreSQL server the installer installs as a native package**: shown,
+  disabled, with "Available in a later version of this installer". An
+  existing server ([database_connection.md](database_connection.md)) and a
+  Docker container the installer manages
+  ([docker_postgres.md](docker_postgres.md)) are supported.
 - **Registering Goobster as a service** from the page. On Linux the
   bootstrapper registers a systemd service as part of the install
   ([linux_install.md](linux_install.md)) and the finished page says whether it did
@@ -297,4 +304,6 @@ the barrier released again, the instance scope pointing at the command line,
 the migration status and a preflight whose URL is not retained, and a member
 refused by the Host proxies. `e2e/databaseWizard.spec.js` drives the Database
 step, the Database journeys and the Host Database page (the PostgreSQL parts
-only when a server is configured).
+only when a server is configured). `e2e/dockerPostgres.spec.js` drives the
+Docker choice (disabled with the reason, enabled with the form and preview)
+and the Host card against a fake `docker` executable.

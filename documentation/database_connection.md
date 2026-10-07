@@ -1,7 +1,7 @@
 ---
 title: Choosing SQLite or PostgreSQL and connecting to an existing server (installer P4.5)
 kind: reference
-summary: How the installer helps choose between SQLite and PostgreSQL by workload (no user-count thresholds), the connection form for an existing PostgreSQL server (host, port, database, schema, user, password, TLS mode, CA file), the read-only database test (reachability, server and driver versions, sign-in, privileges, extensions, schema compatibility, TLS outcome, verdict), the three operation kinds database.provision, database.schema.apply and database.connect, the cutover rules (a fresh install, an empty SQLite file, an existing PostgreSQL database, and why a SQLite database that holds data goes to the migration), where the connection is stored and what is never stored, the setup wizard step, the Database maintenance journey and Host page, the CLI, the audit actions, failure remediation, and what is not done here (Docker or native PostgreSQL provisioning, server bind and storage edits, cluster tuning, server major upgrades, reverse migration).
+summary: How the installer helps choose between SQLite and PostgreSQL by workload (no user-count thresholds), the connection form for an existing PostgreSQL server (host, port, database, schema, user, password, TLS mode, CA file), the read-only database test (reachability, server and driver versions, sign-in, privileges, extensions, schema compatibility, TLS outcome, verdict), the three operation kinds database.provision, database.schema.apply and database.connect, the cutover rules (a fresh install, an empty SQLite file, an existing PostgreSQL database, and why a SQLite database that holds data goes to the migration), where the connection is stored and what is never stored, the setup wizard step, the Database maintenance journey and Host page, the CLI, the audit actions, failure remediation, and how a Docker instance the installer owns plugs in (documentation/docker_postgres.md), and what is not done here (native PostgreSQL provisioning, server bind and storage edits, cluster tuning, server major upgrades, reverse migration).
 when: Choosing a database engine for a new installation; connecting an installation to a PostgreSQL server you already run; testing a connection; preparing a server (role, database, schema, extensions) with an administrative credential; applying or updating Goobster's schema on a server; explaining why a connection change was refused; reading the Database page or the database CLI; changing the probe, the provisioning actions, the connect operation or the install answer.
 tags: [installer, manager, postgres, sqlite, connection, wizard, provisioning, schema, tls, host-room, cli]
 ---
@@ -16,8 +16,9 @@ read-only inspector of the migration (`packages/core/db/migration/inspect.js`,
 engine ([manager.md](manager.md)).
 
 **What it is not.** It does not install, start or configure a PostgreSQL
-server: a server the installer would set up itself (a Docker container or a
-native package) is listed in the chooser as "Available in a later version of
+server of its own: a PostgreSQL in Docker that the installer creates and owns
+is [docker_postgres.md](docker_postgres.md) (#339, an explicit choice), and a
+native package is listed in the chooser as "Available in a later version of
 this installer". It does not edit anything about a server that belongs to
 someone else: not its data directory, the address it listens on, its port, its
 memory settings or its other databases. It never moves data between engines
@@ -233,6 +234,21 @@ server can be used (a changed field makes the earlier result stale). The
 review shows the server (host, database, user; never the password) and the
 install creates Goobster's tables in it.
 
+### PostgreSQL in Docker (#339)
+
+A third source next to "an existing server": **PostgreSQL in Docker (managed
+by this installer)**. The chooser enables it only after the Docker check
+passes (otherwise it is disabled with the reason and the remedy). The
+`database` answer of `install.new` takes `docker: { port, bind, storage, ... }`
+instead of `connection` (give one, not both) and the install gains a
+`docker-postgres` step. The kinds `database.docker.provision|start|stop|
+repair|reconfigure`, the generated passwords, the digest-pinned image, the
+`io.goobster.*` labels and the uninstall scopes are in
+[docker_postgres.md](docker_postgres.md). The connection of such an instance
+is made with `database.connect` and `{ "connection": { "owned": "docker" } }`:
+it reuses the staged application URL, so the connect, the cutover rules and the
+barrier are exactly those of this page.
+
 ### Maintenance: Database
 
 The Installation page (manager's own page: **Installation → Database…**, test
@@ -245,6 +261,10 @@ already owns, safe to repeat) and **PostgreSQL server upgrade** (the server
 itself moving to a newer major version: the administrator's job, outside
 Goobster; see [postgres_setup.md](postgres_setup.md#upgrading-the-server)).
 It also lists what to do for each way the database can fail.
+
+When the installer owns a Docker database, the page also shows it (status,
+health, image, storage, port, **Start**, **Stop**, **Repair**, **Use it for
+this installation…**).
 
 **Connect to a PostgreSQL server…** runs the form, the test, the optional
 preparation, the review (`database.connect`'s plan: from, to, what is left
@@ -259,6 +279,7 @@ node apps/manager/cli.js database provision --answers prov.json
 node apps/manager/cli.js database schema --answers conn.json
 node apps/manager/cli.js database connect --answers conn.json [--release]
 node apps/manager/cli.js database status
+node apps/manager/cli.js database docker status|provision|start|stop|repair|reconfigure   # docker_postgres.md
 ```
 
 `conn.json` is `{ "connection": { "host": "...", "port": 5432, "database":
@@ -306,4 +327,7 @@ connecting again with the new one; the old connection stays in use until then.
 schema comparison, provisioning), `tests/databaseKinds.test.js` (the three
 kinds and the install answer, engine parity), `tests/databaseRoutes.test.js`
 (status and test routes, the Host proxies), and the browser journeys in
-`e2e/databaseWizard.spec.js`.
+`e2e/databaseWizard.spec.js`. The Docker instance has its own specs
+(`tests/dockerDaemon.test.js`, `tests/dockerPostgresKinds.test.js`,
+`tests/dockerPostgresRoutes.test.js`, `e2e/dockerPostgres.spec.js`;
+[docker_postgres.md](docker_postgres.md#tests)).

@@ -273,6 +273,15 @@ schema…** over the same journey the manager's own page runs
   audit row `host.database.apply` with counts and names (the action ids, the
   database and schema), never a connection, a password or an elevated
   credential.
+- `GET /api/app/admin/host/docker/status` (#339): the Docker check and the
+  PostgreSQL container the manager owns (names, state, health, image, port,
+  storage), read only; `?storage=<absolute path>` adds the free space there.
+  `POST /operations` also accepts `database.docker.provision`, `.start`,
+  `.stop`, `.repair` and `.reconfigure`; applying one writes
+  `host.database.apply` with the kind and resource names only (no host, port,
+  user, URL or password). The page shows the instance and runs the same
+  journey as the manager's own page
+  (`documentation/docker_postgres.md`).
 
 ## Maintenance: backup, restore, reset, migration (#337)
 
