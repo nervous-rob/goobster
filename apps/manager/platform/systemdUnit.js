@@ -157,7 +157,7 @@ function renderUnit({ name, installationId = null, runtimeUser, codeRoot, roots,
     lines.push('[Service]');
     lines.push('Type=simple');
     lines.push(`User=${runtimeUser}`);
-    lines.push(`WorkingDirectory=${quote(codeRoot)}`);
+    lines.push(`WorkingDirectory=${codeRoot}`);
     lines.push(`ExecStart=${quote(execStartFor({ codeRoot, mode, nodePath }))} ${quote(scriptFor({ codeRoot, mode }))} --supervise`);
     lines.push('Restart=on-failure');
     lines.push('RestartSec=10');

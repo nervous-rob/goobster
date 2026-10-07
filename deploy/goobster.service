@@ -1,6 +1,14 @@
 # Goobster systemd service (Raspberry Pi / any Linux)
 #
-# Install:
+# This is the unit the installer renders for a source working copy at the
+# documented Raspberry Pi paths (apps/manager/platform/systemdUnit.js; the
+# test in tests/linuxService.test.js keeps this file identical to that
+# output). The installer-registered unit for a release payload differs only
+# in its paths and carries an X-Goobster-Installation marker, which is how
+# the installer recognises (and never touches anything but) its own unit.
+# A unit copied by hand has no marker: the installer treats it as yours.
+#
+# Install by hand:
 #   sudo cp deploy/goobster.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now goobster
@@ -8,7 +16,7 @@
 # Logs:
 #   journalctl -u goobster -f            (or see logs/goobster.log)
 #
-# Adjust User/WorkingDirectory/ExecStart paths to match your install location.
+# Adjust User/WorkingDirectory/ExecStart/ReadWritePaths to match your install.
 #
 # The unit runs the installation manager, which supervises the workers of
 # this installation's layout (lite: the bot; standalone: the api; paired:
@@ -22,6 +30,11 @@
 # manager stops each worker (stop new work, at most 45 s of in-flight work,
 # then 15 s to exit, then SIGKILL to its process group). TimeoutStopSec
 # covers that with room to spare before systemd kills what is left.
+#
+# ProtectSystem=strict makes the whole file system read-only except the
+# ReadWritePaths below (the working copy). A tool the application starts that
+# writes elsewhere (a cache under the home directory, say) needs its path
+# added there, or a drop-in: sudo systemctl edit goobster.
 
 [Unit]
 Description=Goobster (installation manager and its workers)
@@ -32,7 +45,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/goobster
-ExecStart=/usr/bin/node apps/manager/index.js --supervise
+ExecStart="/usr/bin/node" "/home/pi/goobster/apps/manager/index.js" --supervise
 Restart=on-failure
 RestartSec=10
 KillMode=mixed
@@ -43,23 +56,30 @@ TimeoutStopSec=120
 MemoryMax=1G
 CPUWeight=80
 
-# Hardening
+# Hardening: the service writes its own mutable roots and nothing else.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
-ReadWritePaths=/home/pi/goobster
+ProtectSystem=strict
+ReadWritePaths="/home/pi/goobster"
 
-Environment=NODE_ENV=production
-Environment=GOOBSTER_SUPERVISOR=systemd
+Environment="NODE_ENV=production"
+Environment="GOOBSTER_SUPERVISOR=systemd"
+Environment="GOOBSTER_RUNTIME_MODE=lite"
+Environment="GOOBSTER_WORKSPACE_ROOT=/home/pi/goobster"
+Environment="GOOBSTER_DATA_DIR=/home/pi/goobster/data"
+Environment="GOOBSTER_CONFIG_PATH=/home/pi/goobster/config.json"
+Environment="GOOBSTER_CACHE_DIR=/home/pi/goobster/cache"
+Environment="GOOBSTER_LOG_DIR=/home/pi/goobster/logs"
+Environment="GOOBSTER_MANAGER_STATE_DIR=/home/pi/goobster/data/manager"
+
+[Install]
+WantedBy=multi-user.target
 
 # Legacy: run the bot directly, without the manager (existing installs that
 # have not moved over yet). Replace the ExecStart/KillMode/TimeoutStopSec
 # lines above with these. Exit code 75 still restarts the bot because of
 # Restart=on-failure, but nothing performs a staged restart.
 #
-#   ExecStartPre=/usr/bin/node apps/bot/deploy-commands.js
-#   ExecStart=/usr/bin/node apps/bot/index.js
+#   ExecStartPre=/usr/bin/node /home/pi/goobster/apps/bot/deploy-commands.js
+#   ExecStart=/usr/bin/node /home/pi/goobster/apps/bot/index.js
 #   TimeoutStopSec=75
-
-[Install]
-WantedBy=multi-user.target

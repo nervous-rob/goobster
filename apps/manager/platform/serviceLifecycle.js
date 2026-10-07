@@ -51,8 +51,8 @@ function rootsOf(roots) {
 /** What an operator types to run the supervisor in the foreground, and to start it at boot by hand. */
 function manualInstructions({ codeRoot, mode, nodePath, unitFile }) {
     const foreground = mode === 'payload'
-        ? `${codeRoot}/current/bin/goobster-manager --supervise`
-        : `${nodePath} ${codeRoot}/apps/manager/index.js --supervise`;
+        ? `${shellQuote(`${codeRoot}/current/bin/goobster-manager`)} --supervise`
+        : `${shellQuote(nodePath)} ${shellQuote(`${codeRoot}/apps/manager/index.js`)} --supervise`;
     return {
         foreground,
         boot: [
@@ -228,7 +228,12 @@ function createServiceLifecycle({ core, settings, fs = nodeFs, now = () => new D
 
     /** The `unregister-service` step body: only what the record names, only a unit with our marker. */
     async function unregister(record, ctx, { enabled }) {
-        if (!enabled) return { status: 'skipped', code: 'NOT_REQUESTED' };
+        if (!enabled) {
+            try {
+                rootsEnv.removeRootsEnv(record.plan.target.roots.code, fs);
+            } catch { }
+            return { status: 'skipped', code: 'NOT_REQUESTED' };
+        }
         const read = ctx.store.readInstallation();
         const doc = read.status === 'ok' ? read.doc : null;
         const owned = doc ? doc.owned.services.filter(item => item.registeredBy === 'installer' && item.kind === 'systemd') : [];
