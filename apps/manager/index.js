@@ -71,6 +71,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
         // The overlay's connection must also select the facade the manager's own audit reconciliation opens.
         env.GOOBSTER_DB_URL = settings.dbUrl;
     }
+    if (installDeps) settings.installDeps = installDeps;
 
     if (flags.has('--mint-bootstrap') || flags.has('--mint-recovery') || flags.has('--status')) {
         const manager = createManager({ settings, logger, extraKinds: extensions.kinds });
