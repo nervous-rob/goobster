@@ -499,9 +499,10 @@ Work:
    `goobster-manager database native ...`, the Database step option, the
    instance card on the Database page and the Host proxy. Unit, route and
    Playwright tests run the real helper as an ordinary user inside a fake machine
-   (`tests/helpers/fakeNative.js`); real-distro verification is a CI matrix
-   (Ubuntu 24.04 x86-64 and arm64, Debian 12 and Rocky Linux 9 containers) that
-   is proposed in the PR. Not built here: Windows and macOS native services,
+   (`tests/helpers/fakeNative.js`); `.github/workflows/native-postgres.yml`
+   runs `scripts/native-postgres-real-distro.js` on Ubuntu 24.04 (x86-64 and
+   arm64) and in Debian 12 and Rocky Linux 9 containers, and nothing has run on
+   a real distribution before that workflow's first run. Not built here: Windows and macOS native services,
    PostgreSQL major upgrades, backup scheduling, and moving the data directory
    from the wizard (it is a CLI journey). See
    [native_postgres.md](native_postgres.md).

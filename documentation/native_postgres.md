@@ -459,12 +459,17 @@ The unit tests drive the real helper as an ordinary user inside a throwaway
 "machine" of fake programs (`apt-get`, `dnf`, `pg_createcluster`, `pg_ctlcluster`,
 `pg_lsclusters`, `psql`, `systemctl`, …; `tests/helpers/fakeNative.js`), so they
 prove what the installer asks the system to do and what it does with the answers.
-They do not prove the distribution's behaviour. A real-distro job belongs in CI
-(Ubuntu 24.04 on x86-64 and arm64, a Debian 12 container and a Rocky Linux 9
-container) and checks, for each: a fresh provision beside an existing `main`
-cluster, a custom data directory, a port conflict resolved by the next port, stop
-and start, repair, a relocation, removal keeping the data and then removing it, and
-that the pre-existing cluster is unchanged byte for byte.
+They do not prove the distribution's behaviour. That is the job of
+`.github/workflows/native-postgres.yml`, which runs
+`scripts/native-postgres-real-distro.js` as root on Ubuntu 24.04 (x86-64, and
+arm64 where the repository has such runners), in a Debian 12 container without
+systemd and in a Rocky Linux 9 container with systemd as PID 1. On each it
+checks: a fresh provision beside an existing `main` cluster, a custom data
+directory, a port conflict refused with the next port proposed, stop and start,
+repair, a relocation, removal keeping the data and then removing it, and that
+the pre-existing cluster's configuration and identity are unchanged. The journey
+runs on a pull request that touches the native code and on `main`; its first
+run is the first time any of this has met a real distribution.
 
 ## Risks and limits
 
