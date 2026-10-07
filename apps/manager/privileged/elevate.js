@@ -17,9 +17,14 @@
  *
  * The platform module (`./linux.js`, and its siblings for the other platforms)
  * supplies what differs per platform: `elevation()` (how to start the helper
- * with rights), `manualCommand()`, `serviceFacts()` (is the service manager
- * there and running) and `HELPER_FILES` (the files the elevated process runs,
- * for the manifest check). The defaults below are the Linux ones.
+ * with rights: `{ kind, prefix, reason? }`, `kind` 'root' when already there,
+ * 'none' when there is no way), `manualCommand()`, `serviceFacts()` (is the
+ * service manager there and running), `HELPER_FILES` (the files the elevated
+ * process runs, for the manifest check), and optionally `transport()` (when
+ * the elevation tool cannot pass stdin/stdout: the request and the reply go
+ * through files under the request directory; `helper.js --request <file>
+ * --reply <file>` reads and writes them) and `refusal()` (how that tool says
+ * the operator declined). The defaults below are the Linux ones.
  */
 
 const nodeFs = require('node:fs');
@@ -181,8 +186,12 @@ async function runHelper({ operation, input, implementation, env = process.env, 
         const verdict = verifyHelperFiles({ payloadRoot, nodePath, fs, files: Array.isArray(implementation.HELPER_FILES) ? implementation.HELPER_FILES : HELPER_FILES });
         if (!verdict.ok) return { status: 'failed', code: 'HELPER_UNVERIFIED', message: 'The helper or the runtime does not match the release manifest; it was not started.', log: [] };
     }
-    const argv = [...plan.prefix, nodePath, helperPath];
-    const result = await spawnHelper({ argv, request, spawn, timeoutMs });
+    // The transport: stdin/stdout by default; a platform whose elevation cannot pass a pipe
+    // (UAC, an administrator prompt) supplies `transport()` and carries the request and the
+    // reply in files under the request directory instead.
+    const result = typeof implementation.transport === 'function'
+        ? await implementation.transport({ plan, request, nodePath, helperPath, requestDir, spawn, fs, env, timeoutMs: timeoutMs || HELPER_TIMEOUT_MS })
+        : await spawnHelper({ argv: [...plan.prefix, nodePath, helperPath], request, spawn, timeoutMs });
     const reply = protocol.parseReply(result.stdout, operation);
     const allowed = allowedPathsOf(checked);
     if (reply && reply.ok) {
@@ -192,7 +201,11 @@ async function runHelper({ operation, input, implementation, env = process.env, 
         return { status: 'failed', code: reply.code, message: scrubLines([reply.message], allowed)[0], log: scrubLines(reply.log, allowed), via: plan.kind };
     }
     if (result.spawnError) return { status: 'fallback', reason: 'ELEVATION_UNAVAILABLE', detail: { why: result.spawnError } };
-    if (plan.kind === 'sudo' || plan.kind === 'pkexec') {
+    if (typeof implementation.refusal === 'function') {
+        // The platform reads its own elevation tool's way of saying no (a dismissed prompt, a policy).
+        const refused = implementation.refusal({ plan, status: result.status, stderr: result.stderr || '' });
+        if (refused) return { status: 'fallback', reason: refused.reason || 'ELEVATION_REFUSED', detail: { via: plan.kind, ...(refused.detail || {}) } };
+    } else if (plan.kind === 'sudo' || plan.kind === 'pkexec') {
         const refused = plan.kind === 'pkexec' ? [126, 127].includes(result.status) : /password is required|not allowed|may not run|no tty present/i.test(result.stderr);
         if (refused) return { status: 'fallback', reason: 'ELEVATION_REFUSED', detail: { via: plan.kind } };
     }

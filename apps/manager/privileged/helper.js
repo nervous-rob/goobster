@@ -3,6 +3,7 @@
  * The privileged helper (documentation/linux_install.md, "Elevation").
  *
  *   sudo -n <node> apps/manager/privileged/helper.js   < request.json
+ *   <node> apps/manager/privileged/helper.js --request <file> --reply <file>   (file transport)
  *
  * Reads one JSON request from stdin, validates it against the closed shapes
  * in ./protocol.js, performs the one operation through the platform module
@@ -78,11 +79,45 @@ function execute(text, { platform = process.platform, deps = null, env = process
     }
 }
 
+/**
+ * `--request <file>` and `--reply <file>`: the file transport for a platform
+ * whose elevation cannot pass a pipe (./elevate.js `transport()`). The paths
+ * are the only arguments the helper ever takes; the values stay in the files.
+ */
+function parseArgs(argv) {
+    const out = { requestFile: null, replyFile: null };
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === '--request' && argv[i + 1]) out.requestFile = argv[++i];
+        else if (argv[i] === '--reply' && argv[i + 1]) out.replyFile = argv[++i];
+    }
+    return out;
+}
+
+function readRequest(requestFile) {
+    if (!requestFile) return readStdin();
+    try {
+        return fs.readFileSync(requestFile, 'utf8');
+    } catch {
+        return '';
+    }
+}
+
 function main() {
-    const { reply, code } = execute(readStdin());
-    process.stdout.write(`${JSON.stringify(reply)}\n`, () => process.exit(code));
+    const args = parseArgs(process.argv.slice(2));
+    const { reply, code } = execute(readRequest(args.requestFile));
+    const text = `${JSON.stringify(reply)}\n`;
+    if (args.replyFile) {
+        try {
+            fs.writeFileSync(args.replyFile, text, { mode: 0o600 });
+        } catch {
+            process.stdout.write(text);
+        }
+        process.exit(code);
+        return;
+    }
+    process.stdout.write(text, () => process.exit(code));
 }
 
 if (require.main === module) main();
 
-module.exports = { execute, sandboxDeps };
+module.exports = { execute, sandboxDeps, parseArgs, readRequest };

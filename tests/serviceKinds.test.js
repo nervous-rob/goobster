@@ -264,6 +264,66 @@ describe('the elevation runner takes what differs per platform from the platform
         expect(elevate.verifyHelperFiles({ payloadRoot: dir, nodePath: '/usr/bin/node' })).toMatchObject({ checked: true, ok: false, reason: 'NOT_IN_MANIFEST' });
     });
 
+    const registerInput = (roots) => ({ kind: 'systemd', name: 'goobster', layout: 'standalone', codeRoot: roots.code, runtimeUser: 'goobster', installationId: '5f3c0e0e-3e8e-4a52-9d57-0e4a5f6f8a11', roots, mode: 'payload' });
+    const rootsAt = (base) => ({ code: `${base}/code`, data: `${base}/data`, config: `${base}/config/config.json`, cache: `${base}/cache`, logs: `${base}/logs`, uploads: `${base}/data/web-uploads`, managerStore: `${base}/data/manager` });
+
+    test('a platform module\'s transport() carries the request and reads the reply instead of a pipe; spawn is never used', async () => {
+        const protocol = require('@goobster/manager/privileged/protocol');
+        const seen = {};
+        const spawn = jest.fn();
+        const implementation = {
+            ...linux,
+            transport: async ({ plan, request, nodePath, helperPath, requestDir }) => {
+                Object.assign(seen, { plan, request, nodePath, helperPath, requestDir });
+                return { status: 0, signal: null, stdout: `${JSON.stringify(protocol.okReply('service.register', 'done', { active: 'running' }, ['sc.exe create -> 0']))}\n`, stderr: '' };
+            }
+        };
+        const result = await elevate.runHelper({
+            operation: 'service.register',
+            input: registerInput(rootsAt('/srv/g')),
+            implementation,
+            spawn,
+            elevation: { kind: 'root', prefix: [] },
+            facts: { available: true },
+            requestDir: '/srv/g/data/manager/requests',
+            nodePath: '/srv/g/code/current/runtime/node.exe',
+            helperPath: '/srv/g/code/current/app/apps/manager/privileged/helper.js'
+        });
+        expect(result).toMatchObject({ status: 'done', outcome: 'done', detail: { active: 'running' }, via: 'root' });
+        expect(spawn).not.toHaveBeenCalled();
+        expect(seen.plan).toEqual({ kind: 'root', prefix: [] });
+        expect(JSON.parse(seen.request)).toMatchObject({ v: 1, operation: 'service.register', input: { runtimeUser: 'goobster' } });
+        expect(seen).toMatchObject({ nodePath: '/srv/g/code/current/runtime/node.exe', requestDir: '/srv/g/data/manager/requests' });
+    });
+
+    test('a platform module\'s refusal() turns its elevation tool\'s "no" into a fallback; without one the sudo/pkexec rules apply', async () => {
+        const noReply = { status: 1, signal: null, stdout: '', stderr: 'The operation was canceled by the user.' };
+        const uac = { ...linux, transport: async () => noReply, refusal: ({ plan, stderr }) => (plan.kind === 'uac' && /canceled/.test(stderr) ? { reason: 'ELEVATION_DECLINED', detail: { prompt: 'uac' } } : null) };
+        const declined = await elevate.runHelper({ operation: 'service.register', input: registerInput(rootsAt('/srv/g')), implementation: uac, elevation: { kind: 'uac', prefix: [] }, facts: { available: true } });
+        expect(declined).toMatchObject({ status: 'fallback', reason: 'ELEVATION_DECLINED', detail: { via: 'uac', prompt: 'uac' } });
+        const other = await elevate.runHelper({ operation: 'service.register', input: registerInput(rootsAt('/srv/g')), implementation: { ...uac, refusal: () => null }, elevation: { kind: 'uac', prefix: [] }, facts: { available: true } });
+        expect(other).toMatchObject({ status: 'failed', code: 'HELPER_PROTOCOL' });
+    });
+
+    test('helper.js --request/--reply: the request is read from a file and the reply written to one, with no value on argv', () => {
+        const childProcess = require('node:child_process');
+        const protocol = require('@goobster/manager/privileged/protocol');
+        const dir = scratch('transport');
+        const requestFile = path.join(dir, 'service.register.request.json');
+        const replyFile = path.join(dir, 'service.register.reply.json');
+        // Unregistering a unit the sandbox does not hold is a noop: the helper answers without any system command.
+        fs.writeFileSync(requestFile, `${protocol.buildRequest('service.unregister', { kind: 'systemd', name: 'goobster', registeredBy: 'installer', installationId: '5f3c0e0e-3e8e-4a52-9d57-0e4a5f6f8a11' })}\n`);
+        const result = childProcess.spawnSync(process.execPath, [path.join(__dirname, '..', 'apps', 'manager', 'privileged', 'helper.js'), '--request', requestFile, '--reply', replyFile], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', GOOBSTER_HELPER_SANDBOX: dir } });
+        expect(result.stdout).toBe('');
+        const reply = JSON.parse(fs.readFileSync(replyFile, 'utf8'));
+        expect(reply).toMatchObject({ v: 1, ok: true, operation: 'service.unregister', outcome: 'noop' });
+        expect(result.status).toBe(0);
+        expect(fs.statSync(replyFile).mode & 0o777).toBe(0o600);
+        expect(helper.parseArgs(['--request', '/a', '--reply', '/b'])).toEqual({ requestFile: '/a', replyFile: '/b' });
+        expect(helper.parseArgs([])).toEqual({ requestFile: null, replyFile: null });
+        expect(helper.readRequest(path.join(dir, 'missing.json'))).toBe('');
+    });
+
     test('the helper\'s sandbox shape comes from the platform module', () => {
         const dir = scratch('sandbox');
         expect(helper.sandboxDeps({ GOOBSTER_HELPER_SANDBOX: dir })).toEqual(linux.sandboxDeps(dir));
