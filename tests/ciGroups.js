@@ -31,6 +31,7 @@ const GROUPS = [
             'featureGatingCommands',
             'featureGatingMcp',
             'featureGatingRuntime',
+            'featureGatingServices',
             'featureGatingTools',
             'featureInventory',
             'featureState',
