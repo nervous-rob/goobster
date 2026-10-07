@@ -28,6 +28,7 @@ const GROUPS = [
             'postgresConnectRetry',
             'executionLease',
             'featureCatalog',
+            'featureConformance',
             'featureGatingCommands',
             'featureGatingMcp',
             'featureGatingRuntime',
