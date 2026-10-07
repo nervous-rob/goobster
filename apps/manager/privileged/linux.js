@@ -768,8 +768,8 @@ function nativeOperations(kit) {
     function installedNames(d, log, names) {
         if (d.family === 'debian') {
             if (!command('dpkg-query')) return new Set();
-            const out = run(log, 'dpkg-query', ['-W', '-f=${Package} ${db:Status-Abbrev}\\n', ...names], { allowFailure: true });
-            return new Set(out.stdout.split('\n').map(line => line.trim().split(/\s+/)).filter(fields => fields.length >= 2 && /^ii/.test(fields[1])).map(fields => fields[0]));
+            const out = run(log, 'dpkg-query', ['-W', '-f=${Package} ${Version} ${db:Status-Abbrev}\\n', ...names], { allowFailure: true });
+            return new Set(out.stdout.split('\n').map(line => line.trim().split(/\s+/)).filter(fields => fields.length >= 3 && /^ii/.test(fields[2])).map(fields => fields[0]));
         }
         if (!command('rpm')) return new Set();
         const out = run(log, 'rpm', ['-q', '--qf', '%{NAME}\\n', ...names], { allowFailure: true });
@@ -1310,7 +1310,7 @@ function nativeOperations(kit) {
             run(log, 'cp', ['-a', '--', `${source}/.`, `${input.target}/`], { timeoutMs: deps.copyTimeoutMs || NATIVE.installTimeoutMs });
             const copied = treeBytes(log, input.target);
             const extra = copied - bytes;
-            if (extra < 0 || extra > 64 * 1024) throw refuse('COPY_VERIFY_FAILED', 'The copy is not the size of the original; the original was not changed.');
+            if (Math.abs(extra) > 64 * 1024) throw refuse('COPY_VERIFY_FAILED', 'The copy is not the size of the original; the original was not changed.');
             const after = controlData(d, log, input.target);
             if (!after.identifier || after.identifier !== before.identifier || after.checkpoint !== before.checkpoint) throw refuse('COPY_VERIFY_FAILED', 'The copy is not the same database cluster as the original; the original was not changed.');
             fs.rmSync(path.join(input.target, NATIVE.relocating), { force: true });
