@@ -51,7 +51,7 @@ if (!fs.existsSync(configPath)) {
 }
 
 logger.info('Loading config...');
-const config = require('../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 if (!config.token) {
 	logger.error('Discord token not found in config.json!');
 	process.exit(1);

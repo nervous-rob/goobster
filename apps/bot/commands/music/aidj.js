@@ -9,7 +9,7 @@ const { parseTrackName } = require('@goobster/core/utils/musicUtils');
 const { getGuildContext, getPreferredUserName } = require('@goobster/core/utils/guildContext');
 
 // Config
-const config = require('../../../../config.json');
+const config = require('@goobster/core/config/configJson').load();
 
 module.exports = {
     data: new SlashCommandBuilder()

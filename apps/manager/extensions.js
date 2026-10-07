@@ -12,15 +12,15 @@
 
 /** @type {Array<(api: import('express').Router, helpers: import('./server').RouteHelpers) => void>} */
 const routes = [
-    require('./routes/lifecycle').mountLifecycleRoutes,
-    require('./routes/config').createConfigMount()
+    require('./routes/config').createConfigMount(),
+    require('./routes/lifecycle').mountLifecycleRoutes
 ];
 
 /** @type {Array<(deps: { settings: Object, fs: Object, now: () => Date, logger: Object }) => import('./engine').OperationKind[]>} */
 const kinds = [
-    require('./engine/kinds/lifecycle').createLifecycleKinds,
     require('./engine/kinds/config').createKinds,
     require('./engine/kinds/defaults').createKinds,
+    require('./engine/kinds/lifecycle').createLifecycleKinds,
     require('./engine/kinds/install').createKinds
 ];
 

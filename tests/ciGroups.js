@@ -27,6 +27,7 @@ const GROUPS = [
             'instanceDefaults',
             'managerConfig',
             'effectiveConfig',
+            'configJson',
             'cursorAgentService',
             'dbSchemaUpgrade',
             'dialectForeignKeys',

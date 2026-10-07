@@ -11,8 +11,8 @@
 const load = (observatory) => {
     let mod;
     jest.isolateModules(() => {
-        // config.json is gitignored and usually absent, so mock it virtually.
-        jest.doMock('../config.json', () => ({ observatory }), { virtual: true });
+        // config.json is gitignored and usually absent, so stand in for the loader.
+        jest.doMock('../packages/core/config/configJson', () => ({ load: () => ({ observatory }) }));
         mod = require('@goobster/core/config/observatoryConfig');
     });
     return mod;

@@ -30,8 +30,8 @@ const ACTIONS = new Set([
     // Written by the manager's audit reconciliation (documentation/manager.md);
     // `target` is the manager operation id.
     'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock',
-    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
     'manager.config.set', 'manager.defaults.set',
+    'manager.lifecycle.apply', 'manager.lifecycle.restart', 'manager.lifecycle.cancel',
     'manager.install.new', 'manager.install.reconfigure', 'manager.install.repair', 'manager.install.uninstall'
 ]);
 
