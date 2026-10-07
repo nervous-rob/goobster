@@ -15,6 +15,7 @@ import { FeaturesPage } from './host/FeaturesPage';
 import { ConnectionsPage, DefaultsPage } from './host/ConfigPages';
 import { LifecyclePanel } from './host/LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './host/ManagerCard';
+import { InstallationCard, InstallationPage } from './host/InstallationPage';
 
 const INVITES_KEY = ['admin-invites'];
 const ACCOUNTS_KEY = ['admin-accounts'];
@@ -680,7 +681,8 @@ const HOST_PAGES = [
     { id: 'overview', name: 'Overview' },
     { id: 'features', name: 'Features' },
     { id: 'connections', name: 'Connections' },
-    { id: 'defaults', name: 'Instance Defaults' }
+    { id: 'defaults', name: 'Instance Defaults' },
+    { id: 'installation', name: 'Installation' }
 ] as const;
 type HostPageId = typeof HOST_PAGES[number]['id'];
 
@@ -692,6 +694,7 @@ function OverviewPage() {
             <InstancePanel />
             <LimitsPanel />
             <LifecyclePanel enabled={usable} />
+            <InstallationCard />
             <SignupPanel />
             <InvitesPanel />
             <AccountsPanel />
@@ -730,6 +733,7 @@ export function HostRoom() {
                 {operator && page === 'features' && <FeaturesPage />}
                 {operator && page === 'connections' && <ConnectionsPage />}
                 {operator && page === 'defaults' && <DefaultsPage />}
+                {operator && page === 'installation' && <InstallationPage />}
             </div>
         </main>
     );
