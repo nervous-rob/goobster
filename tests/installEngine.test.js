@@ -651,3 +651,78 @@ onPostgres('against Postgres (GOOBSTER_DB_URL)', () => {
         expect(failure.details.findings.map(item => item.code)).toContain('DATABASE_MISMATCH');
     });
 });
+
+describe('over HTTP (#330): public kinds with allowed bases', () => {
+    const SETUP = { principal: 'setup:test', via: 'setup' };
+
+    async function claimed(label) {
+        const root = scratch(label);
+        const harness = await newHarness({ root });
+        await harness.manager.engine.run('claim', { label: 'Rob' }, { principal: null, via: 'bootstrap' });
+        return { root, harness };
+    }
+
+    test('the four install kinds are public, and the engine plans them for a setup session without the internal flag', async () => {
+        const { createKinds } = require('@goobster/manager/engine/kinds/install');
+        const { settings } = await newHarness({ root: scratch('public') });
+        const kinds = createKinds({ settings });
+        expect(kinds.map(kind => [kind.kind, kind.public])).toEqual(expect.arrayContaining([
+            ['install.new', true], ['install.reconfigure', true], ['install.repair', true], ['install.uninstall', true]
+        ]));
+        const { harness } = await claimed('public-plan');
+        const release = makeRelease(scratch('public-plan-src'));
+        const planned = await harness.manager.engine.plan('install.new', { source: release.dir, release: { allowUnsigned: true } }, SETUP);
+        expect(planned.plan.preflight.ok).toBe(true);
+    });
+
+    test('an anonymous caller, an unknown kind of session and the wrong state are refused for every kind', async () => {
+        const { harness } = await claimed('anon');
+        const release = makeRelease(scratch('anon-src'));
+        const input = { source: release.dir, release: { allowUnsigned: true } };
+        for (const kind of ['install.new', 'install.reconfigure', 'install.repair', 'install.uninstall']) {
+            for (const via of ['anonymous', 'bootstrap', 'recovery-credential', undefined]) {
+                expect(await codeOf(harness.manager.engine.plan(kind, kind === 'install.uninstall' ? {} : input, { principal: null, via }))).toBe('STATE_NOT_ALLOWED');
+            }
+        }
+        const fresh = await newHarness({ root: scratch('anon-unclaimed') });
+        expect(await codeOf(fresh.manager.engine.plan('install.new', input, SETUP))).toBe('STATE_NOT_ALLOWED');
+    });
+
+    test('a root outside the allowed bases is a block for a setup session and not for the command line', async () => {
+        const { harness } = await claimed('bases');
+        const release = makeRelease(scratch('bases-src'));
+        const elsewhere = scratch('bases-elsewhere');
+        const input = { source: release.dir, release: { allowUnsigned: true }, roots: { code: path.join(elsewhere, 'goobster') } };
+
+        const refused = await harness.manager.engine.plan('install.new', input, SETUP);
+        expect(refused.plan.preflight.ok).toBe(false);
+        const blocked = refused.plan.preflight.findings.find(item => item.code === 'ROOT_OUTSIDE_ALLOWED_BASES');
+        expect(blocked).toMatchObject({ severity: 'block' });
+        expect(blocked.detail).toMatch(/command line/);
+        expect(await codeOf(drive(harness, 'install.new', input, { auth: SETUP }))).toBe('PREFLIGHT_FAILED');
+        expect(fs.existsSync(path.join(elsewhere, 'goobster'))).toBe(false);
+
+        const local = await harness.manager.engine.plan('install.new', input, LOCAL, { internal: true });
+        expect(local.plan.preflight.findings.map(item => item.code)).not.toContain('ROOT_OUTSIDE_ALLOWED_BASES');
+    });
+
+    test('a root inside the home directory or an allowed base is accepted', async () => {
+        const { harness, root } = await claimed('inside');
+        const release = makeRelease(scratch('inside-src'));
+        const planned = await harness.manager.engine.plan('install.new', { source: release.dir, release: { allowUnsigned: true }, roots: { code: path.join(root, 'app') } }, SETUP);
+        expect(planned.plan.preflight.findings.map(item => item.code)).not.toContain('ROOT_OUTSIDE_ALLOWED_BASES');
+    });
+
+    test('the allowed bases per platform', () => {
+        const paths = require('@goobster/manager/install/paths');
+        expect(paths.allowedBases({ home: '/home/a', platform: 'linux', env: {} })).toEqual(['/home/a', '/opt/goobster', '/srv/goobster', '/var/lib/goobster', '/usr/local/goobster']);
+        expect(paths.allowedBases({ home: '/Users/a', platform: 'darwin', env: {} })).toEqual(['/Users/a/Library/Application Support/Goobster', '/opt/goobster']);
+        const win = paths.allowedBases({ home: 'C:\\Users\\a', platform: 'win32', env: { LOCALAPPDATA: 'C:\\Users\\a\\AppData\\Local', ProgramData: 'C:\\ProgramData', SystemDrive: 'C:' } });
+        expect(win).toEqual(['C:\\Users\\a\\AppData\\Local\\Goobster', 'C:\\ProgramData\\Goobster', 'C:\\Goobster']);
+        expect(paths.isUnderAllowedBase('D:\\Goobster\\app', win, { platform: 'win32' })).toBe(true);
+        expect(paths.isUnderAllowedBase('D:\\Other\\app', win, { platform: 'win32' })).toBe(false);
+        expect(paths.isUnderAllowedBase('/home/a/goobster', ['/home/a'], { platform: 'linux' })).toBe(true);
+        expect(paths.isUnderAllowedBase('/home/ab/goobster', ['/home/a'], { platform: 'linux' })).toBe(false);
+        expect(paths.isUnderAllowedBase('/home/a/../etc', ['/home/a'], { platform: 'linux' })).toBe(false);
+    });
+});

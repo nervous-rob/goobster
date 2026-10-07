@@ -222,8 +222,12 @@ function createInstallMount() {
             const doc = read.status === 'ok' ? read.doc : null;
             const roots = doc && model.isManaged(doc) ? doc.roots : { code: settings.root, data: settings.dataDir };
             const database = doc && doc.database ? doc.database : { engine: settings.dbUrl ? 'postgres' : 'sqlite', external: Boolean(settings.dbUrl) };
-            const checked = await checkOwner({ roots, settings, database });
-            add('database', 'Database', checked.ok === true, checked.ok === true ? `the ${database.engine} database opens` : 'the database could not be opened',
+            const reach = await manager.probe({ fresh: true });
+            // Opening a database that is not there would create it; a read never does.
+            const checked = database.engine === 'sqlite' && reach.present === false
+                ? { ok: false, code: 'DB_MISSING' }
+                : await checkOwner({ roots, settings, database });
+            add('database', 'Database', checked.ok === true, checked.ok === true ? `the ${database.engine} database opens` : (checked.code === 'DB_MISSING' ? 'there is no database yet' : 'the database could not be opened'),
                 'Run Repair: it opens the database again and applies the schema without touching your data.');
             add('owner', 'Owner account', checked.ok === true && Number(checked.operators) > 0,
                 checked.ok !== true ? 'not checked: the database did not open' : (Number(checked.operators) > 0 ? 'an operator account exists' : 'no operator account yet'),
