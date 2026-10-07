@@ -43,9 +43,16 @@ function readPublicKeys(files, fs = nodeFs) {
     return keys;
 }
 
-function verifyOptions(release, fs = nodeFs) {
+/**
+ * The trusted keys a bootstrapper hands the wizard (a signed .run/AppImage
+ * names its embedded key in GOOBSTER_RELEASE_PUBLIC_KEY_FILE); an install
+ * input that names keys of its own wins.
+ */
+function verifyOptions(release, fs = nodeFs, env = process.env) {
     const options = {};
-    const keys = readPublicKeys(release && release.publicKeyFiles, fs);
+    const named = release && Array.isArray(release.publicKeyFiles) && release.publicKeyFiles.length > 0;
+    const files = named ? release.publicKeyFiles : (env.GOOBSTER_RELEASE_PUBLIC_KEY_FILE ? [env.GOOBSTER_RELEASE_PUBLIC_KEY_FILE] : []);
+    const keys = readPublicKeys(files, fs);
     if (keys.length) options.publicKey = keys;
     if (release && release.allowUnsigned === true) options.devMode = true;
     else if (release && release.allowUnsigned === false) options.devMode = false;
