@@ -59,6 +59,8 @@ const GROUPS = [
             'lifecycleAdapters',
             'commandDeployHash',
             'workInterruption',
+            'maintenanceBarrier',
+            'maintenanceFence',
             'presenceService',
             'reportIntegrations',
             'safeFetch',
