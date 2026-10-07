@@ -543,6 +543,8 @@ async function runMigrate(c) {
     const overlay = environmentOverlay.read(settings.storeDir, fs).values;
     secrets.push(...cliView.secretsOfMigrate({}, [...Object.values(overlay), settings.dbUrl].filter(Boolean)));
     settings.installDeps = io.installDeps || {};
+    // Audit rows stay in the manager journal until the manager next starts: a preflight must not write the application database it is inspecting.
+    settings.reconcile = false;
     settings.migrationDeps = {
         ...(io.migrationDeps || {}),
         onProgress: (event) => {
