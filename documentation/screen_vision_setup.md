@@ -112,6 +112,8 @@ required; the pairing is saved to `~/.goobster-companion.json`.
 
 - Client tokens are stored **hashed** (SHA-256) in `screen_vision_clients`;
   a re-pair or unlink revokes the old token and disconnects the client.
+  `/forget-me` deletes the pairing (and drops a live connection) and the account export lists
+  its label and dates only, never the hash; both work while the `screenVision` feature is off.
 - Pairing-code redemption is throttled (10 attempts/min) and codes expire in
   10 minutes; unused codes are purged.
 - One live connection per user (newest wins); dead connections are reaped by

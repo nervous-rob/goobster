@@ -1,0 +1,19 @@
+{
+    "economy": ["packages/core/services/economyService.js"],
+    "exchange": ["packages/core/services/exchange/index.js", "packages/core/services/exchange/riskEngine.js", "packages/core/services/stockPortfolioService.js"],
+    "gambling": ["packages/core/services/exchange/wheelService.js", "packages/core/services/exchange/predictionService.js"],
+    "tavern": ["packages/core/services/tavern/tavernService.js", "packages/core/services/tavern/interactionHandler.js"],
+    "music": ["packages/core/services/voice/musicService.js", "packages/core/services/studioSongService.js"],
+    "voice": ["packages/core/services/voice/index.js", "packages/core/services/voice/elevenLabsTTSService.js"],
+    "sandbox": ["packages/core/services/sandboxService.js"],
+    "observatory": ["packages/core/services/observatoryService.js"],
+    "projects": ["packages/core/services/projectService.js", "packages/core/services/projectTriggerService.js"],
+    "expeditions": ["packages/core/services/spitballExpeditionRunner.js"],
+    "knowledge": ["packages/core/services/knowledgeGraphService.js"],
+    "github": ["packages/core/services/githubService.js"],
+    "cursor": ["packages/core/services/cursorAgentService.js"],
+    "screenVision": ["packages/core/services/screenVisionService.js"],
+    "gba": ["packages/core/services/gbaRunService.js"],
+    "push": ["packages/core/services/pushService.js"],
+    "mcp": ["packages/core/mcp/http.js"]
+}

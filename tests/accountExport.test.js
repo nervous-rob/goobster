@@ -172,8 +172,70 @@ test('expiry removes files and stale claims become failed rather than running fo
 });
 test('archive builder never includes authentication or integration secret tables', async () => {
     const data = await snapshot(U);
-    for (const table of ['web_sessions', 'password_credentials', 'user_integrations', 'account_invites', 'web_share_links', 'observatory_share_links']) expect(data).not.toHaveProperty(table);
+    for (const table of ['web_sessions', 'password_credentials', 'account_invites', 'web_share_links', 'observatory_share_links']) expect(data).not.toHaveProperty(table);
     expect(typeof buildArchive).toBe('function');
+});
+test('stored integration tokens, push keys and pairing hashes never reach the archive, only the connection facts do', async () => {
+    await db.run("INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@userId, 'github', 'ghp_SECRET_TOKEN', 'octo')", { userId: U });
+    await db.run("INSERT INTO push_subscriptions (userId, endpoint, p256dh, auth, userAgent) VALUES (@userId, 'https://push.example/SECRET_ENDPOINT', 'SECRET_P256', 'SECRET_AUTH', 'Firefox')", { userId: U });
+    await db.run("INSERT INTO screen_vision_clients (userId, tokenHash, label) VALUES (@userId, 'SECRET_PAIR_HASH', 'Desk PC')", { userId: U });
+    try {
+        const data = await snapshot(U);
+        expect(data.user_integrations).toEqual([expect.objectContaining({ userId: U, provider: 'github', accountLabel: 'octo' })]);
+        expect(data.push_subscriptions).toEqual([expect.objectContaining({ userId: U, userAgent: 'Firefox' })]);
+        expect(data.screen_vision_clients).toEqual([expect.objectContaining({ userId: U, label: 'Desk PC' })]);
+        expect(JSON.stringify(data)).not.toMatch(/SECRET_/);
+        expect(Object.keys(data.user_integrations[0])).not.toContain('token');
+    } finally {
+        for (const table of ['user_integrations', 'push_subscriptions', 'screen_vision_clients']) await db.run(`DELETE FROM ${table}`);
+    }
+});
+test('optional-feature stores (economy, exchange, Tavern, Studio, DMs, sandbox, integrations) are exported for the owner only', async () => {
+    const seedFor = async (userId, tag) => {
+        const g = '200000000000000009';
+        await db.run('INSERT INTO economy_wallets (guildId, userId, balance) VALUES (@g, @userId, 500)', { g, userId });
+        await db.run("INSERT INTO economy_transactions (guildId, userId, amount, balanceAfter, type) VALUES (@g, @userId, 500, 500, 'daily')", { g, userId });
+        await db.run("INSERT INTO stock_holdings (guildId, userId, symbol, units, costBasis) VALUES (@g, @userId, 'AAPL', 1, 100)", { g, userId });
+        await db.run("INSERT INTO exchange_accounts (guildId, userId, accountType) VALUES (@g, @userId, 'MARGIN')", { g, userId });
+        await db.run("INSERT INTO tavern_rooms (guildId, userId, description) VALUES (@g, @userId, @description)", { g, userId, description: `room ${tag}` });
+        await db.run("INSERT INTO studio_songs (id, ownerId, name, projectJson) VALUES (@id, @userId, @name, '{}')", { id: `song-${tag}`, userId, name: `Song ${tag}` });
+        await db.run("INSERT INTO sandbox_requests (type, userId, payload) VALUES ('package-install', @userId, @payload)", { userId, payload: `{"why":"${tag}"}` });
+        await db.run("INSERT INTO agent_runs (agentId, runId, guildId, channelId, userId, repo, prompt, status) VALUES (@agentId, 'r', @g, 'c', @userId, 'a/b', @prompt, 'RUNNING')", { agentId: `agent-${tag}`, g, userId, prompt: `prompt ${tag}` });
+    };
+    await seedFor(U, 'MINE');
+    await seedFor(V, 'THEIRS');
+    const [low, high] = [U, V].sort();
+    const thread = await db.insert('INSERT INTO dm_threads (lowId, highId) VALUES (@low, @high)', { low, high });
+    await db.run("INSERT INTO dm_messages (threadId, senderId, content) VALUES (@thread, @V, 'hello from the other side')", { thread, V });
+    const bystander = '800000000000000043';
+    const other = await db.insert('INSERT INTO dm_threads (lowId, highId) VALUES (@low, @high)', { low: V, high: bystander });
+    await db.run("INSERT INTO dm_messages (threadId, senderId, content) VALUES (@other, @V, 'BYSTANDER_SENTINEL')", { other, V });
+    try {
+        const data = await snapshot(U);
+        expect(data.economy_wallets.map(r => r.balance)).toEqual([500]);
+        expect(data.economy_transactions).toHaveLength(1);
+        expect(data.stock_holdings).toHaveLength(1);
+        expect(data.exchange_accounts).toHaveLength(1);
+        expect(data.tavern_rooms.map(r => r.description)).toEqual(['room MINE']);
+        expect(data.studio_songs.map(r => r.name)).toEqual(['Song MINE']);
+        expect(data.sandbox_requests).toHaveLength(1);
+        expect(data.agent_runs.map(r => r.prompt)).toEqual(['prompt MINE']);
+        expect(data.dm_threads.map(r => r.id)).toEqual([thread]);
+        expect(data.dm_messages.map(r => r.content)).toEqual(['hello from the other side']);
+        const text = JSON.stringify(data);
+        expect(text).not.toContain('THEIRS');
+        expect(text).not.toContain('BYSTANDER_SENTINEL');
+
+        const job = await service.request(U); await service.sweep();
+        expect((await service.list(U)).exports[0].status).toBe('READY');
+        const files = await unpack(path.join(service.directory({ ...job, userId: U }), 'account.tar.gz'));
+        expect(JSON.parse(files.get('data/economy_wallets.json'))).toHaveLength(1);
+        expect(JSON.parse(files.get('data/dm_messages.json'))).toHaveLength(1);
+        expect(files.get('README.md').toString()).toMatch(/economy, trading, Tavern/);
+        expect([...files.values()].map(b => b.toString()).join('\n')).not.toMatch(/THEIRS|BYSTANDER_SENTINEL/);
+    } finally {
+        for (const table of ['economy_wallets', 'economy_transactions', 'stock_holdings', 'exchange_accounts', 'tavern_rooms', 'studio_songs', 'sandbox_requests', 'agent_runs', 'dm_messages', 'dm_threads']) await db.run(`DELETE FROM ${table}`);
+    }
 });
 test('snapshot includes every page of retained records and works for native identities', async () => {
     const userId = 'usr_56ef0876-73b3-4bc4-b6e1-90f99e58e963';

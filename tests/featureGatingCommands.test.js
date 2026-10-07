@@ -53,7 +53,6 @@ jest.mock('@goobster/core/utils/aiSearchHandler', () => ({
 const db = require('@goobster/core/db');
 const inventory = require('@goobster/core/features/inventory');
 const { features } = require('@goobster/core/features/featureState');
-const { createLegacyResolver } = require('@goobster/core/features/legacyResolver');
 const {
     collectCommandPayloads,
     commandNameIndex,
@@ -63,109 +62,18 @@ const {
 } = require('@goobster/core/utils/commandDeployment');
 const interactionCreate = require('../apps/bot/events/interactionCreate');
 
-const { FEATURE_IDS, FEATURES } = inventory;
-const COMMANDS_DIR = path.join(__dirname, '..', 'apps', 'bot', 'commands');
-const MANAGEABLE = FEATURE_IDS.filter(id => id !== 'core');
-const FILE = '/virtual/data/features.json';
-
-/* ------------------------------------------------------------------ */
-/* Fixtures                                                            */
-/* ------------------------------------------------------------------ */
-
-function memoryFs(files = {}) {
-    const store = new Map(Object.entries(files));
-    const missing = (p) => Object.assign(new Error(`ENOENT ${p}`), { code: 'ENOENT' });
-    return {
-        existsSync: p => store.has(p),
-        readFileSync(p) { if (!store.has(p)) throw missing(p); return store.get(p); },
-        writeFileSync: (p, data) => store.set(p, String(data)),
-        renameSync(from, to) { store.set(to, store.get(from)); store.delete(from); },
-        mkdirSync() {},
-        unlinkSync: p => store.delete(p)
-    };
-}
-
-/** A configuration with the Discord adapter on and every legacy flag at its shipped default. */
-const DEFAULT_CONFIG = { token: 'jest-token', clientId: '0', guildIds: ['0'] };
-/** Every legacy switch flipped on. */
-const EVERYTHING_ON = {
-    ...DEFAULT_CONFIG,
-    sandbox: { enabled: true },
-    observatory: { enabled: true },
-    mcp: { enabled: true },
-    gbaRun: { enabled: true },
-    screenVision: { enabled: true },
-    activity: { enabled: true }
-};
-
-function useState({ config = DEFAULT_CONFIG, env = {}, inactive = null } = {}) {
-    let files = {};
-    if (inactive) {
-        const entries = {};
-        for (const id of MANAGEABLE) entries[id] = { installed: true, active: !inactive.includes(id) };
-        files = {
-            [FILE]: JSON.stringify({
-                version: 1, revision: 1, updatedAt: '2026-10-06 12:00:00', origin: 'operator', features: entries
-            })
-        };
-    }
-    features._resetForTests({ fs: memoryFs(files), filePath: FILE, env, config });
-    return features;
-}
-
-/**
- * Expected active set, computed from the inventory graph and the legacy
- * switches only (the thing the resolver is meant to equal when no state file
- * exists). Independent of featureState.js.
- */
-function deriveActive({ config = DEFAULT_CONFIG, env = {}, inactiveRequested = null } = {}) {
-    const legacy = createLegacyResolver({ config, env });
-    const requested = (id) => {
-        if (id === 'core') return true;
-        if (inactiveRequested) return !inactiveRequested.includes(id);
-        try { return legacy.value(id); } catch { return true; }
-    };
-    const memo = {};
-    const active = (id) => {
-        if (memo[id] === undefined) memo[id] = requested(id) && FEATURES[id].dependsOn.every(active);
-        return memo[id];
-    };
-    return new Set(FEATURE_IDS.filter(active));
-}
-
-/**
- * The served set with no state file: everything except features an env
- * override forces off and their hard dependents (the enforcement rule;
- * legacy switches only change the reported value). Independent of featureState.js.
- */
-function deriveServed({ env = {} } = {}) {
-    const memo = {};
-    const served = (id) => {
-        if (memo[id] === undefined) {
-            const override = env[`GOOBSTER_FEATURE_${id.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`];
-            const forcedOff = override !== undefined && ['0', 'false', 'off', 'no'].includes(String(override).trim().toLowerCase());
-            memo[id] = id === 'core' || (!forcedOff && FEATURES[id].dependsOn.every(served));
-        }
-        return memo[id];
-    };
-    return new Set(FEATURE_IDS.filter(served));
-}
-
-/** inventory command/context-menu keys whose owner and every alsoRequires are in `activeSet`. */
-function expectedKeys(activeSet) {
-    const keys = [];
-    for (const [kind, table] of [['command', inventory.commands], ['contextMenu', inventory.contextMenus]]) {
-        for (const key of Object.keys(table)) {
-            const { owner, alsoRequires } = inventory.ownerOf(kind, key);
-            if ([owner, ...alsoRequires].every(id => activeSet.has(id))) keys.push(key);
-        }
-    }
-    return keys.sort();
-}
-
-function payloadNames(payload) {
-    return [...payload.guildCommands, ...payload.globalCommands].map(command => command.name).sort();
-}
+const {
+    MANAGEABLE,
+    FILE,
+    COMMANDS_DIR,
+    memoryFs,
+    EVERYTHING_ON,
+    useState,
+    deriveActive,
+    deriveServed,
+    expectedKeys,
+    payloadNames
+} = require('./helpers/featureFixtures');
 
 function namesFor(keys) {
     const index = commandNameIndex(COMMANDS_DIR);

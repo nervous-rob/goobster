@@ -550,6 +550,164 @@ They read dormant tables of disabled features by design.
 | `ffmpeg` | voice / music / observatory | voice owns it; observatory render is a soft consumer (`FFMPEG_MISSING`) |
 | GBA fresh default | #261 on / legacy off | #261 preset recorded; flagged for the owner |
 
+## Conformance and dormant data (#322)
+
+Two specs are the Phase 1 merge gate. Both run on SQLite and Postgres (the
+conformance spec is in the `core` CI group, the dormant-data spec in
+`privacy`); fixtures shared with the per-surface specs live in
+`tests/helpers/featureFixtures.js`.
+
+### `tests/featureConformance.test.js`
+
+Per-surface specs prove one gate with one feature at a time. This spec proves
+the gates agree. For every profile the expected set is derived from the
+inventory graph, never a hand list, and independently of `featureState.js`:
+
+`served(claim) = claim.owner and every claim.alsoRequires are served`, where
+a feature is served unless it is enforced off or one of its hard
+dependencies is (the enforcement rule in `feature_state.md`).
+
+| Profile | What it is | What it proves |
+|---|---|---|
+| `legacy-no-file` | No `features.json`, default config | Nothing is refused anywhere, even where a legacy switch reports a feature off. The loader set equals the unfiltered walk; every route is served. |
+| `fresh-install` | `features.freshPreset()` written to the state file | The preset turns off `economy`, `exchange` and `gambling` only, and every other surface follows. |
+| `core-only` | Every manageable feature `active: false` | Zero optional commands, steps, tools, MCP tools, routes and sockets; core chat, Inbox, privacy, export, settings, admin and MCP token revocation stay reachable. |
+| `one-feature-off` x 20 | One profile per manageable id | The same invariant, one feature at a time, including the dependents the graph takes down with it. |
+| Dependency combinations | `sandbox` off takes `observatory`; `knowledge` takes `expeditions`; `economy` takes `exchange` and `gambling`; `discord` takes `discordActivity` and every Discord-bound `alsoRequires` claim; `github` takes `cursor`; `economy` + `knowledge` together | Hard dependents and `alsoRequires` surfaces go off together. |
+| `env-override-only` | `GOOBSTER_FEATURE_<ID>=0`, no file (sandbox, knowledge, economy, discord, github, gba + screenVision) | An override alone enforces, with the same results as the file. |
+
+Each profile is checked at every surface kind the gates implement:
+
+| Surface | Assertion |
+|---|---|
+| Central rule | `gate.requireSurface(kind, id)` agrees with the derived set for every claimed command, context menu, runtime step, event gate, interaction type, AI tool, MCP tool and socket path (blocker named). |
+| Commands and context menus | `listCommandFiles` with `featureCommandFilter` returns exactly the served keys; unclaimed files are failed closed. |
+| Runtime steps | `startCoreRuntime` reports exactly the served steps; a skipped step's marker never appears; no `fetch` and no model call. |
+| Bot boot | `apps/bot/index.js` booted with fakes: `client.commands`, voice/music/issue-capture listeners, command-backed adapters and `startCoreRuntime` follow the profile. |
+| AI tools | Discovery offers only served tools; `toolsRegistry.execute` refuses the rest with `FEATURE_UNAVAILABLE` and no database write, `fetch` or model call. |
+| MCP | Tool and resource listings, `tools/call` and `resources/read` follow the claims; the `/mcp` mount answers 404 `FEATURE_UNAVAILABLE` for an enforced-off `mcp`; revoking a token works in every profile. |
+| HTTP routes | `routeBlock` agrees with every mounted portal route (walked from the Express router stack); a real request to each refused route is 404 `FEATURE_UNAVAILABLE` with no handler, write or outbound call. Core operator, privacy, Inbox, export, settings and status routes answer 200 in every profile. |
+| WebSocket upgrades | A real upgrade is 404 exactly for the unserved paths and never reaches a handler. |
+
+Inventory negative checks, in the same spec:
+
+- `requireSurface` throws `UNCLAIMED_SURFACE` for an unclaimed id of every gated kind.
+- An unclaimed command file added to a copy of the commands directory is neither loaded nor deployed (the lister fails it closed) and is found by the claim check.
+- With a claim removed (by replacing `inventory.ownerOf` inside the test; the real inventory is never touched) a runtime step, AI tool, MCP tool, interaction type, event gate and WebSocket path is found unclaimed and refused.
+- An unclaimed route is found by the inventory check. The network edge deliberately never gates a path it does not recognise, so for routes this check, not the edge, is the safety net.
+- `catalog.validateCatalog` rejects an unknown dependency, a cycle, `core` with dependencies, `core` as a dependency, a self dependency, a duplicate id and an unlisted descriptor; `features.write` rejects an unknown id, a `core` entry and a dependent without its dependency.
+- Core ownership is explicit: every mounted core route is matched by a `core` entry in `routeRules`, and every core step, tool, command, MCP tool, socket path and static prefix is listed by name.
+
+Mutation check: with the `toolsRegistry` refusal removed, or the `routeGate`
+mount removed from `appApi.js`, the spec fails (AI tools in every refusing
+profile; HTTP routes in every refusing profile).
+
+### `tests/featureDormantData.test.js`
+
+Two accounts (A and B) are seeded across 39 tables owned by economy,
+exchange, gambling, Tavern, music (Song Studio), push, sandbox, Cursor,
+GitHub, integrations, Screen Vision, MCP, projects, Observatory and
+expeditions, plus memories with vectors and old and new ledger rows. Every
+manageable feature is then turned off through a state file, and the real
+services run:
+
+- the state really refuses every optional feature, the runtime starts with none of their steps, and no feature worker, tool, `fetch`, model call, sandbox run, expedition start or Web Push send happens;
+- `privacyService.auditUser` and `buildUserReport` list both accounts' dormant rows;
+- `AccountExportService` builds a real archive that carries A's rows only;
+- retention sweeps still prune what retention owns (old `resource_events`) and leave the dormant rows byte-identical;
+- an off then on round trip with no privacy or retention action leaves every row unchanged;
+- `forgetUser(A)` with the features off erases A everywhere, anonymises (keeps) guild-wide rows, leaves no vector orphan, keeps the ledger rows with the actor nulled, and leaves B byte-identical, before and after the features come back on.
+
+A seeded-table consistency test fails when a feature-owned table with a
+person-shaped column is neither seeded nor explained in the spec's
+`NOT_SEEDED` map.
+
+### Reach gaps closed
+
+| Table | Service | How |
+|---|---|---|
+| `agent_runs` | `privacyService`, export | Deleted on erasure (they hold the person's prompt); counted in `auditUser` and the report; exported. |
+| `pending_integration_actions` | `privacyService`, export | Rows the person requested are deleted; `resolvedBy` is cleared where they resolved someone else's; counted; exported. |
+| `integration_audit` | `privacyService`, export | Guild audit record: the row stays and `userId` is nulled; counted; exported. |
+| `repo_watches` | `privacyService`, export | Guild record: `createdBy` nulled; counted; exported. |
+| `screen_vision_clients` | `privacyService`, export | Pairing deleted (a bearer credential) and the live session and pairing codes dropped; exported without the token hash. |
+| `kg_reflection_runs.requestedBy` | `privacyService` | Nulled on erasure (found by the dormant-data table check); counted. |
+| `prediction_markets.createdBy`, `tavern_adventures.createdBy` | `auditUser` | Attribution was already nulled on erasure; it is now counted too. |
+| Economy, exchange, Tavern, Song Studio, push, friends and DMs, `user_integrations`, sandbox | account export (`accountExportData.js`) | The person's own rows are exported whether or not the feature is on; secrets (push keys, integration tokens, token hashes) never are. See `user_settings.md`. |
+| Push delivery | `pushService.notify` | With `push` enforced off nothing is sent (an Inbox delivery used to attempt Web Push and bump `failCount`); stored devices stay. |
+
+Left open, with the reason:
+
+- GBA has no per-person table. `gba_run_clients` is one pairing per guild channel and `gba_run_milestones` is guild-level text, reached only by the `/forget-me` name-mention review pass. There is nothing person-keyed to export or erase.
+- The MTGA deck library is core (not feature-gated) and is erased by `/forget-me`; the export keeps excluding it (the existing archive policy: decks copy out verbatim from the Decks room).
+- `sandbox_packages` is shared host state (a hash-pinned overlay every user's runs rely on). The export lists only rows the person requested, and erasure nulls `requestedBy`/`approvedBy` attribution; deleting the package would change other people's sandbox.
+- `prediction_markets`, `tavern_adventures` and `tavern_adventure_log` are guild-wide game state: erasure nulls the person and keeps the row. They are not exported as the person's data, apart from their own adventure-log lines.
+- `observatory_share_links` tokens are a bearer credential and are never exported (the project they open is).
+
+### Loaded but not executed when off
+
+"Code may still load" is the Phase 1 rule: the gates stop execution, not
+`require()`. The spec records, per feature module, the first entry point that
+still requires it, once with every optional feature off and once in the legacy
+(nothing off) walk, by running `tests/helpers/loadProbe.js` in a child process
+so Jest's module registry does not hide anything. It reports and does not
+fail, except that with everything off nothing may be reached through the
+command loader or the runtime. The table is printed in the test output:
+
+```
+Loaded but not executed when off (entry point that first required the module; "-" = not loaded)
+feature       module                                  all off         legacy (nothing off)
+economy       services/economyService.js              portal          toolsRegistry
+exchange      services/exchange/index.js              -               -
+exchange      services/exchange/riskEngine.js         -               commands
+exchange      services/stockPortfolioService.js       portal          commands
+gambling      services/exchange/wheelService.js       -               commands
+gambling      services/exchange/predictionService.js  portal          commands
+tavern        services/tavern/tavernService.js        -               commands
+tavern        services/tavern/interactionHandler.js   -               commands
+music         services/voice/musicService.js          -               commands
+music         services/studioSongService.js           portal          portal
+voice         services/voice/index.js                 -               commands
+voice         services/voice/elevenLabsTTSService.js  -               commands
+sandbox       services/sandboxService.js              toolsRegistry   toolsRegistry
+observatory   services/observatoryService.js          toolsRegistry   toolsRegistry
+projects      services/projectService.js              toolsRegistry   toolsRegistry
+projects      services/projectTriggerService.js       toolsRegistry   toolsRegistry
+expeditions   services/spitballExpeditionRunner.js    portal          portal
+knowledge     services/knowledgeGraphService.js       toolsRegistry   toolsRegistry
+github        services/githubService.js               -               commands
+cursor        services/cursorAgentService.js          -               commands
+screenVision  services/screenVisionService.js         -               commands
+gba           services/gbaRunService.js               -               commands
+push          services/pushService.js                 portal          portal
+mcp           mcp/http.js                             -               -
+```
+
+Reading it: with every feature off the command loader and the runtime load
+none of these modules (the point of #318). What is still loaded is the
+module graph the AI tool registry (`toolsRegistry` requires sandbox,
+observatory, project and knowledge services) and the portal context
+(`createWebAppContext` requires economy, stock portfolio, prediction, Song
+Studio, expedition runner and push services) import at the top. Those are
+what reduced-payload packaging (Phase 3) must make lazy before an excluded
+feature's files can be absent; `scripts/smoke-require.js` stays a full-source
+smoke.
+
+### Rooms, tutorials and self-docs (#321)
+
+The same 35 profiles check the portal surfaces, which act on the *reported*
+state (`features.isActive`) and so show with no state file exactly what the
+legacy flags showed: a room or nested view is available in `rooms.cjs` (and a
+deep link is explained by `routeUnavailability`) exactly when every feature
+it requires is reported active, and its `requires` names the same features
+as the inventory claim; a tour is listed available by
+`tutorialService.tutorialAvailability` on the same rule, while
+`gate.requireSurface('tutorial', id)` refuses exactly the tours whose claim
+is not served (the enforcement rule, like every other surface); and the
+self-docs corpus is never hidden - every seeded doc is listed in every
+profile, and a doc tagged `feature:<id>` carries an availability note
+exactly when that feature is reported inactive.
+
 ## Known gaps carried to later issues
 
 Recorded as `knownGaps` in `inventory.js` so they are not lost:
@@ -566,8 +724,10 @@ Recorded as `knownGaps` in `inventory.js` so they are not lost:
   `trading.basics` (exchange and discord), and an unmet tutorial is
   reported unavailable instead of omitted. See
   [portal_navigation.md](portal_navigation.md#feature-availability).
-- #322: `screen_vision_clients`, `agent_runs`, `repo_watches`,
-  `integration_audit` and `pending_integration_actions` are not reached by
-  `privacyService.forgetUser`; account export omits economy, exchange,
-  tavern, studio, gba, push, friends DMs, `user_integrations` and sandbox
-  data.
+- #322: closed. The reach gaps (`screen_vision_clients`, `agent_runs`,
+  `repo_watches`, `integration_audit`, `pending_integration_actions` for
+  erasure; economy, exchange, tavern, studio, push, friends and DMs,
+  `user_integrations` and sandbox for export) are fixed and pinned by
+  `tests/featureDormantData.test.js`; what is deliberately not per-person
+  (GBA, the MTGA deck library, `sandbox_packages`) is explained under
+  "Conformance and dormant data (#322)".

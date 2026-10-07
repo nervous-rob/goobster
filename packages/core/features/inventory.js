@@ -627,13 +627,7 @@ const systemDependencies = {
 const knownGaps = [
     { issue: '#318', surface: 'interactionTypes.intaction', note: 'One router token serves github and cursor actions; the owner is resolved from `pending.type` at runtime.' },
     { issue: '#319', surface: 'mcp', note: 'MCP enablement is read at boot only.' },
-    { issue: '#319', surface: 'aiTools.observatory', note: 'The definition needs an action-aware reduced form so project organization stays offered when only projects is active.' },
-    { issue: '#322', surface: 'tables.screen_vision_clients', note: 'Not reached by forgetUser (owner screenVision).' },
-    { issue: '#322', surface: 'tables.agent_runs', note: 'Not reached by forgetUser (owner cursor).' },
-    { issue: '#322', surface: 'tables.repo_watches', note: 'Not reached by forgetUser (owner github).' },
-    { issue: '#322', surface: 'tables.integration_audit', note: 'Not reached by forgetUser (owner github).' },
-    { issue: '#322', surface: 'tables.pending_integration_actions', note: 'Not reached by forgetUser (owner github).' },
-    { issue: '#322', surface: 'accountExport', note: 'Export gaps: economy, exchange, tavern, studio, gba, push, friends and DMs, user_integrations, sandbox.' }
+    { issue: '#319', surface: 'aiTools.observatory', note: 'The definition needs an action-aware reduced form so project organization stays offered when only projects is active.' }
 ];
 
 function normalize(value) {
