@@ -563,6 +563,7 @@ function createFeatureState(options = {}) {
 
 let singleton = null;
 let singletonOptions = {};
+let configured = false;
 
 function current() {
     if (!singleton) singleton = createFeatureState(singletonOptions);
@@ -570,23 +571,45 @@ function current() {
 }
 
 /**
+ * Point the process-wide resolver at another document before anything
+ * reads feature state (the snapshot is memoised on first use). The one
+ * production caller is a worker started at a staged revision
+ * (`runtime/lifecycle.js adoptStagedFeatures`, documentation/manager_lifecycle.md),
+ * which must run before the first read; a second call, or a call after a
+ * read, is refused so a late caller cannot swap the state under a running
+ * process. Tests use `_resetForTests`, which has no such guard.
+ * @param {{ filePath?: string, env?: Object }} options
+ */
+function configure(options = {}) {
+    if (singleton) throw new FeatureStateError('ALREADY_RESOLVED', 'Feature state was already read in this process; configure() must run first.');
+    if (configured) throw new FeatureStateError('ALREADY_CONFIGURED', 'Feature state was already configured in this process.');
+    configured = true;
+    singletonOptions = { ...options };
+    return features;
+}
+
+const CONTROL = {
+    configure,
+    _resetForTests(opts = {}) {
+        singletonOptions = opts;
+        singleton = null;
+        configured = false;
+        return features;
+    }
+};
+
+/**
  * The process-wide resolver, created on first use. A Proxy so that
  * `features.isActive(id)` always reaches the current instance, including
- * after `_resetForTests`.
+ * after `configure()` or `_resetForTests()`.
  */
 const features = new Proxy({}, {
     get(_target, property) {
-        if (property === '_resetForTests') {
-            return (opts = {}) => {
-                singletonOptions = opts;
-                singleton = null;
-                return features;
-            };
-        }
+        if (Object.prototype.hasOwnProperty.call(CONTROL, property)) return CONTROL[property];
         const value = current()[property];
         return typeof value === 'function' ? value.bind(current()) : value;
     },
-    has: (_target, property) => property === '_resetForTests' || property in current()
+    has: (_target, property) => Object.prototype.hasOwnProperty.call(CONTROL, property) || property in current()
 });
 
 module.exports = {

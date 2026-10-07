@@ -347,6 +347,12 @@ const state = createFeatureState({ fs: memoryFs, filePath: '/x/features.json', e
 features._resetForTests({ config: { token: 'x' }, env: {} });   // the singleton, for gate tests
 ```
 
+The one production entry point for pointing the singleton elsewhere is
+`features.configure({ filePath })`: it is accepted only before the first
+read and only once per process (`ALREADY_RESOLVED` / `ALREADY_CONFIGURED`
+otherwise). A worker the manager starts at a staged revision uses it
+(`documentation/manager_lifecycle.md`, "Staged features").
+
 `tests/featureCatalog.test.js` keeps the catalog in step with the inventory
 and the repository (documentation paths, env var names and config sections
 must exist). `tests/featureState.test.js` covers everything in this document.

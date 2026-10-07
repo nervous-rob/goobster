@@ -193,9 +193,14 @@ function adoptStagedFeatures({ revision, env = process.env, fs = nodeFs, feature
     const doc = readStagedFeatures({ revision, env, fs });
     if (!doc) return { adopted: false, reason: 'STAGED_MISSING' };
     const resolver = features || require('../features/featureState').features;
-    // featureState has no configuration entry point besides this reset: it
-    // swaps the options the process-wide resolver is created with.
-    resolver._resetForTests({ filePath: stagedFeaturesFile(env) });
+    try {
+        resolver.configure({ filePath: stagedFeaturesFile(env) });
+    } catch (error) {
+        // Something read feature state before the worker's boot reached
+        // here: the staged document cannot be adopted; run at the file's
+        // current revision instead and say so.
+        return { adopted: false, reason: error.code || 'CONFIGURE_FAILED' };
+    }
     return { adopted: true, reason: null };
 }
 
@@ -242,6 +247,7 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         supervisor: null,
         revision: null,
         staged: false,
+        stagedRequested: false,
         bootedAt: now(),
         paused: null,
         restarting: false
@@ -263,6 +269,7 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         const resolved = bootRevision({ worker, env, fs });
         state.revision = resolved.revision;
         state.staged = false;
+        state.stagedRequested = Boolean(resolved.staged);
         if (resolved.staged) {
             const adopted = adoptStagedFeatures({ revision: resolved.revision, env, fs });
             state.staged = adopted.adopted;
@@ -390,9 +397,19 @@ function createWorkerLifecycle({ now = () => Date.now() } = {}) {
         return true;
     }
 
-    /** Write (and optionally POST) the ack of the revision this start runs. */
+    /**
+     * Write (and optionally POST) the ack of the revision this start runs.
+     * A start that was asked to run staged features but could not adopt
+     * them acknowledges nothing: it serves at the previous document, and
+     * the supervisor's ack timeout rolls the change back instead of
+     * promoting a revision no worker is running.
+     */
     function acknowledgeReady({ env = process.env, fs = nodeFs } = {}) {
         if (!state.worker) return Promise.resolve({ skipped: true });
+        if (state.stagedRequested && !state.staged) {
+            logger.warn?.(`[lifecycle] not acknowledging revision ${state.revision}: its staged features were not adopted`);
+            return Promise.resolve({ skipped: true, reason: 'STAGED_NOT_ADOPTED' });
+        }
         return revisionAck.acknowledge({ worker: state.worker, revision: state.revision, env, fs, logger });
     }
 

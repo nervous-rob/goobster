@@ -359,12 +359,42 @@ describe('staged features', () => {
         const file = lifecycle.stagedFeaturesFile(env);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify({ version: 1, features: {}, lifecycle: { version: 1, revision: 4 } }));
-        const resolver = { _resetForTests: jest.fn() };
+        const resolver = { configure: jest.fn() };
         expect(lifecycle.adoptStagedFeatures({ revision: 3, env, features: resolver })).toEqual({ adopted: false, reason: 'STAGED_MISSING' });
-        expect(resolver._resetForTests).not.toHaveBeenCalled();
+        expect(resolver.configure).not.toHaveBeenCalled();
         expect(lifecycle.adoptStagedFeatures({ revision: null, env, features: resolver })).toEqual({ adopted: false, reason: 'NO_REVISION' });
         expect(lifecycle.adoptStagedFeatures({ revision: 4, env, features: resolver })).toEqual({ adopted: true, reason: null });
-        expect(resolver._resetForTests).toHaveBeenCalledWith({ filePath: file });
+        expect(resolver.configure).toHaveBeenCalledWith({ filePath: file });
+    });
+
+    test('the real resolver adopts a staged document only before its first read, through configure()', () => {
+        const { features, FeatureStateError } = require('@goobster/core/features/featureState');
+        const env = { GOOBSTER_MANAGER_STATE_DIR: dir('staged-real') };
+        const file = lifecycle.stagedFeaturesFile(env);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({
+            version: 1, revision: 1, origin: 'operator', features: { gambling: { installed: true, active: false } },
+            lifecycle: { version: 1, revision: 9 }
+        }));
+        features._resetForTests({});
+        try {
+            expect(lifecycle.adoptStagedFeatures({ revision: 9, env })).toEqual({ adopted: true, reason: null });
+            expect(features.status().features.gambling.active).toBe(false);
+            // Read already happened: a second adoption is refused, not applied.
+            expect(() => features.configure({ filePath: file })).toThrow(FeatureStateError);
+            expect(lifecycle.adoptStagedFeatures({ revision: 9, env })).toEqual({ adopted: false, reason: 'ALREADY_RESOLVED' });
+        } finally {
+            features._resetForTests({});
+        }
+    });
+
+    test('a start that could not adopt its staged features acknowledges nothing', async () => {
+        const storeDir = dir('no-ack');
+        const env = { GOOBSTER_SUPERVISOR: 'manager', GOOBSTER_MANAGER_STATE_DIR: storeDir, GOOBSTER_REVISION: '6', GOOBSTER_FEATURES_STAGED: '1' };
+        const worker = lifecycle.createWorkerLifecycle();
+        expect(worker.boot({ worker: 'api', env, log: { warn: () => {} } })).toMatchObject({ revision: 6, staged: false });
+        expect(await worker.acknowledgeReady({ env })).toEqual({ skipped: true, reason: 'STAGED_NOT_ADOPTED' });
+        expect(fs.existsSync(path.join(storeDir, 'ack', 'api.json'))).toBe(false);
     });
 
     test('boot asks for staged features only with GOOBSTER_FEATURES_STAGED, and falls back when the document is not there', () => {

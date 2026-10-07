@@ -189,10 +189,14 @@ is running, and `sandboxService.pauseNewWork()` refuses new runs.
 
 **Staged features.** A start at revision `n` with
 `GOOBSTER_FEATURES_STAGED=1` reads `<store>/lifecycle/staged-features.json`
-tagged with revision `n` and adopts it instead of `data/features.json`,
-before anything reads feature state (`lifecycle.boot()` is the first line
-of each worker). A missing or mismatched document falls back to
-`data/features.json`.
+tagged with revision `n` and adopts it instead of `data/features.json`
+through `features.configure({ filePath })`, which works only before the
+first read (`lifecycle.boot()` is the first line of each worker; a later
+call is refused with `ALREADY_RESOLVED`). A missing or mismatched document,
+or a refused configure, falls back to `data/features.json` - and such a
+start **acknowledges nothing** (`STAGED_NOT_ADOPTED` in its log), so the
+supervisor's ack timeout rolls the change back rather than promoting a
+revision no worker runs.
 
 ## The apply flow
 
