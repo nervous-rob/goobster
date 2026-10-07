@@ -500,7 +500,7 @@ They read dormant tables of disabled features by design.
 | `GET /api/app/projects/:slug/parlor` | projects / core | projects |
 | Run/render/job routes inside `routes/projects.js` | projects / observatory | observatory |
 | `/api/app/mtga/*`, `/api/app/applets/*`, `/api/app/followed-sources/*` | core / projects / expeditions | core |
-| `GET /api/activity/music/casino` | activity / music / gambling | discordActivity (transport asset) |
+| `GET /api/activity/music/casino` | activity / music / gambling | discordActivity, `alsoRequires: gambling` (the lounge music is casino content) |
 | `/app/liveAudioWorklet.js` | core / voice | core (shared) |
 | Table games (`TableManager`, `BotPlayer`, `table_games`, `activity/games/*`) | activity / gambling | gambling, `alsoRequires: discordActivity` |
 | `sharp` | core / exchange | core |
@@ -511,13 +511,13 @@ They read dormant tables of disabled features by design.
 
 Recorded as `knownGaps` in `inventory.js` so they are not lost:
 
-- #318: `toolsRegistry`-independent command gating does not exist; the
-  command loader (`apps/bot/index.js`) and `collectCommandPayloads`
-  filter nothing but `config*`; `serviceManager.js` constructs
-  `VoiceService` at require time; `clear_search_button` router collision.
-- #319: `toolsRegistry.execute()` has no feature gate; MCP enablement is
-  boot-time only and the briefs tools/resource are unguarded by
-  Expeditions.
+- #318: the `intaction` router token serves both github and cursor
+  actions, so its owner is resolved from `pending.type` at runtime.
+  (Fixed since the first audit: command gating, lazy `VoiceService`, the
+  `step()` feature parameter and the `clear_search_button` collision.)
+- #319: MCP enablement is boot-time only and the `observatory` tool needs
+  an action-aware reduced definition. (`toolsRegistry.execute()` and the
+  MCP brief tools and resource are gated.)
 - #321: tutorial `knowledge.research` has no `requires`; `projects.runs`
   needs observatory and `trading.basics` needs exchange; unmet tutorials
   are omitted instead of reported unavailable.

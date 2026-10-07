@@ -622,13 +622,8 @@ const systemDependencies = {
 
 /** Defects found while taking the inventory; each is fixed under the issue named. */
 const knownGaps = [
-    { issue: '#318', surface: 'interactionTypes.collector:clear_search_button', note: 'The music paginator id parses as router type `search` and is deferred by the approval branch before the collector sees it; rename the id or exclude live collectors.' },
     { issue: '#318', surface: 'interactionTypes.intaction', note: 'One router token serves github and cursor actions; the owner is resolved from `pending.type` at runtime.' },
-    { issue: '#318', surface: 'runtimeSteps', note: 'step() has no feature parameter; automation, heartbeat, personalHeartbeat, memoryConsolidation, followupDelivery and monologue are bundled core steps whose feature branches are gated inside them.' },
-    { issue: '#318', surface: 'runtimeSteps.exchangeRiskEngine', note: 'Runs while exchange is active; prediction settlement inside it is gated on gambling.' },
-    { issue: '#319', surface: 'mcpResources.goobster://briefs/{id}', note: 'MCP brief tools and resources are not guarded by the expeditions feature.' },
     { issue: '#319', surface: 'mcp', note: 'MCP enablement is read at boot only.' },
-    { issue: '#319', surface: 'aiTools', note: 'toolsRegistry.execute() has no feature gating; only discovery filters tools.' },
     { issue: '#319', surface: 'aiTools.observatory', note: 'The definition needs an action-aware reduced form so project organization stays offered when only projects is active.' },
     { issue: '#321', surface: 'tutorials.knowledge.research', note: 'Declares no requirement although the Research view needs expeditions.' },
     { issue: '#321', surface: 'tutorials.projects.runs', note: 'Requires only projects although runs need observatory.' },

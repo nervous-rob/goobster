@@ -219,6 +219,26 @@ describe('feature graph', () => {
     });
 });
 
+describe('known gaps', () => {
+    test('every remaining row names the issue that will close it (a cheap guard against rot)', () => {
+        expect(knownGaps.length).toBeGreaterThan(0);
+        for (const gap of knownGaps) {
+            expect({ surface: gap.surface, issue: gap.issue }).toEqual({ surface: gap.surface, issue: expect.stringMatching(/^#\d+$/) });
+            expect(typeof gap.note).toBe('string');
+            expect(gap.note.length).toBeGreaterThan(0);
+        }
+    });
+
+    test('rows that were fixed are not carried any more', () => {
+        const surfaces = knownGaps.map((gap) => gap.surface);
+        expect(surfaces).not.toContain('runtimeSteps');
+        expect(surfaces).not.toContain('aiTools');
+        expect(surfaces).not.toContain('interactionTypes.collector:clear_search_button');
+        expect(surfaces).not.toContain('runtimeSteps.exchangeRiskEngine');
+        expect(surfaces).not.toContain('mcpResources.goobster://briefs/{id}');
+    });
+});
+
 describe('slash commands and context menus', () => {
     test('every file under apps/bot/commands/<category>/ is claimed exactly once', () => {
         const base = path.join(ROOT, 'apps/bot/commands');
