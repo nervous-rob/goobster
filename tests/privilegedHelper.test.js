@@ -458,7 +458,7 @@ describe('what Linux does not do', () => {
     });
 
     test('another platform has no helper yet', () => {
-        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: [] }), { platform: 'win32' });
+        const { reply } = helper.execute(protocol.buildRequest('package.install', { names: [] }), { platform: 'aix' });
         expect(reply).toMatchObject({ ok: false, code: 'PLATFORM_UNSUPPORTED' });
     });
 
@@ -726,6 +726,8 @@ describe('helper integrity', () => {
                 const target = match[2];
                 if (target.startsWith('node:')) continue;
                 expect(target.startsWith('.')).toBe(true);
+                // The other platforms' modules are loaded lazily, only on their own platform, against their own HELPER_FILES.
+                if (path.basename(file) === 'helper.js' && /^\.\/(win32|darwin)$/.test(target)) continue;
                 let resolved = path.resolve(path.dirname(file), target);
                 if (!resolved.endsWith('.js')) resolved += '.js';
                 queue.push(resolved);
@@ -745,7 +747,7 @@ describe('the dispatcher', () => {
 
     test('run() reports the implemented set per platform', () => {
         expect(privileged.describe('linux')).toMatchObject({ implemented: true, implementedOperations: ['service.register', 'service.unregister', 'updater.disable', 'user.create'] });
-        expect(privileged.describe('win32')).toMatchObject({ implemented: false });
+        expect(privileged.describe('aix')).toMatchObject({ implemented: false });
         expect(privileged.isImplemented('package.install', 'linux')).toBe(false);
     });
 

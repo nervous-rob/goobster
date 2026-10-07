@@ -25,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const protocol = require('./protocol');
 
-const PLATFORMS = Object.freeze({ linux: () => require('./linux') });
+const PLATFORMS = Object.freeze({ linux: () => require('./linux'), win32: () => require('./win32') });
 
 function readStdin() {
     try {
