@@ -161,4 +161,11 @@ function nextOpen(window, date) {
     return null;
 }
 
-module.exports = { CHANNELS, MODES, DEFAULT_SOURCE, normalise, current, sourceOf, effectiveMode, inWindow, nextOpen };
+/** A policy as an operation record, a response or an audit row may carry it: the source's kind (and a GitHub owner and repo), never a directory or a base address. */
+function publicPolicy(policy) {
+    const { source, ...rest } = policy || {};
+    if (!source) return rest;
+    return { ...rest, source: { kind: source.kind, ...(source.kind === 'github-release' ? { owner: source.owner, repo: source.repo } : {}) } };
+}
+
+module.exports = { CHANNELS, MODES, DEFAULT_SOURCE, normalise, current, sourceOf, publicPolicy, effectiveMode, inWindow, nextOpen };

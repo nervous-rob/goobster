@@ -611,8 +611,8 @@ function mountHost(app, ctx, h) {
             return {
                 operation: 'apply',
                 outcome: (result && result.outcome) || null,
-                from: (result && result.from) || null,
-                to: (result && result.to) || null,
+                fromVersion: (result && result.from) || null,
+                toVersion: (result && result.to) || null,
                 schemaChanging: Boolean(result && result.schemaChanging),
                 ...(result && result.downtimeMs !== undefined ? { downtimeMs: result.downtimeMs } : {})
             };

@@ -607,8 +607,8 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 return {
                     plan: {
                         action: 'policy',
-                        from: core.policyOf(doc),
-                        to: next,
+                        from: policyModule.publicPolicy(core.policyOf(doc)),
+                        to: policyModule.publicPolicy(next),
                         effectiveMode: effective.mode,
                         ...(effective.capped ? { capped: 'apply is honoured only while the manager is the updater' } : {}),
                         steps: stepList(['record']),
@@ -630,7 +630,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     return { detail: { mode: next.mode, channel: next.channel } };
                 })
             ],
-            result: (scratch) => ({ policy: scratch.policy }),
+            result: (scratch) => ({ policy: policyModule.publicPolicy(scratch.policy) }),
             auditDetail: (record, scratch) => ({ mode: scratch.policy.mode, channel: scratch.policy.channel, source: scratch.policy.source ? scratch.policy.source.kind : 'default', window: Boolean(scratch.policy.window) })
         };
     }
