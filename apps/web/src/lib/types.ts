@@ -1309,3 +1309,98 @@ export type AccountExportJob = {
     error: string | null;
     downloadUrl: string | null;
 };
+
+// Host room: operator pages served through the installation manager (documentation/host_operations.md)
+export type HostLifecycleWorker = {
+    name: string; state: string; supervised?: boolean; pid?: number | null; revision?: number | null; staged?: boolean;
+    healthy?: boolean | null; ackedRevision: number | null; restarts?: number; crashes?: number; crashLoop?: boolean;
+    backoffMs?: number; code?: string | null; lastExit?: { code?: number | null; signal?: string | null; at?: string } | null;
+};
+export type HostLifecycleOutcome = {
+    revision: number; outcome: 'applied' | 'failed' | 'rolled_back' | 'cancelled'; code?: string | null; at?: string;
+    worker?: string; configRecovery?: string; previousRevisionReady?: boolean;
+};
+export type HostLifecycle = {
+    supervising: boolean; mode: string | null; layout: string | null; layoutError: string | null; stateProblem: string | null;
+    current: number; committing: boolean;
+    pending: {
+        revision: number; operationId?: string; changeRef?: string; phase: 'countdown' | 'committing' | string;
+        deadline?: string; graceSeconds?: number; secondsLeft?: number;
+    } | null;
+    lastOutcome: HostLifecycleOutcome | null;
+    acked: Record<string, number | null>;
+    workers: HostLifecycleWorker[];
+    events: Array<{ at: string; type: string; revision?: number; worker?: string; code?: string }>;
+};
+export type HostManagerStatus = {
+    reachable: boolean; state: string | null; reason?: string | null; version?: string | null; installationId?: string | null;
+    origin?: string | null; appDatabase?: { reachable: boolean; engine: string | null; reason: string | null } | null;
+    lifecycle?: { supervising: boolean; layout: string | null; workers: Array<{ name: string; state: string; ackedRevision: number | null }> } | null;
+    audit?: { pending: number } | null; bridge: { available: boolean };
+    error: { code: string; message: string } | null;
+};
+export type HostFeatureState = {
+    installed: boolean; configured: boolean; active: boolean; pending: boolean; requested: boolean;
+    pendingActive: boolean | null;
+    reasons: FeatureReason[]; warnings: Array<{ code: string; names?: string[] }>;
+};
+export type HostFeatureRow = {
+    id: string; kind: string; title: string; summary: string; dependsOn: string[]; requiredBy: string[];
+    freshDefault: 'on' | 'off' | string;
+    apiKeys: Array<{ name: string; configPath: string | null; purpose: string; required: boolean }>;
+    configKeys: string[]; systemDependencies: string[]; requiredSystemDependencies: string[]; docs: string[];
+    hostSwitch?: { name: string; covers: string; existing: string };
+    state: HostFeatureState;
+};
+export type HostSharedVerdict = { shared: boolean; reasons: string[]; activeAccounts: number; guilds: number };
+export type HostFeatures = {
+    manager: { reachable: boolean; code?: string };
+    source: string; revision: number | null; runningRevision: number | null; origin: string | null;
+    error: { code: string } | null;
+    shared: HostSharedVerdict; keepsData: string; gamblingAttestation: { text: string };
+    features: HostFeatureRow[];
+};
+export type HostConfigField = {
+    id: string; section: string; type: string; feature: string; apply: 'hot' | 'restart'; help: string; description: string;
+    secret: boolean; present: boolean; source: 'env' | 'config' | 'db' | 'default' | 'unset' | 'unknown-db';
+    envControlled: boolean; controlledBy: string | null; envName: string | null;
+    value?: string | number | boolean | string[] | null; default?: unknown; options?: string[]; min?: number; max?: number;
+    masked?: boolean; fingerprint?: string | null; editable: boolean; sources: string[];
+    featureActive?: boolean; invalid?: boolean; placeholder?: boolean;
+};
+export type HostConfigSection = { id: string; title: string; fields: HostConfigField[] };
+export type HostConfigReport = {
+    revision: string | null;
+    file: { present: boolean; readable: boolean; error?: string } | null;
+    appDatabase: { reachable: boolean; engine: string | null; reason?: string } | null;
+    defaults: { revision: number } | null;
+    sections: HostConfigSection[];
+    probes: Array<{ target: string; whatItDoes: string; sendsCredentialTo: string | null; needsCredential: boolean }>;
+};
+export type HostProbeOutcome = {
+    target: string; ok: boolean; code: string; latencyMs: number; detail: string; whatItDoes: string; usedSaved: boolean;
+};
+export type HostOperationKind = 'features.set' | 'config.set' | 'defaults.set' | 'lifecycle.apply';
+export type HostPlanChange = {
+    id: string; from?: boolean; to?: boolean; running?: boolean; action?: 'set' | 'remove'; secret?: boolean; apply?: string;
+    section?: string; value?: unknown; ineffective?: boolean; controlledBy?: string;
+};
+export type HostOperation = {
+    id: string; kind: HostOperationKind; status: string; revision: number | string | null;
+    plan: {
+        target?: string; effect?: string; changes?: HostPlanChange[]; warnings?: Array<{ code: string; message?: string; id?: string }>;
+        restartRequired?: string[]; changeRef?: string; graceSeconds?: number; toRevision?: number;
+        attestation?: { by: string; at: string; text: string } | null;
+    };
+    createdAt?: string; updatedAt?: string; steps: Array<{ name: string; status: string; at?: string }>;
+    error?: { code: string; message: string };
+};
+export type HostPreview = {
+    operation: HostOperation;
+    preview: { restartRequired: boolean; warnings: Array<{ code: string; count?: number; message: string }> };
+    attestation: { by: string; at: string; text: string } | null;
+};
+export type HostApplied = {
+    operation: HostOperation;
+    result: { revision?: number | string; pending?: string[]; restartRequired?: string[]; ineffective?: string[]; changed?: string[]; effect?: string } | null;
+};

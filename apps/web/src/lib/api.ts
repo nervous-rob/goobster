@@ -1,5 +1,5 @@
 import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, PushStatus } from './types';
-import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure } from './types';
+import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob } from './types';
@@ -137,6 +137,20 @@ export const api = {
     adminInstance: () => request<InstanceStateView>('/api/app/admin/instance'),
     adminInstanceResume: () =>
         request<{ paused: null; skipped: SkippedSchedules; state: InstanceStateView }>('/api/app/admin/instance/resume', { method: 'POST' }),
+    // Host operations through the installation manager (documentation/host_operations.md). The secret in a
+    // config.set preview travels once, in this body, and is never part of a URL or a response.
+    hostManager: () => request<HostManagerStatus>('/api/app/admin/host/manager'),
+    hostFeatures: () => request<HostFeatures>('/api/app/admin/host/features'),
+    hostConfig: () => request<HostConfigReport>('/api/app/admin/host/config'),
+    hostProbe: (body: { target: string; useSaved?: boolean; credential?: string }) =>
+        request<HostProbeOutcome>('/api/app/admin/host/config/probe', { method: 'POST', body }),
+    hostPreview: (kind: HostOperationKind, input: unknown) =>
+        request<HostPreview>('/api/app/admin/host/operations', { method: 'POST', body: { kind, input } }),
+    hostApply: (id: string) =>
+        request<HostApplied>(`/api/app/admin/host/operations/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
+    hostLifecycle: () => request<HostLifecycle>('/api/app/admin/host/lifecycle'),
+    hostLifecycleAction: (action: 'restart-now' | 'cancel' | 'restart') =>
+        request<{ operation: unknown; result: unknown }>(`/api/app/admin/host/lifecycle/${action}`, { method: 'POST' }),
     adminTestMail: (to: string) => request<{ ok: true; provider: string }>('/api/app/admin/mail/test', { method: 'POST', body: { to } }),
 
     conversations: () => request<{ conversations: Conversation[] }>('/api/app/chat/conversations'),

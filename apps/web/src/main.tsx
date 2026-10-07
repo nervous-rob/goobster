@@ -378,6 +378,12 @@ const hostRoute = createRoute({
     component: HostRoom,
 });
 
+const hostPageRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/host/$page',
+    component: HostRoom,
+});
+
 const usageRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/usage',
@@ -545,6 +551,7 @@ const routeTree = rootRoute.addChildren([
         decksRoute,
         usageRoute,
         hostRoute,
+        hostPageRoute,
         settingsRoute,
         settingsSectionRoute,
         ...legacyRoutes,
