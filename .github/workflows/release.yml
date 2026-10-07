@@ -1,0 +1,620 @@
+name: Release
+
+# Issue #341 (installer epic #315, installer plan Phase 5 item P5.1). The signed release pipeline:
+# builds the runtime payload and every bootstrap artifact on each promised target, signs them where the
+# owner has supplied the keys and certificates, assembles and signs `release-index.json`, verifies the
+# whole release the way an installer will, and publishes a GitHub Release. Documentation, the index schema
+# and the trust policy: documentation/release.md.
+#
+# Triggers: a `v*` tag push (`v1.4.0` is the stable channel; `v1.4.0-rc.1`, `-beta.N`, `-alpha.N` the
+# prerelease channel) or a manual dispatch (always a prerelease, tagged `v<core>-dev.<run number>`).
+# This workflow never runs for a pull request: it holds signing material and a write token.
+#
+# What happens with no keys (the state of the repository today):
+#   * a stable tag stops in the `plan` job with RELEASE_BLOCKED_UNSIGNED - nothing is built or published;
+#   * a dispatch or a prerelease tag builds everything development-signed and publishes it labelled
+#     "UNSIGNED DEVELOPMENT BUILD". A production verification (the installer's default) refuses it.
+#
+# Secrets (environment `release`; every one is optional, a missing one turns its step off and the
+# artifact is then labelled unsigned - nothing here fails because a certificate is absent):
+#   GOOBSTER_RELEASE_SIGNING_KEY_PEM            Ed25519 key that signs payloads and the index; its public half
+#                                               must be an `active` entry in scripts/release-keys.json
+#   WINDOWS_SIGNING_CERT_PFX_BASE64             Authenticode certificate (base64 PFX) and its password
+#   WINDOWS_SIGNING_CERT_PASSWORD
+#   APPLE_DEVELOPER_ID_INSTALLER_CERT_P12_BASE64  Developer ID Installer certificate (base64 p12), its password
+#   APPLE_CERT_PASSWORD
+#   APPLE_TEAM_ID                               Apple team id (the identity recorded for a notarized pkg)
+#   APPLE_NOTARY_KEY_ID / APPLE_NOTARY_ISSUER_ID / APPLE_NOTARY_KEY_P8_BASE64   App Store Connect API key
+#   APPLE_DEVELOPER_ID_APPLICATION_CERT_P12_BASE64  reserved for Mach-O codesigning of the payload, which
+#                                               the payload build has no hook for yet (documentation/release.md)
+# Signing material is only exposed to a tag push or a protected branch (`github.ref_type == 'tag' ||
+# github.ref_protected`); a dispatch from any other branch builds a development release. The `release`
+# environment should additionally restrict deployment refs and may require a reviewer.
+#
+# Secrets are written to files under a temp directory that an `always()` step deletes, are passed to the
+# tools as files or environment variables of ONE step, and nothing here prints the environment.
+# The Windows and macOS signing steps and the arm64, macOS and Windows jobs need real certificates and
+# runners; they were written against the tools' documented behaviour and have not been run by their author.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      linux_arm64:
+        description: 'Include linux-arm64 (ubuntu-24.04-arm). Untick if the repository has no access to GitHub-hosted arm64 runners; the job would otherwise queue forever.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: plan (channel, tag, signing mode)
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 10
+    outputs:
+      channel: ${{ steps.plan.outputs.channel }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      mode: ${{ steps.plan.outputs.mode }}
+      key_id: ${{ steps.plan.outputs.key_id }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Channel, tag and signing mode (a stable run without an active key stops here)
+        id: plan
+        shell: bash
+        env:
+          GOOBSTER_RELEASE_SIGNING_KEY_PEM: ${{ (github.ref_type == 'tag' || github.ref_protected) && secrets.GOOBSTER_RELEASE_SIGNING_KEY_PEM || '' }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            args=(--tag "$REF_NAME" --dispatch --run-number "$RUN_NUMBER")
+          else
+            args=(--tag "$REF_NAME")
+          fi
+          node scripts/release-index.js plan "${args[@]}" --github-output "$GITHUB_OUTPUT"
+
+      - name: Matrix
+        id: matrix
+        shell: bash
+        env:
+          INCLUDE_ARM64: ${{ github.event_name != 'workflow_dispatch' && vars.PACKAGING_PROOF_LINUX_ARM64 != 'false' || inputs.linux_arm64 == true }}
+        run: |
+          entries='{"target":"linux-x64","runner":"ubuntu-24.04"},{"target":"win32-x64","runner":"windows-2022"},{"target":"darwin-x64","runner":"macos-15-intel"},{"target":"darwin-arm64","runner":"macos-15"}'
+          if [ "$INCLUDE_ARM64" = "true" ]; then
+            entries="$entries"',{"target":"linux-arm64","runner":"ubuntu-24.04-arm"}'
+          else
+            echo "::notice::linux-arm64 is NOT part of this run; the release will say it is absent."
+          fi
+          echo "matrix={\"include\":[$entries]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target }} (${{ matrix.runner }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      MODE: ${{ needs.plan.outputs.mode }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      PLANNED_KEY_ID: ${{ needs.plan.outputs.key_id }}
+    steps:
+      - name: Output locations (outside the checkout)
+        run: |
+          temp="${RUNNER_TEMP//\\//}"
+          {
+            echo "PAYLOAD=$temp/goobster-payload"
+            echo "REPORTS=$temp/goobster-reports"
+            echo "ARTIFACTS=$temp/goobster-bootstrap"
+            echo "TOOLS=$temp/goobster-bootstrap-tools"
+            echo "STAGE=$temp/goobster-stage"
+            echo "KEYDIR=$temp/goobster-release-key"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      - name: Release signing key (a private file, deleted by the last step)
+        if: needs.plan.outputs.mode == 'release'
+        env:
+          GOOBSTER_RELEASE_SIGNING_KEY_PEM: ${{ (github.ref_type == 'tag' || github.ref_protected) && secrets.GOOBSTER_RELEASE_SIGNING_KEY_PEM || '' }}
+        run: |
+          mkdir -p "$KEYDIR"
+          chmod 700 "$KEYDIR"
+          node scripts/release-index.js materialize-key --env GOOBSTER_RELEASE_SIGNING_KEY_PEM --out "$KEYDIR/release-key.pem" > "$KEYDIR/materialized.json"
+          node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.keyId !== process.env.PLANNED_KEY_ID) { console.error("the signing key is not the key the plan job accepted"); process.exit(1); }' "$KEYDIR/materialized.json"
+          node scripts/release-index.js export-public --key "$KEYDIR/release-key.pem" --out "$KEYDIR/release-key.pub.pem"
+          {
+            echo "PUBKEY=$KEYDIR/release-key.pub.pem"
+            echo "VERIFY_KEY=$KEYDIR/release-key.pub.pem"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the payload (signed with the release key)
+        if: needs.plan.outputs.mode == 'release'
+        run: |
+          node scripts/package-runtime.js --target "$TARGET" --out "$PAYLOAD" --report-dir "$REPORTS" --force
+          node scripts/package-sign.js --key "$KEYDIR/release-key.pem" "$PAYLOAD"
+
+      - name: Build the payload (development-signed; the artifacts are labelled UNSIGNED DEVELOPMENT BUILD)
+        if: needs.plan.outputs.mode != 'release'
+        run: |
+          node scripts/package-runtime.js --target "$TARGET" --out "$PAYLOAD" --report-dir "$REPORTS" --force --dev-sign
+          echo "VERIFY_KEY=$REPORTS/payload-dev-key-$TARGET.pub.pem" >> "$GITHUB_ENV"
+
+      - name: The payload verifies against the key it is shipped with
+        run: |
+          node scripts/lib/payloadStage.js verify "$PAYLOAD" --target "$TARGET" --abi 127 --public-key "$VERIFY_KEY" | tee "$REPORTS/payload-verify-$TARGET.json"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: The payload passes its own smoke check, bundled runtime only (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          test -x "$PAYLOAD/bin/goobster-manager"
+          env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+            "$PAYLOAD/runtime/bin/node" "$PAYLOAD/app/scripts/package-smoke.js" \
+            --public-key "$VERIFY_KEY" --report "$REPORTS/package-smoke-$TARGET.json" 2>&1 | tee "$REPORTS/package-smoke-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The payload passes its own smoke check, bundled runtime only (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          if (Get-Command node -ErrorAction SilentlyContinue) { throw 'a system node is still visible on PATH' }
+          & "$env:PAYLOAD\runtime\node.exe" "$env:PAYLOAD\app\scripts\package-smoke.js" `
+            --public-key "$env:VERIFY_KEY" --report "$env:REPORTS\package-smoke-$env:TARGET.json" 2>&1 | Tee-Object -FilePath "$env:REPORTS\package-smoke-$env:TARGET.log"
+          if ($LASTEXITCODE -ne 0) { throw "package-smoke exited $LASTEXITCODE" }
+
+      # ---- Linux ---------------------------------------------------------------------------------
+      - name: appimagetool's host prerequisite (desktop-file-validate)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends desktop-file-utils
+
+      - name: Build the .run and the AppImage (a skipped AppImage fails the job)
+        if: runner.os == 'Linux'
+        run: |
+          pub=()
+          if [ -n "${PUBKEY:-}" ]; then pub=(--public-key "$PUBKEY"); fi
+          node scripts/package-bootstrap.js --target "$TARGET" --payload "$PAYLOAD" --out "$ARTIFACTS" \
+            --tools-dir "$TOOLS" "${pub[@]}" --require-appimage 2>&1 | tee "$REPORTS/package-bootstrap-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      # ---- Windows -------------------------------------------------------------------------------
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'choco install nsis failed' }
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          if (-not (Test-Path (Join-Path $nsis 'makensis.exe'))) { throw "makensis.exe is not in $nsis" }
+          $nsis | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Authenticode signing is configured
+        id: winsign
+        if: runner.os == 'Windows'
+        env:
+          CONFIGURED: ${{ needs.plan.outputs.mode == 'release' && (github.ref_type == 'tag' || github.ref_protected) && secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 != '' && secrets.WINDOWS_SIGNING_CERT_PASSWORD != '' }}
+        run: |
+          echo "enabled=$CONFIGURED" >> "$GITHUB_OUTPUT"
+          if [ "$CONFIGURED" != "true" ]; then
+            echo "::warning::Windows Authenticode signing is not configured for this run; the installer is an UNSIGNED build and a stable release will not publish this target."
+          fi
+
+      - name: Import the Authenticode certificate (a private file, deleted by the last step)
+        if: runner.os == 'Windows' && steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+          TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'https://timestamp.digicert.com' }}
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:KEYDIR | Out-Null
+          $pfx = Join-Path $env:KEYDIR 'authenticode.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_PFX_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $cert.HasPrivateKey) { throw 'the Authenticode certificate has no private key' }
+          $days = [int][Math]::Floor(($cert.NotAfter - (Get-Date)).TotalDays)
+          if ($days -lt 0) { throw "the Authenticode certificate expired $(-$days) day(s) ago" }
+          if ($days -lt 60) { Write-Host "::warning::the Authenticode certificate expires in $days day(s); renew it (documentation/release.md)" }
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          if (-not $signtool) { throw 'signtool.exe was not found in the Windows SDK' }
+          @("SIGN_THUMBPRINT=$($cert.Thumbprint)", "SIGNTOOL=$($signtool.FullName)", "SIGN_TIMESTAMP_URL=$env:TIMESTAMP_URL") | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Build the installer (a skipped installer fails the job; signtool runs when configured)
+        if: runner.os == 'Windows'
+        run: |
+          pub=()
+          if [ -n "${PUBKEY:-}" ]; then pub=(--public-key "$PUBKEY"); fi
+          sign=()
+          if [ -n "${SIGNTOOL:-}" ]; then sign=(--signtool "$SIGNTOOL" --sign-thumbprint "$SIGN_THUMBPRINT" --sign-timestamp-url "$SIGN_TIMESTAMP_URL"); fi
+          node scripts/package-bootstrap-win32.js --target "$TARGET" --payload "$PAYLOAD" --out "$ARTIFACTS" \
+            --tools-dir "$TOOLS" "${pub[@]}" --require-installer "${sign[@]}" 2>&1 | tee "$REPORTS/package-bootstrap-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The installer's Authenticode signature is valid and timestamped
+        if: runner.os == 'Windows' && steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem $env:ARTIFACTS -Filter 'goobster-*-win32-x64*.exe').FullName
+          $signature = Get-AuthenticodeSignature $exe
+          "Authenticode: $($signature.Status)"
+          if ($signature.Status -ne 'Valid') { throw "the installer's Authenticode status is $($signature.Status)" }
+          if (-not $signature.TimeStamperCertificate) { throw 'the installer signature carries no timestamp' }
+          @('PLATFORM_METHOD=authenticode', "PLATFORM_IDENTITY=$($signature.SignerCertificate.Thumbprint)") | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      # ---- macOS ---------------------------------------------------------------------------------
+      - name: Apple signing and notarization are configured
+        id: macsign
+        if: runner.os == 'macOS'
+        env:
+          CONFIGURED: ${{ needs.plan.outputs.mode == 'release' && (github.ref_type == 'tag' || github.ref_protected) && secrets.APPLE_DEVELOPER_ID_INSTALLER_CERT_P12_BASE64 != '' && secrets.APPLE_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_NOTARY_KEY_ID != '' && secrets.APPLE_NOTARY_ISSUER_ID != '' && secrets.APPLE_NOTARY_KEY_P8_BASE64 != '' }}
+        run: |
+          echo "enabled=$CONFIGURED" >> "$GITHUB_OUTPUT"
+          if [ "$CONFIGURED" != "true" ]; then
+            echo "::warning::Apple Developer ID signing and notarization are not configured for this run; the package is an UNSIGNED build and a stable release will not publish this target."
+          fi
+
+      - name: Import the Developer ID Installer certificate and store the notary credentials (a temporary keychain)
+        if: runner.os == 'macOS' && steps.macsign.outputs.enabled == 'true'
+        env:
+          APPLE_DEVELOPER_ID_INSTALLER_CERT_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+        run: |
+          mkdir -p "$KEYDIR"
+          chmod 700 "$KEYDIR"
+          p12="$KEYDIR/installer.p12"
+          p8="$KEYDIR/notary.p8"
+          printf '%s' "$APPLE_DEVELOPER_ID_INSTALLER_CERT_P12_BASE64" | base64 --decode > "$p12"
+          printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | base64 --decode > "$p8"
+          chmod 600 "$p12" "$p8"
+
+          # Expiry: warn under 60 days, stop when expired. Reading the certificate may not work with
+          # every p12 and openssl combination; failing to read it is a warning, not a stop.
+          if cert_pem="$(openssl pkcs12 -in "$p12" -passin env:APPLE_CERT_PASSWORD -nokeys -clcerts 2>/dev/null)" && [ -n "$cert_pem" ]; then
+            if ! printf '%s\n' "$cert_pem" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
+              echo "::error::the Developer ID Installer certificate has expired"
+              exit 1
+            fi
+            if ! printf '%s\n' "$cert_pem" | openssl x509 -noout -checkend $((60 * 86400)) >/dev/null 2>&1; then
+              echo "::warning::the Developer ID Installer certificate expires within 60 days; renew it (documentation/release.md)"
+            fi
+          else
+            echo "::warning::could not read the certificate's expiry with this openssl; check it by hand (documentation/release.md)"
+          fi
+
+          keychain="$KEYDIR/goobster-release.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain" > /dev/null
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
+          existing="$(security list-keychains -d user | tr -d '"')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$keychain" $existing
+
+          identity="$(security find-identity -v "$keychain" | awk '/Developer ID Installer/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "::error::the imported file holds no valid Developer ID Installer identity"
+            exit 1
+          fi
+          xcrun notarytool store-credentials goobster-notary --key "$p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" --keychain "$keychain" > /dev/null
+          {
+            echo "PRODUCT_SIGN_IDENTITY=$identity"
+            echo "NOTARY_PROFILE=goobster-notary"
+            echo "APPLE_KEYCHAIN=$keychain"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the .pkg and the .tar.gz (a skipped pkg fails the job; productsign, notarytool and stapler run when configured)
+        if: runner.os == 'macOS'
+        run: |
+          pub=()
+          if [ -n "${PUBKEY:-}" ]; then pub=(--public-key "$PUBKEY"); fi
+          sign=()
+          if [ -n "${PRODUCT_SIGN_IDENTITY:-}" ]; then sign=(--product-sign "$PRODUCT_SIGN_IDENTITY" --notary-profile "$NOTARY_PROFILE"); fi
+          node scripts/package-bootstrap-darwin.js --target "$TARGET" --payload "$PAYLOAD" --out "$ARTIFACTS" \
+            "${pub[@]}" --require-pkg "${sign[@]}" 2>&1 | tee "$REPORTS/package-bootstrap-$TARGET.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: The package is signed, notarized and stapled
+        if: runner.os == 'macOS' && steps.macsign.outputs.enabled == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          pkg="$(ls "$ARTIFACTS"/goobster-*-"$TARGET".pkg)"
+          pkgutil --check-signature "$pkg" | tee "$REPORTS/pkg-signature-$TARGET.txt"
+          grep -q 'Developer ID Installer' "$REPORTS/pkg-signature-$TARGET.txt"
+          xcrun stapler validate "$pkg"
+          spctl --assess --type install --verbose=2 "$pkg" 2>&1 | tee "$REPORTS/pkg-spctl-$TARGET.txt"
+          {
+            echo "PLATFORM_METHOD=apple-notarized"
+            echo "PLATFORM_IDENTITY=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+
+      # ---- every target --------------------------------------------------------------------------
+      - name: Entries, the payload archive and the dependency inventory
+        run: |
+          mkdir -p "$STAGE/release"
+          entries="$STAGE/artifact-entry-$TARGET.json"
+          rm -f "$entries"
+          pub=()
+          if [ -n "${PUBKEY:-}" ]; then pub=(--public-key "$PUBKEY"); fi
+          platform=()
+          if [ -n "${PLATFORM_METHOD:-}" ]; then platform=(--platform-method "$PLATFORM_METHOD" --platform-identity "$PLATFORM_IDENTITY"); fi
+
+          single() {
+            if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then echo "::error::expected exactly one artifact, found: $*"; return 1; fi
+            printf '%s\n' "$1"
+          }
+          add() {
+            local file="$1" kind="$2"
+            shift 2
+            cp "$file" "$STAGE/release/"
+            node scripts/release-index.js entry --payload "$PAYLOAD" --artifact "$STAGE/release/$(basename "$file")" --kind "$kind" \
+              "${pub[@]}" --out "$entries" "$@"
+          }
+
+          case "$TARGET" in
+            linux-*)
+              add "$(single "$ARTIFACTS"/goobster-*-"$TARGET"*.run)" bootstrap
+              add "$(single "$ARTIFACTS"/Goobster-*.AppImage)" appimage
+              ;;
+            win32-*)
+              add "$(single "$ARTIFACTS"/goobster-*-"$TARGET"*.exe)" exe "${platform[@]}"
+              ;;
+            darwin-*)
+              add "$(single "$ARTIFACTS"/goobster-*-"$TARGET"*.pkg)" pkg "${platform[@]}"
+              add "$(single "$ARTIFACTS"/goobster-*-"$TARGET"*.tar.gz)" tarball
+              ;;
+            *)
+              echo "::error::no artifact rules for $TARGET"
+              exit 1
+              ;;
+          esac
+
+          node scripts/release-index.js pack-payload --payload "$PAYLOAD" --out "$STAGE/release" "${pub[@]}" > "$REPORTS/pack-payload-$TARGET.json"
+          name="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).name' "$REPORTS/pack-payload-$TARGET.json")"
+          node scripts/release-index.js entry --payload "$PAYLOAD" --artifact "$STAGE/release/$name" --kind payload \
+            "${pub[@]}" --out "$entries"
+          node scripts/release-index.js inventory --payload "$PAYLOAD" --out "$STAGE/release"
+          cat "$entries" > "$REPORTS/artifact-entry-$TARGET.json"
+
+      - name: Artifact hygiene scan (a container this runner can open and cannot is a failure)
+        run: node scripts/release-verify-artifacts.js "$STAGE/release" --target "$TARGET" --strict --report "$REPORTS/hygiene-$TARGET.json"
+
+      - name: Artifact digests
+        run: |
+          mkdir -p "$REPORTS"
+          node -e '
+            const fs = require("fs"), path = require("path"), crypto = require("crypto");
+            const dir = process.argv[1];
+            for (const name of fs.readdirSync(dir).sort()) {
+              const hash = crypto.createHash("sha256").update(fs.readFileSync(path.join(dir, name))).digest("hex");
+              console.log(hash + "  " + name);
+            }
+          ' "$STAGE/release" | tee "$REPORTS/sha256-$TARGET.txt"
+
+      - name: Upload the target's release files and entries
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ${{ env.STAGE }}/release
+            ${{ env.STAGE }}/artifact-entry-${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-reports-${{ matrix.target }}
+          path: ${{ env.REPORTS }}
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Delete every key, certificate and keychain this job created
+        if: always()
+        run: |
+          if [ -n "${APPLE_KEYCHAIN:-}" ] && [ "$RUNNER_OS" = macOS ]; then security delete-keychain "$APPLE_KEYCHAIN" || true; fi
+          rm -rf "$KEYDIR"
+
+      - name: Remove the Authenticode certificate from the store
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:SIGN_THUMBPRINT) { Remove-Item "Cert:\CurrentUser\My\$($env:SIGN_THUMBPRINT)" -ErrorAction SilentlyContinue }
+          if (Test-Path $env:KEYDIR) { Remove-Item -Recurse -Force $env:KEYDIR -ErrorAction SilentlyContinue }
+
+  publish:
+    name: assemble, sign, verify and publish
+    needs: [plan, build]
+    # A target that failed uploaded nothing and is absent from the index and the release; the others publish.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      MODE: ${{ needs.plan.outputs.mode }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      PLANNED_KEY_ID: ${{ needs.plan.outputs.key_id }}
+      EVENT_NAME: ${{ github.event_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Download what the targets built
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/incoming
+
+      - name: Assemble the release directory
+        run: |
+          out="$RUNNER_TEMP/goobster-release"
+          entries="$RUNNER_TEMP/goobster-entries"
+          mkdir -p "$out" "$entries"
+          found=0
+          for dir in "$RUNNER_TEMP"/incoming/release-*; do
+            [ -d "$dir/release" ] || continue
+            cp -a "$dir/release/." "$out/"
+            cp "$dir"/artifact-entry-*.json "$entries/"
+            found=$((found + 1))
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no target produced release files; there is nothing to publish"
+            exit 1
+          fi
+          echo "targets assembled: $found"
+          {
+            echo "OUT=$out"
+            echo "ENTRIES=$entries"
+            echo "NOTES=$RUNNER_TEMP/release-notes.md"
+          } >> "$GITHUB_ENV"
+          ls -1 "$out"
+
+      - name: Release signing key (a private file, deleted by the last step)
+        if: needs.plan.outputs.mode == 'release'
+        env:
+          GOOBSTER_RELEASE_SIGNING_KEY_PEM: ${{ (github.ref_type == 'tag' || github.ref_protected) && secrets.GOOBSTER_RELEASE_SIGNING_KEY_PEM || '' }}
+        run: |
+          keydir="$RUNNER_TEMP/goobster-release-key"
+          mkdir -p "$keydir"
+          chmod 700 "$keydir"
+          node scripts/release-index.js materialize-key --env GOOBSTER_RELEASE_SIGNING_KEY_PEM --out "$keydir/release-key.pem" > "$keydir/materialized.json"
+          node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.keyId !== process.env.PLANNED_KEY_ID) { console.error("the signing key is not the key the plan job accepted"); process.exit(1); }' "$keydir/materialized.json"
+          echo "KEYDIR=$keydir" >> "$GITHUB_ENV"
+
+      - name: Build the release index (a stable release withdraws any target that is not fully signed)
+        run: |
+          args=(--dir "$OUT" --tag "$TAG" --source-revision "$GITHUB_SHA" --min-upgrade-from "${MIN_UPGRADE_FROM:-0.0.0}")
+          for file in "$ENTRIES"/artifact-entry-*.json; do args+=(--entries "$file"); done
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then args+=(--dispatch); fi
+          if [ "$CHANNEL" = stable ]; then args+=(--drop-unsigned-targets); fi
+          node scripts/release-index.js build "${args[@]}" | tee "$RUNNER_TEMP/build-result.json"
+          dropped="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).dropped.map(item => item.target).join(", ")' "$RUNNER_TEMP/build-result.json")"
+          if [ -n "$dropped" ]; then
+            echo "::warning::withdrawn from this stable release because not every artifact is signed: $dropped"
+          fi
+          if [ -z "$(ls "$OUT" | grep -E '\.(run|AppImage|pkg|exe|msi|tar\.gz)$' || true)" ]; then
+            echo "::error::every target was withdrawn; there is nothing to publish"
+            exit 1
+          fi
+        env:
+          MIN_UPGRADE_FROM: ${{ vars.RELEASE_MIN_UPGRADE_FROM }}
+
+      - name: Sign the release index
+        if: needs.plan.outputs.mode == 'release'
+        run: node scripts/release-index.js sign --dir "$OUT" --key "$KEYDIR/release-key.pem"
+
+      - name: Verify the release the way an installer will (production policy, repository key list)
+        if: needs.plan.outputs.mode == 'release'
+        run: |
+          node scripts/release-index.js verify "$OUT" --policy development --require-files
+          if [ "$CHANNEL" = stable ]; then
+            node scripts/release-index.js verify "$OUT" --policy production --require-files
+          else
+            set +e
+            node scripts/release-index.js verify "$OUT" --policy production --require-files
+            echo "::notice::production verification of this prerelease exited $? (informational: a prerelease may carry unsigned artifacts)"
+            exit 0
+          fi
+
+      - name: Verify the development release (it must verify as a development build and be REFUSED as production)
+        if: needs.plan.outputs.mode != 'release'
+        run: |
+          node scripts/release-index.js verify "$OUT" --policy development --require-files
+          set +e
+          node scripts/release-index.js verify "$OUT" --policy production --require-files
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            echo "::error::a development release must be refused under the production policy (exit $status)"
+            exit 1
+          fi
+
+      - name: Artifact hygiene scan over everything about to be published, and no key material in the plain files
+        run: |
+          node scripts/release-verify-artifacts.js "$OUT" --report "$RUNNER_TEMP/hygiene-release.json"
+          if grep -rlaE -e '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----' "$OUT"; then
+            echo "::error::a file in the release carries a private key"
+            exit 1
+          fi
+
+      - name: SHA256SUMS and the release notes
+        run: |
+          node scripts/release-index.js sums --dir "$OUT"
+          node scripts/release-index.js notes --dir "$OUT" --expected linux-x64,linux-arm64,win32-x64,darwin-x64,darwin-arm64 --out "$NOTES"
+          cat "$NOTES"
+          {
+            echo "### Release $TAG ($CHANNEL, signing mode: $MODE)"
+            echo
+            cat "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Goobster $VERSION ($CHANNEL)"
+          if [ "$MODE" != release ]; then title="$title - UNSIGNED DEVELOPMENT BUILD"; fi
+          files=("$OUT"/*)
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+            gh release edit "$TAG" --title "$title" --notes-file "$NOTES"
+          else
+            flags=(--title "$title" --notes-file "$NOTES")
+            if [ "$CHANNEL" = stable ]; then flags+=(--latest); else flags+=(--prerelease); fi
+            if [ "$EVENT_NAME" = workflow_dispatch ]; then flags+=(--target "$GITHUB_SHA"); else flags+=(--verify-tag); fi
+            gh release create "$TAG" "${files[@]}" "${flags[@]}"
+          fi
+
+      - name: Delete the signing key
+        if: always()
+        run: |
+          if [ -n "${KEYDIR:-}" ]; then rm -rf "$KEYDIR"; fi
