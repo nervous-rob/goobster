@@ -18,7 +18,7 @@ const { ReleaseWorkshop } = require('./release');
 
 const OWNER_LOGIN = 'acceptance-owner';
 const OFFSET = { manager: 0, api: 1, bot: 2, ollama: 3, scratchManager: 4, scratchApi: 5, scratchBot: 6, busy: 7, docker: 8 };
-const FEATURE_ROUTE = '/api/app/exchange/portfolio';
+const FEATURE_ROUTE = '/api/app/exchange/overview?guildId=1';
 const FEATURE_ID = 'exchange';
 
 function parseSse(text) {
@@ -77,6 +77,7 @@ class Cell {
         this.cookie = null;
         this.installationId = null;
         this.installed = false;
+        this.passphrase = null;
         this.engine = 'sqlite';
         this.markerConversation = null;
         this.fake = null;
@@ -136,6 +137,51 @@ class Cell {
         });
     }
 
+    /** The roots the installed launcher would read from goobster.env, for commands run from the payload's launcher. */
+    rootEnv(extra = {}) {
+        return this.env({
+            GOOBSTER_RUNTIME_MODE: 'standalone',
+            GOOBSTER_DATA_DIR: this.roots.data,
+            GOOBSTER_CONFIG_PATH: this.roots.config,
+            GOOBSTER_CACHE_DIR: this.roots.cache,
+            GOOBSTER_LOG_DIR: this.roots.logs,
+            GOOBSTER_MANAGER_STATE_DIR: this.roots.managerStore,
+            ...extra
+        });
+    }
+
+    sqliteFile() {
+        return path.join(this.roots.data, 'goobster.sqlite');
+    }
+
+    sha256File(file) {
+        return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    }
+
+    /** The one archive directory `backup --out <dir>` wrote inside `dir`. */
+    archiveIn(dir) {
+        const names = fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.startsWith('goobster-backup-')).sort() : [];
+        check(names.length > 0, 'the backup wrote no archive directory');
+        return path.join(dir, names[names.length - 1]);
+    }
+
+    ensurePassphrase() {
+        if (!this.passphrase) {
+            this.passphrase = `${crypto.randomBytes(9).toString('hex')}-copper-lantern-tide`;
+            this.redactor.secret(this.passphrase);
+        }
+        return this.passphrase;
+    }
+
+    /** A 0600 file holding a passphrase (the first line), registered as a secret. */
+    passphraseFile(name = 'passphrase') {
+        this.ensurePassphrase();
+        const file = path.join(this.dirs.answers, `${name}.txt`);
+        fs.writeFileSync(file, `${this.passphrase}\n`, { mode: 0o600 });
+        try { fs.chmodSync(file, 0o600); } catch { /* not POSIX */ }
+        return file;
+    }
+
     /** Write a 0600 answers file (it may hold a secret) and return its path. */
     answersFile(name, document) {
         const file = path.join(this.dirs.answers, `${name}.json`);
@@ -181,6 +227,14 @@ class Cell {
         this.daemon.start();
         this.api.token = null;
         return this.daemon;
+    }
+
+    /** After a step that failed half way: bring the manager and its workers back so the next step starts from a running installation. */
+    async ensureRunning() {
+        if (!this.installed || (this.daemon && this.daemon.running())) return;
+        this.startDaemon();
+        await this.waitManager();
+        await this.waitHealthy();
     }
 
     async stopDaemon() {
@@ -288,6 +342,20 @@ class Cell {
         check(done.lastOutcome.outcome === 'applied', `the restart ended ${done.lastOutcome.outcome}${done.lastOutcome.code ? ` (${done.lastOutcome.code})` : ''}`);
         await this.waitHealthy();
         return { applied, lifecycle: done };
+    }
+
+    /** Restart the workers at the current revision, the portal's "Restart" button. */
+    async restartWorkers() {
+        const before = await this.api.call('GET', '/lifecycle');
+        const pids = new Set(((before.json && before.json.workers) || []).map((worker) => worker.pid));
+        const now = await this.api.call('POST', '/lifecycle/restart');
+        check(now.status === 200, `restart answered ${now.status}${now.json && now.json.error ? ` ${now.json.error.code}` : ''}`);
+        await op.waitFor(async () => {
+            const lifecycle = await this.api.call('GET', '/lifecycle');
+            const workers = (lifecycle.json && lifecycle.json.workers) || [];
+            return workers.length && workers.every((worker) => worker.pid && !pids.has(worker.pid) && worker.healthy === true) ? lifecycle.json : null;
+        }, { timeoutMs: 180_000, intervalMs: 700, what: 'the workers to come back with new processes' });
+        await this.waitHealthy();
     }
 
     // ------------------------------------------------------------ steps

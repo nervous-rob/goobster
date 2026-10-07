@@ -20,17 +20,23 @@ function readManifest(dir) {
     return JSON.parse(fs.readFileSync(path.join(dir, stage.MANIFEST_FILE), 'utf8'));
 }
 
-function copyTree(from, to) {
+/**
+ * Copy a payload tree. Files below the top level are hard-linked (the payload is hundreds of MiB and
+ * is never written to); the top-level manifest, signature and selection are real copies because the
+ * workshop rewrites them and a rewrite through a link would change the payload they came from.
+ */
+function copyTree(from, to, depth = 0) {
     fs.mkdirSync(to, { recursive: true });
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
         const source = path.join(from, entry.name);
         const target = path.join(to, entry.name);
         if (entry.isDirectory()) {
-            copyTree(source, target);
+            copyTree(source, target, depth + 1);
         } else if (entry.isSymbolicLink()) {
             fs.symlinkSync(fs.readlinkSync(source), target);
         } else {
             try {
+                if (depth === 0) throw new Error('copy');
                 fs.linkSync(source, target);
             } catch {
                 fs.copyFileSync(source, target);
