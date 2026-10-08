@@ -80,6 +80,23 @@ function alive(pid) {
 }
 
 /**
+ * How a launcher is started. A `.cmd` launcher needs cmd.exe, which reads an unquoted path with a
+ * forward slash (`D:\\a\\_temp/goobster-payload\\bin\\goobster-manager.cmd`, the shape $RUNNER_TEMP
+ * gives a bash step on a Windows runner) as a program plus a switch, so the path is normalized to
+ * backslashes and quoted, and so is every argument that holds a space or a cmd.exe metacharacter.
+ * Everywhere else the launcher is a program and the arguments are passed through unchanged.
+ * @returns {{ file: string, args: string[], shell: boolean }}
+ */
+function launcherCommand(launcher, args) {
+    if (!(IS_WINDOWS && /\.cmd$/i.test(launcher))) return { file: launcher, args, shell: false };
+    const quote = (value) => {
+        const text = String(value);
+        return /[\s"&|<>^()%!]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    return { file: `"${path.win32.normalize(launcher).replace(/"/g, '')}"`, args: args.map(quote), shell: true };
+}
+
+/**
  * @param {string} launcher  the goobster-manager launcher of a payload or of an installed release
  * @param {string[]} args
  * @param {Object} options
@@ -90,7 +107,8 @@ function alive(pid) {
 function runLauncher(launcher, args, { env, timeoutMs = 300_000, input = '' } = {}) {
     return new Promise((resolve) => {
         const started = Date.now();
-        const child = childProcess.spawn(launcher, args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WINDOWS && /\.cmd$/i.test(launcher), windowsHide: true });
+        const command = launcherCommand(launcher, args);
+        const child = childProcess.spawn(command.file, command.args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: command.shell, windowsHide: true });
         let stdout = '';
         let stderr = '';
         let timedOut = false;
@@ -113,7 +131,8 @@ function runLauncher(launcher, args, { env, timeoutMs = 300_000, input = '' } = 
 /** A spawned CLI whose process the caller may signal before it ends. */
 function startLauncher(launcher, args, { env }) {
     const started = Date.now();
-    const child = childProcess.spawn(launcher, args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WINDOWS && /\.cmd$/i.test(launcher), windowsHide: true });
+    const command = launcherCommand(launcher, args);
+    const child = childProcess.spawn(command.file, command.args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: command.shell, windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -150,10 +169,11 @@ class Daemon {
 
     _spawn() {
         const out = fs.openSync(this.logFile, 'a');
-        const child = childProcess.spawn(this.launcher, this.args, {
+        const command = launcherCommand(this.launcher, this.args);
+        const child = childProcess.spawn(command.file, command.args, {
             env: this.env,
             stdio: ['ignore', 'pipe', 'pipe'],
-            shell: IS_WINDOWS && /\.cmd$/i.test(this.launcher),
+            shell: command.shell,
             windowsHide: true
         });
         const keep = (chunk) => {
@@ -298,6 +318,7 @@ function tempWorkDir(label) {
 
 module.exports = {
     IS_WINDOWS,
+    launcherCommand,
     sleep,
     waitFor,
     extractJson,

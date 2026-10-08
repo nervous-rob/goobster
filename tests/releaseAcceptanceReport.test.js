@@ -259,3 +259,39 @@ describe('the evidence primitives', () => {
         expect(E.findLeaks(entry)).toEqual([]);
     });
 });
+
+describe('how the driver starts a launcher', () => {
+    function onPlatform(platform, fn) {
+        const original = Object.getOwnPropertyDescriptor(process, 'platform');
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+        try {
+            let operator;
+            jest.isolateModules(() => { operator = require('../scripts/acceptance/lib/operator'); });
+            return fn(operator);
+        } finally {
+            Object.defineProperty(process, 'platform', original);
+        }
+    }
+
+    test('a POSIX launcher is a program with its arguments untouched', () => {
+        onPlatform('linux', (operator) => {
+            expect(operator.launcherCommand('/opt/goobster/code/current/bin/goobster-manager', ['status', '--json', 'a b']))
+                .toEqual({ file: '/opt/goobster/code/current/bin/goobster-manager', args: ['status', '--json', 'a b'], shell: false });
+        });
+    });
+
+    test('a .cmd launcher goes through cmd.exe with a normalized, quoted path (a forward slash would read as a switch)', () => {
+        onPlatform('win32', (operator) => {
+            const command = operator.launcherCommand('D:\\a\\_temp/goobster-payload\\bin\\goobster-manager.cmd', ['install', '--answers', 'D:\\a\\_temp/work/answers x.json', '--json']);
+            expect(command.shell).toBe(true);
+            expect(command.file).toBe('"D:\\a\\_temp\\goobster-payload\\bin\\goobster-manager.cmd"');
+            expect(command.args).toEqual(['install', '--answers', '"D:\\a\\_temp/work/answers x.json"', '--json']);
+        });
+    });
+
+    test('a Windows launcher that is not a .cmd file is a program, not a shell command', () => {
+        onPlatform('win32', (operator) => {
+            expect(operator.launcherCommand('C:\\Goobster\\runtime\\node.exe', ['x'])).toEqual({ file: 'C:\\Goobster\\runtime\\node.exe', args: ['x'], shell: false });
+        });
+    });
+});
