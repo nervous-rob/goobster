@@ -379,7 +379,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 features: staged.features,
                 schemaChanging: Boolean(staged.schemaChanging),
                 rollback: staged.schemaChanging
-                    ? 'Automatic only while no worker got past /health on the new release; after that the barrier stays held and you decide: restore the backup (loses writes since it) or retry.'
+                    ? 'After activation, automatic rollback is blocked even before /health: startup may already have changed the schema. The barrier stays held and you decide: restore the backup (loses writes since it) or retry.'
                     : 'Automatic: the previous release is put back and verified.',
                 backup: { required: true, verified: true, includesConfig: false, estimateBytes: stageHelpers.backupEstimate() },
                 downtime: 'From the moment every writer is quiesced to the moment the barrier is released: the backup, the activation, the restart and the verification all happen inside it.',
@@ -543,7 +543,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     ctx.scratch.failure = out;
                     throw new ManagerError(409, out.outcome === 'recovery' ? 'UPDATE_RECOVERY_REQUIRED' : 'UPDATE_ROLLED_BACK',
                         out.outcome === 'recovery'
-                            ? 'The new release failed after the database was in use and the update changed the schema. The maintenance barrier stays held; decide with update recovery: restore the backup or retry.'
+                            ? 'The new release failed and may already have changed the database schema, even before health became ready. The maintenance barrier stays held; decide with update recovery: restore the backup or retry.'
                             : 'The new release did not verify; the previous release was put back and verified.',
                         { cause: verified.code, outcome: out.outcome });
                 }),

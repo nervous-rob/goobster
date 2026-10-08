@@ -727,7 +727,7 @@ the new manager finishes the update; the crash matrix is documented. The
 schema fingerprint (SHA-256 of `schema.sql` and the ordered
 `COLUMN_MIGRATIONS`) decides the rollback: a failed update that cannot have
 changed the database is put back automatically, and a schema-changing update
-that failed after a worker got past `/health` stays in `recovery` with the
+that fails after activation, even before `/health`, stays in `recovery` with the
 barrier held until the operator chooses to restore the pre-update backup or
 retry. `config.json`, `features.json` and the data roots are never touched,
 and the service registration is re-rendered only when its template hash
@@ -742,10 +742,15 @@ workers and a restart loop standing in for the OS supervisor: a healthy
 layout, features and application data identical afterwards), a corrupted
 archive refused at stage, an automatic rollback when the new workers die at
 start, and a schema-changing release that failed after `/health` left in
-`recovery` and restored from the backup. The Windows (WinSW) and macOS
-(launchd) handoffs are written and unit-tested through the supervisor seam but
-have not run, and the proof ran with no registered service (no systemd in the
-test VM), so the service-registration refresh is proven by Jest only.
+`recovery` and restored from the backup. The October 8 hosted matrix also passed the Windows (WinSW-style restart)
+and macOS handoffs using its simulated OS supervisor. The matrix is being
+extended to assert custom-root, feature-selection and account-preference
+preservation. Registered-service refresh remains a separate native acceptance
+requirement; its unit tests verify the registration inputs and ownership record.
+The pre-health failure policy now holds recovery after every schema-changing
+activation. A real-DDL regression runs in the SQLite/Postgres test matrix;
+first-attempt and watchdog failures are also covered. Hosted results for these
+new assertions must be linked before marking the remaining acceptance complete.
 
 **Status (P5.3, #343), operator runbooks: published, walked on Linux only.**
 `documentation/operator_runbooks.md` gives a second operator numbered
@@ -801,8 +806,9 @@ runbooks are the other half of P5.3. **Acceptance remains open:** physical Pi
 validation, full-disk failure injection, a recorded second-operator recovery
 drill, human accessibility validation and production-release qualification
 are not established by the hosted matrix. The separate requirements in
-#331–#333 and #340–#342, including #342's pre-health schema-rollback safety
-gap, still apply. See [release acceptance caveats](release_acceptance.md#caveats).
+#331–#333 and #340–#342 still apply. The updater now blocks pre-health
+schema rollback; its new regression results and remaining native preservation
+evidence must be recorded on #342. See [release acceptance caveats](release_acceptance.md#caveats).
 
 ## Audits before implementation
 
