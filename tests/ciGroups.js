@@ -19,6 +19,7 @@ const GROUPS = [
             'activityService',
             'autoUpdate',
             'backupRestore',
+            'macosCodeSign',
             'ciGroups',
             'cliResolver',
             'configFieldCatalog',

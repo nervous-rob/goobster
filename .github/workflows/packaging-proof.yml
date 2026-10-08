@@ -30,6 +30,8 @@ on:
       - 'scripts/lib/requireGraph.js'
       - 'scripts/lib/frontendChunks.js'
       - 'scripts/lib/nativeBinaryInfo.js'
+      - 'scripts/lib/macosCodeSign.js'
+      - 'scripts/release-verify-artifacts.js'
       - 'packages/core/features/**'
       - 'tests/helpers/reducedPayloadProbe.js'
       - 'tests/helpers/dormantSeed.js'
@@ -110,11 +112,17 @@ jobs:
       - name: Build the payload
         shell: bash
         run: |
-          node scripts/package-runtime.js --out "$PAYLOAD" --report-dir "$REPORTS" --force
+          signing=()
+          if [ "$RUNNER_OS" = macOS ]; then signing=(--codesign-identity - --dev-sign); fi
+          node scripts/package-runtime.js --out "$PAYLOAD" --report-dir "$REPORTS" --force "${signing[@]}"
           # Independent re-check of the acceptance rules, outside the build script.
           test -z "$(find "$PAYLOAD" -type l)" || { echo "::error::symlinks in the payload"; find "$PAYLOAD" -type l | head; exit 1; }
           test -z "$(find "$PAYLOAD" -name config.json -o -name '.env*' -o -name '*.sqlite' | head -1)" || { echo "::error::config/env/database file in the payload"; exit 1; }
           echo "payload files: $(find "$PAYLOAD" -type f | wc -l)"
+
+      - name: Strict payload hygiene scan
+        shell: bash
+        run: node scripts/release-verify-artifacts.js "$PAYLOAD" --target "$TARGET" --strict --report "$REPORTS/hygiene-payload-$TARGET.json"
 
       - name: Smoke check in place, bundled runtime only (Linux, macOS)
         if: runner.os != 'Windows'

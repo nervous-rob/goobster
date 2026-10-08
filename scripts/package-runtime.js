@@ -33,6 +33,7 @@
  *        [--with-sandbox] [--build-web] [--node-binary <path>] [--cache-dir <dir>]
  *        [--report-dir <dir>] [--keep-staging]
  *        [--profile minimal|full | --features <id,id,...>] [--dev-sign]
+ *        [--codesign-identity <Developer-ID-Application identity>]
  *
  *   --target       host only (linux-x64, linux-arm64, darwin-x64, darwin-arm64,
  *                  win32-x64). Native modules are fetched for the machine that
@@ -52,6 +53,8 @@
  *   --dev-sign     sign the manifest with a throwaway development key (made in a
  *                  0700 temp directory and deleted after signing); the public key
  *                  is written to the report directory for the smoke check.
+ *   --codesign-identity  macOS: sign and verify Mach-O files before hashing the manifest.
+ *                  `-` is ad-hoc and requires --dev-sign; it is never a release signature.
  *
  * The recipe is deterministic given the lockfile, the Node pin
  * (scripts/package-node-pins.json) and the upstream prebuilt binaries: the
@@ -111,6 +114,7 @@ function parseArgs(argv) {
         else if (arg === '--profile') options.profile = value();
         else if (arg === '--features') options.features = value().split(',').map(id => id.trim()).filter(Boolean);
         else if (arg === '--dev-sign') options.devSign = true;
+        else if (arg === '--codesign-identity') options.codesignIdentity = value();
         else if (arg === '-h' || arg === '--help') options.help = true;
         else throw new Error(`Unknown option: ${arg}`);
     }
@@ -809,6 +813,14 @@ async function main() {
     removeTree(path.join(stagingDir, 'node_modules'));
     if (!options.keepStaging) removeTree(stagingDir);
 
+    // Mach-O signatures change file bytes, so complete them before measuring
+    // files or creating/signing the payload manifest.
+    let macosSigning = null;
+    if (options.codesignIdentity) {
+        macosSigning = require('./lib/macosCodeSign').signBinaries({ root: outDir,
+            binaries: inspectBinaries(outDir, walk(outDir)), identity: options.codesignIdentity, development: options.devSign });
+    }
+
     // 4. Verify what was produced.
     const entries = walk(outDir);
     const binaries = inspectBinaries(outDir, entries);
@@ -968,6 +980,7 @@ async function main() {
         prunedEntries: pruned.length,
         excludedTrackedFiles: excludedTracked,
         nativeBinaryCount: binaries.length,
+        macosSigning,
         baselines: manifest.baselines,
         nonPermissiveLicenses: nonPermissive,
         violations

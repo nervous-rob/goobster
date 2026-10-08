@@ -297,7 +297,7 @@ Owner decision tracked in #262.
 | Authenticode certificate (OV or EV; an Azure Trusted Signing setup would need a different step) | The Windows installer | `WINDOWS_SIGNING_CERT_PFX_BASE64`, `WINDOWS_SIGNING_CERT_PASSWORD` | Release owner / Windows publisher identity |
 | Developer ID Installer certificate | The macOS `.pkg` | `APPLE_DEVELOPER_ID_INSTALLER_CERT_P12_BASE64`, `APPLE_CERT_PASSWORD`, `APPLE_TEAM_ID` | Apple developer account holder |
 | App Store Connect API key | Notarization | `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`, `APPLE_NOTARY_KEY_P8_BASE64` | Apple developer account holder |
-| Developer ID Application certificate | Reserved for codesigning the payload's Mach-O files (not wired, see "Known gaps") | `APPLE_DEVELOPER_ID_APPLICATION_CERT_P12_BASE64` | Apple developer account holder |
+| Developer ID Application certificate | Signs the payload's Mach-O runtime and addons before manifest hashing | `APPLE_DEVELOPER_ID_APPLICATION_CERT_P12_BASE64` | Apple developer account holder |
 
 Every secret is optional. A missing one turns its step off with a warning; the
 artifact is then `unsigned-dev` (`NO_AUTHENTICODE` or `NOT_NOTARIZED`), and a
@@ -419,18 +419,17 @@ journeys do and do not prove. Windows on Arm, 32-bit systems and musl are out of
 
 ## Known gaps
 
-- **Mach-O codesigning of the payload.** The Node binary and the native addons inside a
-  macOS payload are not codesigned before the payload manifest is signed, because the
-  payload build has no hook for it. Developer ID signing and notarization cover the
-  `.pkg`; an in-payload codesign pass (and the hardened-runtime entitlements the
-  packaging proof notes) belongs in `scripts/package-runtime.js`, before manifest
-  signing. The Application certificate secret is documented and reserved for that.
+- **Production Mach-O signing evidence.** The payload builder now signs and strictly
+  verifies Mach-O files before recording their final sizes and hashes. CI exercises
+  the hook with ad-hoc development signatures; real Developer ID Application
+  signing, notarization and clean-host Gatekeeper acceptance still need owner
+  credentials and a production qualification run.
 - **Key expiry.** Ed25519 keys have no notion of expiry. Only certificates are
   checked for it (the workflow's 60-day warning); a signing key is controlled by
   custody and revocation.
 - **`signed` on the install record** means a signature file is present, not that it
   verified.
-- **Windows and macOS signing, and the non-Linux-x64 jobs, are unexecuted** (above).
+- **Production Windows and macOS signing is still unverified.** Hosted development acceptance across all five targets is recorded in [release_acceptance.md](release_acceptance.md); that evidence does not establish production signing.
 - **Post-build journeys are not part of the release workflow.** The service journeys
   (`scripts/linux-bootstrap-proof.sh`, `windows-bootstrap-proof.ps1`,
   `macos-bootstrap-proof.sh`) run in the three bootstrap workflows against development
@@ -481,3 +480,28 @@ variable and goes nowhere but the signing call.
   artifacts, inject a `config.json` and confirm the scan refuses it.
 - Not verified: anything on Windows or macOS, anything on arm64, anything with a real
   certificate.
+
+
+### Verification-only dispatch and payload codesigning
+
+Manual `Release` workflow dispatches now default to **build and verify only**.
+Leave `publish` unchecked: the run uses development signing, assembles and scans
+the artifacts, verifies the index, and retains a `release-verification` workflow
+artifact without creating or changing a GitHub Release. Tag-triggered publication
+keeps its existing behavior. Explicitly checking `publish` opts a manual run into
+the existing development prerelease publication path.
+
+On macOS, `package-runtime.js --codesign-identity <identity>` signs every inspected
+Mach-O runtime/addon/library and runs `codesign --verify --strict` before computing
+the manifest hashes. Only Node receives JIT/executable-memory entitlements; release
+signing retains library validation. The release workflow imports Developer ID
+Application and Installer identities before building the payload. The packaging
+proof uses `--codesign-identity - --dev-sign` on macOS, with an additional
+library-validation exception because ad-hoc signatures have no Team ID. This
+mode cannot be requested without explicit development signing and never proves
+production identity, notarization, or Gatekeeper acceptance.
+
+The packaging workflow also performs a strict hygiene scan of each built payload.
+The new signing and verification changes require hosted results before being
+claimed as acceptance evidence; the actual publication workflow was not run as
+part of this change.

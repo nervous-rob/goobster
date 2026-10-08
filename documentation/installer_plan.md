@@ -834,3 +834,14 @@ evidence must be recorded on #342. See [release acceptance caveats](release_acce
   `db/dialect.js`.
 - Every new per-user store is reachable by `privacyService`.
 - Ledger rows never carry prompts, replies, tokens, links or addresses.
+
+
+### Release qualification follow-up (#341)
+
+Mach-O signing and strict verification are now hooked before payload manifest
+hashing. The macOS packaging proof exercises ad-hoc signing, and all payload
+proofs run strict hygiene checks. Manual release dispatch defaults to verification
+only; publication requires an explicit `publish` choice. Local signing-contract,
+workflow and hygiene regressions pass; hosted hook evidence remains pending.
+Production credentials, notarization/Gatekeeper checks and publication approval
+remain outstanding. No production release was dispatched or published.
