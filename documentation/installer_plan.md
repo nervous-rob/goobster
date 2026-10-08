@@ -30,7 +30,17 @@ Playwright). The real-platform workflows (`linux-bootstrap.yml`,
 on the merged tree at `707c3fc`.
 
 Still open: #343's acceptance matrix (driver, hosted workflow, report; PR
-#377, where the 19 hosted cells run for the first time), the owner decisions
+#377, where the 19 hosted cells run for the first time). Its first hosted run
+found three defects that the same PR fixes: the documented SQLite-with-data →
+`database docker provision` → `migrate` path was refused with
+`TARGET_NOT_EMPTY` because the preflight counted relations and provisioning
+had applied the schema (the preflight now judges what the schema holds; a
+provisioned empty schema is the warning `TARGET_SCHEMA_PRESENT`, and a rollback
+empties it rather than dropping it: [db_migration.md](db_migration.md#the-preflight));
+the acceptance driver started a `.cmd` launcher through `cmd.exe` with an
+unquoted path that `$RUNNER_TEMP` spells with a forward slash; and the payload
+smoke probed the API's port on loopback only, which on macOS can pass a port
+the API's wildcard bind is then refused. Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each
 carries its own acceptance evidence.
