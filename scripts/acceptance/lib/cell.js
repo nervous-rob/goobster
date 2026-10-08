@@ -201,7 +201,21 @@ class Cell {
         return { ...result, json };
     }
 
-    /** The one-line reason a command failed: its error code from the JSON, else the last stderr line. */
+    /** The database URL the manager keeps in its environment overlay (mode 0600): what an operator's service environment would hold. */
+    databaseUrl() {
+        const file = path.join(this.roots.managerStore, 'environment.json');
+        const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const url = doc && doc.values && doc.values.GOOBSTER_DB_URL;
+        check(typeof url === 'string' && url.length > 0, 'the manager keeps no database URL after the migration');
+        this.redactor.secret(url);
+        try {
+            const parsed = new URL(url);
+            if (parsed.password) this.redactor.secret(decodeURIComponent(parsed.password));
+        } catch { /* not a URL we can take a password from */ }
+        return url;
+    }
+
+    /** The one-line reason a command failed: its error code from the JSON, else the last thing it said. */
     why(result) {
         if (result.json && result.json.error) return `${result.json.error.code}${result.json.error.message ? `: ${result.json.error.message}` : ''}`;
         const lines = `${result.stderr}\n${result.stdout}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);

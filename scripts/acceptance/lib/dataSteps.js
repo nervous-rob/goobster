@@ -151,11 +151,23 @@ async function stepMigrate(cell, step) {
     const status = await cell.cli(step, ['database', 'status', '--json']);
     check(status.code === 0, `database status exited ${status.code}: ${cell.why(status)}`);
     check(/postgres/i.test(JSON.stringify(status.json || {})), 'database status does not report Postgres after the migration');
-    await cell.restartWorkers();
+    const stale = await cell.managerStatus();
+    const staleEngine = stale.json && stale.json.appDatabase ? stale.json.appDatabase.engine : null;
+    await cell.stopDaemon();
+    cell.startDaemon();
+    await cell.waitManager();
+    await cell.waitHealthy();
+    const fresh = await cell.managerStatus();
+    check(fresh.json && fresh.json.appDatabase && fresh.json.appDatabase.engine === 'postgres', `after the manager restarted it reports ${fresh.json && fresh.json.appDatabase && fresh.json.appDatabase.engine}, not postgres`);
     await cell.portalLogin();
     const conversations = await cell.conversations();
     check(conversations.length === before, `${conversations.length} conversation(s) on Postgres, ${before} on SQLite`);
-    return { result: `SQLite copied to Postgres (${cell.o.db}), verified, switched; ${conversations.length} conversation(s) read back through the portal on Postgres` };
+    const sqliteAfterSwitch = cell.sha256File(cell.sqliteFile());
+    const turn = await cell.portalChatInNewConversation('A conversation written on Postgres.');
+    check(turn.ok, 'a chat turn on Postgres failed');
+    check((await cell.conversations()).length === before + 1, 'the conversation written on Postgres was not kept');
+    check(cell.sha256File(cell.sqliteFile()) === sqliteAfterSwitch, 'the old SQLite file changed after the switch: the workers are still writing to it');
+    return { result: `SQLite copied to Postgres (${cell.o.db}), verified, switched. Before the manager was restarted it reported ${staleEngine}; after the restart it reports postgres, ${conversations.length} conversation(s) read back, a new one written, and the old SQLite file untouched` };
 }
 
 async function stepReset(cell, step) {
@@ -164,15 +176,25 @@ async function stepReset(cell, step) {
     check(dry.code === 0, `reset --dry-run exited ${dry.code}: ${cell.why(dry)}`);
     check((await cell.conversations()).length === before, 'the dry run changed data');
     const answers = cell.answersFile('reset', { command: 'reset', scope: 'instance', confirm: cell.installationId, backup: { dir: path.join(cell.dirs.backups, 'reset'), passphrase: cell.ensurePassphrase() } });
-    const reset = await cell.cli(step, ['reset', '--answers', answers, '--yes', '--json']);
+    let environmentNote = '';
+    let resetEnv = {};
+    if (cell.engine === 'postgres') {
+        const refused = await cell.cli(step, ['reset', '--answers', answers, '--yes', '--json']);
+        check(refused.code === 3 && /FOREIGN_TARGET/.test(JSON.stringify(refused.json || {})), `reset on Postgres without the database URL in its environment answered ${refused.code}, not the FOREIGN_TARGET refusal: ${cell.why(refused)}`);
+        check((await cell.conversations()).length === before, 'the refused reset changed data');
+        resetEnv = { GOOBSTER_DB_URL: cell.databaseUrl() };
+        environmentNote = ' (the CLI reads the database from its own environment, not from the manager overlay: without GOOBSTER_DB_URL it refused FOREIGN_TARGET and changed nothing; with it set, it ran)';
+    }
+    const reset = await cell.cli(step, ['reset', '--answers', answers, '--yes', '--json'], { env: cell.env(resetEnv) });
     check(reset.code === 0, `reset exited ${reset.code}: ${cell.why(reset)}`);
     check(cell.archiveIn(path.join(cell.dirs.backups, 'reset')), 'reset wrote no backup first');
     const signIn = await fetch(cell.portal('/api/app/auth/native-login'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginName: 'acceptance-owner', password: cell.password }), signal: AbortSignal.timeout(30_000) });
-    check(signIn.status !== 200, 'the owner can still sign in after the instance data was reset');
+    const signInBody = await signIn.text().catch(() => '');
+    check(signIn.status !== 200, `the owner can still sign in after the instance data was reset (${signIn.status} ${signInBody.slice(0, 120)})`);
     const maintenance = await cell.api.call('GET', '/maintenance');
     check(maintenance.status === 200, `GET /maintenance answered ${maintenance.status}`);
     check(!(maintenance.json && maintenance.json.active), 'the maintenance barrier is still up after the reset');
-    return { result: `dry run changed nothing; reset took a verified backup first, emptied the data (owner sign-in now ${signIn.status}), left the manager store and config.json, and released the barrier` };
+    return { result: `dry run changed nothing; reset took a verified backup first, emptied the data (owner sign-in now ${signIn.status}), left the manager store and config.json, and released the barrier${environmentNote}` };
 }
 
 async function keepData(cell) {
@@ -230,7 +252,7 @@ async function stepUninstallFull(cell, step) {
     check(doc.dataRemoved === true, 'the tombstone does not record that the data was removed');
     const left = fs.readdirSync(cell.roots.data).sort();
     check(left.every((name) => ['manager', 'tombstone.json'].includes(name)), `unexpected leftovers in the data root: ${left.join(', ')}`);
-    return { result: `refused without --confirm and with a wrong id (data intact); with the installation id: database, config.json and release removed, leaving only the manager store and the tombstone (dataRemoved)` };
+    return { result: `refused without --confirm and with a wrong id (data intact); with the installation id: ${cell.engine === 'postgres' ? 'the data root\'s SQLite file (the Postgres database itself is the operator\'s and was not inspected)' : 'database'}, config.json and release removed, leaving only the manager store and the tombstone (dataRemoved)` };
 }
 
 module.exports = { stepRepair, stepBackupRestore, stepMigrate, stepReset, stepUninstallKeep, stepUninstallFull, backup, restore, comeBack, fromPayload, dockerUsable };
