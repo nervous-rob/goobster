@@ -351,6 +351,18 @@ regression test:
     and the driver leaves on its own once the evidence is written even if a
     stray process still holds a pipe (`scripts/acceptance/lib/operator.js`
     `killTree`, `scripts/acceptance/run.js`; `tests/releaseAcceptanceReport.test.js`).
+15. **Fixed: no update could be downloaded on Windows.** `update stage`
+    ended in `DOWNLOAD_FAILED` for the directory source (and would have for
+    a URL or GitHub source alike): the landed file was synced through a
+    handle opened read-only, and on Windows `FlushFileBuffers` needs write
+    access, so the `fsync` failed with `EPERM` and the download was
+    discarded. The handle is now opened for writing
+    (`apps/manager/update/source.js`; `tests/updateStage.test.js` lands a
+    file through a file system that refuses a read-only `fsync`, as Windows
+    does). The other failures of that Windows run (`STALE_MAINTENANCE` at
+    reset, the scratch managers that never answered, the restore that
+    completed under the "kill", `EBUSY` on the WAL file) were the shadow of
+    finding 14: the manager the driver believed stopped was still running.
 
 ## Cells no hosted runner can give
 

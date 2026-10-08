@@ -164,3 +164,38 @@ describe('update.stage', () => {
         expect(fs.readdirSync(path.join(harness.code, 'releases'))).toEqual([second.releaseId]);
     });
 });
+
+describe('landing a downloaded file', () => {
+    const { landFile } = require('../apps/manager/update/source');
+
+    test('syncs the landed file through a handle opened for writing, as Windows requires (a read-only fsync fails there with EPERM)', async () => {
+        const dir = tempDir(roots, 'land');
+        const readOnly = new Set();
+        const windowsLike = {
+            ...fs,
+            openSync(file, flags, mode) {
+                const fd = fs.openSync(file, flags, mode);
+                if (flags === 'r') readOnly.add(fd);
+                return fd;
+            },
+            fsyncSync(fd) {
+                if (readOnly.has(fd)) {
+                    const error = new Error('EPERM: operation not permitted, fsync');
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return fs.fsyncSync(fd);
+            },
+            closeSync(fd) {
+                readOnly.delete(fd);
+                return fs.closeSync(fd);
+            }
+        };
+        const bytes = Buffer.from('a release artifact');
+        const dest = path.join(dir, 'artifact.tar.gz');
+        const landed = await landFile({ fs: windowsLike, readable: Readable.from([bytes]), dest, limit: 1024, expect: { size: bytes.length } });
+        expect(landed.bytes).toBe(bytes.length);
+        expect(fs.readFileSync(dest)).toEqual(bytes);
+        expect(fs.existsSync(`${dest}.partial`)).toBe(false);
+    });
+});

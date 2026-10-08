@@ -53,6 +53,15 @@ the installed payload's `current\bin\goobster-manager.cmd` did not read
 `<code root>\goobster.env` as its POSIX counterpart does, so `status` run from
 it looked under `%LOCALAPPDATA%\Goobster` and reported `recovery` (it now reads
 the file the same way: [windows_install.md](windows_install.md#repair-reconfigure-uninstall)).
+The third run passed all eighteen Linux and macOS cells, every step and
+injection, and the Windows cell reached the end of its steps for the first
+time, finding two more: the driver ended only the `cmd.exe` that ran the
+`.cmd` launcher, leaving the manager and its workers alive (the driver now
+ends the process tree, as the service host does); and no update could be
+downloaded on Windows, because the landed file was synced through a
+read-only handle, which Windows refuses (`DOWNLOAD_FAILED` for every source
+kind; fixed in `apps/manager/update/source.js`:
+[manager_update.md](manager_update.md#how-this-was-verified)).
 Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each

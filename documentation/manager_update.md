@@ -475,8 +475,18 @@ last apply and its downtime, and the recovery state.
   `features.json`, `goobster.env` and the layout were byte-identical before and
   after every one of them, and the secret appears in no log, state file or audit
   row.
-- **Not executed:** the Windows (WinSW) and macOS (launchd) handoff; a
-  systemd-registered service (the test VM has no systemd, so the proof ran the
-  restart loop); a `github-release` source against github.com (the source is
-  tested through an injected fetch); an update with optional features
-  installed (the proof payload is the minimal profile).
+- **The release acceptance matrix** (`documentation/release_acceptance.md`)
+  runs the staged update and the interrupted handoff on every hosted cell:
+  Linux x64 and arm64 (SQLite and Docker-managed Postgres), macOS arm64 and
+  x64, Windows x64. Its first Windows run found that no download could land
+  there: the file was synced through a read-only handle, which Windows
+  refuses (`FlushFileBuffers` needs write access), so `update stage` ended in
+  `DOWNLOAD_FAILED` for every source kind. The handle is now opened for
+  writing (`apps/manager/update/source.js`, `tests/updateStage.test.js`).
+- **Not executed:** the Windows (WinSW) and macOS (launchd) handoff under the
+  real service host (the matrix drives the manager as the host would, from a
+  restart loop, not under WinSW or launchd); a `github-release` source
+  against github.com (the source is tested through an injected fetch); an
+  update with optional features installed (the proof payload is the minimal
+  profile; the representative cells of the matrix carry `economy`, `exchange`
+  and `tavern`).
