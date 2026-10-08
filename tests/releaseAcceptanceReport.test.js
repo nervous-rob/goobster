@@ -181,6 +181,36 @@ describe('the intended matrix', () => {
     });
 });
 
+describe('the generated block of a document', () => {
+    const BEGIN = '<!-- acceptance-matrix:begin -->';
+    const END = '<!-- acceptance-matrix:end -->';
+
+    test('--doc replaces only the text between the markers, and again leaves the same text', () => {
+        write('evidence-linux-x64-new-sqlite-minimal.json', evidence());
+        const file = path.join(dir, 'doc.md');
+        fs.writeFileSync(file, `# Title\n\nbefore\n\n${BEGIN}\n\nstale table\n\n${END}\n\nafter\n`);
+        const run = () => report.main([dir, '--doc', file], { stdout: { write: () => {} }, stderr: { write: () => {} } });
+        expect(run()).toBe(0);
+        const once = fs.readFileSync(file, 'utf8');
+        expect(once).toContain('# Title\n\nbefore\n\n');
+        expect(once).toContain('\n\nafter\n');
+        expect(once).not.toContain('stale table');
+        expect(once).toContain('| linux-x64 | new | sqlite | minimal |');
+        expect(run()).toBe(0);
+        expect(fs.readFileSync(file, 'utf8')).toBe(once);
+    });
+
+    test('a document without the markers is refused and left as it was', () => {
+        write('evidence-linux-x64-new-sqlite-minimal.json', evidence());
+        const file = path.join(dir, 'plain.md');
+        fs.writeFileSync(file, '# No block here\n');
+        let said = '';
+        expect(report.main([dir, '--doc', file], { stdout: { write: () => {} }, stderr: { write: (text) => { said += text; } } })).toBe(2);
+        expect(said).toMatch(/acceptance-matrix:begin/);
+        expect(fs.readFileSync(file, 'utf8')).toBe('# No block here\n');
+    });
+});
+
 describe('the evidence primitives', () => {
     test('a thrown check is a fail, a step that returns nothing is a pass, and a dependent of a failed step does not run', async () => {
         const recorder = new E.Recorder({ redactor: new E.Redactor() });

@@ -5,14 +5,16 @@
  * Renders the release acceptance matrix from evidence files (documentation/release_acceptance.md).
  *
  *   node scripts/acceptance/report.js <evidence dir>... [--matrix] [--format markdown|json]
- *        [--out <file>] [--strict]
+ *        [--out <file>] [--doc <markdown file>] [--strict]
  *
  * Every `evidence-*.json` under the directories is validated and scanned for anything that looks like
  * a secret, a token, user content or a home directory before it is rendered; a file that fails either
  * is listed as rejected and contributes nothing. `--matrix` adds the intended matrix of
  * scripts/acceptance/matrix.js: a hosted cell with no evidence shows as `missing`, and the cells no
- * hosted runner can give show as `deferred` with their reasons. `--strict` exits 1 when anything failed,
- * was rejected, or is missing.
+ * hosted runner can give show as `deferred` with their reasons. `--doc` replaces the text between the
+ * `acceptance-matrix:begin` and `acceptance-matrix:end` comments of a Markdown file with the rendered
+ * table (documentation/release_acceptance.md keeps its generated table that way). `--strict` exits 1
+ * when anything failed, was rejected, or is missing.
  */
 
 const fs = require('node:fs');
@@ -167,14 +169,26 @@ function renderJson(model) {
     }, null, 2)}\n`;
 }
 
+const DOC_BEGIN = '<!-- acceptance-matrix:begin -->';
+const DOC_END = '<!-- acceptance-matrix:end -->';
+
+/** `text` with the generated block replaced by `rendered`; throws when the file has no such block. */
+function spliceDoc(text, rendered) {
+    const begin = text.indexOf(DOC_BEGIN);
+    const end = text.indexOf(DOC_END);
+    if (begin < 0 || end < begin) throw new Error(`the document has no ${DOC_BEGIN} ... ${DOC_END} block`);
+    return `${text.slice(0, begin + DOC_BEGIN.length)}\n\n${rendered.trimEnd()}\n\n${text.slice(end)}`;
+}
+
 function parseArgs(argv) {
-    const o = { dirs: [], matrix: false, format: 'markdown', out: null, strict: false };
+    const o = { dirs: [], matrix: false, format: 'markdown', out: null, doc: null, strict: false };
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
         if (arg === '--matrix') o.matrix = true;
         else if (arg === '--strict') o.strict = true;
         else if (arg === '--format') { i += 1; o.format = argv[i]; }
         else if (arg === '--out') { i += 1; o.out = argv[i]; }
+        else if (arg === '--doc') { i += 1; o.doc = argv[i]; }
         else if (arg === '-h' || arg === '--help') o.help = true;
         else if (arg.startsWith('-')) throw new Error(`unknown option ${arg}`);
         else o.dirs.push(arg);
@@ -197,12 +211,20 @@ function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
     }
     const model = buildModel(loadEvidence(o.dirs), { withMatrix: o.matrix });
     const text = o.format === 'json' ? renderJson(model) : renderMarkdown(model);
+    if (o.doc) {
+        try {
+            fs.writeFileSync(o.doc, spliceDoc(fs.readFileSync(o.doc, 'utf8'), renderMarkdown(model)));
+        } catch (error) {
+            stderr.write(`${error.message}\n`);
+            return 2;
+        }
+    }
     if (o.out) fs.writeFileSync(o.out, text);
-    else stdout.write(text);
+    else if (!o.doc) stdout.write(text);
     if (!o.strict) return 0;
     return model.counts.fail || model.rejected.length || model.missing.length ? 1 : 0;
 }
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { loadEvidence, buildModel, renderMarkdown, renderJson, parseArgs, main, STEP_LABELS, INJECTION_LABELS };
+module.exports = { loadEvidence, buildModel, renderMarkdown, renderJson, spliceDoc, parseArgs, main, STEP_LABELS, INJECTION_LABELS };
