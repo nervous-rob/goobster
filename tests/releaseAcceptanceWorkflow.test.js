@@ -145,9 +145,10 @@ describe('what the workflow cannot give', () => {
         for (const cell of matrix.DEFERRED) expect(cell.reason.length).toBeGreaterThan(40);
     });
 
-    test('cites the native-PostgreSQL evidence of #371 without merging it', () => {
-        expect(text).toMatch(/#371/);
-        expect(text).toMatch(/joins this matrix after that stack merges/);
+    test('points the native-PostgreSQL install at its own real-distro proof instead of a cell here', () => {
+        expect(text).toMatch(/native-postgres\.yml/);
+        expect(text).toMatch(/no native-pg database choice yet/);
+        expect(workflow.jobs.acceptance.strategy.matrix.include.map(cell => cell.db)).not.toContain('native-pg');
     });
 });
 
