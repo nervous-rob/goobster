@@ -70,12 +70,12 @@ jobs:
         shell: pwsh
     env:
       TARGET: win32-x64
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/goobster-proof-browsers
       GOOBSTER_NATIVE_BROWSER_PROOF: '1'
     steps:
       - name: Output locations (outside the checkout)
         run: |
           @(
+            "PLAYWRIGHT_BROWSERS_PATH=$env:RUNNER_TEMP\goobster-proof-browsers",
             "PAYLOAD=$env:RUNNER_TEMP\goobster-payload",
             "REPORTS=$env:RUNNER_TEMP\goobster-reports",
             "ARTIFACTS=$env:RUNNER_TEMP\goobster-bootstrap",

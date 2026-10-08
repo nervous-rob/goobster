@@ -92,13 +92,13 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       TARGET: ${{ matrix.target }}
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/goobster-proof-browsers
       GOOBSTER_NATIVE_BROWSER_PROOF: '1'
     steps:
       - name: Output locations (outside the checkout)
         shell: bash
         run: |
           {
+            echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/goobster-proof-browsers"
             echo "PAYLOAD=$RUNNER_TEMP/goobster-payload"
             echo "REPORTS=$RUNNER_TEMP/goobster-reports"
             echo "ARTIFACTS=$RUNNER_TEMP/goobster-bootstrap"
