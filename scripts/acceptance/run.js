@@ -140,17 +140,44 @@ async function main(argv) {
         return 1;
     }
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
-    if (!o.keep) fs.rmSync(o.work, { recursive: true, force: true });
     for (const entry of [...steps, ...injections]) process.stdout.write(`${entry.status.padEnd(14)} ${entry.id.padEnd(24)} ${entry.result}\n`);
     process.stdout.write(`evidence: ${path.basename(file)}${problems.length ? ` (INVALID: ${problems.join('; ')})` : ''}\n`);
+    if (!o.keep) {
+        const left = await removeWorkTree(o.work);
+        if (left) process.stderr.write(`work directory kept: ${redactor.text(left)}\n`);
+    }
     const failed = [...steps, ...injections].some((entry) => entry.status === 'fail') || fatal || problems.length;
     return failed ? 1 : 0;
+}
+
+/**
+ * The work tree is scratch: failing to remove it is never a failed cell. On Windows a file a process
+ * has still mapped (a native addon of a worker that is still leaving) makes the remove fail with
+ * EBUSY, ENOTEMPTY or EPERM for a moment, so it is tried a few times.
+ * @returns {Promise<string|null>} the reason the tree was left, or null when it is gone
+ */
+async function removeWorkTree(dir) {
+    let reason = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+            fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+            return null;
+        } catch (error) {
+            reason = `${error.code || 'error'}: ${error.message}`;
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+    }
+    return reason;
 }
 
 if (require.main === module) {
     main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (error) => {
         process.stderr.write(`acceptance driver failed: ${error && error.message}\n`);
         process.exitCode = 1;
+    }).finally(() => {
+        // A process the driver could not end (an orphan still holding the driver's pipes) must not keep
+        // the driver alive until the job's timeout: the evidence is written, so leave with the code.
+        setTimeout(() => process.exit(process.exitCode ?? 1), 15_000).unref();
     });
 }
 

@@ -295,3 +295,38 @@ describe('how the driver starts a launcher', () => {
         });
     });
 });
+
+describe('how the driver ends a process it started', () => {
+    const { spawn } = require('node:child_process');
+
+    test('on POSIX the signal goes to the process itself, and a pid that is gone is reported as not ended', async () => {
+        const operator = require('../scripts/acceptance/lib/operator');
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+        const closed = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+        expect(operator.killTree(child.pid)).toBe(true);
+        const ended = await closed;
+        expect(ended.signal).toBe('SIGKILL');
+        expect(operator.killTree(child.pid)).toBe(false);
+        expect(operator.killTree(null)).toBe(false);
+    });
+
+    test('on Windows the whole tree is ended with taskkill, because the pid the driver holds is the cmd.exe running the .cmd launcher', () => {
+        const original = Object.getOwnPropertyDescriptor(process, 'platform');
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        const calls = [];
+        try {
+            jest.isolateModules(() => {
+                jest.doMock('node:child_process', () => ({
+                    ...jest.requireActual('node:child_process'),
+                    execFileSync: (file, args, options) => { calls.push({ file, args, options }); }
+                }));
+                const operator = require('../scripts/acceptance/lib/operator');
+                expect(operator.killTree(4242)).toBe(true);
+            });
+        } finally {
+            jest.dontMock('node:child_process');
+            Object.defineProperty(process, 'platform', original);
+        }
+        expect(calls).toEqual([expect.objectContaining({ file: 'taskkill', args: ['/PID', '4242', '/T', '/F'] })]);
+    });
+});

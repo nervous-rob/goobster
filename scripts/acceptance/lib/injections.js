@@ -419,7 +419,7 @@ async function restoreInterrupted(cell, step) {
     while (Date.now() < deadline) {
         const journal = operationJournals(cell).find((doc) => !knownOps.has(doc.id));
         if (journal && (journal.steps || []).some((entry) => entry.name === 'mutate' && entry.status === 'started')) {
-            try { process.kill(run.pid, 'SIGKILL'); killed = true; } catch { /* already finished */ }
+            killed = op.killTree(run.pid);
             break;
         }
         if (!op.alive(run.pid)) break;

@@ -291,6 +291,67 @@ operator runbooks have to describe, or open items.
    host with no browser has to use that API directly. The runbooks should say
    so, and a CLI for them is a candidate for a later change.
 
+The hosted matrix then found these, each fixed in the same change with a
+regression test:
+
+9. **Fixed: migrating into a database the installer had just provisioned was
+   refused with `TARGET_NOT_EMPTY`.** `database docker provision` applies
+   Goobster's schema; the migration preflight counted relations and blocked
+   the documented SQLite-with-data → provision → `migrate` path on every
+   managed-Postgres cell. The preflight now reads what the target schema
+   holds (its tables and columns, other relations, which tables have rows,
+   inside the same READ ONLY transaction) and judges it: nothing, Goobster's
+   own schema with no rows (the warning `TARGET_SCHEMA_PRESENT`), or anything
+   else (`TARGET_NOT_EMPTY`, naming what it found). The provision step records
+   the tables it found, and a rollback empties them again instead of dropping
+   them (`packages/core/db/migration/inspect.js`,
+   `apps/manager/migration/childEntry.js`; `tests/dbMigrationInspect.test.js`,
+   `tests/dbMigration.test.js`; [db_migration.md](db_migration.md)).
+10. **Fixed: the driver started the Windows launcher with an unquoted path.**
+    `cmd.exe` read `D:/a/_temp/...` (the runner spells `$RUNNER_TEMP` with a
+    forward slash) as a command named `D:\a\_temp`. The driver normalizes and
+    quotes a `.cmd` launcher and its arguments (`scripts/acceptance/lib/operator.js`,
+    `launcherCommand`; `tests/releaseAcceptanceReport.test.js`).
+11. **Fixed: the installed Windows payload launcher did not read
+    `goobster.env`.** `current\bin\goobster-manager.cmd` took its roots from
+    the environment or `%LOCALAPPDATA%\Goobster` only, unlike the POSIX
+    launcher and the code-root launcher the bootstrapper writes, so `status`
+    run from it looked at an empty data directory and reported `recovery`. It
+    now reads the `GOOBSTER_*` lines of `<code root>\goobster.env` the same way
+    (text, never run, environment first) when it runs from `current`
+    (`scripts/package-runtime.js`; `tests/packagePayloadRules.test.js`;
+    [windows_install.md](windows_install.md#repair-reconfigure-uninstall)).
+12. **Fixed: the macOS payload smoke found its port taken.** The smoke probed
+    a free port on loopback but the API binds the wildcard address, which
+    macOS refuses while another account's `TIME_WAIT` connections sit on the
+    port. The probe now makes the same wildcard bind and the smoke retries on
+    another port when the first listen is refused for that reason
+    (`scripts/package-smoke.js`).
+13. **Fixed: the managed-Postgres `reset` failed `BACKUP_FAILED` on the hosted
+    runner, with its cause hidden.** The pinned `pgvector/pgvector:pg17`
+    server is newer than the runner's `pg_dump` (16); the backup refuses that
+    (`TOOL_VERSION_MISMATCH`) and the reset wrapped the cause away. The reset
+    now carries the wrapped error's short code as `reason` (the CLI prints
+    `BACKUP_FAILED (TOOL_VERSION_MISMATCH)`), and the workflow installs the
+    PostgreSQL 17 client tools for those cells **and puts them first on
+    PATH** - installing the package alone changed nothing, because
+    `/usr/bin/pg_dump` is Debian's `pg_wrapper` and kept choosing the runner's
+    own 16 ([docker_postgres.md](docker_postgres.md) now tells an operator the
+    same; `apps/manager/engine/kinds/reset.js`; `tests/dataReset.test.js`,
+    `tests/releaseAcceptanceWorkflow.test.js`).
+14. **Fixed: on Windows the driver ended only `cmd.exe`, not the manager.**
+    A `.cmd` launcher runs through `cmd.exe`, so the process the driver held
+    was the shell; signalling it left the manager's `node.exe` and its workers
+    running, holding the driver's pipes open (the job sat until its timeout
+    after the evidence was written) and the payload's native addons mapped
+    (the work tree could not be removed, `EBUSY` under `current\app`). The
+    driver now ends the whole tree on Windows (`taskkill /T /F`, as the
+    service host does on stop) wherever it stops, crashes or interrupts a
+    process; removing the work tree is best-effort and never fails a cell;
+    and the driver leaves on its own once the evidence is written even if a
+    stray process still holds a pipe (`scripts/acceptance/lib/operator.js`
+    `killTree`, `scripts/acceptance/run.js`; `tests/releaseAcceptanceReport.test.js`).
+
 ## Cells no hosted runner can give
 
 These are `deferred` in the table, each with its reason. Nothing here is

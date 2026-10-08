@@ -80,6 +80,31 @@ function alive(pid) {
 }
 
 /**
+ * End a process the driver started. On Windows the process the driver holds is the cmd.exe that runs
+ * the `.cmd` launcher; signalling it leaves the manager's node.exe and its workers running (holding
+ * the driver's pipes open and the payload's native addons mapped, so the install tree cannot be
+ * removed), so the whole tree is ended with taskkill, which is what the service host does on stop.
+ * Elsewhere the signal goes to the process itself. Never throws.
+ */
+function killTree(pid, signal = 'SIGKILL') {
+    if (!pid) return false;
+    if (IS_WINDOWS) {
+        try {
+            childProcess.execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 20_000 });
+            return true;
+        } catch {
+            return alive(pid) === false;
+        }
+    }
+    try {
+        process.kill(pid, signal);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * How a launcher is started. A `.cmd` launcher needs cmd.exe, which reads an unquoted path with a
  * forward slash (`D:\\a\\_temp/goobster-payload\\bin\\goobster-manager.cmd`, the shape $RUNNER_TEMP
  * gives a bash step on a Windows runner) as a program plus a switch, so the path is normalized to
@@ -114,7 +139,7 @@ function runLauncher(launcher, args, { env, timeoutMs = 300_000, input = '' } = 
         let timedOut = false;
         const timer = setTimeout(() => {
             timedOut = true;
-            try { child.kill('SIGKILL'); } catch { /* gone */ }
+            killTree(child.pid);
         }, timeoutMs);
         child.stdout.on('data', (chunk) => { stdout += chunk; });
         child.stderr.on('data', (chunk) => { stderr += chunk; });
@@ -223,19 +248,22 @@ class Daemon {
         if (!child) return null;
         this.stopping = true;
         const closed = new Promise((resolve) => child.once('close', resolve));
-        try { child.kill(signal); } catch { /* already gone */ }
+        if (IS_WINDOWS) killTree(child.pid);
+        else { try { child.kill(signal); } catch { /* already gone */ } }
         const outcome = await Promise.race([closed.then(() => 'closed'), sleep(timeoutMs).then(() => 'late')]);
         if (outcome === 'late') {
-            try { child.kill('SIGKILL'); } catch { /* gone */ }
+            killTree(child.pid);
             await Promise.race([closed, sleep(10_000)]);
         }
         return this.exits[this.exits.length - 1] || null;
     }
 
+    /** Stop as the service host would: SIGTERM and a drain on POSIX; on Windows the process tree is ended. */
     stop() {
         return this.signal(IS_WINDOWS ? 'SIGKILL' : 'SIGTERM');
     }
 
+    /** A crash: SIGKILL on POSIX (the workers are left to notice their parent is gone); on Windows the process tree is ended. */
     kill() {
         return this.signal('SIGKILL');
     }
@@ -319,6 +347,7 @@ function tempWorkDir(label) {
 module.exports = {
     IS_WINDOWS,
     launcherCommand,
+    killTree,
     sleep,
     waitFor,
     extractJson,
