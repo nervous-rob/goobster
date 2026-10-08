@@ -80,15 +80,33 @@ function makeRelease(parent, { core = '2.4.0' } = {}) {
     return { dir, manifest };
 }
 
+/**
+ * A loopback port that is free now and that no other Jest worker will be handed. Ports come from a
+ * range of 200 per worker below the OS ephemeral range (Linux starts it at 32768), so a port taken
+ * here is never also given to another worker's `freePort()` or to a server that listened on port 0;
+ * each is probed before it is handed out. Asking the OS for port 0 and closing it, as this once did,
+ * let another worker bind the same port between the close and the install preflight's probe.
+ */
+const PORT_RANGE = 200;
+const PORT_FLOOR = 20_000;
+let nextPort = PORT_FLOOR + ((Number(process.env.JEST_WORKER_ID) || 1) - 1) * PORT_RANGE;
+
 function freePort() {
-    return new Promise((resolve, reject) => {
+    const floor = PORT_FLOOR + ((Number(process.env.JEST_WORKER_ID) || 1) - 1) * PORT_RANGE;
+    const tryPort = (port) => new Promise((resolve, reject) => {
         const server = net.createServer();
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => {
-            const { port } = server.address();
-            server.close(() => resolve(port));
-        });
+        server.once('error', (error) => (error && error.code === 'EADDRINUSE' ? resolve(null) : reject(error)));
+        server.listen({ port, host: '127.0.0.1', exclusive: true }, () => server.close(() => resolve(port)));
     });
+    return (async () => {
+        for (let attempts = 0; attempts < PORT_RANGE; attempts += 1) {
+            const candidate = nextPort;
+            nextPort = nextPort + 1 >= floor + PORT_RANGE ? floor : nextPort + 1;
+            const port = await tryPort(candidate);
+            if (port) return port;
+        }
+        throw new Error(`no free port in this worker's range ${floor}-${floor + PORT_RANGE - 1}`);
+    })();
 }
 
 /**
