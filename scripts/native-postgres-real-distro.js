@@ -143,11 +143,17 @@ async function main({ io = {}, seams = {}, log = console.log } = {}) {
     assert.ok(await up(port));
     log('repair');
 
-    // 6. relocate (the service-level move the kind's "relocate" step runs; the barrier and
-    //    the verified backup are covered by the unit tests and need running workers).
+    // 6. A fresh process selects the native DB before loading the facade. Drive
+    //    real workers, maintenance, matching-client backup/restore and the manager's
+    //    relocation kind, including its verified backup (not only the helper).
     const target = `${dataDirectory}-moved`;
-    const moved = await createNativeService({ settings, logger: { info() {}, warn() {}, error() {} } }).relocate({ installationId, target });
-    assert.equal(moved.moved, true);
+    const proof = sh(process.execPath, [path.join(__dirname, 'native-postgres-data-proof.js')], {
+        env: { ...env, GOOBSTER_DB_URL: url, GOOBSTER_NATIVE_PROOF_CONFIRM: installationId },
+        timeout: 20 * 60_000, maxBuffer: 8 * 1024 * 1024
+    });
+    const clean = text => String(text || '').split(url).join('[database URL]').split(password).join('[password]');
+    log(clean(proof.stdout));
+    assert.equal(proof.status, 0, `manager data journey failed: ${clean(proof.stderr)}`);
     assert.ok(fs.existsSync(path.join(target, 'PG_VERSION')) && fs.existsSync(path.join(dataDirectory, 'PG_VERSION')), 'the new directory serves and the original is kept');
     assert.ok(await up(port), 'the cluster is up from the new directory');
     log('relocate');

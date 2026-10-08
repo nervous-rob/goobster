@@ -285,3 +285,9 @@ Run this before the invited pilot ([#265](https://github.com/nervous-rob/goobste
 Error codes a restore can stop with: `NOT_AN_ARCHIVE`, `BAD_MANIFEST`, `BAD_FORMAT`, `ENGINE_MISMATCH`, `SCHEMA_MISMATCH`, `BAD_PASSPHRASE`, `TARGET_NOT_EMPTY`, `TOOL_MISSING` (no `pg_dump`/`pg_restore` on PATH or under `GOOBSTER_PG_BIN`), `TOOL_VERSION_MISMATCH` (client tools older than the server), `TOOL_FAILED`. A backup can stop with `PASSPHRASE_REQUIRED`, `EXISTS`, or the same three tool codes.
 
 The manager's kinds add: `BACKUP_DESTINATION_UNSAFE`, `BACKUP_UNVERIFIED`, `BACKUP_FAILED`, `ARCHIVE_INSIDE_DATA`, `ARCHIVE_INCOMPLETE`, `ARCHIVE_CHANGED` (the archive changed between plan and apply), `FOREIGN_TARGET`, `CONFIRMATION_REQUIRED`, `RESTORE_IN_PROGRESS`, `MAINTENANCE_NOT_HELD`, `STALE_MAINTENANCE`, `WRITER_UNACKNOWLEDGED`, `PHASE_NOT_ALLOWED`, `PLAN_INPUT_LOST`, `REVISION_CONFLICT`. The CLI adds `SECRET_ON_ARGV` and `USAGE`.
+
+
+PostgreSQL backup tools receive connection passwords through their child
+`PGPASSWORD` environment, with passwords removed from URI authority and query
+arguments. This keeps credentials out of ordinary process argument listings and
+command strings in execution errors. The application's environment is unchanged.
