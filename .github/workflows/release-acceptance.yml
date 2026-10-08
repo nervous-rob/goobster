@@ -22,9 +22,8 @@ name: Release acceptance
 #     usable container runtime, so their managed-pg cells are not part of the matrix.
 #   - Major upgrades (a release that changes the database schema and the recovery decision after a
 #     failed one): the fake release here changes only its version.
-# The native-PostgreSQL install evidence of PR #371 (Ubuntu 24.04 x64 and arm64, Debian 12, Rocky 9) is
-# proven on #371 and
-# joins this matrix after that stack merges.
+# The native-PostgreSQL install (Ubuntu 24.04 x64 and arm64, Debian 12, Rocky 9) has its own real-distro
+# proof in native-postgres.yml; this driver has no native-pg database choice yet.
 #
 # Not a release pipeline: nothing is published and no secret is read. Documentation:
 # documentation/release_acceptance.md.
