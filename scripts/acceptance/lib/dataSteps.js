@@ -213,7 +213,8 @@ async function stepUninstallKeep(cell, step) {
     check(removed.code === 0, `uninstall exited ${removed.code}: ${cell.why(removed)}`);
     cell.installed = false;
     const kept = await keepData(cell);
-    check(!kept.code, 'the release is still in place after a keep-data uninstall');
+    const adopted = cell.o.install === 'adopt';
+    check(adopted ? kept.code : !kept.code, adopted ? 'the uninstall removed the code of an adopted installation, which the manager does not own' : 'the release is still in place after a keep-data uninstall');
     check(kept.sqlite && kept.config, `a keep-data uninstall removed data (database ${kept.sqlite ? 'kept' : 'gone'}, config.json ${kept.config ? 'kept' : 'gone'})`);
     check(fs.statSync(cell.sqliteFile()).size === sizeBefore, 'the kept database changed size');
     const status = await fromPayload(cell, step, ['status', '--json']);
@@ -229,7 +230,7 @@ async function stepUninstallKeep(cell, step) {
     cell.startDaemon();
     await cell.waitManager();
     await cell.waitHealthy();
-    return { result: 'uninstall (data kept): release removed, database and config.json left byte-size identical, manager reports the tombstoned recovery; a reinstall over the kept data came back healthy' };
+    return { result: `uninstall (data kept): ${adopted ? 'the adopted release left in place (the manager does not own it)' : 'release removed'}, database and config.json left byte-size identical, manager reports the tombstoned recovery; a reinstall over the kept data came back healthy` };
 }
 
 async function stepUninstallFull(cell, step) {
