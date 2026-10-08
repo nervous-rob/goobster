@@ -571,14 +571,17 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
     return [kind];
 }
 
+const REASON_CODE = /^[A-Z][A-Z0-9_]{0,40}$/;
+
+/** The cause as a short code only (a BackupError code such as TOOL_VERSION_MISMATCH, or an errno such as ENOTDIR); never its message, which can quote a path. */
 function mapBackupError(error) {
     if (error instanceof ManagerError) return error;
     if (error && error.name === 'BackupError') {
         if (error.code === 'PASSPHRASE_REQUIRED') return mapCoreError(error);
         if (error.code === 'UNVERIFIED') return mapCoreError(error);
-        return new ManagerError(409, 'BACKUP_FAILED', 'The backup could not be written, so nothing was changed.', { reason: error.code || null });
     }
-    return new ManagerError(409, 'BACKUP_FAILED', 'The backup could not be written, so nothing was changed.');
+    const reason = error && typeof error.code === 'string' && REASON_CODE.test(error.code) ? error.code : null;
+    return new ManagerError(409, 'BACKUP_FAILED', 'The backup could not be written, so nothing was changed.', reason ? { reason } : null);
 }
 
 module.exports = { createKinds, previewReset, parseInput, resolveTarget, STEP_NAMES, HELD_PHASES };

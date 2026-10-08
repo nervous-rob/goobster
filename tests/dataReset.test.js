@@ -1065,6 +1065,23 @@ describe('the command line', () => {
         expect(h.configHash()).toBe(sha256(CONFIG_TEXT));
     });
 
+    test('a backup that cannot be written names its cause as a code beside BACKUP_FAILED, in the JSON and on stderr, and nothing else about it', async () => {
+        const h = await world();
+        write(path.join(h.root, 'not-a-dir'), 'file');
+        const file = answers(h, { command: 'reset', scope: 'instance', backup: { dir: path.join(h.root, 'not-a-dir', 'inside'), passphrase: PASSPHRASE }, confirm: h.installationId });
+        const asJson = await runCli(['reset', '--answers', file, '--json'], { env: cliEnv(h) });
+        expect(asJson.exitCode).toBe(3);
+        const view = JSON.parse(asJson.stdout).error;
+        expect(view.code).toBe('BACKUP_FAILED');
+        expect(view.reason).toMatch(/^[A-Z][A-Z0-9_]+$/);
+        expect(asJson.stdout + asJson.stderr).not.toContain(PASSPHRASE);
+        expect(asJson.stdout + asJson.stderr).not.toContain('not-a-dir');
+        const asText = await runCli(['reset', '--answers', file], { env: cliEnv(h) });
+        expect(asText.stderr).toContain(`BACKUP_FAILED (${view.reason}):`);
+        await untouchedRows(h);
+        expect(h.archives()).toEqual([]);
+    });
+
     test('a wrong confirmation exits 2 with nothing changed, the barrier released and no archive written', async () => {
         const h = await world();
         const file = answers(h, { command: 'reset', scope: 'instance', backup: { dir: h.backupDir, passphrase: PASSPHRASE }, confirm: 'not-the-installation' });

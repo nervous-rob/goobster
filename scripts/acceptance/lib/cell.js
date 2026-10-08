@@ -221,7 +221,7 @@ class Cell {
         if (Array.isArray(blocks) && blocks.length) {
             return blocks.map((item) => `${item.code}${typeof item.detail === 'string' && item.detail ? `: ${item.detail}` : ''}`).join('; ');
         }
-        if (result.json && result.json.error) return `${result.json.error.code}${result.json.error.message ? `: ${result.json.error.message}` : ''}`;
+        if (result.json && result.json.error) return `${result.json.error.code}${result.json.error.reason ? ` (${result.json.error.reason})` : ''}${result.json.error.message ? `: ${result.json.error.message}` : ''}`;
         const lines = `${result.stderr}\n${result.stdout}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
         const said = lines.filter((line) => !/^\[[\w.-]+\] [\w.-]+ \.\.\.$/.test(line));
         if (said.length) return said[said.length - 1];

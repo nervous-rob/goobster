@@ -120,6 +120,21 @@ jobs:
         if: matrix.db == 'managed-pg'
         run: docker info --format '{{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
+      # The managed database is the pinned pgvector/pgvector:pg17 image and Goobster's backups read it
+      # with the host's pg_dump, which refuses a server newer than itself. The runner image ships
+      # PostgreSQL 16 client tools, so without this step the provision would only be allowed with
+      # acknowledgeBackupTools and the reset's backup would fail (BACKUP_FAILED / TOOL_VERSION_MISMATCH),
+      # which the first hosted run showed. This is the remedy docker_postgres.md gives an operator.
+      - name: PostgreSQL 17 client tools for the managed-Postgres cells
+        if: matrix.db == 'managed-pg'
+        run: |
+          sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends postgresql-client-17
+          pg_dump --version
+
       - name: Run the acceptance cell
         run: |
           mkdir -p "$EVIDENCE"

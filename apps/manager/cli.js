@@ -63,6 +63,7 @@ const environmentOverlay = require('./environment');
 const fieldCatalog = lazy('@goobster/core/config/fieldCatalog');
 
 const EXIT = Object.freeze({ OK: 0, UNEXPECTED: 1, INVALID: 2, REFUSED: 3, INTERRUPTED: 4, PRIVILEGE: 5 });
+const REASON_CODE = /^[A-Z][A-Z0-9_]{0,60}$/;
 const KIND_OF = Object.freeze({ install: 'install.new', adopt: 'adopt', reconfigure: 'install.reconfigure', repair: 'install.repair', uninstall: 'install.uninstall' });
 const COMMANDS = Object.freeze([...Object.keys(KIND_OF), 'reset', 'release', 'plan', 'status', 'discover', 'schema', 'migrate', 'backup', 'restore', 'database', 'update', 'help']);
 const MIGRATE_KIND = Object.freeze({ preflight: 'db.migrate.preflight', run: 'db.migrate', rollback: 'db.migrate.rollback' });
@@ -648,9 +649,11 @@ async function run(argv, io = {}) {
         const code = exitFor(error);
         const view = { code: error && error.code ? String(error.code) : 'UNEXPECTED', message: error instanceof CliError || error instanceof ManagerError ? error.message : 'The operation failed unexpectedly.' };
         if (error && error.details && error.details.findings) view.findings = error.details.findings;
+        // A failure wrapped by a step (BACKUP_FAILED, DB_INIT_FAILED ...) names its cause as a short code; show it, never a message or a path.
+        if (error && error.details && typeof error.details.reason === 'string' && REASON_CODE.test(error.details.reason)) view.reason = error.details.reason;
         if (error && error.operation) view.operationId = error.operation.id;
         if (!json) {
-            progress(`${view.code}: ${view.message}`);
+            progress(`${view.code}${view.reason ? ` (${view.reason})` : ''}: ${view.message}`);
             for (const finding of view.findings || []) progress(`  ${finding.code}: ${finding.detail}`);
         }
         const resetNotice = report.command === 'reset' ? require('./cliReset').failureNotice(error) : (report.command === 'restore' ? require('./cliBackup').failureNotice(error, 'restore') : null);

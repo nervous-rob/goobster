@@ -103,6 +103,19 @@ describe('the matrix', () => {
         const check = steps.find(({ step }) => /docker info/.test(step.run || '')).step;
         expect(check.if).toBe("matrix.db == 'managed-pg'");
     });
+
+    test("the Docker cells install PostgreSQL 17 client tools, the server major of the pinned image, so the host's pg_dump can back the database up", () => {
+        const tools = steps.find(({ step }) => /postgresql-client-17/.test(step.run || '')).step;
+        expect(tools.if).toBe("matrix.db == 'managed-pg'");
+        expect(tools.run).toMatch(/apt\.postgresql\.org/);
+        expect(tools.run).toMatch(/signed-by=/);
+        expect(tools.run).toMatch(/pg_dump --version/);
+        const docker = steps.findIndex(({ step }) => /docker info/.test(step.run || ''));
+        const cell = steps.findIndex(({ step }) => /acceptance\/run\.js/.test(step.run || ''));
+        const at = steps.findIndex(({ step }) => /postgresql-client-17/.test(step.run || ''));
+        expect(at).toBeGreaterThan(docker);
+        expect(at).toBeLessThan(cell);
+    });
 });
 
 describe('evidence', () => {

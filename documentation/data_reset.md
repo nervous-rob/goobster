@@ -192,7 +192,7 @@ Nothing is written before a refusal.
 | `FOREIGN_TARGET` | The open database is not the one the installation record names. |
 | `FILE_SET_UNSAFE`, `BACKUP_DESTINATION_UNSAFE` | A path a reset must not remove, or must not write into. |
 | `REVISION_CONFLICT`, `PRIVATE_INPUT_LOST` | The plan is stale, or the in-memory input was lost across a manager restart. Plan again. |
-| `BACKUP_FAILED`, `BACKUP_UNVERIFIED` | The backup could not be written, or did not verify. |
+| `BACKUP_FAILED`, `BACKUP_UNVERIFIED` | The backup could not be written, or did not verify. `BACKUP_FAILED` names its cause as a code beside it (`BACKUP_FAILED (TOOL_VERSION_MISMATCH)`: the host's `pg_dump` is older than the Postgres server; `ENOTDIR`, `EACCES`: the destination), never a message or a path. |
 | `RESET_FAILED`, `VERIFY_FAILED` | `mutate` or `verify` failed after the barrier crossed its irreversible boundary. |
 
 ## The commands
