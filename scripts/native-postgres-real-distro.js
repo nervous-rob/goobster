@@ -61,7 +61,16 @@ async function main({ io = {}, seams = {}, log = console.log } = {}) {
     const settings = resolveSettings(env);
     createStore({ root: settings.storeDir }).init();
     const store = createStore({ root: settings.storeDir });
-    store.createInstallation({ origin: 'claim', ownerLabel: 'Real-distro proof' });
+    // A managed source installation, with sealed roots, is required by restore.
+    // This fixture owns only the throwaway state directories; it registers no app service.
+    store.createInstallation({ origin: 'adopt', ownerLabel: 'Real-distro proof', install: {
+        layout: 'standalone',
+        roots: { code: path.resolve(__dirname, '..'), data: env.GOOBSTER_DATA_DIR, config: root,
+            cache: path.join(root, 'cache'), logs: path.join(root, 'logs'),
+            uploads: path.join(env.GOOBSTER_DATA_DIR, 'web-uploads'), managerStore: settings.storeDir },
+        runtimeUser: null, owned: { files: [], services: [], dependencies: [] },
+        updater: { kind: 'none' }, release: null, database: { engine: 'postgres', external: false }
+    } });
     const installationId = store.readInstallation().doc.installationId;
 
     const run = async (argv, answers) => {
