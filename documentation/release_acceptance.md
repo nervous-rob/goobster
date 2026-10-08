@@ -329,11 +329,14 @@ representative`, against a payload built for `linux-arm64`).
 
 ### Native Postgres on Linux (PR #371)
 
-The native Postgres provisioning of PR #371 (`cursor/native-postgres-340-7372`)
-was proven there on Ubuntu 24.04 x64 and arm64, Debian 12 and Rocky 9. That is
-**proven on #371; it joins this matrix after the stack merges** and is not
-merged into this branch: the cells above that use Postgres use the Docker path
-(`managed-pg`) and an existing server (`existing-pg`) only.
+The native Postgres provisioning of PR #371 is merged and has its own
+real-distro proof, `.github/workflows/native-postgres.yml`: the full journey
+(provision, port conflict, stop and start, repair, relocate, keep and remove
+data, a foreign cluster left untouched, clean teardown) on Ubuntu 24.04 x64 and
+arm64, Debian 12 and Rocky 9 ([native_postgres.md](native_postgres.md)). This
+driver has no `native-pg` database choice yet: the cells above that use
+Postgres take the Docker path (`managed-pg`) and an existing server
+(`existing-pg`) only, and a native cell is a later addition to `matrix.js`.
 
 ## Caveats
 
