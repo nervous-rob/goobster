@@ -100,7 +100,7 @@ each ending with the installation healthy or in the documented state.
 | `token` | Stale setup token | A replaced credential, an expired one and a reused one are all refused (`BOOTSTRAP_INVALID`); a fresh one is claimed exactly once. |
 | `store` | Lost or corrupted manager store | With the store directory gone the manager reports `MANAGER_STORE_MISSING` and `adopt` takes the installation back (the one that is also the adopt cells' install); with `installation.json` corrupted it reports `MANAGER_STORE_CORRUPT`, grants no session, performs no mutation and stays up. |
 | `port` | Port in use | `install` with the API port held by another listener exits 2 with `PORT_IN_USE`; nothing is written beyond the refused operation's own journal entry. |
-| `storage` | Full or read-only storage root | A read-only code root exits 2 `ROOT_NOT_WRITABLE`; a read-only data root exits 3 `STORE_UNUSABLE`; nothing is written either way. A full disk (`DISK_SPACE`) needs a size-limited mount the hosted runners do not give without root-level loop devices; it is **not exercised** (see the caveats). |
+| `storage` | Full or read-only storage root | A read-only code root exits 2 `ROOT_NOT_WRITABLE`; a read-only data root exits 3 `STORE_UNUSABLE`; nothing is written either way. Linux jobs now prepare a dedicated 1 MiB tmpfs, observe real `ENOSPC`, reserve 64 KiB for write probes, and require `DISK_SPACE` before install mutation. New hosted evidence is pending; this does not test mid-write exhaustion or other operating systems. |
 | `update-kill` | Update interrupted between activate and verify | The manager is killed by its process id with the handoff recorded as pending. The next start verifies and finishes the update, releases the barrier, the workers are healthy and the data is intact. |
 | `restore-kill` | Restore interrupted | The restore is killed once its journal reaches `mutate`. The live database is still the pre-restore file; the first retry is refused (`STALE_MAINTENANCE`, exit 3); `release --force --acknowledge-mutation` clears the barrier; the same restore re-run with `--release` completes and the data matches the archive. |
 | `gated` | Direct HTTP to a disabled feature's route | Signed out: a plain 404. Signed in: 404 `FEATURE_UNAVAILABLE` naming the feature. A write: 404. Nothing reaches the feature. |
@@ -602,7 +602,7 @@ Postgres take the Docker path (`managed-pg`) and an existing server
   the POSIX read-only storage injection. `n/a` remains explicit: minimal
   payloads do not toggle optional features, SQLite-only cells do not migrate,
   and Windows does not run the POSIX-mode storage injection.
-- The full-disk half of the storage injection is not exercised on any target;
+- The new Linux bounded-volume preflight proof still needs hosted results; mid-write disk exhaustion and macOS/Windows full-disk behavior remain unverified;
   the Windows storage-refusal case still needs an appropriate Windows test.
 - Hosted Linux ARM64 is not physical Raspberry Pi validation. The Pi 4B
   adoption cell remains deferred, with memory, SD-card I/O and thermal
@@ -636,3 +636,19 @@ Postgres take the Docker path (`managed-pg`) and an existing server
   upgrades (#345) do not block the initial supported release. Deferring those
   features does not waive the supported updater's schema-safety requirement.
 
+
+
+### Additional qualification checks awaiting results
+
+The Linux acceptance jobs now mount a separate 1 MiB tmpfs per job, fill only that
+bounded filesystem until a real `ENOSPC`, and reserve 64 KiB for preflight probes.
+The storage injection checks `DISK_SPACE` and no installation mutation. The
+preparation refuses ordinary filesystems, nonempty mounts, or capacities above
+2 MiB, and the workflow unmounts the fixture in its cleanup step. No host disk is
+filled. This establishes only capacity refusal before installation if the new
+jobs pass; mid-operation exhaustion, macOS/Windows full disks, physical Raspberry
+Pi, independent recovery operators and production signing remain open.
+
+The shared confirmation dialog also has enforced keyboard assertions replacing
+four known-gap annotations. Human screen-reader, contrast, zoom and language
+review remain separate acceptance requirements.

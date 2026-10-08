@@ -351,23 +351,20 @@ test.describe('Host operator pages, keyboard only', () => {
         await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
         await expect(dialog.getByRole('button', { name: 'Confirm' })).toBeVisible();
         const inDialog = () => page.evaluate(() => Boolean(document.querySelector('[role="dialog"]')?.contains(document.activeElement)));
-        const gaps = [];
-        if (!await inDialog()) gaps.push('focus stays on the page behind the dialog when it opens');
-        let escaped = false;
-        for (let tabs = 0; tabs < 6; tabs += 1) {
-            await page.keyboard.press('Tab');
-            if (!await inDialog()) escaped = true;
+        await expect(dialog).toHaveAccessibleName(/operator \(host\)/);
+        await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+        for (const key of ['Tab', 'Shift+Tab']) {
+            for (let tabs = 0; tabs < 6; tabs += 1) {
+                await page.keyboard.press(key);
+                expect(await inDialog(), `${key} stays within the open modal`).toBe(true);
+            }
         }
-        if (escaped) gaps.push('Tab leaves the dialog for the page behind it (no focus trap)');
-        if (!await dialog.getAttribute('aria-label') && !await dialog.getAttribute('aria-labelledby')) gaps.push('the dialog has no accessible name');
         const reachable = await dialog.evaluate((node) => [...node.querySelectorAll('button')].length);
         expect(reachable).toBe(2);
 
         await page.keyboard.press('Escape');
         await expect(dialog).toHaveCount(0);
-        const after = await focused(page);
-        if (!after || after.key !== 'button|||Make operator') gaps.push('focus is not returned to the control that opened the dialog');
-        for (const gap of gaps) test.info().annotations.push({ type: 'known-gap', description: gap });
+        await expect(makeOperator).toBeFocused();
         await expect(colleague).toContainText('· member · active ·');
         await expect(colleague.getByRole('button', { name: 'Make operator' })).toBeVisible();
 
@@ -376,6 +373,7 @@ test.describe('Host operator pages, keyboard only', () => {
         await expect(page.getByRole('dialog')).toBeVisible();
         await press(page, page.getByRole('dialog').getByRole('button', { name: 'Cancel' }), 'Enter');
         await expect(page.getByRole('dialog')).toHaveCount(0);
+        await expect(makeOperator).toBeFocused();
         await expect(page.getByText('Reset link for native-colleague')).toHaveCount(0);
     });
 

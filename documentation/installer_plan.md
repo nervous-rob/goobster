@@ -834,3 +834,14 @@ evidence must be recorded on #342. See [release acceptance caveats](release_acce
   `db/dialect.js`.
 - Every new per-user store is reachable by `privacyService`.
 - Ledger rows never carry prompts, replies, tokens, links or addresses.
+
+
+### Acceptance and accessibility follow-up (#343)
+
+The shared modal implements initial focus, topmost-dialog Tab containment,
+accessible naming and opener restoration, with mandatory keyboard assertions.
+Linux acceptance adds a bounded tmpfs capacity-refusal proof that observes
+`ENOSPC` and then checks installer preflight without mutation. Typecheck/build
+pass locally; hosted keyboard and bounded-volume results remain pending. Human
+accessibility, mid-write disk exhaustion, full-disk behavior on other OSes and
+independent second-operator recovery remain open.
