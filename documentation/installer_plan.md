@@ -606,6 +606,30 @@ start, and a schema-changing release that failed after `/health` left in
 have not run, and the proof ran with no registered service (no systemd in the
 test VM), so the service-registration refresh is proven by Jest only.
 
+**Status (P5.3 matrix half, #343): the acceptance driver, the workflow and the
+generated matrix are built; only the local linux-x64 cells have run.**
+`documentation/release_acceptance.md` is the reference. `scripts/acceptance/run.js`
+runs one cell (install new or adopt; SQLite, an existing Postgres server or
+Docker-managed Postgres; minimal, representative or full features) through the
+manager's own command line, the manager process and its loopback API, never a
+manager module, and records thirteen lifecycle steps and nine failure and
+negative-authorization injections as pass, fail, n/a or deferred, each with its
+commands, exit codes and durations. `.github/workflows/release-acceptance.yml`
+runs 19 hosted cells (linux x64 and arm64: new and adopt by SQLite and
+managed Postgres by minimal and representative; macOS arm64 and x64 and
+Windows: new, SQLite, minimal) with read-only permissions and no secrets,
+uploading evidence from every cell; `scripts/acceptance/report.js` renders the
+table. Local runs on 2026-10-08 (artifact 1.0.0, development-signed) passed
+every step and injection that applies on four cells (SQLite minimal and
+representative, an existing Postgres server, an adopted installation); the
+managed-Postgres, macOS, Windows and linux-arm64 cells are written and
+structurally tested but have not run, and a Raspberry Pi is deferred. The runs
+found and fixed two manager defects (a silent exit of a CLI command waiting on
+the maintenance barrier; a restore over a SQLite file that is not a database)
+and left two operator-visible behaviours open (the CLI does not read the
+manager's database overlay; the switch to Postgres reaches the running manager
+at its next start). The operator recovery runbooks are the other half of P5.3.
+
 ## Audits before implementation
 
 | Id | Question | Needed by | Result |
