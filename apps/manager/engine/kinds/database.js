@@ -42,6 +42,7 @@ const input = require('../../database/input');
 const state = require('../../database/state');
 const { createProbe } = require('../../database/probe');
 const dockerOwned = require('../../docker/owned');
+const nativeOwned = require('../../native/owned');
 
 const SESSION_VIA = ['local', 'bridge', 'setup', 'recovery'];
 const PROVISION_STEPS = ['provision', 'verify'];
@@ -292,7 +293,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
         exactKeys(raw, new Set(['connection', 'maintenance', 'expectedRevision', 'release']));
         if (raw.expectedRevision !== undefined && (!Number.isInteger(raw.expectedRevision) || raw.expectedRevision < 0)) throw new ManagerError(400, 'INVALID_INPUT', '"expectedRevision" must be a non-negative integer.');
         return {
-            connection: input.parseConnection(dockerOwned.expand(raw.connection, settings, fs)),
+            connection: input.parseConnection(nativeOwned.expand(dockerOwned.expand(raw.connection, settings, fs), settings, fs)),
             maintenance: input.parseMaintenance(raw.maintenance),
             expectedRevision: raw.expectedRevision,
             release: parseBoolean(raw.release, 'release', false)
@@ -498,6 +499,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 const existing = environment.read(settings.storeDir, fs).values;
                 const values = { ...existing, GOOBSTER_DB_URL: ctx.scratch.url };
                 if (existing.GOOBSTER_DOCKER_DB_URL === ctx.scratch.url) delete values.GOOBSTER_DOCKER_DB_URL;
+                if (existing.GOOBSTER_NATIVE_DB_URL === ctx.scratch.url) delete values.GOOBSTER_NATIVE_DB_URL;
                 environment.write(settings.storeDir, values, { fs, now });
                 await deps().afterOverlayWrite?.();
                 const doc = core.ownedInstall(ctx);

@@ -508,14 +508,14 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
      *   a refused input throws a ManagerError; an operation with no helper on
      *   this platform answers `deferred`
      */
-    async function runPrivileged(operation, input, { record = null, ctx = null, requestDir = null } = {}) {
+    async function runPrivileged(operation, input, { record = null, ctx = null, requestDir = null, timeoutMs = null } = {}) {
         const runner = privilegedRunner();
         let result;
         if (!runner) {
             result = { status: 'deferred', code: 'NOT_IMPLEMENTED' };
         } else {
             try {
-                result = await runner.run(operation, input, { requestDir, env, ...(deps.privilegedOptions || {}) });
+                result = await runner.run(operation, input, { requestDir, env, ...(timeoutMs ? { timeoutMs } : {}), ...(deps.privilegedOptions || {}) });
             } catch (error) {
                 if (error instanceof ManagerError && error.status === 501) result = { status: 'deferred', code: 'NOT_IMPLEMENTED' };
                 else throw error;

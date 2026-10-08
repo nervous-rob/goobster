@@ -53,7 +53,10 @@ export function ThreeKinds() {
 }
 
 /** Who owns the storage, and what a failure of it means. */
-export function StorageOwnership({ engine, docker = false }: { engine: 'sqlite' | 'postgres'; docker?: boolean }) {
+export function StorageOwnership({ engine, docker = false, native = false }: { engine: 'sqlite' | 'postgres'; docker?: boolean; native?: boolean }) {
+    if (native) {
+        return <p className="hint" data-testid="storage-owner">The database is a PostgreSQL cluster this installer creates on this machine, with its data in a folder of its own. Uninstalling keeps that data and the installed packages unless you ask for the data to be removed, and then removes only that cluster. A Goobster backup does not contain it: back it up with the backup command, which reads it through <code>pg_dump</code>.</p>;
+    }
     if (docker) {
         return <p className="hint" data-testid="storage-owner">The database runs in a container this installer creates, with its data in a Docker volume or a folder you chose. Uninstalling keeps that data unless you ask for it to be removed, and then removes only what the installer created. A Goobster backup does not contain it: back it up with the backup command, which reads it through <code>pg_dump</code>.</p>;
     }

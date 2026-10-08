@@ -217,7 +217,9 @@ Work, in order:
    each. Open findings that gate the release phase (B1 config roots,
    B2 glibc floors, B3 sqlite-vec macOS floor, B4 VC++ redistributable,
    B5 GPL declarations, B6 discord.js in the no-Discord path) are in
-   `documentation/packaging_proof.md`.
+   `documentation/packaging_proof.md`. B1 has a fix open against `main`
+   as PR [#364](https://github.com/nervous-rob/goobster/pull/364)
+   (shared `config/configJson.js` loader).
 2. Payload builder: resolves the selected features to files and exclusive
    dependencies (ffmpeg for Voice, the python venv for Music, the sandbox
    runner), builds the frontend with only the selected rooms.
@@ -513,14 +515,46 @@ Work:
    instance card on the Database page and the Host proxy. Unit and route tests
    run against a fake `docker` executable; the real-container block runs with
    `GOOBSTER_DOCKER_TESTS=1` in a CI job that has a daemon. Not built here:
-   native PostgreSQL (#340), moving a data directory, a remote Docker host and
-   Windows containers. See [docker_postgres.md](docker_postgres.md).
+   moving a Docker data directory, a remote Docker host and Windows
+   containers (native PostgreSQL followed in #340). See [docker_postgres.md](docker_postgres.md).
    PR [#368](https://github.com/nervous-rob/goobster/pull/368) (stacked on
    #367): SQLite full suite 287 suites / 5853 passed; Postgres `core` 2466 and
    `portal` 1137 passed in isolated schemas; Playwright 254 passed; lint, smoke,
    docs and group inventory green; the `test (docker postgres)` CI job runs the
    gated real-daemon blocks. A delete-data uninstall that leaves the volume
    warns `DOCKER_DATA_RETAINED`.
+
+   **Status (P4.7, #340): native PostgreSQL on supported Linux built (stacked
+   on #339).** The native entry of the chooser is enabled only on Debian 12 /
+   Raspberry Pi OS Bookworm, Ubuntu 22.04+ or AlmaLinux/Rocky 9 (x86-64 or arm64)
+   with an elevation that needs no prompt; PostgreSQL 17 comes from the PostgreSQL
+   project's apt or dnf repository, added by the privileged helper only after the
+   signing key's fingerprint matches the one pinned in
+   `packages/core/db/native/pgdg.js` (`PGDG_KEY_MISMATCH` otherwise); packages are
+   installed only with `installPackages` and stay installed on uninstall. The
+   kinds `database.native.provision` (preflight, packages, cluster, schema,
+   verify-database), `.start`, `.stop`, `.repair` and `.relocate` (verified
+   backup first, inside a held barrier, the original directory kept) run through
+   five closed privileged operations (`package.install`,
+   `postgres.cluster.create|control|remove|relocate`) that the helper re-checks
+   against the manager's `native-postgres.json` and the data directory's marker;
+   the cluster is `goobster` (or `goobster-<id8>`) beside any existing cluster,
+   which is never touched; the application role is created `NOSUPERUSER` from a
+   SCRAM-SHA-256 verifier so no password is on any command line, and its URL
+   lives only in the manager's overlay (`GOOBSTER_NATIVE_DB_URL` until
+   `database.connect { owned: native }`); the `DATABASE_NOT_READY` gate; an
+   uninstall that keeps the cluster and data unless `removeNativeData` is
+   confirmed with the installation id; `GET /manager/api/native/status`,
+   `goobster-manager database native ...`, the Database step option, the
+   instance card on the Database page and the Host proxy. Unit, route and
+   Playwright tests run the real helper as an ordinary user inside a fake machine
+   (`tests/helpers/fakeNative.js`); `.github/workflows/native-postgres.yml`
+   runs `scripts/native-postgres-real-distro.js` on Ubuntu 24.04 (x86-64 and
+   arm64) and in Debian 12 and Rocky Linux 9 containers, and nothing has run on
+   a real distribution before that workflow's first run. Not built here: Windows and macOS native services,
+   PostgreSQL major upgrades, backup scheduling, and moving the data directory
+   from the wizard (it is a CLI journey). See
+   [native_postgres.md](native_postgres.md).
 
    The P4.5 chooser below:
    PR [#365](https://github.com/nervous-rob/goobster/pull/365) (stacked on
@@ -605,6 +639,28 @@ start, and a schema-changing release that failed after `/health` left in
 (launchd) handoffs are written and unit-tested through the supervisor seam but
 have not run, and the proof ran with no registered service (no systemd in the
 test VM), so the service-registration refresh is proven by Jest only.
+
+**Status (P5.3, #343), operator runbooks: published, walked on Linux only.**
+`documentation/operator_runbooks.md` gives a second operator numbered
+procedures, with the commands, the expected result and the refusal code with its
+remedy, for getting started on Linux, Windows and macOS (first owner without
+Discord, first chat), the feature and configuration reference, service
+ownership, network access, backup and recovery, migration and rollback, upgrade
+and uninstall, each with a "what this cannot do" line. The Linux getting-started,
+backup and restore, feature toggle and uninstall procedures were executed from
+that document on a Linux x64 machine (no systemd, no Discord) and the document
+was corrected where a step did not work as written; the Windows and macOS
+procedures, systemd registration, adoption, SQLite to Postgres migration,
+Docker-managed Postgres and `update apply` were not run. The walk found
+problems that need a source change and are recorded in the document rather
+than fixed there: a full uninstall leaves `config.json.pre-restore-<time>`,
+and several manager operations have no command-line verb (the silent exit 1 of
+a command-line `restore` waiting on the barrier, also found by the walk, is
+fixed by the matrix half below). The accessibility
+record is `documentation/accessibility_review.md`. Open owner decisions the
+runbooks name and do not close: #249 (the restore drill on a real second host),
+#255 (authentication policy), #262 (public listing) and the signing material
+for #372.
 
 **Status (P5.3 matrix half, #343): the acceptance driver, the workflow and the
 generated matrix are built; only the local linux-x64 cells have run.**

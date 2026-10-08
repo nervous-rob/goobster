@@ -67,8 +67,8 @@ value), and `status().features[id].configured` is `false`. They do not affect
 never hides a surface: an unconfigured integration keeps its commands, tools
 and routes and answers with its own guidance, exactly as before (`/agent`
 says Cursor is not configured, the push routes report `no-keys`, the mail
-routes report the mode). In Phase 2 the manager uses `configured` and
-`warnings` to tell the operator what is missing before it activates a feature.
+routes report the mode). The Host room's Features page uses `configured` and
+`warnings` to tell the operator what is missing before a feature is activated.
 
 Two more reason codes: `UNKNOWN_FEATURE` (an id the catalog does not know; never
 thrown) and `STATE_ERROR` (added to an inactive feature while the state file
@@ -253,8 +253,10 @@ config and env and fails if any appears.
 
 ## Writing
 
-`await state.write(doc, { expectedRevision })` is the only mutation, for the
-later manager and operator pages (there is no mutation route yet).
+`await state.write(doc, { expectedRevision })` is the only mutation. Its caller is
+the manager's `features.set` operation ([manager.md](manager.md), run from the Host
+room's Features page or headless; [operator_runbooks.md](operator_runbooks.md#turn-a-feature-off-or-on));
+the portal has no route that writes the file itself.
 
 1. The document is validated: known ids, `core` absent, an uninstalled
    feature not active, and the dependency closure. A feature requested active
@@ -273,8 +275,10 @@ later manager and operator pages (there is no mutation route yet).
    change; call `refresh()` deliberately (tests, and the manager after a
    restart).
 
-Two processes can still race between the revision check and the rename; a
-lock is a manager concern (Phase 2).
+Two processes can still race between the revision check and the rename. The
+manager re-reads the revision in its own `check-revision` step and again inside
+`write`, and a stale revision is `REVISION_CONFLICT` (nothing is merged), but
+there is no lock between a hand edit of the file and the manager.
 
 ## State transitions
 

@@ -18,8 +18,8 @@ engine ([manager.md](manager.md)).
 **What it is not.** It does not install, start or configure a PostgreSQL
 server of its own: a PostgreSQL in Docker that the installer creates and owns
 is [docker_postgres.md](docker_postgres.md) (#339, an explicit choice), and a
-native package is listed in the chooser as "Available in a later version of
-this installer". It does not edit anything about a server that belongs to
+PostgreSQL 17 cluster the installer creates natively on a supported Linux host
+is [native_postgres.md](native_postgres.md) (#340, an explicit choice). It does not edit anything about a server that belongs to
 someone else: not its data directory, the address it listens on, its port, its
 memory settings or its other databases. It never moves data between engines
 (that is the migration), never upgrades a server to a newer PostgreSQL major
@@ -39,9 +39,11 @@ The setup wizard says this in words, not in numbers of people:
 No threshold of users or servers is stated because none was measured; the
 guidance is about how the installation is run.
 
-The chooser offers three engines in this version: SQLite, an existing
-PostgreSQL server, and two disabled entries (a server in Docker, a server on
-this machine) that say "Available in a later version of this installer".
+The chooser offers four choices: SQLite, an existing PostgreSQL server,
+PostgreSQL in Docker managed by the installer
+([docker_postgres.md](docker_postgres.md)) and PostgreSQL on this machine
+managed by the installer ([native_postgres.md](native_postgres.md)). The last
+two are enabled only when their check passes and say why when they are not.
 
 ## The connection
 
@@ -69,8 +71,9 @@ another machine is not encrypted or its certificate is not checked.
 Next to the form the pages show a read-only block, **Where the data is
 stored**, with the server and database, and the sentence that the data
 directory, listen address and port are set on the server. For a server the
-manager owns (a later version) they will be editable; for one it merely
-connects to they never are.
+manager owns the data directory can be moved
+([native_postgres.md](native_postgres.md#databasenativerelocate)); for one it
+merely connects to they never are.
 
 ## Test connection
 
@@ -249,6 +252,22 @@ is made with `database.connect` and `{ "connection": { "owned": "docker" } }`:
 it reuses the staged application URL, so the connect, the cutover rules and the
 barrier are exactly those of this page.
 
+### PostgreSQL on this machine (#340)
+
+A fourth source: **PostgreSQL on this machine (managed by this installer)**,
+for a Debian 12, Ubuntu 22.04+ or AlmaLinux/Rocky 9 host where the manager can
+obtain administrator rights without a password prompt. The `database` answer of
+`install.new` takes `native: { port, bind, dataDirectory, installPackages, ... }`
+instead of `connection` or `docker` (give one) and the install gains a
+`native-postgres` step. The kinds `database.native.provision|start|stop|repair|
+relocate`, the pinned PostgreSQL repositories, the cluster the installer
+creates beside any cluster that already exists (never touched), the SCRAM
+verifier that keeps the password away from every command line, the staged key
+`GOOBSTER_NATIVE_DB_URL` and the uninstall scopes are in
+[native_postgres.md](native_postgres.md). The connection is made with
+`database.connect` and `{ "connection": { "owned": "native" } }`, reusing the
+staged application URL.
+
 ### Maintenance: Database
 
 The Installation page (manager's own page: **Installation → Database…**, test
@@ -264,7 +283,9 @@ It also lists what to do for each way the database can fail.
 
 When the installer owns a Docker database, the page also shows it (status,
 health, image, storage, port, **Start**, **Stop**, **Repair**, **Use it for
-this installation…**).
+this installation…**). A native cluster it owns is shown the same way (name and
+state, port, data directory, **Start**, **Stop**, **Repair**, **Use it for this
+installation…**).
 
 **Connect to a PostgreSQL server…** runs the form, the test, the optional
 preparation, the review (`database.connect`'s plan: from, to, what is left
@@ -280,6 +301,7 @@ node apps/manager/cli.js database schema --answers conn.json
 node apps/manager/cli.js database connect --answers conn.json [--release]
 node apps/manager/cli.js database status
 node apps/manager/cli.js database docker status|provision|start|stop|repair|reconfigure   # docker_postgres.md
+node apps/manager/cli.js database native status|provision|start|stop|repair|relocate      # native_postgres.md
 ```
 
 `conn.json` is `{ "connection": { "host": "...", "port": 5432, "database":
@@ -330,4 +352,7 @@ kinds and the install answer, engine parity), `tests/databaseRoutes.test.js`
 `e2e/databaseWizard.spec.js`. The Docker instance has its own specs
 (`tests/dockerDaemon.test.js`, `tests/dockerPostgresKinds.test.js`,
 `tests/dockerPostgresRoutes.test.js`, `e2e/dockerPostgres.spec.js`;
-[docker_postgres.md](docker_postgres.md#tests)).
+[docker_postgres.md](docker_postgres.md#tests)); so does the native one
+(`tests/nativePostgresAdapters.test.js`, `tests/nativePostgresHelper.test.js`,
+`tests/nativePostgresKinds.test.js`, `tests/nativePostgresRoutes.test.js`,
+`e2e/nativePostgres.spec.js`; [native_postgres.md](native_postgres.md#tests)).
