@@ -40,7 +40,17 @@ empties it rather than dropping it: [db_migration.md](db_migration.md#the-prefli
 the acceptance driver started a `.cmd` launcher through `cmd.exe` with an
 unquoted path that `$RUNNER_TEMP` spells with a forward slash; and the payload
 smoke probed the API's port on loopback only, which on macOS can pass a port
-the API's wildcard bind is then refused. Also still open: the owner decisions
+the API's wildcard bind is then refused. The second run passed the eleven
+SQLite cells and found two more: the managed-Postgres cells' `reset` failed
+`BACKUP_FAILED` because the runner's `pg_dump` (16) is older than the pinned
+`pgvector/pgvector:pg17` server (the workflow installs the PostgreSQL 17 client
+tools for those cells, and `BACKUP_FAILED` now names its cause as a short code,
+`TOOL_VERSION_MISMATCH` here: [data_reset.md](data_reset.md)); and on Windows
+the installed payload's `current\bin\goobster-manager.cmd` did not read
+`<code root>\goobster.env` as its POSIX counterpart does, so `status` run from
+it looked under `%LOCALAPPDATA%\Goobster` and reported `recovery` (it now reads
+the file the same way: [windows_install.md](windows_install.md#repair-reconfigure-uninstall)).
+Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each
 carries its own acceptance evidence.

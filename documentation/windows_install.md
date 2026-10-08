@@ -337,7 +337,12 @@ terminal runs the workers as you.
 
 The installer leaves `goobster-manager.cmd` in the code root. It reads the
 installation's roots from `goobster.env` beside it (only `GOOBSTER_*` lines, as
-text), so it works from any prompt:
+text), so it works from any prompt. The payload's own launcher,
+`<code root>\current\bin\goobster-manager.cmd`, reads the same file the same
+way when it runs from `current` (as its POSIX counterpart does), so either
+door finds this installation rather than the `%LOCALAPPDATA%\Goobster`
+defaults; `uninstall` still belongs to the code-root launcher, which runs it
+from a copy of Node outside the code root.
 
 ```bat
 "C:\Users\you\AppData\Local\Goobster\code\goobster-manager.cmd" status

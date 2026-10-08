@@ -217,3 +217,29 @@ describe('package-runtime selection flags', () => {
         expect(() => resolveSelection(parseArgs(['--features', 'voice,warpdrive']))).toThrow(/Unknown feature\(s\) for --features: warpdrive/);
     });
 });
+
+describe('the manager launchers the payload carries', () => {
+    const { launchers } = require('../scripts/package-runtime');
+
+    test('an installed POSIX payload (<code root>/current) takes its roots from <code root>/goobster.env, environment first', () => {
+        const text = launchers.posixManager;
+        expect(text).toContain('ENV_FILE="$(dirname -- "$PAYLOAD")/goobster.env"');
+        expect(text).toContain('if [ "$(basename -- "$PAYLOAD")" = "current" ] && [ -r "$ENV_FILE" ]; then');
+        expect(text).toContain('GOOBSTER_[A-Z0-9_]*=*)');
+        expect(text).toContain('if ! printenv "$key" >/dev/null 2>&1; then');
+        expect(text.indexOf('goobster.env')).toBeLessThan(text.indexOf('GOOBSTER_DATA_DIR="${GOOBSTER_DATA_DIR:-'));
+    });
+
+    test('the Windows payload launcher reads the same file the same way, so the installed current\\bin launcher sees the installation and not %LOCALAPPDATA%', () => {
+        const lines = launchers.windowsManager.split('\r\n');
+        expect(lines).toContain('for %%I in ("%PAYLOAD%\\..") do set "CODE=%%~fI"');
+        expect(lines).toContain('if /i "%PAYLOAD_NAME%"=="current" if exist "%CODE%\\goobster.env" (');
+        expect(lines).toContain('    for /f "usebackq eol=# tokens=1* delims==" %%A in ("%CODE%\\goobster.env") do (');
+        expect(lines).toContain('        echo %%A| findstr /b /c:"GOOBSTER_" >nul && if not defined %%A set "%%A=%%B"');
+        const read = lines.findIndex((line) => line.includes('goobster.env'));
+        const defaults = lines.findIndex((line) => line.includes('if not defined GOOBSTER_HOME'));
+        expect(read).toBeGreaterThan(-1);
+        expect(read).toBeLessThan(defaults);
+        expect(launchers.windowsManager).not.toMatch(/call "%CODE%\\goobster\.env"|^\s*"%CODE%\\goobster\.env"/m);
+    });
+});
