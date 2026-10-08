@@ -174,7 +174,9 @@ local operator asks:
 curl -s -X POST http://127.0.0.1:3400/manager/api/operations \
   -H "authorization: Bearer $S" -H "x-goobster-nonce: $(openssl rand -hex 12)" \
   -H 'content-type: application/json' -d '{"kind":"adopt","input":{"label":"Rob"}}'
-# then POST /operations/<id>/validate and /operations/<id>/apply with {"revision": null}
+# then POST /operations/<id>/validate (no body) and /operations/<id>/apply with {"revision": null}
+# (adopt plans carry no revision; most other kinds apply with the integer `revision` of their plan:
+#  operator_runbooks.md, Getting started step 5)
 ```
 
 `adopt` creates a new `installation.json` (`origin: 'adopt'`) and bridge

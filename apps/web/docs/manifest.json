@@ -19,6 +19,7 @@
   ] },
   { "title": "Hosting and accounts", "pages": [
     ["install", "Installation and privacy", "README.md"],
+    ["runbooks", "Operator runbooks", "documentation/operator_runbooks.md"],
     ["standalone", "Running without Discord", "documentation/independent_runtime.md"],
     ["accounts", "Accounts and sign-in", "documentation/identity.md"],
     ["web-app", "Web app setup", "documentation/webapp_setup.md"],
