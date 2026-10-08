@@ -438,11 +438,17 @@ async function restoreInterrupted(cell, step) {
         check(kept, 'the database was replaced and the previous file is nowhere among the .pre-restore items');
         previous = 'the previous database was set aside intact (.pre-restore)';
     }
-    const again = await cell.cli(step, ['restore', archive, '--confirm', cell.installationId, '--without-config', '--release', '--json'], { show: ['restore', '<archive>', '--confirm', '<installationId>', '--without-config', '--release', '--json'] });
+    const restoreArgs = ['restore', archive, '--confirm', cell.installationId, '--without-config', '--release', '--json'];
+    const restoreShown = ['restore', '<archive>', '--confirm', '<installationId>', '--without-config', '--release', '--json'];
+    const refused = await cell.cli(step, restoreArgs, { show: restoreShown });
+    check(refused.code === 3 && /STALE_MAINTENANCE/.test(JSON.stringify(refused.json || {})), `the first restore after the kill answered ${refused.code}, not the STALE_MAINTENANCE refusal: ${cell.why(refused)}`);
+    const released = await cell.cli(step, ['release', '--force', '--acknowledge-mutation', '--json']);
+    check(released.code === 0, `release --force --acknowledge-mutation exited ${released.code}: ${cell.why(released)}`);
+    const again = await cell.cli(step, restoreArgs, { show: restoreShown });
     check(again.code === 0, `restore after the interruption exited ${again.code}: ${cell.why(again)}`);
     await dataSteps.comeBack(cell, before);
     const resumed = again.json && again.json.result && again.json.result.resumed ? 'resumed the interrupted restore' : 'restored from scratch';
-    return { result: `restore SIGKILLed by pid once its journal reached mutate; ${previous}; the next run ${resumed}, data equals the archive (${before} conversation(s), the later one gone), workers healthy` };
+    return { result: `restore SIGKILLed by pid once its journal reached mutate; ${previous}; the first retry was refused (STALE_MAINTENANCE), the documented "release --force --acknowledge-mutation" cleared the barrier, and the next run ${resumed}; data equals the archive (${before} conversation(s), the later one gone), workers healthy` };
 }
 
 module.exports = { Scratch, staleSetupToken, lostManagerStore, portInUse, storageRefusal, unauthenticatedManager, recoveryNotRemote, disabledFeatureRoute, updateInterrupted, restoreInterrupted };
