@@ -56,7 +56,7 @@ function isSymlink(target, fs = nodeFs) {
  * outside it (a symlinked directory, or a symlink root).
  */
 function assertContained(parent, child, fs = nodeFs) {
-    if (isSymlink(child, fs)) {
+    if (isSymlink(child, fs) && !isPayloadLink(path.resolve(child), parent, fs)) {
         throw new ManagerError(409, 'PATH_ESCAPE', 'A recorded root is a symbolic link; the installer will not operate through it.');
     }
     const realParent = realish(parent, fs);
@@ -71,7 +71,7 @@ function assertContained(parent, child, fs = nodeFs) {
  * a filesystem root, the home directory or a parent of it, a path of fewer
  * than two components, the code root itself or a parent of it.
  */
-function assertRemovable(target, { codeRoot = null, home = os.homedir(), fs = nodeFs } = {}) {
+function assertRemovable(target, { codeRoot = null, home = os.homedir(), fs = nodeFs, payloadRoot = null } = {}) {
     const resolved = path.resolve(target);
     const problem = rawProblem(target);
     if (problem) throw new ManagerError(409, 'PATH_ESCAPE', 'A recorded root is not a usable absolute path.');
@@ -84,13 +84,37 @@ function assertRemovable(target, { codeRoot = null, home = os.homedir(), fs = no
     if (codeRoot && isSameOrInside(resolved, path.resolve(codeRoot))) {
         throw new ManagerError(409, 'PATH_ESCAPE', 'Refusing to remove the code root or a directory that contains it.');
     }
-    if (isSymlink(resolved, fs)) {
+    if (isSymlink(resolved, fs) && !isPayloadLink(resolved, payloadRoot, fs)) {
         throw new ManagerError(409, 'PATH_ESCAPE', 'A recorded root is a symbolic link; the installer will not operate through it.');
     }
     return resolved;
 }
 
-/** Remove one owned directory or file. Never follows a link out of it. Returns whether anything was removed. */
+/**
+ * A `current`/`previous` entry of the linked payload layout (Windows; `activationLayout` in
+ * scripts/lib/payloadStage.js): a directory link that sits directly in `payloadRoot` and names a
+ * payload under `<payloadRoot>/live`. The one link the installer made itself and will remove;
+ * any other link is still refused.
+ */
+function isPayloadLink(resolved, payloadRoot, fs = nodeFs) {
+    if (!payloadRoot || !isSymlink(resolved, fs)) return false;
+    const root = path.resolve(payloadRoot);
+    if (path.dirname(resolved) !== root) return false;
+    let target;
+    try {
+        target = path.resolve(root, fs.readlinkSync(resolved));
+    } catch {
+        return false;
+    }
+    const live = path.join(root, 'live');
+    return target !== live && isInside(live, target);
+}
+
+/**
+ * Remove one owned directory or file. Never follows a link out of it: a payload link of the linked
+ * layout is unlinked (its payload goes with `live`, a payload directory of its own), anything else
+ * is removed whole. Returns whether anything was removed.
+ */
 function removeOwned(target, options = {}) {
     const fs = options.fs || nodeFs;
     const resolved = assertRemovable(target, options);
@@ -99,6 +123,10 @@ function removeOwned(target, options = {}) {
     } catch (error) {
         if (error && error.code === 'ENOENT') return false;
         throw error;
+    }
+    if (isPayloadLink(resolved, options.payloadRoot, fs)) {
+        fs.unlinkSync(resolved);
+        return true;
     }
     fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     return true;
@@ -117,7 +145,7 @@ function removeIfEmpty(target, fs = nodeFs) {
 /** Findings for a set of roots: nesting that would let one root's removal take another's data. */
 function nestingProblems(roots) {
     const out = [];
-    const payload = ['current', 'previous', 'staging', 'releases'].map(name => path.join(roots.code, name));
+    const payload = ['current', 'previous', 'staging', 'releases', 'live'].map(name => path.join(roots.code, name));
     const names = ['data', 'config', 'cache', 'logs', 'uploads', 'managerStore'];
     for (const name of names) {
         for (const dir of payload) {
@@ -188,6 +216,7 @@ module.exports = {
     isSymlink,
     assertContained,
     assertRemovable,
+    isPayloadLink,
     removeOwned,
     removeIfEmpty,
     nestingProblems

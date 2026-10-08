@@ -76,7 +76,9 @@ async function landFile({ fs, readable, dest, limit, expect = null }) {
         if (expect && ((expect.size !== undefined && state.bytes !== expect.size) || (expect.sha256 !== undefined && sha256 !== expect.sha256))) {
             throw new ManagerError(409, 'ARTIFACT_DIGEST_MISMATCH', 'The downloaded file does not match the size and SHA-256 the signed release index records; it was discarded.');
         }
-        const fd = fs.openSync(partial, 'r');
+        // Opened for writing: on Windows FlushFileBuffers needs a handle with write access, and a
+        // read-only one fails with EPERM, which would turn every download there into DOWNLOAD_FAILED.
+        const fd = fs.openSync(partial, 'r+');
         try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
         fs.renameSync(partial, dest);
         return { bytes: state.bytes, sha256 };

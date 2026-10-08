@@ -68,10 +68,42 @@ function createApplier({ core, store, journal, logger = console }) {
         return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
     }
 
-    /** Does this manager process run from the payload an update replaces? */
+    /** The path as the file system resolves it (a `current` that is a directory link, on Windows), else as given. */
+    function realOrSame(target) {
+        try {
+            return typeof fs.realpathSync === 'function' ? fs.realpathSync(target) : path.resolve(target);
+        } catch {
+            return path.resolve(target);
+        }
+    }
+
+    /**
+     * Where this process's code lives, resolved once when the applier is made (that is before
+     * any swap this process performs): under the linked layout `current` names another payload
+     * after an activation, but the code this process runs is still the payload it started from.
+     */
+    const startedFrom = typeof settings.root === 'string' && settings.root ? realOrSame(path.resolve(settings.root)) : null;
+
+    /**
+     * Does this manager process run from a payload an update replaces or puts back? By the path
+     * it was started with (`current/app` through the Windows launcher), by the payload that path
+     * resolved to at start (the linked layout: any payload under `live/` is one activations swap),
+     * or by the directory `current` resolves to now.
+     */
     function selfReplacing(doc) {
         if (typeof deps.runsFromPayload === 'boolean') return deps.runsFromPayload;
-        return isInside(path.resolve(settings.root), path.join(codeRootOf(doc), 'current'));
+        const code = codeRootOf(doc);
+        const root = path.resolve(settings.root);
+        const current = path.join(code, 'current');
+        if (isInside(root, current)) return true;
+        const real = startedFrom || realOrSame(root);
+        if (isInside(real, realOrSame(path.join(code, release.payloadStage().LIVE_DIR)))) return true;
+        return isInside(real, realOrSame(current));
+    }
+
+    /** Does this process run from the payload `entry` (a directory, or a link under the linked layout) holds? */
+    function runsFrom(entry) {
+        return startedFrom !== null && isInside(startedFrom, realOrSame(entry));
     }
 
     /** Will the OS restart this process when it exits with a failure code? */
@@ -199,7 +231,13 @@ function createApplier({ core, store, journal, logger = console }) {
             const aside = path.join(codeRoot, `.failed-${crypto.randomBytes(4).toString('hex')}`);
             fs.renameSync(current, aside);
             fs.renameSync(previous, current);
-            core.removeTree(aside);
+            // a plain directory whole, or (the linked layout) the link and the payload it names —
+            // unless this process runs from that payload: then only the link goes, and the next
+            // activation's sweep collects the payload once this process has left it
+            const own = runsFrom(aside);
+            let dropped = null;
+            try { dropped = stage.removePayloadEntry(aside, { keepTarget: own }); } catch { }
+            if (!own && (!dropped || !dropped.removed)) core.removeTree(aside);
             return { via: 'previous' };
         }
         const retained = path.join(codeRoot, 'releases', from.releaseId);

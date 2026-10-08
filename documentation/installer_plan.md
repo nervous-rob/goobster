@@ -29,8 +29,78 @@ Playwright). The real-platform workflows (`linux-bootstrap.yml`,
 `macos-bootstrap.yml`, `windows-bootstrap.yml`, `native-postgres.yml`) passed
 on the merged tree at `707c3fc`.
 
-Still open: #343's acceptance matrix (driver, hosted workflow, report; PR
-#377, where the 19 hosted cells run for the first time), the owner decisions
+The last to land: #343's acceptance matrix (driver, hosted workflow, report;
+PR #377, where the 19 hosted cells ran for the first time and, on the seventh
+run, all passed). Its first hosted run
+found three defects that the same PR fixes: the documented SQLite-with-data →
+`database docker provision` → `migrate` path was refused with
+`TARGET_NOT_EMPTY` because the preflight counted relations and provisioning
+had applied the schema (the preflight now judges what the schema holds; a
+provisioned empty schema is the warning `TARGET_SCHEMA_PRESENT`, and a rollback
+empties it rather than dropping it: [db_migration.md](db_migration.md#the-preflight));
+the acceptance driver started a `.cmd` launcher through `cmd.exe` with an
+unquoted path that `$RUNNER_TEMP` spells with a forward slash; and the payload
+smoke probed the API's port on loopback only, which on macOS can pass a port
+the API's wildcard bind is then refused. The second run passed the eleven
+SQLite cells and found two more: the managed-Postgres cells' `reset` failed
+`BACKUP_FAILED` because the runner's `pg_dump` (16) is older than the pinned
+`pgvector/pgvector:pg17` server (the workflow installs the PostgreSQL 17 client
+tools for those cells and puts them first on PATH, since Debian's `pg_wrapper`
+otherwise keeps choosing the runner's own 16 - the third run proved that the
+package alone is not enough, and [docker_postgres.md](docker_postgres.md) now
+tells an operator the same; and `BACKUP_FAILED` names its cause as a short
+code, `TOOL_VERSION_MISMATCH` here: [data_reset.md](data_reset.md)); and on Windows
+the installed payload's `current\bin\goobster-manager.cmd` did not read
+`<code root>\goobster.env` as its POSIX counterpart does, so `status` run from
+it looked under `%LOCALAPPDATA%\Goobster` and reported `recovery` (it now reads
+the file the same way: [windows_install.md](windows_install.md#repair-reconfigure-uninstall)).
+The third run passed all eighteen Linux and macOS cells, every step and
+injection, and the Windows cell reached the end of its steps for the first
+time, finding two more: the driver ended only the `cmd.exe` that ran the
+`.cmd` launcher, leaving the manager and its workers alive (the driver now
+ends the process tree, as the service host does); and no update could be
+downloaded on Windows, because the landed file was synced through a
+read-only handle, which Windows refuses (`DOWNLOAD_FAILED` for every source
+kind; fixed in `apps/manager/update/source.js`:
+[manager_update.md](manager_update.md#how-this-was-verified)).
+The fourth run, Windows only still red, found that `update stage` read the
+landed archive with the GNU tar Git Bash puts first on PATH, which reads
+`D:\...` as a remote host (`ARCHIVE_UNREADABLE`; the manager now uses the
+system `tar.exe` in `System32`, and the code names the failing call as a
+reason: [windows_install.md](windows_install.md#repair-reconfigure-uninstall)),
+and that the driver's Windows stop was a tree kill where the service host
+sends Ctrl+C, so the workers died mid-write and a restore then folded the
+SQLite WAL into the file it set aside, which failed the `restore-kill` check
+and left the barrier up for `reset` (`STALE_MAINTENANCE`); the driver now
+drains the workers through the manager's `lifecycle.stop` first. The fifth
+run (reset and the interrupted restore now pass on Windows) kept the
+processes' logs beside the failed cell's evidence for the first time, and
+they named the last two: the payload launcher `goobster-manager.cmd` failed
+with no argument (a substring of an undefined variable makes `cmd.exe` abort
+the batch file with "The syntax of the command is incorrect", exit 255; every
+other door passes an argument, so no Windows journey had run it bare), and
+the archive listing from Windows' bsdtar ends its lines with CR LF, which made
+the manifest "missing". The sixth run, with the archive read and every other
+Windows step and injection green, reached the one design defect under them
+all: `update apply` swaps `current` while the manager still runs from it,
+which POSIX allows (a rename moves an inode) and Windows never does (a
+directory with an open handle beneath it cannot be renamed, whatever the
+sharing mode), so the activation failed `EPERM`. On Windows the payload
+layout is now the linked one Windows deployments use: activated payloads
+live under `<code>\live\`, `current` and `previous` are junctions, and an
+activation swaps links that hold nothing open
+([packaging.md](packaging.md#staging-and-activation),
+[windows_install.md](windows_install.md#default-roots)); POSIX keeps the
+rename layout the other eighteen cells proved, and the acceptance driver ran
+the linked layout on Linux end to end with `GOOBSTER_PAYLOAD_LAYOUT=linked`
+([release_acceptance.md](release_acceptance.md#findings), findings 16 to 20).
+**The seventh run passed all nineteen cells**, Windows included: every step
+and injection a cell can run, on linux x64 and arm64 (new and adopt, SQLite
+and managed Postgres, minimal and representative), macOS arm64 and x64, and
+Windows; the matrix table in `release_acceptance.md` is generated from that
+run's evidence
+([release_acceptance.md](release_acceptance.md#results-of-the-runs-done-so-far)).
+Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each
 carries its own acceptance evidence.
@@ -684,13 +754,44 @@ was corrected where a step did not work as written; the Windows and macOS
 procedures, systemd registration, adoption, SQLite to Postgres migration,
 Docker-managed Postgres and `update apply` were not run. The walk found
 problems that need a source change and are recorded in the document rather
-than fixed there: the command-line `restore` can exit 1 with no message and
-leave a held barrier, a full uninstall leaves `config.json.pre-restore-<time>`,
-and several manager operations have no command-line verb. The accessibility
+than fixed there: a full uninstall leaves `config.json.pre-restore-<time>`,
+and several manager operations have no command-line verb (the silent exit 1 of
+a command-line `restore` waiting on the barrier, also found by the walk, is
+fixed by the matrix half below). The accessibility
 record is `documentation/accessibility_review.md`. Open owner decisions the
 runbooks name and do not close: #249 (the restore drill on a real second host),
 #255 (authentication policy), #262 (public listing) and the signing material
 for #372.
+
+**Status (P5.3 matrix half, #343): the acceptance driver, the workflow and the
+generated matrix are built, and the hosted matrix passed on all nineteen
+cells (2026-10-08, PR #377, seventh run).**
+`documentation/release_acceptance.md` is the reference. `scripts/acceptance/run.js`
+runs one cell (install new or adopt; SQLite, an existing Postgres server or
+Docker-managed Postgres; minimal, representative or full features) through the
+manager's own command line, the manager process and its loopback API, never a
+manager module, and records thirteen lifecycle steps and nine failure and
+negative-authorization injections as pass, fail, n/a or deferred, each with its
+commands, exit codes and durations. `.github/workflows/release-acceptance.yml`
+runs 19 hosted cells (linux x64 and arm64: new and adopt by SQLite and
+managed Postgres by minimal and representative; macOS arm64 and x64 and
+Windows: new, SQLite, minimal) with read-only permissions and no secrets,
+uploading evidence from every cell; `scripts/acceptance/report.js` renders the
+table. Local runs on 2026-10-08 (artifact 1.0.0, development-signed) passed
+every step and injection that applies on four cells (SQLite minimal and
+representative, an existing Postgres server, an adopted installation) and on
+the Windows payload layout run under Linux; the hosted run of the same day
+passed all nineteen cells — managed Postgres, macOS, Windows and linux-arm64
+included — after six runs that each found defects the PR fixed (findings 8 to
+20 in `release_acceptance.md`); a Raspberry Pi is deferred. The runs found and
+fixed two manager defects locally (a silent exit of a CLI command waiting on
+the maintenance barrier; a restore over a SQLite file that is not a database)
+and thirteen more on the hosted runners (most of them Windows: the archive
+download, the archive read, the launcher with no argument, the payload
+activation under a running manager), and left two operator-visible behaviours
+open (the CLI does not read the manager's database overlay; the switch to
+Postgres reaches the running manager at its next start). The operator recovery
+runbooks are the other half of P5.3.
 
 ## Audits before implementation
 

@@ -41,6 +41,7 @@ function secretsOfMigrate(input, overlayValues = []) {
 
 const place = (target) => (target ? `${target.host}:${target.port}/${target.database}${target.schema ? ` schema ${target.schema}` : ''}` : 'unknown');
 const mb = (bytes) => (typeof bytes === 'number' ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : 'unknown');
+const finding = (detail) => (detail && typeof detail === 'object' ? Object.entries(detail).map(([key, value]) => `${key} ${Array.isArray(value) ? value.join(', ') : value}`).join('; ') : (detail ?? ''));
 
 function describePreflight(result) {
     const lines = ['db.migrate.preflight (read only: nothing was written to the source or the target)'];
@@ -55,9 +56,9 @@ function describePreflight(result) {
     }
     if (result.estimate) lines.push(`  estimate    ${result.estimate.tables ?? '?'} tables to copy, ${result.estimate.rows ?? '?'} rows`);
     lines.push(`  result      ${result.ready ? 'READY' : `BLOCKED (${result.blocks.length})`}`);
-    for (const item of result.blocks || []) lines.push(`    block ${item.code}: ${item.detail}`);
+    for (const item of result.blocks || []) lines.push(`    block ${item.code}: ${finding(item.detail)}`);
     for (const item of result.provisioning || []) lines.push(`    needs ${item.code}${item.extension ? ` (${item.extension})` : ''}: ${item.action || item.detail || ''}`.trimEnd());
-    for (const item of result.warnings || []) lines.push(`    warn  ${item.code}: ${item.detail}`);
+    for (const item of result.warnings || []) lines.push(`    warn  ${item.code}: ${finding(item.detail)}`);
     lines.push('');
     lines.push(`  ${result.rollbackLimit || limitLib.ROLLBACK_LIMIT}`);
     return lines;
@@ -83,6 +84,7 @@ function describeRollbackPlan(plan) {
     const lines = ['db.migrate.rollback'];
     lines.push(`  migration   ${plan.migrationId}${plan.wasSwitched ? ' (switched: the connection is put back to SQLite)' : ' (not switched yet)'}`);
     lines.push(`  drops       ${plan.drops ? `${plan.drops.tables} tables${plan.drops.extensions.length ? `, extensions ${plan.drops.extensions.join(', ')}` : ''}` : 'nothing'} that the migration created on the target`);
+    if (plan.drops && plan.drops.emptied) lines.push(`  empties     ${plan.drops.emptied} tables the target already held (the provisioned schema; kept, emptied again)`);
     lines.push(`  release     ${plan.releaseMaintenance ? 'releases the maintenance barrier' : 'leaves the maintenance barrier as it is (--release to release it)'}`);
     if (plan.confirmation) lines.push(`  confirm     ${plan.confirmation.satisfied ? 'given' : 'required: --confirm <installationId>'}`);
     lines.push('');

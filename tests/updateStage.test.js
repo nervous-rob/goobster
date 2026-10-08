@@ -164,3 +164,100 @@ describe('update.stage', () => {
         expect(fs.readdirSync(path.join(harness.code, 'releases'))).toEqual([second.releaseId]);
     });
 });
+
+describe('landing a downloaded file', () => {
+    const { landFile } = require('../apps/manager/update/source');
+
+    test('syncs the landed file through a handle opened for writing, as Windows requires (a read-only fsync fails there with EPERM)', async () => {
+        const dir = tempDir(roots, 'land');
+        const readOnly = new Set();
+        const windowsLike = {
+            ...fs,
+            openSync(file, flags, mode) {
+                const fd = fs.openSync(file, flags, mode);
+                if (flags === 'r') readOnly.add(fd);
+                return fd;
+            },
+            fsyncSync(fd) {
+                if (readOnly.has(fd)) {
+                    const error = new Error('EPERM: operation not permitted, fsync');
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return fs.fsyncSync(fd);
+            },
+            closeSync(fd) {
+                readOnly.delete(fd);
+                return fs.closeSync(fd);
+            }
+        };
+        const bytes = Buffer.from('a release artifact');
+        const dest = path.join(dir, 'artifact.tar.gz');
+        const landed = await landFile({ fs: windowsLike, readable: Readable.from([bytes]), dest, limit: 1024, expect: { size: bytes.length } });
+        expect(landed.bytes).toBe(bytes.length);
+        expect(fs.readFileSync(dest)).toEqual(bytes);
+        expect(fs.existsSync(`${dest}.partial`)).toBe(false);
+    });
+});
+
+describe('the tar the archive is read with', () => {
+    const archive = require('../apps/manager/update/archive');
+
+    test('is the one on PATH everywhere but Windows', () => {
+        expect(archive.tarCommand({ platform: 'linux' })).toBe('tar');
+        expect(archive.tarCommand({ platform: 'darwin' })).toBe('tar');
+    });
+
+    test('on Windows is System32\'s bsdtar when it is there, since Git Bash puts a GNU tar first that reads D:\\ as a remote host', () => {
+        const seen = [];
+        const exists = (file) => { seen.push(file); return true; };
+        expect(archive.tarCommand({ platform: 'win32', env: { SystemRoot: 'D:\\Windows' }, exists })).toBe('D:\\Windows\\System32\\tar.exe');
+        expect(seen).toEqual(['D:\\Windows\\System32\\tar.exe']);
+        expect(archive.tarCommand({ platform: 'win32', env: {}, exists: () => true })).toBe('C:\\Windows\\System32\\tar.exe');
+        expect(archive.tarCommand({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, exists: () => false })).toBe('tar');
+    });
+
+    test('a file tar cannot read is refused as ARCHIVE_UNREADABLE with the call and exit status as the reason, not tar\'s output', () => {
+        const dir = tempDir(roots, 'notar');
+        const file = path.join(dir, 'not-an-archive.tar.gz');
+        fs.writeFileSync(file, 'this is not a gzip stream at all');
+        let failure = null;
+        try { archive.listMembers(file); } catch (error) { failure = error; }
+        expect(failure).not.toBeNull();
+        expect(failure.code).toBe('ARCHIVE_UNREADABLE');
+        expect(failure.details.reason).toMatch(/^LIST_EXIT_\d+$/);
+        expect(JSON.stringify(failure)).not.toContain('not-an-archive');
+    });
+});
+
+describe('reading a listing from Windows\' bsdtar', () => {
+    test('lines ending in CR LF still name the manifest and still refuse an escaping member', () => {
+        const calls = [];
+        jest.isolateModules(() => {
+            jest.doMock('node:child_process', () => ({
+                ...jest.requireActual('node:child_process'),
+                spawnSync: (file, args) => {
+                    calls.push({ file, args });
+                    if (args[0] === '-tzf') return { status: 0, stdout: Buffer.from('app/\r\napp/index.js\r\npayload-manifest.json\r\npayload-manifest.sig\r\n') };
+                    if (args[0] === '-xzOf') return { status: 0, stdout: Buffer.from('{"release":{"core":"2.5.0"}}\r\n') };
+                    return { status: 0, stdout: Buffer.alloc(0) };
+                }
+            }));
+            const archive = require('../apps/manager/update/archive');
+            expect(archive.listMembers('x.tar.gz')).toEqual(['app/', 'app/index.js', 'payload-manifest.json', 'payload-manifest.sig']);
+            expect(JSON.parse(archive.readManifestText('x.tar.gz'))).toEqual({ release: { core: '2.5.0' } });
+            expect(calls.find((call) => call.args[0] === '-xzOf').args).toEqual(['-xzOf', 'x.tar.gz', 'payload-manifest.json']);
+        });
+        jest.isolateModules(() => {
+            jest.doMock('node:child_process', () => ({
+                ...jest.requireActual('node:child_process'),
+                spawnSync: () => ({ status: 0, stdout: Buffer.from('app/\r\n../outside\r\n') })
+            }));
+            const archive = require('../apps/manager/update/archive');
+            let failure = null;
+            try { archive.listMembers('x.tar.gz'); } catch (error) { failure = error; }
+            expect(failure && failure.code).toBe('ARCHIVE_UNSAFE');
+        });
+        jest.dontMock('node:child_process');
+    });
+});

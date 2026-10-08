@@ -817,6 +817,32 @@ describe('an empty target', () => {
     }, 120000);
 });
 
+describe('a target that is not a database', () => {
+    const sqliteOnly = PG ? test.skip : test;
+
+    sqliteOnly('a damaged SQLite file cannot be backed up, so the safety backup is skipped and the file is set aside whole while the archive comes back', async () => {
+        await seedWorld('one');
+        const h = await makeHarness();
+        const { dir } = await backupViaKind(h);
+        await db.closeConnection();
+        const damaged = Buffer.alloc(4096, 0xa5);
+        const handle = fs.openSync(DB_PATH, 'r+');
+        fs.writeSync(handle, damaged, 0, damaged.length, 0);
+        fs.closeSync(handle);
+        for (const suffix of ['-wal', '-shm']) fs.rmSync(`${DB_PATH}${suffix}`, { force: true });
+        const before = fs.readFileSync(DB_PATH);
+
+        const { applied } = await h.drive('backup.restore', restoreInput(h, dir));
+        expect(lastStep(applied, 'backup')).toMatchObject({ status: 'skipped' });
+        expect(applied.result.safetyBackup).toBeNull();
+        expect(await countOf('observatory_jobs')).toBe(2);
+        const aside = fs.readdirSync(DATA_DIR).filter(name => name.startsWith('goobster.sqlite.pre-restore-'));
+        expect(aside.some(name => Buffer.compare(fs.readFileSync(path.join(DATA_DIR, name)), before) === 0)).toBe(true);
+        const barrier = h.barrierDoc();
+        await h.release({ operationId: barrier.operationId, fence: barrier.fence });
+    }, 120000);
+});
+
 describe('workFailures after a restore', () => {
     test('the interrupted work has its ledger rows with the fixed reason and code', async () => {
         await seedWorld('one');

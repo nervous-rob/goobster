@@ -9,6 +9,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const childProcess = require('node:child_process');
 
 const rules = require('../scripts/lib/packageRules');
 const { inspectBinary, looksLikeBinary, compareVersions, maxVersion } = require('../scripts/lib/nativeBinaryInfo');
@@ -215,5 +216,79 @@ describe('package-runtime selection flags', () => {
         expect(() => parseArgs(['--profile', 'minimal', '--features', 'voice'])).toThrow(/alternatives/);
         expect(() => parseArgs(['--features'])).toThrow(/needs a value/);
         expect(() => resolveSelection(parseArgs(['--features', 'voice,warpdrive']))).toThrow(/Unknown feature\(s\) for --features: warpdrive/);
+    });
+});
+
+describe('the manager launchers the payload carries', () => {
+    const { launchers } = require('../scripts/package-runtime');
+
+    test('an installed POSIX payload (<code root>/current) takes its roots from <code root>/goobster.env, environment first', () => {
+        const text = launchers.posixManager;
+        expect(text).toContain('ENV_FILE="$(dirname -- "$REACHED")/goobster.env"');
+        expect(text).toContain('if [ "$(basename -- "$REACHED")" = "current" ] && [ -r "$ENV_FILE" ]; then');
+        expect(text).toContain('GOOBSTER_[A-Z0-9_]*=*)');
+        expect(text).toContain('if ! printenv "$key" >/dev/null 2>&1; then');
+        expect(text.indexOf('goobster.env')).toBeLessThan(text.indexOf('GOOBSTER_DATA_DIR="${GOOBSTER_DATA_DIR:-'));
+    });
+
+    test('the POSIX launcher judges "current" by the name it was reached by (links kept), not by the directory that name resolves to', () => {
+        const text = launchers.posixManager;
+        // the linked layout makes `current` a link into live/: a physical path would never be named current
+        expect(text).toContain('REACHED=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -L)');
+        expect(text).toContain('PAYLOAD=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -P)');
+        expect(text).not.toContain('basename -- "$PAYLOAD"');
+    });
+
+    test('the POSIX launcher run through a current link that names a payload under live/ reads goobster.env', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-launcher-'));
+        try {
+            const live = path.join(root, 'live', 'p-000001');
+            fs.mkdirSync(path.join(live, 'bin'), { recursive: true });
+            fs.mkdirSync(path.join(live, 'runtime', 'bin'), { recursive: true });
+            fs.mkdirSync(path.join(live, 'app', 'apps', 'manager'), { recursive: true });
+            fs.writeFileSync(path.join(live, 'bin', 'goobster-manager'), launchers.posixManager, { mode: 0o755 });
+            // a stand-in node that prints the roots the launcher exported
+            fs.writeFileSync(path.join(live, 'runtime', 'bin', 'node'), '#!/bin/sh\nprintf "%s|%s\\n" "$GOOBSTER_DATA_DIR" "$GOOBSTER_WORKSPACE_ROOT"\n', { mode: 0o755 });
+            fs.symlinkSync(live, path.join(root, 'current'));
+            fs.writeFileSync(path.join(root, 'goobster.env'), 'GOOBSTER_DATA_DIR=/srv/goobster-data\n');
+            const env = { PATH: process.env.PATH, HOME: root };
+            const out = childProcess.spawnSync('/bin/sh', [path.join(root, 'current', 'bin', 'goobster-manager'), 'status'], { env, encoding: 'utf8' });
+            expect(out.status).toBe(0);
+            const [data, workspace] = out.stdout.trim().split('|');
+            expect(data).toBe('/srv/goobster-data');
+            expect(fs.realpathSync(workspace)).toBe(fs.realpathSync(path.join(live, 'app')));
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('the Windows payload launcher reads the same file the same way, so the installed current\\bin launcher sees the installation and not %LOCALAPPDATA%', () => {
+        const lines = launchers.windowsManager.split('\r\n');
+        expect(lines).toContain('for %%I in ("%PAYLOAD%\\..") do set "CODE=%%~fI"');
+        expect(lines).toContain('if /i "%PAYLOAD_NAME%"=="current" if exist "%CODE%\\goobster.env" (');
+        expect(lines).toContain('    for /f "usebackq eol=# tokens=1* delims==" %%A in ("%CODE%\\goobster.env") do (');
+        expect(lines).toContain('        echo %%A| findstr /b /c:"GOOBSTER_" >nul && if not defined %%A set "%%A=%%B"');
+        const read = lines.findIndex((line) => line.includes('goobster.env'));
+        const defaults = lines.findIndex((line) => line.includes('if not defined GOOBSTER_HOME'));
+        expect(read).toBeGreaterThan(-1);
+        expect(read).toBeLessThan(defaults);
+        expect(launchers.windowsManager).not.toMatch(/call "%CODE%\\goobster\.env"|^\s*"%CODE%\\goobster\.env"/m);
+    });
+
+    test('the Windows payload launcher never takes a substring of a variable that may be undefined: with no argument, cmd drops "%VAR:" and the line fails with a syntax error (exit 255)', () => {
+        const lines = launchers.windowsManager.split('\r\n').filter((line) => !/^\s*rem\b/i.test(line));
+        const defined = new Set();
+        for (const line of lines) {
+            for (const match of line.matchAll(/%([A-Za-z_][A-Za-z0-9_]*):~/g)) {
+                expect(defined.has(match[1])).toBe(true);
+            }
+            const set = /^\s*(?:if [^(]*? )?set "([A-Za-z_][A-Za-z0-9_]*)=([^"]*)"/.exec(line);
+            // Only a value that cannot be empty counts (a bare %~1 or %1 is empty with no argument).
+            if (set && set[2] !== '' && !/^%~?\*?\d*%?$/.test(set[2]) && !/^%~[a-z]*\d$/i.test(set[2])) defined.add(set[1]);
+        }
+        expect(lines).toContain('set "FIRST=x%~1"');
+        expect(lines).toContain('if "%FIRST%"=="x" set "ENTRY=%PAYLOAD%\\app\\apps\\manager\\index.js"');
+        expect(lines).toContain('if "%FIRST:~1,1%"=="-" set "ENTRY=%PAYLOAD%\\app\\apps\\manager\\index.js"');
+        expect(launchers.windowsManager).not.toContain('%FIRST:~0,1%');
     });
 });

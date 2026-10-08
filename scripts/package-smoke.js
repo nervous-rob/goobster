@@ -216,16 +216,27 @@ function verifyPayloadAgainstManifest(manifest, { hash }) {
     return { fileCount: expected.size, missing, extra, changed, symlinks };
 }
 
+/**
+ * A port the API can take, probed with the same wildcard bind the API makes
+ * (`app.listen(port)`), not a loopback-only one: on macOS a port that binds
+ * on 127.0.0.1 can still refuse the wildcard bind while another account's
+ * connections sit on it in TIME_WAIT, which is how a hosted runner handed
+ * the API a "free" port it could not listen on. The window between this
+ * probe closing and the API listening remains, so `runApi` retries once or
+ * twice on EADDRINUSE.
+ */
 function freePort() {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
         server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => {
+        server.listen(0, () => {
             const { port } = server.address();
             server.close(() => resolve(port));
         });
     });
 }
+
+const PORT_ATTEMPTS = 3;
 
 function send(port, { method = 'GET', pathname, headers = {}, body = null }) {
     return new Promise((resolve, reject) => {
@@ -371,9 +382,8 @@ function waitForExit(child, timeoutMs) {
     });
 }
 
-/** Run the API once, probe it, stop it. `mode` is 'direct' (bundled node + index.js) or 'launcher'. */
-async function runApi(mode, roots, probe = null) {
-    const port = await freePort();
+/** Start the API on `port`; the child and how it is stopped. `mode` is 'direct' (bundled node + index.js) or 'launcher'. */
+function startApi(mode, roots, port) {
     const indexJs = path.join(CODE_ROOT, 'apps', 'api', 'index.js');
     let child;
     let stopMethod;
@@ -405,10 +415,36 @@ async function runApi(mode, roots, probe = null) {
             stopMethod = 'SIGTERM';
         }
     }
-    const output = collectOutput(child);
-    const result = { mode, port, stopMethod };
+    return { child, stopMethod };
+}
+
+/** Run the API once, probe it, stop it. A port taken between the probe and the API's listen is tried again on another port. */
+async function runApi(mode, roots, probe = null) {
+    let port;
+    let child;
+    let stopMethod;
+    let output;
+    let health;
+    let portRetries = 0;
+    for (let attempt = 1; ; attempt++) {
+        port = await freePort();
+        ({ child, stopMethod } = startApi(mode, roots, port));
+        output = collectOutput(child);
+        try {
+            health = await waitForHealth(child, port, output);
+            break;
+        } catch (error) {
+            child.kill();
+            await waitForExit(child, 5000);
+            if (attempt < PORT_ATTEMPTS && /EADDRINUSE/.test(error.message)) {
+                portRetries++;
+                continue;
+            }
+            throw error;
+        }
+    }
+    const result = { mode, port, stopMethod, ...(portRetries ? { portRetries } : {}) };
     try {
-        const health = await waitForHealth(child, port, output);
         assert(health.status === 'healthy', `/health status was "${health.status}"`);
         assert(health.mode === 'standalone', `/health mode was "${health.mode}", expected standalone`);
         assert(health.discord === 'disabled', `/health discord was "${health.discord}", expected disabled`);

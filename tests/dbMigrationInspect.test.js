@@ -20,7 +20,7 @@ const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-db-inspect-'));
 process.env.GOOBSTER_DB_PATH = path.join(ROOT, 'jest-own.sqlite');
 
 const { createSeededSqlite, lockedSchemaUrl } = require('./helpers/migrationSeed');
-const { inspectSqlite, inspectPostgres, inspectAll, classify, REQUIRED_EXTENSIONS, MIN_SERVER_VERSION } = require('@goobster/core/db/migration/inspect');
+const { inspectSqlite, inspectPostgres, inspectAll, classify, judgeTargetContents, REQUIRED_EXTENSIONS, MIN_SERVER_VERSION } = require('@goobster/core/db/migration/inspect');
 const { describeTarget, publicTarget, redactText, schemaFromOptions } = require('@goobster/core/db/migration/target');
 const { expectedSchema, isCopyable, topologicalOrder, quoteIdent } = require('@goobster/core/db/migration/schemaModel');
 const { ROLLBACK_LIMIT } = require('@goobster/core/db/migration');
@@ -179,7 +179,7 @@ describe('blocks, provisioning and warnings', () => {
         expect(codes(verdict({ serverVersion: MIN_SERVER_VERSION - 1 }).blocks)).toEqual(['SERVER_TOO_OLD']);
         expect(codes(verdict({ schemaExists: false }).blocks)).toEqual(['TARGET_SCHEMA_MISSING']);
         expect(codes(verdict({ relationCount: 12 }).blocks)).toEqual(['TARGET_NOT_EMPTY']);
-        expect(verdict({ relationCount: 12 }).blocks[0].detail).toEqual({ relations: 12 });
+        expect(verdict({ relationCount: 12 }).blocks[0].detail).toEqual({ relations: 12, layoutUnknown: true });
         expect(codes(verdict({ canCreateInSchema: false }).blocks)).toEqual(['TARGET_NO_CREATE_PRIVILEGE']);
         expect(codes(verdict({ extensions: { ...healthy.extensions, vector: { available: false, installed: false, trusted: false } } }).blocks)).toEqual(['EXTENSION_UNAVAILABLE']);
         expect(codes(verdict({}, { integrity: { mode: 'quick_check', ok: false } }).blocks)).toEqual(['SOURCE_INTEGRITY']);
@@ -213,6 +213,40 @@ describe('blocks, provisioning and warnings', () => {
     test('an empty source and tables this release does not copy are warnings', () => {
         expect(codes(verdict({}, { tableCount: 0 }).warnings)).toEqual(['SOURCE_EMPTY']);
         expect(codes(verdict({}, { schema: { ...source.schema, uncopied: ['extra'] } }).warnings)).toEqual(['UNCOPIED_TABLE']);
+    });
+
+    describe('a target that already holds a schema', () => {
+        const model = expectedSchema().tables;
+        const ours = (name) => ({ name, columns: model[name].columns.map(col => col.name) });
+        const provisioned = {
+            tables: Object.keys(model).map(ours),
+            otherRelations: [{ name: 'users_id_seq', kind: 'S' }],
+            populated: []
+        };
+
+        test("Goobster's own schema with no rows - what database docker/native provision leave - is a warning, not a block", () => {
+            expect(judgeTargetContents(provisioned)).toEqual({ kind: 'goobster-empty', reasons: {} });
+            expect(judgeTargetContents({ tables: [], otherRelations: [], populated: [] })).toEqual({ kind: 'empty', reasons: {} });
+            const out = verdict({ relationCount: provisioned.tables.length + 1, ...provisioned });
+            expect(out.blocks).toEqual([]);
+            expect(out.warnings).toEqual([{ code: 'TARGET_SCHEMA_PRESENT', detail: { tables: provisioned.tables.length } }]);
+            // a subset of the schema (an older provision, a partial rollback) is still ours and empty
+            expect(judgeTargetContents({ ...provisioned, tables: [ours('users'), ours('conversations')] }).kind).toBe('goobster-empty');
+            // the derived vector tables and a table missing a column this release adds are ours too
+            expect(judgeTargetContents({ ...provisioned, tables: [ours('users'), { name: 'memory_vec_1536', columns: ['rowid', 'embedding'] }, { name: 'messages', columns: ['id'] }] }).kind).toBe('goobster-empty');
+        });
+
+        test('anything else in the schema is TARGET_NOT_EMPTY, and the detail says what (names, never rows)', () => {
+            const foreign = (patch) => judgeTargetContents({ ...provisioned, ...patch });
+            expect(foreign({ tables: [...provisioned.tables, { name: 'invoices', columns: ['id'] }] })).toEqual({ kind: 'foreign', reasons: { unknownTables: ['invoices'] } });
+            expect(foreign({ tables: [{ name: 'users', columns: [...ours('users').columns, 'legacy_flag'] }] })).toEqual({ kind: 'foreign', reasons: { unknownColumns: ['users.legacy_flag'] } });
+            expect(foreign({ otherRelations: [{ name: 'users_id_seq', kind: 'S' }, { name: 'active_users', kind: 'v' }] })).toEqual({ kind: 'foreign', reasons: { otherRelations: ['active_users'] } });
+            expect(foreign({ populated: ['conversations', 'users'] })).toEqual({ kind: 'foreign', reasons: { populated: ['conversations', 'users'] } });
+            expect(foreign({ populated: null })).toEqual({ kind: 'foreign', reasons: { rowsUnknown: true } });
+            const out = verdict({ relationCount: 3, ...provisioned, populated: ['users'] });
+            expect(out.blocks).toEqual([{ code: 'TARGET_NOT_EMPTY', detail: { relations: 3, populated: ['users'] } }]);
+            expect(out.warnings).toEqual([]);
+        });
     });
 });
 
@@ -346,8 +380,42 @@ withPostgres('the Postgres target', () => {
         const before = await target.catalog();
         const report = await inspectAll({ sqlitePath: file, url: target.url });
         expect(report.blocks.map(item => item.code)).toEqual(['TARGET_NOT_EMPTY']);
+        expect(report.blocks[0].detail).toEqual({ relations: 1, unknownTables: ['occupied'] });
         expect(report.target.relationCount).toBe(1);
+        expect(report.target.populated).toEqual([]);
         expect(await target.catalog()).toBe(before);
+    });
+
+    test("a target that holds Goobster's own tables with no rows is a warning; one row in them is the block, and the rows are read inside the READ ONLY transaction after the catalog", async () => {
+        const { file } = seeded('pg-provisioned');
+        const target = await schemaTarget();
+        const model = expectedSchema().tables;
+        for (const name of ['users', 'conversations']) {
+            await target.admin.query(`CREATE TABLE ${target.name}.${quoteIdent(name)} (${model[name].columns.map(col => `${quoteIdent(col.name)} text`).join(', ')})`);
+        }
+        const before = await target.catalog();
+        const sent = [];
+        const connect = (url) => {
+            const client = new Client({ connectionString: url });
+            const query = client.query.bind(client);
+            client.query = (sql, ...rest) => { sent.push(String(sql).trim().replace(/\s+/g, ' ')); return query(sql, ...rest); };
+            return client;
+        };
+        const report = await inspectAll({ sqlitePath: file, url: target.url, connect });
+        expect(report.blocks).toEqual([]);
+        expect(report.warnings).toEqual([{ code: 'TARGET_SCHEMA_PRESENT', detail: { tables: 2 } }]);
+        expect(report.target).toMatchObject({ relationCount: 2, populated: [] });
+        // the row check is one SELECT, made after every catalog read so a refused table cannot spoil them; only the superuser-only SHOW and the ROLLBACK follow
+        const rowCheck = sent.findIndex(sql => /^SELECT \$1::text AS name, EXISTS \(SELECT 1 FROM /.test(sql));
+        expect(rowCheck).toBeGreaterThan(0);
+        expect(sent.slice(rowCheck + 1).every(sql => sql === 'ROLLBACK' || sql === 'SHOW data_directory')).toBe(true);
+        expect(await target.catalog()).toBe(before);
+
+        await target.admin.query(`INSERT INTO ${target.name}.users DEFAULT VALUES`);
+        const occupied = await inspectAll({ sqlitePath: file, url: target.url });
+        expect(occupied.blocks).toEqual([{ code: 'TARGET_NOT_EMPTY', detail: { relations: 2, populated: ['users'] } }]);
+        expect(occupied.warnings).toEqual([]);
+        expect(JSON.stringify(occupied)).not.toContain('DEFAULT VALUES');
     });
 
     test('a role that cannot create in the schema is a block', async () => {

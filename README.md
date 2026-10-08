@@ -15,6 +15,14 @@ claim for concurrent users, local models or local voice.
 See [Where your data goes](#where-your-data-goes) for what that does and
 does not mean for privacy.
 
+It installs from a signed-payload **installer** on Windows, macOS and Linux
+(a setup wizard in the browser, or a headless answers file), which registers
+the OS service and gives you one management surface for features, keys,
+database choice, backup, restore, reset, SQLite→Postgres migration, staged
+updates, repair and uninstall; see
+[Installers](#installers-windows-macos-linux). A git checkout still works
+for development and for the Raspberry Pi script.
+
 The distinctive product is not “a bot that can call tools.” It is a
 closed cognitive loop:
 
@@ -35,6 +43,7 @@ provenance, confidence bounds, and state transitions.
 - [Prerequisites](#prerequisites)
 - [Configuration](#configuration)
 - [Installation](#installation)
+  - [Installers (Windows, macOS, Linux)](#installers-windows-macos-linux)
   - [Standalone Installation (no Discord)](#standalone-installation-no-discord)
   - [Raspberry Pi Installation](#raspberry-pi-installation)
   - [Docker Installation](#docker-installation)
@@ -190,6 +199,13 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | The work ledger (failures, resource events, operator audit, cost per accepted result) | `documentation/work_ledger.md` |
 | Releasing (the signed release pipeline, release index, trust policies, signing keys and certificates, release checklist) | `documentation/release.md` |
 | Updating an installation (the update policy, staged apply, the handoff, schema fingerprint, rollback and recovery, `goobster-manager update`) | `documentation/manager_update.md` |
+| Operator runbooks (install, first owner, features, service ownership, ports, backup and restore, migration and rollback, update, uninstall; the open owner decisions) | `documentation/operator_runbooks.md` |
+| Installing with the installers: Linux (`.run`, AppImage, systemd, adopting a Pi), Windows (NSIS `.exe`, the Windows service), macOS (`.pkg`, per-user archive, launchd) | `documentation/linux_install.md`, `documentation/windows_install.md`, `documentation/macos_install.md` |
+| The manager (states, store, setup engine, recovery, adoption), install/adopt/repair/uninstall kinds and the headless CLI, the wizard and the Host room pages | `documentation/manager.md`, `documentation/manager_install.md`, `documentation/setup_wizard.md`, `documentation/host_operations.md` |
+| Feature catalog (every feature, its dependencies, keys and system tools), feature state (`data/features.json`), configuration reference | `documentation/features.md`, `documentation/feature_state.md`, `documentation/config_reference.md` |
+| Choosing SQLite or PostgreSQL, connecting an existing server, PostgreSQL in Docker or native on the host, both owned by the installer | `documentation/database_connection.md`, `documentation/docker_postgres.md`, `documentation/native_postgres.md` |
+| SQLite→Postgres migration (preflight, verified copy, cutover, rollback), data reset, the maintenance barrier | `documentation/db_migration.md`, `documentation/data_reset.md`, `documentation/maintenance_barrier.md` |
+| Selective payloads and the release manifest; the release acceptance matrix (hosted cells, steps, injections, findings); the installer plan and delivery status | `documentation/packaging.md`, `documentation/release_acceptance.md`, `documentation/installer_plan.md` |
 | Shared-instance roadmap handoff (what shipped, where the next steps hook in) | `documentation/shared_instance_handoff.md` |
 | Private single-user pilot (task, measurements, cycle record and exit decision) | `documentation/pilot_plan.md` |
 | Owner-judged research evaluation (30 fixed-evidence questions, optional live runner and review artifacts) | `documentation/research_evaluation.md` |
@@ -222,8 +238,9 @@ instructions for features already available in the app.
 
 | Shape | Discord | Process | Database | Start |
 |---|---|---|---|---|
-| **Standalone** | None | `apps/api` serves the portal and runs the schedulers | SQLite or Postgres | `node apps/api` |
-| **Lite** (default install) | Required | `apps/bot` runs the Discord adapter and serves the portal in-process | SQLite | `npm start` |
+| **Installed** (the installers) | Optional, a feature you turn on | the manager (`goobster-manager --supervise`) runs the api, the bot or both as its workers from a verified payload | SQLite, or PostgreSQL: a server you run, a Docker container or a native cluster the installer owns | the OS service the installer registered (systemd, launchd, Windows service) |
+| **Standalone** (checkout) | None | `apps/api` serves the portal and runs the schedulers | SQLite or Postgres | `node apps/api` |
+| **Lite** (checkout, `npm start`) | Required | `apps/bot` runs the Discord adapter and serves the portal in-process | SQLite | `npm start` |
 | **Full** | Required | postgres + bot + api + nginx (`deploy/docker-compose.yml`) | Postgres + pgvector | `docker compose -f deploy/docker-compose.yml up -d` |
 
 **Without Discord** you get the portal's Chat, Knowledge (including
@@ -237,6 +254,13 @@ for the standalone setup and
 operator and member accounts.
 
 ## Prerequisites
+
+The installers carry their own Node runtime and run from it alone; what
+follows is for a git checkout. System tools a feature needs (FFmpeg for
+voice and music, `bubblewrap` and `python3-venv` for the sandbox, Docker
+for a managed Postgres container) come from the OS either way; the feature
+catalog (`documentation/features.md`) names them per feature, and the
+installer's preflight tells you which are missing.
 
 - Node.js v20 or higher (v22 recommended)
 - FFmpeg (`sudo apt install ffmpeg`)
@@ -302,6 +326,81 @@ A single ElevenLabs API key (config `elevenlabs.apiKey` or the `ELEVENLABS_API_K
 - **Ambient sounds** (`/playambience`, `/generateambience`) — generated as seamless loops with the ElevenLabs Sound Effects API and cached under `data/ambience/`.
 
 ## Installation
+
+### Installers (Windows, macOS, Linux)
+
+The installers are built by the release workflow (`.github/workflows/release.yml`,
+`v*` tags) and published as GitHub release assets with a signed
+`release-index.json`: `goobster-<version>-linux-<arch>[-dev].run` (and an
+AppImage), `goobster-<version>-win32-x64[-dev].exe`, and the macOS `.pkg` or
+per-user archive. **Every build from this repository today is an unsigned
+development build (`-dev`)**: no production signing key or certificate exists
+yet, the artifact says so before it does anything, and it belongs only on a
+machine you trust. See `documentation/release.md` for what a release build
+will verify.
+
+Each installer unpacks a verified payload, then either opens the **setup
+wizard** in your browser on `127.0.0.1:3400` of that machine (over an SSH
+tunnel on a server) or runs **headless** from an answers file; the eleven wizard
+steps (welcome, where, features, connections, database location, defaults,
+access, review, progress, first-run check, open Goobster) and the answers
+schema are in `documentation/setup_wizard.md` and
+`documentation/manager_install.md`. The only privileged steps are
+registering and removing the OS service (sudo/pkexec, UAC, or the
+administrator prompt); nothing else runs as root, and with no rights the
+install still completes and prints how to start the manager by hand.
+
+```bash
+# Linux: check, then install (the AppImage takes the same options)
+sh goobster-1.0.0-linux-x64-dev.run --info
+sh goobster-1.0.0-linux-x64-dev.run --verify
+sh goobster-1.0.0-linux-x64-dev.run                                   # the wizard
+sh goobster-1.0.0-linux-x64-dev.run --headless --answers answers.json # no browser
+```
+
+```bat
+rem Windows: double-click the .exe for the wizard, or silently
+goobster-1.0.0-win32-x64-dev.exe /S /ANSWERS="C:\path\answers.json"
+```
+
+```bash
+# macOS: the package (machine-wide with /etc/goobster-answers.json in place, else the per-user wizard)
+sudo installer -pkg goobster-1.0.0-darwin-arm64-dev.pkg -target /
+```
+
+After that, the same installation is managed from one place: the portal's
+**Host** room (Features, Connections and Instance Defaults; Installation for
+reconfigure, repair and uninstall; Database; Maintenance for backup, restore,
+reset and migration; the update and lifecycle cards) or the launcher the
+installer leaves with the code (`<code root>/current/bin/goobster-manager` on
+POSIX, `<code root>\goobster-manager.cmd` on Windows), which reads the
+installation's roots from `goobster.env` in the code root:
+
+```bash
+goobster-manager status
+goobster-manager backup --out <dir> [--include-config]       # verified archive; config.json under a passphrase
+goobster-manager restore <archive dir> --confirm <installationId> [--release]
+goobster-manager reset --scope instance|feature [--dry-run]  # verified backup first, typed confirmation
+goobster-manager migrate preflight|run|rollback|status       # SQLite -> Postgres
+goobster-manager database docker|native status|provision|... # a Postgres the installer owns
+goobster-manager update policy|check|stage|apply|status|recovery
+goobster-manager repair|reconfigure|uninstall --answers <file> --yes
+```
+
+Secrets are never accepted on the command line; they come from the 0600
+answers file or a hidden prompt, and no output, log or audit row echoes them.
+
+A Raspberry Pi install made with `scripts/install-rpi.sh`, a PM2 or Docker
+instance, or a manual checkout is **adopted** rather than reinstalled
+(`goobster-manager adopt`); adoption disables the old git-pull updater so two
+updaters never run at once. Platform details, default roots, result codes and
+what the hosted CI journeys prove: `documentation/linux_install.md`,
+`documentation/windows_install.md`, `documentation/macos_install.md`;
+step-by-step procedures for an operator: `documentation/operator_runbooks.md`;
+the end-to-end acceptance evidence: `documentation/release_acceptance.md`.
+
+The sections below install from a **git checkout** instead - for development,
+for the Raspberry Pi script, and for Docker.
 
 ### Standalone Installation (no Discord)
 
@@ -400,6 +499,19 @@ npm start
 
 ## Running as a Service
 
+An installer registers the service for you: a marker-bearing systemd unit
+(`goobster`, running as the `goobster` account) on Linux, a LaunchDaemon or
+per-user LaunchAgent on macOS, a WinSW-hosted Windows service under the
+`NT SERVICE\goobster` virtual account. The service runs the manager, which
+runs the workers. Where the service could not be registered (no rights, a
+declined prompt, `"registerService": false`) the install still completes and
+prints the command to start the manager by hand
+(`<code root>/current/bin/goobster-manager --supervise`); a service that
+belongs to someone else (`SERVICE_FOREIGN`) is never touched. Who owns the
+service and what listens where: `documentation/operator_runbooks.md`.
+
+For a **git checkout**, register one of these yourself.
+
 **systemd** (recommended on Raspberry Pi):
 
 ```bash
@@ -426,6 +538,27 @@ for running the bot directly. See
 [documentation/manager_lifecycle.md](documentation/manager_lifecycle.md).
 
 ## Automatic Updates
+
+An **installed** Goobster updates through the manager, never by a git pull.
+The policy lives in the installation record and defaults to **off**: pick a
+channel (`stable` or `prerelease`), a mode (`off`, `check`, `download`,
+`apply`) and an optional window, and the manager verifies the release index
+and the artifact, stages the new payload beside the old one, hands over
+through a restart, checks health and the schema fingerprint, and rolls back
+on its own when the new version does not come up. Everything is in
+`documentation/manager_update.md`.
+
+```bash
+goobster-manager update policy --mode check --channel stable --github nervous-rob/goobster
+goobster-manager update check
+goobster-manager update stage && goobster-manager update apply --now
+goobster-manager update status
+goobster-manager update recovery --decision restore|retry   # after a failed handoff
+```
+
+The rest of this section is the older path for a **git checkout** on a
+Raspberry Pi. Adopting such an install under the manager disables this timer,
+so the two updaters never run at once.
 
 Keep a Pi in sync with `main` without logging in. A systemd timer checks the
 deploy branch every 5 minutes and, when it has moved, stops the bot, pulls,
@@ -514,6 +647,24 @@ build, and the named Jest groups on **both** engines, plus a separate
 `test (playwright)` job. A change must pass on both database engines. Live
 provider tests run on trusted `main` pushes and manual dispatch; they
 skip when secrets are absent and never replace mocked coverage.
+
+The installer has its own proof workflows, each triggered by the files it
+covers: `packaging-proof.yml` (real payloads build, verify and smoke in place
+and relocated), `linux-bootstrap.yml`, `windows-bootstrap.yml` and
+`macos-bootstrap.yml` (a real install, service, repair and uninstall on each
+platform's hosted runner), `native-postgres.yml` (the Linux cluster journey on
+Ubuntu, Debian and Rocky) and `release-acceptance.yml` (the 19-cell acceptance
+matrix: every lifecycle step and failure injection through the manager's own
+CLI and API; `documentation/release_acceptance.md`). `release.yml` builds and
+signs the artifacts for a `v*` tag and never runs for a pull request.
+
+```bash
+node scripts/package-runtime.js --target linux-x64 --out dist/payload --report-dir dist/reports --force --dev-sign
+node scripts/package-bootstrap.js --target linux-x64 --payload dist/payload --out dist/bootstrap
+npm run manager:cli -- status            # the manager CLI from a checkout
+npm run docs:features                    # regenerate documentation/features.md (docs:check fails when stale)
+node scripts/acceptance/run.js --help    # one acceptance cell, locally
+```
 
 ```bash
 npm run build:web   # Vite → apps/web/dist

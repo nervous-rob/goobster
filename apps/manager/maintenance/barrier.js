@@ -67,11 +67,13 @@ function tune(storeDir, overrides) {
     else tuning.delete(storeDir);
 }
 
+/**
+ * A wait the process must survive: the CLI (`restore`, `reset`, `migrate`) waits for a writer's
+ * acknowledgement here with nothing else holding its event loop, so an unref'd timer lets the process
+ * end silently (exit 1, no message) in the middle of the barrier.
+ */
 function sleep(ms) {
-    return new Promise((resolve) => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

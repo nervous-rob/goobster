@@ -435,6 +435,145 @@ describe('activate', () => {
     });
 });
 
+describe('activate with the linked layout (what Windows uses)', () => {
+    const LINKED = { ...DEV, layout: 'linked' };
+    const linkOf = (p) => path.resolve(path.dirname(p), fs.readlinkSync(p));
+
+    test('the layout is linked on win32 only', () => {
+        expect(stage.activationLayout('win32', {})).toBe('linked');
+        expect(stage.activationLayout('linux', {})).toBe('rename');
+        expect(stage.activationLayout('darwin', {})).toBe('rename');
+        expect(stage.activationLayout('linux', { [stage.LAYOUT_ENV]: 'linked' })).toBe('linked');
+        expect(stage.activationLayout('win32', { [stage.LAYOUT_ENV]: 'rename' })).toBe('rename');
+        expect(stage.activationLayout('win32', { [stage.LAYOUT_ENV]: 'other' })).toBe('linked');
+    });
+
+    test('current and previous are links into live/, the staged directory is never renamed over a running one, and the one before previous goes with its payload', () => {
+        const release = makeRelease();
+        const stagingRoot = tempDir('staging');
+        const installRoot = tempDir('install');
+        const current = path.join(installRoot, 'current');
+        const previous = path.join(installRoot, 'previous');
+
+        const first = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: [] }, DEV).stagingDir, installRoot, LINKED);
+        expect(first.layout).toBe('linked');
+        expect(fs.lstatSync(current).isSymbolicLink()).toBe(true);
+        expect(linkOf(current)).toBe(first.home);
+        expect(path.dirname(first.home)).toBe(path.join(installRoot, stage.LIVE_DIR));
+        expect(stage.verifyPayload(current, DEV).features).toEqual(['core']);
+        expect(first.previous).toBeNull();
+
+        const second = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: ['voice'] }, DEV).stagingDir, installRoot, LINKED);
+        expect(fs.lstatSync(previous).isSymbolicLink()).toBe(true);
+        expect(linkOf(previous)).toBe(first.home);
+        expect(linkOf(current)).toBe(second.home);
+        expect(stage.verifyPayload(current, DEV).features).toEqual(['core', 'voice']);
+        expect(stage.verifyPayload(previous, DEV).features).toEqual(['core']);
+        expect(fs.existsSync(first.home)).toBe(true);
+
+        const third = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: ['tavern'] }, DEV).stagingDir, installRoot, LINKED);
+        expect(linkOf(previous)).toBe(second.home);
+        expect(linkOf(current)).toBe(third.home);
+        expect(fs.existsSync(first.home)).toBe(false);
+        expect(fs.readdirSync(path.join(installRoot, stage.LIVE_DIR)).sort()).toEqual([path.basename(second.home), path.basename(third.home)].sort());
+        expect(fs.readdirSync(installRoot).sort()).toEqual(['current', 'live', 'previous']);
+        expect(fs.readdirSync(stagingRoot)).toEqual([]);
+    });
+
+    test('a failed link leaves the old current in place and the staged directory where it was', () => {
+        const release = makeRelease();
+        const stagingRoot = tempDir('staging');
+        const installRoot = tempDir('install');
+        const first = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: [] }, DEV).stagingDir, installRoot, LINKED);
+        const staged = stage.stageSelection(release.dir, stagingRoot, { features: ['voice'] }, DEV).stagingDir;
+        const before = treeDigest(staged);
+        const realSymlink = fs.symlinkSync;
+        fs.symlinkSync = () => { const e = new Error('no'); e.code = 'EACCES'; throw e; };
+        let code;
+        try {
+            code = codeOf(() => stage.activate(staged, installRoot, LINKED));
+        } finally {
+            fs.symlinkSync = realSymlink;
+        }
+        expect(code).toBe(CODES.ACTIVATE_FAILED);
+        expect(linkOf(path.join(installRoot, 'current'))).toBe(first.home);
+        expect(fs.existsSync(path.join(installRoot, 'previous'))).toBe(false);
+        expect(fs.existsSync(staged)).toBe(true);
+        expect(treeDigest(staged)).toBe(before);
+        expect(fs.readdirSync(path.join(installRoot, stage.LIVE_DIR))).toEqual([path.basename(first.home)]);
+    });
+
+    test('recoverInstall promotes a previous link when current is gone, and drops a link whose payload is gone', () => {
+        const release = makeRelease();
+        const stagingRoot = tempDir('staging');
+        const installRoot = tempDir('install');
+        const first = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: [] }, DEV).stagingDir, installRoot, LINKED);
+        const second = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: ['voice'] }, DEV).stagingDir, installRoot, LINKED);
+        fs.unlinkSync(path.join(installRoot, 'current'));
+        expect(stage.recoverInstall(installRoot)).toBe('restored-previous');
+        expect(linkOf(path.join(installRoot, 'current'))).toBe(first.home);
+        expect(stage.verifyPayload(path.join(installRoot, 'current'), DEV).features).toEqual(['core']);
+        expect(stage.recoverInstall(installRoot)).toBe('ok');
+
+        // a dangling link counts as nothing: the next activation does not trip over the stale entry
+        fs.rmSync(first.home, { recursive: true });
+        expect(stage.recoverInstall(installRoot)).toBe('empty');
+        expect(fs.existsSync(path.join(installRoot, 'current'))).toBe(false);
+        const third = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: ['tavern'] }, DEV).stagingDir, installRoot, LINKED);
+        expect(third.previous).toBeNull();
+        expect(linkOf(path.join(installRoot, 'current'))).toBe(third.home);
+        // the orphaned payload of the second activation was swept with it
+        expect(fs.existsSync(second.home)).toBe(false);
+    });
+
+    test('removePayloadEntry removes a link with its payload and a plain directory whole; sweepLive removes orphans only', () => {
+        const release = makeRelease();
+        const stagingRoot = tempDir('staging');
+        const installRoot = tempDir('install');
+        const first = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: [] }, DEV).stagingDir, installRoot, LINKED);
+        const orphan = path.join(installRoot, stage.LIVE_DIR, 'orphan-000000');
+        fs.mkdirSync(orphan);
+        fs.writeFileSync(path.join(orphan, 'f'), 'x');
+        expect(stage.sweepLive(installRoot)).toEqual([orphan]);
+        expect(fs.existsSync(orphan)).toBe(false);
+        expect(fs.existsSync(first.home)).toBe(true);
+
+        const aside = path.join(installRoot, '.failed-abcd');
+        fs.renameSync(path.join(installRoot, 'current'), aside);
+        expect(stage.removePayloadEntry(aside)).toEqual({ removed: true, target: first.home, targetRemoved: true });
+        expect(fs.existsSync(aside)).toBe(false);
+        expect(fs.existsSync(first.home)).toBe(false);
+
+        const plain = tempDir('plain');
+        fs.writeFileSync(path.join(plain, 'f'), 'x');
+        expect(stage.removePayloadEntry(plain)).toEqual({ removed: true, target: null, targetRemoved: null });
+        expect(fs.existsSync(plain)).toBe(false);
+        expect(stage.removePayloadEntry(plain)).toEqual({ removed: false, target: null, targetRemoved: null });
+    });
+
+    test('removePayloadEntry with keepTarget drops the link and leaves the payload for the next sweep', () => {
+        const release = makeRelease();
+        const stagingRoot = tempDir('staging');
+        const installRoot = tempDir('install');
+        const first = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: [] }, DEV).stagingDir, installRoot, LINKED);
+        const second = stage.activate(stage.stageSelection(release.dir, stagingRoot, { features: [] }, DEV).stagingDir, installRoot, LINKED);
+
+        // a rollback performed by the process running from the second payload
+        const aside = path.join(installRoot, '.failed-abcd');
+        fs.renameSync(path.join(installRoot, 'current'), aside);
+        fs.renameSync(path.join(installRoot, 'previous'), path.join(installRoot, 'current'));
+        expect(stage.removePayloadEntry(aside, { keepTarget: true })).toEqual({ removed: true, target: second.home, targetRemoved: false });
+        expect(fs.existsSync(aside)).toBe(false);
+        expect(fs.existsSync(second.home)).toBe(true);
+        expect(fs.realpathSync(path.join(installRoot, 'current'))).toBe(fs.realpathSync(first.home));
+
+        // nothing names it any more, so the next activation's sweep collects it
+        expect(stage.sweepLive(installRoot)).toEqual([second.home]);
+        expect(fs.existsSync(second.home)).toBe(false);
+        expect(fs.existsSync(first.home)).toBe(true);
+    });
+});
+
 describe('scripts/package-sign.js', () => {
     test('--gen-dev-key writes a 0600 private key outside the repository and prints no key material', () => {
         const dir = path.join(tempDir('keys'), 'dev');

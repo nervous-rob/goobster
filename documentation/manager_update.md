@@ -136,7 +136,12 @@ timer applies it when the window opens.
 4. `activate`: the barrier moves to its `mutate` phase, `watchdog.json` and
    `handoff.json` are written (phase `activating`), the new release is
    swapped in atomically (`current` points at it), and the handoff becomes
-   `pending`.
+   `pending`. The swap happens while the old manager still runs from
+   `current`: on POSIX a rename of the payload directory, on Windows — where a
+   directory with an open handle beneath it cannot be renamed — a swap of the
+   `current` junction to a payload under `<code>\live\` (the `linked`
+   layout of `scripts/lib/payloadStage.js`, see `packaging.md`); the old
+   manager keeps running from the old payload until it leaves.
 5. `handoff`: see [The handoff](#the-handoff).
 6. `verify`: the workers restart, are verified and then watched for the
    settle window (below).
@@ -221,6 +226,18 @@ system's supervisor instead of verifying in the old process:
 | `offline` | no manager daemon, the command line applied it | the new release is in place and the apply completes the next time a manager starts |
 
 (75 is the exit code of the *workers'* restart request; 76 is the manager's.)
+`selfReplacing` compares the manager's root with `<code>/current` both as
+written and as the file system resolves them, so a Windows manager started
+through the `current` junction still knows it runs from the payload. Under
+the linked layout the answer is also yes for any payload under `<code>/live`,
+judged by the payload the process *started* from (resolved once, when the
+applier is made): after the swap `current` names the new payload while the
+old manager still executes the old one, and that manager must still hand
+over rather than verify in-process. For the same reason a rollback performed
+by the process running from the release being put aside removes only the
+`current` link and leaves that payload for the next activation's sweep
+(`removePayloadEntry(entry, { keepTarget })`); a process never deletes the
+code it is executing.
 
 The handoff is durable. `handoff.json` carries a phase, which is written
 before the step it announces: `activating` (swap in progress), `pending`
@@ -417,7 +434,7 @@ last apply and its downtime, and the recovery state.
 | `INDEX_INVALID`, `INDEX_UNSIGNED`, `INDEX_BAD_SIGNATURE`, `UNTRUSTED_KEY`, `KEY_LIST_INVALID` | the index failed the production trust policy |
 | `TARGET_MISMATCH`, `ABI_MISMATCH`, `VERSION_INCOMPATIBLE`, `DOWNGRADE`, `CHANNEL_MISMATCH`, `FEATURES_UNAVAILABLE` | the index offers something this installation cannot or must not take |
 | `NO_UPDATE_AVAILABLE`, `NOTHING_STAGED`, `STAGE_STALE` | nothing to do, nothing staged, or the stage is for another installed release |
-| `ARTIFACT_MISSING`, `ARTIFACT_DIGEST_MISMATCH`, `ARCHIVE_UNREADABLE`, `ARCHIVE_UNSAFE` | the download is not the signed artifact; deleted, nothing applied |
+| `ARTIFACT_MISSING`, `ARTIFACT_DIGEST_MISMATCH`, `ARCHIVE_UNREADABLE`, `ARCHIVE_UNSAFE` | the download is not the signed artifact; deleted, nothing applied. `ARCHIVE_UNREADABLE` names the `tar` call and its cause as a short reason (`LIST_EXIT_1`, `EXTRACT_ENOENT`; the CLI prints it in parentheses, `--json` carries `error.reason`), never tar's output. The archive is read with the system `tar`: on Windows `%SystemRoot%\System32\tar.exe` (bsdtar) when it is there, since the GNU tar Git for Windows puts first on PATH under Git Bash reads `D:\...` as a remote host and fails on every archive |
 | `INSUFFICIENT_SPACE` | not enough disk for stage plus backup |
 | `SCHEMA_FINGERPRINT_UNAVAILABLE` | the staged release carries no readable schema |
 | `UPDATE_IN_PROGRESS`, `RECOVERY_PENDING` | an update or an undecided recovery already exists |
@@ -475,8 +492,26 @@ last apply and its downtime, and the recovery state.
   `features.json`, `goobster.env` and the layout were byte-identical before and
   after every one of them, and the secret appears in no log, state file or audit
   row.
-- **Not executed:** the Windows (WinSW) and macOS (launchd) handoff; a
-  systemd-registered service (the test VM has no systemd, so the proof ran the
-  restart loop); a `github-release` source against github.com (the source is
-  tested through an injected fetch); an update with optional features
-  installed (the proof payload is the minimal profile).
+- **The release acceptance matrix** (`documentation/release_acceptance.md`)
+  runs the staged update and the interrupted handoff on every hosted cell:
+  Linux x64 and arm64 (SQLite and Docker-managed Postgres), macOS arm64 and
+  x64, Windows x64. Its first Windows run found that no download could land
+  there: the file was synced through a read-only handle, which Windows
+  refuses (`FlushFileBuffers` needs write access), so `update stage` ended in
+  `DOWNLOAD_FAILED` for every source kind. The handle is now opened for
+  writing (`apps/manager/update/source.js`, `tests/updateStage.test.js`).
+  Its later Windows runs found the archive read with the wrong `tar` and
+  split on the wrong line end (`ARCHIVE_UNREADABLE`, `MANIFEST_MISSING`,
+  `apps/manager/update/archive.js`), and then that `update apply` failed at
+  `activate` with `EPERM` on the rename of `current`: Windows refuses to
+  rename a directory with an open handle beneath it, and the manager runs
+  from `current`. Windows now uses the linked payload layout (`current` a
+  junction into `<code>\live\`, swapped under the running manager); see
+  `packaging.md` and `release_acceptance.md` finding 20.
+- **Not executed:** the Windows (WinSW) and macOS (launchd) handoff under the
+  real service host (the matrix drives the manager as the host would, from a
+  restart loop, not under WinSW or launchd); a `github-release` source
+  against github.com (the source is tested through an injected fetch); an
+  update with optional features installed (the proof payload is the minimal
+  profile; the representative cells of the matrix carry `economy`, `exchange`
+  and `tavern`).

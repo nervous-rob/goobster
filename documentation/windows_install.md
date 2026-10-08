@@ -170,6 +170,17 @@ only one replaced on an update; data, config and the manager's store are never
 read, written or moved by a payload change, so the data root may live on
 another drive and every folder name may contain spaces.
 
+Inside the code root, `current` and `previous` are **directory junctions**
+on Windows, not folders: each activated payload lives under `<code>\live\`,
+and an install, update or rollback swaps the junction rather than renaming
+the folder the running manager and its workers hold open (Windows refuses
+to rename a directory with an open handle beneath it; a junction holds
+nothing open, and the running program keeps its handles on the old payload
+until it exits). `dir <code>` shows them as `<JUNCTION>`; every path through
+`current\...` works as on the other platforms, and `goobster-manager
+uninstall` removes the junctions with the payloads they name. On Linux and
+macOS `current` is the payload directory itself.
+
 A root the **service** will use must be a full drive path (`D:\...`), at least
 two folders deep, without `<>"|?*%`, control characters, `..`, a UNC name, a
 reserved device name (`CON`, `NUL`, `COM1`...) or a trailing dot or space, and
@@ -337,7 +348,26 @@ terminal runs the workers as you.
 
 The installer leaves `goobster-manager.cmd` in the code root. It reads the
 installation's roots from `goobster.env` beside it (only `GOOBSTER_*` lines, as
-text), so it works from any prompt:
+text), so it works from any prompt. The payload's own launcher,
+`<code root>\current\bin\goobster-manager.cmd`, reads the same file the same
+way when it runs from `current` (as its POSIX counterpart does), so either
+door finds this installation rather than the `%LOCALAPPDATA%\Goobster`
+defaults; `uninstall` still belongs to the code-root launcher, which runs it
+from a copy of Node outside the code root.
+
+Either launcher also runs bare (`goobster-manager.cmd` with no argument
+serves the manager in the foreground, as `--supervise` does for the service);
+the payload launcher once failed that way with "The syntax of the command is
+incorrect" (exit 255), because a batch file's substring of an undefined
+variable is not empty, which the acceptance matrix found and fixed.
+
+Either launcher works from Git Bash too. The one place the shell used to
+matter was `update stage`: it reads the downloaded payload archive with the
+system `tar`, and Git Bash puts Git's GNU tar first on PATH, which reads a
+`D:\...` path as a remote host and fails on every archive
+(`ARCHIVE_UNREADABLE`). The manager now uses `%SystemRoot%\System32\tar.exe`
+(bsdtar, present on Windows 10 1803 and later) whenever it is there and falls
+back to PATH only where it is not ([manager_update.md](manager_update.md)).
 
 ```bat
 "C:\Users\you\AppData\Local\Goobster\code\goobster-manager.cmd" status

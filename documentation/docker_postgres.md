@@ -87,7 +87,12 @@ is fine, an older one is `BACKUP_TOOLS_MISMATCH` and a missing one
 `BACKUP_TOOLS_MISSING`. Neither blocks creating the database, but a backup of
 it would fail, so the page asks you to fix it or to tick an acknowledgement
 (`acknowledgeBackupTools`) first, and the Docker operations that need a backup
-(`reconfigure`) refuse until it works.
+(`reconfigure`) refuse until it works. On Debian and Ubuntu, `/usr/bin/pg_dump`
+is `pg_wrapper`, which picks the version of a PostgreSQL already installed on
+the host, so installing `postgresql-client-17` beside an older server does not
+change what `pg_dump` runs: put `/usr/lib/postgresql/17/bin` first on the
+PATH of the service (or set `GOOBSTER_PG_BIN=/usr/lib/postgresql/17/bin`,
+which the backup honours over PATH) and check with `pg_dump --version`.
 
 ## What is created, and what is never touched
 
@@ -174,7 +179,12 @@ reuses the staged URL (so nothing about the database is typed again), validates
 the application on the target, writes `GOOBSTER_DB_URL`, updates the
 installation record and removes the staged key. A SQLite installation that
 holds data is routed to the migration (`MIGRATION_REQUIRED`), exactly as for an
-existing server ([database_connection.md](database_connection.md#the-cutover-rules)).
+existing server ([database_connection.md](database_connection.md#the-cutover-rules)):
+`goobster-manager migrate run` with `"target": { "owned": "docker" }` copies
+into the provisioned database. Its preflight reports the schema provision
+applied as the warning `TARGET_SCHEMA_PRESENT` (Goobster's own tables, no
+rows), not as `TARGET_NOT_EMPTY`; a rollback empties those tables again
+rather than dropping them ([db_migration.md](db_migration.md#the-preflight)).
 A fresh installation that chose Docker in the wizard does all of it in one
 `install.new`: the install gains a `docker-postgres` step after `ownership`
 and uses the new database from its first start.
@@ -337,7 +347,7 @@ password is asked. Exit codes are those of the other `database` commands.
 | `STORAGE_*` | The chosen folder is missing, not a directory, unreadable, full, already holds data, or is not shared with Docker Desktop. | Pick another folder, or fix its permissions or sharing. |
 | `RESOURCE_FOREIGN` | A container, volume or network of this name exists without this installation's labels. | Rename or remove it yourself; the installer will not. |
 | `HEALTH_TIMEOUT`, `CONTAINER_EXITED` | The container did not become healthy. | `docker logs goobster-pg-<id8>`; check memory and the storage's permissions. |
-| `BACKUP_TOOLS_MISMATCH`, `BACKUP_TOOLS_MISSING` | The host's `pg_dump` is older than the server, or absent. | Install the PostgreSQL 17 client tools (`postgresql-client-17`), or acknowledge the limit. |
+| `BACKUP_TOOLS_MISMATCH`, `BACKUP_TOOLS_MISSING` | The host's `pg_dump` is older than the server, or absent. | Install the PostgreSQL 17 client tools (`postgresql-client-17`) and make sure they are the ones `pg_dump` runs (first on PATH, or `GOOBSTER_PG_BIN`; see Backup tools above), or acknowledge the limit. |
 | `DATABASE_NOT_READY` | The workers were not started because the database is not up yet. | Wait; start it from the Database page (**Start** or **Repair**). |
 | `DATABASE_IN_USE` | The installation uses the container you are stopping. | Stop the workers first, or acknowledge. |
 | `MAJOR_UPGRADE_IS_MANUAL` | A different PostgreSQL major was asked for. | Dump and restore into a new instance, the administrator's job. |

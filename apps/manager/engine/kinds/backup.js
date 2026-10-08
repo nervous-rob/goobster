@@ -682,7 +682,16 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
 
             guarded('backup', async (record, ctx, parsed) => {
                 if (stepDone('backup')) return { skipped: true, code: 'ALREADY_DONE' };
-                const probe = await runChild('probeTarget', { engine: targetEngine(), sqlitePath: settings.sqlitePath });
+                let probe;
+                try {
+                    probe = await runChild('probeTarget', { engine: targetEngine(), sqlitePath: settings.sqlitePath });
+                } catch (error) {
+                    // A SQLite file that is not a database cannot be backed up, but it is exactly what a
+                    // restore is for: it is set aside whole by the database sub-step, never deleted.
+                    if (targetEngine() !== 'sqlite' || !/^SQLITE_(NOTADB|CORRUPT)/.test(String(error && error.code))) throw error;
+                    markStep('backup', { hadData: true, skipped: true, unreadable: true });
+                    return { skipped: true, code: 'TARGET_UNREADABLE' };
+                }
                 if (!probe.hasData) {
                     markStep('backup', { hadData: false, skipped: true });
                     return { skipped: true, code: 'TARGET_EMPTY' };
@@ -807,7 +816,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                     database: { restored: true },
                     files: Object.entries(finished.mutate).filter(([name]) => name.startsWith('files:')).map(([name, entry]) => ({ id: name.slice('files:'.length), files: entry.files || 0 })),
                     config: { restored: Boolean(config.restored), skipped: config.restored ? null : (config.skipped || null) },
-                    safetyBackup: finished.steps.backup && finished.steps.backup.hadData ? { archive: finished.steps.backup.archive, dir: finished.steps.backup.dir, tables: finished.steps.backup.tables, rows: finished.steps.backup.rows } : null,
+                    safetyBackup: finished.steps.backup && finished.steps.backup.hadData && !finished.steps.backup.skipped ? { archive: finished.steps.backup.archive, dir: finished.steps.backup.dir, tables: finished.steps.backup.tables, rows: finished.steps.backup.rows } : null,
                     interrupted,
                     interruptedTotal: Object.values(interrupted).reduce((sum, n) => sum + n, 0),
                     rowCounts: { tables: ctx.scratch.finish.tables, mismatches: ctx.scratch.finish.mismatches, matchesArchive: ctx.scratch.finish.mismatchCount === 0 },

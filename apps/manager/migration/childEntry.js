@@ -107,20 +107,24 @@ const OPS = {
         return { sha256: hash.sha256, bytes: hash.bytes, tables: report.tableCount, rows: report.rows, integrity: report.integrity.mode };
     },
 
+    /**
+     * `expectEmpty`: the target may hold nothing, or Goobster's own schema
+     * with no rows (a provisioned database); the tables found are reported as
+     * `preexistingTables` so the rollback empties rather than drops them.
+     */
     async extensions({ url, extensions = [], expectEmpty = true }) {
-        const { REQUIRED_EXTENSIONS } = require('@goobster/core/db/migration/inspect');
+        const { REQUIRED_EXTENSIONS, inspectContents, judgeTargetContents } = require('@goobster/core/db/migration/inspect');
         const { Client } = require('pg');
         const created = [];
         const client = new Client({ connectionString: url, connectionTimeoutMillis: 10000 });
         await client.connect();
         try {
             const schema = (await client.query('SELECT current_schema() AS s')).rows[0].s;
+            let preexistingTables = null;
             if (expectEmpty) {
-                const found = await client.query(
-                    `SELECT COUNT(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                     WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')`, [schema]
-                );
-                if (Number(found.rows[0].n) > 0) throw Object.assign(new Error('target'), { code: 'TARGET_NOT_EMPTY' });
+                const contents = await inspectContents(client, schema);
+                if (judgeTargetContents(contents).kind === 'foreign') throw Object.assign(new Error('target'), { code: 'TARGET_NOT_EMPTY' });
+                preexistingTables = contents.tables.map(table => table.name).sort();
             }
             for (const name of extensions) {
                 if (!REQUIRED_EXTENSIONS.includes(name)) throw Object.assign(new Error('extension'), { code: 'EXTENSION_NOT_ALLOWED' });
@@ -129,7 +133,7 @@ const OPS = {
                 await client.query(`CREATE EXTENSION ${name} WITH SCHEMA public`);
                 created.push(name);
             }
-            return { extensionsCreated: created, schema };
+            return { extensionsCreated: created, schema, preexistingTables };
         } finally {
             await client.end().catch(() => { });
         }
@@ -222,12 +226,18 @@ const OPS = {
         return { paused: true };
     },
 
-    async rollback({ url, tables, extensions, schema, allOurs = false }) {
+    /**
+     * Drops what the migration created; the tables that were already there
+     * (`keepTables`, the provisioned empty schema) are emptied again instead,
+     * in one TRUNCATE so their foreign keys hold. Anything else is foreign and
+     * nothing is touched.
+     */
+    async rollback({ url, tables, extensions, schema, allOurs = false, keepTables = [] }) {
         const { Client } = require('pg');
         const { expectedSchema } = require('@goobster/core/db/migration/schemaModel');
         const client = new Client({ connectionString: url, connectionTimeoutMillis: 10000 });
         await client.connect();
-        const dropped = { tables: 0, derived: 0, extensions: [], retained: [] };
+        const dropped = { tables: 0, derived: 0, emptied: 0, extensions: [], retained: [] };
         try {
             const current = (await client.query('SELECT current_schema() AS s')).rows[0].s;
             if (current !== schema) throw Object.assign(new Error('schema'), { code: 'TARGET_SCHEMA_CHANGED' });
@@ -235,17 +245,20 @@ const OPS = {
                 `SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')`, [schema]
             )).rows.map(row => row.name);
-            const owned = allOurs ? new Set(present) : new Set(tables);
-            const derived = present.filter(name => /^memory_vec_\d+$/.test(name));
-            const foreign = present.filter(name => !owned.has(name) && !derived.includes(name));
+            const kept = new Set(keepTables);
+            const owned = allOurs ? new Set(present.filter(name => !kept.has(name))) : new Set(tables.filter(name => !kept.has(name)));
+            const derived = present.filter(name => /^memory_vec_\d+$/.test(name) && !owned.has(name) && !kept.has(name));
+            const foreign = present.filter(name => !owned.has(name) && !kept.has(name) && !derived.includes(name));
             if (foreign.length > 0) throw Object.assign(new Error('foreign'), { code: 'ROLLBACK_FOREIGN_OBJECTS' });
             const order = expectedSchema().order;
             const ranked = (name) => { const at = order.indexOf(name); return at < 0 ? -1 : at; };
             const doomed = [...present.filter(name => owned.has(name)).sort((a, b) => ranked(b) - ranked(a)), ...derived];
+            const emptied = present.filter(name => kept.has(name)).sort();
             const quoted = (name) => `"${schema.replace(/"/g, '""')}"."${name.replace(/"/g, '""')}"`;
             await client.query('BEGIN');
             try {
                 for (const name of doomed) await client.query(`DROP TABLE ${quoted(name)}`);
+                if (emptied.length > 0) await client.query(`TRUNCATE TABLE ${emptied.map(quoted).join(', ')} RESTART IDENTITY`);
                 await client.query('COMMIT');
             } catch (error) {
                 await client.query('ROLLBACK').catch(() => { });
@@ -253,6 +266,7 @@ const OPS = {
             }
             dropped.tables = doomed.length - derived.length;
             dropped.derived = derived.length;
+            dropped.emptied = emptied.length;
             for (const name of extensions) {
                 if (!/^[a-z_]{1,30}$/.test(name)) continue;
                 try {

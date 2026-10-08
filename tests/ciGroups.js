@@ -87,7 +87,7 @@ const GROUPS = [
             'nativePostgresAdapters', 'nativePostgresHelper', 'nativePostgresKinds',
             'launchdService', 'darwinHelper', 'darwinBootstrapCli', 'darwinBootstrapStage',
             'windowsService', 'windowsHelper', 'windowsBootstrapCli', 'packageBootstrapWin32',
-            'releaseIndex', 'releaseArtifacts', 'releaseManagerTrust', 'releaseWorkflow',
+            'releaseIndex', 'releaseArtifacts', 'releaseManagerTrust', 'releaseWorkflow', 'releaseAcceptanceReport', 'releaseAcceptanceWorkflow',
             'updateCheck', 'updateStage', 'updateApply', 'updateHandoff', 'updateRoutes', 'updateHostRoutes', 'updateService',
             'presenceService',
             'reportIntegrations',

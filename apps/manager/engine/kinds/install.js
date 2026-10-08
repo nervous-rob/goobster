@@ -802,7 +802,7 @@ function createInstallKinds({ settings, fs = nodeFs, now = () => new Date(), log
                 removes.push({ role: entry.role, path: entry.path, scope: entry.scope });
             }
         }
-        for (const item of removes) paths.assertRemovable(item.path, { codeRoot: item.role === 'code' ? null : roots.code, home: deps.home, fs });
+        for (const item of removes) paths.assertRemovable(item.path, { codeRoot: item.role === 'code' ? null : roots.code, home: deps.home, fs, payloadRoot: item.role === 'code' ? roots.code : null });
         for (const item of removes.filter(entry => entry.role === 'code')) paths.assertContained(roots.code, item.path, fs);
         const { services, unknown } = describeServices(doc, { unregister: true });
         const sqliteInside = paths.isSameOrInside(roots.data, settings.sqlitePath);

@@ -1,0 +1,188 @@
+name: Release acceptance
+
+# Issue #343 (installer epic #315, installer plan P5.3): the end-to-end release acceptance matrix.
+#
+# Every cell below installs a development-signed payload through the manager CLI the way an operator
+# would, then runs the lifecycle (first owner and chat, feature remove and add, defaults and keys,
+# boot recovery, a staged update to a locally built signed fake release, repair, backup and restore,
+# the SQLite to Postgres migration, reset, both uninstalls) and the failure injections and negative
+# authorization checks of scripts/acceptance/run.js. Each cell writes one evidence file and uploads
+# it; the report job renders the matrix from them (scripts/acceptance/report.js) into the job summary.
+# A step the cell cannot run is `n/a` with its reason, never a pass.
+#
+# Cells this workflow cannot give, and why (each is `deferred` in documentation/release_acceptance.md):
+#   - Raspberry Pi 4B hardware: no hosted runner is a Pi. linux-arm64 itself is proven on
+#     ubuntu-24.04-arm; the Pi's memory, SD-card I/O and thermal limits are not.
+#   - An existing Postgres server without superuser (existing-pg): a hosted service container hands the
+#     application a superuser, which is not the case being asked about. The driver runs this cell
+#     against any server named by GOOBSTER_ACCEPTANCE_PG_URL; no server is configured here, and the
+#     workflow receives no secret values.
+#   - The full feature profile with real provider keys: the keys are secrets this workflow never gets.
+#   - Desktop PostgreSQL (Docker Desktop on macOS and Windows): hosted macOS and Windows runners have no
+#     usable container runtime, so their managed-pg cells are not part of the matrix.
+#   - Major upgrades (a release that changes the database schema and the recovery decision after a
+#     failed one): the fake release here changes only its version.
+# The native-PostgreSQL install (Ubuntu 24.04 x64 and arm64, Debian 12, Rocky 9) has its own real-distro
+# proof in native-postgres.yml; this driver has no native-pg database choice yet.
+#
+# Not a release pipeline: nothing is published and no secret is read. Documentation:
+# documentation/release_acceptance.md.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/acceptance/**'
+      - 'tests/releaseAcceptance*.test.js'
+      - 'documentation/release_acceptance.md'
+      - '.github/workflows/release-acceptance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: ${{ matrix.platform }} / ${{ matrix.install }} / ${{ matrix.db }} / ${{ matrix.features }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64, runner: ubuntu-24.04, install: new, db: sqlite, features: minimal }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: new, db: sqlite, features: representative }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: new, db: managed-pg, features: minimal }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: new, db: managed-pg, features: representative }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: adopt, db: sqlite, features: minimal }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: adopt, db: sqlite, features: representative }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: adopt, db: managed-pg, features: minimal }
+          - { platform: linux-x64, runner: ubuntu-24.04, install: adopt, db: managed-pg, features: representative }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: new, db: sqlite, features: minimal }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: new, db: sqlite, features: representative }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: new, db: managed-pg, features: minimal }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: new, db: managed-pg, features: representative }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: adopt, db: sqlite, features: minimal }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: adopt, db: sqlite, features: representative }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: adopt, db: managed-pg, features: minimal }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, install: adopt, db: managed-pg, features: representative }
+          - { platform: darwin-arm64, runner: macos-15, install: new, db: sqlite, features: minimal }
+          - { platform: darwin-x64, runner: macos-15-intel, install: new, db: sqlite, features: minimal }
+          - { platform: win32-x64, runner: windows-2022, install: new, db: sqlite, features: minimal }
+    env:
+      TARGET: ${{ matrix.platform }}
+      INSTALL: ${{ matrix.install }}
+      DATABASE: ${{ matrix.db }}
+      FEATURES: ${{ matrix.features }}
+      RUNNER_IMAGE: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Output locations (outside the checkout)
+        run: |
+          {
+            echo "PAYLOAD=$RUNNER_TEMP/goobster-payload"
+            echo "REPORTS=$RUNNER_TEMP/goobster-reports"
+            echo "EVIDENCE=$RUNNER_TEMP/goobster-acceptance-evidence"
+            echo "WORK=$RUNNER_TEMP/goobster-acceptance-work"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (build host only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the React client
+        run: npm run build:web
+
+      - name: Build the payload for this cell (development-signed)
+        run: |
+          case "$FEATURES" in
+            minimal) selection="--profile minimal" ;;
+            representative) selection="--features tavern,economy,exchange" ;;
+            full) selection="--profile full" ;;
+            *) echo "unknown feature set $FEATURES"; exit 1 ;;
+          esac
+          mkdir -p "$REPORTS"
+          # shellcheck disable=SC2086
+          node scripts/package-runtime.js --target "$TARGET" --out "$PAYLOAD" --report-dir "$REPORTS" --force --dev-sign $selection
+
+      - name: Docker is available for the managed-Postgres cells
+        if: matrix.db == 'managed-pg'
+        run: docker info --format '{{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
+
+      # The managed database is the pinned pgvector/pgvector:pg17 image and Goobster's backups read it
+      # with the host's pg_dump, which refuses a server newer than itself. The runner image ships
+      # PostgreSQL 16 client tools, so without this step the provision would only be allowed with
+      # acknowledgeBackupTools and the reset's backup would fail (BACKUP_FAILED / TOOL_VERSION_MISMATCH),
+      # which the first hosted run showed. Installing the package is not enough on its own: /usr/bin/pg_dump
+      # is Debian's pg_wrapper, which keeps choosing the runner's own PostgreSQL 16 (the second hosted run
+      # printed 16.15 right after installing 17), so the 17 binaries go first on PATH, which the driver
+      # passes through to the manager. This is the remedy docker_postgres.md gives an operator.
+      - name: PostgreSQL 17 client tools for the managed-Postgres cells
+        if: matrix.db == 'managed-pg'
+        run: |
+          sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version | grep -F 'pg_dump (PostgreSQL) 17.'
+
+      - name: Run the acceptance cell
+        run: |
+          mkdir -p "$EVIDENCE"
+          node scripts/acceptance/run.js --payload "$PAYLOAD" --install "$INSTALL" --db "$DATABASE" --features "$FEATURES" \
+            --out "$EVIDENCE" --work "$WORK" --runner-image "$RUNNER_IMAGE" --commit "$GITHUB_SHA"
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-${{ matrix.platform }}-${{ matrix.install }}-${{ matrix.db }}-${{ matrix.features }}
+          path: ${{ runner.temp }}/goobster-acceptance-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  report:
+    name: matrix report
+    needs: acceptance
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: acceptance-*
+          path: ${{ runner.temp }}/goobster-acceptance-all
+
+      - name: Render the matrix
+        run: |
+          node scripts/acceptance/report.js "$RUNNER_TEMP/goobster-acceptance-all" --matrix --out "$RUNNER_TEMP/acceptance-matrix.md"
+          cat "$RUNNER_TEMP/acceptance-matrix.md" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/acceptance/report.js "$RUNNER_TEMP/goobster-acceptance-all" --matrix --format json --out "$RUNNER_TEMP/acceptance-matrix.json"
+
+      - name: Keep the rendered matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-matrix
+          path: |
+            ${{ runner.temp }}/acceptance-matrix.md
+            ${{ runner.temp }}/acceptance-matrix.json
+          retention-days: 30
