@@ -217,8 +217,9 @@ class Cell {
 
     /** The one-line reason a command failed: its error code from the JSON, else the last thing it said. */
     why(result) {
-        if (result.json && Array.isArray(result.json.blocks) && result.json.blocks.length) {
-            return result.json.blocks.map((item) => `${item.code}${item.detail ? `: ${item.detail}` : ''}`).join('; ');
+        const blocks = result.json && (Array.isArray(result.json.blocks) ? result.json.blocks : (result.json.preflight && result.json.preflight.blocks));
+        if (Array.isArray(blocks) && blocks.length) {
+            return blocks.map((item) => `${item.code}${item.detail ? `: ${item.detail}` : ''}`).join('; ');
         }
         if (result.json && result.json.error) return `${result.json.error.code}${result.json.error.message ? `: ${result.json.error.message}` : ''}`;
         const lines = `${result.stderr}\n${result.stdout}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
