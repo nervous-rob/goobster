@@ -21,4 +21,9 @@ describe('PostgreSQL backup tool credentials', () => {
         const env = { PGPASSFILE: '/private/pgpass' };
         expect(prepareConnection(['--dbname', 'postgres://owner@localhost/db'], env)).toEqual({ args: ['--dbname', 'postgres://owner@localhost/db'], env });
     });
+
+    test('preserves libpq startup options as percent encoding rather than form plus signs', () => {
+        const child = prepareConnection(['--dbname', 'postgres://owner:secret@localhost/db?options=-c%20search_path%3Dpublic&sslmode=disable'], {});
+        expect(child.args[1]).toBe('postgres://owner@localhost/db?options=-c%20search_path%3Dpublic&sslmode=disable');
+    });
 });

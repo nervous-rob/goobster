@@ -10,6 +10,9 @@ function prepareConnection(args, env = process.env) {
     const password = queryPasswords.length ? queryPasswords.at(-1) : url.password ? decodeURIComponent(url.password) : null;
     url.password = '';
     url.searchParams.delete('password');
+    // libpq URI parameters use percent encoding, not form encoding: '+' would
+    // turn the native connection's '-c search_path=public' into an invalid option.
+    url.search = [...url.searchParams].map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&');
     safeArgs[index + 1] = url.toString();
     return { args: safeArgs, env: password === null ? env : { ...env, PGPASSWORD: password } };
 }

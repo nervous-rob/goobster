@@ -94,4 +94,8 @@ async function main() {
     }
 }
 
-if (require.main === module) main().catch(error => { console.error(`native data proof failed: ${error.code || error.name}: ${error.message}`); process.exitCode = 1; });
+if (require.main === module) main().catch(error => {
+    const reason = error.details && /^[A-Z_]+$/.test(error.details.reason || '') ? ` (${error.details.reason})` : '';
+    console.error(`native data proof failed: ${error.code || error.name}${reason}: ${error.message}`);
+    process.exitCode = 1;
+});
