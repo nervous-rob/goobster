@@ -4,6 +4,37 @@ Decisions are recorded in `documentation/adr/0013-installer-and-feature-manifest
 This document is the working plan: phases, acceptance criteria, audits to
 run before each phase, and open items. It is updated as phases land.
 
+## Delivery status
+
+Every implementation issue of the epic except #343's matrix half, and the two
+deferred issues, is merged into `main` (2026-10-07/08, merge commits in
+dependency order; each PR was green on both database engines on its own base
+before it moved). The per-phase **Status** paragraphs below record what each
+change proved and what it left out; this table records where it landed.
+
+| Issue | PR | Merge |
+|---|---|---|
+| #316 inventory, #317 catalog and state, #319 tools and MCP, #320 routes and sockets, #318 commands and runtime, #321 portal, #322 conformance | #346, #347, #349, #350, #351, #352, #353 | `0e5b8ff` … `a27dd4d` |
+| #328 payload selection, #323 manager foundation, #324 configuration, #325 lifecycle, #329 install engine and CLI | #356, #354, #355, #357, #358 | `62d3317` … `3fab11a` |
+| #334 maintenance barrier, #335 data reset, #336 migration, #326 host pages, #330 wizard, #338 database chooser, #337 maintenance UI | #359, #361, #362, #360, #363, #365, #366 | `0782db3` … `5bd6a64` |
+| #333 Linux bootstrapper, #339 Docker Postgres, #332 macOS with the service-kind seam, #331 Windows, #341 release pipeline, #342 staged updates | #367, #368, #369, #370, #372, #373 | `f873cfe`, `62dfd51`, `dc6a7c5`, `2e5590d`, `de6aacc`, `1bf0901` |
+| #327 packaging proof (with the shared `config.json` loader, #364) | #348, #364 | `1ccb2fa` |
+| #340 native Postgres | #371 | `707c3fc` |
+| #343 operator runbooks and accessibility review | #375 | `991aced` |
+| Post-merge: duplicated list registrations from the stack merge; a Windows helper spec broken by the fixed package table | #374, #376 | `87fa25f`, `8845cc5` |
+
+`main` is green on both engines from `8845cc5` (lint, smoke, typecheck, build,
+the eight Jest groups on SQLite and Postgres, the sandbox isolation smoke,
+Playwright). The real-platform workflows (`linux-bootstrap.yml`,
+`macos-bootstrap.yml`, `windows-bootstrap.yml`, `native-postgres.yml`) passed
+on the merged tree at `707c3fc`.
+
+Still open: #343's acceptance matrix (driver, hosted workflow, report; PR
+#377, where the 19 hosted cells run for the first time), the owner decisions
+the runbooks name (#249, #255, #262, the signing material for #372), and the
+deferred #344 and #345. The child issues of #315 are not closed here; each
+carries its own acceptance evidence.
+
 ## Goal
 
 An operator installs Goobster on Windows, macOS or Linux (desktop or
