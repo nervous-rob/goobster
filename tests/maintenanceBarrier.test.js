@@ -775,3 +775,26 @@ describe('maintenance.enter and maintenance.release over HTTP', () => {
         }
     });
 });
+
+describe('waiting for a writer in a process with nothing else to do', () => {
+    test('the wait between polls keeps the event loop alive, so a CLI never ends silently inside the barrier', async () => {
+        const { settings, barrier } = directBarrier({ bootId: 'boot-wait' });
+        const { fence } = barrier.begin({ operationId: 'op-wait', actor: 'owner-1', via: 'local', reason: 'restore' });
+        const created = [];
+        const realSetTimeout = global.setTimeout;
+        const spy = jest.spyOn(global, 'setTimeout').mockImplementation((fn, ms, ...rest) => {
+            const timer = realSetTimeout(fn, ms, ...rest);
+            if (ms === TUNING.pollMs) created.push(timer);
+            return timer;
+        });
+        try {
+            realSetTimeout(() => coreMaintenance.writeFenceAck({ worker: 'api', fence, state: 'fenced', pid: 4242, env: controlEnv(settings) }), 80);
+            await barrier.quiesce({ operationId: 'op-wait', fence, resolved: resolvedWith(API), timeoutSeconds: 10, actor: 'owner-1' });
+        } finally {
+            spy.mockRestore();
+        }
+        expect(created.length).toBeGreaterThan(1);
+        expect(created.every((timer) => timer.hasRef())).toBe(true);
+        await barrier.release({ operationId: 'op-wait', fence, force: true });
+    });
+});
