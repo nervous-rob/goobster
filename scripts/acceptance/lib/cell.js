@@ -205,7 +205,9 @@ class Cell {
     why(result) {
         if (result.json && result.json.error) return `${result.json.error.code}${result.json.error.message ? `: ${result.json.error.message}` : ''}`;
         const lines = `${result.stderr}\n${result.stdout}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-        return lines.length ? lines[lines.length - 1] : `exit ${result.code}`;
+        const said = lines.filter((line) => !/^\[[\w.-]+\] [\w.-]+ \.\.\.$/.test(line));
+        if (said.length) return said[said.length - 1];
+        return lines.length ? `${lines[lines.length - 1]} (then nothing: exit ${result.code})` : `exit ${result.code}`;
     }
 
     async mintRecovery() {
@@ -304,11 +306,12 @@ class Cell {
         return { status: response.status, json };
     }
 
-    async portalChat(message) {
+    /** A chat turn; without a conversation id the portal continues the latest conversation. */
+    async portalChat(message, conversationId = null) {
         const response = await fetch(this.portal('/api/app/chat'), {
             method: 'POST',
             headers: { 'content-type': 'application/json', cookie: this.cookie },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify(conversationId === null ? { message } : { message, conversationId }),
             signal: AbortSignal.timeout(120_000)
         });
         const text = await response.text();
@@ -316,6 +319,19 @@ class Cell {
         const reply = events.find((event) => event.name === 'message' && event.data);
         const done = events.find((event) => event.name === 'done' && event.data);
         return { status: response.status, reply: reply ? reply.data.content : null, ok: Boolean(done && done.data.ok), conversationId: done && done.data ? done.data.conversationId : null };
+    }
+
+    /** A chat turn in a conversation of its own, so a later count of conversations moves by exactly one. */
+    async portalChatInNewConversation(message) {
+        const made = await fetch(this.portal('/api/app/chat/conversations'), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: this.cookie },
+            body: '{}',
+            signal: AbortSignal.timeout(30_000)
+        });
+        const body = await made.json().catch(() => null);
+        check(made.status === 200 && body && body.id, `creating a conversation answered ${made.status}`);
+        return this.portalChat(message, body.id);
     }
 
     async conversations() {

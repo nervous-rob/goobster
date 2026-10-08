@@ -97,7 +97,7 @@ async function stepRepair(cell, step) {
 async function stepBackupRestore(cell, step) {
     const archive = await backup(cell, step, path.join(cell.dirs.backups, 'full'), { includeConfig: true });
     const before = (await cell.conversations()).length;
-    const turn = await cell.portalChat('A conversation written after the backup.');
+    const turn = await cell.portalChatInNewConversation('A conversation written after the backup.');
     check(turn.ok, 'a chat turn after the backup failed');
     check((await cell.conversations()).length === before + 1, 'the new conversation was not kept');
     const report = await configReport(cell);

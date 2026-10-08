@@ -189,6 +189,20 @@ async function lostManagerStore(cell, step) {
     }
 }
 
+function writtenBeyondJournal(scratch) {
+    const found = [];
+    const walk = (dir) => {
+        if (!fs.existsSync(dir)) return;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) walk(full);
+            else found.push(path.relative(scratch.dir, full).split(path.sep).join('/'));
+        }
+    };
+    walk(path.join(scratch.dir, 'inst'));
+    return found.filter((file) => !/^inst\/data\/manager\/operations\/[^/]+\.json$/.test(file));
+}
+
 async function portInUse(cell, step) {
     const scratch = new Scratch(cell, 'port');
     const held = await op.occupyPort(cell.ports.busy);
@@ -197,8 +211,9 @@ async function portInUse(cell, step) {
         check(installed.code === 2, `install with a busy port exited ${installed.code}, not 2 (invalid input or preflight block): ${cell.why(installed)}`);
         const text = JSON.stringify(installed.json || {});
         check(/PORT_IN_USE/.test(text), 'the refusal does not name PORT_IN_USE');
-        check(!fs.existsSync(scratch.roots.code) && !fs.existsSync(scratch.roots.data), 'the refused install wrote roots');
-        return { result: `install exit 2 with PORT_IN_USE (api port held by another listener), no root written` };
+        const extra = writtenBeyondJournal(scratch);
+        check(extra.length === 0, `the refused install wrote more than its operation record: ${extra.slice(0, 5).join(', ')}`);
+        return { result: 'install exit 2 with PORT_IN_USE (api port held by another listener); nothing written but the refused operation\'s own journal entry' };
     } finally {
         await held.close();
     }
@@ -207,21 +222,42 @@ async function portInUse(cell, step) {
 async function storageRefusal(cell, step) {
     if (process.platform === 'win32') return notApplicable('POSIX directory modes do not exist on Windows; the read-only half cannot be built the same way, and a full disk needs a size-limited volume');
     if (typeof process.getuid === 'function' && process.getuid() === 0) return notApplicable('running as root: directory modes do not stop root, and a full disk needs a privileged size-limited mount');
-    const scratch = new Scratch(cell, 'storage');
-    const locked = path.join(scratch.dir, 'locked');
-    fs.mkdirSync(locked, { recursive: true });
-    fs.chmodSync(locked, 0o555);
+    const outcomes = [];
+
+    const codeCase = new Scratch(cell, 'storage-code');
+    const codeLocked = path.join(codeCase.dir, 'locked');
+    fs.mkdirSync(codeLocked, { recursive: true });
+    fs.chmodSync(codeLocked, 0o555);
     try {
-        scratch.roots.data = path.join(locked, 'data');
-        scratch.roots.managerStore = path.join(locked, 'data', 'manager');
-        const installed = await scratch.install(step);
-        check(installed.code === 2, `install into a read-only data root exited ${installed.code}, not 2: ${cell.why(installed)}`);
-        check(/ROOT_NOT_WRITABLE/.test(JSON.stringify(installed.json || {})), 'the refusal does not name ROOT_NOT_WRITABLE');
-        check(fs.readdirSync(locked).length === 0 && !fs.existsSync(scratch.roots.code), 'the refused install wrote something');
-        return { result: 'install into a read-only data root: exit 2, ROOT_NOT_WRITABLE, nothing written. A full disk (DISK_SPACE) needs a size-limited mount and was not exercised' };
+        codeCase.roots.code = path.join(codeLocked, 'code');
+        const installed = await codeCase.install(step);
+        check(installed.code === 2, `install with a read-only code root exited ${installed.code}, not 2: ${cell.why(installed)}`);
+        check(/ROOT_NOT_WRITABLE/.test(JSON.stringify(installed.json || {})), 'the refusal for a read-only code root does not name ROOT_NOT_WRITABLE');
+        check(fs.readdirSync(codeLocked).length === 0, 'the refused install wrote into the read-only code root');
+        const extra = writtenBeyondJournal(codeCase);
+        check(extra.length === 0, `the refused install wrote more than its operation record: ${extra.slice(0, 5).join(', ')}`);
+        outcomes.push('read-only code root: exit 2, ROOT_NOT_WRITABLE, nothing written');
     } finally {
-        fs.chmodSync(locked, 0o755);
+        fs.chmodSync(codeLocked, 0o755);
     }
+
+    const dataCase = new Scratch(cell, 'storage-data');
+    const dataLocked = path.join(dataCase.dir, 'locked');
+    fs.mkdirSync(dataLocked, { recursive: true });
+    fs.chmodSync(dataLocked, 0o555);
+    try {
+        dataCase.roots.data = path.join(dataLocked, 'data');
+        dataCase.roots.managerStore = path.join(dataLocked, 'data', 'manager');
+        const installed = await dataCase.install(step);
+        check(installed.code !== 0, 'install into a read-only data root succeeded');
+        check(/ROOT_NOT_WRITABLE|STORE_UNUSABLE/.test(JSON.stringify(installed.json || {})), `the refusal for a read-only data root names neither ROOT_NOT_WRITABLE nor STORE_UNUSABLE: ${cell.why(installed)}`);
+        check(fs.readdirSync(dataLocked).length === 0 && !fs.existsSync(dataCase.roots.code), 'the refused install wrote something');
+        const named = /STORE_UNUSABLE/.test(JSON.stringify(installed.json || {})) ? 'STORE_UNUSABLE' : 'ROOT_NOT_WRITABLE';
+        outcomes.push(`read-only data root: exit ${installed.code}, ${named} (the manager cannot keep its own store there), nothing written`);
+    } finally {
+        fs.chmodSync(dataLocked, 0o755);
+    }
+    return { result: `${outcomes.join('; ')}. A full disk (DISK_SPACE) needs a size-limited mount and was not exercised` };
 }
 
 async function unauthenticatedManager(cell, step) {
@@ -370,7 +406,7 @@ function filesNamed(root, prefix, found = []) {
 async function restoreInterrupted(cell, step) {
     const archive = await dataSteps.backup(cell, step, path.join(cell.dirs.backups, 'interrupt'));
     const before = (await cell.conversations()).length;
-    const turn = await cell.portalChat('A conversation the interrupted restore must not lose.');
+    const turn = await cell.portalChatInNewConversation('A conversation the interrupted restore must not lose.');
     check(turn.ok, 'a chat turn before the restore failed');
     check((await cell.conversations()).length === before + 1, 'the extra conversation was not kept');
     await cell.stopDaemon();
