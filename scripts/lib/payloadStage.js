@@ -31,6 +31,9 @@ const INSTALLED_FEATURES_FILE = 'app/apps/web/dist/installed-features.json';
 const LOCAL_FILES = [MANIFEST_FILE, SIGNATURE_FILE, SELECTION_FILE, INSTALLED_FEATURES_FILE];
 const PARTIAL_SUFFIX = '.partial';
 const DEV_UNSIGNED_ENV = 'GOOBSTER_PAYLOAD_DEV_UNSIGNED';
+/** Where the `linked` layout keeps activated payloads: `<installRoot>/live/<name>`. */
+const LIVE_DIR = 'live';
+const LAYOUT_ENV = 'GOOBSTER_PAYLOAD_LAYOUT';
 const SAMPLE = 5;
 
 const CODES = Object.freeze({
@@ -714,14 +717,131 @@ function cleanStaging(stagingRoot) {
     return partial;
 }
 
+// ---------------------------------------------------------------------------
+// the two layouts of `current`
+// ---------------------------------------------------------------------------
+
+/**
+ * How `current` is laid out. `rename`: the payload directory itself is moved
+ * into place (`current/`, `previous/`). `linked`: every activated payload
+ * stays where it was moved, under `<installRoot>/live/<name>`, and `current`
+ * and `previous` are directory links to those. Windows needs the second: a
+ * directory with a running program inside it (the manager's own `node.exe`,
+ * its native addons, the workers' working directory) cannot be renamed there,
+ * while a junction can be swapped under the running program. POSIX keeps the
+ * first, where a rename moves an inode and the running program never notices.
+ * `GOOBSTER_PAYLOAD_LAYOUT=linked|rename` overrides the platform's choice (the
+ * acceptance driver runs the linked layout on Linux with symbolic links).
+ * @param {string} [platform]
+ * @param {Object} [env]
+ * @returns {'rename'|'linked'}
+ */
+function activationLayout(platform = process.platform, env = process.env) {
+    const forced = env[LAYOUT_ENV];
+    if (forced === 'linked' || forced === 'rename') return forced;
+    return platform === 'win32' ? 'linked' : 'rename';
+}
+
+function entryExists(target) {
+    try {
+        fs.lstatSync(target);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function isLink(target) {
+    try {
+        return fs.lstatSync(target).isSymbolicLink();
+    } catch {
+        return false;
+    }
+}
+
+/** The directory a `current`/`previous` link names, or null for a plain directory or nothing. */
+function linkTarget(entry) {
+    if (!isLink(entry)) return null;
+    try {
+        return path.resolve(path.dirname(entry), fs.readlinkSync(entry));
+    } catch {
+        return null;
+    }
+}
+
+function removeTreeQuietly(dir) {
+    try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Remove an activated payload entry (`current`, `previous`, a retired one): a
+ * plain directory whole; a link together with the payload directory it names.
+ * The payload directory is best effort — one a leaving process still holds
+ * open is swept at the next activation — so this never throws for it. With
+ * `keepTarget` only the link goes: the caller runs from that payload, and
+ * `sweepLive` collects it once nothing names it.
+ * @returns {{ removed: boolean, target: string|null, targetRemoved: boolean|null }}
+ */
+function removePayloadEntry(entry, { keepTarget = false } = {}) {
+    if (!entryExists(entry)) return { removed: false, target: null, targetRemoved: null };
+    const target = linkTarget(entry);
+    if (target === null) {
+        fs.rmSync(entry, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        return { removed: true, target: null, targetRemoved: null };
+    }
+    fs.unlinkSync(entry);
+    if (keepTarget) return { removed: true, target, targetRemoved: false };
+    return { removed: true, target, targetRemoved: removeTreeQuietly(target) };
+}
+
+/**
+ * Drop a dangling `current`/`previous` link (its payload directory is gone); a plain directory is
+ * left alone. Judged by the target's own entry: on Windows `existsSync` of a junction answers for
+ * the junction, not for what it names.
+ */
+function dropDangling(entry) {
+    const target = linkTarget(entry);
+    if (target !== null && !entryExists(target)) {
+        try { fs.unlinkSync(entry); } catch { }
+    }
+}
+
+/**
+ * Remove every payload under `live/` that neither `current` nor `previous`
+ * names: what a crash between an activation's steps, or a payload directory
+ * held open while it was retired, left behind. Best effort.
+ * @returns {string[]} the directories removed
+ */
+function sweepLive(installRoot) {
+    const live = path.join(installRoot, LIVE_DIR);
+    if (!entryExists(live)) return [];
+    const named = new Set([path.join(installRoot, 'current'), path.join(installRoot, 'previous')]
+        .map(linkTarget).filter(Boolean).map(target => path.resolve(target)));
+    const removed = [];
+    for (const name of fs.readdirSync(live).sort()) {
+        const dir = path.join(live, name);
+        if (named.has(path.resolve(dir))) continue;
+        if (removeTreeQuietly(dir)) removed.push(dir);
+    }
+    return removed;
+}
+
 /**
  * Finish an activation a crash interrupted between its two renames: with no
- * `current` but a `previous`, the previous payload comes back.
+ * `current` but a `previous`, the previous payload comes back. A `current`
+ * or `previous` link whose payload directory is gone counts as missing.
  * @returns {'ok'|'restored-previous'|'empty'}
  */
 function recoverInstall(installRoot) {
     const current = path.join(installRoot, 'current');
     const previous = path.join(installRoot, 'previous');
+    dropDangling(current);
+    dropDangling(previous);
     if (fs.existsSync(current)) return 'ok';
     if (fs.existsSync(previous)) {
         fs.renameSync(previous, current);
@@ -731,33 +851,51 @@ function recoverInstall(installRoot) {
     return 'empty';
 }
 
+/** Retire the payload `previous` holds: moved aside first so a failure removing it never leaves a half `previous`. */
+function retirePrevious(installRoot, previous) {
+    const retired = path.join(installRoot, `.retired-${crypto.randomBytes(4).toString('hex')}`);
+    fs.renameSync(previous, retired);
+    removePayloadEntry(retired);
+}
+
 /**
  * Make a verified staging directory the installation's `current` payload:
  * the old `current` becomes `previous` (the one before is dropped), then the
- * staged directory is renamed into place. Both renames stay on one
- * filesystem; if the second fails the first is undone, so `current` is either
- * the old payload or the new one, never a mix. The staged copy is verified
- * again first unless `verify: false`.
+ * staged payload takes its place. Everything stays on one filesystem and
+ * moves by rename; if the last step fails the earlier ones are undone, so
+ * `current` is either the old payload or the new one, never a mix. The staged
+ * copy is verified again first unless `verify: false`.
+ *
+ * With the `rename` layout (POSIX) the staged directory itself becomes
+ * `current/`. With the `linked` layout (Windows, see `activationLayout`) the
+ * staged directory moves under `live/` and `current` becomes a directory link
+ * to it, so the swap never renames a directory a running program holds open.
  * @param {string} stagingDir
  * @param {string} installRoot
- * @param {VerifyOptions & { verify?: boolean }} [options]
- * @returns {{ current: string, previous: string|null, verified: VerifyResult|null }}
+ * @param {VerifyOptions & { verify?: boolean, layout?: 'rename'|'linked' }} [options]
+ * @returns {{ current: string, previous: string|null, verified: VerifyResult|null, layout: 'rename'|'linked', home: string }}
  */
 function activate(stagingDir, installRoot, options = {}) {
     if (stagingDir.endsWith(PARTIAL_SUFFIX)) fail(CODES.ACTIVATE_FAILED, 'refusing to activate an interrupted (.partial) stage');
     const verifyOptions = { ...options };
     delete verifyOptions.verify;
+    delete verifyOptions.layout;
+    const layout = options.layout || activationLayout();
     const verified = options.verify === false ? null : verifyPayload(stagingDir, verifyOptions);
     fs.mkdirSync(installRoot, { recursive: true });
     recoverInstall(installRoot);
     const current = path.join(installRoot, 'current');
     const previous = path.join(installRoot, 'previous');
-    const hadCurrent = fs.existsSync(current);
-    if (hadCurrent && fs.existsSync(previous)) {
-        const retired = path.join(installRoot, `.retired-${crypto.randomBytes(4).toString('hex')}`);
-        fs.renameSync(previous, retired);
-        fs.rmSync(retired, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
+    const hadCurrent = entryExists(current);
+    if (hadCurrent && entryExists(previous)) retirePrevious(installRoot, previous);
+    const out = layout === 'linked'
+        ? activateLinked(stagingDir, installRoot, current, previous, hadCurrent)
+        : activateByRename(stagingDir, current, previous, hadCurrent);
+    fsyncPath(installRoot);
+    return { current, previous: hadCurrent ? previous : null, verified, layout, home: out.home };
+}
+
+function activateByRename(stagingDir, current, previous, hadCurrent) {
     if (hadCurrent) fs.renameSync(current, previous);
     try {
         fs.renameSync(stagingDir, current);
@@ -765,8 +903,35 @@ function activate(stagingDir, installRoot, options = {}) {
         if (hadCurrent) fs.renameSync(previous, current);
         fail(CODES.ACTIVATE_FAILED, `could not move the staged payload into place (${error.code || 'error'}); the previous payload is still current`, { cause: error.code || null });
     }
-    fsyncPath(installRoot);
-    return { current, previous: hadCurrent ? previous : null, verified };
+    return { home: current };
+}
+
+/**
+ * The linked layout's swap, in an order a crash at any point leaves recoverable:
+ * the staged directory moves under `live/` (a crash here leaves an orphan the
+ * next sweep removes and `current` untouched); `current` is renamed to
+ * `previous` (a crash here is the gap `recoverInstall` closes); the new link is
+ * created. A failure undoes what was done and puts the staged directory back.
+ */
+function activateLinked(stagingDir, installRoot, current, previous, hadCurrent) {
+    const live = path.join(installRoot, LIVE_DIR);
+    fs.mkdirSync(live, { recursive: true });
+    const home = path.join(live, `${path.basename(stagingDir)}-${crypto.randomBytes(3).toString('hex')}`);
+    let moved = false;
+    let swapped = false;
+    try {
+        fs.renameSync(stagingDir, home);
+        moved = true;
+        if (hadCurrent) fs.renameSync(current, previous);
+        swapped = hadCurrent;
+        fs.symlinkSync(home, current, 'junction');
+    } catch (error) {
+        if (swapped) try { fs.renameSync(previous, current); } catch { }
+        if (moved) try { fs.renameSync(home, stagingDir); } catch { }
+        fail(CODES.ACTIVATE_FAILED, `could not link the staged payload into place (${error.code || 'error'}); the previous payload is still current`, { cause: error.code || null });
+    }
+    sweepLive(installRoot);
+    return { home };
 }
 
 module.exports = {
@@ -780,6 +945,8 @@ module.exports = {
     LOCAL_FILES,
     PARTIAL_SUFFIX,
     DEV_UNSIGNED_ENV,
+    LIVE_DIR,
+    LAYOUT_ENV,
     PayloadError,
     canonicalJson,
     canonicalBytes,
@@ -802,8 +969,11 @@ module.exports = {
     stageSelection,
     listStaging,
     cleanStaging,
+    activationLayout,
     recoverInstall,
     activate,
+    removePayloadEntry,
+    sweepLive,
     verifyCli
 };
 

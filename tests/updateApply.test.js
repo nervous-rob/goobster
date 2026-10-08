@@ -277,6 +277,29 @@ describe('the settle window after every worker is ready', () => {
         expect(make({ GOOBSTER_UPDATE_SETTLE_MS: 'soon' }).settleMs()).toBe(30_000);
         expect(make({ GOOBSTER_UPDATE_SETTLE_MS: '8000' }, { settleMs: 5 }).settleMs()).toBe(5);
     });
+
+    test('a manager running from a payload under live/ (the linked layout) is self-replacing, also after current names another payload', () => {
+        const { createApplier } = require('@goobster/manager/update/apply');
+        const code = tempDir(roots, 'code');
+        const live = path.join(code, 'live');
+        for (const name of ['b-000001', 'c-000002']) fs.mkdirSync(path.join(live, name, 'app'), { recursive: true });
+        fs.symlinkSync(path.join(live, 'b-000001'), path.join(code, 'current'), 'junction');
+        const doc = { roots: { code } };
+        const make = (root) => createApplier({ core: { settings: { storeDir: path.join(code, 'store'), root }, now: () => new Date(), state: {}, deps: {}, env: {} }, store: {}, journal: {} });
+
+        // started through the POSIX launcher: the physical path of the payload current named
+        const fromB = make(path.join(live, 'b-000001', 'app'));
+        expect(fromB.handoffAvailability(doc).selfReplacing).toBe(true);
+        // an activation points current at the next payload; this process still runs from b
+        fs.unlinkSync(path.join(code, 'current'));
+        fs.symlinkSync(path.join(live, 'c-000002'), path.join(code, 'current'), 'junction');
+        expect(fromB.handoffAvailability(doc).selfReplacing).toBe(true);
+        // started through the Windows launcher: the logical path through the link
+        expect(make(path.join(code, 'current', 'app')).handoffAvailability(doc).selfReplacing).toBe(true);
+        // a manager run from a checkout somewhere else is not replaced by an update
+        const elsewhere = tempDir(roots, 'elsewhere');
+        expect(make(path.join(elsewhere, 'app')).handoffAvailability(doc).selfReplacing).toBe(false);
+    });
 });
 
 describe('a failure after the new release is active', () => {

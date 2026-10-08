@@ -563,7 +563,7 @@ function createInstallCore({ settings, fs = nodeFs, now = () => new Date(), logg
     }
 
     function removeOwnedPath(target, roots) {
-        return paths.removeOwned(target, { codeRoot: roots.code, home: deps.home, fs });
+        return paths.removeOwned(target, { codeRoot: roots.code, home: deps.home, fs, payloadRoot: roots.code });
     }
 
     return {

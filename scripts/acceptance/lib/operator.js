@@ -14,7 +14,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const IS_WINDOWS = process.platform === 'win32';
-const PASS_THROUGH = ['PATH', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'SYSTEMROOT', 'ComSpec', 'COMSPEC', 'PATHEXT', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'];
+/** What the processes the driver starts inherit; GOOBSTER_PAYLOAD_LAYOUT lets a POSIX host run the Windows (linked) payload layout. */
+const PASS_THROUGH = ['PATH', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'SYSTEMROOT', 'ComSpec', 'COMSPEC', 'PATHEXT', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'GOOBSTER_PAYLOAD_LAYOUT'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

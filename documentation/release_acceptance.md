@@ -203,6 +203,7 @@ the workflow for hosted runs; the local files live outside the repository.
 | linux-x64, new, existing Postgres server, minimal | 12 pass, 1 n/a; 9 of 9 injections pass | The server is a local PostgreSQL 17 with pgvector and citext pre-created, reached through a role that is not a superuser. `features` n/a. `migrate` ran: engine `postgres` after the manager restart (finding 4); `reset` ran refused, then with the URL (finding 3). Update downtime 6.9 s. |
 | linux-x64, adopt, SQLite, minimal | 11 pass, 2 n/a; 9 of 9 injections pass | The driver installs, deletes the manager's store, and the manager adopts what is left (the adopted release then stays at keep-data uninstall: finding 7). `features`, `migrate` n/a. Update downtime 6.6 s. |
 | linux-x64, new, managed Postgres (Docker) | n/a | `docker info` fails on this VM: the cell is `missing` in the table, not run. |
+| linux-x64, new, SQLite, minimal, **linked payload layout** (`GOOBSTER_PAYLOAD_LAYOUT=linked`) | 11 pass, 2 n/a; 9 of 9 injections pass | The Windows layout (finding 20) run on Linux with symbolic links standing in for junctions: `current` and `previous` are links into `live/`, the update swaps them under the running manager, the manager hands over with exit 76, the interrupted update finishes on the next start, and both uninstalls remove the links with their payloads. Update downtime 6.8 s. |
 
 What the runs measured, from the evidence files:
 
@@ -423,6 +424,45 @@ regression test:
     name it wanted. Listings are now split on either line end
     (`apps/manager/update/archive.js`; `tests/updateStage.test.js` drives
     the listing and the member read through a tar that answers with CR LF).
+20. **Fixed: no update could be applied on Windows.** With the archive read
+    (findings 16 and 19) `update apply --now` reached the `activate` step
+    and failed there: `EPERM ... rename '<code>\current' -> '<code>\previous'`.
+    The staged-update design swaps `current` *before* the manager leaves
+    with exit 76, while the manager still runs from it; that is fine on
+    POSIX, where a rename moves an inode, and impossible on Windows, where a
+    directory with any open handle beneath it (the manager's own `node.exe`,
+    its native addons, the workers' working directory) cannot be renamed,
+    whatever the handles' sharing mode. The payload layout on Windows is now
+    the one Windows deployments use: every activated payload stays under
+    `<code>\live\<name>` and `current` and `previous` are directory junctions
+    to those, so an activation moves the staged directory under `live\`,
+    renames the `current` junction to `previous` and creates a new junction —
+    links hold nothing open, and the running manager keeps its handles on the
+    old payload until it exits (`activationLayout` and the `linked` layout in
+    `scripts/lib/payloadStage.js`; the installer's own links are the one kind
+    of link the removal guard accepts, `isPayloadLink` in
+    `apps/manager/install/paths.js`). POSIX keeps the rename layout the
+    other eighteen cells proved. Two consequences for the apply machine:
+    a manager that runs from a payload under `live\` is *self-replacing*
+    whichever payload `current` names at the moment (the process's code
+    location is resolved once, when the applier is made, so the swap it
+    performs does not change the answer — without this the old manager
+    verified the new release in-process, `handoffMode` `inline`, and the
+    interrupted-update injection left the install in recovery), and a
+    rollback performed by the manager running from the payload being put
+    aside drops only the link and leaves that payload for the next
+    activation's sweep (`removePayloadEntry(entry, { keepTarget })`), so a
+    process never deletes its own code. The POSIX launcher judges
+    "started from `current`" by the path it was reached by (`pwd -L`), not
+    the physical path, so `goobster.env` is still read through a link.
+    `GOOBSTER_PAYLOAD_LAYOUT=linked` runs the Windows layout on a POSIX host
+    with symbolic links; the local linux-x64 cell was run that way end to
+    end (results above). Specs: `tests/payloadStage.test.js` (the linked
+    activation, its failure path, recovery, sweep, `keepTarget`),
+    `tests/updateApply.test.js` (self-replacing under `live/` before and
+    after the swap), `tests/installEngine.test.js` (an uninstall over the
+    linked layout), `tests/packagePayloadRules.test.js` (the launcher through
+    a link). Docs: `packaging.md`, `manager_update.md`, `windows_install.md`.
 
 ## Cells no hosted runner can give
 

@@ -136,7 +136,12 @@ timer applies it when the window opens.
 4. `activate`: the barrier moves to its `mutate` phase, `watchdog.json` and
    `handoff.json` are written (phase `activating`), the new release is
    swapped in atomically (`current` points at it), and the handoff becomes
-   `pending`.
+   `pending`. The swap happens while the old manager still runs from
+   `current`: on POSIX a rename of the payload directory, on Windows — where a
+   directory with an open handle beneath it cannot be renamed — a swap of the
+   `current` junction to a payload under `<code>\live\` (the `linked`
+   layout of `scripts/lib/payloadStage.js`, see `packaging.md`); the old
+   manager keeps running from the old payload until it leaves.
 5. `handoff`: see [The handoff](#the-handoff).
 6. `verify`: the workers restart, are verified and then watched for the
    settle window (below).
@@ -221,6 +226,18 @@ system's supervisor instead of verifying in the old process:
 | `offline` | no manager daemon, the command line applied it | the new release is in place and the apply completes the next time a manager starts |
 
 (75 is the exit code of the *workers'* restart request; 76 is the manager's.)
+`selfReplacing` compares the manager's root with `<code>/current` both as
+written and as the file system resolves them, so a Windows manager started
+through the `current` junction still knows it runs from the payload. Under
+the linked layout the answer is also yes for any payload under `<code>/live`,
+judged by the payload the process *started* from (resolved once, when the
+applier is made): after the swap `current` names the new payload while the
+old manager still executes the old one, and that manager must still hand
+over rather than verify in-process. For the same reason a rollback performed
+by the process running from the release being put aside removes only the
+`current` link and leaves that payload for the next activation's sweep
+(`removePayloadEntry(entry, { keepTarget })`); a process never deletes the
+code it is executing.
 
 The handoff is durable. `handoff.json` carries a phase, which is written
 before the step it announces: `activating` (swap in progress), `pending`
@@ -483,6 +500,14 @@ last apply and its downtime, and the recovery state.
   refuses (`FlushFileBuffers` needs write access), so `update stage` ended in
   `DOWNLOAD_FAILED` for every source kind. The handle is now opened for
   writing (`apps/manager/update/source.js`, `tests/updateStage.test.js`).
+  Its later Windows runs found the archive read with the wrong `tar` and
+  split on the wrong line end (`ARCHIVE_UNREADABLE`, `MANIFEST_MISSING`,
+  `apps/manager/update/archive.js`), and then that `update apply` failed at
+  `activate` with `EPERM` on the rename of `current`: Windows refuses to
+  rename a directory with an open handle beneath it, and the manager runs
+  from `current`. Windows now uses the linked payload layout (`current` a
+  junction into `<code>\live\`, swapped under the running manager); see
+  `packaging.md` and `release_acceptance.md` finding 20.
 - **Not executed:** the Windows (WinSW) and macOS (launchd) handoff under the
   real service host (the matrix drives the manager as the host would, from a
   restart loop, not under WinSW or launchd); a `github-release` source

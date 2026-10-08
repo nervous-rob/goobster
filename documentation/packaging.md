@@ -329,8 +329,33 @@ probes use it; from a source checkout the same command is
   a crash between the two renames by restoring `previous/` when `current/`
   is missing, and returns `ok`, `restored-previous` or `empty`.
 
-On Windows a directory with running code cannot be renamed. The manager
-must stop the service before activating and start it afterwards.
+That is the `rename` layout, which POSIX uses: a rename moves an inode and a
+program running from the directory never notices. Windows cannot: a directory
+with any open handle beneath it (the manager's own `node.exe`, its native
+addons, a worker's working directory) cannot be renamed, whatever the sharing
+mode of the handles, and the manager that applies an update runs from
+`current/` itself. On Windows `activate` therefore uses the **`linked`
+layout** (`activationLayout(platform)`; `GOOBSTER_PAYLOAD_LAYOUT=linked|rename`
+overrides it, which is how the acceptance driver runs the Windows layout on
+Linux with symbolic links):
+
+  1. retires the old `previous` (the link and the payload it names);
+  2. moves the staged tree under `<installRoot>/live/<name>` (a crash here
+     leaves an orphan the next activation sweeps, and `current` untouched);
+  3. renames the `current` junction to `previous` (the gap `recoverInstall`
+     closes);
+  4. creates the `current` junction to the new payload.
+
+  A failure undoes what was done and puts the staged tree back. Links hold
+  nothing open, so the swap succeeds while the old payload runs, and the
+  running program keeps its handles on the old payload until it exits; a
+  payload directory still held when it is retired is swept at the next
+  activation (`sweepLive`). `removePayloadEntry` removes a link with its
+  payload, or a plain directory whole (with `keepTarget` only the link, for
+  a caller that runs from that payload); `live/` is one of the payload
+  directories the installer owns and removes at uninstall, and the
+  installer's own `current`/`previous` links are the one kind of link its
+  removal guard accepts (`isPayloadLink`).
 
 ## Signing and development mode
 

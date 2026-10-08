@@ -530,9 +530,13 @@ while [ -h "$SELF" ]; do
     case "$link" in /*) SELF=$link ;; *) SELF="$(dirname "$SELF")/$link" ;; esac
 done
 PAYLOAD=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -P)
+# The name this launcher was reached by, links in the path kept: an installation's \`current\`
+# may be a link to the payload (the linked layout, documentation/packaging.md), and it is that
+# name, not the directory it resolves to, that says whether goobster.env applies.
+REACHED=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -L)
 
-ENV_FILE="$(dirname -- "$PAYLOAD")/goobster.env"
-if [ "$(basename -- "$PAYLOAD")" = "current" ] && [ -r "$ENV_FILE" ]; then
+ENV_FILE="$(dirname -- "$REACHED")/goobster.env"
+if [ "$(basename -- "$REACHED")" = "current" ] && [ -r "$ENV_FILE" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
             GOOBSTER_[A-Z0-9_]*=*)

@@ -9,6 +9,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const childProcess = require('node:child_process');
 
 const rules = require('../scripts/lib/packageRules');
 const { inspectBinary, looksLikeBinary, compareVersions, maxVersion } = require('../scripts/lib/nativeBinaryInfo');
@@ -223,11 +224,42 @@ describe('the manager launchers the payload carries', () => {
 
     test('an installed POSIX payload (<code root>/current) takes its roots from <code root>/goobster.env, environment first', () => {
         const text = launchers.posixManager;
-        expect(text).toContain('ENV_FILE="$(dirname -- "$PAYLOAD")/goobster.env"');
-        expect(text).toContain('if [ "$(basename -- "$PAYLOAD")" = "current" ] && [ -r "$ENV_FILE" ]; then');
+        expect(text).toContain('ENV_FILE="$(dirname -- "$REACHED")/goobster.env"');
+        expect(text).toContain('if [ "$(basename -- "$REACHED")" = "current" ] && [ -r "$ENV_FILE" ]; then');
         expect(text).toContain('GOOBSTER_[A-Z0-9_]*=*)');
         expect(text).toContain('if ! printenv "$key" >/dev/null 2>&1; then');
         expect(text.indexOf('goobster.env')).toBeLessThan(text.indexOf('GOOBSTER_DATA_DIR="${GOOBSTER_DATA_DIR:-'));
+    });
+
+    test('the POSIX launcher judges "current" by the name it was reached by (links kept), not by the directory that name resolves to', () => {
+        const text = launchers.posixManager;
+        // the linked layout makes `current` a link into live/: a physical path would never be named current
+        expect(text).toContain('REACHED=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -L)');
+        expect(text).toContain('PAYLOAD=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -P)');
+        expect(text).not.toContain('basename -- "$PAYLOAD"');
+    });
+
+    test('the POSIX launcher run through a current link that names a payload under live/ reads goobster.env', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-launcher-'));
+        try {
+            const live = path.join(root, 'live', 'p-000001');
+            fs.mkdirSync(path.join(live, 'bin'), { recursive: true });
+            fs.mkdirSync(path.join(live, 'runtime', 'bin'), { recursive: true });
+            fs.mkdirSync(path.join(live, 'app', 'apps', 'manager'), { recursive: true });
+            fs.writeFileSync(path.join(live, 'bin', 'goobster-manager'), launchers.posixManager, { mode: 0o755 });
+            // a stand-in node that prints the roots the launcher exported
+            fs.writeFileSync(path.join(live, 'runtime', 'bin', 'node'), '#!/bin/sh\nprintf "%s|%s\\n" "$GOOBSTER_DATA_DIR" "$GOOBSTER_WORKSPACE_ROOT"\n', { mode: 0o755 });
+            fs.symlinkSync(live, path.join(root, 'current'));
+            fs.writeFileSync(path.join(root, 'goobster.env'), 'GOOBSTER_DATA_DIR=/srv/goobster-data\n');
+            const env = { PATH: process.env.PATH, HOME: root };
+            const out = childProcess.spawnSync('/bin/sh', [path.join(root, 'current', 'bin', 'goobster-manager'), 'status'], { env, encoding: 'utf8' });
+            expect(out.status).toBe(0);
+            const [data, workspace] = out.stdout.trim().split('|');
+            expect(data).toBe('/srv/goobster-data');
+            expect(fs.realpathSync(workspace)).toBe(fs.realpathSync(path.join(live, 'app')));
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 
     test('the Windows payload launcher reads the same file the same way, so the installed current\\bin launcher sees the installation and not %LOCALAPPDATA%', () => {

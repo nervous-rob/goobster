@@ -23,7 +23,7 @@ const SERVICE_KINDS = Object.freeze(['systemd', 'pm2', 'docker', 'windows-servic
 const UPDATER_KINDS = Object.freeze(['manager', 'auto-update.sh', 'pm2', 'none']);
 const DEPENDENCY_KINDS = Object.freeze(['binary', 'python-venv', 'npm', 'service', 'library']);
 const ROOT_ROLES = Object.freeze(['code', 'data', 'config', 'cache', 'logs', 'uploads', 'managerStore']);
-const PAYLOAD_DIRS = Object.freeze(['current', 'previous', 'staging', 'releases']);
+const PAYLOAD_DIRS = Object.freeze(['current', 'previous', 'staging', 'releases', 'live']);
 const DB_ENGINES = Object.freeze(['sqlite', 'postgres']);
 
 const isText = (value, max = 4096) => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');
@@ -57,7 +57,7 @@ function envForRoots(roots) {
 /**
  * Roots the engine owns for an installation: roots only, never a listing.
  * `scope` says how much of the path is ours: `payload` is only the
- * `current/previous/staging/releases` directories of the code root,
+ * `current/previous/staging/releases/live` directories of the code root,
  * `tree` is the whole directory, `file` one file.
  */
 function ownedFiles({ origin, roots }) {

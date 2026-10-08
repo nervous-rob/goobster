@@ -18,6 +18,7 @@ const {
 const { createStore } = require('@goobster/manager/store/installation');
 const tombstone = require('@goobster/manager/install/tombstone');
 const { discover } = require('@goobster/manager/install/discover');
+const paths = require('@goobster/manager/install/paths');
 
 const POSTGRES_URL = process.env.GOOBSTER_DB_URL || null;
 const cleanup = [];
@@ -408,6 +409,30 @@ describe('refusals', () => {
         expect(await codeOf(drive(harness, 'install.uninstall', {}))).toBe('PATH_ESCAPE');
         expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('keep me');
         expect(fs.existsSync(path.join(harness.code, 'current'))).toBe(true);
+    });
+
+    test('the linked layout (Windows): current and previous links into <code>/live are the installer\'s own and an uninstall removes them with their payloads', async () => {
+        const { harness } = await freshInstall();
+        const live = path.join(harness.code, 'live');
+        fs.mkdirSync(live, { recursive: true });
+        // turn the real `current` into the linked layout by hand, as activate() does on win32
+        fs.renameSync(path.join(harness.code, 'current'), path.join(live, 'a-000001'));
+        fs.symlinkSync(path.join(live, 'a-000001'), path.join(harness.code, 'current'));
+        fs.mkdirSync(path.join(live, 'b-000002'));
+        fs.writeFileSync(path.join(live, 'b-000002', 'payload-manifest.json'), '{}');
+        fs.symlinkSync(path.join(live, 'b-000002'), path.join(harness.code, 'previous'));
+        // a link beside them that names something else is still refused by the guard
+        const outside = scratch('outside-linked');
+        expect(paths.isPayloadLink(path.join(harness.code, 'current'), harness.code)).toBe(true);
+        expect(paths.isPayloadLink(path.join(harness.code, 'previous'), harness.code)).toBe(true);
+        fs.symlinkSync(outside, path.join(harness.code, '.retired-0000'));
+        expect(paths.isPayloadLink(path.join(harness.code, '.retired-0000'), harness.code)).toBe(false);
+        expect(() => paths.assertRemovable(path.join(harness.code, '.retired-0000'), { payloadRoot: harness.code })).toThrow(expect.objectContaining({ code: 'PATH_ESCAPE' }));
+        fs.unlinkSync(path.join(harness.code, '.retired-0000'));
+
+        expect(await codeOf(drive(harness, 'install.uninstall', {}))).toBe('OK');
+        for (const name of ['current', 'previous', 'live']) expect(fs.existsSync(path.join(harness.code, name))).toBe(false);
+        expect(fs.lstatSync(harness.code).isDirectory()).toBe(true);
     });
 
     test('a cache root that is a symlink or a path that climbs with ".." is refused before anything is written', async () => {

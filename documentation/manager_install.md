@@ -135,7 +135,9 @@ credential), or claimed and asked locally/over a session. Steps:
 - `write-config` writes the supplied config fields through the field
   catalog (secrets by value, from the answers file or the prompt, never from
   argv); `write-features` writes `data/features.json` for the selection.
-- `activate` is the atomic switch of `current/` with `previous/` kept.
+- `activate` is the atomic switch of `current/` with `previous/` kept (on
+  Windows `current` and `previous` are junctions into `<code>\live\`; see
+  `packaging.md`).
 - `register-service` registers the installation's service (Linux: creates the
   `goobster` account when `createRuntimeUser` is set, writes
   `<code root>/goobster.env`, registers a marker-bearing systemd unit and records it

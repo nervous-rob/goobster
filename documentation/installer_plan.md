@@ -79,8 +79,20 @@ with no argument (a substring of an undefined variable makes `cmd.exe` abort
 the batch file with "The syntax of the command is incorrect", exit 255; every
 other door passes an argument, so no Windows journey had run it bare), and
 the archive listing from Windows' bsdtar ends its lines with CR LF, which made
-the manifest "missing"
-([release_acceptance.md](release_acceptance.md#findings), findings 16 to 19).
+the manifest "missing". The sixth run, with the archive read and every other
+Windows step and injection green, reached the one design defect under them
+all: `update apply` swaps `current` while the manager still runs from it,
+which POSIX allows (a rename moves an inode) and Windows never does (a
+directory with an open handle beneath it cannot be renamed, whatever the
+sharing mode), so the activation failed `EPERM`. On Windows the payload
+layout is now the linked one Windows deployments use: activated payloads
+live under `<code>\live\`, `current` and `previous` are junctions, and an
+activation swaps links that hold nothing open
+([packaging.md](packaging.md#staging-and-activation),
+[windows_install.md](windows_install.md#default-roots)); POSIX keeps the
+rename layout the other eighteen cells proved, and the acceptance driver ran
+the linked layout on Linux end to end with `GOOBSTER_PAYLOAD_LAYOUT=linked`
+([release_acceptance.md](release_acceptance.md#findings), findings 16 to 20).
 Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each

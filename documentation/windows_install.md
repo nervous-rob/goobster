@@ -170,6 +170,17 @@ only one replaced on an update; data, config and the manager's store are never
 read, written or moved by a payload change, so the data root may live on
 another drive and every folder name may contain spaces.
 
+Inside the code root, `current` and `previous` are **directory junctions**
+on Windows, not folders: each activated payload lives under `<code>\live\`,
+and an install, update or rollback swaps the junction rather than renaming
+the folder the running manager and its workers hold open (Windows refuses
+to rename a directory with an open handle beneath it; a junction holds
+nothing open, and the running program keeps its handles on the old payload
+until it exits). `dir <code>` shows them as `<JUNCTION>`; every path through
+`current\...` works as on the other platforms, and `goobster-manager
+uninstall` removes the junctions with the payloads they name. On Linux and
+macOS `current` is the payload directory itself.
+
 A root the **service** will use must be a full drive path (`D:\...`), at least
 two folders deep, without `<>"|?*%`, control characters, `..`, a UNC name, a
 reserved device name (`CON`, `NUL`, `COM1`...) or a trailing dot or space, and
