@@ -87,7 +87,7 @@ async function main() {
         for (let i = 0; i < 5; i++) {
             await sleep(1000);
             const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) });
-            assert.ok(response.ok(), 'the installed API must keep serving after the browser exits');
+            assert.ok(response.ok, 'the installed API must keep serving after the browser exits');
         }
         console.log('PASS: the installed API remains healthy after closing the manager page and browser process');
     }
