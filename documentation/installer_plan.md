@@ -29,8 +29,9 @@ Playwright). The real-platform workflows (`linux-bootstrap.yml`,
 `macos-bootstrap.yml`, `windows-bootstrap.yml`, `native-postgres.yml`) passed
 on the merged tree at `707c3fc`.
 
-Still open: #343's acceptance matrix (driver, hosted workflow, report; PR
-#377, where the 19 hosted cells run for the first time). Its first hosted run
+The last to land: #343's acceptance matrix (driver, hosted workflow, report;
+PR #377, where the 19 hosted cells ran for the first time and, on the seventh
+run, all passed). Its first hosted run
 found three defects that the same PR fixes: the documented SQLite-with-data →
 `database docker provision` → `migrate` path was refused with
 `TARGET_NOT_EMPTY` because the preflight counted relations and provisioning
@@ -93,6 +94,12 @@ activation swaps links that hold nothing open
 rename layout the other eighteen cells proved, and the acceptance driver ran
 the linked layout on Linux end to end with `GOOBSTER_PAYLOAD_LAYOUT=linked`
 ([release_acceptance.md](release_acceptance.md#findings), findings 16 to 20).
+**The seventh run passed all nineteen cells**, Windows included: every step
+and injection a cell can run, on linux x64 and arm64 (new and adopt, SQLite
+and managed Postgres, minimal and representative), macOS arm64 and x64, and
+Windows; the matrix table in `release_acceptance.md` is generated from that
+run's evidence
+([release_acceptance.md](release_acceptance.md#results-of-the-runs-done-so-far)).
 Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each
@@ -757,7 +764,8 @@ runbooks name and do not close: #249 (the restore drill on a real second host),
 for #372.
 
 **Status (P5.3 matrix half, #343): the acceptance driver, the workflow and the
-generated matrix are built; only the local linux-x64 cells have run.**
+generated matrix are built, and the hosted matrix passed on all nineteen
+cells (2026-10-08, PR #377, seventh run).**
 `documentation/release_acceptance.md` is the reference. `scripts/acceptance/run.js`
 runs one cell (install new or adopt; SQLite, an existing Postgres server or
 Docker-managed Postgres; minimal, representative or full features) through the
@@ -771,14 +779,19 @@ Windows: new, SQLite, minimal) with read-only permissions and no secrets,
 uploading evidence from every cell; `scripts/acceptance/report.js` renders the
 table. Local runs on 2026-10-08 (artifact 1.0.0, development-signed) passed
 every step and injection that applies on four cells (SQLite minimal and
-representative, an existing Postgres server, an adopted installation); the
-managed-Postgres, macOS, Windows and linux-arm64 cells are written and
-structurally tested but have not run, and a Raspberry Pi is deferred. The runs
-found and fixed two manager defects (a silent exit of a CLI command waiting on
+representative, an existing Postgres server, an adopted installation) and on
+the Windows payload layout run under Linux; the hosted run of the same day
+passed all nineteen cells — managed Postgres, macOS, Windows and linux-arm64
+included — after six runs that each found defects the PR fixed (findings 8 to
+20 in `release_acceptance.md`); a Raspberry Pi is deferred. The runs found and
+fixed two manager defects locally (a silent exit of a CLI command waiting on
 the maintenance barrier; a restore over a SQLite file that is not a database)
-and left two operator-visible behaviours open (the CLI does not read the
-manager's database overlay; the switch to Postgres reaches the running manager
-at its next start). The operator recovery runbooks are the other half of P5.3.
+and thirteen more on the hosted runners (most of them Windows: the archive
+download, the archive read, the launcher with no argument, the payload
+activation under a running manager), and left two operator-visible behaviours
+open (the CLI does not read the manager's database overlay; the switch to
+Postgres reaches the running manager at its next start). The operator recovery
+runbooks are the other half of P5.3.
 
 ## Audits before implementation
 

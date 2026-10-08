@@ -138,23 +138,23 @@ secret-like replaced by a note. The report reads only `evidence-*.json`.
 | linux-x64 | new | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | linux-x64 | new | sqlite | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | linux-x64 | new | existing-pg | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
-| linux-x64 | new | managed-pg | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-x64 | new | managed-pg | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
+| linux-x64 | new | managed-pg | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-x64 | new | managed-pg | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | linux-x64 | adopt | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
-| linux-x64 | adopt | sqlite | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-x64 | adopt | managed-pg | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-x64 | adopt | managed-pg | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | new | sqlite | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | new | sqlite | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | new | managed-pg | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | new | managed-pg | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | adopt | sqlite | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | adopt | sqlite | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | adopt | managed-pg | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| linux-arm64 | adopt | managed-pg | representative | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| darwin-arm64 | new | sqlite | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| darwin-x64 | new | sqlite | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
-| win32-x64 | new | sqlite | minimal | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing | missing |
+| linux-x64 | adopt | sqlite | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-x64 | adopt | managed-pg | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-x64 | adopt | managed-pg | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | new | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | new | sqlite | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | new | managed-pg | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | new | managed-pg | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | adopt | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | adopt | sqlite | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | adopt | managed-pg | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| linux-arm64 | adopt | managed-pg | representative | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| darwin-arm64 | new | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| darwin-x64 | new | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| win32-x64 | new | sqlite | minimal | pass | pass | pass | n/a | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass | pass | n/a | pass | pass | pass | pass | pass |
 | linux-x64 | major upgrade | sqlite | minimal | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred |
 | linux-x64 | new | sqlite | full | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred |
 | linux-x64 | new | existing-pg | representative | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred | deferred |
@@ -166,10 +166,26 @@ Columns: `install` = install; `owner` = first owner; `chat` = first chat turn; `
 
 | cell | artifact | commit | runner image | date | steps pass/fail/n.a. | injections pass/fail/n.a. |
 | --- | --- | --- | --- | --- | --- | --- |
-| linux-x64/new/sqlite/minimal | 1.0.0 (minimal: core) | 8c84eaf3a4bc | local Linux 6.12.94+ | 2026-10-08 | 11/0/2 | 9/0/0 |
-| linux-x64/new/sqlite/representative | 1.0.0 (custom: core, economy, exchange, tavern) | 8c84eaf3a4bc | local Linux 6.12.94+ | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-x64/new/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 11/0/2 | 9/0/0 |
+| linux-x64/new/sqlite/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 12/0/1 | 9/0/0 |
 | linux-x64/new/existing-pg/minimal | 1.0.0 (minimal: core) | 8c84eaf3a4bc | local Linux 6.12.94+ | 2026-10-08 | 12/0/1 | 9/0/0 |
-| linux-x64/adopt/sqlite/minimal | 1.0.0 (minimal: core) | 8c84eaf3a4bc | local Linux 6.12.94+ | 2026-10-08 | 11/0/2 | 9/0/0 |
+| linux-x64/new/managed-pg/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-x64/new/managed-pg/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 13/0/0 | 9/0/0 |
+| linux-x64/adopt/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 11/0/2 | 9/0/0 |
+| linux-x64/adopt/sqlite/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-x64/adopt/managed-pg/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-x64/adopt/managed-pg/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04 | 2026-10-08 | 13/0/0 | 9/0/0 |
+| linux-arm64/new/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 11/0/2 | 9/0/0 |
+| linux-arm64/new/sqlite/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-arm64/new/managed-pg/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-arm64/new/managed-pg/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 13/0/0 | 9/0/0 |
+| linux-arm64/adopt/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 11/0/2 | 9/0/0 |
+| linux-arm64/adopt/sqlite/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-arm64/adopt/managed-pg/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 12/0/1 | 9/0/0 |
+| linux-arm64/adopt/managed-pg/representative | 1.0.0 (custom: core, economy, exchange, tavern) | db2da4a9f6f7 | ubuntu-24.04-arm | 2026-10-08 | 13/0/0 | 9/0/0 |
+| darwin-arm64/new/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | macos-15 | 2026-10-08 | 11/0/2 | 9/0/0 |
+| darwin-x64/new/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | macos-15-intel | 2026-10-08 | 11/0/2 | 9/0/0 |
+| win32-x64/new/sqlite/minimal | 1.0.0 (minimal: core) | db2da4a9f6f7 | windows-2022 | 2026-10-08 | 11/0/2 | 8/0/1 |
 
 Deferred cells:
 
@@ -180,11 +196,43 @@ Deferred cells:
 - win32-x64, new, managed-pg, minimal: Desktop PostgreSQL (Docker Desktop on Windows): hosted Windows runners cannot run Linux containers.
 - linux-x64, major upgrade, sqlite, minimal: Major upgrades (a release that changes the database schema, and the recovery decision that follows a failed one): the fake release in this driver changes only a version.
 
-Hosted cells with no evidence yet: 16 (shown as `missing`).
-
 <!-- acceptance-matrix:end -->
 
 ## Results of the runs done so far
+
+### Hosted run, 2026-10-08
+
+The generated table above is from the `release-acceptance.yml` run on the
+commit recorded in its `commit` column (the pull request merge commit of
+driver `0c8ddef`, PR #377): **all nineteen hosted cells passed every step and
+injection they can run** — linux-x64 and linux-arm64 (`ubuntu-24.04`,
+`ubuntu-24.04-arm`) in `new` and `adopt` mode on SQLite and Docker-managed
+Postgres with the minimal and representative payloads, macOS on arm64
+(`macos-15`) and x64 (`macos-15-intel`), and Windows (`windows-2022`). The
+`n/a` entries are the ones the step definitions call for: `features` on a
+minimal payload, `migrate` on a cell that stays on SQLite, and the
+storage-refusal injection on Windows (no POSIX directory modes). It took seven
+runs to get there; findings 8 to 20 below are what the first six found, each
+fixed with a regression test before the next run. From the evidence files:
+
+- The staged update ran end to end (check, stage, apply, exit-76 handoff,
+  the new manager's verification) in 40 to 59 seconds on the Linux and
+  macOS arm64 runners, 55 seconds on Windows and 138 seconds on the Intel
+  macOS runner; the downtime the manager measured, from quiesce to release,
+  was 6.3 to 7.7 seconds everywhere but Windows (9.3 s) and Intel macOS
+  (12.1 s). The interrupted update finished the same way on every cell.
+- Boot recovery was back with healthy workers and the owner's conversation
+  intact in 5 to 8 seconds.
+- The SQLite to Postgres migration into the Docker-managed server took 18 to
+  31 seconds for a database of one conversation, including provisioning.
+- The managed-Postgres cells ran `migrate`, `reset` with the database URL, and
+  the full lifecycle against the pinned `pgvector/pgvector:pg17` image with
+  PostgreSQL 17 client tools (finding 11).
+
+The local existing-Postgres row in the table is from the local run below (the
+hosted matrix has no existing-server cell: see the deferred list).
+
+### Local runs, 2026-10-08
 
 Runs on the local development VM (Ubuntu 24.04 container, Linux 6.12, x64,
 the driver on Node 22.14, the payload carrying its bundled Node 22.23.3), on
@@ -218,11 +266,10 @@ What the runs measured, from the evidence files:
   seconds; the SQLite to Postgres migration about 10 seconds for a database of
   one conversation.
 
-Not exercised by any local run: the managed-Postgres cell (Docker is not
-usable on this VM), the macOS, Windows and linux-arm64 cells, the `adopt` mode
-with the representative payload, the full profile, and a real Raspberry Pi.
-They are `missing` in the table until the workflow has run, or `deferred`
-below.
+Not exercised by any local run: the managed-Postgres cells (Docker is not
+usable on this VM), the macOS, Windows and linux-arm64 cells, and the `adopt`
+mode with the representative payload — the hosted run above covers all of
+them. The full profile and a real Raspberry Pi are `deferred` below.
 
 ## Findings
 
@@ -491,10 +538,10 @@ claimed as passed.
 
 ### Raspberry Pi and ARM64
 
-linux-arm64 is proven on the hosted `ubuntu-24.04-arm` runner once the
-workflow has produced evidence for it (the table shows `missing` until then;
-the packaging proof, `documentation/packaging_proof.md`, already ran the
-payload's smoke check on that runner). **A Raspberry Pi 4B is not**: no hosted
+linux-arm64 is proven on the hosted `ubuntu-24.04-arm` runner: all eight
+arm64 cells passed in the hosted run above (the packaging proof,
+`documentation/packaging_proof.md`, had already run the payload's smoke check
+on that runner). **A Raspberry Pi 4B is not**: no hosted
 runner has its memory limit, SD-card I/O or thermal behaviour, so the Pi cell
 stays `deferred` and is the owner's to run by hand with the same driver
 (`node scripts/acceptance/run.js --install adopt --db sqlite --features
