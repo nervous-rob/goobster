@@ -10,7 +10,8 @@ tags: [installer, acceptance, release, matrix, ci, recovery, failure-injection, 
 This is the matrix half of installer plan item P5.3 (issue #343, epic #315):
 run the whole lifecycle of a release, as an operator would, on every platform
 a hosted runner can give, and record what happened. The operator recovery
-runbooks are the other half and live in their own documents (see
+runbooks are the other half: start with [operator_runbooks.md](operator_runbooks.md),
+then the detailed references (see
 `documentation/getting_started.md`, `documentation/host_operations.md`,
 `documentation/data_reset.md`, `documentation/db_migration.md`,
 `documentation/backup_and_restore.md` and `documentation/manager_update.md`).
@@ -204,7 +205,9 @@ Deferred cells:
 
 The generated table above is from the `release-acceptance.yml` run on the
 commit recorded in its `commit` column (the pull request merge commit of
-driver `0c8ddef`, PR #377): **all nineteen hosted cells passed every step and
+driver `0c8ddef`, PR #377,
+[run 37743801349](https://github.com/nervous-rob/goobster/actions/runs/37743801349)):
+**all nineteen hosted cells passed every step and
 injection they can run** — linux-x64 and linux-arm64 (`ubuntu-24.04`,
 `ubuntu-24.04-arm`) in `new` and `adopt` mode on SQLite and Docker-managed
 Postgres with the minimal and representative payloads, macOS on arm64
@@ -227,10 +230,44 @@ fixed with a regression test before the next run. From the evidence files:
   31 seconds for a database of one conversation, including provisioning.
 - The managed-Postgres cells ran `migrate`, `reset` with the database URL, and
   the full lifecycle against the pinned `pgvector/pgvector:pg17` image with
-  PostgreSQL 17 client tools (finding 11).
+  PostgreSQL 17 client tools (finding 13).
 
 The local existing-Postgres row in the table is from the local run below (the
 hosted matrix has no existing-server cell: see the deferred list).
+
+### CI verification checkpoint, 2026-10-08
+
+The final PR #377 head, `421540daa4d213f1da39c08e2899156477bedbef`, repeated
+the hosted result: all **19 cells plus the matrix report** passed in
+[run 37745881709](https://github.com/nervous-rob/goobster/actions/runs/37745881709).
+The job records and the Windows and Linux ARM64 managed-Postgres cell logs
+confirm the lifecycle and applicable injections ran; the report job downloaded
+all 19 evidence artifacts and published the
+[rendered matrix](https://github.com/nervous-rob/goobster/actions/runs/37745881709/artifacts/11536072784).
+The generated table and timings above retain their original seventh-run
+provenance; this later verification does not relabel them as a new run.
+
+| Evidence at the final PR #377 head | Result |
+|---|---|
+| [CI: SQLite, Postgres, Playwright, Docker Postgres and sandbox isolation](https://github.com/nervous-rob/goobster/actions/runs/37745881752) | All required jobs passed; optional live integrations were skipped on this PR run. |
+| [Packaging proof](https://github.com/nervous-rob/goobster/actions/runs/37745881674) | All five platform/architecture jobs and reduced Linux x64 payloads passed. |
+| [Linux bootstrap](https://github.com/nervous-rob/goobster/actions/runs/37745882197) | Ubuntu 24.04 x64 and ARM64 passed. |
+| [macOS bootstrap](https://github.com/nervous-rob/goobster/actions/runs/37745881751) | macOS 15 x64 and ARM64 passed. |
+| [Windows bootstrap](https://github.com/nervous-rob/goobster/actions/runs/37745881675) | Windows Server 2022 x64 passed. |
+| [Native Postgres](https://github.com/nervous-rob/goobster/actions/runs/37745881738) | Ubuntu 24.04 x64/ARM64, Debian 12 and Rocky 9 passed their separate provisioning workflow. |
+
+PR #377 merged as `987b0ba`; PR #379 then updated the implementation plan.
+At `main` `db2bdd96e738cd50b26d7a9e453c0335ec3eaea9`,
+[CI run 37750418734](https://github.com/nervous-rob/goobster/actions/runs/37750418734)
+passed, including both database engines and Playwright. Platform and acceptance
+evidence above belongs to the final PR head; those workflows did not rerun on
+this documentation-only main commit. The cancelled CI run on `987b0ba` is not
+credited as a pass.
+
+These are development-signed payloads, starting at version **1.0.0** and
+updating to synthetic **1.1.0** and **1.2.0** releases with the same schema.
+Passing this checkpoint does not qualify production-signed release artifacts
+or complete the outstanding requirements in #331–#333 and #340–#343.
 
 ### Local runs, 2026-10-08
 
@@ -250,7 +287,7 @@ the workflow for hosted runs; the local files live outside the repository.
 | linux-x64, new, SQLite, representative (core, economy, exchange, tavern) | 12 pass, 1 n/a; 9 of 9 injections pass | `migrate` n/a. `exchange` shipped on; turned off, added back (pending until the restart, then reaching its handler), removed (gated again). Update downtime 6.7 s. |
 | linux-x64, new, existing Postgres server, minimal | 12 pass, 1 n/a; 9 of 9 injections pass | The server is a local PostgreSQL 17 with pgvector and citext pre-created, reached through a role that is not a superuser. `features` n/a. `migrate` ran: engine `postgres` after the manager restart (finding 4); `reset` ran refused, then with the URL (finding 3). Update downtime 6.9 s. |
 | linux-x64, adopt, SQLite, minimal | 11 pass, 2 n/a; 9 of 9 injections pass | The driver installs, deletes the manager's store, and the manager adopts what is left (the adopted release then stays at keep-data uninstall: finding 7). `features`, `migrate` n/a. Update downtime 6.6 s. |
-| linux-x64, new, managed Postgres (Docker) | n/a | `docker info` fails on this VM: the cell is `missing` in the table, not run. |
+| linux-x64, new, managed Postgres (Docker) | n/a locally | `docker info` fails on this VM; not run locally. The hosted managed-Postgres cells passed and supply the generated table's results. |
 | linux-x64, new, SQLite, minimal, **linked payload layout** (`GOOBSTER_PAYLOAD_LAYOUT=linked`) | 11 pass, 2 n/a; 9 of 9 injections pass | The Windows layout (finding 20) run on Linux with symbolic links standing in for junctions: `current` and `previous` are links into `live/`, the update swaps them under the running manager, the manager hands over with exit 76, the interrupted update finishes on the next start, and both uninstalls remove the links with their payloads. Update downtime 6.8 s. |
 
 What the runs measured, from the evidence files:
@@ -560,18 +597,40 @@ Postgres take the Docker path (`managed-pg`) and an existing server
 
 ## Caveats
 
-- Only the local linux-x64 cells have run. The macOS and Windows cells, and the
-  arm64 cell, are written and structurally tested (`tests/releaseAcceptanceWorkflow.test.js`)
-  but not run; in particular the Windows launchers (`.cmd`), how a process is
-  killed by its process id there, and the POSIX-mode half of the storage
-  injection (which is `n/a` on Windows) are unverified.
-- The full-disk half of the storage injection is not exercised.
+- All 19 hosted cells passed on Linux x64/ARM64, macOS x64/ARM64 and Windows
+  x64 on 2026-10-08, including Windows launchers/process-tree handling and
+  the POSIX read-only storage injection. `n/a` remains explicit: minimal
+  payloads do not toggle optional features, SQLite-only cells do not migrate,
+  and Windows does not run the POSIX-mode storage injection.
+- The full-disk half of the storage injection is not exercised on any target;
+  the Windows storage-refusal case still needs an appropriate Windows test.
+- Hosted Linux ARM64 is not physical Raspberry Pi validation. The Pi 4B
+  adoption cell remains deferred, with memory, SD-card I/O and thermal
+  behaviour still unverified. The other deferred cells retain their reasons
+  above; supported native Linux Postgres has separate provisioning evidence
+  but no integrated `native-pg` acceptance-driver cell yet.
+- The driver uses the installed manager CLI and HTTP APIs and simulates
+  supervisor restarts. It does not establish a browser wizard journey on
+  every native target, a real OS reboot, a host without a system toolchain,
+  or every service registration/uninstall interruption. Separate browser and
+  bootstrap CI is linked above; #331–#333 and #340 retain their own criteria.
 - The update step moves between two versions of the same payload; a release
   that changes the database schema, and the recovery decision after a failed
-  one, are covered by the manager's own tests and the local proof recorded in
-  `documentation/installer_plan.md` (P5.2), not by this matrix.
+  one, are not qualified by this matrix. #342 still records the pre-health
+  schema-rollback safety gap: API startup can apply migrations before health
+  is observed. Existing tests and the local P5.2 proof do not resolve that gap.
+- The merged [operator runbooks](operator_runbooks.md#how-this-was-verified)
+  have a documented Linux walk-through, not a recorded second-operator
+  recovery drill. #343's second-operator requirement, #249's actual-host
+  restore drill, and #272's human accessibility/tutorial validation remain
+  open. Automated keyboard checks are not assistive-technology validation.
 - The fake provider proves the chat path end to end, not any real provider.
 - The hosted workflow uses the development key; the production signing key is
-  not in the repository, so the signed-release path is verified against the
-  throwaway key only.
+  not in the repository, so payload verification is exercised against the
+  throwaway key only. Production signing/notarization, the complete prerelease
+  pipeline and final-artifact qualification remain #341 requirements. #255's
+  auth policy and #262's public-listing decision are not completed by CI.
+- Deferred native desktop Postgres (#344) and manager-owned PostgreSQL major
+  upgrades (#345) do not block the initial supported release. Deferring those
+  features does not waive the supported updater's schema-safety requirement.
 

@@ -6,11 +6,12 @@ run before each phase, and open items. It is updated as phases land.
 
 ## Delivery status
 
-Every implementation issue of the epic, except the two deferred issues, is
-merged into `main` (2026-10-07/08, merge commits in
-dependency order; each PR was green on both database engines on its own base
-before it moved). The per-phase **Status** paragraphs below record what each
-change proved and what it left out; this table records where it landed.
+Implementation PRs for all 28 initial-delivery issues are merged into `main`
+(2026-10-07/08). Acceptance remains open for #331–#333 and #340–#343; a merged
+implementation alone does not complete an issue. The two deferred issues,
+#344 and #345, remain outside initial-release blockers. The per-phase
+**Status** paragraphs below record what each change proved and what it left
+out; this table records where it landed.
 
 | Issue | PR | Merge |
 |---|---|---|
@@ -24,11 +25,15 @@ change proved and what it left out; this table records where it landed.
 | #343 acceptance matrix (driver, hosted workflow, report; findings 8 to 20 fixed) | #377 | `987b0ba` |
 | Post-merge: duplicated list registrations from the stack merge; a Windows helper spec broken by the fixed package table | #374, #376 | `87fa25f`, `8845cc5` |
 
-`main` is green on both engines from `8845cc5` (lint, smoke, typecheck, build,
-the eight Jest groups on SQLite and Postgres, the sandbox isolation smoke,
-Playwright). The real-platform workflows (`linux-bootstrap.yml`,
-`macos-bootstrap.yml`, `windows-bootstrap.yml`, `native-postgres.yml`) passed
-on the merged tree at `707c3fc`.
+Verified on 2026-10-08: `main` `db2bdd9` passed
+[CI run 37750418734](https://github.com/nervous-rob/goobster/actions/runs/37750418734),
+including SQLite, Postgres and Playwright. The final #377 head `421540d`
+passed the 19-cell acceptance matrix, packaging proof, all three platform
+bootstrap workflows and native Postgres provisioning. Exact run links and
+the distinction between PR-head evidence and current-main CI are in the
+[release acceptance checkpoint](release_acceptance.md#ci-verification-checkpoint-2026-10-08).
+These development-signed results do not establish production release
+qualification, physical Pi acceptance or a second-operator recovery drill.
 
 The last to land: #343's acceptance matrix (driver, hosted workflow, report;
 PR #377, merged `987b0ba`, where the 19 hosted cells ran for the first time
@@ -172,21 +177,20 @@ feature.
 
 Deliverable: a disabled feature cannot execute. Code may still load.
 
-Status (issues #316 - #322 under epic #315):
+Implementation details (issues #316 - #322 under epic #315; all merged and
+accepted, see the delivery table above):
 
 | Issue | Scope | State |
 |---|---|---|
-| #316 | Audits E1/T1/R1/S1/M1, ownership inventory, ADR 0013 accepted | Inventory module `packages/core/features/inventory.js`, spec `tests/featureInventory.test.js`, `documentation/feature_inventory.md` (PR pending review) |
-| #317 | `catalog.js` + `featureState.js` contract | Catalog `packages/core/features/catalog.js` (+ `descriptors/`), resolver `featureState.js`, `legacyResolver.js` and `gate.js`; specs `tests/featureCatalog.test.js`, `tests/featureState.test.js`; contract in `documentation/feature_state.md`. Nothing consumes the predicate yet (PR pending review) |
-| #318 | Command loader / deploy, `coreRuntime.step()`, `messageCreate` and interaction gating | One lister and one filter for command load and deploy (`commandDeployment.listCommandFiles` / `featureCommandFilter`; filtered files are never required; the deploy hash covers the served feature set). Stale slash commands, autocomplete, context menus, buttons, selects and modals of an enforced-off feature are refused ephemerally before any handler (`interactionCreate.gateComponentInteraction` / `refuseUnavailableCommand`; `collector:<id>` keys keep `clear_search_button` with its own collector; `intaction` resolves its owner from the pending action). `coreRuntime.step(name, fn, { feature })` skips an enforced-off step without invoking it and reports `skipped:feature` apart from `paused`; bundled steps drop their feature branches (`applyBundledFeatureGates`); `executeWheel` refuses at the top. `serviceManager.voiceService` is lazy (inert stand-in when voice is off); voice/music/issue-capture listeners and the command-backed tool adapters follow the snapshot; `messageCreate` gates `#06`/`#10` skip cleanly with the order unchanged. Enforcement rule shared with #319/#320 (`featureState.enforcedOff`): no file ⇒ identical to the unfiltered walk. Specs `tests/featureGatingCommands.test.js`, `tests/featureGatingRuntime.test.js`; `tests/independentRuntime.test.js` and `tests/backupRestore.test.js` pin the state they assume (PR pending review) |
-| #319 | AI tool registry, `runAgentLoop`, MCP gating | Discovery and dispatch are gated independently in `toolsRegistry` (`getDefinitions` filters by `surfaceActive('aiTool', name)`; `execute` refuses a stale or direct call with `FEATURE_UNAVAILABLE` before approvals, admission or side effects). `runAgentLoop` treats `FEATURE_UNAVAILABLE` as a terminal observation (repeat calls short-circuited, no implicit activation). `promptContext` adds one `UNAVAILABLE HERE:` line from `features.unavailable()`, omitted when nothing is off. MCP tool and resource listings, `tools/call` and `resources/read` are filtered per request, and the `mcp` feature off makes HTTP and stdio refuse to serve (`apps/mcp` refuses to start). Specs `tests/featureGatingTools.test.js` and `tests/featureGatingMcp.test.js`, plus adjusted `tests/mcpServer.test.js`, `tests/toolsRegistryRunCode.test.js` and `tests/toolsRegistryObservatory.test.js` (PR pending review) |
-| #320 | HTTP / WS / Activity / internal route gating | One network-edge gate in `packages/core/web/featureGate.js`: `routeGate` middleware resolves each request against the inventory's ordered `routeRules` and answers `404 { error: 'FEATURE_UNAVAILABLE', feature }` for an enforced-off owner (`ownerGate`/`mountable` for whole mounts, `guardOpenSocket`/`rejectUpgrade` for WebSocket paths). Mounted in `appApi.js` (first), `appWebsocket.js`, `apps/bot/web/server.js`, `activityApi.js`, `screenVisionApi.js`, `gbaRunApi.js` and `apps/api/server.js`. `GET /api/app/features` returns the sanitized status for clients. Enforcement rule unified here for all surfaces: `featureState.enforcedOff(id)` is true only with a usable `features.json`, a `GOOBSTER_FEATURE_<ID>` override off, or an enforced-off hard dependency, so with no file nothing new is refused; `gate.js` and the #319 tool/MCP gates consume the same predicate. MCP token-management routes (`/api/app/mcp*`) reassigned to `core` so revocation stays reachable. Specs `tests/featureGatingRoutes.test.js` (router-stack walk of every mounted route) and `tests/featureGatingWebsocket.test.js` (PR pending review) |
-| #321 | Portal rooms, tutorials, `consultDocs` availability | The portal fetches `GET /api/app/features` once per session beside `me` (legacy `me.features` kept as the fallback). Rooms and nested views declare `requires.feature` in `rooms.cjs`; navigation omits host-unavailable rooms and views, Tools shows an unavailable card (reason, dependency title, doc link) distinct from the user-hidden state, and a deep link renders a "not available on this installation" state inside the shell. Tutorial requirements corrected (`knowledge.research`, `projects.runs`, `trading.basics`); an unavailable tour is listed `available: false` with a reason and refused with `FEATURE_UNAVAILABLE` (`gate.requireSurface('tutorial', id)`), never completed, progress kept. `feature:<id>` front matter on the feature docs; `consultDocs` search/read/list annotate an inactive feature's docs at query time, never hidden. `documentation/features.md` is generated by `scripts/generate-features-doc.js` (`npm run docs:features`, `--check` inside `npm run docs:check`). Specs `tests/featureGatingPortal.test.js` and `e2e/featureAvailability.spec.js` (PR pending review) |
-| #322 | Cross-surface conformance and dormant-data tests | `tests/featureConformance.test.js` (35 profiles x every gated surface kind, bot boot, inventory negative checks, loaded-versus-executed report) and `tests/featureDormantData.test.js` (two accounts, every feature off: report, export, erasure, retention, vectors, off/on round trip, no feature work); shared fixtures in `tests/helpers/featureFixtures.js`. Closes the privacy and export reach gaps (`agent_runs`, `pending_integration_actions`, `integration_audit`, `repo_watches`, `screen_vision_clients`, `kg_reflection_runs`; the export now carries economy, exchange, Tavern, Song Studio, push, friends and DMs, integrations and sandbox) and gates Web Push delivery on `push`. Rooms, nested views, tutorial listing and launch refusal, and self-docs annotation are asserted per profile against #321's implementation (PR pending review) |
+| #316 | Audits E1/T1/R1/S1/M1, ownership inventory, ADR 0013 accepted | Inventory module `packages/core/features/inventory.js`, spec `tests/featureInventory.test.js`, `documentation/feature_inventory.md` |
+| #317 | `catalog.js` + `featureState.js` contract | Catalog `packages/core/features/catalog.js` (+ `descriptors/`), resolver `featureState.js`, `legacyResolver.js` and `gate.js`; specs `tests/featureCatalog.test.js`, `tests/featureState.test.js`; contract in `documentation/feature_state.md`. |
+| #318 | Command loader / deploy, `coreRuntime.step()`, `messageCreate` and interaction gating | One lister and one filter for command load and deploy (`commandDeployment.listCommandFiles` / `featureCommandFilter`; filtered files are never required; the deploy hash covers the served feature set). Stale slash commands, autocomplete, context menus, buttons, selects and modals of an enforced-off feature are refused ephemerally before any handler (`interactionCreate.gateComponentInteraction` / `refuseUnavailableCommand`; `collector:<id>` keys keep `clear_search_button` with its own collector; `intaction` resolves its owner from the pending action). `coreRuntime.step(name, fn, { feature })` skips an enforced-off step without invoking it and reports `skipped:feature` apart from `paused`; bundled steps drop their feature branches (`applyBundledFeatureGates`); `executeWheel` refuses at the top. `serviceManager.voiceService` is lazy (inert stand-in when voice is off); voice/music/issue-capture listeners and the command-backed tool adapters follow the snapshot; `messageCreate` gates `#06`/`#10` skip cleanly with the order unchanged. Enforcement rule shared with #319/#320 (`featureState.enforcedOff`): no file ⇒ identical to the unfiltered walk. Specs `tests/featureGatingCommands.test.js`, `tests/featureGatingRuntime.test.js`; `tests/independentRuntime.test.js` and `tests/backupRestore.test.js` pin the state they assume |
+| #319 | AI tool registry, `runAgentLoop`, MCP gating | Discovery and dispatch are gated independently in `toolsRegistry` (`getDefinitions` filters by `surfaceActive('aiTool', name)`; `execute` refuses a stale or direct call with `FEATURE_UNAVAILABLE` before approvals, admission or side effects). `runAgentLoop` treats `FEATURE_UNAVAILABLE` as a terminal observation (repeat calls short-circuited, no implicit activation). `promptContext` adds one `UNAVAILABLE HERE:` line from `features.unavailable()`, omitted when nothing is off. MCP tool and resource listings, `tools/call` and `resources/read` are filtered per request, and the `mcp` feature off makes HTTP and stdio refuse to serve (`apps/mcp` refuses to start). Specs `tests/featureGatingTools.test.js` and `tests/featureGatingMcp.test.js`, plus adjusted `tests/mcpServer.test.js`, `tests/toolsRegistryRunCode.test.js` and `tests/toolsRegistryObservatory.test.js` |
+| #320 | HTTP / WS / Activity / internal route gating | One network-edge gate in `packages/core/web/featureGate.js`: `routeGate` middleware resolves each request against the inventory's ordered `routeRules` and answers `404 { error: 'FEATURE_UNAVAILABLE', feature }` for an enforced-off owner (`ownerGate`/`mountable` for whole mounts, `guardOpenSocket`/`rejectUpgrade` for WebSocket paths). Mounted in `appApi.js` (first), `appWebsocket.js`, `apps/bot/web/server.js`, `activityApi.js`, `screenVisionApi.js`, `gbaRunApi.js` and `apps/api/server.js`. `GET /api/app/features` returns the sanitized status for clients. Enforcement rule unified here for all surfaces: `featureState.enforcedOff(id)` is true only with a usable `features.json`, a `GOOBSTER_FEATURE_<ID>` override off, or an enforced-off hard dependency, so with no file nothing new is refused; `gate.js` and the #319 tool/MCP gates consume the same predicate. MCP token-management routes (`/api/app/mcp*`) reassigned to `core` so revocation stays reachable. Specs `tests/featureGatingRoutes.test.js` (router-stack walk of every mounted route) and `tests/featureGatingWebsocket.test.js` |
+| #321 | Portal rooms, tutorials, `consultDocs` availability | The portal fetches `GET /api/app/features` once per session beside `me` (legacy `me.features` kept as the fallback). Rooms and nested views declare `requires.feature` in `rooms.cjs`; navigation omits host-unavailable rooms and views, Tools shows an unavailable card (reason, dependency title, doc link) distinct from the user-hidden state, and a deep link renders a "not available on this installation" state inside the shell. Tutorial requirements corrected (`knowledge.research`, `projects.runs`, `trading.basics`); an unavailable tour is listed `available: false` with a reason and refused with `FEATURE_UNAVAILABLE` (`gate.requireSurface('tutorial', id)`), never completed, progress kept. `feature:<id>` front matter on the feature docs; `consultDocs` search/read/list annotate an inactive feature's docs at query time, never hidden. `documentation/features.md` is generated by `scripts/generate-features-doc.js` (`npm run docs:features`, `--check` inside `npm run docs:check`). Specs `tests/featureGatingPortal.test.js` and `e2e/featureAvailability.spec.js` |
+| #322 | Cross-surface conformance and dormant-data tests | `tests/featureConformance.test.js` (35 profiles x every gated surface kind, bot boot, inventory negative checks, loaded-versus-executed report) and `tests/featureDormantData.test.js` (two accounts, every feature off: report, export, erasure, retention, vectors, off/on round trip, no feature work); shared fixtures in `tests/helpers/featureFixtures.js`. Closes the privacy and export reach gaps (`agent_runs`, `pending_integration_actions`, `integration_audit`, `repo_watches`, `screen_vision_clients`, `kg_reflection_runs`; the export now carries economy, exchange, Tavern, Song Studio, push, friends and DMs, integrations and sandbox) and gates Web Push delivery on `push`. Rooms, nested views, tutorial listing and launch refusal, and self-docs annotation are asserted per profile against #321's implementation |
 
-Pull requests, as one stack in dependency order (each base is the previous
-PR's branch; none merged yet, so no Phase 1 issue is complete until the
-stack lands): #346 (#316) -> #347 (#317) -> #349 (#319) -> #350 (#320) ->
+Original pull-request stack, now merged: #346 (#316) -> #347 (#317) -> #349 (#319) -> #350 (#320) ->
 #351 (#318, also carries the independent review's fixes) -> #352 (#321) ->
 #353 (#322). The CI workflow (lint, smoke, typecheck, web build, every Jest
 group on SQLite and on Postgres, Playwright) passed on the head of every PR
@@ -793,7 +797,12 @@ download, the archive read, the launcher with no argument, the payload
 activation under a running manager), and left two operator-visible behaviours
 open (the CLI does not read the manager's database overlay; the switch to
 Postgres reaches the running manager at its next start). The operator recovery
-runbooks are the other half of P5.3.
+runbooks are the other half of P5.3. **Acceptance remains open:** physical Pi
+validation, full-disk failure injection, a recorded second-operator recovery
+drill, human accessibility validation and production-release qualification
+are not established by the hosted matrix. The separate requirements in
+#331–#333 and #340–#342, including #342's pre-health schema-rollback safety
+gap, still apply. See [release acceptance caveats](release_acceptance.md#caveats).
 
 ## Audits before implementation
 
