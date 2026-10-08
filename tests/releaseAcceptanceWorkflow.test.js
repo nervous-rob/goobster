@@ -104,12 +104,13 @@ describe('the matrix', () => {
         expect(check.if).toBe("matrix.db == 'managed-pg'");
     });
 
-    test("the Docker cells install PostgreSQL 17 client tools, the server major of the pinned image, so the host's pg_dump can back the database up", () => {
+    test("the Docker cells install PostgreSQL 17 client tools, the server major of the pinned image, put them first on PATH past Debian's pg_wrapper, and prove the version", () => {
         const tools = steps.find(({ step }) => /postgresql-client-17/.test(step.run || '')).step;
         expect(tools.if).toBe("matrix.db == 'managed-pg'");
         expect(tools.run).toMatch(/apt\.postgresql\.org/);
         expect(tools.run).toMatch(/signed-by=/);
-        expect(tools.run).toMatch(/pg_dump --version/);
+        expect(tools.run).toMatch(/echo "\/usr\/lib\/postgresql\/17\/bin" >> "\$GITHUB_PATH"/);
+        expect(tools.run).toMatch(/\/usr\/lib\/postgresql\/17\/bin\/pg_dump --version \| grep -F 'pg_dump \(PostgreSQL\) 17\.'/);
         const docker = steps.findIndex(({ step }) => /docker info/.test(step.run || ''));
         const cell = steps.findIndex(({ step }) => /acceptance\/run\.js/.test(step.run || ''));
         const at = steps.findIndex(({ step }) => /postgresql-client-17/.test(step.run || ''));

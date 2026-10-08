@@ -44,8 +44,11 @@ the API's wildcard bind is then refused. The second run passed the eleven
 SQLite cells and found two more: the managed-Postgres cells' `reset` failed
 `BACKUP_FAILED` because the runner's `pg_dump` (16) is older than the pinned
 `pgvector/pgvector:pg17` server (the workflow installs the PostgreSQL 17 client
-tools for those cells, and `BACKUP_FAILED` now names its cause as a short code,
-`TOOL_VERSION_MISMATCH` here: [data_reset.md](data_reset.md)); and on Windows
+tools for those cells and puts them first on PATH, since Debian's `pg_wrapper`
+otherwise keeps choosing the runner's own 16 - the third run proved that the
+package alone is not enough, and [docker_postgres.md](docker_postgres.md) now
+tells an operator the same; and `BACKUP_FAILED` names its cause as a short
+code, `TOOL_VERSION_MISMATCH` here: [data_reset.md](data_reset.md)); and on Windows
 the installed payload's `current\bin\goobster-manager.cmd` did not read
 `<code root>\goobster.env` as its POSIX counterpart does, so `status` run from
 it looked under `%LOCALAPPDATA%\Goobster` and reported `recovery` (it now reads
