@@ -12,8 +12,10 @@
  *                         switch the connection. Re-running the same input
  *                         resumes.
  *   db.migrate.rollback   before the first Postgres write: drop exactly what
- *                         the operation created and restore the source
- *                         configuration. Refused after (`POSTGRES_HAS_WRITES`).
+ *                         the operation created, empty again the tables the
+ *                         target already held (a provisioned schema) and
+ *                         restore the source configuration. Refused after
+ *                         (`POSTGRES_HAS_WRITES`).
  *
  * None is plannable over HTTP (the target URL and the backup passphrase are
  * `privateInput`, in memory only); the CLI plans them in-process and the
@@ -498,11 +500,15 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                 if (doc.steps.provision && doc.steps.provision.done) return { skipped: true, code: 'ALREADY_DONE' };
                 const intent = doc.provisioning || [];
                 store.update(next => ({ ...next, steps: { ...next.steps, provision: { ...(next.steps.provision || {}), done: false, extensionsIntent: intent, at: stamp() } } }));
-                const ext = await runChild('extensions', { url: parsed.target.url, extensions: parsed.provisionExtensions ? intent : [], expectEmpty: !(doc.steps.provision && doc.steps.provision.started) }, { url: parsed.target.url });
-                store.update(next => ({ ...next, steps: { ...next.steps, provision: { ...next.steps.provision, started: true, extensionsCreated: ext.extensionsCreated, schema: ext.schema } } }));
+                const started = Boolean(doc.steps.provision && doc.steps.provision.started);
+                const ext = await runChild('extensions', { url: parsed.target.url, extensions: parsed.provisionExtensions ? intent : [], expectEmpty: !started }, { url: parsed.target.url });
+                // The tables the target held before this migration touched it (a provisioned empty schema): the rollback empties them, never drops them.
+                const preexisting = Array.isArray(ext.preexistingTables) ? ext.preexistingTables : ((doc.steps.provision && doc.steps.provision.preexistingTables) || []);
+                store.update(next => ({ ...next, steps: { ...next.steps, provision: { ...next.steps.provision, started: true, extensionsCreated: ext.extensionsCreated, schema: ext.schema, preexistingTables: preexisting } } }));
                 const applied = await runChild('schema', {}, { url: parsed.target.url });
-                markStep('provision', { done: true, started: true, extensionsIntent: intent, extensionsCreated: ext.extensionsCreated, schema: applied.schema, tables: applied.tables.length, createdTables: applied.tables });
-                return { extensionsCreated: ext.extensionsCreated, tables: applied.tables.length };
+                const createdTables = applied.tables.filter(name => !preexisting.includes(name));
+                markStep('provision', { done: true, started: true, extensionsIntent: intent, extensionsCreated: ext.extensionsCreated, schema: applied.schema, tables: applied.tables.length, createdTables, preexistingTables: preexisting });
+                return { extensionsCreated: ext.extensionsCreated, tables: applied.tables.length, created: createdTables.length, preexisting: preexisting.length };
             }),
 
             guarded('copy', async (record, ctx, parsed) => {
@@ -674,7 +680,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                         migrationId: migration.id,
                         wasSwitched: migration.status === 'switched',
                         boundary: BOUNDARY,
-                        drops: { tables: (provision.createdTables || []).length, extensions: provision.extensionsCreated || [] },
+                        drops: { tables: (provision.createdTables || []).length, extensions: provision.extensionsCreated || [], emptied: (provision.preexistingTables || []).length },
                         releaseMaintenance: parsed.releaseMaintenance,
                         confirmation: { required: true, satisfied: parsed.confirm === doc.installationId },
                         rollbackLimit: rollbackLimit(),
@@ -736,10 +742,11 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                             tables: provision.createdTables || [],
                             allOurs: !provision.createdTables,
                             extensions: provision.extensionsCreated || provision.extensionsIntent || [],
-                            schema: provision.schema
+                            schema: provision.schema,
+                            keepTables: provision.preexistingTables || []
                         }, { url: input.target.url });
                         ctx.scratch.dropped = dropped;
-                        return { tables: dropped.tables, derived: dropped.derived, extensions: dropped.extensions, retained: dropped.retained };
+                        return { tables: dropped.tables, derived: dropped.derived, emptied: dropped.emptied || 0, extensions: dropped.extensions, retained: dropped.retained };
                     }
                 },
                 {
@@ -748,7 +755,7 @@ function createKinds({ settings, fs = nodeFs, now = () => new Date(), logger = c
                         const store = state();
                         store.update(next => ({ ...next, status: 'rolled-back', rolledBackAt: stamp(), cutover: null, failure: null, steps: {}, result: null }));
                         files.removeIfPresent(store.progressFile, fs);
-                        ctx.scratch.result = { rolledBack: true, switchReverted: Boolean(ctx.scratch.reverted), dropped: ctx.scratch.dropped || { tables: 0, derived: 0, extensions: [], retained: [] }, rollbackLimit: rollbackLimit() };
+                        ctx.scratch.result = { rolledBack: true, switchReverted: Boolean(ctx.scratch.reverted), dropped: ctx.scratch.dropped || { tables: 0, derived: 0, emptied: 0, extensions: [], retained: [] }, rollbackLimit: rollbackLimit() };
                         ctx.scratch.audit = { tables: (ctx.scratch.dropped || {}).tables || 0, switchReverted: Boolean(ctx.scratch.reverted) };
                         if (ctx.scratch.reverted) ctx.scratch.result.workersRestarted = restartWorkers();
                         return { rolledBack: true };

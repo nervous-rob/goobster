@@ -208,7 +208,10 @@ goobster-manager database connect --answers connect.json
 reuses the staged URL, validates the application on the target, writes
 `GOOBSTER_DB_URL`, updates the installation record and removes the staged key. A
 SQLite installation that holds data is routed to the migration
-(`MIGRATION_REQUIRED`), exactly as for an existing server. A fresh installation
+(`MIGRATION_REQUIRED`), exactly as for an existing server: `goobster-manager
+migrate run` with `"target": { "owned": "native" }` copies into the provisioned
+database, whose applied schema the preflight reports as the warning
+`TARGET_SCHEMA_PRESENT`, not the block `TARGET_NOT_EMPTY`. A fresh installation
 that chose this option in the wizard does all of it in one `install.new`: the
 install gains a `native-postgres` step after `ownership` and uses the new
 database from its first start. Without a provisioned database the answer is

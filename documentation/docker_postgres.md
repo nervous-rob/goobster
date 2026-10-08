@@ -174,7 +174,12 @@ reuses the staged URL (so nothing about the database is typed again), validates
 the application on the target, writes `GOOBSTER_DB_URL`, updates the
 installation record and removes the staged key. A SQLite installation that
 holds data is routed to the migration (`MIGRATION_REQUIRED`), exactly as for an
-existing server ([database_connection.md](database_connection.md#the-cutover-rules)).
+existing server ([database_connection.md](database_connection.md#the-cutover-rules)):
+`goobster-manager migrate run` with `"target": { "owned": "docker" }` copies
+into the provisioned database. Its preflight reports the schema provision
+applied as the warning `TARGET_SCHEMA_PRESENT` (Goobster's own tables, no
+rows), not as `TARGET_NOT_EMPTY`; a rollback empties those tables again
+rather than dropping them ([db_migration.md](db_migration.md#the-preflight)).
 A fresh installation that chose Docker in the wizard does all of it in one
 `install.new`: the install gains a `docker-postgres` step after `ownership`
 and uses the new database from its first start.

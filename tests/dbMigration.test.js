@@ -605,6 +605,56 @@ withPostgres('the operation against a Postgres schema', () => {
         expect(fresh.settings.dbUrl).toBe(target.url);
     }, 300000);
 
+    test("a provisioned target (Goobster's schema applied, no rows) is migrated into: the preflight warns, provision creates nothing, rollback empties the tables instead of dropping them", async () => {
+        const env = await setup();
+        const target = await targetSchema();
+        // what `database docker provision` / `database native provision` leave behind: the init-db child applied the schema
+        const { execFileSync } = require('node:child_process');
+        execFileSync(process.execPath, [require.resolve('@goobster/manager/install/dbInitChild')], {
+            env: { ...process.env, GOOBSTER_DB_URL: target.url, GOOBSTER_DATA_DIR: env.settings.dataDir, GOOBSTER_WORKSPACE_ROOT: env.code, GOOBSTER_DB_PATH: undefined, GOOBSTER_PG_TEST_ISOLATE: undefined },
+            stdio: ['ignore', 'pipe', 'ignore']
+        });
+        const provisioned = (await target.tables()).sort();
+        expect(provisioned.length).toBeGreaterThan(150);
+        expect(await target.count('users')).toBe(0);
+
+        const { applied: preflight } = await drive(env, 'db.migrate.preflight', { target: { url: target.url } }, { auth: BRIDGE });
+        expect(preflight.result.ready).toBe(true);
+        expect(preflight.result.blocks).toEqual([]);
+        expect(preflight.result.warnings.map(item => item.code)).toContain('TARGET_SCHEMA_PRESENT');
+
+        // stop after the copy so the rollback has something to undo
+        env.settings.migrationDeps.validate = async () => {
+            const { ManagerError } = require('@goobster/manager/errors');
+            throw new ManagerError(409, 'VALIDATION_FAILED', 'unhealthy', {});
+        };
+        const failed = await drive(env, 'db.migrate', input(env, target)).catch(e => e);
+        expect(failed.code).toBe('VALIDATION_FAILED');
+        expect(await target.count('users')).toBe(2);
+        const state = createMigrationState({ storeDir: env.settings.storeDir });
+        const provision = state.read().doc.steps.provision;
+        expect(provision.preexistingTables.sort()).toEqual(provisioned);
+        // only derived vector tables, if any, were created; every table of the schema was already there
+        expect(provision.createdTables.every(name => /^memory_vec_\d+$/.test(name))).toBe(true);
+
+        const confirm = env.installation().installationId;
+        const { planned, applied } = await drive(env, 'db.migrate.rollback', { target: { url: target.url }, confirm, releaseMaintenance: true });
+        expect(applied.result).toMatchObject({ rolledBack: true, switchReverted: false, maintenanceReleased: true, dropped: { tables: 0, emptied: provisioned.length } });
+        expect(planned.plan.drops).toMatchObject({ tables: 0, emptied: provisioned.length });
+        expect((await target.tables()).sort()).toEqual(provisioned);
+        expect(await target.count('users')).toBe(0);
+        expect(await target.count('conversations')).toBe(0);
+        expect(state.read().doc).toMatchObject({ status: 'rolled-back' });
+        expect(env.installation().database.engine).toBe('sqlite');
+
+        // the emptied schema is accepted again, and this time the migration completes
+        env.settings.migrationDeps.validate = async () => ({ workers: [{ name: 'api', healthy: true }], layout: 'standalone' });
+        const { applied: done } = await drive(env, 'db.migrate', input(env, target, { release: true }));
+        expect(done.result).toMatchObject({ status: 'switched', rows: env.seeded.rows });
+        expect(await target.count('users')).toBe(2);
+        expect(env.installation().database).toEqual({ engine: 'postgres', external: true });
+    }, 600000);
+
     test('rollback before the cutover drops exactly what the journal lists and nothing else, then clears the state', async () => {
         const env = await setup();
         const target = await targetSchema();

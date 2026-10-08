@@ -18,8 +18,11 @@
  *
  * `classify()` turns the two reports into blocks (the operation refuses),
  * provisioning (what `provision` will create, only with consent) and
- * warnings. Reports carry names, counts and booleans - never a row, a
- * password or a connection URL.
+ * warnings. A target that already holds Goobster's own schema with no rows
+ * (`judgeTargetContents()`: a provisioned, never-connected database) is a
+ * warning, not a block; anything else in the schema is `TARGET_NOT_EMPTY`.
+ * Reports carry names, counts and booleans - never a row, a password or a
+ * connection URL.
  */
 
 const fs = require('node:fs');
@@ -184,6 +187,9 @@ async function inspectPostgres(url, { connect = defaultConnect } = {}) {
             const row = available.find(item => item.name === name);
             extensions[name] = { available: Boolean(row), installed: Boolean(row && row.installed_version), trusted: Boolean(row && row.trusted) };
         }
+        // A statement the role may not make aborts the READ ONLY transaction, so the two that may fail come
+        // last, each answering "unknown" for itself: the row check first, then the superuser-only data_directory.
+        const populated = schemaRow ? await populatedTables(client, wanted, layout.tables) : [];
         const space = await freeSpace(client, description.local);
         await client.query('ROLLBACK');
         return {
@@ -201,6 +207,7 @@ async function inspectPostgres(url, { connect = defaultConnect } = {}) {
             relationCount: relations,
             tables: layout.tables,
             otherRelations: layout.otherRelations,
+            populated,
             extensions,
             freeBytes: space,
             serverVersionText: versionText,
@@ -241,6 +248,78 @@ async function schemaLayout(client, schema) {
         tables: found.filter(row => row.kind === 'r' || row.kind === 'p').slice(0, MAX_TABLES).map(row => ({ name: row.name, columns: row.columns })),
         otherRelations: found.filter(row => !(row.kind === 'r' || row.kind === 'p')).slice(0, MAX_OTHER).map(row => ({ name: row.name, kind: row.kind }))
     };
+}
+
+const DERIVED_TABLE = /^memory_vec_\d+$/;
+
+/**
+ * Which of the schema's tables hold at least one row: one SELECT of
+ * `EXISTS` per table, in a single statement. `null` when the role may not
+ * read one of them (then nothing can be said about rows, and the caller
+ * treats the target as occupied).
+ */
+async function populatedTables(client, schema, tables) {
+    if (tables.length === 0) return [];
+    const quoted = (name) => `"${String(schema).replace(/"/g, '""')}"."${String(name).replace(/"/g, '""')}"`;
+    const sql = tables.map((table, index) => `SELECT $${index + 1}::text AS name, EXISTS (SELECT 1 FROM ${quoted(table.name)}) AS populated`).join(' UNION ALL ');
+    try {
+        const rows = (await client.query(sql, tables.map(table => table.name))).rows;
+        return rows.filter(row => row.populated === true).map(row => row.name).sort();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The target schema's relations, their layout and their rows, read with an
+ * open `pg` client (the migration's provision step shares this with the
+ * preflight, so both judge the target the same way).
+ */
+async function inspectContents(client, schema) {
+    const layout = await schemaLayout(client, schema);
+    return { ...layout, populated: await populatedTables(client, schema, layout.tables) };
+}
+
+/**
+ * What is in the target schema. Pure.
+ *
+ *   empty           no relation at all.
+ *   goobster-empty  only tables of the expected schema whose every column the
+ *                   schema knows, the derived vector tables and sequences, and
+ *                   not one row: what `database docker provision` / `database
+ *                   native provision` leave behind, and what an earlier
+ *                   rolled-back migration or a fresh connect leaves. The copy
+ *                   fills it and the rollback empties it again.
+ *   foreign         anything else: a table or a column the schema does not
+ *                   know, a view or other relation, a row, or rows that could
+ *                   not be read.
+ *
+ * @returns {{ kind: 'empty'|'goobster-empty'|'foreign', reasons: Object }}
+ *   `reasons` lists (names, capped) what made it foreign; empty otherwise.
+ */
+function judgeTargetContents({ tables = [], otherRelations = [], populated = [] } = {}) {
+    if (tables.length === 0 && otherRelations.length === 0) return { kind: 'empty', reasons: {} };
+    const expected = expectedSchema().tables;
+    const unknownTables = [];
+    const unknownColumns = [];
+    for (const table of tables) {
+        if (DERIVED_TABLE.test(table.name)) continue;
+        const model = expected[table.name];
+        if (!model) {
+            unknownTables.push(table.name);
+            continue;
+        }
+        const known = new Set(model.columns.map(col => col.name));
+        for (const column of table.columns || []) if (!known.has(column)) unknownColumns.push(`${table.name}.${column}`);
+    }
+    const foreignRelations = otherRelations.filter(item => item.kind !== 'S').map(item => item.name);
+    const reasons = {};
+    if (unknownTables.length) reasons.unknownTables = sorted(unknownTables);
+    if (unknownColumns.length) reasons.unknownColumns = sorted(unknownColumns);
+    if (foreignRelations.length) reasons.otherRelations = sorted(foreignRelations);
+    if (!Array.isArray(populated)) reasons.rowsUnknown = true;
+    else if (populated.length) reasons.populated = sorted(populated);
+    return { kind: Object.keys(reasons).length === 0 ? 'goobster-empty' : 'foreign', reasons };
 }
 
 /** Whether this very session is encrypted (`pg_stat_ssl` shows it for the caller's own backend). */
@@ -302,7 +381,11 @@ function classify({ source, target, options = {} }) {
         if (!target.schema || !target.schemaExists) {
             block('TARGET_SCHEMA_MISSING');
         } else {
-            if (target.relationCount > 0) block('TARGET_NOT_EMPTY', { relations: target.relationCount });
+            if (target.relationCount > 0) {
+                const contents = judgeTargetContents(target);
+                if (contents.kind === 'goobster-empty') warn('TARGET_SCHEMA_PRESENT', { tables: (target.tables || []).length });
+                else block('TARGET_NOT_EMPTY', { relations: target.relationCount, ...(contents.kind === 'empty' ? { layoutUnknown: true } : contents.reasons) });
+            }
             if (!target.canCreateInSchema) block('TARGET_NO_CREATE_PRIVILEGE', { scope: 'schema' });
         }
         for (const name of REQUIRED_EXTENSIONS) {
@@ -344,4 +427,4 @@ async function inspectAll({ sqlitePath, url, integrity = 'quick', connect, alrea
     };
 }
 
-module.exports = { inspectSqlite, inspectPostgres, classify, inspectAll, REQUIRED_EXTENSIONS, MIN_SERVER_VERSION };
+module.exports = { inspectSqlite, inspectPostgres, classify, inspectAll, inspectContents, judgeTargetContents, REQUIRED_EXTENSIONS, MIN_SERVER_VERSION };

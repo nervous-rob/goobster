@@ -57,7 +57,8 @@ without a `vector` extension.
 
 **Read:** the source file (size, whether a WAL holds data, `quick_check`, the
 table list and counts, the columns against the expected schema); the target
-(reachability, server version, whether the named schema exists and is empty,
+(reachability, server version, whether the named schema exists and what it
+holds - nothing, Goobster's own schema with no rows, or something else -
 `CREATE` privilege on the schema and database, which of `vector` and `citext`
 are installed or available and whether the role may create them, and free space
 when the manager can `statfs` the server's data directory: a remote or unreadable
@@ -73,7 +74,7 @@ The report sorts findings into three groups:
 | Block | `ALREADY_POSTGRES` | The installation already uses Postgres. |
 | Block | `TARGET_UNREACHABLE`, `SERVER_TOO_OLD` | No connection, or the server is older than 13. |
 | Block | `TARGET_SCHEMA_MISSING` | The URL names a schema (`options=-c search_path=...`) that does not exist; it is never silently replaced by `public`. |
-| Block | `TARGET_NOT_EMPTY` | The schema already holds relations. |
+| Block | `TARGET_NOT_EMPTY` | The schema holds something that is not Goobster's own empty schema: a table or a column the schema does not know, a view or other relation, a row, or rows the role cannot read (the detail names them, capped). |
 | Block | `TARGET_NO_CREATE_PRIVILEGE` | The role cannot create tables in the schema. |
 | Block | `EXTENSION_UNAVAILABLE`, `EXTENSION_PRIVILEGE` | `vector` or `citext` is not available on the server, or is not installed and the role may not create it. |
 | Block | `INSUFFICIENT_SPACE` | Free space under 1.5 times the source size. |
@@ -81,6 +82,7 @@ The report sorts findings into three groups:
 | Warning | `SOURCE_SCHEMA_BEHIND` | An optional column is missing; the target default is used. |
 | Warning | `UNCOPIED_TABLE` | The source has a table the schema does not (never copied). |
 | Warning | `SOURCE_EMPTY` | The source holds no rows. |
+| Warning | `TARGET_SCHEMA_PRESENT` | The target already holds Goobster's schema with no rows: a database `database docker provision` or `database native provision` created, or one a rolled-back migration emptied. The copy fills it; the rollback empties it again rather than dropping it. |
 | Warning | `LOW_SPACE` | Free space under 3 times the source size. |
 | Warning | `ENV_OVERRIDES_OVERLAY` | `GOOBSTER_DB_URL` is set in the process environment and differs from the overlay; the workers see the environment value. |
 
@@ -114,7 +116,7 @@ booleans only.
 | `maintenance` | untouched | untouched | The barrier is released if this operation entered it and the phase is cancel-safe. | Run again. |
 | `backup` | opened through the application adapter to take the archive (this applies pending app data migrations, so the file's bytes may change here and nowhere later) | untouched | The archive may be partial; it is never used until `verified`. | Runs again; skipped once recorded. |
 | `snapshot` | full `integrity_check`, sha256 of the file and any non-empty `-wal` | untouched | Nothing changed. | Skipped when done; a different hash is `SOURCE_CHANGED`. |
-| `provision` | untouched | creates missing extensions if allowed, applies `schema.sql` | Extensions and tables created so far are recorded in `migration.json`, so rollback drops exactly those. | Skipped when done. |
+| `provision` | untouched | creates missing extensions if allowed, applies `schema.sql` | Extensions and tables created so far are recorded in `migration.json`, so rollback drops exactly those; tables the target already held (`preexistingTables`, the provisioned empty schema) are recorded too, so rollback empties them instead. | Skipped when done. |
 | `copy` | one pinned read transaction | one transaction per table, then identity sequences re-seated | A table is either complete or empty; the progress file says which. | Finished tables are re-counted and skipped; an incomplete one is cleared with `DELETE FROM` (never `TRUNCATE ... CASCADE`) and copied again. |
 | `verify` | read only, hash re-checked | read only | Nothing changed. | Runs again. |
 | `validate` | untouched | read only (counts compared before and after) | The validation workers are stopped. | Runs again. |
@@ -236,9 +238,11 @@ supervising) do not read the overlay; restart them yourself with
 boundary above (`POSTGRES_HAS_WRITES`). Before it: it reverts the switch (if
 one happened: the overlay value is removed, the record's `database` is put
 back, workers restart), then drops exactly the tables and extensions that
-`migration.json` says this migration created (a foreign object in the schema
-is `ROLLBACK_FOREIGN_OBJECTS` and nothing is dropped), then records
-`rolled-back`. It needs `confirm` (the installation id) and, when the
+`migration.json` says this migration created and empties again, in one
+`TRUNCATE ... RESTART IDENTITY`, the tables it found already there (a
+provisioned schema held no rows, so it is left as it was found; a foreign
+object in the schema is `ROLLBACK_FOREIGN_OBJECTS` and nothing is dropped),
+then records `rolled-back`. It needs `confirm` (the installation id) and, when the
 migration provisioned the target, the same target URL (its fingerprint must
 match, else `TARGET_MISMATCH`). `releaseMaintenance` (`--release`) also
 releases the barrier, forcing it if it is stale. Nothing after the backup
@@ -339,9 +343,11 @@ the manager runs on the new connection and reconciles them into
 
 ## Tests
 
-`tests/dbMigrationInspect.test.js` (read-only inspection, classification),
+`tests/dbMigrationInspect.test.js` (read-only inspection, classification,
+what counts as a provisioned empty schema versus a foreign one),
 `tests/dbMigration.test.js` (the operation end to end, refusals, resume,
-cutover reconcile, rollback boundary, audit), `tests/dbMigrationCli.test.js`
+cutover reconcile, rollback boundary, the migration into a provisioned target
+and the rollback that empties it, audit), `tests/dbMigrationCli.test.js`
 (the CLI) and `tests/managerEnvironmentOverlay.test.js` (overlay,
 `verifyBackup`). The Postgres journeys need `GOOBSTER_DB_URL` and an isolated
 schema.
