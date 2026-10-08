@@ -344,6 +344,14 @@ door finds this installation rather than the `%LOCALAPPDATA%\Goobster`
 defaults; `uninstall` still belongs to the code-root launcher, which runs it
 from a copy of Node outside the code root.
 
+Either launcher works from Git Bash too. The one place the shell used to
+matter was `update stage`: it reads the downloaded payload archive with the
+system `tar`, and Git Bash puts Git's GNU tar first on PATH, which reads a
+`D:\...` path as a remote host and fails on every archive
+(`ARCHIVE_UNREADABLE`). The manager now uses `%SystemRoot%\System32\tar.exe`
+(bsdtar, present on Windows 10 1803 and later) whenever it is there and falls
+back to PATH only where it is not ([manager_update.md](manager_update.md)).
+
 ```bat
 "C:\Users\you\AppData\Local\Goobster\code\goobster-manager.cmd" status
 "C:\...\goobster-manager.cmd" repair      --answers repair.json      --yes

@@ -89,13 +89,21 @@ class Scratch {
         return { status: response.status, json: await response.json().catch(() => null) };
     }
 
+    /** The manager's status once it answers; a process that leaves first is reported with its exit, not as a timeout. */
     async waitStatus() {
-        return op.waitFor(async () => {
+        const deadline = Date.now() + 40_000;
+        for (;;) {
             try {
                 const answer = await this.status();
-                return answer.status === 200 ? answer.json : null;
-            } catch { return null; }
-        }, { timeoutMs: 40_000, what: 'the scratch manager to answer' });
+                if (answer.status === 200) return answer.json;
+            } catch { /* not listening yet */ }
+            if (this.daemon && !this.daemon.running()) {
+                const exit = this.daemon.exits[this.daemon.exits.length - 1];
+                throw new Error(`the scratch manager exited (${exit ? `code ${exit.code}, signal ${exit.signal}` : 'no exit recorded'}) before it answered`);
+            }
+            if (Date.now() >= deadline) throw new Error('timed out waiting for the scratch manager to answer');
+            await op.sleep(250);
+        }
     }
 
     async post(route, body, headers = {}) {

@@ -257,10 +257,30 @@ class Cell {
         await this.waitHealthy();
     }
 
+    /**
+     * Stop the installation as its service host would. On POSIX that is SIGTERM to the manager, which
+     * drains and stops its workers before it exits. On Windows the host sends Ctrl+C, which a Node
+     * parent cannot; the manager's own `lifecycle.stop` operation is what that Ctrl+C runs inside it
+     * (workers drained and closed through the control file), so it is asked for first and the process
+     * tree is ended afterwards. Ending the tree without it kills the workers mid-write: SQLite is left
+     * with an un-checkpointed WAL, and the next thing to open the database (a restore) folds the WAL
+     * into the main file, so the file the restore sets aside is not the one that was there before.
+     */
     async stopDaemon() {
-        if (this.daemon && this.daemon.running()) await this.daemon.stop();
+        if (this.daemon && this.daemon.running()) {
+            if (op.IS_WINDOWS) await this.drainWorkers();
+            await this.daemon.stop();
+        }
         await this.waitPortFree(this.ports.api, 40_000).catch(() => {});
         this.api.token = null;
+    }
+
+    /** `lifecycle.stop` through the manager's API, bounded; a manager that cannot (not supervising, already leaving) is left to the tree kill. */
+    async drainWorkers() {
+        const stop = this.api.operation('lifecycle.stop', {}).then(() => true, () => false);
+        const outcome = await Promise.race([stop, op.sleep(90_000).then(() => false)]);
+        if (outcome) await this.waitPortFree(this.ports.api, 30_000).catch(() => {});
+        return outcome;
     }
 
     async waitPortFree(port, timeoutMs = 30_000) {

@@ -199,3 +199,33 @@ describe('landing a downloaded file', () => {
         expect(fs.existsSync(`${dest}.partial`)).toBe(false);
     });
 });
+
+describe('the tar the archive is read with', () => {
+    const archive = require('../apps/manager/update/archive');
+
+    test('is the one on PATH everywhere but Windows', () => {
+        expect(archive.tarCommand({ platform: 'linux' })).toBe('tar');
+        expect(archive.tarCommand({ platform: 'darwin' })).toBe('tar');
+    });
+
+    test('on Windows is System32\'s bsdtar when it is there, since Git Bash puts a GNU tar first that reads D:\\ as a remote host', () => {
+        const seen = [];
+        const exists = (file) => { seen.push(file); return true; };
+        expect(archive.tarCommand({ platform: 'win32', env: { SystemRoot: 'D:\\Windows' }, exists })).toBe('D:\\Windows\\System32\\tar.exe');
+        expect(seen).toEqual(['D:\\Windows\\System32\\tar.exe']);
+        expect(archive.tarCommand({ platform: 'win32', env: {}, exists: () => true })).toBe('C:\\Windows\\System32\\tar.exe');
+        expect(archive.tarCommand({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, exists: () => false })).toBe('tar');
+    });
+
+    test('a file tar cannot read is refused as ARCHIVE_UNREADABLE with the call and exit status as the reason, not tar\'s output', () => {
+        const dir = tempDir(roots, 'notar');
+        const file = path.join(dir, 'not-an-archive.tar.gz');
+        fs.writeFileSync(file, 'this is not a gzip stream at all');
+        let failure = null;
+        try { archive.listMembers(file); } catch (error) { failure = error; }
+        expect(failure).not.toBeNull();
+        expect(failure.code).toBe('ARCHIVE_UNREADABLE');
+        expect(failure.details.reason).toMatch(/^LIST_EXIT_\d+$/);
+        expect(JSON.stringify(failure)).not.toContain('not-an-archive');
+    });
+});

@@ -62,6 +62,19 @@ downloaded on Windows, because the landed file was synced through a
 read-only handle, which Windows refuses (`DOWNLOAD_FAILED` for every source
 kind; fixed in `apps/manager/update/source.js`:
 [manager_update.md](manager_update.md#how-this-was-verified)).
+The fourth run, Windows only still red, found that `update stage` read the
+landed archive with the GNU tar Git Bash puts first on PATH, which reads
+`D:\...` as a remote host (`ARCHIVE_UNREADABLE`; the manager now uses the
+system `tar.exe` in `System32`, and the code names the failing call as a
+reason: [windows_install.md](windows_install.md#repair-reconfigure-uninstall)),
+and that the driver's Windows stop was a tree kill where the service host
+sends Ctrl+C, so the workers died mid-write and a restore then folded the
+SQLite WAL into the file it set aside, which failed the `restore-kill` check
+and left the barrier up for `reset` (`STALE_MAINTENANCE`); the driver now
+drains the workers through the manager's `lifecycle.stop` first. The scratch
+managers of two injections still did not answer on Windows; a failed cell now
+keeps the processes' logs beside its evidence
+([release_acceptance.md](release_acceptance.md#findings), findings 16 to 18).
 Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each

@@ -84,16 +84,19 @@ function alive(pid) {
  * the `.cmd` launcher; signalling it leaves the manager's node.exe and its workers running (holding
  * the driver's pipes open and the payload's native addons mapped, so the install tree cannot be
  * removed), so the whole tree is ended with taskkill, which is what the service host does on stop.
- * Elsewhere the signal goes to the process itself. Never throws.
+ * Elsewhere the signal goes to the process itself. Never throws. Returns true only when this call
+ * ended the process: a process that was already gone (it finished on its own) is false, which is
+ * what an interruption check needs to tell "killed part way" from "finished before the kill landed".
  */
 function killTree(pid, signal = 'SIGKILL') {
     if (!pid) return false;
     if (IS_WINDOWS) {
+        if (alive(pid) === false) return false;
         try {
             childProcess.execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 20_000 });
             return true;
         } catch {
-            return alive(pid) === false;
+            return false;
         }
     }
     try {

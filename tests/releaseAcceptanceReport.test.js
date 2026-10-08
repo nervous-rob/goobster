@@ -310,7 +310,10 @@ describe('how the driver ends a process it started', () => {
         expect(operator.killTree(null)).toBe(false);
     });
 
-    test('on Windows the whole tree is ended with taskkill, because the pid the driver holds is the cmd.exe running the .cmd launcher', () => {
+    test('on Windows the whole tree is ended with taskkill, because the pid the driver holds is the cmd.exe running the .cmd launcher; a pid already gone is not ended (no taskkill, false)', async () => {
+        const live = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+        const gone = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+        await new Promise((resolve) => gone.once('close', resolve));
         const original = Object.getOwnPropertyDescriptor(process, 'platform');
         Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
         const calls = [];
@@ -321,12 +324,42 @@ describe('how the driver ends a process it started', () => {
                     execFileSync: (file, args, options) => { calls.push({ file, args, options }); }
                 }));
                 const operator = require('../scripts/acceptance/lib/operator');
-                expect(operator.killTree(4242)).toBe(true);
+                expect(operator.killTree(live.pid)).toBe(true);
+                expect(operator.killTree(gone.pid)).toBe(false);
             });
         } finally {
             jest.dontMock('node:child_process');
             Object.defineProperty(process, 'platform', original);
+            live.kill('SIGKILL');
         }
-        expect(calls).toEqual([expect.objectContaining({ file: 'taskkill', args: ['/PID', '4242', '/T', '/F'] })]);
+        expect(calls).toEqual([expect.objectContaining({ file: 'taskkill', args: ['/PID', String(live.pid), '/T', '/F'] })]);
+    });
+});
+
+describe('the process logs a failed cell keeps beside its evidence', () => {
+    test('every log is redacted through the cell\'s redactor, and one that still shows something secret-like is replaced by a note', () => {
+        const { keepLogs } = require('../scripts/acceptance/run');
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'acceptance-logs-'));
+        try {
+            const from = path.join(root, 'logs');
+            fs.mkdirSync(from);
+            fs.writeFileSync(path.join(from, 'manager.log'), '[manager] state: claimed\ncredential file at /home/someone/data/manager/recovery-credential\nminted s3cr3t-value-here\n');
+            fs.writeFileSync(path.join(from, 'scratch-token.log'), 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789\n-----BEGIN PRIVATE KEY-----\nMIIE...\n');
+            fs.writeFileSync(path.join(from, 'notes.txt'), 'not a log\n');
+            const redactor = new E.Redactor();
+            redactor.secret('s3cr3t-value-here');
+            const to = path.join(root, 'out', 'logs-cell');
+            expect(keepLogs(from, to, redactor)).toEqual(['manager.log', 'scratch-token.log']);
+            const manager = fs.readFileSync(path.join(to, 'manager.log'), 'utf8');
+            expect(manager).toContain('[manager] state: claimed');
+            expect(manager).toContain('minted [redacted]');
+            expect(manager).not.toContain('s3cr3t');
+            expect(manager).not.toContain('/home/someone');
+            expect(fs.readFileSync(path.join(to, 'scratch-token.log'), 'utf8')).toMatch(/^\(not kept: 1 possible leak\(s\): a private key\)\n$/);
+            expect(fs.existsSync(path.join(to, 'notes.txt'))).toBe(false);
+            expect(keepLogs(path.join(root, 'missing'), to, redactor)).toEqual([]);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 });

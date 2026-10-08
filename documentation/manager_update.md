@@ -417,7 +417,7 @@ last apply and its downtime, and the recovery state.
 | `INDEX_INVALID`, `INDEX_UNSIGNED`, `INDEX_BAD_SIGNATURE`, `UNTRUSTED_KEY`, `KEY_LIST_INVALID` | the index failed the production trust policy |
 | `TARGET_MISMATCH`, `ABI_MISMATCH`, `VERSION_INCOMPATIBLE`, `DOWNGRADE`, `CHANNEL_MISMATCH`, `FEATURES_UNAVAILABLE` | the index offers something this installation cannot or must not take |
 | `NO_UPDATE_AVAILABLE`, `NOTHING_STAGED`, `STAGE_STALE` | nothing to do, nothing staged, or the stage is for another installed release |
-| `ARTIFACT_MISSING`, `ARTIFACT_DIGEST_MISMATCH`, `ARCHIVE_UNREADABLE`, `ARCHIVE_UNSAFE` | the download is not the signed artifact; deleted, nothing applied |
+| `ARTIFACT_MISSING`, `ARTIFACT_DIGEST_MISMATCH`, `ARCHIVE_UNREADABLE`, `ARCHIVE_UNSAFE` | the download is not the signed artifact; deleted, nothing applied. `ARCHIVE_UNREADABLE` names the `tar` call and its cause as a short reason (`LIST_EXIT_1`, `EXTRACT_ENOENT`; the CLI prints it in parentheses, `--json` carries `error.reason`), never tar's output. The archive is read with the system `tar`: on Windows `%SystemRoot%\System32\tar.exe` (bsdtar) when it is there, since the GNU tar Git for Windows puts first on PATH under Git Bash reads `D:\...` as a remote host and fails on every archive |
 | `INSUFFICIENT_SPACE` | not enough disk for stage plus backup |
 | `SCHEMA_FINGERPRINT_UNAVAILABLE` | the staged release carries no readable schema |
 | `UPDATE_IN_PROGRESS`, `RECOVERY_PENDING` | an update or an undecided recovery already exists |

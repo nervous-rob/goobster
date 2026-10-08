@@ -125,6 +125,12 @@ and running:
 node scripts/acceptance/report.js <dir with the evidence directories> --matrix --doc documentation/release_acceptance.md
 ```
 
+A cell that fails also keeps the processes' own output beside its evidence
+(`logs-<cell id>/manager.log`, `scratch-<name>.log`: the manager's and the
+scratch managers' stdout and stderr, what `--keep` would leave on the host),
+every line through the cell's redactor and any log that still shows something
+secret-like replaced by a note. The report reads only `evidence-*.json`.
+
 <!-- acceptance-matrix:begin -->
 
 | platform | install | database | features | install | owner | chat | features | keys | crash | update | repair | restore | migrate | reset | keep | remove | token | store | port | storage | update-kill | restore-kill | gated | no-session | proxy |
@@ -363,6 +369,44 @@ regression test:
     reset, the scratch managers that never answered, the restore that
     completed under the "kill", `EBUSY` on the WAL file) were the shadow of
     finding 14: the manager the driver believed stopped was still running.
+16. **Fixed: on Windows the update read its archive with the wrong `tar`.**
+    With the download landing (finding 15), `update stage` ended in
+    `ARCHIVE_UNREADABLE` within three seconds, before anything was unpacked.
+    The manager ran whatever `tar` PATH gave it; under Git Bash (the hosted
+    job's shell, and an operator's terminal just as easily) that is the GNU
+    tar Git for Windows puts first, which reads `D:\...` as a remote host
+    (`Cannot connect to D`) and fails on every archive, while the system
+    `tar.exe` in `System32` is bsdtar and takes the path. On Windows the
+    manager now uses `%SystemRoot%\System32\tar.exe` when it is there and
+    PATH only where it is not, and the error carries the call and cause as
+    a short reason (`LIST_EXIT_1`, `EXTRACT_ENOENT`), never tar's output
+    (`apps/manager/update/archive.js`; `tests/updateStage.test.js`).
+17. **Fixed: the driver's Windows stop was a crash, and a restore then set
+    aside a different file.** Finding 14 made the Windows stop a tree kill.
+    The service host does not do that: it sends Ctrl+C and the manager drains
+    and closes its workers before it leaves. A tree kill ends the workers
+    mid-write and leaves SQLite with an un-checkpointed WAL; the next thing
+    to open the database, the restore of `restore-kill`, folds the WAL into
+    the main file first, so the file it set aside as `.pre-restore` no longer
+    hashed as the file the driver had measured and the check "the previous
+    database was set aside intact" failed. Because that check failed first,
+    the injection never ran its own `release --force --acknowledge-mutation`,
+    the interrupted restore's barrier stayed up, and the next `reset` was
+    refused `STALE_MAINTENANCE`: one cause, two red cells. A Node parent
+    cannot send Ctrl+C, so on Windows the driver now asks the manager for
+    what that Ctrl+C runs inside it, the public `lifecycle.stop` operation
+    (workers drained and closed through the control file), and ends the
+    process tree afterwards (`scripts/acceptance/lib/cell.js` `stopDaemon`).
+    `killTree` also reports true only when it ended the process, so a
+    restore that finishes before the kill lands is `n/a`, not a false
+    "killed" (`scripts/acceptance/lib/operator.js`).
+18. **Open: on Windows the scratch managers (`token`, `store`) did not answer
+    within 40 seconds** while the cell's own manager, started the same way,
+    did on every run. The two differ in their environment (`HOME`,
+    `USERPROFILE`, the three scratch ports) and, for `token`, in running the
+    payload's launcher before anything is installed. The evidence carried no
+    output of those processes; a failed cell now keeps their logs beside it
+    (above), and the next hosted run tells.
 
 ## Cells no hosted runner can give
 

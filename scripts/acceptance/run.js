@@ -142,12 +142,40 @@ async function main(argv) {
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
     for (const entry of [...steps, ...injections]) process.stdout.write(`${entry.status.padEnd(14)} ${entry.id.padEnd(24)} ${entry.result}\n`);
     process.stdout.write(`evidence: ${path.basename(file)}${problems.length ? ` (INVALID: ${problems.join('; ')})` : ''}\n`);
+    const failed = [...steps, ...injections].some((entry) => entry.status === 'fail') || fatal || problems.length;
+    if (failed) {
+        const kept = keepLogs(path.join(o.work, 'logs'), path.join(o.out, `logs-${doc.cell.id}`), redactor);
+        if (kept.length) process.stdout.write(`process logs: ${kept.join(', ')}\n`);
+    }
     if (!o.keep) {
         const left = await removeWorkTree(o.work);
         if (left) process.stderr.write(`work directory kept: ${redactor.text(left)}\n`);
     }
-    const failed = [...steps, ...injections].some((entry) => entry.status === 'fail') || fatal || problems.length;
     return failed ? 1 : 0;
+}
+
+/**
+ * When a cell fails, the processes' own output (the manager's and the scratch managers' stdout and
+ * stderr, what `--keep` would leave on the host) goes beside the evidence so a hosted failure can be
+ * read without re-running it. Every line goes through the cell's redactor (secrets it minted, home,
+ * user name), and a log that still shows something secret-like is replaced by a note saying so.
+ * @returns {string[]} the file names written
+ */
+function keepLogs(from, to, redactor) {
+    let names;
+    try { names = fs.readdirSync(from).filter((name) => name.endsWith('.log')).sort(); } catch { return []; }
+    if (!names.length) return [];
+    fs.mkdirSync(to, { recursive: true });
+    const kept = [];
+    for (const name of names) {
+        let text;
+        try { text = redactor.text(fs.readFileSync(path.join(from, name), 'utf8')); } catch { continue; }
+        const leaks = E.findLeaks({ text });
+        const body = leaks.length ? `(not kept: ${leaks.length} possible leak(s): ${[...new Set(leaks.map((item) => item.kind))].join('; ')})\n` : text;
+        fs.writeFileSync(path.join(to, name), body);
+        kept.push(name);
+    }
+    return kept;
 }
 
 /**
@@ -181,4 +209,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { main, parseArgs, artifactOf };
+module.exports = { main, parseArgs, artifactOf, keepLogs };
