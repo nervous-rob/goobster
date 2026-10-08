@@ -344,6 +344,12 @@ door finds this installation rather than the `%LOCALAPPDATA%\Goobster`
 defaults; `uninstall` still belongs to the code-root launcher, which runs it
 from a copy of Node outside the code root.
 
+Either launcher also runs bare (`goobster-manager.cmd` with no argument
+serves the manager in the foreground, as `--supervise` does for the service);
+the payload launcher once failed that way with "The syntax of the command is
+incorrect" (exit 255), because a batch file's substring of an undefined
+variable is not empty, which the acceptance matrix found and fixed.
+
 Either launcher works from Git Bash too. The one place the shell used to
 matter was `update stage`: it reads the downloaded payload archive with the
 system `tar`, and Git Bash puts Git's GNU tar first on PATH, which reads a

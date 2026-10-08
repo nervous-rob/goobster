@@ -242,4 +242,21 @@ describe('the manager launchers the payload carries', () => {
         expect(read).toBeLessThan(defaults);
         expect(launchers.windowsManager).not.toMatch(/call "%CODE%\\goobster\.env"|^\s*"%CODE%\\goobster\.env"/m);
     });
+
+    test('the Windows payload launcher never takes a substring of a variable that may be undefined: with no argument, cmd drops "%VAR:" and the line fails with a syntax error (exit 255)', () => {
+        const lines = launchers.windowsManager.split('\r\n').filter((line) => !/^\s*rem\b/i.test(line));
+        const defined = new Set();
+        for (const line of lines) {
+            for (const match of line.matchAll(/%([A-Za-z_][A-Za-z0-9_]*):~/g)) {
+                expect(defined.has(match[1])).toBe(true);
+            }
+            const set = /^\s*(?:if [^(]*? )?set "([A-Za-z_][A-Za-z0-9_]*)=([^"]*)"/.exec(line);
+            // Only a value that cannot be empty counts (a bare %~1 or %1 is empty with no argument).
+            if (set && set[2] !== '' && !/^%~?\*?\d*%?$/.test(set[2]) && !/^%~[a-z]*\d$/i.test(set[2])) defined.add(set[1]);
+        }
+        expect(lines).toContain('set "FIRST=x%~1"');
+        expect(lines).toContain('if "%FIRST%"=="x" set "ENTRY=%PAYLOAD%\\app\\apps\\manager\\index.js"');
+        expect(lines).toContain('if "%FIRST:~1,1%"=="-" set "ENTRY=%PAYLOAD%\\app\\apps\\manager\\index.js"');
+        expect(launchers.windowsManager).not.toContain('%FIRST:~0,1%');
+    });
 });

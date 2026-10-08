@@ -400,13 +400,29 @@ regression test:
     `killTree` also reports true only when it ended the process, so a
     restore that finishes before the kill lands is `n/a`, not a false
     "killed" (`scripts/acceptance/lib/operator.js`).
-18. **Open: on Windows the scratch managers (`token`, `store`) did not answer
-    within 40 seconds** while the cell's own manager, started the same way,
-    did on every run. The two differ in their environment (`HOME`,
-    `USERPROFILE`, the three scratch ports) and, for `token`, in running the
-    payload's launcher before anything is installed. The evidence carried no
-    output of those processes; a failed cell now keeps their logs beside it
-    (above), and the next hosted run tells.
+18. **Fixed: on Windows the payload launcher failed with no argument.** The
+    scratch managers of the `token` and `store` injections never answered
+    while the cell's own manager did. Their logs (kept beside the evidence
+    from the fifth run on) held one line, `The syntax of the command is
+    incorrect.`, and the processes left with 255 within a quarter of a second:
+    `cmd.exe` aborting the batch file before Node ran. The one difference
+    from every working call was the argument list, which was empty: the
+    launcher took a substring of its first argument (`%FIRST:~0,1%`) to tell a
+    `--flag` from a CLI verb, and in a batch file a substring of an undefined
+    variable is not empty: `cmd` drops `%FIRST:` and reads on to the next `%`,
+    so the line it then parses is garbage. Every other door passes an
+    argument (`--supervise` from the service, `--open-browser` from the
+    installer, a verb from the CLI), which is why no Windows journey had run
+    it bare. The variable now always holds a leading `x` before any substring
+    is taken (`scripts/package-runtime.js`; `tests/packagePayloadRules.test.js`
+    checks that no substring is taken of a variable that may be undefined).
+19. **Fixed: on Windows the archive's manifest was "missing".** With the
+    right `tar` (finding 16) `update stage` ended in `MANIFEST_MISSING`.
+    bsdtar on Windows ends each line of its listing with CR LF; the manager
+    split the listing on LF and compared `payload-manifest.json\r` with the
+    name it wanted. Listings are now split on either line end
+    (`apps/manager/update/archive.js`; `tests/updateStage.test.js` drives
+    the listing and the member read through a tar that answers with CR LF).
 
 ## Cells no hosted runner can give
 

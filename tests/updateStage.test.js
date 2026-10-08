@@ -229,3 +229,35 @@ describe('the tar the archive is read with', () => {
         expect(JSON.stringify(failure)).not.toContain('not-an-archive');
     });
 });
+
+describe('reading a listing from Windows\' bsdtar', () => {
+    test('lines ending in CR LF still name the manifest and still refuse an escaping member', () => {
+        const calls = [];
+        jest.isolateModules(() => {
+            jest.doMock('node:child_process', () => ({
+                ...jest.requireActual('node:child_process'),
+                spawnSync: (file, args) => {
+                    calls.push({ file, args });
+                    if (args[0] === '-tzf') return { status: 0, stdout: Buffer.from('app/\r\napp/index.js\r\npayload-manifest.json\r\npayload-manifest.sig\r\n') };
+                    if (args[0] === '-xzOf') return { status: 0, stdout: Buffer.from('{"release":{"core":"2.5.0"}}\r\n') };
+                    return { status: 0, stdout: Buffer.alloc(0) };
+                }
+            }));
+            const archive = require('../apps/manager/update/archive');
+            expect(archive.listMembers('x.tar.gz')).toEqual(['app/', 'app/index.js', 'payload-manifest.json', 'payload-manifest.sig']);
+            expect(JSON.parse(archive.readManifestText('x.tar.gz'))).toEqual({ release: { core: '2.5.0' } });
+            expect(calls.find((call) => call.args[0] === '-xzOf').args).toEqual(['-xzOf', 'x.tar.gz', 'payload-manifest.json']);
+        });
+        jest.isolateModules(() => {
+            jest.doMock('node:child_process', () => ({
+                ...jest.requireActual('node:child_process'),
+                spawnSync: () => ({ status: 0, stdout: Buffer.from('app/\r\n../outside\r\n') })
+            }));
+            const archive = require('../apps/manager/update/archive');
+            let failure = null;
+            try { archive.listMembers('x.tar.gz'); } catch (error) { failure = error; }
+            expect(failure && failure.code).toBe('ARCHIVE_UNSAFE');
+        });
+        jest.dontMock('node:child_process');
+    });
+});

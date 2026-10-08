@@ -71,10 +71,16 @@ and that the driver's Windows stop was a tree kill where the service host
 sends Ctrl+C, so the workers died mid-write and a restore then folded the
 SQLite WAL into the file it set aside, which failed the `restore-kill` check
 and left the barrier up for `reset` (`STALE_MAINTENANCE`); the driver now
-drains the workers through the manager's `lifecycle.stop` first. The scratch
-managers of two injections still did not answer on Windows; a failed cell now
-keeps the processes' logs beside its evidence
-([release_acceptance.md](release_acceptance.md#findings), findings 16 to 18).
+drains the workers through the manager's `lifecycle.stop` first. The fifth
+run (reset and the interrupted restore now pass on Windows) kept the
+processes' logs beside the failed cell's evidence for the first time, and
+they named the last two: the payload launcher `goobster-manager.cmd` failed
+with no argument (a substring of an undefined variable makes `cmd.exe` abort
+the batch file with "The syntax of the command is incorrect", exit 255; every
+other door passes an argument, so no Windows journey had run it bare), and
+the archive listing from Windows' bsdtar ends its lines with CR LF, which made
+the manifest "missing"
+([release_acceptance.md](release_acceptance.md#findings), findings 16 to 19).
 Also still open: the owner decisions
 the runbooks name (#249, #255, #262, the signing material for #372), and the
 deferred #344 and #345. The child issues of #315 are not closed here; each

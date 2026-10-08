@@ -44,9 +44,14 @@ function tar(call, args, { input = null, maxBuffer = MAX_LIST_BYTES } = {}) {
     return result.stdout;
 }
 
+/** tar's listing, one member a line; Windows' bsdtar ends its lines with CR LF, so both line ends are taken. */
+function lines(output) {
+    return output.toString('utf8').split(/\r?\n/).filter(Boolean);
+}
+
 /** Every member name; refuse an absolute path, a `..` part, a drive letter or a backslash. */
 function listMembers(file) {
-    const names = tar('LIST', ['-tzf', file]).toString('utf8').split('\n').filter(Boolean);
+    const names = lines(tar('LIST', ['-tzf', file]));
     for (const name of names) {
         const parts = name.split('/');
         if (name.startsWith('/') || name.includes('\\') || name.includes('\0') || /^[A-Za-z]:/.test(name) || parts.includes('..')) throw unsafe();
@@ -56,8 +61,7 @@ function listMembers(file) {
 
 /** Link members must stay inside too: list them verbosely and refuse an absolute or escaping target. */
 function checkLinks(file) {
-    const lines = tar('LIST_LINKS', ['-tzvf', file]).toString('utf8').split('\n').filter(Boolean);
-    for (const line of lines) {
+    for (const line of lines(tar('LIST_LINKS', ['-tzvf', file]))) {
         const flag = line[0];
         if (flag !== 'l' && flag !== 'h') continue;
         const match = / -> (.+)$/.exec(line) || / link to (.+)$/.exec(line);
