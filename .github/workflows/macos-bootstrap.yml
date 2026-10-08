@@ -33,6 +33,7 @@ on:
       - 'scripts/lib/payload*'
       - 'scripts/bootstrap-pins.json'
       - 'scripts/macos-bootstrap-proof.sh'
+      - 'scripts/native-service-recovery-proof.js'
       - 'documentation/macos_install.md'
       - '.github/workflows/macos-bootstrap.yml'
       - 'package.json'
@@ -46,6 +47,7 @@ on:
       - 'scripts/package-bootstrap-darwin.js'
       - 'scripts/lib/bootstrap/**'
       - 'scripts/macos-bootstrap-proof.sh'
+      - 'scripts/native-service-recovery-proof.js'
       - 'apps/manager/privileged/**'
       - 'apps/manager/platform/**'
       - 'apps/manager/bootstrap/**'
@@ -90,6 +92,8 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       TARGET: ${{ matrix.target }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/goobster-proof-browsers
+      GOOBSTER_NATIVE_BROWSER_PROOF: '1'
     steps:
       - name: Output locations (outside the checkout)
         shell: bash
@@ -112,6 +116,9 @@ jobs:
 
       - name: Update service ownership and registration contract on this OS
         run: npx jest tests/updateService.test.js --runInBand
+
+      - name: Install the browser used only by the proof
+        run: npx playwright install chromium
 
       - name: Build the React client
         run: npm run build:web

@@ -377,12 +377,13 @@ function createHandler(deps = {}) {
         } else if (!sameHost) {
             run(log, 'sc.exe config', 'sc.exe', ['config', xml.SERVICE_ID, 'binPath=', binPath, 'start=', 'auto']);
         }
-        if (!found.exists || written) {
-            run(log, 'sc.exe description', 'sc.exe', ['description', xml.SERVICE_ID, `${xml.DISPLAY_NAME} Discord bot, installation ${input.installationId}`]);
-            run(log, 'sc.exe failure', 'sc.exe', ['failure', xml.SERVICE_ID, 'reset=', '86400', 'actions=', RECOVERY]);
-            run(log, 'sc.exe failureflag', 'sc.exe', ['failureflag', xml.SERVICE_ID, '1'], { allowFailure: true });
-            run(log, 'sc.exe sidtype', 'sc.exe', ['sidtype', xml.SERVICE_ID, 'unrestricted'], { allowFailure: true });
-        }
+        // A previous helper may have stopped just after sc create. An owned, unchanged
+        // but stopped service still needs the policy/virtual-account setup completed.
+        // The healthy unchanged case returned above, so reapplying these is bounded.
+        run(log, 'sc.exe description', 'sc.exe', ['description', xml.SERVICE_ID, `${xml.DISPLAY_NAME} Discord bot, installation ${input.installationId}`]);
+        run(log, 'sc.exe failure', 'sc.exe', ['failure', xml.SERVICE_ID, 'reset=', '86400', 'actions=', RECOVERY]);
+        run(log, 'sc.exe failureflag', 'sc.exe', ['failureflag', xml.SERVICE_ID, '1'], { allowFailure: true });
+        run(log, 'sc.exe sidtype', 'sc.exe', ['sidtype', xml.SERVICE_ID, 'unrestricted'], { allowFailure: true });
         applyAccess(log, input, paths.dir);
 
         if (found.exists && !sameHost) {

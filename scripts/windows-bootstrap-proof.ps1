@@ -309,6 +309,11 @@ try {
     }
     Group-End
 
+    Group-Start 'interrupted native service registration and removal'
+    & (Join-Path $Code 'current\runtime\node.exe') (Join-Path $PSScriptRoot 'native-service-recovery-proof.js') --store $Store --confirm (Installation-Id) --port $ApiPort
+    if ($LASTEXITCODE -ne 0) { Fail 'native service interruption recovery failed' }
+    Group-End
+
     Group-Start '3. the same install command again changes nothing'
     $beforeBinary = Service-Field 'BINARY_PATH_NAME'
     $exit = Run-Installer $Answers 'install-again'

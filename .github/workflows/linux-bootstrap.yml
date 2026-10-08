@@ -30,6 +30,7 @@ on:
       - 'scripts/package-*'
       - 'scripts/bootstrap-pins.json'
       - 'scripts/linux-bootstrap-proof.sh'
+      - 'scripts/native-service-recovery-proof.js'
       - 'scripts/lib/bootstrapStage.js'
       - 'scripts/lib/payload*'
       - 'deploy/goobster.service'
@@ -47,6 +48,7 @@ on:
       - 'scripts/package-bootstrap.js'
       - 'scripts/bootstrap-pins.json'
       - 'scripts/linux-bootstrap-proof.sh'
+      - 'scripts/native-service-recovery-proof.js'
       - 'apps/manager/privileged/**'
       - 'apps/manager/platform/**'
       - 'apps/manager/bootstrap/**'
@@ -90,6 +92,8 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       TARGET: ${{ matrix.target }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/goobster-proof-browsers
+      GOOBSTER_NATIVE_BROWSER_PROOF: '1'
     steps:
       - name: Output locations (outside the checkout)
         shell: bash
@@ -113,6 +117,9 @@ jobs:
 
       - name: Update service ownership and registration contract on this OS
         run: npx jest tests/updateService.test.js --runInBand
+
+      - name: Install the browser used only by the proof
+        run: npx playwright install --with-deps chromium
 
       - name: Build the React client
         run: npm run build:web
