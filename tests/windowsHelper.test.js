@@ -514,7 +514,8 @@ describe('the platform module surface', () => {
 
     test('the other operations answer NOT_IMPLEMENTED', () => {
         const world = ready();
-        const { reply } = handle(world, 'package.install', { names: ['ffmpeg'] });
+        // A name from the protocol's fixed package table, so the request reaches the Windows handler instead of being refused first.
+        const { reply } = handle(world, 'package.install', { names: ['postgresql-17'] });
         expect(reply).toMatchObject({ ok: false, code: 'NOT_IMPLEMENTED' });
         expect(world.calls).toEqual([]);
         expect(win32.createHandler(world.deps()).handle.length).toBe(2);
