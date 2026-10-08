@@ -6,8 +6,8 @@ run before each phase, and open items. It is updated as phases land.
 
 ## Delivery status
 
-Every implementation issue of the epic except #343's matrix half, and the two
-deferred issues, is merged into `main` (2026-10-07/08, merge commits in
+Every implementation issue of the epic, except the two deferred issues, is
+merged into `main` (2026-10-07/08, merge commits in
 dependency order; each PR was green on both database engines on its own base
 before it moved). The per-phase **Status** paragraphs below record what each
 change proved and what it left out; this table records where it landed.
@@ -21,6 +21,7 @@ change proved and what it left out; this table records where it landed.
 | #327 packaging proof (with the shared `config.json` loader, #364) | #348, #364 | `1ccb2fa` |
 | #340 native Postgres | #371 | `707c3fc` |
 | #343 operator runbooks and accessibility review | #375 | `991aced` |
+| #343 acceptance matrix (driver, hosted workflow, report; findings 8 to 20 fixed) | #377 | `987b0ba` |
 | Post-merge: duplicated list registrations from the stack merge; a Windows helper spec broken by the fixed package table | #374, #376 | `87fa25f`, `8845cc5` |
 
 `main` is green on both engines from `8845cc5` (lint, smoke, typecheck, build,
@@ -30,8 +31,9 @@ Playwright). The real-platform workflows (`linux-bootstrap.yml`,
 on the merged tree at `707c3fc`.
 
 The last to land: #343's acceptance matrix (driver, hosted workflow, report;
-PR #377, where the 19 hosted cells ran for the first time and, on the seventh
-run, all passed). Its first hosted run
+PR #377, merged `987b0ba`, where the 19 hosted cells ran for the first time
+and, on the seventh run, all passed; the eighth, on the final head, passed
+again). Its first hosted run
 found three defects that the same PR fixes: the documented SQLite-with-data →
 `database docker provision` → `migrate` path was refused with
 `TARGET_NOT_EMPTY` because the preflight counted relations and provisioning
