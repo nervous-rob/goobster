@@ -24,14 +24,18 @@ test('catalog contracts cover configured defaults and contain usable, immutable 
     }
 });
 
-test('only explicit aliases resolve; model names never imply support', () => {
+test('reviewed aliases take priority and new chat models use minimal requests', () => {
     expect(registry.get('openai', 'gpt-5.6').canonicalId).toBe('gpt-5.6-sol');
     expect(registry.get('anthropic', 'claude-haiku-4-5-20251001').canonicalId).toBe('claude-haiku-4-5');
     expect(registry.get('gemini', 'models/gemini-3.5-flash').id).toBe('gemini-3.5-flash');
-    for (const id of ['gpt-6-sol-future', 'gpt-7', 'gpt-image-2', 'gpt-4o-realtime-preview']) {
+    for (const id of ['gpt-future', 'gpt-image-2', 'gpt-4o-realtime-preview', 'gpt-4o-audio-preview', 'text-embedding-3-small']) {
         expect(() => resolve(id)).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_MODEL' }));
     }
     expect(registry.get('anthropic', 'gpt-6-sol')).toBeNull();
+    const policy = resolve('gpt-7', { temperature: 1, reasoning_effort: 'high' });
+    expect(policy).toMatchObject({ effort: null, sampling: {}, maxOutputTokens: 8692, model: { status: 'discovered', checkedAt: null } });
+    expect(registry.createRegistry().get('openai', 'gpt-7').status).toBe('discovered');
+    expect(() => resolve('gpt-7', { webSearch: true })).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_SEARCH' }));
 });
 
 test('GPT-6 policies distinguish effort, sampling and output limits', () => {

@@ -24,6 +24,15 @@ describe('GeminiService', () => {
         return service;
     }
 
+    test('new API-listed Gemini models use provider defaults without invented thinking controls', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Hello' }] } }] }) });
+        const service = createService();
+        await service.chat('Hi', { model: 'gemini-4-flash', temperature: 0.4, reasoning_effort: 'high', max_tokens: 500 });
+        expect(global.fetch.mock.calls[0][0]).toContain('models/gemini-4-flash:generateContent');
+        const request = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(request.generationConfig).toEqual({ maxOutputTokens: 8692 });
+    });
+
     test('posts chat requests to Gemini REST and normalizes text responses', async () => {
         global.fetch = jest.fn().mockResolvedValue({
             ok: true,

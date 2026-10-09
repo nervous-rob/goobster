@@ -25,6 +25,17 @@ describe('AnthropicService', () => {
         return service;
     }
 
+    test('new API-listed Claude models use provider defaults without sampling or thinking options', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: 'text', text: 'Hello' }] }) });
+        const service = createService();
+        await service.chat('Hi', { model: 'claude-sonnet-6', temperature: 0.4, reasoning_effort: 'high', max_tokens: 500 });
+        const request = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(request).toMatchObject({ model: 'claude-sonnet-6', max_tokens: 8692 });
+        expect(request).not.toHaveProperty('temperature');
+        expect(request).not.toHaveProperty('thinking');
+        expect(request).not.toHaveProperty('output_config');
+    });
+
     test('posts chat requests to the Messages API and normalizes text responses', async () => {
         global.fetch = jest.fn().mockResolvedValue({
             ok: true,

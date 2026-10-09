@@ -578,6 +578,7 @@ async function runChatInteraction(interaction, thread = null) {
                 // withThinkingHeadroom in each provider - never inflate this
                 // to "make room" for thinking tokens.
                 max_tokens: 4096,
+                personalAiFunction: isVoiceInteraction || interaction.spoken === true ? 'voiceChat' : 'chat',
                 usageContext: { guildId: conversationScopeId, userId: interaction.user?.id }
             };
             try {
@@ -997,7 +998,8 @@ async function processMessage(message, isThread = false) {
                 const imagePath = await imageDetectionHandler.generateImage(
                     prompt, 
                     type || 'SCENE', 
-                    style || 'fantasy'
+                    style || 'fantasy',
+                    { usageContext: { guildId: message.guildId || `dm:${message.author.id}`, userId: message.author.id } }
                 );
                 
                 // Send the image

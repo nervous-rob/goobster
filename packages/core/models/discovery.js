@@ -61,11 +61,13 @@ async function fetchIds(provider) {
     }
 }
 
-async function discover(provider) {
+async function discover(provider, { refresh = false } = {}) {
     if (!PROVIDERS.includes(provider)) throw new registry.ModelPolicyError('BAD_PROVIDER', 'Unknown AI provider.');
     if (!configured(provider)) return { ids: [], status: 'not-configured', checkedAt: null };
     const prior = cache.get(provider);
-    if (prior && Date.now() < prior.expiresAt) return { ...prior, status: prior.status === 'live' ? 'cached' : prior.status };
+    // Manual refresh bypasses the normal TTL, with a short cooldown to keep
+    // repeated clicks and multiple clients from flooding a provider.
+    if (prior && Date.now() < (refresh ? prior.retryAt : prior.expiresAt)) return { ...prior, status: prior.status === 'live' ? 'cached' : prior.status };
     if (inFlight.has(provider)) return inFlight.get(provider);
     const task = (async () => {
         let result;
@@ -75,6 +77,7 @@ async function discover(provider) {
             // Do not leak upstream URLs, credentials, or raw provider errors.
             result = { ids: prior?.ids || [], status: prior?.checkedAt ? 'stale' : 'unavailable', checkedAt: prior?.checkedAt || null, expiresAt: Date.now() + RETRY_MS };
         }
+        result.retryAt = Date.now() + RETRY_MS;
         cache.set(provider, result);
         return result;
     })();
@@ -82,12 +85,17 @@ async function discover(provider) {
     try { return await task; } finally { inFlight.delete(provider); }
 }
 
-async function listCatalog(provider, workflow = 'chat') {
+async function listCatalog(provider, workflow = 'chat', options = {}) {
     if (!['chat', 'parlor', 'research'].includes(workflow)) throw new registry.ModelPolicyError('BAD_WORKFLOW', 'Unknown model workflow.');
-    const result = await discover(provider);
+    const result = await discover(provider, options);
     const fresh = result.status === 'live' || result.status === 'cached';
     const discovered = new Set(result.ids.map(id => registry.get(provider, id)?.canonicalId || id));
-    const models = registry.list(provider).filter(m => m.id === m.canonicalId && m.workflows.includes(workflow)).map(model => {
+    const entries = new Map(registry.list(provider).filter(m => m.id === m.canonicalId && m.workflows.includes(workflow)).map(m => [m.id, m]));
+    for (const id of result.ids) {
+        const model = registry.get(provider, id);
+        if (model?.workflows.includes(workflow) && !entries.has(model.canonicalId)) entries.set(model.canonicalId, model);
+    }
+    const models = [...entries.values()].map(model => {
         const availability = fresh ? (discovered.has(model.id) ? 'listed' : 'not-listed') : 'unknown';
         return { ...model, availability, selectable: configured(provider) && availability !== 'not-listed' && model.status !== 'disabled' };
     });
