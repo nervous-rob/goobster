@@ -306,6 +306,11 @@ measure to 1120px and Settings forms from 760px to 1040px; the
 Documentation article keeps its 880px reading column. It previews live
 and saves with the rest of Appearance.
 
+The room, view and section icons the registry carries as emoji are drawn
+through `<RoomIcon>` / `<ViewIcon>` / `<SectionIcon>` (`src/icons/Icon.tsx`),
+which render the person's chosen icon language (Settings → Appearance →
+Icon style, emoji by default); see [portal_icons.md](portal_icons.md).
+
 Both layouts render the same `nav[aria-label="Rooms"]` landmark, the same
 `a.nav-btn[data-room]` entries with the same active-room rule
 (`parentRoom(resolveRoom(path))`), the same feature gating

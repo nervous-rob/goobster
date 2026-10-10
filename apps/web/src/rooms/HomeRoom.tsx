@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
+import { Icon, RoomIcon } from '../icons/Icon';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { bindTilt, formatClock, formatRelativeTime, greeting } from '../lib/atmosphere';
@@ -232,9 +233,9 @@ export function HomeRoom() {
                             {PRIMARY_ROOMS
                                 .filter((room) => room.path !== '/' && isRoomAvailable(room, me))
                                 .map((room) => (
-                                    <Door key={room.id} label={`${room.icon} ${room.name}`} onClick={() => navigate({ to: room.path as never })} />
+                                    <Door key={room.id} label={<><RoomIcon room={room} /> {room.name}</>} onClick={() => navigate({ to: room.path as never })} />
                                 ))}
-                            <Door label="📈 Usage & limits" onClick={() => navigate({ to: '/usage' })} />
+                            <Door label={<><Icon glyph="usage" /> Usage & limits</>} onClick={() => navigate({ to: '/usage' })} />
                         </div>
                         {!!home.servers?.length && (
                             <div className="home-servers hint">
@@ -255,7 +256,7 @@ export function HomeRoom() {
     );
 }
 
-function Door({ label, onClick }: { label: string; onClick: () => void }) {
+function Door({ label, onClick }: { label: ReactNode; onClick: () => void }) {
     const ref = useRef<HTMLButtonElement>(null);
     useEffect(() => bindTilt(ref.current), []);
     return <button type="button" ref={ref} className="home-door" onClick={onClick}>{label}</button>;

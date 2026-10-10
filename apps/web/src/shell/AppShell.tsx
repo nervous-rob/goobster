@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import { api } from '../lib/api';
 import { applyAtmosphere } from '../lib/atmosphere';
+import { Icon, RoomIcon } from '../icons/Icon';
 import { keys } from '../lib/query';
 import { useSession } from '../hooks/useSession';
 import { usePortalEvents } from '../hooks/usePortalEvents';
@@ -16,8 +17,8 @@ import {
     setStoredAccent, setStoredSurface, setStoredTheme, THEME_EVENT, type ThemeChoice
 } from '../lib/theme';
 import {
-    getStoredNavLayout, getStoredPageWidth, NAV_LAYOUT_EVENT, paintAppearance, paintNavLayout, paintPageWidth,
-    persistAppearance, persistNavLayout, persistPageWidth, type NavLayout
+    getStoredIconStyle, getStoredNavLayout, getStoredPageWidth, isIconStyle, NAV_LAYOUT_EVENT, paintAppearance, paintIconStyle,
+    paintNavLayout, paintPageWidth, persistAppearance, persistIconStyle, persistNavLayout, persistPageWidth, type NavLayout
 } from '../lib/appearance';
 import { TopBar } from './TopBar';
 import { useQuery } from '@tanstack/react-query';
@@ -43,7 +44,7 @@ function NavLink({ room, active, count, onClick }: { room: Room; active: boolean
     return (
         <Link to={room.path as never} className={`nav-btn${active ? ' active' : ''}`}
             aria-current={active ? 'page' : undefined} data-room={room.id} onClick={onClick}>
-            <span aria-hidden="true">{room.icon}</span> {room.name}
+            <RoomIcon room={room} /> {room.name}
             {room.secondaryName && <span className="nav-secondary">{room.secondaryName}</span>}
             {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
         </Link>
@@ -209,6 +210,7 @@ export function AppShell() {
         paintSurface(getStoredSurface());
         paintNavLayout(getStoredNavLayout());
         paintPageWidth(getStoredPageWidth());
+        paintIconStyle(getStoredIconStyle());
         const onLayout = (event: Event) => setNavLayout((event as CustomEvent<NavLayout>).detail);
         window.addEventListener(NAV_LAYOUT_EVENT, onLayout);
         return () => window.removeEventListener(NAV_LAYOUT_EVENT, onLayout);
@@ -221,6 +223,7 @@ export function AppShell() {
         if (isSurface(appearance.surface)) setStoredSurface(appearance.surface);
         if (appearance.navLayout === 'top' || appearance.navLayout === 'sidebar') persistNavLayout(appearance.navLayout);
         if (appearance.pageWidth === 'full' || appearance.pageWidth === 'centered') persistPageWidth(appearance.pageWidth);
+        if (isIconStyle(appearance.iconStyle)) persistIconStyle(appearance.iconStyle);
         persistAppearance({
             textSize: appearance.textSize,
             density: appearance.density,
@@ -286,7 +289,7 @@ export function AppShell() {
     }
 
     const toggleTheme = () => setStoredTheme(resolveTheme(theme) === 'light' ? 'dark' : 'light');
-    const themeLabel = resolveTheme(theme) === 'light' ? '☀️' : '🌙';
+    const themeLabel = <Icon glyph={resolveTheme(theme) === 'light' ? 'sun' : 'moon'} />;
 
     return (
         <MenuProvider open={() => setDrawer(true)}>

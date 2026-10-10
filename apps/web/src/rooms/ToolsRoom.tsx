@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router';
+import { RoomIcon } from '../icons/Icon';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -65,7 +66,7 @@ export function ToolsRoom() {
                         const body = (
                             <>
                                 <div className="tools-card-head">
-                                    <span className="tools-card-icon" aria-hidden="true">{tool.icon}</span>
+                                    <span className="tools-card-icon" aria-hidden="true"><RoomIcon room={tool} /></span>
                                     <div>
                                         <div className="tools-card-title">{tool.name}</div>
                                         {tool.secondaryName && <div className="hint tools-card-secondary">{tool.secondaryName}</div>}
@@ -113,7 +114,7 @@ export function ToolsRoom() {
                         <ul className="tools-hidden-list">
                             {hiddenRooms.map((tool) => (
                                 <li key={tool.id} className="tools-hidden-row">
-                                    <span>{tool.icon} {tool.name}</span>
+                                    <span><RoomIcon room={tool} /> {tool.name}</span>
                                     <button type="button" className="btn subtle" aria-label={`Unhide ${tool.name}`}
                                         onClick={() => void setHidden(hidden.filter((id) => id !== tool.id))}>
                                         Unhide

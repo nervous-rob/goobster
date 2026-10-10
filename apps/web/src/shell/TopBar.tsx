@@ -1,10 +1,11 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Me } from '../lib/types';
 import { ACCOUNT_ROOMS, PRIMARY_ROOMS, isRoomAvailable, roomBadgeCount, type Room } from '../lib/rooms';
 import { ActiveFriends } from './ActiveFriends';
 import { BerryMark } from '../components/BerryMark';
 import { InstallEntry } from '../components/InstallEntry';
+import { Icon, RoomIcon } from '../icons/Icon';
 
 /**
  * The horizontal navigation layout (Settings → Appearance → Navigation →
@@ -19,7 +20,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
     me: Me | null;
     room: string | null;
     activeNav: string | null;
-    themeLabel: string;
+    themeLabel: ReactNode;
     onToggleTheme: () => void;
     onLogout: () => void;
 }) {
@@ -57,7 +58,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
                     return (
                         <Link key={item.id} to={item.path as never} className={`nav-btn${active ? ' active' : ''}`}
                             aria-current={active ? 'page' : undefined} data-room={item.id} title={item.secondaryName ? `${item.name} · ${item.secondaryName}` : item.name}>
-                            <span aria-hidden="true">{item.icon}</span> {item.name}
+                            <RoomIcon room={item} /> {item.name}
                             {item.secondaryName && <span className="nav-secondary">{item.secondaryName}</span>}
                             {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
                         </Link>
@@ -74,7 +75,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
                         <Link to="/settings" className={`topbar-icon${room === 'settings' ? ' active' : ''}`}
                             aria-label="Settings" title="Settings" data-tour="nav-settings"
                             aria-current={room === 'settings' ? 'page' : undefined}>
-                            <span aria-hidden="true">⚙️</span>
+                            <Icon glyph="settings" />
                         </Link>
                         <div ref={menuRef} className="topbar-account">
                             <button type="button" className="topbar-icon" aria-label="Account menu" title={me.user.name || me.user.id}
@@ -82,7 +83,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
                                 onClick={() => setMenuOpen((v) => !v)}>
                                 {me.user.avatar
                                     ? <img className="avatar" src={me.user.avatar} alt="" />
-                                    : <span aria-hidden="true">🙂</span>}
+                                    : <Icon glyph="person" emoji="🙂" />}
                             </button>
                             {menuOpen && (
                                 <div id={menuId} className="topbar-menu" role="menu" aria-label="Account">
@@ -96,12 +97,12 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
                                     {ACCOUNT_ROOMS.filter((item) => item.id !== 'settings' && visible(item)).map((item) => (
                                         <Link key={item.id} to={item.path as never} role="menuitem"
                                             className={`nav-btn${activeNav === item.id ? ' active' : ''}`} data-room={item.id}>
-                                            <span aria-hidden="true">{item.icon}</span> {item.name}
+                                            <RoomIcon room={item} /> {item.name}
                                         </Link>
                                     ))}
                                     <Link to="/docs/$slug" params={{ slug: 'getting-started' }} role="menuitem"
                                         className={`nav-btn${room === 'docs' ? ' active' : ''}`}>
-                                        <span aria-hidden="true">📖</span> Documentation
+                                        <Icon glyph="docs" /> Documentation
                                     </Link>
                                     <InstallEntry role="menuitem" onNavigate={() => setMenuOpen(false)} />
                                     <ActiveFriends />

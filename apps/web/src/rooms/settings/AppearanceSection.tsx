@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
@@ -10,23 +10,29 @@ import {
 } from '../../lib/theme';
 import {
     getStoredDensity,
+    getStoredIconStyle,
     getStoredNavLayout,
     getStoredPageWidth,
     getStoredReducedMotion,
     getStoredTextSize,
     paintAppearance,
+    paintIconStyle,
     paintNavLayout,
     paintPageWidth,
     persistAppearance,
+    persistIconStyle,
     persistNavLayout,
     persistPageWidth,
+    isIconStyle,
     type Density,
+    type IconStyle,
     type NavLayout,
     type PageWidth,
     type ReducedMotion,
     type TextSize
 } from '../../lib/appearance';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
+import { Icon } from '../../icons/Icon';
 import { SCOPE_FOR } from './sectionMeta';
 import { useSession } from '../../hooks/useSession';
 import { START_PAGE_OPTIONS, TOOL_ROOMS, startPageOptionFor } from '../../lib/rooms';
@@ -38,6 +44,7 @@ type Draft = {
     surface: SurfaceChoice;
     navLayout: NavLayout;
     pageWidth: PageWidth;
+    iconStyle: IconStyle;
     linkByTag: boolean;
     textSize: TextSize;
     reducedMotion: ReducedMotion;
@@ -53,9 +60,9 @@ type Draft = {
     parlorDefaultCharter: string;
 };
 
-const THEMES: Array<{ value: ThemeChoice; label: string; hint: string }> = [
-    { value: 'dark', label: '🌙 Dark', hint: 'The default.' },
-    { value: 'light', label: '☀️ Light', hint: 'Bright surfaces.' },
+const THEMES: Array<{ value: ThemeChoice; label: ReactNode; hint: string }> = [
+    { value: 'dark', label: <><Icon glyph="moon" /> Dark</>, hint: 'The default.' },
+    { value: 'light', label: <><Icon glyph="sun" /> Light</>, hint: 'Bright surfaces.' },
     { value: 'system', label: '🖥️ System', hint: 'Follow this device\'s setting.' }
 ];
 
@@ -69,12 +76,24 @@ const PAGE_WIDTHS: Array<{ value: PageWidth; label: string; hint: string }> = [
     { value: 'full', label: '⬌ Full width', hint: 'Rooms use the whole window, and chat threads widen.' }
 ];
 
+const ICON_STYLE_OPTIONS: Array<{ value: IconStyle; label: string; hint: string }> = [
+    { value: 'emoji', label: 'Emoji', hint: 'The original look. Your device\u2019s emoji font.' },
+    { value: 'mono', label: 'Monoline', hint: 'Rounded strokes. Quiet; colours in when active.' },
+    { value: 'blocks', label: 'Blocks', hint: 'Filled geometry in two tones.' },
+    { value: 'sigils', label: 'Sigils', hint: 'Abstract marks, one per room.' },
+    { value: 'pixel', label: 'Pixel', hint: 'Two-tone bitmaps on a 12\u00d712 grid.' },
+    { value: 'neon', label: 'Neon', hint: 'Strokes with an accent glow.' },
+    { value: 'constellation', label: 'Constellation', hint: 'Stars joined by hairlines.' }
+];
+const ICON_STYLE_SAMPLES = ['home', 'chat', 'knowledge', 'projects'] as const;
+
 const LABELS: Record<string, string> = {
     theme: 'Theme',
     accent: 'Accent color',
     surface: 'Surface',
     navLayout: 'Navigation',
     pageWidth: 'Page width',
+    iconStyle: 'Icon style',
     linkByTag: 'Link notes by shared tag',
     textSize: 'Text size',
     reducedMotion: 'Reduced motion',
@@ -114,6 +133,7 @@ export function AppearanceSection({ section, onDirty }: {
         surface: isSurface(v.surface) ? v.surface : getStoredSurface(),
         navLayout: v.navLayout === 'top' || v.navLayout === 'sidebar' ? v.navLayout : getStoredNavLayout(),
         pageWidth: v.pageWidth === 'full' || v.pageWidth === 'centered' ? v.pageWidth : getStoredPageWidth(),
+        iconStyle: isIconStyle(v.iconStyle) ? v.iconStyle : getStoredIconStyle(),
         linkByTag: localStorage.getItem(LINK_BY_TAG_KEY) === null ? Boolean(v.linkByTag) : localStorage.getItem(LINK_BY_TAG_KEY) !== '0',
         textSize: getStoredTextSize() || v.textSize || 'm',
         reducedMotion: getStoredReducedMotion() || v.reducedMotion || 'system',
@@ -143,8 +163,9 @@ export function AppearanceSection({ section, onDirty }: {
         paintAccent(d.draft.accent);
         paintSurface(d.draft.surface);
         paintPageWidth(d.draft.pageWidth);
+        paintIconStyle(d.draft.iconStyle);
         paintAppearance({ textSize: d.draft.textSize, density: d.draft.density, reducedMotion: d.draft.reducedMotion });
-    }, [d.draft.theme, d.draft.accent, d.draft.surface, d.draft.pageWidth, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
+    }, [d.draft.theme, d.draft.accent, d.draft.surface, d.draft.pageWidth, d.draft.iconStyle, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
     // The layout previews too, but not on mount: painting the stored value
     // again would only re-render the shell for nothing.
     const layoutPainted = useRef(false);
@@ -158,6 +179,7 @@ export function AppearanceSection({ section, onDirty }: {
         paintSurface(getStoredSurface());
         paintNavLayout(getStoredNavLayout());
         paintPageWidth(getStoredPageWidth());
+        paintIconStyle(getStoredIconStyle());
         paintAppearance({
             textSize: getStoredTextSize(),
             density: getStoredDensity(),
@@ -171,6 +193,7 @@ export function AppearanceSection({ section, onDirty }: {
         setStoredSurface(d.draft.surface);
         persistNavLayout(d.draft.navLayout);
         persistPageWidth(d.draft.pageWidth);
+        persistIconStyle(d.draft.iconStyle);
         localStorage.setItem(LINK_BY_TAG_KEY, d.draft.linkByTag ? '1' : '0');
         persistAppearance({
             textSize: d.draft.textSize,
@@ -244,6 +267,23 @@ export function AppearanceSection({ section, onDirty }: {
                             title={w.hint}
                             className={`segment-btn${d.draft.pageWidth === w.value ? ' active' : ''}`}
                             onClick={() => d.set({ pageWidth: w.value })}>{w.label}</button>
+                    ))}
+                </div>
+            </Field>
+
+            <Field id="icon-style" label="Icon style" scope="Your account"
+                hint="The language the portal draws its room, view and section icons in. Every style is drawn from code in the accent you chose, so it follows the theme and the accent. Previews as you pick.">
+                <div className="icon-style-grid" role="radiogroup" aria-label="Icon style" id="icon-style-input">
+                    {ICON_STYLE_OPTIONS.map((o) => (
+                        <button key={o.value} type="button" role="radio" aria-checked={d.draft.iconStyle === o.value}
+                            className="icon-style-card" data-icon-style={o.value}
+                            onClick={() => d.set({ iconStyle: o.value })}>
+                            <span className="icon-style-samples" aria-hidden="true">
+                                {ICON_STYLE_SAMPLES.map((g) => <Icon key={g} glyph={g} style={o.value} />)}
+                            </span>
+                            <span className="icon-style-name">{o.label}</span>
+                            <span className="icon-style-hint">{o.hint}</span>
+                        </button>
                     ))}
                 </div>
             </Field>
@@ -390,6 +430,7 @@ export function AppearanceSection({ section, onDirty }: {
                     paintSurface(getStoredSurface());
                     paintNavLayout(getStoredNavLayout());
                     paintPageWidth(getStoredPageWidth());
+                    paintIconStyle(getStoredIconStyle());
                     paintAppearance({
                         textSize: getStoredTextSize(),
                         density: getStoredDensity(),
@@ -405,6 +446,7 @@ export function AppearanceSection({ section, onDirty }: {
                         if (isSurface(values.surface)) setStoredSurface(values.surface);
                         if (values.navLayout === 'top' || values.navLayout === 'sidebar') persistNavLayout(values.navLayout);
                         if (values.pageWidth === 'full' || values.pageWidth === 'centered') persistPageWidth(values.pageWidth);
+                        if (isIconStyle(values.iconStyle)) persistIconStyle(values.iconStyle);
                         localStorage.setItem(LINK_BY_TAG_KEY, values.linkByTag ? '1' : '0');
                         persistAppearance({
                             textSize: values.textSize,
