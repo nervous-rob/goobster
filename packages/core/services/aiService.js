@@ -163,9 +163,9 @@ class AIServiceRouter {
         }));
     }
 
-    /** Metadata and live availability are separate; discovery cannot add support. */
-    async listModelCatalog(providerKey, workflow = 'chat') {
-        return modelDiscovery.listCatalog(providerKey || currentProviderKey, workflow);
+    /** Reviewed metadata plus current API models using provider defaults. */
+    async listModelCatalog(providerKey, workflow = 'chat', options = {}) {
+        return modelDiscovery.listCatalog(providerKey || currentProviderKey, workflow, options);
     }
 
     /** Legacy ID-only view for older clients. */
@@ -232,6 +232,9 @@ class AIServiceRouter {
     }
 
     async generateText(prompt, opts = {}) {
+        const personal = await this._personalConnection(opts);
+        if (personal) return this._admit({ ...opts, personal }, async signal =>
+            (await require('./personalAiService').chat(personal, prompt, { ...opts, signal })).content, prompt);
         const provider = this._resolveProvider(opts);
         return this._admit(opts, signal => provider.generateText(prompt, { ...opts, signal }), prompt);
     }
@@ -240,6 +243,9 @@ class AIServiceRouter {
      * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
      */
     async chat(messages, opts = {}) {
+        const personal = await this._personalConnection(opts);
+        if (personal) return this._admit({ ...opts, personal }, signal =>
+            require('./personalAiService').chat(personal, messages, { ...opts, signal }), messages);
         const provider = this._resolveProvider(opts);
         return this._admit(opts, signal => provider.chat(messages, { ...opts, signal }), messages);
     }
@@ -247,7 +253,7 @@ class AIServiceRouter {
     async _admit(opts, work, input = '') {
         const providerKey = opts.provider || currentProviderKey;
         const provider = PROVIDERS[providerKey];
-        const request = modelRegistry.resolveRequest(providerKey, opts.model || this.defaultModelFor(providerKey), {
+        const request = opts.personal ? { maxOutputTokens: opts.max_tokens || 4096 } : modelRegistry.resolveRequest(providerKey, opts.model || this.defaultModelFor(providerKey), {
             ...opts, reasoning_effort: opts.reasoning_effort || provider?.getDefaultReasoningEffort?.()
         }, Array.isArray(input) ? input : []);
         // Conservative text estimate, including tool definitions and framing.
@@ -263,6 +269,20 @@ class AIServiceRouter {
             limit: policy.modelConcurrent, perActor: policy.modelPerAccount,
             waitMs: policy.modelQueueMs, leaseMs: policy.modelTimeoutMs + 30000, signal, onWaiting: opts.onAdmission
         } }, work);
+    }
+
+    async _personalConnection(opts) {
+        if (opts.personalAiDisabled) return null;
+        const { guildId, userId } = opts.usageContext || {};
+        if (!userId || guildId !== `dm:${userId}`) return null;
+        const fn = opts.personalAiFunction || (['research', 'parlor'].includes(opts.workflow) ? opts.workflow : 'chat');
+        return require('./personalAiService').selection(userId, fn);
+    }
+
+    async generateImage(prompt, opts = {}) {
+        const personal = await this._personalConnection({ ...opts, personalAiFunction: 'image' });
+        if (personal) return require('./personalAiService').image(personal, prompt, opts.signal);
+        return openaiService.generateImage(prompt, opts);
     }
 
     /**

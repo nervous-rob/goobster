@@ -59,8 +59,9 @@ function toolPath(command, env = process.env) {
 
 async function runTool(command, args, { env = process.env } = {}) {
     const executable = toolPath(command, env);
+    const connection = require('./postgresToolConnection').prepareConnection(args, env);
     try {
-        return await execFileAsync(executable, args, { env, maxBuffer: 64 * 1024 * 1024 });
+        return await execFileAsync(executable, connection.args, { env: connection.env, maxBuffer: 64 * 1024 * 1024 });
     } catch (error) {
         if (error.code === 'ENOENT') {
             throw new BackupError('TOOL_MISSING',

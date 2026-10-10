@@ -1,7 +1,7 @@
 # ADR 0011: Model compatibility is deployment policy
 
 Date: 2026-09-22
-Status: Implemented initial contract
+Status: Implemented; extended with live provider-default models (2026-10-09)
 
 ## Problem
 
@@ -20,7 +20,8 @@ provider-specific model ID to the global fallback provider.
 Keep three separate facts:
 
 1. **Compatibility:** the versioned registry describes the exact model IDs and
-   configurations that Goobster's current adapter can use.
+   configurations that have received a model-specific review. New chat IDs use
+   a minimal provider-default contract when no reviewed entry exists.
 2. **Availability:** live discovery reports which IDs the host's provider account
    currently lists. A listing is evidence, not a guarantee of inference access,
    quota, regional availability, or continuing service.
@@ -32,10 +33,19 @@ is in `registry.js`; provider discovery and its transient cache are in
 `discovery.js`. Provider adapters serialize the resolver's output into their API
 formats. Frontend controls consume public descriptors from the same registry.
 
-Adding support is an explicit code review or host configuration change. A new
-name returned by a provider cannot promote itself into a supported model. Exact
-aliases are declared individually. Future snapshots never inherit compatibility
-solely because they have a familiar prefix.
+The picker merges the reviewed registry with live provider chat IDs. A new ID
+uses a separate `discovered` descriptor: no explicit reasoning or sampling
+parameters, no native search or image-input claims, and unknown limits. It does
+not inherit another model's advanced controls. Standard tool serialization and
+streaming use the provider adapter; the provider remains the final authority on
+request compatibility and access. Reviewed entries and explicit custom entries
+always take precedence. Specialized image, audio, embedding and other non-chat
+IDs are excluded. Exact reviewed aliases are declared individually.
+
+The fallback resolver can rebuild a provider-default descriptor from a saved
+chat ID after a restart or in another worker. This does not assert availability;
+the picker still bases availability on live discovery. Unknown non-chat IDs
+continue to fail locally.
 
 ## Registry contract
 
@@ -67,7 +77,8 @@ this change does not claim exact input-token counting or automatic truncation.
 
 ## Selection and request validation
 
-- Normal model options require a registry entry for the selected workflow.
+- Model options use a reviewed/custom entry or a minimal provider-default chat
+  descriptor for the selected workflow.
 - New settings are validated against the effective provider and model after
   merging partial updates. A provider change clears the previous model and
   effort unless replacements were explicitly supplied. A model change clears
@@ -99,19 +110,22 @@ This PR does not rewrite shared personas, historical records, or job snapshots.
 
 `GET /api/app/chat/model-catalog?provider=openai&workflow=chat` is authenticated and
 returns `{version, provider, workflow, models, discovery, unregisteredCount}`.
-`models` contains registry descriptors with `availability` and `selectable`.
+`models` contains reviewed/custom descriptors and discovered chat descriptors
+with `availability` and `selectable`. `unregisteredCount` counts excluded IDs.
 The existing `/api/app/chat/models` endpoint remains an ID-only compatibility view.
 
 | Discovery result | Availability and picker behavior |
 | --- | --- |
-| Successful complete listing | Matching registered models are listed/selectable. Other registry entries are not-listed. |
+| Successful complete listing | Reviewed and newly discovered chat models are listed/selectable. Other registry entries are not-listed. |
 | Successful empty listing | No models claimed available. This is distinct from an error. |
 | Failure without a snapshot | Availability unknown. Registered models can still be selected. |
 | Failure with a snapshot | Keep the snapshot and its last successful timestamp; mark availability unknown/stale. |
 | Provider not configured | Registry descriptions remain available, but model options are disabled. |
 
 Listings are cached in memory for ten minutes, concurrent refreshes are coalesced,
-and failures have a thirty-second retry delay. Anthropic and Gemini pagination
+and failures have a thirty-second retry delay. The picker refreshes while open
+every ten minutes and offers **Refresh models**. `refresh=true` bypasses the normal
+TTL with a thirty-second provider cooldown; it never rewrites a saved choice. Anthropic and Gemini pagination
 must finish before the result is accepted. An eight-second deadline covers the
 whole listing. Malformed, cyclic, or excessively long pagination is a failed
 refresh, never a partial authoritative list. Raw provider errors and credentials
@@ -164,10 +178,10 @@ validation. Custom entries cannot replace built-in entries or inject API options
 They are marked Custom and have no official review date. Custom local models still
 need to be installed on the configured Ollama server.
 
-The shipped default IDs are registered. Hosts using other IDs (including dated
-snapshots) must add an explicit matching entry or select a registered model before
-those calls run. The error points to ai.customModels; no automatic model migration
-is performed. Image, embedding, transcription, and realtime APIs keep their existing
+The shipped default IDs are registered. Newly listed chat IDs, including dated
+snapshots, work with provider defaults without a commit, redeploy or restart.
+An explicit `ai.customModels` entry remains useful to expose reviewed advanced
+controls for an additional ID. No automatic model migration is performed. Image, embedding, transcription, and realtime APIs keep their existing
 configuration and are outside this chat-model registry.
 
 ## Verification and evolution

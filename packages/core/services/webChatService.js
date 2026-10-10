@@ -1043,8 +1043,8 @@ class WebChatService {
         return await aiService.listModels(providerKey || undefined);
     }
 
-    async listModelCatalog(providerKey, workflow) {
-        return require('./aiService').listModelCatalog(providerKey, workflow);
+    async listModelCatalog(providerKey, workflow, options) {
+        return require('./aiService').listModelCatalog(providerKey, workflow, options);
     }
 
     /**

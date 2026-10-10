@@ -67,10 +67,18 @@ describe('OpenAIService request parameters', () => {
         expect(request).not.toHaveProperty('top_p');
     });
 
-    test('rejects an unreviewed model before sending an API request', async () => {
+    test('rejects specialized models before sending a chat request', async () => {
         const { service, create } = createService();
-        await expect(service.chat('Hi', { model: 'gpt-6-sol-unreviewed' })).rejects.toMatchObject({ code: 'UNSUPPORTED_MODEL' });
+        await expect(service.chat('Hi', { model: 'gpt-image-2' })).rejects.toMatchObject({ code: 'UNSUPPORTED_MODEL' });
         expect(create).not.toHaveBeenCalled();
+    });
+
+    test('a new chat model uses provider defaults without inventing advanced parameters', async () => {
+        const { service, create } = createService();
+        await service.chat('Hi', { model: 'gpt-7', temperature: 0.7, reasoning_effort: 'high' });
+        expect(create.mock.calls[0][0]).toMatchObject({ model: 'gpt-7', max_output_tokens: 9216 });
+        expect(create.mock.calls[0][0]).not.toHaveProperty('reasoning');
+        expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
     });
 
     test('supports sampling when GPT-6 Sol reasoning is explicitly off', async () => {
