@@ -26,6 +26,7 @@
  */
 
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -140,6 +141,33 @@ function checkEntries(entries) {
 /** Does the start of a file hold a private key block? */
 function holdsPrivateKey(buffer) {
     return PRIVATE_KEY.test(buffer.toString('latin1'));
+}
+
+/**
+ * A Windows installer is built by NSIS, whose stub, uninstaller and plugin DLLs are 32-bit by design,
+ * and it carries the pinned WinSW .NET 4 service host, which is a 32-bit PE too. They run fine on x64
+ * Windows, so inside an NSIS installer (and only there) exactly these files may be ia32:
+ *   - NSIS plugins unpacked to $PLUGINSDIR/*.dll and the generated uninstall/uninstall.exe stub, by path;
+ *   - the service host, by path AND by the SHA-256 pinned in scripts/bootstrap-pins.json.
+ * Anything else that is ia32, and every other architecture, is still a violation.
+ */
+const NSIS_IA32_PATHS = [/^\$PLUGINSDIR\/[^/]+\.dll$/i, /^uninstall\/uninstall\.exe$/i];
+const SERVICE_HOST_PATH = /(^|\/)service-host\/goobster-service\.exe$/i;
+
+function pinnedServiceHostSha256() {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(__dirname, 'bootstrap-pins.json'), 'utf8')).winsw.sha256;
+    } catch {
+        return null;
+    }
+}
+
+function expectedInstallerIa32(info, rel, full) {
+    if (info.format !== 'pe' || info.arch.length !== 1 || info.arch[0] !== 'ia32') return false;
+    if (NSIS_IA32_PATHS.some(pattern => pattern.test(rel))) return true;
+    if (!SERVICE_HOST_PATH.test(rel)) return false;
+    const pinned = pinnedServiceHostSha256();
+    return Boolean(pinned) && crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex') === pinned;
 }
 
 function binaryViolation(info, targetId, rel) {
@@ -308,7 +336,7 @@ function scanTarFile(tarFile, { target = null } = {}) {
 // ---------------------------------------------------------------------------
 
 /** Scan a directory the way an archive is scanned (links are read, never followed). */
-function scanTree(root, { target = null } = {}) {
+function scanTree(root, { target = null, nsisInstaller = false } = {}) {
     const entries = [];
     const files = [];
     const visit = (dir, rel) => {
@@ -338,6 +366,7 @@ function scanTree(root, { target = null } = {}) {
             } catch {
                 info = { format: 'unknown', arch: ['unknown'] };
             }
+            if (nsisInstaller && target === 'win32-x64' && expectedInstallerIa32(info, file.rel, file.full)) continue;
             const problem = binaryViolation(info, target, file.rel);
             if (problem) violations.push(problem);
         }
@@ -446,7 +475,7 @@ async function scanArtifact(file, options = {}) {
             const out = path.join(work, 'unpacked');
             const result = run(sevenZip, ['x', '-y', `-o${out}`, path.resolve(file)]);
             if (result.status !== 0 || !fs.existsSync(out)) return skip('EXE_EXTRACT_FAILED', `7z exited ${result.status === null ? 'abnormally' : result.status}`);
-            return { ...base, ...scanTree(out, { target }) };
+            return { ...base, ...scanTree(out, { target, nsisInstaller: true }) };
         }
         const unzip = findTool(['unzip']);
         if (!unzip) return skip('ZIP_NEEDS_UNZIP', 'no unzip on PATH');

@@ -288,6 +288,53 @@ describe('native binaries', () => {
     });
 });
 
+describe('32-bit files inside a Windows installer', () => {
+    // A minimal PE header: "MZ", e_lfanew at 0x3c, then "PE\0\0" and the machine field.
+    const pe = (machine) => {
+        const buffer = Buffer.alloc(512);
+        buffer.write('MZ', 0, 'latin1');
+        buffer.writeUInt32LE(0x40, 0x3c);
+        buffer.write('PE\0\0', 0x40, 'latin1');
+        buffer.writeUInt16LE(machine, 0x44);
+        return buffer;
+    };
+    const IA32 = 0x014c;
+    const X64 = 0x8664;
+    const put = (root, rel, buffer) => {
+        const full = path.join(root, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, buffer);
+    };
+
+    test('the NSIS plugin DLLs and the uninstaller stub may be ia32, in an installer only', () => {
+        const root = cleanTree('nsis-ia32');
+        put(root, '$PLUGINSDIR/nsExec.dll', pe(IA32));
+        put(root, 'uninstall/uninstall.exe', pe(IA32));
+        put(root, 'app/node.exe', pe(X64));
+        expect(scan.scanTree(root, { target: 'win32-x64', nsisInstaller: true }).violations).toEqual([]);
+        expect(rulesOf(scan.scanTree(root, { target: 'win32-x64' }).violations)).toEqual(['binary-arch:ia32!=x64', 'binary-arch:ia32!=x64']);
+    });
+
+    test('any other ia32 file, or a service host that is not the pinned build, is still refused', () => {
+        const root = cleanTree('nsis-ia32-other');
+        put(root, 'app/addon.node', pe(IA32));
+        put(root, '$PLUGINSDIR/sub/deep.dll', pe(IA32));
+        put(root, '$_3_/service-host/goobster-service.exe', pe(IA32));
+        const found = scan.scanTree(root, { target: 'win32-x64', nsisInstaller: true }).violations;
+        expect(found.map(v => v.path).sort()).toEqual(['$PLUGINSDIR/sub/deep.dll', '$_3_/service-host/goobster-service.exe', 'app/addon.node']);
+        expect(new Set(found.map(v => v.rule))).toEqual(new Set(['binary-arch:ia32!=x64']));
+    });
+
+    test('an arm64 file at an exempt path is refused, and the exemption does not apply to other targets', () => {
+        const root = cleanTree('nsis-arm');
+        put(root, '$PLUGINSDIR/nsExec.dll', pe(0xaa64));
+        expect(rulesOf(scan.scanTree(root, { target: 'win32-x64', nsisInstaller: true }).violations)).toEqual(['binary-arch:arm64!=x64']);
+        const other = cleanTree('nsis-other-target');
+        put(other, '$PLUGINSDIR/nsExec.dll', pe(IA32));
+        expect(scan.scanTree(other, { target: 'linux-x64', nsisInstaller: true }).violations.length).toBeGreaterThan(0);
+    });
+});
+
 describe('the .run container', () => {
     const TEMPLATE = "#!/bin/sh\nGOOBSTER_ARCHIVE_OFFSET='@ARCHIVE_OFFSET@'\nexit 0\n";
 

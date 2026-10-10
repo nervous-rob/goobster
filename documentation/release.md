@@ -334,6 +334,14 @@ workflow uses it on what each runner can open and runs a non-strict pass over
 the whole release at publish time. Tar archives are read by an in-Node parser
 (ustar, PAX, GNU long names), so the same code runs on every runner.
 
+One deliberate exception: NSIS builds 32-bit installer parts, and the service
+host is a 32-bit .NET build. Inside an NSIS `.exe` for `win32-x64` only, these
+may be `ia32`: the NSIS plugin DLLs directly under `$PLUGINSDIR`, the generated
+`uninstall/uninstall.exe` stub, and `service-host/goobster-service.exe` when its
+SHA-256 equals the WinSW pin in `scripts/bootstrap-pins.json`. Any other `ia32`
+file, any other CPU at those paths, and the same files in any other artifact are
+still violations.
+
 ## Release checklist
 
 1. Land everything on `main`; CI (both engines, Playwright) is green.
