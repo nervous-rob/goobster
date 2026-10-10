@@ -107,7 +107,7 @@ test('reads the documentation, stores text and controls, and the registry applie
     expect(rows[0]).toMatchObject({ provider: 'anthropic', modelId: 'claude-sonnet-6', evidence: 'docs', sourceUrl: expect.stringContaining('sonnet-6') });
     expect(JSON.parse(rows[0].controlsJson)).toEqual({
         contextWindow: 1000000, maxOutputTokens: 128000, imageInput: true, nativeSearch: true,
-        reasoning: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'xhigh' }, sampling: 'never'
+        reasoning: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' }, sampling: 'never'
     });
     expect(JSON.stringify(rows)).not.toContain(PROMPT_MARK);
     expect(JSON.stringify(rows)).not.toContain(PAGE_MARK);

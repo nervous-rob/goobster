@@ -146,7 +146,7 @@ test('a refresh carries what the listing publishes into unreviewed models and th
     const anthropic = await aiService.listModelCatalog('anthropic');
     expect(anthropic.models.find(m => m.id === 'claude-sonnet-5').displayName).toBe('Claude Sonnet 5');
     expect(anthropic.models.find(m => m.id === 'claude-sonnet-6')).toMatchObject({
-        displayName: 'Claude Sonnet 6 (listed)', reasoning: { levels: ['low', 'medium', 'high'] }, guess: { source: 'heuristic', basis: 'claude-sonnet-5', listing: ['displayName'] }
+        displayName: 'Claude Sonnet 6 (listed)', reasoning: { levels: ['low', 'medium', 'high', 'xhigh', 'max'] }, guess: { source: 'heuristic', basis: 'claude-sonnet-5', listing: ['displayName'] }
     });
     global.fetch.mockImplementationOnce(() => jsonResponse({ models: [
         { name: 'models/gemini-4-flash', displayName: 'Gemini 4 Flash', description: 'Fast multimodal model.', inputTokenLimit: 2000000, outputTokenLimit: 65536, thinking: true, maxTemperature: 2, supportedGenerationMethods: ['generateContent'] },
