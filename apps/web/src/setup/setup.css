@@ -9,11 +9,11 @@
   min-height: 100%;
 }
 .wizard-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
-.wizard-header h1 { margin: 0; font-size: 22px; }
+.wizard-header h1 { margin: 0; font-size: 1.375rem; }
 
 .wizard-stepper { margin: 8px 0 20px; }
 .wizard-stepper ol { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
-.wizard-stepper li { font-size: 12.5px; color: var(--text-dim); }
+.wizard-stepper li { font-size: 0.78125rem; color: var(--text-dim); }
 .wizard-stepper li > a, .wizard-stepper li > span {
   display: inline-block; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
   color: inherit; text-decoration: none;
@@ -22,7 +22,7 @@
 .wizard-stepper li[data-state='done'] > a, .wizard-stepper li[data-state='done'] > span { color: var(--text); }
 
 .wizard-step { display: flex; flex-direction: column; gap: 16px; }
-.wizard-step > h2 { margin: 0; font-size: 20px; }
+.wizard-step > h2 { margin: 0; font-size: 1.25rem; }
 .wizard-step > h2:focus { outline: none; }
 .wizard-step > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
 .wizard-lead { margin: 0; color: var(--text-dim); }
@@ -48,7 +48,7 @@
   border: 1px solid var(--danger); border-radius: var(--radius); padding: 12px 14px;
   background: rgba(255, 107, 122, 0.08);
 }
-.wizard-errors h3 { margin: 0 0 6px; font-size: 15px; color: var(--danger); }
+.wizard-errors h3 { margin: 0 0 6px; font-size: 0.9375rem; color: var(--danger); }
 .wizard-errors ul { margin: 0; padding-left: 20px; }
 .wizard-errors a { color: var(--text); }
 
@@ -60,7 +60,7 @@
 .wizard-callout > :last-child { margin-bottom: 0; }
 .wizard-callout pre, .wizard-tunnel pre, .wizard-step pre {
   margin: 6px 0; padding: 8px 10px; overflow-x: auto; background: var(--bg-raise-2);
-  border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 13px;
+  border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 0.8125rem;
 }
 .wizard-again, .wizard-pending {
   border-left: 3px solid var(--warn); padding: 6px 10px; margin: 4px 0; background: var(--bg-raise); border-radius: 6px; list-style: none;
@@ -95,7 +95,7 @@
 .wizard-step-mark { width: 1.2em; text-align: center; }
 
 .wizard-journey { display: flex; flex-direction: column; gap: 12px; }
-.wizard-crumbs { margin: 0; color: var(--text-dim); font-size: 13px; }
+.wizard-crumbs { margin: 0; color: var(--text-dim); font-size: 0.8125rem; }
 
 @media (max-width: 480px) {
   .wizard-page { padding: 16px 14px 48px; }
@@ -104,6 +104,6 @@
   .wizard-nav, .wizard-actions { flex-direction: column-reverse; }
   .wizard-actions { flex-direction: column; }
   .wizard-nav .btn, .wizard-actions .btn { width: 100%; }
-  .wizard-stepper li { font-size: 12px; }
+  .wizard-stepper li { font-size: 0.75rem; }
   .wizard-stepper li > a, .wizard-stepper li > span { padding: 2px 8px; }
 }

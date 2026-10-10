@@ -116,6 +116,7 @@ const ACCENTS = ['blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'ambe
 // Where the portal's primary navigation sits: the left sidebar (default) or
 // a horizontal bar across the top of the page.
 const NAV_LAYOUTS = ['sidebar', 'top'];
+const PAGE_WIDTHS = ['centered', 'full'];
 // How the portal's whitespace relates to the accent: `tinted` rebuilds the
 // surface greys from the accent's hue (default); `neutral` keeps the fixed
 // greys and lets the accent show only in the controls and the room glow.
@@ -227,6 +228,7 @@ const PREFERENCE_DEFAULTS = {
     accent: 'blueberry',
     surface: 'tinted',
     navLayout: 'sidebar',
+    pageWidth: 'centered',
     linkByTag: true,
     textSize: 'm',
     reducedMotion: 'system',
@@ -277,7 +279,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
     ],
     memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
     appearance: [
-        'theme', 'accent', 'surface', 'navLayout', 'linkByTag', 'textSize', 'reducedMotion', 'density',
+        'theme', 'accent', 'surface', 'navLayout', 'pageWidth', 'linkByTag', 'textSize', 'reducedMotion', 'density',
         'enterToSend', 'expandChatDetails', 'startPage', 'hiddenToolRooms', 'preferredExchangeGuild',
         'expeditionDefaultDepth', 'expeditionDefaultLens', 'parlorDefaultEmoji', 'parlorDefaultCharter'
     ],
@@ -437,6 +439,11 @@ function coercePreference(key, raw) {
         case 'navLayout':
             if (!NAV_LAYOUTS.includes(raw)) {
                 return { ok: false, code: 'BAD_NAV_LAYOUT', message: `navLayout must be one of: ${NAV_LAYOUTS.join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        case 'pageWidth':
+            if (!PAGE_WIDTHS.includes(raw)) {
+                return { ok: false, code: 'BAD_PAGE_WIDTH', message: `pageWidth must be one of: ${PAGE_WIDTHS.join(', ')}.` };
             }
             return { ok: true, value: raw };
         case 'textSize':
@@ -659,6 +666,7 @@ module.exports = {
     ACCENTS,
     SURFACES,
     NAV_LAYOUTS,
+    PAGE_WIDTHS,
     ANSWER_LENGTHS,
     TONES,
     HUMOR_LEVELS,

@@ -80,7 +80,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🎨',
         scope: 'Your account',
         blurb: 'Theme, accent color, surface, navigation layout, density, keyboard, and working defaults. Theme also keeps a device copy.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'page width', 'full width', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
     },
     {
         id: 'account',
@@ -169,6 +169,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'accent', label: 'Accent color', keywords: ['accent', 'color', 'colour', 'palette', 'tint', 'blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'amber', 'graphite'] },
     { section: 'appearance', fieldId: 'surface', label: 'Surface', keywords: ['surface', 'whitespace', 'background', 'grey', 'gray', 'neutral', 'tinted', 'tint', 'orb', 'glow'] },
     { section: 'appearance', fieldId: 'nav-layout', label: 'Navigation', keywords: ['navigation', 'nav', 'sidebar', 'top bar', 'layout', 'menu', 'rooms', 'horizontal', 'vertical'] },
+    { section: 'appearance', fieldId: 'page-width', label: 'Page width', keywords: ['page width', 'full width', 'centred', 'centered', 'wide', 'margins', 'column', 'frame'] },
     { section: 'appearance', fieldId: 'text-size', label: 'Text size', keywords: ['font', 'text size', 'bigger', 'smaller'] },
     { section: 'appearance', fieldId: 'reduced-motion', label: 'Reduced motion', keywords: ['motion', 'animation', 'accessibility'] },
     { section: 'appearance', fieldId: 'density', label: 'Interface density', keywords: ['compact', 'comfortable', 'spacing'] },

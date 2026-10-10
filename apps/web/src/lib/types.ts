@@ -1124,6 +1124,7 @@ export type UserSettingsResponse = {
             accent: 'blueberry' | 'ocean' | 'mint' | 'sunset' | 'rose' | 'violet' | 'amber' | 'graphite';
             surface: 'tinted' | 'neutral';
             navLayout: 'sidebar' | 'top';
+            pageWidth: 'centered' | 'full';
             linkByTag: boolean;
             textSize: 's' | 'm' | 'l';
             reducedMotion: 'system' | 'on' | 'off';

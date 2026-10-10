@@ -11,14 +11,18 @@ import {
 import {
     getStoredDensity,
     getStoredNavLayout,
+    getStoredPageWidth,
     getStoredReducedMotion,
     getStoredTextSize,
     paintAppearance,
     paintNavLayout,
+    paintPageWidth,
     persistAppearance,
     persistNavLayout,
+    persistPageWidth,
     type Density,
     type NavLayout,
+    type PageWidth,
     type ReducedMotion,
     type TextSize
 } from '../../lib/appearance';
@@ -33,6 +37,7 @@ type Draft = {
     accent: AccentChoice;
     surface: SurfaceChoice;
     navLayout: NavLayout;
+    pageWidth: PageWidth;
     linkByTag: boolean;
     textSize: TextSize;
     reducedMotion: ReducedMotion;
@@ -59,11 +64,17 @@ const NAV_LAYOUTS: Array<{ value: NavLayout; label: string; hint: string }> = [
     { value: 'top', label: '⬒ Across the top', hint: 'Rooms in a bar along the top of the page; the account menu moves to the right.' }
 ];
 
+const PAGE_WIDTHS: Array<{ value: PageWidth; label: string; hint: string }> = [
+    { value: 'centered', label: '▣ Centred', hint: 'Rooms centre on a reading column with the bar on top. The default.' },
+    { value: 'full', label: '⬌ Full width', hint: 'Rooms use the whole window, and chat threads widen.' }
+];
+
 const LABELS: Record<string, string> = {
     theme: 'Theme',
     accent: 'Accent color',
     surface: 'Surface',
     navLayout: 'Navigation',
+    pageWidth: 'Page width',
     linkByTag: 'Link notes by shared tag',
     textSize: 'Text size',
     reducedMotion: 'Reduced motion',
@@ -102,6 +113,7 @@ export function AppearanceSection({ section, onDirty }: {
         accent: isAccent(v.accent) ? v.accent : getStoredAccent(),
         surface: isSurface(v.surface) ? v.surface : getStoredSurface(),
         navLayout: v.navLayout === 'top' || v.navLayout === 'sidebar' ? v.navLayout : getStoredNavLayout(),
+        pageWidth: v.pageWidth === 'full' || v.pageWidth === 'centered' ? v.pageWidth : getStoredPageWidth(),
         linkByTag: localStorage.getItem(LINK_BY_TAG_KEY) === null ? Boolean(v.linkByTag) : localStorage.getItem(LINK_BY_TAG_KEY) !== '0',
         textSize: getStoredTextSize() || v.textSize || 'm',
         reducedMotion: getStoredReducedMotion() || v.reducedMotion || 'system',
@@ -130,8 +142,9 @@ export function AppearanceSection({ section, onDirty }: {
         paintTheme(d.draft.theme);
         paintAccent(d.draft.accent);
         paintSurface(d.draft.surface);
+        paintPageWidth(d.draft.pageWidth);
         paintAppearance({ textSize: d.draft.textSize, density: d.draft.density, reducedMotion: d.draft.reducedMotion });
-    }, [d.draft.theme, d.draft.accent, d.draft.surface, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
+    }, [d.draft.theme, d.draft.accent, d.draft.surface, d.draft.pageWidth, d.draft.textSize, d.draft.density, d.draft.reducedMotion]);
     // The layout previews too, but not on mount: painting the stored value
     // again would only re-render the shell for nothing.
     const layoutPainted = useRef(false);
@@ -144,6 +157,7 @@ export function AppearanceSection({ section, onDirty }: {
         paintAccent(getStoredAccent());
         paintSurface(getStoredSurface());
         paintNavLayout(getStoredNavLayout());
+        paintPageWidth(getStoredPageWidth());
         paintAppearance({
             textSize: getStoredTextSize(),
             density: getStoredDensity(),
@@ -156,6 +170,7 @@ export function AppearanceSection({ section, onDirty }: {
         setStoredAccent(d.draft.accent);
         setStoredSurface(d.draft.surface);
         persistNavLayout(d.draft.navLayout);
+        persistPageWidth(d.draft.pageWidth);
         localStorage.setItem(LINK_BY_TAG_KEY, d.draft.linkByTag ? '1' : '0');
         persistAppearance({
             textSize: d.draft.textSize,
@@ -221,8 +236,20 @@ export function AppearanceSection({ section, onDirty }: {
                 </div>
             </Field>
 
+            <Field id="page-width" label="Page width" scope="Your account"
+                hint="How much of a wide window rooms use. Centred keeps a reading column when the rooms are across the top; Full width lets every room reach the edges, and chat and discussion threads widen in both layouts. Previews as you pick.">
+                <div className="segment settings-segment" role="radiogroup" aria-label="Page width" id="page-width-input">
+                    {PAGE_WIDTHS.map((w) => (
+                        <button key={w.value} type="button" role="radio" aria-checked={d.draft.pageWidth === w.value}
+                            title={w.hint}
+                            className={`segment-btn${d.draft.pageWidth === w.value ? ' active' : ''}`}
+                            onClick={() => d.set({ pageWidth: w.value })}>{w.label}</button>
+                    ))}
+                </div>
+            </Field>
+
             <Field id="text-size" label="Text size" scope="Your account"
-                hint="A bounded reading scale. Browser zoom still works.">
+                hint="Scales the text across the portal, about a tenth smaller or larger. Browser zoom still works on top of it. Previews as you pick.">
                 <div className="segment settings-segment" role="radiogroup" aria-label="Text size" id="text-size-input">
                     {([['s', 'Small'], ['m', 'Medium'], ['l', 'Large']] as const).map(([value, label]) => (
                         <button key={value} type="button" role="radio" aria-checked={d.draft.textSize === value}
@@ -243,7 +270,7 @@ export function AppearanceSection({ section, onDirty }: {
             </Field>
 
             <Field id="density" label="Interface density" scope="Your account"
-                hint="Compact never shrinks mobile controls below a usable touch target.">
+                hint="Compact tightens rows, headers, messages and controls so more fits on screen. It never shrinks mobile controls below a usable touch target. Previews as you pick.">
                 <div className="segment settings-segment" role="radiogroup" aria-label="Density" id="density-input">
                     <button type="button" role="radio" aria-checked={d.draft.density === 'comfortable'}
                         className={`segment-btn${d.draft.density === 'comfortable' ? ' active' : ''}`}
@@ -362,6 +389,12 @@ export function AppearanceSection({ section, onDirty }: {
                     paintAccent(getStoredAccent());
                     paintSurface(getStoredSurface());
                     paintNavLayout(getStoredNavLayout());
+                    paintPageWidth(getStoredPageWidth());
+                    paintAppearance({
+                        textSize: getStoredTextSize(),
+                        density: getStoredDensity(),
+                        reducedMotion: getStoredReducedMotion()
+                    });
                 },
                 reset: async (rev) => {
                     const r = await d.reset(rev);
@@ -371,6 +404,7 @@ export function AppearanceSection({ section, onDirty }: {
                         if (isAccent(values.accent)) setStoredAccent(values.accent);
                         if (isSurface(values.surface)) setStoredSurface(values.surface);
                         if (values.navLayout === 'top' || values.navLayout === 'sidebar') persistNavLayout(values.navLayout);
+                        if (values.pageWidth === 'full' || values.pageWidth === 'centered') persistPageWidth(values.pageWidth);
                         localStorage.setItem(LINK_BY_TAG_KEY, values.linkByTag ? '1' : '0');
                         persistAppearance({
                             textSize: values.textSize,

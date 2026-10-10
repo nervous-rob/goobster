@@ -64,6 +64,9 @@ body.light .conservatory {
   padding: 1.5rem;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
+/* Settings → Appearance → Page width: at full width the panel follows the
+   room instead of stopping at 1320px (the portal's toolbar follows too). */
+html[data-page-width="full"] .rhythm-engine { width: calc(100% - 32px); }
 
 body.light .rhythm-engine {
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.08);
