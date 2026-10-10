@@ -1810,12 +1810,21 @@ a.tools-card, a.tools-card-link { text-decoration: none; color: inherit; }
   margin-top: 2px;
 }
 
-/* Model metadata is reachable by hover, keyboard focus, or tap. */
-.model-picker { min-width: 0; width: 100%; }
+/* The picker is a short stack: the select, then a row of actions (Refresh
+   models + when it was last checked), then the selected model's summary with
+   About this model. Rows keep a fixed rhythm so the secondary buttons never
+   sit on the select's border. Model metadata is reachable by hover, keyboard
+   focus, or tap. */
+.model-picker { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; }
 .model-picker .select { width: 100%; }
-.model-picker-summary { position: relative; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .5rem; }
-.model-info-panel { box-sizing: border-box; position: absolute; top: 100%; left: 0; z-index: 25; width: min(340px, 100%); padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-raise); box-shadow: 0 8px 28px #0006; }
+.model-picker-actions, .model-picker-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.model-picker-actions .btn, .model-picker-summary .btn { flex: none; }
+.model-picker > .hint { margin: 0; }
+.model-picker-summary { position: relative; }
+.model-picker-summary > .hint { flex: 1 1 220px; min-width: 0; }
+.model-info-panel { box-sizing: border-box; position: absolute; top: calc(100% + 6px); left: 0; z-index: 25; width: min(360px, 100%); padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-raise); box-shadow: 0 8px 28px #0006; }
 .model-info-panel p { margin: .5rem 0; }
+.model-guess-badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--text); font-size: .72rem; font-weight: 600; vertical-align: middle; }
 .model-info-panel a { color: var(--text); text-underline-offset: .2em; }
 .model-info-panel dl { display: grid; grid-template-columns: auto 1fr; gap: .35rem .75rem; font-size: .85rem; }
 .model-info-panel dt { opacity: .7; }

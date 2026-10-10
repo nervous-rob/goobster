@@ -32,10 +32,14 @@ test('reviewed aliases take priority and new chat models use minimal requests', 
         expect(() => resolve(id)).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_MODEL' }));
     }
     expect(registry.get('anthropic', 'gpt-6-sol')).toBeNull();
+    // A recognizable family borrows its reviewed sibling's controls as a best guess (tests/modelInference.test.js).
     const policy = resolve('gpt-7', { temperature: 1, reasoning_effort: 'high' });
-    expect(policy).toMatchObject({ effort: null, sampling: {}, maxOutputTokens: 8692, model: { status: 'discovered', checkedAt: null } });
+    expect(policy).toMatchObject({ effort: 'high', sampling: {}, maxOutputTokens: 25076, model: { status: 'discovered', checkedAt: null, guess: { basis: 'gpt-6-sol' } } });
     expect(registry.createRegistry().get('openai', 'gpt-7').status).toBe('discovered');
-    expect(() => resolve('gpt-7', { webSearch: true })).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_SEARCH' }));
+    // An unrecognizable id keeps the minimal contract: no effort, no sampling, no search.
+    const bare = registry.resolveRequest('anthropic', 'claude-x', { max_tokens: 500, temperature: 1, reasoning_effort: 'high' });
+    expect(bare).toMatchObject({ effort: null, sampling: {}, maxOutputTokens: 8692, model: { status: 'discovered', guess: null } });
+    expect(() => registry.resolveRequest('anthropic', 'claude-x', { webSearch: true })).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_SEARCH' }));
 });
 
 test('GPT-6 policies distinguish effort, sampling and output limits', () => {

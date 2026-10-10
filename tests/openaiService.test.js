@@ -73,12 +73,16 @@ describe('OpenAIService request parameters', () => {
         expect(create).not.toHaveBeenCalled();
     });
 
-    test('a new chat model uses provider defaults without inventing advanced parameters', async () => {
+    test('a new GPT model borrows GPT-6 Sol\'s reasoning contract as a best guess', async () => {
         const { service, create } = createService();
+        // ADR 0011, best guesses: effort is serialized, sampling stays off while reasoning, limits stay unknown.
         await service.chat('Hi', { model: 'gpt-7', temperature: 0.7, reasoning_effort: 'high' });
-        expect(create.mock.calls[0][0]).toMatchObject({ model: 'gpt-7', max_output_tokens: 9216 });
-        expect(create.mock.calls[0][0]).not.toHaveProperty('reasoning');
+        expect(create.mock.calls[0][0]).toMatchObject({ model: 'gpt-7', max_output_tokens: 25600, reasoning: { effort: 'high' } });
         expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+        await service.chat('Hi', { model: 'gpt-7', temperature: 0.7 });
+        expect(create.mock.calls[1][0]).toMatchObject({ model: 'gpt-7', max_output_tokens: 9216 });
+        expect(create.mock.calls[1][0]).not.toHaveProperty('reasoning');
+        expect(create.mock.calls[1][0]).not.toHaveProperty('temperature');
     });
 
     test('supports sampling when GPT-6 Sol reasoning is explicitly off', async () => {

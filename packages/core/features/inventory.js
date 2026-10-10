@@ -508,6 +508,7 @@ const tables = {
         system_logs: 'core',
         data_migrations: 'core',
         self_docs: 'core',
+        model_profile_guesses: 'core',
         principals: 'core',
         app_accounts: 'core',
         instance_state: 'core',

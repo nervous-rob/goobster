@@ -182,13 +182,17 @@ export function ChatSection({ section, onDirty }: {
                 </select>
             </Field>
 
-            <Field id="model" label="Model" hint="Current API chat models. New models use provider defaults until advanced controls are reviewed.">
+            <Field id="model" label="Model" hint="Current API chat models. New models get Goobster's best-guess profile from their name until advanced controls are reviewed.">
                 <ModelPicker id="model-input" label="Model" value={d.draft.model} defaultModel={entry?.chatModel}
                     state={chatCatalog} onChange={model => setManual({ model, reasoningEffort: '' })} />
             </Field>
 
             <Field id="reasoning" label="Reasoning effort"
-                hint={reasoningLevels.length ? 'Higher effort allows more reasoning. It can take longer and use more tokens.' : 'This model uses provider defaults; no reasoning control is available.'}>
+                hint={reasoningLevels.length
+                    ? (selectedModel?.guess?.basisName
+                        ? `Higher effort allows more reasoning. Levels follow Goobster's best guess for this model, like ${selectedModel.guess.basisName}; the provider has the final say.`
+                        : 'Higher effort allows more reasoning. It can take longer and use more tokens.')
+                    : 'This model uses provider defaults; no reasoning control is available.'}>
                 <div className="segment settings-segment" role="radiogroup" aria-label="Reasoning effort" id="reasoning-input">
                     {['', ...reasoningLevels, ...(savedEffortMissing ? [d.draft.reasoningEffort] : [])].map(value => (
                         <button key={value || 'default'} type="button" role="radio"

@@ -81,7 +81,7 @@ export function PersonalAiSettings({ onDirty }: { onDirty: (dirty: boolean) => v
                     </label>
                     {draft.connected && <>
                         <div className="personal-ai-status">
-                            <button type="button" className="btn secondary" disabled={busy} onClick={() => void run(async () => {
+                            <button type="button" className="btn secondary small" disabled={busy} onClick={() => void run(async () => {
                                 setCatalog(await api.personalAiModels(true));
                             })}>Refresh personal models</button>
                             {catalog?.checkedAt && <span className="hint">Last checked {new Date(catalog.checkedAt).toLocaleString()}</span>}

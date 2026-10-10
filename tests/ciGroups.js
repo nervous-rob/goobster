@@ -121,6 +121,8 @@ const GROUPS = [
             'geminiService',
             'imageSearchService',
             'openaiService',
+            'modelInference',
+            'modelProfileGuessService',
             'modelRegistry',
             'promptContext',
             'promptFragments',
