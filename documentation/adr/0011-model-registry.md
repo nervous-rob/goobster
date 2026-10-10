@@ -1,7 +1,7 @@
 # ADR 0011: Model compatibility is deployment policy
 
 Date: 2026-09-22
-Status: Implemented; extended with live provider-default models (2026-10-09) and the full Claude effort range (2026-10-10)
+Status: Implemented; extended with live provider-default models (2026-10-09), best guesses for unreviewed models and the full Claude effort range (2026-10-10)
 
 ## Problem
 
@@ -34,9 +34,11 @@ is in `registry.js`; provider discovery and its transient cache are in
 formats. Frontend controls consume public descriptors from the same registry.
 
 The picker merges the reviewed registry with live provider chat IDs. A new ID
-uses a separate `discovered` descriptor: no explicit reasoning or sampling
-parameters, no native search or image-input claims, and unknown limits. It does
-not inherit another model's advanced controls. Standard tool serialization and
+uses a separate `discovered` descriptor. Originally that meant no explicit
+reasoning or sampling parameters, no native search or image-input claims, and
+unknown limits; since 2026-10-10 a recognizable name borrows its reviewed
+sibling's controls as a labelled best guess, refined by what the listing and
+the provider's documentation say (see *Best guesses for unreviewed models*). Standard tool serialization and
 streaming use the provider adapter; the provider remains the final authority on
 request compatibility and access. Reviewed entries and explicit custom entries
 always take precedence. Specialized image, audio, embedding and other non-chat
@@ -162,6 +164,59 @@ and can be reset; metadata explains the effective setting. The model-details
 panel opens on hover, keyboard focus, or tap and dismisses with Escape. It shows
 input support, tools, native search, reasoning levels, verified limits, availability,
 review date, and the official documentation link.
+
+## Best guesses for unreviewed models
+
+Added 2026-10-10. A newly listed chat id without a reviewed entry no longer
+gets the bare provider-default contract when its name is recognizable. Three
+layers fill it in, each applied only to `status: 'discovered'` descriptors and
+each labelled in the picker (`guess` on the public descriptor):
+
+1. **Name heuristics** (`models/inference.js`, keyless and deterministic). The
+   id's family picks the nearest reviewed sibling - `claude-sonnet-6` borrows
+   Claude Sonnet 5, `gpt-7` borrows GPT-6 Sol, `gemini-4-flash` borrows Gemini
+   3.5 Flash, a local Ollama pull borrows the Ollama text profile - and the
+   descriptor takes that sibling's reasoning levels, sampling rule and
+   capability flags, a readable display name and a description that says it
+   is a guess. Token limits are never guessed from a name. An id that matches
+   no family (`claude-x`, `gemini-exp-1206`) keeps the minimal contract.
+   Because the registry's fallback resolver uses the same function, request
+   validation in every process agrees with the picker.
+2. **Listing evidence** (`models/discovery.js`). Every listing, including a
+   manual **Refresh models**, keeps what the provider publishes per id and hands
+   it to `providerDefaults.setListingEvidence`: Anthropic's display name, token
+   limits and web-search capability; Gemini's display name, description, token
+   limits, `thinking` flag and temperature ceiling. OpenAI and Ollama listings
+   carry nothing beyond the id. A listing that says a model does not think
+   removes the effort control and turns sampling on. Listing evidence beats
+   every other layer for an unreviewed id.
+3. **Goobster reads the documentation** (`services/modelProfileGuessService.js`,
+   `ai.modelGuesses`, on by default). After a listing, each new unreviewed model
+   is queued (six per listing, sequential, one hour back-off after a failure).
+   Goobster fetches the provider's documentation page for the model through the
+   `safeFetch` stages (Anthropic's docs as Markdown, OpenAI, Gemini and the
+   Ollama library as HTML), keeps the passages that name the model, and asks the
+   host's default provider for a one-sentence description, what the model is
+   probably good for, what is uncertain, and - only when a page was read - the
+   controls the page states: context window, output limit, image input, web
+   search, effort support and levels, sampling. Effort levels are clamped to
+   what the adapter implements for that provider (Claude: low/medium/high);
+   a page cannot widen the adapter contract. The row in `model_profile_guesses`
+   (`evidence` `docs` or `name`, `sourceUrl`, `controlsJson`) is written once,
+   decorates every later listing, and its controls overlay the registry fallback
+   under the listing evidence. Other processes load the rows on their next
+   listing or model call (`ensureLoaded()` in `aiService._admit`), so the
+   window in which two processes disagree is one request. With no readable page
+   the text is name-only and no control is claimed. No prompt, page or reply is
+   stored. The corpus is public model ids, so there is no privacy path.
+
+Reviewed and custom entries are never touched by any layer. The picker shows
+the selected model's description under the select, marks an unreviewed model
+**Best guess** (or **Goobster's guess** once he has written it), says in the
+details panel which facts came from the listing, which from the documentation
+and which from the family, and polls the cached listing for a few seconds while
+descriptions are pending. The deterministic resolver remains the only source of
+request parameters; the provider stays the final authority.
 
 ## Explicit custom models
 

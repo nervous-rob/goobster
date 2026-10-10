@@ -24,12 +24,17 @@ describe('GeminiService', () => {
         return service;
     }
 
-    test('new API-listed Gemini models use provider defaults without invented thinking controls', async () => {
+    test('a new Gemini model of a known family borrows its sibling\'s thinking contract; an unknown name stays minimal', async () => {
         global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Hello' }] } }] }) });
         const service = createService();
+        // gemini-4-flash is read as Gemini 3.5 Flash-like: a thinking level is sent, sampling is not (ADR 0011, best guesses).
         await service.chat('Hi', { model: 'gemini-4-flash', temperature: 0.4, reasoning_effort: 'high', max_tokens: 500 });
         expect(global.fetch.mock.calls[0][0]).toContain('models/gemini-4-flash:generateContent');
-        const request = JSON.parse(global.fetch.mock.calls[0][1].body);
+        let request = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(request.generationConfig).toEqual({ maxOutputTokens: 25076, thinkingConfig: { thinkingLevel: 'high' } });
+        // A name outside every family keeps provider defaults without invented thinking controls.
+        await service.chat('Hi', { model: 'gemini-exp-1206', temperature: 0.4, reasoning_effort: 'high', max_tokens: 500 });
+        request = JSON.parse(global.fetch.mock.calls[1][1].body);
         expect(request.generationConfig).toEqual({ maxOutputTokens: 8692 });
     });
 

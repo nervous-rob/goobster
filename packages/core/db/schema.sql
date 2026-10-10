@@ -3314,3 +3314,32 @@ CREATE TABLE IF NOT EXISTS mcp_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mcp_tokens_user ON mcp_tokens(userId, createdAt);
+
+-- Goobster's own reading of a chat model that has no reviewed contract
+-- (documentation/adr/0011-model-registry.md, "Best guesses for unreviewed
+-- models"). One row per provider/model, written once by
+-- services/modelProfileGuessService.js with the host's default provider
+-- after reading the provider's documentation page when it can. Prose and
+-- controls about public model ids only: never a prompt, a page or user
+-- data, so no privacy path. The registry loads controlsJson as an overlay
+-- under the live listing's evidence; reviewed entries are never touched.
+CREATE TABLE IF NOT EXISTS model_profile_guesses (
+    provider TEXT NOT NULL,
+    modelId TEXT NOT NULL,
+    description TEXT NOT NULL,
+    bestFor TEXT,
+    caveat TEXT,
+    -- name: written from the id alone; docs: the provider's documentation
+    -- page at sourceUrl was read first (only then may controlsJson be set)
+    evidence TEXT NOT NULL DEFAULT 'name',
+    sourceUrl TEXT,
+    -- JSON controls read from the documentation and clamped to the adapter:
+    -- contextWindow, maxOutputTokens, imageInput, nativeSearch,
+    -- reasoning {levels, default}, sampling (always | never | reasoning-off)
+    controlsJson TEXT,
+    -- provider key that wrote the text (openai | anthropic | gemini | ollama)
+    writtenBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (provider, modelId)
+);

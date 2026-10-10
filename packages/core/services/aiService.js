@@ -165,7 +165,12 @@ class AIServiceRouter {
 
     /** Reviewed metadata plus current API models using provider defaults. */
     async listModelCatalog(providerKey, workflow = 'chat', options = {}) {
-        return modelDiscovery.listCatalog(providerKey || currentProviderKey, workflow, options);
+        // Unreviewed models carry the controls and text Goobster read from
+        // provider documentation (stored, maybe by another process), and
+        // missing ones are queued for him to read (background, best-effort).
+        const guesses = require('./modelProfileGuessService');
+        try { await guesses.load?.(); } catch { /* the overlay stays as last loaded */ }
+        return guesses.decorate(await modelDiscovery.listCatalog(providerKey || currentProviderKey, workflow, options));
     }
 
     /** Legacy ID-only view for older clients. */
@@ -251,6 +256,9 @@ class AIServiceRouter {
     }
 
     async _admit(opts, work, input = '') {
+        // Controls Goobster read from provider documentation for unreviewed
+        // models (stored by another process, maybe) apply to this request too.
+        try { await require('./modelProfileGuessService').ensureLoaded?.(); } catch { /* best-effort overlay */ }
         const providerKey = opts.provider || currentProviderKey;
         const provider = PROVIDERS[providerKey];
         const request = opts.personal ? { maxOutputTokens: opts.max_tokens || 4096 } : modelRegistry.resolveRequest(providerKey, opts.model || this.defaultModelFor(providerKey), {

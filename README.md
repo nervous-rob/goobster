@@ -694,8 +694,13 @@ MIT License - See LICENSE file for details
 ### Personal AI and current models
 
 Chat model pickers refresh from OpenAI, Anthropic, Gemini and Ollama APIs.
-Newly listed chat models use provider defaults without a model-catalog commit.
-Use **Refresh models** for a fresh listing (subject to a short cooldown).
+Newly listed chat models work without a model-catalog commit: a recognizable
+name borrows the nearest reviewed model's controls as a labelled best guess,
+the listing adds what the provider publishes (limits, thinking, web search),
+and Goobster reads the provider's documentation page to write the **About this
+model** note and pick up the controls it states (`ai.modelGuesses`, on by
+default). Use **Refresh models** for a fresh listing (subject to a short
+cooldown). See [ADR 0011](documentation/adr/0011-model-registry.md).
 
 In **Settings → Connections → Personal AI**, each account can connect its own
 OpenRouter key and completion URL, then assign separate models to chat, images,

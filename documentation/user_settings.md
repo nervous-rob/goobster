@@ -70,7 +70,7 @@ erasure already include it. New per-user stores must stay on that path.
 | ID05 | Custom instructions | `UserPreferences` |
 | ID06 | Private personality directive | DM `guild_settings` |
 | ID07 | Meme mode | `UserPreferences` |
-| AI01–AI05 | Provider, model, reasoning, Thoughtful, reset | DM `guild_settings` |
+| AI01–AI05 | Provider, model, reasoning, Thoughtful, reset | DM `guild_settings`; an unreviewed model's controls and **About this model** text are best guesses from its name, the provider listing and the provider's documentation ([ADR 0011](adr/0011-model-registry.md#best-guesses-for-unreviewed-models)) |
 | VO01–VO02, VO13 | Speaking voice, speed, availability | DM TTS row + capability API |
 | AT01–AT05, AT07–AT09 | Attention enrollment, initiative, budgets, UTC quiet hours, category matrix | `attention_policies` |
 | PR01–PR05 | Retention, memories, facts, report, forget-me | existing privacy/memory paths |

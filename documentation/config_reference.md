@@ -31,6 +31,7 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `ai.anthropic.apiKey` | secret | env `ANTHROPIC_API_KEY`<br>config.json `anthropicKey` | none | restart | core | Anthropic API key. |
 | `ai.gemini.apiKey` | secret | env `GEMINI_API_KEY`<br>config.json `googleAIKey` | none | restart | core | Google Gemini API key. |
 | `ai.personalEndpointHosts` | list | env `GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS`<br>config.json `ai.personalEndpointHosts` | `[]` | restart | core | Additional trusted public HTTPS hosts for personal AI completion endpoints; OpenRouter is allowed by default. |
+| `ai.modelGuesses` | boolean | env `GOOBSTER_MODEL_GUESSES`<br>config.json `ai.modelGuesses` | `true` | restart | core | Let Goobster write a short best-guess description for newly listed chat models that have no reviewed profile; one model call per model, cached in the database. |
 
 ## AI models
 
