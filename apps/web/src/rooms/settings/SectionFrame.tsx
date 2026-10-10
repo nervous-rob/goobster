@@ -5,6 +5,7 @@ import { Modal } from '../../components/Modal';
 import { useToast } from '../../hooks/useToast';
 import type { SectionDraft } from '../../hooks/useUserSettings';
 import { SECTION_BY_ID, type ScopeLabel } from './sectionMeta';
+import { SectionIcon } from '../../icons/Icon';
 
 export function ScopeBadge({ scope }: { scope: ScopeLabel }) {
     return <span className="badge settings-scope" title="Where this setting applies">{scope}</span>;
@@ -65,7 +66,7 @@ export function SectionHeader({
     return (
         <div className="settings-section-head">
             <div>
-                <h2>{meta.icon} {meta.title}</h2>
+                <h2><SectionIcon section={meta} /> {meta.title}</h2>
                 <p className="hint">{meta.blurb}</p>
                 <div className="settings-applies">
                     <ScopeBadge scope={scope} />

@@ -1125,6 +1125,7 @@ export type UserSettingsResponse = {
             surface: 'tinted' | 'neutral';
             navLayout: 'sidebar' | 'top';
             pageWidth: 'centered' | 'full';
+            iconStyle: 'emoji' | 'mono' | 'blocks' | 'sigils' | 'pixel' | 'neon' | 'constellation';
             linkByTag: boolean;
             textSize: 's' | 'm' | 'l';
             reducedMotion: 'system' | 'on' | 'off';

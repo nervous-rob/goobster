@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ViewIcon } from '../icons/Icon';
 import { Link, Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -36,7 +37,7 @@ export function PeopleRoom() {
                             className={`activity-tab${current === view.id ? ' active' : ''}`}
                             aria-current={current === view.id ? 'page' : undefined}
                             data-tour={`people-tab-${view.id}`}>
-                            <span aria-hidden="true">{view.icon}</span> {view.name}
+                            <ViewIcon view={view} /> {view.name}
                             {count > 0 && (
                                 <span className="nav-count" aria-label={`${count} ${view.id === 'friends' ? 'waiting' : 'unread'}`}>{count > 99 ? '99+' : count}</span>
                             )}

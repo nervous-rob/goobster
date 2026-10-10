@@ -8,6 +8,7 @@ import type { SettingsSectionId } from '../../lib/types';
 import { roomDisplayName } from '../../lib/rooms';
 import { SECTIONS, SECTION_BY_ID, isSectionId, searchSettings } from './sectionMeta';
 import { useFieldAnchor } from './SectionFrame';
+import { SectionIcon } from '../../icons/Icon';
 import { ProfileSection } from './ProfileSection';
 import { ChatSection } from './ChatSection';
 import { VoiceSection } from './VoiceSection';
@@ -125,7 +126,7 @@ export function SettingsRoom() {
                                 <li key={`${hit.section.id}:${hit.field.fieldId}`} role="option" aria-selected={false}>
                                     <button type="button" onClick={() => go(hit.section.id, hit.field.fieldId)}>
                                         <span className="settings-hit-label">{hit.field.label}</span>
-                                        <span className="hint">{hit.section.icon} {hit.section.title} · {hit.section.scope}</span>
+                                        <span className="hint"><SectionIcon section={hit.section} /> {hit.section.title} · {hit.section.scope}</span>
                                     </button>
                                 </li>
                             ))}
@@ -139,7 +140,7 @@ export function SettingsRoom() {
                         <Link key={s.id} to="/settings/$section" params={{ section: s.id }}
                             className={`settings-nav-item${active === s.id ? ' active' : ''}`}
                             aria-current={active === s.id ? 'page' : undefined}>
-                            <span className="settings-nav-icon" aria-hidden="true">{s.icon}</span>
+                            <span className="settings-nav-icon" aria-hidden="true"><SectionIcon section={s} /></span>
                             <span className="settings-nav-text">
                                 <span className="settings-nav-title">{s.title}{dirty[s.id] ? <span className="settings-dirty-dot" title="Unsaved changes" /> : null}</span>
                                 <span className="hint settings-nav-blurb">{s.blurb}</span>

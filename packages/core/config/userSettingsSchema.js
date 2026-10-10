@@ -117,6 +117,7 @@ const ACCENTS = ['blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'ambe
 // a horizontal bar across the top of the page.
 const NAV_LAYOUTS = ['sidebar', 'top'];
 const PAGE_WIDTHS = ['centered', 'full'];
+const ICON_STYLES = ['emoji', 'mono', 'blocks', 'sigils', 'pixel', 'neon', 'constellation'];
 // How the portal's whitespace relates to the accent: `tinted` rebuilds the
 // surface greys from the accent's hue (default); `neutral` keeps the fixed
 // greys and lets the accent show only in the controls and the room glow.
@@ -229,6 +230,7 @@ const PREFERENCE_DEFAULTS = {
     surface: 'tinted',
     navLayout: 'sidebar',
     pageWidth: 'centered',
+    iconStyle: 'emoji',
     linkByTag: true,
     textSize: 'm',
     reducedMotion: 'system',
@@ -279,7 +281,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
     ],
     memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
     appearance: [
-        'theme', 'accent', 'surface', 'navLayout', 'pageWidth', 'linkByTag', 'textSize', 'reducedMotion', 'density',
+        'theme', 'accent', 'surface', 'navLayout', 'pageWidth', 'iconStyle', 'linkByTag', 'textSize', 'reducedMotion', 'density',
         'enterToSend', 'expandChatDetails', 'startPage', 'hiddenToolRooms', 'preferredExchangeGuild',
         'expeditionDefaultDepth', 'expeditionDefaultLens', 'parlorDefaultEmoji', 'parlorDefaultCharter'
     ],
@@ -444,6 +446,11 @@ function coercePreference(key, raw) {
         case 'pageWidth':
             if (!PAGE_WIDTHS.includes(raw)) {
                 return { ok: false, code: 'BAD_PAGE_WIDTH', message: `pageWidth must be one of: ${PAGE_WIDTHS.join(', ')}.` };
+            }
+            return { ok: true, value: raw };
+        case 'iconStyle':
+            if (!ICON_STYLES.includes(raw)) {
+                return { ok: false, code: 'BAD_ICON_STYLE', message: `iconStyle must be one of: ${ICON_STYLES.join(', ')}.` };
             }
             return { ok: true, value: raw };
         case 'textSize':
@@ -667,6 +674,7 @@ module.exports = {
     SURFACES,
     NAV_LAYOUTS,
     PAGE_WIDTHS,
+    ICON_STYLES,
     ANSWER_LENGTHS,
     TONES,
     HUMOR_LEVELS,

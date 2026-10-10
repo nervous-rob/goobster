@@ -1,4 +1,5 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { ViewIcon } from '../icons/Icon';
 import { useMe } from '../hooks/useSession';
 import { ROOM_BY_ID, resolveActivityView } from '../lib/rooms';
 
@@ -27,7 +28,7 @@ export function ActivityRoom() {
                         className={`activity-tab${current === view.id ? ' active' : ''}`}
                         aria-current={current === view.id ? 'page' : undefined}
                         data-tour={`activity-tab-${view.id}`}>
-                        <span aria-hidden="true">{view.icon}</span> {view.name}
+                        <ViewIcon view={view} /> {view.name}
                         {view.secondaryName && <span className="activity-tab-secondary">{view.secondaryName}</span>}
                         {view.id === 'inbox' && unread > 0 && (
                             <span className="nav-count" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span>

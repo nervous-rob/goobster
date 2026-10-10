@@ -204,7 +204,7 @@ describe('updateSection', () => {
     test('appearance: accent, surface, navigation layout and page width default, validate, persist, and reset', async () => {
         const userId = nextUser();
         const before = await userSettingsService.getSettings({ userId });
-        expect(before.sections.appearance.values).toMatchObject({ accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered' });
+        expect(before.sections.appearance.values).toMatchObject({ accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered', iconStyle: 'emoji' });
 
         await expect(userSettingsService.updateSection({ userId, section: 'appearance', changes: { accent: 'neon' } }))
             .rejects.toMatchObject({ code: 'BAD_ACCENT' });
@@ -214,16 +214,18 @@ describe('updateSection', () => {
             .rejects.toMatchObject({ code: 'BAD_SURFACE' });
         await expect(userSettingsService.updateSection({ userId, section: 'appearance', changes: { pageWidth: 'wide' } }))
             .rejects.toMatchObject({ code: 'BAD_PAGE_WIDTH' });
+        await expect(userSettingsService.updateSection({ userId, section: 'appearance', changes: { iconStyle: 'clipart' } }))
+            .rejects.toMatchObject({ code: 'BAD_ICON_STYLE' });
 
         const result = await userSettingsService.updateSection({
-            userId, section: 'appearance', changes: { accent: 'mint', surface: 'neutral', navLayout: 'top', pageWidth: 'full' }
+            userId, section: 'appearance', changes: { accent: 'mint', surface: 'neutral', navLayout: 'top', pageWidth: 'full', iconStyle: 'pixel' }
         });
-        expect(result.data.values).toMatchObject({ accent: 'mint', surface: 'neutral', navLayout: 'top', pageWidth: 'full' });
+        expect(result.data.values).toMatchObject({ accent: 'mint', surface: 'neutral', navLayout: 'top', pageWidth: 'full', iconStyle: 'pixel' });
         const row = await db.get('SELECT preferencesJson FROM user_settings WHERE userId = @userId', { userId });
         expect(JSON.parse(row.preferencesJson)).toMatchObject({ accent: 'mint', surface: 'neutral', navLayout: 'top', pageWidth: 'full' });
 
         const reset = await userSettingsService.resetSection({ userId, section: 'appearance', expectedRevision: result.data.revision });
-        expect(reset.data.values).toMatchObject({ accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered' });
+        expect(reset.data.values).toMatchObject({ accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered', iconStyle: 'emoji' });
     });
 });
 
