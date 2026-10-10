@@ -64,6 +64,17 @@ test('provider contracts preserve conditional sampling and effective reasoning d
     expect(haiku.sampling).toEqual({ temperature: 1 });
     const opus = registry.resolveRequest('anthropic', 'claude-opus-5-5', { max_tokens: 500 });
     expect(opus).toMatchObject({ effectiveEffort: 'medium', maxOutputTokens: 8692, sampling: {} });
+    // Every current adaptive Claude model documents xhigh and max; Haiku keeps no effort control.
+    for (const id of ['claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-1', 'claude-opus-5-5']) {
+        expect(registry.get('anthropic', id).reasoning.levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    }
+    expect(registry.get('anthropic', 'claude-fable-5-1').reasoning.default).toBe('high');
+    expect(registry.resolveRequest('anthropic', 'claude-sonnet-5', { reasoning_effort: 'xhigh', max_tokens: 500 }))
+        .toMatchObject({ effort: 'xhigh', effectiveEffort: 'xhigh', maxOutputTokens: 49652, sampling: {} });
+    expect(registry.resolveRequest('anthropic', 'claude-fable-5-1', { reasoning_effort: 'max', max_tokens: 500 }).maxOutputTokens).toBe(66036);
+    expect(registry.resolveRequest('anthropic', 'claude-fable-5-1', { reasoning_effort: 'max', max_tokens: 100000 }).maxOutputTokens).toBe(128000);
+    expect(() => registry.resolveRequest('anthropic', 'claude-sonnet-5', { reasoning_effort: 'none' })).toThrow(expect.objectContaining({ code: 'BAD_REASONING' }));
+    expect(() => registry.resolveEffort(registry.get('anthropic', 'claude-haiku-4-5'), 'max', { strict: true })).toThrow(expect.objectContaining({ code: 'BAD_REASONING' }));
     const pro = registry.resolveRequest('gemini', 'gemini-3.1-pro-preview', { reasoning_effort: 'minimal', max_tokens: 500 });
     expect(pro).toMatchObject({ effort: 'low', maxOutputTokens: 4596, sampling: {} });
     expect(() => registry.resolveEffort(registry.get('openai', 'gpt-4o'), 'high', { strict: true })).toThrow();

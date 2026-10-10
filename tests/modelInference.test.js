@@ -62,7 +62,9 @@ test('a reviewed id is never re-guessed and an unrecognizable id keeps minimal p
 test('a guessed profile validates requests like its basis, with unknown limits', () => {
     const sonnet = registry.resolveRequest('anthropic', 'claude-sonnet-6', { max_tokens: 500, reasoning_effort: 'low' });
     expect(sonnet).toMatchObject({ effort: 'low', maxOutputTokens: 4596, sampling: {} });
-    expect(() => registry.resolveRequest('anthropic', 'claude-sonnet-6', { reasoning_effort: 'max' })).toThrow(expect.objectContaining({ code: 'BAD_REASONING' }));
+    // The borrowed Sonnet 5 contract carries Anthropic's full effort range; OpenAI-only levels still fail.
+    expect(registry.resolveRequest('anthropic', 'claude-sonnet-6', { max_tokens: 500, reasoning_effort: 'max' })).toMatchObject({ effort: 'max', maxOutputTokens: 66036 });
+    expect(() => registry.resolveRequest('anthropic', 'claude-sonnet-6', { reasoning_effort: 'none' })).toThrow(expect.objectContaining({ code: 'BAD_REASONING' }));
     const chat = registry.resolveRequest('openai', 'gpt-5-chat-latest', { max_tokens: 500, temperature: 0.4 });
     expect(chat.sampling).toEqual({ temperature: 0.4, top_p: 1 });
     expect(registry.resolveRequest('openai', 'gpt-7', { max_tokens: 100000, reasoning_effort: 'max' }).maxOutputTokens).toBe(165536);

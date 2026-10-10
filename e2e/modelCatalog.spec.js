@@ -58,7 +58,11 @@ test('catalog drives model choices, effort, sampling and feature pickers', async
     await expect(model).toHaveValue('');
     await expect(model.locator('option')).toHaveCount(2);
     await expect(page.getByLabel('Temperature', { exact: true })).toBeDisabled();
-    await expect(page.getByRole('radio', { name: 'Max', exact: true })).toHaveCount(0);
+    // Claude Sonnet 5 offers all five documented levels; OpenAI's "None" is not one of them.
+    await expect(page.getByRole('radiogroup', { name: 'Reasoning effort' }).getByRole('radio')).toHaveCount(6);
+    await expect(page.getByRole('radio', { name: 'Xhigh', exact: true })).toBeVisible();
+    await expect(page.getByRole('radio', { name: 'Max', exact: true })).toBeVisible();
+    await expect(page.getByRole('radio', { name: 'None', exact: true })).toHaveCount(0);
     await expect(page.getByRole('combobox', { name: 'Parlor model', exact: true }).locator('option')).toHaveCount(3);
     await expect(page.getByRole('combobox', { name: 'Research model', exact: true }).locator('option')).toHaveCount(3);
 });

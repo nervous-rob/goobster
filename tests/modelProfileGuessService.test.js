@@ -66,10 +66,10 @@ test('documentation pages are looked up most-specific first and only passages na
 test('controls read from a page are clamped to the adapter and dropped when confidence is low', () => {
     const model = registry.get('anthropic', 'claude-sonnet-6');
     const read = { controls: { contextWindow: 1000000, maxOutputTokens: 128000, imageInput: true, webSearch: true,
-        reasoning: { supported: true, levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max' }, sampling: 'unsupported', confidence: 'high' } };
+        reasoning: { supported: true, levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], default: 'xhigh' }, sampling: 'unsupported', confidence: 'high' } };
     expect(parseControls('anthropic', read, model)).toEqual({
         contextWindow: 1000000, maxOutputTokens: 128000, imageInput: true, nativeSearch: true,
-        reasoning: { levels: ['low', 'medium', 'high'], default: 'high' }, sampling: 'never'
+        reasoning: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'xhigh' }, sampling: 'never'
     });
     expect(parseControls('anthropic', { controls: { ...read.controls, confidence: 'low' } }, model)).toBeNull();
     expect(parseControls('openai', { controls: { contextWindow: 12, reasoning: { supported: false }, sampling: 'supported' } }, model))
@@ -107,7 +107,7 @@ test('reads the documentation, stores text and controls, and the registry applie
     expect(rows[0]).toMatchObject({ provider: 'anthropic', modelId: 'claude-sonnet-6', evidence: 'docs', sourceUrl: expect.stringContaining('sonnet-6') });
     expect(JSON.parse(rows[0].controlsJson)).toEqual({
         contextWindow: 1000000, maxOutputTokens: 128000, imageInput: true, nativeSearch: true,
-        reasoning: { levels: ['low', 'medium', 'high'], default: 'high' }, sampling: 'never'
+        reasoning: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' }, sampling: 'never'
     });
     expect(JSON.stringify(rows)).not.toContain(PROMPT_MARK);
     expect(JSON.stringify(rows)).not.toContain(PAGE_MARK);

@@ -6,6 +6,7 @@
  */
 const VERSION = 1;
 const CHECKED = '2026-09-22';
+const CLAUDE_EFFORT_CHECKED = '2026-10-10';
 const OPENAI = 'https://developers.openai.com/api/docs/';
 const CLAUDE = 'https://platform.claude.com/docs/en/';
 const GEMINI = 'https://ai.google.dev/gemini-api/docs/';
@@ -37,9 +38,10 @@ const PROFILES = {
     },
     'claude-adaptive': {
         provider: 'anthropic', endpoint: 'messages',
-        // The initial adapter contract exposes the common supported effort
-        // levels. Additional provider levels need their own budget/test policy.
-        reasoning: { levels: ['low', 'medium', 'high'], default: 'high', aliases: { minimal: 'low' } },
+        // Anthropic documents all five effort levels on every current adaptive
+        // model (reviewed 2026-10-10 against build-with-claude/effort). An entry
+        // for a model that lacks xhigh (Opus 4.6, Sonnet 4.6) must narrow this.
+        reasoning: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high', aliases: { minimal: 'low' } },
         sampling: { mode: 'never', temperatureMax: 1, exclusive: true },
         capabilities: { imageInput: true, tools: 'native', streaming: true, nativeSearch: true }
     },
@@ -117,18 +119,21 @@ const MODELS = [
         contextWindow: 200000, maxOutputTokens: 100000, input: ['text'], capabilities: { imageInput: false, nativeSearch: false }, sources: [`${OPENAI}models/o3-mini`]
     }),
     entry('claude-sonnet-5', 'claude-adaptive', 'Claude Sonnet 5', 'General conversation and tools with adaptive thinking.', {
-        contextWindow: 1000000, maxOutputTokens: 128000,
+        contextWindow: 1000000, maxOutputTokens: 128000, checkedAt: CLAUDE_EFFORT_CHECKED,
         sources: [`${CLAUDE}models/sonnet-5/overview`, `${CLAUDE}build-with-claude/effort`]
     }),
     entry('claude-fable-5', 'claude-adaptive', 'Claude Fable 5', 'Demanding reasoning and longer tasks.', {
-        sources: [`${CLAUDE}build-with-claude/effort`]
+        checkedAt: CLAUDE_EFFORT_CHECKED, sources: [`${CLAUDE}build-with-claude/effort`]
     }),
     entry('claude-fable-5-1', 'claude-adaptive', 'Claude Fable 5.1', 'Demanding reasoning and extended work with tools.', {
-        contextWindow: 1000000, maxOutputTokens: 128000, sources: [`${CLAUDE}models/overview`, `${CLAUDE}build-with-claude/effort`]
+        contextWindow: 1000000, maxOutputTokens: 128000, checkedAt: CLAUDE_EFFORT_CHECKED,
+        sources: [`${CLAUDE}models/overview`, `${CLAUDE}build-with-claude/effort`]
     }),
     entry('claude-opus-5-5', 'claude-adaptive', 'Claude Opus 5.5', 'Coding and knowledge work with adaptive thinking.', {
+        // Anthropic's documented default for Opus 5.5 is medium; the five levels come from the profile.
         reasoning: { ...PROFILES['claude-adaptive'].reasoning, default: 'medium' },
-        contextWindow: 1000000, maxOutputTokens: 128000, sources: [`${CLAUDE}models/overview`, `${CLAUDE}build-with-claude/effort`]
+        contextWindow: 1000000, maxOutputTokens: 128000, checkedAt: CLAUDE_EFFORT_CHECKED,
+        sources: [`${CLAUDE}models/overview`, `${CLAUDE}build-with-claude/effort`]
     }),
     entry('claude-haiku-4-5', 'claude-standard', 'Claude Haiku 4.5', 'Fast chat and tool use. Goobster uses standard generation.', {
         aliases: ['claude-haiku-4-5-20251001'], contextWindow: 200000, maxOutputTokens: 64000,

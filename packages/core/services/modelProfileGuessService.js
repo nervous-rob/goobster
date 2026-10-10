@@ -54,7 +54,7 @@ const GEMINI = 'https://ai.google.dev/gemini-api/docs/';
 /** Effort levels each adapter serializes; a page cannot widen this. */
 const ALLOWED_LEVELS = {
     openai: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-    anthropic: ['low', 'medium', 'high'],
+    anthropic: ['low', 'medium', 'high', 'xhigh', 'max'],
     gemini: ['minimal', 'low', 'medium', 'high'],
     ollama: []
 };
