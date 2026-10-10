@@ -1,5 +1,6 @@
 const aiConfig = require('../config/aiConfig');
 const registry = require('./registry');
+const providerDefaults = require('./providerDefaults');
 
 const TTL_MS = 10 * 60 * 1000;
 const RETRY_MS = 30 * 1000;
@@ -12,10 +13,53 @@ function configured(provider) {
     return provider === 'ollama' || Boolean(aiConfig[provider]?.apiKey);
 }
 
-async function fetchIds(provider) {
+function positiveInt(value) {
+    const n = Number(value);
+    return Number.isSafeInteger(n) && n >= 16 ? n : null;
+}
+
+function text(value, max) {
+    if (typeof value !== 'string') return null;
+    const flat = value.replace(/\s+/g, ' ').trim();
+    return flat ? flat.slice(0, max) : null;
+}
+
+/**
+ * What a listing says about one model beyond its id. Only Anthropic and
+ * Gemini publish anything usable. Anthropic: a display name, token limits
+ * and whether the built-in web search tool is accepted. Gemini: a display
+ * name, description, token limits, whether the model thinks, and the
+ * temperature ceiling. Evidence, not policy: providerDefaults applies it to
+ * unreviewed ids only, so a refresh updates their controls without a code
+ * change.
+ */
+function listingMeta(provider, row) {
+    const meta = {};
+    if (provider === 'anthropic') {
+        meta.displayName = text(row.display_name, 80);
+        meta.contextWindow = positiveInt(row.max_input_tokens);
+        meta.maxOutputTokens = positiveInt(row.max_tokens);
+        const search = row.capabilities?.server_tools?.web_search?.supported;
+        if (typeof search === 'boolean') meta.nativeSearch = search;
+    }
+    if (provider === 'gemini') {
+        meta.displayName = text(row.displayName, 80);
+        meta.description = text(row.description, 240);
+        meta.contextWindow = positiveInt(row.inputTokenLimit);
+        meta.maxOutputTokens = positiveInt(row.outputTokenLimit);
+        if (typeof row.thinking === 'boolean') meta.thinking = row.thinking;
+        const ceiling = Number(row.maxTemperature);
+        if (Number.isFinite(ceiling) && ceiling > 0 && ceiling <= 2) meta.maxTemperature = ceiling;
+    }
+    for (const key of Object.keys(meta)) if (meta[key] == null) delete meta[key];
+    return Object.keys(meta).length ? meta : null;
+}
+
+async function fetchListing(provider) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     const ids = [];
+    const meta = {};
     const cursors = new Set();
     let cursor = '';
     try {
@@ -45,12 +89,15 @@ async function fetchIds(provider) {
                 if (provider === 'gemini' && !(row.supportedGenerationMethods || []).includes('generateContent')) continue;
                 const id = provider === 'gemini' ? String(row.name || '').replace(/^models\//, '')
                     : provider === 'ollama' ? row.name : row.id;
-                if (typeof id === 'string' && id) ids.push(id);
+                if (typeof id !== 'string' || !id) continue;
+                ids.push(id);
+                const extra = listingMeta(provider, row);
+                if (extra) meta[id] = extra;
             }
             const next = provider === 'anthropic' && json.has_more ? json.last_id
                 : provider === 'gemini' ? json.nextPageToken : null;
             if (provider === 'anthropic' && json.has_more && !next) throw new Error('Incomplete model list');
-            if (!next) return [...new Set(ids)];
+            if (!next) return { ids: [...new Set(ids)], meta };
             if (cursors.has(next)) throw new Error('Repeated model-list cursor');
             cursors.add(next);
             cursor = next;
@@ -63,7 +110,7 @@ async function fetchIds(provider) {
 
 async function discover(provider, { refresh = false } = {}) {
     if (!PROVIDERS.includes(provider)) throw new registry.ModelPolicyError('BAD_PROVIDER', 'Unknown AI provider.');
-    if (!configured(provider)) return { ids: [], status: 'not-configured', checkedAt: null };
+    if (!configured(provider)) return { ids: [], meta: {}, status: 'not-configured', checkedAt: null };
     const prior = cache.get(provider);
     // Manual refresh bypasses the normal TTL, with a short cooldown to keep
     // repeated clicks and multiple clients from flooding a provider.
@@ -72,10 +119,11 @@ async function discover(provider, { refresh = false } = {}) {
     const task = (async () => {
         let result;
         try {
-            result = { ids: await fetchIds(provider), status: 'live', checkedAt: new Date().toISOString(), expiresAt: Date.now() + TTL_MS };
+            const listing = await fetchListing(provider);
+            result = { ...listing, status: 'live', checkedAt: new Date().toISOString(), expiresAt: Date.now() + TTL_MS };
         } catch {
             // Do not leak upstream URLs, credentials, or raw provider errors.
-            result = { ids: prior?.ids || [], status: prior?.checkedAt ? 'stale' : 'unavailable', checkedAt: prior?.checkedAt || null, expiresAt: Date.now() + RETRY_MS };
+            result = { ids: prior?.ids || [], meta: prior?.meta || {}, status: prior?.checkedAt ? 'stale' : 'unavailable', checkedAt: prior?.checkedAt || null, expiresAt: Date.now() + RETRY_MS };
         }
         result.retryAt = Date.now() + RETRY_MS;
         cache.set(provider, result);
@@ -88,6 +136,9 @@ async function discover(provider, { refresh = false } = {}) {
 async function listCatalog(provider, workflow = 'chat', options = {}) {
     if (!['chat', 'parlor', 'research'].includes(workflow)) throw new registry.ModelPolicyError('BAD_WORKFLOW', 'Unknown model workflow.');
     const result = await discover(provider, options);
+    // The registry's fallback descriptors now reflect this listing, for the
+    // picker and for request validation alike in this process.
+    if (result.status !== 'not-configured') providerDefaults.setListingEvidence(provider, result.meta);
     const fresh = result.status === 'live' || result.status === 'cached';
     const discovered = new Set(result.ids.map(id => registry.get(provider, id)?.canonicalId || id));
     const entries = new Map(registry.list(provider).filter(m => m.id === m.canonicalId && m.workflows.includes(workflow)).map(m => [m.id, m]));

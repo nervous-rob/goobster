@@ -25,12 +25,19 @@ describe('AnthropicService', () => {
         return service;
     }
 
-    test('new API-listed Claude models use provider defaults without sampling or thinking options', async () => {
+    test('a new Claude model of a known family borrows its sibling\'s adaptive contract; an unknown name stays minimal', async () => {
         global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: 'text', text: 'Hello' }] }) });
         const service = createService();
+        // claude-sonnet-6 is read as Claude Sonnet 5-like: effort is sent, sampling is not (ADR 0011, best guesses).
         await service.chat('Hi', { model: 'claude-sonnet-6', temperature: 0.4, reasoning_effort: 'high', max_tokens: 500 });
-        const request = JSON.parse(global.fetch.mock.calls[0][1].body);
-        expect(request).toMatchObject({ model: 'claude-sonnet-6', max_tokens: 8692 });
+        let request = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(request).toMatchObject({ model: 'claude-sonnet-6', max_tokens: 25076, output_config: { effort: 'high' } });
+        expect(request).not.toHaveProperty('temperature');
+        expect(request).not.toHaveProperty('thinking');
+        // A name outside every family keeps provider defaults: no sampling, no effort, no thinking options.
+        await service.chat('Hi', { model: 'claude-x', temperature: 0.4, reasoning_effort: 'high', max_tokens: 500 });
+        request = JSON.parse(global.fetch.mock.calls[1][1].body);
+        expect(request).toMatchObject({ model: 'claude-x', max_tokens: 8692 });
         expect(request).not.toHaveProperty('temperature');
         expect(request).not.toHaveProperty('thinking');
         expect(request).not.toHaveProperty('output_config');

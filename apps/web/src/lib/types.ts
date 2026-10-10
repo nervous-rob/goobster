@@ -1274,11 +1274,30 @@ export type ModelDescriptor = {
     sampling: { mode: 'always' | 'never' | 'reasoning-off'; temperatureMax: number; exclusive: boolean };
     contextWindow: number | null; maxOutputTokens: number | null; checkedAt: string | null; sources: string[];
     availability: 'listed' | 'not-listed' | 'unknown'; selectable: boolean;
+    /** Unreviewed models only: where the profile and text came from. */
+    guess?: ModelGuess | null;
+};
+/**
+ * How an unreviewed model's descriptor was filled in: `heuristic` borrows the
+ * nearest reviewed sibling's controls from the id, `provider` adds what the
+ * provider's own listing publishes, `ai` adds the text Goobster wrote.
+ */
+export type ModelGuess = {
+    source: 'heuristic' | 'provider' | 'ai'; basis: string | null; basisName: string | null; profile: string | null;
+    /** Listing fields the provider published for this id (name, limits, thinking, temperature ceiling, web search). */
+    listing?: string[];
+    /** Controls Goobster read from the provider's documentation page (limits, image input, web search, reasoning, sampling). */
+    controls?: string[];
+    /** Where Goobster's text came from: the documentation page at sourceUrl, or the name alone. */
+    evidence?: 'docs' | 'name'; sourceUrl?: string | null;
+    bestFor?: string | null; caveat?: string | null; writtenAt?: string | null;
 };
 export type ModelCatalog = {
     version: number; provider: string; workflow: string; models: ModelDescriptor[];
     discovery: { status: 'live' | 'cached' | 'stale' | 'unavailable' | 'not-configured'; checkedAt: string | null };
     unregisteredCount: number;
+    /** Descriptions Goobster is still writing for this listing; the picker re-reads while it is above zero. */
+    pendingGuesses?: number;
 };
 
 export type PersonalAiFunction = 'chat' | 'voiceChat' | 'image' | 'speech' | 'transcription' | 'parlor' | 'research';

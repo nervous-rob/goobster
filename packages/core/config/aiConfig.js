@@ -25,6 +25,9 @@ module.exports = {
     /** Explicit compatibility profiles for additional operator-managed models. */
     customModels: fileConfig.ai?.customModels || [],
 
+    /** Let Goobster write a short best-guess description for unreviewed chat models (one model call each, cached in the database). */
+    modelGuesses: (process.env.GOOBSTER_MODEL_GUESSES ?? String(fileConfig.ai?.modelGuesses ?? 'true')) !== 'false',
+
     /** Public OpenAI-compatible endpoint hosts allowed for personal keys. */
     personalEndpointHosts: process.env.GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS
         ? process.env.GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS.split(',').map(host => host.trim().toLowerCase()).filter(Boolean)

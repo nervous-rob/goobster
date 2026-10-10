@@ -14,6 +14,9 @@ beforeEach(() => {
         ollama: { host: 'http://ollama.test', model: 'llama3.2:3b' }
     }));
     jest.doMock('@goobster/core/services/usageTracker', () => ({ log: jest.fn() }));
+    // Goobster's written descriptions have their own suite (modelProfileGuessService.test.js);
+    // here the listing must not spend a model call or a database read.
+    jest.doMock('@goobster/core/services/modelProfileGuessService', () => ({ decorate: async catalog => ({ ...catalog, pendingGuesses: 0 }) }));
     aiService = require('@goobster/core/services/aiService');
 });
 afterEach(() => { global.fetch = realFetch; jest.restoreAllMocks(); });
@@ -27,7 +30,11 @@ test('new API chat models are selectable while specialized models stay excluded'
     expect(catalog.unregisteredCount).toBe(2);
     expect(catalog.models.find(m => m.id === 'gpt-6-sol')).toMatchObject({ availability: 'listed', reasoning: { default: 'medium' } });
     expect(await aiService.listModels('openai')).toEqual(['gpt-4o-mini', 'gpt-6-sol', 'gpt-7']);
-    expect(catalog.models.find(m => m.id === 'gpt-7')).toMatchObject({ status: 'discovered', contextWindow: null, reasoning: { levels: [] }, sampling: { mode: 'never' } });
+    expect(catalog.models.find(m => m.id === 'gpt-7')).toMatchObject({
+        status: 'discovered', displayName: 'GPT-7', contextWindow: null, guess: { source: 'heuristic', basis: 'gpt-6-sol' },
+        reasoning: { levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] }, sampling: { mode: 'reasoning-off' }
+    });
+    expect(catalog.pendingGuesses).toBe(0);
     expect(aiService.validateModelSelection({ provider: 'openai' }, { model: 'gpt-7' })).toEqual({ model: 'gpt-7', reasoningEffort: null });
     expect(global.fetch).toHaveBeenCalledTimes(1);
 });
@@ -132,6 +139,31 @@ test('manual refresh bypasses the TTL, coalesces requests and observes its coold
     clock.mockReturnValue(Date.now() + 31000);
     global.fetch.mockRejectedValue(new Error('offline'));
     expect(selectable(await aiService.listModelCatalog('openai', 'chat', { refresh: true }))).toContain('gpt-7');
+});
+
+test('a refresh carries what the listing publishes into unreviewed models and the request validator', async () => {
+    global.fetch.mockImplementationOnce(() => jsonResponse({ data: [{ id: 'claude-sonnet-5', display_name: 'Claude Sonnet 5' }, { id: 'claude-sonnet-6', display_name: 'Claude Sonnet 6 (listed)' }] }));
+    const anthropic = await aiService.listModelCatalog('anthropic');
+    expect(anthropic.models.find(m => m.id === 'claude-sonnet-5').displayName).toBe('Claude Sonnet 5');
+    expect(anthropic.models.find(m => m.id === 'claude-sonnet-6')).toMatchObject({
+        displayName: 'Claude Sonnet 6 (listed)', reasoning: { levels: ['low', 'medium', 'high'] }, guess: { source: 'heuristic', basis: 'claude-sonnet-5', listing: ['displayName'] }
+    });
+    global.fetch.mockImplementationOnce(() => jsonResponse({ models: [
+        { name: 'models/gemini-4-flash', displayName: 'Gemini 4 Flash', description: 'Fast multimodal model.', inputTokenLimit: 2000000, outputTokenLimit: 65536, thinking: true, maxTemperature: 2, supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/gemini-4-flash-fast', displayName: 'Gemini 4 Flash Fast', thinking: false, maxTemperature: 1.5, supportedGenerationMethods: ['generateContent'] }
+    ] }));
+    const gemini = await aiService.listModelCatalog('gemini');
+    expect(gemini.models.find(m => m.id === 'gemini-4-flash')).toMatchObject({
+        displayName: 'Gemini 4 Flash', description: 'Fast multimodal model.', contextWindow: 2000000, maxOutputTokens: 65536,
+        reasoning: { levels: ['minimal', 'low', 'medium', 'high'] }, guess: { source: 'provider', basis: 'gemini-3.5-flash' }
+    });
+    const fast = gemini.models.find(m => m.id === 'gemini-4-flash-fast');
+    expect(fast).toMatchObject({ reasoning: { levels: [], default: null }, sampling: { mode: 'always', temperatureMax: 1.5 }, contextWindow: null });
+    // The same process validates requests with the same evidence.
+    const registry = require('@goobster/core/models/registry');
+    expect(registry.resolveRequest('gemini', 'gemini-4-flash-fast', { max_tokens: 500, temperature: 1.9 }).sampling).toEqual({ temperature: 1.5, top_p: 1 });
+    expect(registry.resolveRequest('gemini', 'gemini-4-flash', { max_tokens: 500, reasoning_effort: 'low' }).effort).toBe('low');
+    expect(registry.resolveRequest('gemini', 'gemini-4-flash', { max_tokens: 100000 }).maxOutputTokens).toBe(65536);
 });
 
 test.each([

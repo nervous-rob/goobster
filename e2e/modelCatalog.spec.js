@@ -70,11 +70,18 @@ test('refresh adds a new API model without replacing the saved selection', async
     const model = page.getByRole('combobox', { name: 'Model', exact: true });
     await expect(model).toHaveValue('gpt-6-sol');
     await page.getByRole('button', { name: 'Refresh model list', exact: true }).click();
-    await expect(model.locator('option[value="gpt-7"]')).toHaveText('gpt-7 · API model');
+    await expect(model.locator('option[value="gpt-7"]')).toHaveText('GPT-7 · API model');
     await expect(model).toHaveValue('gpt-6-sol');
     await model.selectOption('gpt-7');
-    await expect(page.getByRole('radiogroup', { name: 'Reasoning effort' }).getByRole('radio')).toHaveCount(1);
+    // A best-guess profile from the name: GPT-6 Sol's effort levels, sampling off while reasoning.
+    await expect(page.getByRole('radiogroup', { name: 'Reasoning effort' }).getByRole('radio')).toHaveCount(7);
+    await expect(page.locator('#reasoning')).toContainText('best guess');
     await expect(page.getByLabel('Temperature', { exact: true })).toBeDisabled();
+    const about = page.locator('#model').getByRole('button', { name: 'About this model' });
+    await about.hover();
+    const details = page.getByRole('region', { name: 'GPT-7 details' }).first();
+    await expect(details).toContainText('Best guess');
+    await expect(details).toContainText('GPT-6 Sol');
 });
 
 test('model details work on hover, keyboard and touch without mobile overflow', async ({ page }) => {

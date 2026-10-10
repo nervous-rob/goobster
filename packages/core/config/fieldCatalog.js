@@ -155,7 +155,8 @@ group({ section: 'ai.providers', help: CONFIG_DOC + '#required-credentials' }, [
     ['ai.openai.apiKey', 'secret', { env: ['OPENAI_API_KEY'], configPath: 'openaiKey', help: URL_OPENAI, description: 'OpenAI API key.' }],
     ['ai.anthropic.apiKey', 'secret', { env: ['ANTHROPIC_API_KEY'], configPath: 'anthropicKey', help: URL_ANTHROPIC, description: 'Anthropic API key.' }],
     ['ai.gemini.apiKey', 'secret', { env: ['GEMINI_API_KEY'], configPath: 'googleAIKey', help: URL_GEMINI, description: 'Google Gemini API key.' }],
-    ['ai.personalEndpointHosts', 'list', { env: ['GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS'], runtime: 'config/aiConfig#personalEndpointHosts', default: [], validate: { custom: 'hostnameList' }, help: 'documentation/personal_ai.md#operator-setup', description: 'Additional trusted public HTTPS hosts for personal AI completion endpoints; OpenRouter is allowed by default.' }]
+    ['ai.personalEndpointHosts', 'list', { env: ['GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS'], runtime: 'config/aiConfig#personalEndpointHosts', default: [], validate: { custom: 'hostnameList' }, help: 'documentation/personal_ai.md#operator-setup', description: 'Additional trusted public HTTPS hosts for personal AI completion endpoints; OpenRouter is allowed by default.' }],
+    ['ai.modelGuesses', 'boolean', { env: ['GOOBSTER_MODEL_GUESSES'], runtime: 'config/aiConfig#modelGuesses', default: true, help: 'documentation/adr/0011-model-registry.md#best-guesses-for-unreviewed-models', description: 'Let Goobster write a short best-guess description for newly listed chat models that have no reviewed profile; one model call per model, cached in the database.' }]
 ]);
 
 // --- AI models (every default is pinned to config/aiConfig.js by the tests) --
