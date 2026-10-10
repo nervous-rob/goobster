@@ -17,9 +17,9 @@
   <link rel="stylesheet" href="/app/style.css">
 </head>
 <body>
-  <!-- Paint the device copies of theme, accent (and its berry favicon), surface, and
-       navigation layout before the app mounts so a reload never flashes the defaults. Same keys as
-       src/lib/theme.ts and src/lib/appearance.ts. -->
+  <!-- Paint the device copies of theme, accent (and its berry favicon), surface, navigation
+       layout, page width, text size and density before the app mounts so a reload never flashes
+       the defaults. Same keys as src/lib/theme.ts and src/lib/appearance.ts. -->
   <script>
     (function () {
       try {
@@ -35,6 +35,10 @@
         }
         if (s.getItem('goobster-surface') === 'neutral') document.documentElement.setAttribute('data-surface', 'neutral');
         if (s.getItem('goobster-nav-layout') === 'top') document.documentElement.setAttribute('data-nav-layout', 'top');
+        if (s.getItem('goobster-page-width') === 'full') document.documentElement.setAttribute('data-page-width', 'full');
+        var ts = s.getItem('goobster-text-size');
+        if (ts === 's' || ts === 'l') document.documentElement.setAttribute('data-text-size', ts);
+        if (s.getItem('goobster-density') === 'compact') document.documentElement.setAttribute('data-density', 'compact');
       } catch (e) { /* private mode */ }
     })();
   </script>

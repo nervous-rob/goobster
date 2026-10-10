@@ -10,11 +10,14 @@ export type Density = 'comfortable' | 'compact';
 export type ReducedMotion = 'system' | 'on' | 'off';
 /** Where the primary room navigation lives: the left sidebar or a bar across the top. */
 export type NavLayout = 'sidebar' | 'top';
+/** How wide rooms draw: centred on a column (the default) or across the whole window. */
+export type PageWidth = 'centered' | 'full';
 
 const TEXT_KEY = 'goobster-text-size';
 const DENSITY_KEY = 'goobster-density';
 const MOTION_KEY = 'goobster-reduced-motion';
 const NAV_LAYOUT_KEY = 'goobster-nav-layout';
+const PAGE_WIDTH_KEY = 'goobster-page-width';
 const MIC_KEY = 'goobster-preferred-mic';
 const VOLUME_KEY = 'goobster-voice-volume';
 
@@ -53,6 +56,20 @@ export function paintNavLayout(layout: NavLayout): void {
 export function persistNavLayout(layout: NavLayout): void {
     localStorage.setItem(NAV_LAYOUT_KEY, layout);
     paintNavLayout(layout);
+}
+
+export function getStoredPageWidth(): PageWidth {
+    return localStorage.getItem(PAGE_WIDTH_KEY) === 'full' ? 'full' : 'centered';
+}
+
+/** Paint the page width without persisting (live preview); the stylesheet reads `html[data-page-width]`. */
+export function paintPageWidth(width: PageWidth): void {
+    document.documentElement.dataset.pageWidth = width;
+}
+
+export function persistPageWidth(width: PageWidth): void {
+    localStorage.setItem(PAGE_WIDTH_KEY, width);
+    paintPageWidth(width);
 }
 
 export function getStoredMicId(): string | null {
@@ -110,6 +127,7 @@ export function deviceLocalKeys(): string[] {
         DENSITY_KEY,
         MOTION_KEY,
         NAV_LAYOUT_KEY,
+        PAGE_WIDTH_KEY,
         MIC_KEY,
         VOLUME_KEY,
         'goobster.map.linkByTag',

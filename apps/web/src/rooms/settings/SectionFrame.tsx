@@ -22,7 +22,8 @@ export function Field({
     error,
     children,
     inline = false,
-    scope
+    scope,
+    className
 }: {
     id: string;
     label: ReactNode;
@@ -31,9 +32,11 @@ export function Field({
     children: ReactNode;
     inline?: boolean;
     scope?: ScopeLabel;
+    /** An extra hook class for a field with its own styling or tests. */
+    className?: string;
 }) {
     return (
-        <div className={`settings-field${inline ? ' inline' : ''}`} id={id} data-field={id}>
+        <div className={`settings-field${inline ? ' inline' : ''}${className ? ` ${className}` : ''}`} id={id} data-field={id}>
             <div className="settings-field-head">
                 <label htmlFor={`${id}-input`}>{label}</label>
                 {scope && <ScopeBadge scope={scope} />}

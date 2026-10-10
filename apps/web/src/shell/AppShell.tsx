@@ -16,7 +16,8 @@ import {
     setStoredAccent, setStoredSurface, setStoredTheme, THEME_EVENT, type ThemeChoice
 } from '../lib/theme';
 import {
-    getStoredNavLayout, NAV_LAYOUT_EVENT, paintAppearance, paintNavLayout, persistAppearance, persistNavLayout, type NavLayout
+    getStoredNavLayout, getStoredPageWidth, NAV_LAYOUT_EVENT, paintAppearance, paintNavLayout, paintPageWidth,
+    persistAppearance, persistNavLayout, persistPageWidth, type NavLayout
 } from '../lib/appearance';
 import { TopBar } from './TopBar';
 import { useQuery } from '@tanstack/react-query';
@@ -207,6 +208,7 @@ export function AppShell() {
         paintAccent(getStoredAccent());
         paintSurface(getStoredSurface());
         paintNavLayout(getStoredNavLayout());
+        paintPageWidth(getStoredPageWidth());
         const onLayout = (event: Event) => setNavLayout((event as CustomEvent<NavLayout>).detail);
         window.addEventListener(NAV_LAYOUT_EVENT, onLayout);
         return () => window.removeEventListener(NAV_LAYOUT_EVENT, onLayout);
@@ -218,6 +220,7 @@ export function AppShell() {
         if (isAccent(appearance.accent)) setStoredAccent(appearance.accent);
         if (isSurface(appearance.surface)) setStoredSurface(appearance.surface);
         if (appearance.navLayout === 'top' || appearance.navLayout === 'sidebar') persistNavLayout(appearance.navLayout);
+        if (appearance.pageWidth === 'full' || appearance.pageWidth === 'centered') persistPageWidth(appearance.pageWidth);
         persistAppearance({
             textSize: appearance.textSize,
             density: appearance.density,

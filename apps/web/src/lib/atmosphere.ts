@@ -24,8 +24,10 @@ export function applyAtmosphere(roomClass: string): void {
     body.classList.add(timeOfDayClass());
 }
 
+/** The OS setting, or Settings → Appearance → Reduced motion = "Reduce motion" (the shell paints `html.reduce-motion`). */
 export function prefersReducedMotion(): boolean {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    return document.documentElement.classList.contains('reduce-motion')
+        || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function canHover(): boolean {

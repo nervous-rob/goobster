@@ -292,6 +292,20 @@ their usual padding. The column is CSS only (`styles.css`, "navigation
 layout: the page column"), driven by `--page-max`, `--page-wide` and
 `--page-gutter` on `.app.nav-top`.
 
+Settings → Appearance → **Page width** (`appearance.pageWidth`, `centered`
+by default) decides whether that column exists at all. **Full width**
+(`full`, painted as `html[data-page-width="full"]`, device copy
+`goobster-page-width`) collapses the page column, the workspace frame and
+the Music Lab's 1320px panel to the window, so every room reaches the
+edges with only its usual inset and the bar's brand and account icons sit
+at the corners; the hairlines on the frame's outer edges go with it. The
+reading columns inside a room (People's 780px, the Notes list's 880px) are
+a measure rather than a page cap and stay. In either navigation layout,
+full width also widens the Chat and Discussions threads from their 780px
+measure to 1120px and Settings forms from 760px to 1040px; the
+Documentation article keeps its 880px reading column. It previews live
+and saves with the rest of Appearance.
+
 Both layouts render the same `nav[aria-label="Rooms"]` landmark, the same
 `a.nav-btn[data-room]` entries with the same active-room rule
 (`parentRoom(resolveRoom(path))`), the same feature gating
@@ -301,8 +315,9 @@ in Appearance, saves to the account, and keeps a device copy
 (`goobster-nav-layout`) that `index.html` paints before the app mounts.
 
 `e2e/appearance.spec.js` covers the live preview, Discard, Save,
-reload, the account menu, the hidden ☰, the scrolling bar on a phone, and
-the centred page column and workspace frame on a wide window.
+reload, the account menu, the hidden ☰, the scrolling bar on a phone, the
+centred page column and workspace frame on a wide window, and full width
+reaching the edges.
 
 ## Links written by the server
 

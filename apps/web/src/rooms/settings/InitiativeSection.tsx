@@ -237,7 +237,7 @@ export function InitiativeSection({ section, onDirty }: {
             </Field>
 
             <Field id="presence" label="Show me as online" inline scope="Your account"
-                hint="Friends stop seeing you as online in the portal. Session heartbeats still run so your own tab stays signed in.">
+                hint="On: friends can see when you are in the portal. Off: you always appear offline to them. Session heartbeats still run either way, so your own tab stays signed in.">
                 <button id="presence-input" type="button" className={`toggle${d.draft.presenceVisible ? ' on' : ''}`}
                     role="switch" aria-checked={d.draft.presenceVisible} aria-label="Show me as online"
                     onClick={() => d.set({ presenceVisible: !d.draft.presenceVisible })} />

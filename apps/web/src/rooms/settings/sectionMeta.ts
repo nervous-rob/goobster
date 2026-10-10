@@ -40,7 +40,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '💬',
         scope: 'Private chats & DMs',
         blurb: 'Which AI platform and model answers in Chat and your DMs, and how hard it thinks.',
-        keywords: ['ai', 'model', 'provider', 'platform', 'openai', 'anthropic', 'gemini', 'ollama', 'reasoning', 'thinking', 'thoughtful', 'temperature', 'tokens', 'tools', 'usage', 'parlor', 'research']
+        keywords: ['ai', 'model', 'provider', 'platform', 'openai', 'anthropic', 'gemini', 'ollama', 'openrouter', 'reasoning', 'thinking', 'thoughtful', 'temperature', 'tokens', 'tools', 'usage', 'parlor', 'research']
     },
     {
         id: 'voice',
@@ -72,15 +72,15 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🔗',
         scope: 'Your account',
         blurb: 'Developer accounts Goobster may act through on your behalf, and read-only MCP tokens for external clients.',
-        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat', 'allowlist', 'repos', 'pages', 'mcp', 'cursor', 'claude']
+        keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat', 'allowlist', 'repos', 'pages', 'mcp', 'cursor', 'claude', 'personal ai', 'openrouter', 'byok', 'api key']
     },
     {
         id: 'appearance',
         title: 'Appearance',
         icon: '🎨',
         scope: 'Your account',
-        blurb: 'Theme, accent color, surface, navigation layout, density, keyboard, and working defaults. Theme also keeps a device copy.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
+        blurb: 'Theme, accent color, surface, navigation, page width, text size, density, keyboard, and working defaults. Each keeps a device copy so a reload never flashes.',
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'page width', 'full width', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
     },
     {
         id: 'account',
@@ -126,7 +126,6 @@ export const FIELDS: FieldMeta[] = [
     { section: 'chat', fieldId: 'research-model', label: 'Research model default', keywords: ['research', 'expedition model', 'spitball model'] },
     { section: 'chat', fieldId: 'disabled-tools', label: 'Optional tools', keywords: ['tools', 'disable tools', 'search', 'image', 'code'] },
     { section: 'chat', fieldId: 'usage-alert', label: 'Usage alert', keywords: ['usage', 'budget', 'tokens alert', 'spend'] },
-    { section: 'chat', fieldId: 'byok', label: 'Personal AI keys', keywords: ['byok', 'api key', 'own key', 'bring your own'] },
     { section: 'voice', fieldId: 'voice-pick', label: 'Speaking voice', keywords: ['voice', 'speaker', 'tts', 'elevenlabs'] },
     { section: 'voice', fieldId: 'voice-accent', label: 'Spoken accent', keywords: ['accent', 'british', 'american', 'irish', 'australian', 'dialect'] },
     { section: 'voice', fieldId: 'voice-speed', label: 'Playback speed', keywords: ['speed', 'faster', 'slower', 'rate', 'tempo'] },
@@ -154,12 +153,14 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'use-memories', label: 'Use existing memories', keywords: ['recall', 'use memories', 'read memories'] },
     { section: 'memory', fieldId: 'chat-history', label: 'Chat-history retention', keywords: ['chat history', 'study', 'transcripts', 'conversation expiry'] },
     { section: 'memory', fieldId: 'export', label: 'Export settings and report', keywords: ['export', 'download', 'backup'] },
+    { section: 'memory', fieldId: 'account-export', label: 'Export your account', keywords: ['export', 'archive', 'download everything', 'takeout', 'backup', 'markdown', 'json'] },
     { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
     { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
     { section: 'memory', fieldId: 'memory-report', label: 'What Goobster knows about you', keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency', 'personal memory', 'about you', 'distilled'] },
     { section: 'memory', fieldId: 'memory-scopes', label: 'Inspect a server scope', keywords: ['server', 'guild', 'scope', 'advanced', 'facts in a server', 'server memories'] },
     { section: 'memory', fieldId: 'deletion-rules', label: 'What deleting removes', keywords: ['delete', 'deletion', 'linked copies', 'provenance', 'what is removed', 'transcripts'] },
     { section: 'memory', fieldId: 'forget-me', label: 'Forget me', keywords: ['forget', 'erase', 'delete everything', 'wipe', 'gdpr'] },
+    { section: 'connections', fieldId: 'personal-ai', label: 'Personal AI · OpenRouter', keywords: ['personal ai', 'openrouter', 'byok', 'api key', 'own key', 'bring your own', 'model by function', 'completion url'] },
     { section: 'connections', fieldId: 'mcp-access', label: 'MCP access', keywords: ['mcp', 'cursor', 'claude', 'model context protocol', 'token', 'read only'] },
     { section: 'connections', fieldId: 'github', label: 'GitHub', keywords: ['github', 'git', 'repos', 'pull requests', 'token'] },
     { section: 'connections', fieldId: 'notion', label: 'Notion', keywords: ['notion', 'pages', 'notes', 'token'] },
@@ -169,6 +170,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'accent', label: 'Accent color', keywords: ['accent', 'color', 'colour', 'palette', 'tint', 'blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'amber', 'graphite'] },
     { section: 'appearance', fieldId: 'surface', label: 'Surface', keywords: ['surface', 'whitespace', 'background', 'grey', 'gray', 'neutral', 'tinted', 'tint', 'orb', 'glow'] },
     { section: 'appearance', fieldId: 'nav-layout', label: 'Navigation', keywords: ['navigation', 'nav', 'sidebar', 'top bar', 'layout', 'menu', 'rooms', 'horizontal', 'vertical'] },
+    { section: 'appearance', fieldId: 'page-width', label: 'Page width', keywords: ['page width', 'full width', 'centred', 'centered', 'wide', 'margins', 'column', 'frame'] },
     { section: 'appearance', fieldId: 'text-size', label: 'Text size', keywords: ['font', 'text size', 'bigger', 'smaller'] },
     { section: 'appearance', fieldId: 'reduced-motion', label: 'Reduced motion', keywords: ['motion', 'animation', 'accessibility'] },
     { section: 'appearance', fieldId: 'density', label: 'Interface density', keywords: ['compact', 'comfortable', 'spacing'] },
@@ -184,6 +186,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'conservatory', label: 'Music Lab library', keywords: ['conservatory', 'music lab', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
     { section: 'account', fieldId: 'sign-in-password', label: 'Login name & password', keywords: ['password', 'passphrase', 'login name', 'username', 'change password', 'sign in without discord'] },
+    { section: 'account', fieldId: 'sign-in-email', label: 'Email', keywords: ['email', 'address', 'password reset', 'recovery'] },
     { section: 'account', fieldId: 'sign-in-discord', label: 'Discord connection', keywords: ['discord', 'connect', 'disconnect', 'link', 'unlink'] },
     { section: 'account', fieldId: 'sessions', label: 'Active sessions', keywords: ['devices', 'sessions', 'revoke', 'sign out other'] },
     { section: 'account', fieldId: 'clear-device', label: 'Clear device-local data', keywords: ['clear', 'local storage', 'this device'] },

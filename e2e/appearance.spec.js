@@ -1,7 +1,8 @@
 /**
- * Appearance: the accent palette, the surface treatment, and the navigation
- * layout. All preview live, all save to the account and keep a device copy,
- * and all are painted before the app mounts on reload. The top-bar layout keeps the
+ * Appearance: the accent palette, the surface treatment, the navigation
+ * layout, the page width, the text size and the density. All preview live,
+ * all save to the account and keep a device copy, and all are painted before
+ * the app mounts on reload. The top-bar layout keeps the
  * same "Rooms" landmark and Settings link the sidebar exposes, so the
  * rest of the portal (and its tests) address navigation the same way.
  */
@@ -12,7 +13,7 @@ const { login } = require('./helpers');
 // Later specs address the sidebar; put the account back however a run ended.
 test.afterEach(async ({ page }) => {
     await page.request.patch('/api/app/settings/appearance', {
-        data: { changes: { accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar' } }
+        data: { changes: { accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered' } }
     }).catch(() => {});
 });
 
@@ -339,6 +340,101 @@ test('with the bar on top, rooms centre on one column across a wide window', asy
 
     await page.goto('/app/tools');
     await page.screenshot({ path: '/opt/cursor/artifacts/appearance_top_nav_wide_tools.png' });
+});
+
+test('page width: full width lets every room reach the edges of a wide window', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await login(page);
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { navLayout: 'top' } } });
+    await page.goto('/app/settings/appearance');
+    await expect(page.locator('#topbar')).toBeVisible();
+    const pageWidth = () => page.evaluate(() => document.documentElement.getAttribute('data-page-width'));
+
+    const widths = page.getByRole('radiogroup', { name: 'Page width' });
+    await expect(widths.getByRole('radio', { name: /Centred/ })).toHaveAttribute('aria-checked', 'true');
+    // Centred: Settings is a 1480px frame, so its side column starts at 220px.
+    expect(Math.round((await page.locator('.settings-nav').boundingBox()).x)).toBe(220);
+
+    // Previews live: the frame lets go and the column starts at the edge.
+    await widths.getByRole('radio', { name: /Full width/ }).click();
+    expect(await pageWidth()).toBe('full');
+    expect(Math.round((await page.locator('.settings-nav').boundingBox()).x)).toBe(0);
+
+    // Discard puts the frame back without saving anything.
+    await page.getByRole('button', { name: 'Discard' }).click();
+    expect(await pageWidth()).toBe('centered');
+    expect(Math.round((await page.locator('.settings-nav').boundingBox()).x)).toBe(220);
+
+    await widths.getByRole('radio', { name: /Full width/ }).click();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    const settings = await page.request.get('/api/app/settings');
+    expect((await settings.json()).sections.appearance.values.pageWidth).toBe('full');
+
+    // Persisted: a reload paints it before the app mounts, and every kind of
+    // room uses the window: a reading room, a workspace, and the bar itself.
+    await page.reload();
+    expect(await pageWidth()).toBe('full');
+    await page.goto('/app/');
+    const home = await page.locator('.home-shell').first().boundingBox();
+    expect(home.width).toBeGreaterThan(1800);
+    await page.goto('/app/chat');
+    const panel = await page.locator('#pane-chat .conversations-panel').boundingBox();
+    const study = await page.locator('#pane-chat .study-main').boundingBox();
+    expect(Math.round(panel.x)).toBe(0);
+    expect(Math.round(study.x + study.width)).toBe(1920);
+    const brand = await page.locator('#topbar .brand').boundingBox();
+    expect(brand.x).toBeLessThan(20);
+    // The thread's measure widens from 780px once a conversation is open.
+    const log = page.locator('#pane-chat .chat-log');
+    if (await log.count()) expect(Math.round((await log.boundingBox()).width)).toBe(1120);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_full_width_chat.png' });
+
+    // The thread widens in the sidebar layout as well; the rooms do not change there.
+    await page.request.patch('/api/app/settings/appearance', { data: { changes: { navLayout: 'sidebar' } } });
+    await page.goto('/app/chat');
+    await expect(page.locator('#sidebar')).toBeVisible();
+    expect(await pageWidth()).toBe('full');
+    if (await log.count()) expect(Math.round((await log.boundingBox()).width)).toBe(1120);
+});
+
+test('text size and density paint live, save, and survive a reload', async ({ page }) => {
+    await login(page);
+    await page.goto('/app/settings/appearance');
+    const rootFont = () => page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+    const bodyFont = () => page.evaluate(() => parseFloat(getComputedStyle(document.body).fontSize));
+    const rowPadding = () => page.locator('.settings-field').first().evaluate((el) => parseFloat(getComputedStyle(el).paddingTop));
+    const baseRoot = await rootFont();
+    const baseBody = await bodyFont();
+    const basePadding = await rowPadding();
+
+    // Text size moves the root font and the portal's text follows (it is sized in rem).
+    await page.getByRole('radiogroup', { name: 'Text size' }).getByRole('radio', { name: 'Large' }).click();
+    expect(await rootFont()).toBeGreaterThan(baseRoot);
+    expect(await bodyFont()).toBeGreaterThan(baseBody);
+    await page.getByRole('radiogroup', { name: 'Text size' }).getByRole('radio', { name: 'Small' }).click();
+    expect(await rootFont()).toBeLessThan(baseRoot);
+    expect(await bodyFont()).toBeLessThan(baseBody);
+
+    // Compact tightens the rows.
+    await page.getByRole('radiogroup', { name: 'Density' }).getByRole('radio', { name: 'Compact' }).click();
+    expect(await rowPadding()).toBeLessThan(basePadding);
+
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    const settings = await page.request.get('/api/app/settings');
+    expect((await settings.json()).sections.appearance.values).toMatchObject({ textSize: 's', density: 'compact' });
+
+    await page.reload();
+    expect(await rootFont()).toBeLessThan(baseRoot);
+    expect(await rowPadding()).toBeLessThan(basePadding);
+
+    await page.getByRole('radiogroup', { name: 'Text size' }).getByRole('radio', { name: 'Medium' }).click();
+    await page.getByRole('radiogroup', { name: 'Density' }).getByRole('radio', { name: 'Comfortable' }).click();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    expect(await rootFont()).toBe(baseRoot);
+    expect(await rowPadding()).toBe(basePadding);
 });
 
 test('the top bar scrolls sideways on a phone instead of opening a drawer', async ({ page }) => {
