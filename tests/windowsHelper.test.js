@@ -331,7 +331,7 @@ describe('service.register', () => {
         expect(world.text('C:\\Goobster\\data\\manager\\service\\goobster-service.xml')).toContain('value="standalone"');
     });
 
-    test('a stopped service of ours that is already current is only started', () => {
+    test('a stopped service of ours that is already current completes policy setup and starts', () => {
         const world = ready();
         handle(world, 'service.register', registerInput());
         world.state.service.state = 'stopped';
@@ -339,6 +339,23 @@ describe('service.register', () => {
         expect(reply).toMatchObject({ ok: true, detail: { written: false, active: 'running' } });
         expect(world.sc('start')).toHaveLength(2);
         expect(world.sc('create')).toHaveLength(1);
+    });
+
+    test('retry after interruption immediately after sc create completes recovery policy and service SID setup', () => {
+        const world = ready();
+        handle(world, 'service.register', registerInput(), {
+            exec(file, args, options) {
+                const result = world.exec(file, args, options);
+                if (path.win32.basename(file).toLowerCase() === 'sc.exe' && args[0] === 'create') throw new Error('interrupted after create');
+                return result;
+            }
+        });
+        expect(world.state.service.state).toBe('stopped');
+        expect(world.sc('failure')).toHaveLength(0);
+        const { reply } = handle(world, 'service.register', registerInput());
+        expect(reply).toMatchObject({ ok: true, detail: { written: false, active: 'running' } });
+        expect(world.sc('create')).toHaveLength(1);
+        for (const verb of ['description', 'failure', 'failureflag', 'sidtype']) expect(world.sc(verb)).toHaveLength(1);
     });
 
     test('a manager store that moved: the service points at the new folder and the old one is removed', () => {

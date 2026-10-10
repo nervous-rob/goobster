@@ -185,6 +185,13 @@ else
 fi
 endgroup
 
+if [ "$SYSTEMD" -eq 1 ]; then
+group "interrupted native service registration and removal"
+"$CODE/current/runtime/bin/node" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/native-service-recovery-proof.js" --store "$STORE" --confirm "$(installation_id)" --port "$API_PORT"
+endgroup
+
+fi
+
 group "3. the same install command again changes nothing"
 install_run > "$REPORTS/install-again.log" 2>&1 || { tail -30 "$REPORTS/install-again.log"; fail "running the install again failed"; }
 pass "running the install again exits 0"

@@ -834,3 +834,15 @@ evidence must be recorded on #342. See [release acceptance caveats](release_acce
   `db/dialect.js`.
 - Every new per-user store is reachable by `privacyService`.
 - Ledger rows never carry prompts, replies, tokens, links or addresses.
+
+
+### Native interruption qualification follow-up (#331–#333)
+
+The native bootstrap jobs now include real service-helper interruption/retry and
+browser-closure checks through `scripts/native-service-recovery-proof.js`.
+Windows registration retries finish recovery-policy and service-SID setup even
+when the previous helper stopped immediately after `sc create`. Local helper
+regressions pass; the new native journeys still need hosted results. No platform
+acceptance checkbox is closed by adding these checks. Toolchain-free hosts,
+physical reboot/login behavior, macOS pkg reproducibility and signing remain
+separate requirements.

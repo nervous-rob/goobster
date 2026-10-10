@@ -31,6 +31,7 @@ on:
       - 'scripts/package-*'
       - 'scripts/bootstrap-pins.json'
       - 'scripts/windows-bootstrap-proof.ps1'
+      - 'scripts/native-service-recovery-proof.js'
       - 'scripts/lib/bootstrapStage.js'
       - 'scripts/lib/payload*'
       - 'documentation/windows_install.md'
@@ -46,6 +47,7 @@ on:
       - 'scripts/package-bootstrap-win32.js'
       - 'scripts/bootstrap-pins.json'
       - 'scripts/windows-bootstrap-proof.ps1'
+      - 'scripts/native-service-recovery-proof.js'
       - 'apps/manager/privileged/**'
       - 'apps/manager/platform/**'
       - 'apps/manager/bootstrap/**'
@@ -68,10 +70,12 @@ jobs:
         shell: pwsh
     env:
       TARGET: win32-x64
+      GOOBSTER_NATIVE_BROWSER_PROOF: '1'
     steps:
       - name: Output locations (outside the checkout)
         run: |
           @(
+            "PLAYWRIGHT_BROWSERS_PATH=$env:RUNNER_TEMP\goobster-proof-browsers",
             "PAYLOAD=$env:RUNNER_TEMP\goobster-payload",
             "REPORTS=$env:RUNNER_TEMP\goobster-reports",
             "ARTIFACTS=$env:RUNNER_TEMP\goobster-bootstrap",
@@ -90,6 +94,9 @@ jobs:
 
       - name: Update service ownership and registration contract on this OS
         run: npx jest tests/updateService.test.js --runInBand
+
+      - name: Install the browser used only by the proof
+        run: npx playwright install chromium
 
       - name: Build the React client
         run: npm run build:web

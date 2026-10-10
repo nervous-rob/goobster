@@ -258,6 +258,10 @@ check "the manager listens on the loopback address only" test "$LISTENING" = "12
 check "the install log names no password, token or key" bash -c '! grep -Ei "password|token|BEGIN [A-Z ]*KEY" "$1"' _ "$REPORTS/goobster-install.log"
 endgroup
 
+group "interrupted native service registration and removal"
+"$CODE/current/runtime/bin/node" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/native-service-recovery-proof.js" --store "$STORE" --confirm "$(installation_id)" --port "$API_PORT"
+endgroup
+
 group "6. the same install command again changes nothing"
 write_private "$ANSWERS_FILE" "{\"ownerLabel\":\"macos bootstrap proof\",\"roots\":$(json_roots "$LOGS")}"
 install_pkg > "$REPORTS/install-again.log" 2>&1 || { tail -40 "$REPORTS/install-again.log"; tail -40 /var/log/goobster-install.log || true; fail "running the install again failed"; }
