@@ -260,7 +260,7 @@ export function AppearanceSection({ section, onDirty }: {
             </Field>
 
             <Field id="reduced-motion" label="Reduced motion" scope="Your account"
-                hint="Follows the system by default. Applies to atmosphere, animations, and transitions.">
+                hint="Follows the system by default. Reduce motion stills the room atmosphere, animations and transitions across the portal. Previews as you pick.">
                 <select id="reduced-motion-input" className="input" value={d.draft.reducedMotion}
                     onChange={(e) => d.set({ reducedMotion: e.target.value as ReducedMotion })}>
                     <option value="system">Follow system</option>

@@ -61,10 +61,10 @@ export function PersonalAiSettings({ onDirty }: { onDirty: (dirty: boolean) => v
             hint="Use your own API key and choose a model for each function in your private chats and work. Usage is billed to your provider account. Empty choices use the host’s provider. Keys are encrypted and never displayed again.">
             {notice && <p className="hint" role="status">{notice}</p>}
             {!draft ? <p className="hint" role="status">Loading personal AI settings…</p> : (
-                <div className="settings-stack personal-ai">
+                <div className="settings-stack personal-ai" id="personal-ai-input">
                     <div className="personal-ai-field">
-                        <label htmlFor="personal-ai-input">Completion URL</label>
-                        <input id="personal-ai-input" className="input" type="url" value={draft.completionUrl} disabled={busy}
+                        <label htmlFor="personal-ai-url">Completion URL</label>
+                        <input id="personal-ai-url" className="input" type="url" value={draft.completionUrl} disabled={busy}
                             onChange={event => setDraft({ ...draft, completionUrl: event.target.value })} />
                         <p className="hint">OpenRouter works by default. Other public HTTPS endpoints must be allowed by your host and offer a compatible /models endpoint. Re-enter your key when changing the URL.</p>
                     </div>

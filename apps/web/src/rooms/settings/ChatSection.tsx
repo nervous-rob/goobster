@@ -287,11 +287,6 @@ export function ChatSection({ section, onDirty }: {
                     onChange={(e) => d.set({ usageAlertTokens: e.target.value })} />
             </Field>
 
-            <Field id="byok" label="Personal AI keys" scope="Your account"
-                hint="Bring-your-own provider keys are not stored in Settings. This host uses the operator-configured keys, and missing keys disable that platform above instead of erroring. GitHub and Notion connectors live under Connections.">
-                <p className="hint" id="byok-input">Host keys only — personal BYOK is not available on this host.</p>
-            </Field>
-
             <SaveBar section="chat" draft={d} describe={(k) => LABELS[k] || k} />
         </section>
     );

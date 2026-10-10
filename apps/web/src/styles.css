@@ -1272,6 +1272,12 @@ a.nav-btn {
 .settings-mini .input { width: 100%; }
 .settings-segment { flex-wrap: wrap; }
 .settings-check { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+/* A vertical stack of checkboxes reads as a list: left edge aligned, not centred. */
+.settings-stack > .settings-check { justify-content: flex-start; }
+/* A slider is not a text box: no border, no padding, the thumb lines up with the label. */
+.settings-field-control input[type="range"].input { padding: 0; border: 0; background: transparent; height: 32px; accent-color: var(--accent); }
+.account-export-row { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.account-export-row .list-row { padding: 0; border: 0; justify-content: space-between; align-items: baseline; }
 .settings-check .narrow-only { display: none; }
 
 .settings-boundaries { padding: 0; }
@@ -1439,7 +1445,22 @@ html[data-density="compact"] .composer-wrap { padding-bottom: 8px; }
 html[data-density="compact"] :is(.btn, .input, .select) { padding-top: 6px; padding-bottom: 6px; }
 html[data-density="compact"] .segment-btn { padding-top: 5px; padding-bottom: 5px; }
 html[data-density="compact"] .view-tabs { gap: 2px; }
-html.reduce-motion, html.reduce-motion * { scroll-behavior: auto !important; }
+/* Settings → Appearance → Reduced motion = "Reduce motion": the same stilling
+   the prefers-reduced-motion media rules apply (legacy.css, the tutorial
+   panel and spotlight, the research orbit), keyed on the class the shell
+   paints so it works without the OS setting. */
+html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+html.reduce-motion #stage .pane,
+html.reduce-motion :is(.home-card, .home-door, .workshop-tile),
+html.reduce-motion :is(.btn, .nav-btn):hover { transform: none; }
+html.reduce-motion :is(.tutorial-panel, .tour-target, .research-orbit-ring, .research-orbit-core,
+  .research-stage.current .research-stage-dot) { animation: none; }
+html.reduce-motion .research-progress-fill::after { animation: none; }
 @media (pointer: coarse) {
   html[data-density="compact"] .btn, html[data-density="compact"] .segment-btn, html[data-density="compact"] .toggle {
     min-height: 44px;

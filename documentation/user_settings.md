@@ -104,7 +104,7 @@ erasure already include it. New per-user stores must stay on that path.
 | AI08 | Per-feature model defaults | `parlorProvider`/`parlorModel` → new private conversation model snapshot; `researchProvider`/`researchModel` → new personal expedition snapshot |
 | AI09 | Optional tool preferences | `disabledTools` filters personal turn definitions and is enforced again at execution; search also gates native provider search |
 | AI10 | Usage alert | `usageAlertTokens` → Usage payload `overAlert` (informational) |
-| AI11 | Personal AI keys | Not stored. Settings explains host-key-only; missing keys stay disabled |
+| AI11 | Personal AI keys | Connections → **Personal AI · OpenRouter** ([personal_ai.md](personal_ai.md)): your own key, encrypted, with a model per function. Chat & models links there and no longer carries a keys field of its own; host keys that are missing still disable that platform rather than erroring |
 | PR07 | Learn new long-term memories | `learnMemories` gates private embeddings, model facts, durable-memory tools and consolidation; manual data editors remain explicit user actions |
 | PR08 | Use existing memories | `useMemories` gates private graph/artifact/vector retrieval and recall tools |
 | PR09 | Study chat-history retention | two-step preview/apply + hourly purge + access-time expiry across history, search, shares and file URLs |

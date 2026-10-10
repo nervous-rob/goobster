@@ -51,7 +51,7 @@ export function TutorialsSection() {
         <section className="settings-section" aria-labelledby="settings-tutorials-title" data-tour="settings-tutorials">
             <SectionHeader id="tutorials" scope={SCOPE_FOR.account} appliesTo={['account']} />
 
-            <Field id="tutorial-auto-start" label="Auto-start tours"
+            <Field id="tutorial-auto-start" label="Auto-start tours" inline scope="Your account"
                 hint="When on, Home may offer the orientation once, and a room may offer its own tour on first entry. Pause or Escape never seizes focus again. This preference does not rewrite completion history.">
                 <button
                     type="button"
@@ -63,9 +63,7 @@ export function TutorialsSection() {
                     disabled={!data || busy !== null}
                     data-tour="tutorial-auto-start"
                     onClick={() => void run('auto', () => setAutoStart(!(data?.preferences.autoStart !== false)))}
-                >
-                    <span className="toggle-knob" />
-                </button>
+                />
             </Field>
 
             <Field id="tutorial-list" label="Tours"
