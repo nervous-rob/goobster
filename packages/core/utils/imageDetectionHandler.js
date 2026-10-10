@@ -50,7 +50,7 @@ Extract the following information:
 Respond in this exact JSON format:
 {
   "prompt": "detailed description of what to generate",
-  "type": "SCENE", 
+  "type": "SCENE",
   "style": "preferred style or null if not specified",
   "additional_details": "any other relevant details or null if none"
 }
@@ -87,7 +87,7 @@ Note: For "type", choose one of: CHARACTER, SCENE, LOCATION, ITEM based on what'
  * @param {string} style - The style preference
  * @returns {Promise<string>} - The path to the generated image
  */
-async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
+async function generateImage(prompt, type = 'SCENE', style = 'fantasy', options = {}) {
     try {
         // Ensure image directory exists
         await fs.mkdir(IMAGE_STORAGE_DIR, { recursive: true });
@@ -116,10 +116,11 @@ async function generateImage(prompt, type = 'SCENE', style = 'fantasy') {
         // Generate image (GPT Image models return base64 data, not URLs).
         // Quality comes from config (default 'medium') - 'high' roughly
         // doubles generation latency for chat requests.
-        const buffer = await openaiService.generateImage(fullPrompt, {
+        const buffer = await aiService.generateImage(fullPrompt, {
             model: imageConfig.IMAGES.GENERATION.model,
             size: imageConfig.IMAGES.GENERATION.size,
-            quality: imageConfig.IMAGES.GENERATION.quality
+            quality: imageConfig.IMAGES.GENERATION.quality,
+            ...options
         });
 
         // Generate a unique filename and store the image
@@ -175,4 +176,4 @@ module.exports = {
     detectImageGenerationRequest,
     generateImage,
     editImageFromUrl
-}; 
+};

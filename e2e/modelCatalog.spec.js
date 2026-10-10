@@ -24,7 +24,7 @@ async function catalogFixtures(page, { savedModel = 'gpt-6-sol', status = 'live'
     await page.route('**/api/app/chat/model-catalog?**', async route => {
         const url = new URL(route.request().url());
         const provider = url.searchParams.get('provider');
-        const ids = provider === 'anthropic' ? ['claude-sonnet-5'] : ['gpt-6-sol', 'gpt-4o', 'gpt-5'];
+        const ids = provider === 'anthropic' ? ['claude-sonnet-5'] : ['gpt-6-sol', 'gpt-4o', 'gpt-5', ...(url.searchParams.get('refresh') === 'true' ? ['gpt-7'] : [])];
         const models = ids.map(id => ({
             ...registry.get(provider, id),
             availability: status === 'live' ? (id === 'gpt-5' ? 'not-listed' : 'listed') : 'unknown',
@@ -61,6 +61,20 @@ test('catalog drives model choices, effort, sampling and feature pickers', async
     await expect(page.getByRole('radio', { name: 'Max', exact: true })).toHaveCount(0);
     await expect(page.getByRole('combobox', { name: 'Parlor model', exact: true }).locator('option')).toHaveCount(3);
     await expect(page.getByRole('combobox', { name: 'Research model', exact: true }).locator('option')).toHaveCount(3);
+});
+
+test('refresh adds a new API model without replacing the saved selection', async ({ page }) => {
+    await catalogFixtures(page);
+    await login(page);
+    await page.goto('/app/settings/chat');
+    const model = page.getByRole('combobox', { name: 'Model', exact: true });
+    await expect(model).toHaveValue('gpt-6-sol');
+    await page.getByRole('button', { name: 'Refresh model list', exact: true }).click();
+    await expect(model.locator('option[value="gpt-7"]')).toHaveText('gpt-7 · API model');
+    await expect(model).toHaveValue('gpt-6-sol');
+    await model.selectOption('gpt-7');
+    await expect(page.getByRole('radiogroup', { name: 'Reasoning effort' }).getByRole('radio')).toHaveCount(1);
+    await expect(page.getByLabel('Temperature', { exact: true })).toBeDisabled();
 });
 
 test('model details work on hover, keyboard and touch without mobile overflow', async ({ page }) => {

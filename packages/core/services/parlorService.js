@@ -2660,6 +2660,8 @@ class ParlorService {
                 hasTools: functionDefs.length > 0, projectSeat, spoken, userInstructions: turnState.inboxInstructions
             });
             const chatOptions = {
+                workflow: 'parlor',
+                personalAiDisabled: Boolean(projectSeat || (turnState.startedBy && turnState.startedBy !== ownerId)),
                 background: true,
                 max_tokens: REPLY_MAX_TOKENS,
                 webSearch: aiService.supportsNativeWebSearch(),

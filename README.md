@@ -690,3 +690,15 @@ that already owns that capability.
 ## License
 
 MIT License - See LICENSE file for details
+
+### Personal AI and current models
+
+Chat model pickers refresh from OpenAI, Anthropic, Gemini and Ollama APIs.
+Newly listed chat models use provider defaults without a model-catalog commit.
+Use **Refresh models** for a fresh listing (subject to a short cooldown).
+
+In **Settings → Connections → Personal AI**, each account can connect its own
+OpenRouter key and completion URL, then assign separate models to chat, images,
+voice conversation, speech, transcription, Parlor and research. See
+[Personal AI setup](documentation/personal_ai.md) for endpoint, encryption and
+operator-hosted deployment details.

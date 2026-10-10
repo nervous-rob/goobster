@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { Link } from '@tanstack/react-router';
 import { ModelPicker, useModelCatalog, findModel } from '../../components/ModelPicker';
 import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
@@ -152,10 +153,11 @@ export function ChatSection({ section, onDirty }: {
             <SectionHeader id="chat" scope={SCOPE_FOR[section.scope]} appliesTo={section.appliesTo} />
 
             <div className="settings-effective">
-                Currently answering with <strong>{effective.providerName || effective.provider}</strong> · <code>{effective.model}</code>
-                {effective.reasoningEffort ? <> · {effective.reasoningEffort} reasoning</> : null}
-                {!section.values.provider && !section.values.model && <span className="hint"> (host default)</span>}
+                Currently answering with <strong>{section.personalAi?.enabled && section.personalAi.models.chat ? 'Personal AI' : effective.providerName || effective.provider}</strong> · <code>{section.personalAi?.enabled && section.personalAi.models.chat || effective.model}</code>
+                {!(section.personalAi?.enabled && section.personalAi.models.chat) && effective.reasoningEffort ? <> · {effective.reasoningEffort} reasoning</> : null}
             </div>
+            <p className="hint">Configure your own OpenRouter key and model choices by function in <Link to="/settings/$section" params={{ section: 'connections' }}>Connections → Personal AI</Link>.
+                Enabled personal assignments take precedence over these host-provider settings in private work.</p>
 
             <Field id="thoughtful" label="Thoughtful Mode" inline
                 hint={thoughtfulAvailable
@@ -180,7 +182,7 @@ export function ChatSection({ section, onDirty }: {
                 </select>
             </Field>
 
-            <Field id="model" label="Model" hint="Models with a supported Goobster profile for this platform.">
+            <Field id="model" label="Model" hint="Current API chat models. New models use provider defaults until advanced controls are reviewed.">
                 <ModelPicker id="model-input" label="Model" value={d.draft.model} defaultModel={entry?.chatModel}
                     state={chatCatalog} onChange={model => setManual({ model, reasoningEffort: '' })} />
             </Field>

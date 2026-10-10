@@ -1,5 +1,6 @@
 const { VERSION, PROFILES, MODELS } = require('./catalog');
 const { withThinkingHeadroom } = require('../utils/aiTokenBudget');
+const providerDefaults = require('./providerDefaults');
 
 class ModelPolicyError extends Error {
     constructor(code, message) {
@@ -62,7 +63,9 @@ function createRegistry(customModels = []) {
     function get(provider, id) {
         let clean = typeof id === 'string' ? id.trim() : '';
         if (provider === 'gemini') clean = clean.replace(/^models\//, '');
-        return models.get(key(provider, clean)) || null;
+        // This fallback also resolves saved selections in another worker or
+        // after a restart, without depending on that process's discovery cache.
+        return models.get(key(provider, clean)) || freeze(providerDefaults.describe(provider, clean));
     }
 
     function requireModel(provider, id, workflow = 'chat') {
@@ -130,6 +133,6 @@ function createRegistry(customModels = []) {
         list: provider => [...models.values()].filter(m => !provider || m.provider === provider) };
 }
 
-// No remote requests or key reads: this is deterministic deployment policy.
+// No remote requests or key reads. Reviewed contracts override provider defaults.
 const registry = createRegistry(require('../config/aiConfig').customModels || []);
 module.exports = { ...registry, createRegistry, ModelPolicyError };

@@ -176,6 +176,7 @@ test('archive builder never includes authentication or integration secret tables
     expect(typeof buildArchive).toBe('function');
 });
 test('stored integration tokens, push keys and pairing hashes never reach the archive, only the connection facts do', async () => {
+    await db.run("INSERT INTO user_ai_connections (userId, completionUrl, encryptedKey, modelsJson) VALUES (@userId, 'https://openrouter.ai/api/v1/chat/completions', 'SECRET_CIPHER', '{}')", { userId: U });
     await db.run("INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@userId, 'github', 'ghp_SECRET_TOKEN', 'octo')", { userId: U });
     await db.run("INSERT INTO push_subscriptions (userId, endpoint, p256dh, auth, userAgent) VALUES (@userId, 'https://push.example/SECRET_ENDPOINT', 'SECRET_P256', 'SECRET_AUTH', 'Firefox')", { userId: U });
     await db.run("INSERT INTO screen_vision_clients (userId, tokenHash, label) VALUES (@userId, 'SECRET_PAIR_HASH', 'Desk PC')", { userId: U });
@@ -186,8 +187,9 @@ test('stored integration tokens, push keys and pairing hashes never reach the ar
         expect(data.screen_vision_clients).toEqual([expect.objectContaining({ userId: U, label: 'Desk PC' })]);
         expect(JSON.stringify(data)).not.toMatch(/SECRET_/);
         expect(Object.keys(data.user_integrations[0])).not.toContain('token');
+        expect(data.user_ai_connections[0]).not.toHaveProperty('encryptedKey');
     } finally {
-        for (const table of ['user_integrations', 'push_subscriptions', 'screen_vision_clients']) await db.run(`DELETE FROM ${table}`);
+        for (const table of ['user_integrations', 'user_ai_connections', 'push_subscriptions', 'screen_vision_clients']) await db.run(`DELETE FROM ${table}`);
     }
 });
 test('optional-feature stores (economy, exchange, Tavern, Studio, DMs, sandbox, integrations) are exported for the owner only', async () => {

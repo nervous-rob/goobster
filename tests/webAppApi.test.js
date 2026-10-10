@@ -431,7 +431,36 @@ describe('chat routes', () => {
         const res = await request({ reqPath, headers: { Cookie: cookie } });
         expect(res.status).toBe(200);
         expect(res.json).toEqual({ version: 1, models: [], discovery: { status: 'unavailable', checkedAt: null } });
-        expect(fakeChat.listModelCatalog).toHaveBeenCalledWith('gemini', 'research');
+        expect(fakeChat.listModelCatalog).toHaveBeenCalledWith('gemini', 'research', { refresh: false });
+    });
+
+    test('model refresh is authenticated and reaches discovery', async () => {
+        const cookie = await login();
+        await request({ reqPath: '/api/app/chat/model-catalog?provider=anthropic&refresh=true', headers: { Cookie: cookie } });
+        expect(fakeChat.listModelCatalog).toHaveBeenCalledWith('anthropic', 'chat', { refresh: true });
+    });
+
+    test('personal AI routes use only the authenticated account and omit supplied foreign user IDs', async () => {
+        const personal = require('@goobster/core/services/personalAiService');
+        const settings = { connected: true, enabled: true, completionUrl: 'https://openrouter.ai/api/v1/chat/completions', models: { chat: 'vendor/chat' } };
+        const save = jest.spyOn(personal, 'save').mockResolvedValue(settings);
+        const catalog = jest.spyOn(personal, 'catalog').mockResolvedValue({ models: [], status: 'live', checkedAt: null });
+        const disconnect = jest.spyOn(personal, 'disconnect').mockResolvedValue({ connected: false });
+        try {
+            expect((await request({ reqPath: '/api/app/settings/personal-ai' })).status).toBe(401);
+            const cookie = await login();
+            const headers = { Cookie: cookie };
+            const response = await request({ method: 'PUT', reqPath: '/api/app/settings/personal-ai', headers,
+                body: { userId: OTHER, apiKey: 'user-owned-secret', models: { chat: 'vendor/chat' }, enabled: true } });
+            expect(response.status).toBe(200);
+            expect(JSON.stringify(response.json)).not.toContain('user-owned-secret');
+            expect(save).toHaveBeenCalledWith(USER, expect.objectContaining({ apiKey: 'user-owned-secret' }));
+            expect(save.mock.calls[0][1]).not.toHaveProperty('userId');
+            await request({ reqPath: `/api/app/settings/personal-ai/models?userId=${OTHER}&refresh=true`, headers });
+            expect(catalog).toHaveBeenCalledWith(USER, { refresh: true });
+            await request({ method: 'DELETE', reqPath: '/api/app/settings/personal-ai', headers, body: { userId: OTHER } });
+            expect(disconnect).toHaveBeenCalledWith(USER);
+        } finally { save.mockRestore(); catalog.mockRestore(); disconnect.mockRestore(); }
     });
 
     test('full-text search delegates with the session user', async () => {

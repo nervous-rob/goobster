@@ -1,8 +1,9 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { UserSettingsResponse } from '../../lib/types';
 import { ConnectionsList } from '../../components/ConnectionsList';
 import { McpAccess } from '../../components/McpAccess';
+import { PersonalAiSettings } from '../../components/PersonalAiSettings';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
@@ -30,7 +31,8 @@ export function ConnectionsSection({ section, onDirty }: {
         return diff;
     }, []);
     const d = useSectionDraft('connections', section, toDraft, toChanges);
-    useReportDirty(onDirty, d.dirty);
+    const [personalDirty, setPersonalDirty] = useState(false);
+    useReportDirty(onDirty, d.dirty || personalDirty);
 
     return (
         <section className="settings-section" aria-labelledby="settings-connections-title">
@@ -42,6 +44,7 @@ export function ConnectionsSection({ section, onDirty }: {
                 Resetting other settings or forgetting preferences never disconnects anything.
             </p>
             <ConnectionsList />
+            <PersonalAiSettings onDirty={setPersonalDirty} />
             <McpAccess />
 
             <Field id="github-allowlist" label="GitHub repos Goobster may use" scope="Your account"

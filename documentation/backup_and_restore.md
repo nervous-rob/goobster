@@ -56,6 +56,7 @@ Every directory the application writes under its data directory is classified, i
 | `tavern/campaigns` | archived | `files/tavern-campaigns/` | #249 | Campaign overrides. |
 | `tavern/assets` | archived | `files/tavern-assets/` | #249 | Campaign assets. |
 | `web-push-keys.json` | archived | `files/web-push-keys` | #249 | Without it every browser push subscription is stranded. |
+| `user-ai.key` | left out | | Personal AI | Encryption key for personal API credentials; back up separately as a secret. |
 | `self-docs` | archived | `files/self-docs/` | #337 | Operator documents added to Goobster's own knowledge (`selfDocs.operatorDir` pointing elsewhere is not followed). |
 | `manager` | left out | | | The manager store: installation identity, the operation journal, the audit log, maintenance state. Installation state, not user data. |
 | `features.json` | left out | | | The feature choice belongs to the installed payload and is set again through the Features page or the manager. |
@@ -69,7 +70,7 @@ The manifest records the sets it knows (`fileSetsKnown`) and the paths it leaves
 
 Not in the archive, on purpose:
 
-- **Environment secrets.** `GOOBSTER_DB_URL`, `GOOBSTER_INTERNAL_TOKEN`, `DISCORD_CLIENT_SECRET`, the provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `ELEVENLABS_API_KEY`), `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `CURSOR_API_KEY`, `CURSOR_WEBHOOK_SECRET`, `SPOTIFY_CLIENT_SECRET`. The manifest records which of these were set (`envSecrets.present`) so a restore can list what to re-enter; their values are never written anywhere.
+- **Environment secrets.** `GOOBSTER_USER_AI_ENCRYPTION_KEY`, `GOOBSTER_DB_URL`, `GOOBSTER_INTERNAL_TOKEN`, `DISCORD_CLIENT_SECRET`, the provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `ELEVENLABS_API_KEY`), `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `CURSOR_API_KEY`, `CURSOR_WEBHOOK_SECRET`, `SPOTIFY_CLIENT_SECRET`. The manifest records which of these were set (`envSecrets.present`) so a restore can list what to re-enter; their values are never written anywhere.
 - **Re-derivable state**: the self-docs corpus (reseeded on the next start), admission leases, live turns, the chat queue, and the per-dimension vector index tables (rebuilt from `memory_embeddings`).
 - **Logs** and the sandbox Python toolkit (`data/sandbox/venv`, rebuilt with `npm run sandbox-python`).
 
