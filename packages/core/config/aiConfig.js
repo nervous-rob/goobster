@@ -25,6 +25,11 @@ module.exports = {
     /** Explicit compatibility profiles for additional operator-managed models. */
     customModels: fileConfig.ai?.customModels || [],
 
+    /** Public OpenAI-compatible endpoint hosts allowed for personal keys. */
+    personalEndpointHosts: process.env.GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS
+        ? process.env.GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS.split(',').map(host => host.trim().toLowerCase()).filter(Boolean)
+        : fileConfig.ai?.personalEndpointHosts || [],
+
     openai: {
         apiKey: process.env.OPENAI_API_KEY || fileConfig.openaiKey || null,
         chatModel: process.env.OPENAI_CHAT_MODEL || fileConfig.ai?.openai?.chatModel || 'gpt-5.6-terra',

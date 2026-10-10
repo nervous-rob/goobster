@@ -1017,6 +1017,7 @@ export type SettingSection<TValues = Record<string, unknown>, TEffective = Recor
     appliesTo: string[];
     providers?: Array<{ key: string; name: string; configured: boolean; chatModel?: string }>;
     thoughtfulAvailable?: boolean;
+    personalAi?: PersonalAiSettings;
     categories?: string[];
     initiativeLevels?: string[];
 };
@@ -1264,7 +1265,7 @@ export type TutorialsResponse = {
 /** Public model contract, supplied by the backend registry. */
 export type ModelDescriptor = {
     id: string; canonicalId: string; provider: string; displayName: string; description: string;
-    status: 'supported' | 'preview' | 'custom' | 'disabled'; aliases: string[];
+    status: 'supported' | 'preview' | 'custom' | 'discovered' | 'disabled'; aliases: string[];
     input: string[]; output: string[]; workflows: string[];
     capabilities: { imageInput: boolean; tools: 'native' | 'prompt-based' | false; streaming: boolean; nativeSearch: boolean; nativeSearchExcludedEfforts?: string[] };
     reasoning: { levels: string[]; default: string | null; aliases: Record<string, string> };
@@ -1276,6 +1277,16 @@ export type ModelCatalog = {
     version: number; provider: string; workflow: string; models: ModelDescriptor[];
     discovery: { status: 'live' | 'cached' | 'stale' | 'unavailable' | 'not-configured'; checkedAt: string | null };
     unregisteredCount: number;
+};
+
+export type PersonalAiFunction = 'chat' | 'voiceChat' | 'image' | 'speech' | 'transcription' | 'parlor' | 'research';
+export type PersonalAiSettings = {
+    connected: boolean; enabled: boolean; completionUrl: string;
+    models: Record<PersonalAiFunction, string | null>;
+};
+export type PersonalAiCatalog = {
+    status: 'live' | 'cached' | 'stale' | 'unavailable' | 'not-configured'; checkedAt: string | null;
+    models: Array<{ id: string; name: string; input: string[]; output: string[]; tools: boolean; functions: PersonalAiFunction[] }>;
 };
 
 export type FollowedSourceEntry = {

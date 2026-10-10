@@ -35,6 +35,7 @@ const COUNT_EXEMPT = new Set([
  * archive. Restore prints the ones that were set when the backup was made.
  */
 const ENV_SECRETS = [
+    ['GOOBSTER_USER_AI_ENCRYPTION_KEY', 'personal AI credential encryption'],
     ['GOOBSTER_DB_URL', 'database connection URL (Postgres)'],
     ['GOOBSTER_INTERNAL_TOKEN', 'shared secret between bot, api and sandbox'],
     ['DISCORD_CLIENT_SECRET', 'Discord OAuth client secret (portal sign-in, Activity)'],
@@ -84,6 +85,7 @@ const FILE_SETS = [
  * stores that still resolve against the process's working directory.
  */
 const DATA_CLASSIFICATION = Object.freeze([
+    { path: 'user-ai.key', disposition: 'excluded', since: 'personal-ai', reason: 'Personal AI encryption key: back up separately as a secret, or supply GOOBSTER_USER_AI_ENCRYPTION_KEY' },
     { path: 'goobster.sqlite', disposition: 'archived', archivedAs: 'database', since: '#249', note: 'SQLite engine only; Postgres is dumped with pg_dump' },
     { path: 'sandbox/projects', disposition: 'archived', archivedAs: 'projects', since: '#249' },
     { path: 'sandbox/dashboards', disposition: 'archived', archivedAs: 'dashboards', since: '#249' },

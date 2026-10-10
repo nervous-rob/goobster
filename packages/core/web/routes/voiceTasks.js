@@ -14,8 +14,8 @@ function mountVoiceTasks(app, ctx, h) {
     app.use('/api/app/voice', (req, res, next) => (ctx.voice ? next() : sendUnavailable(res, 'voice')));
 
     // What the client may offer (missing keys hide the buttons - never error)
-    app.get('/api/app/voice/capabilities', requireAuth, chatRoute(async () =>
-        ctx.voice.capabilities()
+    app.get('/api/app/voice/capabilities', requireAuth, chatRoute(async (req) =>
+        ctx.voice.capabilitiesFor ? ctx.voice.capabilitiesFor(req.webUser.userId) : ctx.voice.capabilities()
     ));
 
     // The ElevenLabs voice library, for the voice-picker UI

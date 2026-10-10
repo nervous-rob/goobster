@@ -205,7 +205,8 @@ function mountChat(app, ctx, h) {
     // for older clients while both use the same registry policy.
     app.get('/api/app/chat/model-catalog', requireAuth, chatRoute(async (req) =>
         ctx.chat.listModelCatalog(req.query.provider ? String(req.query.provider) : undefined,
-            req.query.workflow ? String(req.query.workflow) : 'chat')));
+            req.query.workflow ? String(req.query.workflow) : 'chat',
+            { refresh: req.query.refresh === 'true' })));
 
     // Full-text search across every message in the user's web conversations
     // (the sidebar search box; results deep-link to a message).

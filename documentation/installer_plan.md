@@ -845,3 +845,36 @@ Linux acceptance adds a bounded tmpfs capacity-refusal proof that observes
 pass locally; hosted keyboard and bounded-volume results remain pending. Human
 accessibility, mid-write disk exhaustion, full-disk behavior on other OSes and
 independent second-operator recovery remain open.
+
+
+### Release qualification follow-up (#341)
+
+Mach-O signing and strict verification are now hooked before payload manifest
+hashing. The macOS packaging proof exercises ad-hoc signing, and all payload
+proofs run strict hygiene checks. Manual release dispatch defaults to verification
+only; publication requires an explicit `publish` choice. Local signing-contract,
+workflow and hygiene regressions pass; hosted hook evidence remains pending.
+Production credentials, notarization/Gatekeeper checks and publication approval
+remain outstanding. No production release was dispatched or published.
+
+
+### Native PostgreSQL data-path follow-up (#340)
+
+The real-distro workflow now includes matching-client backup/restore and
+relocation through the manager engine with a real API worker, maintenance fence,
+and verified backup. This replaces the direct relocation service call in the
+proof. Local backup/restore and credential-argument tests pass on SQLite; native
+PostgreSQL and distribution results remain pending the expanded hosted workflow.
+No #340 acceptance checkbox is closed by adding an unrun proof.
+
+
+### Native interruption qualification follow-up (#331–#333)
+
+The native bootstrap jobs now include real service-helper interruption/retry and
+browser-closure checks through `scripts/native-service-recovery-proof.js`.
+Windows registration retries finish recovery-policy and service-SID setup even
+when the previous helper stopped immediately after `sc create`. Local helper
+regressions pass; the new native journeys still need hosted results. No platform
+acceptance checkbox is closed by adding these checks. Toolchain-free hosts,
+physical reboot/login behavior, macOS pkg reproducibility and signing remain
+separate requirements.

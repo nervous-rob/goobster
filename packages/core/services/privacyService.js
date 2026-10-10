@@ -1035,6 +1035,9 @@ class PrivacyService {
             counts.integrations = (await db.run(
                 'DELETE FROM user_integrations WHERE userId = @userId', { userId }
             )).changes;
+            counts.personalAiConnections = (await db.run(
+                'DELETE FROM user_ai_connections WHERE userId = @userId', { userId }
+            )).changes;
 
             // Developer integrations. Agent runs carry the prompt the person
             // wrote and queued confirmations carry the issue or task text, so
@@ -1426,6 +1429,9 @@ class PrivacyService {
             )).c,
             user_integrations: (await db.get(
                 'SELECT COUNT(*) AS c FROM user_integrations WHERE userId = @userId', { userId }
+            )).c,
+            user_ai_connections: (await db.get(
+                'SELECT COUNT(*) AS c FROM user_ai_connections WHERE userId = @userId', { userId }
             )).c,
             spitball_expeditions: (await db.get(
                 'SELECT COUNT(*) AS c FROM spitball_expeditions WHERE userId = @userId', { userId }

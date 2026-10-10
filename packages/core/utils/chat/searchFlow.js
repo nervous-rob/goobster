@@ -162,7 +162,9 @@ async function handleAIResponse(response, interaction) {
             await interaction.editReply(`🎨 I'm generating an image of: ${prompt}\nThis might take a moment...`);
 
             // Generate the image
-            const imagePath = await imageDetectionHandler.generateImage(prompt, finalType, finalStyle);
+            const actor = require('../../services/personalPolicyService').privateActor(interaction);
+            const imagePath = await imageDetectionHandler.generateImage(prompt, finalType, finalStyle,
+                actor ? { usageContext: { userId: actor, guildId: `dm:${actor}` } } : {});
             
             // Clear the pending flag
             pendingImageGenerations.delete(channelId);

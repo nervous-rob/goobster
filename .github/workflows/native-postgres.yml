@@ -30,6 +30,9 @@ on:
       - 'apps/manager/engine/kinds/nativePostgres.js'
       - 'packages/core/db/native/**'
       - 'scripts/native-postgres-real-distro.js'
+      - 'scripts/native-postgres-data-proof.js'
+      - 'packages/core/services/backupService.js'
+      - 'packages/core/services/postgresToolConnection.js'
       - 'documentation/native_postgres.md'
       - '.github/workflows/native-postgres.yml'
   push:
@@ -39,6 +42,9 @@ on:
       - 'apps/manager/privileged/**'
       - 'packages/core/db/native/**'
       - 'scripts/native-postgres-real-distro.js'
+      - 'scripts/native-postgres-data-proof.js'
+      - 'packages/core/services/backupService.js'
+      - 'packages/core/services/postgresToolConnection.js'
       - '.github/workflows/native-postgres.yml'
 
 permissions:

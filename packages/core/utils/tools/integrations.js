@@ -73,7 +73,9 @@ module.exports = {
          * @returns {Promise<string>} Relative path to generated image
          */
         execute: async ({ prompt, type = 'SCENE', style = 'fantasy', interactionContext }) => {
-            const imagePath = await imageDetectionHandler.generateImage(prompt, type, style);
+            const actor = require('../../services/personalPolicyService').privateActor(interactionContext);
+            const imagePath = await imageDetectionHandler.generateImage(prompt, type, style,
+                actor ? { usageContext: { userId: actor, guildId: `dm:${actor}` } } : {});
 
             // If we have an interaction context (original Discord interaction) send the attachment right away
             if (interactionContext && interactionContext.channel) {

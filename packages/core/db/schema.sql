@@ -1300,6 +1300,17 @@ CREATE TABLE IF NOT EXISTS user_integrations (
     PRIMARY KEY (userId, provider)
 );
 
+-- Personal AI credentials are encrypted; API responses and account exports
+-- select only non-secret fields. /forget-me erases this entire row.
+CREATE TABLE IF NOT EXISTS user_ai_connections (
+    userId TEXT PRIMARY KEY,
+    completionUrl TEXT NOT NULL,
+    encryptedKey TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    modelsJson TEXT NOT NULL DEFAULT '{}',
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ---------------------------------------------------------------------------
 -- Web app sessions (browser login for the Goobster web interface). Only the
 -- SHA-256 of the session token is stored (screen-vision pattern); sessions

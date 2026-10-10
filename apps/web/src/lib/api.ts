@@ -286,8 +286,13 @@ export const api = {
     listSettingsApplets: () => request<Array<{ id: number; title: string; grants: { observatoryRead?: string[] }; pinned: boolean }>>('/api/app/settings/applets'),
     revokeAppletGrants: (id: number) =>
         request(`/api/app/settings/applets/${id}/revoke-grants`, { method: 'POST' }),
-    modelCatalog: (provider?: string, workflow = 'chat') =>
-        request<ModelCatalog>(`/api/app/chat/model-catalog?workflow=${encodeURIComponent(workflow)}${provider ? `&provider=${encodeURIComponent(provider)}` : ''}`),
+    modelCatalog: (provider?: string, workflow = 'chat', refresh = false) =>
+        request<ModelCatalog>(`/api/app/chat/model-catalog?workflow=${encodeURIComponent(workflow)}${provider ? `&provider=${encodeURIComponent(provider)}` : ''}${refresh ? '&refresh=true' : ''}`),
+    personalAiSettings: () => request<import('./types').PersonalAiSettings>('/api/app/settings/personal-ai'),
+    savePersonalAi: (settings: { apiKey?: string; completionUrl?: string; enabled?: boolean; models?: Partial<import('./types').PersonalAiSettings['models']> }) =>
+        request<import('./types').PersonalAiSettings>('/api/app/settings/personal-ai', { method: 'PUT', body: settings }),
+    disconnectPersonalAi: () => request<import('./types').PersonalAiSettings>('/api/app/settings/personal-ai', { method: 'DELETE' }),
+    personalAiModels: (refresh = false) => request<import('./types').PersonalAiCatalog>(`/api/app/settings/personal-ai/models${refresh ? '?refresh=true' : ''}`),
     listModels: (provider?: string | null) =>
         request(`/api/app/chat/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
     setThoughtful: (thoughtful: boolean) =>

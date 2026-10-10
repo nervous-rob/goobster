@@ -7,6 +7,23 @@ const userSettingsService = require('../../services/userSettingsService');
 
 function mountSettings(app, ctx, h) {
     const { requireAuth, chatRoute } = h;
+    const personalAi = require('../../services/personalAiService');
+    const personalAiLimit = async (req, res, next) => {
+        try {
+            const ok = await require('../../utils/slidingWindowLimit').consumeWindow({
+                scope: 'personal_ai_settings', subject: req.webUser.userId, max: 30, windowMs: 60000
+            });
+            if (!ok) return h.sendError(res, 429, 'RATE_LIMITED', 'Please wait before making more AI settings requests.');
+            res.set('Cache-Control', 'no-store');
+            next();
+        } catch (error) { next(error); }
+    };
+    app.get('/api/app/settings/personal-ai', requireAuth, personalAiLimit, chatRoute(req => personalAi.settings(req.webUser.userId)));
+    app.put('/api/app/settings/personal-ai', requireAuth, personalAiLimit, chatRoute(req => personalAi.save(req.webUser.userId, {
+        apiKey: req.body?.apiKey, completionUrl: req.body?.completionUrl, enabled: req.body?.enabled, models: req.body?.models
+    })));
+    app.delete('/api/app/settings/personal-ai', requireAuth, personalAiLimit, chatRoute(req => personalAi.disconnect(req.webUser.userId)));
+    app.get('/api/app/settings/personal-ai/models', requireAuth, personalAiLimit, chatRoute(req => personalAi.catalog(req.webUser.userId, { refresh: req.query.refresh === 'true' })));
     const exports = ctx.accountExports;
     app.get('/api/app/settings/exports', requireAuth, chatRoute(req => exports.list(req.webUser.userId)));
     app.post('/api/app/settings/exports', requireAuth, chatRoute(req => exports.request(req.webUser.userId)));

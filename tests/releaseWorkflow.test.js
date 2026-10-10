@@ -56,6 +56,26 @@ describe('triggers and permissions', () => {
     test('does not cancel a release in progress', () => {
         expect(workflow.concurrency['cancel-in-progress']).toBe(false);
     });
+
+    test('a manual verification run cannot publish unless explicitly opted in', () => {
+        expect(workflow.on.workflow_dispatch.inputs.publish.default).toBe(false);
+        const publishing = workflow.jobs.publish.steps.find(step => /gh release create/.test(step.run || ''));
+        expect(publishing.if).toBe("github.event_name != 'workflow_dispatch' || inputs.publish == true");
+        const key = workflow.jobs.plan.steps.find(step => step.id === 'plan').env.GOOBSTER_RELEASE_SIGNING_KEY_PEM;
+        expect(key).toContain("github.event_name != 'workflow_dispatch' || inputs.publish");
+        expect(workflow.jobs.publish.steps.some(step => step.name === 'Retain verification output without publishing')).toBe(true);
+    });
+
+    test('Application signing is configured before payload hashing and Ed25519 signing', () => {
+        const buildSteps = workflow.jobs.build.steps;
+        const imported = buildSteps.findIndex(step => /Import the Developer ID Application/.test(step.name || ''));
+        const payload = buildSteps.findIndex(step => step.name === 'Build the payload (signed with the release key)');
+        expect(imported).toBeGreaterThan(-1);
+        expect(imported).toBeLessThan(payload);
+        expect(buildSteps[payload].run).toContain('--codesign-identity');
+        expect(buildSteps[payload].run.indexOf('package-runtime.js')).toBeLessThan(buildSteps[payload].run.indexOf('package-sign.js'));
+        expect(buildSteps.find(step => step.id === 'macsign').env.CONFIGURED).toContain('APPLE_DEVELOPER_ID_APPLICATION_CERT_P12_BASE64');
+    });
 });
 
 describe('secrets', () => {

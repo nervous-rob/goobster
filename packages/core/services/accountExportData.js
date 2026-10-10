@@ -24,6 +24,7 @@ const DM_THREADS = 'SELECT id FROM dm_threads WHERE lowId = @userId OR highId = 
  * below is only the second line of defence).
  */
 const INVENTORY = [
+    ['user_ai_connections', 'userId = @userId', 'userId, completionUrl, enabled, modelsJson, updatedAt'],
     ['principals', 'id = @userId'],
     ['users', 'discordId = @userId'],
     ['account_emails', 'principalId = @userId', 'principalId, address, verifiedAt, createdAt'],

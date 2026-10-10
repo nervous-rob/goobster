@@ -533,3 +533,19 @@ password), `sudo` with a password prompt, macOS 13 and 14 (the runners are
 macOS 15), a Mac with a managed or MDM-restricted configuration, the wizard's
 browser journey from the package (the manager's Playwright journeys cover the
 wizard itself), and a per-user install while the person is logged out.
+
+### Interrupted service recovery proof
+
+The native workflow also runs `scripts/native-service-recovery-proof.js` against
+its disposable installed service. It terminates a helper child immediately after
+a successful OS registration command and again during removal, then retries with
+the shipped helper. The checks require a healthy service after registration,
+no API listener or owned service definition after removal, and preservation of
+installation data and an unrelated sentinel. Windows retries also complete the
+recovery policy and service SID setup after an interrupted `sc create`.
+
+CI opens the installed manager in Chromium, closes both its page and browser
+process, and verifies that the API continues serving. Chromium is a test-host
+dependency. These new checks require a successful run before they count as
+acceptance evidence; they do not establish a machine without development tools,
+physical reboot behavior, human accessibility, or production signing.

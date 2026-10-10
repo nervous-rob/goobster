@@ -149,6 +149,7 @@ class SpitballResearchPipeline {
 
     async _generate(prompt, opts = {}) {
         const { modelConfig, ...next } = opts;
+        next.workflow = 'research';
         if (modelConfig?.provider) next.provider = modelConfig.provider;
         if (modelConfig?.model) next.model = modelConfig.model;
         return this.ai.generateText(prompt, next);
