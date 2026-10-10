@@ -49,7 +49,7 @@ For each page below, the same checks run on every control a person can act on:
 | Host page list | Tab reaches the seven pages in order, in a navigation named "Host pages"; Enter opens each; the current page is marked `aria-current="page"`. |
 | Host Overview, Features, Connections, Instance Defaults, Installation, Database, Maintenance | The four checks, on the page as it first renders with the manager reachable. |
 | Host Features | Space switches a feature on and off; the preview button follows whether anything changed. |
-| Confirm dialog (Accounts list on Host Overview) | Enter on a button opens it; it has Cancel and Confirm buttons; Escape closes it with nothing changed; Enter on Cancel closes it with nothing changed. See the gaps below. |
+| Confirm dialog (Accounts list on Host Overview) | Enter on a button opens it; it has Cancel and Confirm buttons; Escape and Cancel close it without mutation; initial focus, both Tab directions, accessible naming and opener restoration are now required (new hosted results pending). |
 
 ### What the journey does not cover
 
@@ -68,16 +68,21 @@ A test cannot decide these. Each needs a person with the tool, once per release 
 - **Windows high-contrast mode and forced colours**, reduced motion, and touch target size.
 - **Plain-language review** of error messages and the "what this cannot do" statements, by someone who did not write them.
 
-## Gaps found by the review
+## Dialog corrections and their validation
 
-The review ran the confirm dialog (`apps/web/src/components/Modal.tsx`, used through `useConfirm` by every Host confirmation, such as disabling an account, issuing a reset link, a restart and an update) from the keyboard. Escape and the two buttons work. Four things do not, and the spec records them as `known-gap` annotations on the test instead of failing it, so a fix shows up as the annotation disappearing:
+The shared `Modal` now moves focus inside on opening, contains Tab and Shift+Tab
+within the topmost open modal, closes only that modal on Escape, and restores
+focus to its opener when it is still present. Dialogs use an explicit accessible
+label or heading; the Host confirmation references its confirmation text.
+Callbacks can rerender without resetting focus, and hidden or disabled controls
+do not enter the tab sequence.
 
-1. When the dialog opens, focus stays on the control behind it instead of moving into the dialog.
-2. Tab leaves the dialog for the page behind it: there is no focus trap.
-3. The dialog has `role="dialog"` and `aria-modal="true"` but no accessible name (`aria-label` or `aria-labelledby`).
-4. When the dialog closes, focus is not returned to the control that opened it; it falls to the page.
-
-These are changes to a shared component, so they were recorded here and not made as part of this review. [development_standards_and_project_goals.md](development_standards_and_project_goals.md) used to say the dialog had a focus trap and focus restore; it now says what the component does.
+The Accounts confirmation test now **requires** initial focus on Cancel, an
+accessible name, forward and reverse Tab containment, Escape closure and focus
+restoration after both Escape and Cancel. These replace the four former
+`known-gap` annotations. Typecheck and the web build pass locally. The local
+Chromium download was unavailable, so the new keyboard assertions still require
+hosted Playwright results. The human checks above remain open.
 
 ## Guided tours for these pages
 

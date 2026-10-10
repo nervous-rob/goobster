@@ -265,7 +265,26 @@ async function storageRefusal(cell, step) {
     } finally {
         fs.chmodSync(dataLocked, 0o755);
     }
-    return { result: `${outcomes.join('; ')}. A full disk (DISK_SPACE) needs a size-limited mount and was not exercised` };
+    const bounded = process.env.GOOBSTER_ACCEPTANCE_FULL_DISK_DIR;
+    if (bounded) {
+        const marker = JSON.parse(fs.readFileSync(path.join(bounded, 'proof.json'), 'utf8'));
+        check(marker.observed === 'ENOSPC', 'the bounded-volume preparation did not record a real ENOSPC');
+        const stat = fs.statfsSync(bounded);
+        check(stat.type === 0x01021994 && stat.blocks * stat.bsize <= 2 * 1024 * 1024,
+            'the full-disk fixture must be a dedicated bounded tmpfs');
+        check(stat.bavail * stat.bsize < 128 * 1024, 'the bounded volume has too much free space');
+        const fullCase = new Scratch(cell, 'storage-full');
+        fullCase.roots.code = path.join(bounded, 'code');
+        const installed = await fullCase.install(step);
+        check(installed.code === 2, `install with insufficient capacity exited ${installed.code}, not 2: ${cell.why(installed)}`);
+        check(/DISK_SPACE/.test(JSON.stringify(installed.json || {})), 'the refusal does not name DISK_SPACE');
+        check(!fs.existsSync(fullCase.roots.code), 'the refused install activated or wrote a code root');
+        check(writtenBeyondJournal(fullCase).length === 0, 'capacity refusal changed installation data');
+        outcomes.push('bounded tmpfs reached real ENOSPC during preparation; install refused DISK_SPACE before mutation with 64 KiB probe reserve');
+    } else {
+        outcomes.push('full-disk capacity refusal not exercised: no dedicated bounded volume supplied');
+    }
+    return { result: outcomes.join('; ') };
 }
 
 async function unauthenticatedManager(cell, step) {

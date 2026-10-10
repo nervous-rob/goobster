@@ -20,7 +20,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         <ConfirmContext.Provider value={value}>
             {children}
             {text !== null && (
-                <Modal onClose={() => close(false)}>
+                <Modal onClose={() => close(false)} labelledBy="dialog-text">
                     <p id="dialog-text">{text}</p>
                     <div className="modal-actions">
                         <button type="button" className="btn" onClick={() => close(false)}>Cancel</button>

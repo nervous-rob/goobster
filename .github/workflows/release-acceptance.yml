@@ -139,11 +139,27 @@ jobs:
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
           /usr/lib/postgresql/17/bin/pg_dump --version | grep -F 'pg_dump (PostgreSQL) 17.'
 
+      - name: Prepare a bounded full-disk preflight fixture
+        if: runner.os == 'Linux'
+        run: |
+          mount="$RUNNER_TEMP/goobster-full-disk"
+          test ! -e "$mount"
+          mkdir "$mount"
+          sudo mount -t tmpfs -o size=1m,mode=0777,nosuid,nodev,noexec tmpfs "$mount"
+          node scripts/acceptance/prepare-full-disk.js "$mount"
+          echo "GOOBSTER_ACCEPTANCE_FULL_DISK_DIR=$mount" >> "$GITHUB_ENV"
+
       - name: Run the acceptance cell
         run: |
           mkdir -p "$EVIDENCE"
           node scripts/acceptance/run.js --payload "$PAYLOAD" --install "$INSTALL" --db "$DATABASE" --features "$FEATURES" \
             --out "$EVIDENCE" --work "$WORK" --runner-image "$RUNNER_IMAGE" --commit "$GITHUB_SHA"
+
+      - name: Unmount the bounded storage fixture
+        if: always() && runner.os == 'Linux'
+        run: |
+          mount="$RUNNER_TEMP/goobster-full-disk"
+          if mountpoint -q "$mount"; then sudo umount "$mount"; fi
 
       - name: Keep the evidence
         if: always()
