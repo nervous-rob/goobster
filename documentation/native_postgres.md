@@ -511,3 +511,21 @@ run is the first time any of this has met a real distribution.
 - `e2e/nativePostgres.spec.js`: the chooser, the form and the preview, the
   journey and the Host card, against the fake machine.
 - The fake machine is `tests/helpers/fakeNative.js` (and `fakeNativeCli.js`).
+
+
+### Manager data-path qualification
+
+`scripts/native-postgres-data-proof.js` extends the disposable real-distro
+journey with a real supervised API worker. It selects the PostgreSQL 17 client
+binaries explicitly, enters maintenance, creates a manager backup, changes a
+fixture row, restores the archive with a safety backup, and checks the original
+row. It then runs `database.native.relocate` through the manager engine, requiring
+a verified backup and acknowledged writer fence, checks the retained original
+directory and row, and releases maintenance. The existing foreign-cluster
+fingerprint and owned-only retirement checks still run afterwards.
+
+This replaces the earlier service-only relocation shortcut. The expanded
+journey needs a successful hosted run on each promised distribution before its
+results count as acceptance. PostgreSQL tool passwords are passed only through
+the child environment, not in `pg_dump` or `pg_restore` arguments. The parent
+process environment is not changed by this credential preparation.

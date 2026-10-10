@@ -836,6 +836,16 @@ evidence must be recorded on #342. See [release acceptance caveats](release_acce
 - Ledger rows never carry prompts, replies, tokens, links or addresses.
 
 
+### Native PostgreSQL data-path follow-up (#340)
+
+The real-distro workflow now includes matching-client backup/restore and
+relocation through the manager engine with a real API worker, maintenance fence,
+and verified backup. This replaces the direct relocation service call in the
+proof. Local backup/restore and credential-argument tests pass on SQLite; native
+PostgreSQL and distribution results remain pending the expanded hosted workflow.
+No #340 acceptance checkbox is closed by adding an unrun proof.
+
+
 ### Native interruption qualification follow-up (#331–#333)
 
 The native bootstrap jobs now include real service-helper interruption/retry and
