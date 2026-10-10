@@ -12,12 +12,19 @@ export type ReducedMotion = 'system' | 'on' | 'off';
 export type NavLayout = 'sidebar' | 'top';
 /** How wide rooms draw: centred on a column (the default) or across the whole window. */
 export type PageWidth = 'centered' | 'full';
+/** The icon language the portal draws its room, view and section icons in; `emoji` is the original look. */
+export type IconStyle = 'emoji' | 'mono' | 'blocks' | 'sigils' | 'pixel' | 'neon' | 'constellation';
+export const ICON_STYLES: IconStyle[] = ['emoji', 'mono', 'blocks', 'sigils', 'pixel', 'neon', 'constellation'];
+export function isIconStyle(value: unknown): value is IconStyle {
+    return typeof value === 'string' && (ICON_STYLES as string[]).includes(value);
+}
 
 const TEXT_KEY = 'goobster-text-size';
 const DENSITY_KEY = 'goobster-density';
 const MOTION_KEY = 'goobster-reduced-motion';
 const NAV_LAYOUT_KEY = 'goobster-nav-layout';
 const PAGE_WIDTH_KEY = 'goobster-page-width';
+const ICON_STYLE_KEY = 'goobster-icon-style';
 const MIC_KEY = 'goobster-preferred-mic';
 const VOLUME_KEY = 'goobster-voice-volume';
 
@@ -70,6 +77,25 @@ export function paintPageWidth(width: PageWidth): void {
 export function persistPageWidth(width: PageWidth): void {
     localStorage.setItem(PAGE_WIDTH_KEY, width);
     paintPageWidth(width);
+}
+
+/** Fired with the style as `detail` on every paint so `<Icon>` instances re-render. */
+export const ICON_STYLE_EVENT = 'goobster-icon-style-changed';
+
+export function getStoredIconStyle(): IconStyle {
+    const raw = localStorage.getItem(ICON_STYLE_KEY);
+    return isIconStyle(raw) ? raw : 'emoji';
+}
+
+/** Paint the icon style without persisting (live preview); `<Icon>` reads `html[data-icon-style]`. */
+export function paintIconStyle(style: IconStyle): void {
+    document.documentElement.dataset.iconStyle = style;
+    window.dispatchEvent(new CustomEvent<IconStyle>(ICON_STYLE_EVENT, { detail: style }));
+}
+
+export function persistIconStyle(style: IconStyle): void {
+    localStorage.setItem(ICON_STYLE_KEY, style);
+    paintIconStyle(style);
 }
 
 export function getStoredMicId(): string | null {
@@ -128,6 +154,7 @@ export function deviceLocalKeys(): string[] {
         MOTION_KEY,
         NAV_LAYOUT_KEY,
         PAGE_WIDTH_KEY,
+        ICON_STYLE_KEY,
         MIC_KEY,
         VOLUME_KEY,
         'goobster.map.linkByTag',

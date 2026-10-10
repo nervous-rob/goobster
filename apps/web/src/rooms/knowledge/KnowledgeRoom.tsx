@@ -1,4 +1,5 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { ViewIcon } from '../../icons/Icon';
 import { useMe } from '../../hooks/useSession';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
 import { ROOM_BY_ID, availableViews, resolveKnowledgeView } from '../../lib/rooms';
@@ -62,7 +63,7 @@ function KnowledgeShell() {
                         className={`view-tab${current === view.id ? ' active' : ''}`}
                         aria-current={current === view.id ? 'page' : undefined}
                         data-tour={`knowledge-view-${view.id}`}>
-                        <span aria-hidden="true">{view.icon}</span> {view.name}
+                        <ViewIcon view={view} /> {view.name}
                         {view.secondaryName && <span className="view-tab-secondary">{view.secondaryName}</span>}
                     </Link>
                 ))}

@@ -53,7 +53,7 @@ test.beforeEach(async ({ page }) => {
 
 test('Settings lists tours; Resume, Replay, Reset one and Reset all work without touching notes or tools', async ({ page }) => {
     await page.goto('/app/settings/tutorials');
-    await expect(page.getByRole('heading', { name: 'Tutorials', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Tutorials', exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="tutorial-list"]')).toBeVisible();
 
     const homeRow = page.locator('.tutorial-row[data-tutorial-id="home.orientation"]');

@@ -1467,6 +1467,40 @@ html.reduce-motion .research-progress-fill::after { animation: none; }
   }
 }
 
+/* ---------- icon languages (src/icons, Settings → Appearance → Icon style) ----------
+   A glyph sizes from the text around it (1.15em) so the same component sits
+   in a nav row, a pill, a tools card or a heading. Styles that draw in
+   currentColor (Monoline, Constellation) are dim at rest and take the accent
+   on an active row; the others carry the accent themselves. --ic-ink is the
+   surface an icon's negative space must match. */
+:root { --ic-ink: var(--bg); }
+.glyph { display: inline-block; width: 1.15em; height: 1.15em; vertical-align: -0.22em; overflow: visible; flex: none; }
+/* Drawn glyphs sit tighter to text than an emoji's own side bearing; give them the same breath. */
+svg.glyph { margin-right: 0.12em; }
+.glyph-emoji { width: auto; height: auto; vertical-align: baseline; }
+.glyph-pixel { image-rendering: pixelated; }
+#sidebar, #topbar, .settings-nav, .tools-card, .list-card, .integration-card, .topbar-menu { --ic-ink: var(--bg-raise); }
+.home-door, .pill, .segment { --ic-ink: var(--bg-raise-2); }
+.nav-btn.active, .settings-nav-item.active, .activity-tab.active, .view-tab.active, .segment-btn.active { --ic-ink: color-mix(in srgb, var(--bg-raise) 84%, var(--accent)); }
+:is(.nav-btn, .settings-nav-item, .activity-tab, .view-tab, .topbar-icon).active :is(.glyph-mono, .glyph-constellation) { color: var(--accent); }
+.tools-card-icon .glyph { width: 1em; height: 1em; vertical-align: -0.15em; }
+.settings-section-head h2 .glyph { vertical-align: -0.18em; }
+
+/* The Appearance picker: one card per language, four sample glyphs each. */
+.icon-style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.icon-style-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px;
+  background: var(--bg-raise-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); cursor: pointer;
+  font: inherit; font-size: 0.8125rem; text-align: left; --ic-ink: var(--bg-raise-2);
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.icon-style-card:hover { border-color: var(--text-dim); }
+.icon-style-card[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.icon-style-samples { display: flex; gap: 6px; font-size: 1.25rem; color: var(--text-dim); }
+.icon-style-card[aria-checked="true"] .icon-style-samples { color: var(--text); }
+.icon-style-name { font-weight: 600; }
+.icon-style-hint { color: var(--text-dim); font-size: 0.71875rem; line-height: 1.35; }
+
 /* ---------- navigation contract: sidebar, Activity, Tools ---------- */
 
 .nav-secondary {

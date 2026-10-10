@@ -79,8 +79,8 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Appearance',
         icon: '🎨',
         scope: 'Your account',
-        blurb: 'Theme, accent color, surface, navigation, page width, text size, density, keyboard, and working defaults. Each keeps a device copy so a reload never flashes.',
-        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'page width', 'full width', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
+        blurb: 'Theme, accent color, surface, navigation, page width, icon style, text size, density, keyboard, and working defaults. Each keeps a device copy so a reload never flashes.',
+        keywords: ['theme', 'dark', 'light', 'system', 'appearance', 'color', 'accent', 'surface', 'tint', 'neutral', 'navigation', 'sidebar', 'top bar', 'page width', 'full width', 'icons', 'icon style', 'look', 'tags', 'link by tag', 'text size', 'motion', 'density', 'enter', 'start page', 'hide', 'hidden tools', 'music lab', 'trading', 'decks', 'expedition', 'parlor', 'install', 'pwa', 'app']
     },
     {
         id: 'account',
@@ -171,6 +171,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'surface', label: 'Surface', keywords: ['surface', 'whitespace', 'background', 'grey', 'gray', 'neutral', 'tinted', 'tint', 'orb', 'glow'] },
     { section: 'appearance', fieldId: 'nav-layout', label: 'Navigation', keywords: ['navigation', 'nav', 'sidebar', 'top bar', 'layout', 'menu', 'rooms', 'horizontal', 'vertical'] },
     { section: 'appearance', fieldId: 'page-width', label: 'Page width', keywords: ['page width', 'full width', 'centred', 'centered', 'wide', 'margins', 'column', 'frame'] },
+    { section: 'appearance', fieldId: 'icon-style', label: 'Icon style', keywords: ['icons', 'icon style', 'emoji', 'glyphs', 'monoline', 'blocks', 'sigils', 'pixel', 'neon', 'constellation', 'look'] },
     { section: 'appearance', fieldId: 'text-size', label: 'Text size', keywords: ['font', 'text size', 'bigger', 'smaller'] },
     { section: 'appearance', fieldId: 'reduced-motion', label: 'Reduced motion', keywords: ['motion', 'animation', 'accessibility'] },
     { section: 'appearance', fieldId: 'density', label: 'Interface density', keywords: ['compact', 'comfortable', 'spacing'] },

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ViewIcon } from '../../icons/Icon';
 import { Link, Navigate, useNavigate, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -104,7 +105,7 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                         aria-current={view === entry.id ? 'page' : undefined}
                         data-tour={`project-view-${entry.id}`}
                     >
-                        <span aria-hidden="true">{entry.icon}</span> {entry.name}
+                        <ViewIcon view={entry} /> {entry.name}
                         {entry.id === 'runs' && project?.runningJobs ? <span className="badge">{project.runningJobs}</span> : null}
                     </Link>
                 ))}

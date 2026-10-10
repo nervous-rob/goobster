@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ProviderIcon } from '../icons/Icon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -43,7 +44,7 @@ export function ConnectionsList({ anchorPrefix = '' }: { anchorPrefix?: string }
                 {(list.data?.integrations || []).map((item) => (
                     <div key={item.provider} className="integration-card" id={`${anchorPrefix}${item.provider}`}>
                         <div className="integration-head">
-                            <div className="integration-title">{ICONS[item.provider] || '🔌'} {item.name}</div>
+                            <div className="integration-title"><ProviderIcon provider={item.provider} emoji={ICONS[item.provider] || '🔌'} /> {item.name}</div>
                             <span className={`integration-status${item.connected ? ' connected' : ''}`}>
                                 {item.connected ? `Connected · ${item.account || 'account'}` : 'Not connected'}
                             </span>

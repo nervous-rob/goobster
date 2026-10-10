@@ -1,6 +1,6 @@
 /**
  * Appearance: the accent palette, the surface treatment, the navigation
- * layout, the page width, the text size and the density. All preview live,
+ * layout, the page width, the icon style, the text size and the density. All preview live,
  * all save to the account and keep a device copy, and all are painted before
  * the app mounts on reload. The top-bar layout keeps the
  * same "Rooms" landmark and Settings link the sidebar exposes, so the
@@ -13,7 +13,7 @@ const { login } = require('./helpers');
 // Later specs address the sidebar; put the account back however a run ended.
 test.afterEach(async ({ page }) => {
     await page.request.patch('/api/app/settings/appearance', {
-        data: { changes: { accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered' } }
+        data: { changes: { accent: 'blueberry', surface: 'tinted', navLayout: 'sidebar', pageWidth: 'centered', iconStyle: 'emoji' } }
     }).catch(() => {});
 });
 
@@ -396,6 +396,63 @@ test('page width: full width lets every room reach the edges of a wide window', 
     await expect(page.locator('#sidebar')).toBeVisible();
     expect(await pageWidth()).toBe('full');
     if (await log.count()) expect(Math.round((await log.boundingBox()).width)).toBe(1120);
+});
+
+test('icon style previews live, saves, paints before mount, and every language draws every glyph', async ({ page }) => {
+    await login(page);
+    await page.goto('/app/settings/appearance');
+    const nav = page.locator('#sidebar nav[aria-label="Rooms"]');
+    const iconStyle = () => page.evaluate(() => document.documentElement.getAttribute('data-icon-style') || 'emoji');
+
+    // Emoji by default: the sidebar carries text glyphs and no SVG.
+    await expect.poll(iconStyle).toBe('emoji');
+    await expect(nav.locator('svg.glyph')).toHaveCount(0);
+    await expect(nav.locator('.glyph-emoji').first()).toContainText('💬');
+
+    // Previews live: picking Blocks swaps every room icon for an SVG.
+    const picker = page.getByRole('radiogroup', { name: 'Icon style' });
+    await picker.getByRole('radio', { name: /Blocks/ }).click();
+    await expect.poll(iconStyle).toBe('blocks');
+    await expect(nav.locator('.glyph-emoji')).toHaveCount(0);
+    expect(await nav.locator('svg.glyph-blocks').count()).toBeGreaterThanOrEqual(6);
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_icon_style_blocks.png' });
+
+    // Discard puts the emoji back without saving.
+    await page.getByRole('button', { name: 'Discard' }).click();
+    await expect.poll(iconStyle).toBe('emoji');
+    await expect(nav.locator('svg.glyph')).toHaveCount(0);
+
+    // Every language draws every registry glyph: the picker's own sample
+    // cards and, once painted, the sidebar, the settings nav and the view
+    // tabs never fall back to emoji.
+    for (const style of ['mono', 'blocks', 'sigils', 'pixel', 'neon', 'constellation']) {
+        await picker.locator(`[data-icon-style="${style}"]`).click();
+        await expect.poll(iconStyle).toBe(style);
+        await expect(page.locator('#sidebar .glyph-emoji, .settings-nav .glyph-emoji')).toHaveCount(0);
+        expect(await page.locator(`#sidebar svg.glyph-${style}`).count()).toBeGreaterThanOrEqual(6);
+    }
+    await picker.getByRole('radio', { name: /Pixel/ }).click();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    const settings = await page.request.get('/api/app/settings');
+    expect((await settings.json()).sections.appearance.values.iconStyle).toBe('pixel');
+
+    // Persisted: a reload paints the style before the app mounts.
+    await page.reload();
+    await expect.poll(iconStyle).toBe('pixel');
+    await expect(nav.locator('svg.glyph-pixel').first()).toBeVisible();
+    await page.goto('/app/activity/inbox');
+    await expect(page.locator('.activity-tab svg.glyph-pixel').first()).toBeVisible();
+    await expect(page.locator('.activity-tab .glyph-emoji')).toHaveCount(0);
+    await page.goto('/app/tools');
+    await expect(page.locator('.tools-card-icon svg.glyph-pixel').first()).toBeVisible();
+    await page.screenshot({ path: '/opt/cursor/artifacts/appearance_icon_style_pixel_tools.png' });
+
+    await page.goto('/app/settings/appearance');
+    await picker.getByRole('radio', { name: /Emoji/ }).click();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    await expect(nav.locator('svg.glyph')).toHaveCount(0);
 });
 
 test('text size and density paint live, save, and survive a reload', async ({ page }) => {
