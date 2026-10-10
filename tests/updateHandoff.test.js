@@ -218,13 +218,14 @@ describe('the crash matrix', () => {
         for (const entry of recorded) expect(entry.detail).not.toHaveProperty('downtimeMs');
     });
 
-    test('an expired watchdog on a schema-changing update that nothing ever ran is still a safe rollback', async () => {
+    test('an expired watchdog on the first schema-changing handoff cannot establish a safe rollback', async () => {
         const w = await world({ next: { columns: [['users', 'nickname', 'TEXT']] }, deps: { watchdogMs: 1 } });
         await applyNow(w.harness);
         await sleep(20);
-        expect(await w.applier.resume()).toMatchObject({ resumed: true, outcome: 'rolling_back', code: 'WATCHDOG_EXPIRED' });
-        expect(currentVersion(w.harness)).toBe('2.4.0');
-        expect(await w.applier.resume()).toMatchObject({ resumed: true, outcome: 'rolled_back' });
+        expect(await w.applier.resume()).toMatchObject({ resumed: true, outcome: 'recovery', cause: 'WATCHDOG_EXPIRED' });
+        expect(currentVersion(w.harness)).toBe('2.5.0');
+        expect(barrierOf(w.harness).active).toBe(true);
+        expect(await w.applier.resume()).toMatchObject({ resumed: true, outcome: 'recovery' });
     });
 
     test('after verify, before cutover: the next start records the release and releases', async () => {

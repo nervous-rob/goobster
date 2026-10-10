@@ -616,9 +616,11 @@ Postgres take the Docker path (`managed-pg`) and an existing server
   bootstrap CI is linked above; #331–#333 and #340 retain their own criteria.
 - The update step moves between two versions of the same payload; a release
   that changes the database schema, and the recovery decision after a failed
-  one, are not qualified by this matrix. #342 still records the pre-health
-  schema-rollback safety gap: API startup can apply migrations before health
-  is observed. Existing tests and the local P5.2 proof do not resolve that gap.
+  one, are not qualified by this matrix. #342 now blocks automatic rollback after a schema-changing activation,
+  including pre-health failure and first-attempt watchdog expiry. Its regression
+  commits real DDL and startup writes through the SQLite/Postgres test facade
+  before injecting startup failure. The historical matrix and local P5.2 proof
+  do not establish these new assertions; their CI evidence is tracked separately.
 - The merged [operator runbooks](operator_runbooks.md#how-this-was-verified)
   have a documented Linux walk-through, not a recorded second-operator
   recovery drill. #343's second-operator requirement, #249's actual-host

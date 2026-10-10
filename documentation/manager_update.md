@@ -257,7 +257,7 @@ anything else.
 |---|---|---|
 | Before the swap (`activating`, `current` is the old release) | handoff `activating`, barrier held | clears the handoff, releases the barrier, records `abandoned` (`FLIP_NOT_REACHED`); the old release is running unchanged |
 | After the swap, before the exit (`activating` or `pending`, `current` is the new release) | handoff `pending` | verifies the new release and goes on |
-| After the exit, before verification (`pending`) | handoff `pending`, watchdog | verifies; on failure, applies the rollback table; past the watchdog deadline, rolls back |
+| After the exit, before verification (`pending`) | handoff `pending`, watchdog | verifies; on failure or watchdog expiry, applies the rollback table: unchanged schema rolls back; changed/unknown schema holds recovery, including the first attempt |
 | After verification, before cutover (`verified`) | handoff `verified` | cuts over, releases |
 | After cutover, before release (`recorded`) | handoff `recorded` | releases |
 | A rollback in flight (`rollback`) | handoff `rollback` | swaps the previous release back if needed, restarts and verifies it, releases |
@@ -292,7 +292,7 @@ fit, so:
 | Update | Failed before any worker got past `/health` | Failed after a worker got past `/health`, up to the end of the settle window (the database was in use) | Failed after the window closed |
 |---|---|---|---|
 | **Not** schema-changing | automatic rollback (`EXITED_BEFORE_READY`, `HEALTH_TIMEOUT`, ...) | automatic rollback (`EXITED_AFTER_READY`, `ACK_TIMEOUT`, ...) | not the update's: an ordinary crash |
-| Schema-changing | automatic rollback (no process opened the database with the new schema) | **`recovery`**: the previous release is *not* put back automatically; the barrier is held and the operator decides | not the update's: an ordinary crash |
+| Schema-changing | **`recovery`**: startup can migrate before `/health`; the barrier stays held and the operator decides | **`recovery`**: the previous release is *not* put back automatically; the barrier is held and the operator decides | not the update's: an ordinary crash |
 
 An automatic rollback puts the previous release back (`current` swapped back
 atomically), restarts the workers on it, verifies it exactly as above,
@@ -302,8 +302,12 @@ to the database could be unsafe for the previous one in these rows. If the
 previous release does not verify either, the update is in `recovery`
 (`ROLLBACK_VERIFY_FAILED`).
 
-A second failure of a retried schema-changing update (more than one attempt)
-is treated as "in use" too.
+The conservative boundary is activation of the new payload, recorded by the
+durable `activating`/`pending` handoff. A missing health response, expired watchdog
+or first attempt does not prove that the database is unchanged. Before the swap,
+when `current` still names the old payload, recovery can abandon the unapplied
+update as described above. After activation, every schema-changing failure holds
+recovery; only an explicit restore decision permits returning to the old code.
 
 ## Recovery
 
@@ -442,7 +446,7 @@ last apply and its downtime, and the recovery state.
 | `BACKUP_UNVERIFIED`, `NO_BACKUP` | the pre-update backup is not verified (nothing changed), or recovery has no backup to restore |
 | `EXITED_AFTER_READY`, `EXITED_BEFORE_READY` | the cause recorded when a worker left inside the settle window, or before it was ready |
 | `UPDATE_ROLLED_BACK` | the new release did not verify; the previous one was put back |
-| `UPDATE_RECOVERY_REQUIRED` | a schema-changing release failed in use; decide with `update recovery` |
+| `UPDATE_RECOVERY_REQUIRED` | a schema-changing release failed after activation and may have migrated, even before health; decide with `update recovery` |
 | `NO_RECOVERY_PENDING`, `RESTORE_FIRST`, `PREVIOUS_UNAVAILABLE` | the decision is not applicable, needs the data restored first, or the previous release is gone |
 
 ## What this does not do

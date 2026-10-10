@@ -365,10 +365,14 @@ function createApplier({ core, store, journal, logger = console }) {
     }
 
     // ------------------------------------------------------ failure policy
-    /** A failure after the flip: roll back when that is compatible, otherwise leave it to the operator. */
-    async function failure(h, { code, reached = false, optionsFor }) {
-        const unsafe = Boolean(h.schemaChanging) && (reached || Boolean(h.reached) || (h.attempts || 0) > 1);
-        if (unsafe) return enterRecovery(h, { code: 'SCHEMA_CHANGED_DATABASE_IN_USE', cause: code, target: 'to' });
+    /**
+     * Called only after activation. Startup opens/migrates the database before /health, so
+     * neither missing health nor a first handoff attempt proves the old schema is intact.
+     * The durable activating/pending handoff is the conservative boundary: once the new
+     * payload is current, a schema-changing failure requires an operator decision.
+     */
+    async function failure(h, { code, optionsFor }) {
+        if (h.schemaChanging) return enterRecovery(h, { code: 'SCHEMA_CHANGED_DATABASE_IN_USE', cause: code, target: 'to' });
         return rollback(h, { code, optionsFor });
     }
 

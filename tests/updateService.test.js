@@ -6,6 +6,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 
 const serviceRecord = require('@goobster/manager/platform/serviceRecord');
 const serviceKinds = require('@goobster/manager/platform/serviceKinds');
@@ -15,8 +16,14 @@ const { newKey, makePayload, publish, installBase, supervise, fakeChild } = requ
 
 const roots = [];
 const cleanups = [];
+beforeEach(() => {
+    // The helper is fake; registration must not depend on whether Jest itself runs as root.
+    const user = os.userInfo();
+    jest.spyOn(os, 'userInfo').mockReturnValue({ ...user, username: 'goobster' });
+});
 afterEach(async () => {
     while (cleanups.length) await cleanups.pop()();
+    jest.restoreAllMocks();
 });
 afterAll(() => {
     for (const dir of roots) fs.rmSync(dir, { recursive: true, force: true });
@@ -131,9 +138,21 @@ describe('refreshing the registration', () => {
 describe('an update with a changed template', () => {
     test('is applied, and the registration is refreshed after the barrier is released, outside the downtime', async () => {
         const w = await world({ registered: 'stale', apply: true });
+        const before = w.harness.manager.store.readInstallation().doc;
         const { applied } = await drive(w.harness, 'update.apply', {});
         expect(applied.result).toMatchObject({ outcome: 'applied', service: { template: 'refreshed' } });
         expect(w.runner.calls.map(call => call.operation)).toEqual(['service.register']);
+        expect(w.runner.calls[0].input).toMatchObject({
+            installationId: before.installationId,
+            codeRoot: before.roots.code,
+            roots: before.roots,
+            layout: before.layout,
+            runtimeUser: w.definition.account.defaultFor({ invoking: 'goobster' })
+        });
+        const after = w.harness.manager.store.readInstallation().doc;
+        expect(after.roots).toEqual(before.roots);
+        expect(after.owned.services).toEqual(before.owned.services);
+        expect(w.entry().installationId).toBe(before.installationId);
         const last = JSON.parse(fs.readFileSync(path.join(w.harness.settings.storeDir, 'update', 'last-apply.json'), 'utf8'));
         expect(last).toMatchObject({ outcome: 'applied', service: { template: 'refreshed' } });
         expect(JSON.stringify(last)).not.toContain(w.harness.root);

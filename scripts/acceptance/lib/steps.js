@@ -187,6 +187,23 @@ async function stepUpdate(cell, step) {
     const from = cell.state.release.version;
     const target = '1.1.0';
     await offerAndStage(cell, step, target);
+    // Set an account preference distinct from the instance default before replacing code.
+    await cell.portalLogin();
+    const settings = await cell.portalGet('/api/app/settings');
+    check(settings.status === 200 && settings.json?.sections?.appearance, 'could not read account settings before the update');
+    const saved = await fetch(cell.portal('/api/app/settings/appearance'), {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', cookie: cell.cookie },
+        body: JSON.stringify({ expectedRevision: settings.json.sections.appearance.revision, changes: { theme: 'dark', enterToSend: false } }),
+        signal: AbortSignal.timeout(30_000)
+    });
+    check(saved.status === 200, `saving the account preference answered ${saved.status}`);
+    await saved.arrayBuffer();
+    const before = await cell.cliStatus(step);
+    const configHash = cell.sha256File(cell.roots.config);
+    const featuresBefore = await cell.api.call('GET', '/features');
+    check(featuresBefore.status === 200 && featuresBefore.json?.features, 'could not read feature selection before the update');
+    const selection = (features) => Object.fromEntries(Object.entries(features).map(([id, f]) => [id, { installed: f.installed, active: f.active }]));
     const applied = await cell.cli(step, ['update', 'apply', '--now', '--json']);
     check(applied.code === 0, `update apply exited ${applied.code}: ${cell.why(applied)}`);
     cell.api.token = null;
@@ -195,6 +212,18 @@ async function stepUpdate(cell, step) {
     await cell.waitHealthy();
     cell.state.release = { ...cell.state.release, version: target };
     await cell.portalLogin();
+    const after = await cell.cliStatus(step);
+    check(JSON.stringify(after.installation.roots) === JSON.stringify(before.installation.roots), 'the update changed custom installation roots');
+    check(after.installation.installationId === before.installation.installationId, 'the update changed installation ownership');
+    check(after.installation.layout === before.installation.layout, 'the update changed the deployment layout');
+    check(JSON.stringify(after.installation.services) === JSON.stringify(before.installation.services), 'the update changed recorded service ownership');
+    check(cell.sha256File(cell.roots.config) === configHash, 'the update changed config or secret bytes');
+    const featuresAfter = await cell.api.call('GET', '/features');
+    check(featuresAfter.status === 200 && featuresAfter.json?.features, 'could not read feature selection after the update');
+    check(JSON.stringify(selection(featuresAfter.json.features)) === JSON.stringify(selection(featuresBefore.json.features)), 'the update changed installed or active features');
+    const preferences = await cell.portalGet('/api/app/settings');
+    check(preferences.status === 200 && preferences.json?.sections?.appearance?.values?.theme === 'dark'
+        && preferences.json.sections.appearance.values.enterToSend === false, 'account preferences did not survive the update');
     const conversations = await cell.conversations();
     check(conversations.length >= cell.state.conversationCount, 'a conversation was lost by the update');
     const config = await configReport(cell);
@@ -203,7 +232,7 @@ async function stepUpdate(cell, step) {
     check(theme && theme.value === DEFAULT_THEME, 'the instance default did not survive the update');
     const turn = await cell.portalChat('Say hello after the update.');
     check(turn.ok && turn.status === 200, 'a chat turn failed after the update');
-    return { result: `${from} -> ${target} through the staged path (check, stage, apply --now; the manager handed over with exit 76 and the new release verified); downtime ${done.lastApply.downtimeMs} ms; data, key, default and chat intact` };
+    return { result: `${from} -> ${target} through the staged path (check, stage, apply --now; the manager handed over with exit 76 and the new release verified); downtime ${done.lastApply.downtimeMs} ms; custom roots, installation identity/layout, config bytes, feature selection, account preferences, data, key, default and chat intact` };
 }
 
 module.exports = { stepUpdate, offerAndStage, waitApplied, updateView, release, describe, stepFeatures, stepDefaultsKeys, stepBootRecovery, gatedBody, signedInGet, configReport, DEFAULT_THEME, KEY_FIELD, path };

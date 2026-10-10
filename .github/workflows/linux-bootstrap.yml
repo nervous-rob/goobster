@@ -111,6 +111,9 @@ jobs:
       - name: Install dependencies (build host only)
         run: npm ci --no-audit --no-fund
 
+      - name: Update service ownership and registration contract on this OS
+        run: npx jest tests/updateService.test.js --runInBand
+
       - name: Build the React client
         run: npm run build:web
 

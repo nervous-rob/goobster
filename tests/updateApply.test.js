@@ -6,12 +6,16 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+
+const dbRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-update-migration-'));
+process.env.GOOBSTER_DB_PATH = path.join(dbRoot, 'test.sqlite');
 
 const wiring = require('@goobster/manager/update/wiring');
 const { drive, codeOf, snapshot, tempDir } = require('./helpers/installFixture');
 const { newKey, makePayload, publish, installBase, supervise, fakeChild, waitFor } = require('./helpers/updateFixture');
 
-const roots = [];
+const roots = [dbRoot];
 const cleanups = [];
 afterEach(async () => {
     while (cleanups.length) await cleanups.pop()();
@@ -322,13 +326,45 @@ describe('a failure after the new release is active', () => {
         await expect(drive(harness, 'update.stage', {})).resolves.toBeDefined();
     });
 
-    test('a schema-changing release that fails before any worker got past /health is also rolled back', async () => {
+    test('a schema-changing release that fails before /health holds recovery even on its first attempt', async () => {
         const w = await world({ next: { columns: [['users', 'nickname', 'TEXT']] } });
         for (const name of w.names) w.fakes.behave(name, { healthy: false });
         const failure = await apply(w.harness).catch(error => error);
-        expect(failure.code).toBe('UPDATE_ROLLED_BACK');
-        expect(currentId(w.harness)).toBe('2.4.0');
-        expect(barrierOf(w.harness).active).toBe(false);
+        expect(failure.code).toBe('UPDATE_RECOVERY_REQUIRED');
+        expect(currentId(w.harness)).toBe('2.5.0');
+        expect(barrierOf(w.harness).active).toBe(true);
+        expect(update(w.harness, 'recovery')).toMatchObject({ code: 'SCHEMA_CHANGED_DATABASE_IN_USE', target: 'to' });
+    });
+
+    test('a real database migration and pre-health startup failure retain the new schema and all data', async () => {
+        // Runs against the suite's real SQLite or isolated Postgres database in the two-engine CI.
+        // The restart seam performs real DDL/data writes, then reports the pre-health failure.
+        const db = require('@goobster/core/db');
+        await db.run('CREATE TABLE update_recovery_probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+        await db.run('INSERT INTO update_recovery_probe (id, value) VALUES (1, @value)', { value: 'existing data' });
+        const w = await world({ next: { columns: [['update_recovery_probe', 'migrated', 'TEXT']] } });
+        const restart = jest.spyOn(w.supervisor, 'restartAll').mockImplementationOnce(async () => {
+            await db.run('ALTER TABLE update_recovery_probe ADD COLUMN migrated TEXT');
+            await db.run('UPDATE update_recovery_probe SET migrated = @value WHERE id = 1', { value: 'migration committed' });
+            await db.run('INSERT INTO update_recovery_probe (id, value, migrated) VALUES (2, @value, @migration)', { value: 'startup write', migration: 'retained' });
+            return { ok: false, code: 'EXITED_BEFORE_READY', reached: false };
+        });
+        try {
+            expect(await codeOf(apply(w.harness))).toBe('UPDATE_RECOVERY_REQUIRED');
+            expect(restart).toHaveBeenCalledTimes(1); // never restart old code against the new schema
+            expect(currentId(w.harness)).toBe('2.5.0');
+            expect(barrierOf(w.harness)).toMatchObject({ active: true });
+            expect(update(w.harness, 'recovery')).toMatchObject({ cause: 'EXITED_BEFORE_READY', target: 'to' });
+            expect(await db.all('SELECT * FROM update_recovery_probe ORDER BY id')).toEqual([
+                { id: 1, value: 'existing data', migrated: 'migration committed' },
+                { id: 2, value: 'startup write', migrated: 'retained' }
+            ]);
+            expect(await wiring.applier(w.harness.settings.storeDir).resume()).toMatchObject({ outcome: 'recovery' });
+            expect(restart).toHaveBeenCalledTimes(1);
+        } finally {
+            restart.mockRestore();
+            await db.run('DROP TABLE update_recovery_probe');
+        }
     });
 
     test('a schema-changing release that got past /health and then failed holds the barrier and waits for a decision', async () => {
