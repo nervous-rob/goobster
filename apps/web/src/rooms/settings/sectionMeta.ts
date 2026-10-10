@@ -119,7 +119,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'chat', fieldId: 'thoughtful', label: 'Thoughtful Mode', keywords: ['thoughtful', 'thinking', 'deeper', 'reasoning', 'preset'] },
     { section: 'chat', fieldId: 'provider', label: 'Model platform', keywords: ['provider', 'platform', 'openai', 'anthropic', 'claude', 'gemini', 'ollama', 'local'] },
     { section: 'chat', fieldId: 'model', label: 'Model', keywords: ['model', 'gpt', 'claude', 'gemini', 'llama'] },
-    { section: 'chat', fieldId: 'reasoning', label: 'Reasoning effort', keywords: ['reasoning', 'effort', 'thinking', 'minimal', 'low', 'medium', 'high'] },
+    { section: 'chat', fieldId: 'reasoning', label: 'Reasoning effort', keywords: ['reasoning', 'effort', 'thinking', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
     { section: 'chat', fieldId: 'reply-tokens', label: 'Reply length budget', keywords: ['tokens', 'max tokens', 'reply length', 'budget'] },
     { section: 'chat', fieldId: 'sampling', label: 'Sampling', keywords: ['temperature', 'top p', 'sampling', 'creativity'] },
     { section: 'chat', fieldId: 'parlor-model', label: 'Parlor model default', keywords: ['parlor', 'persona model', 'private parlor'] },

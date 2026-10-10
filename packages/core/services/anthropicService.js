@@ -46,8 +46,9 @@ class AnthropicService {
     }
 
     /**
-     * Set a default reasoning effort ('minimal'|'low'|'medium'|'high'|null)
-     * applied when the caller doesn't specify one (parity with OpenAI).
+     * Set a default reasoning effort ('minimal'|'low'|'medium'|'high'|'xhigh'|'max'|null)
+     * applied when the caller doesn't specify one (parity with OpenAI). The
+     * model registry decides which levels a given model accepts.
      */
     setDefaultReasoningEffort(effort) {
         this.defaultReasoningEffort = effort || null;

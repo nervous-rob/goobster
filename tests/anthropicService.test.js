@@ -241,6 +241,31 @@ describe('AnthropicService', () => {
         expect(body.max_tokens).toBe(500 + 24576);
     });
 
+    test('serializes the xhigh and max effort levels and bounds the budget by the reviewed output limit', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ content: [{ type: 'text', text: 'ok' }], usage: {} })
+        });
+
+        const service = createService();
+        await service.chat('deep', { model: 'claude-fable-5-1', reasoning_effort: 'max', max_tokens: 500 });
+        let body = JSON.parse(global.fetch.mock.calls[0][1].body);
+        expect(body.output_config).toEqual({ effort: 'max' });
+        expect(body.max_tokens).toBe(500 + 65536);
+        expect(body.temperature).toBeUndefined();
+
+        await service.chat('deeper', { model: 'claude-sonnet-5', reasoning_effort: 'xhigh', max_tokens: 500 });
+        body = JSON.parse(global.fetch.mock.calls[1][1].body);
+        expect(body.output_config).toEqual({ effort: 'xhigh' });
+        expect(body.max_tokens).toBe(500 + 49152);
+
+        // Visible budget plus the max allowance never exceeds the model's maxOutputTokens
+        await service.chat('long', { model: 'claude-opus-5-5', reasoning_effort: 'max', max_tokens: 100000 });
+        body = JSON.parse(global.fetch.mock.calls[2][1].body);
+        expect(body.output_config).toEqual({ effort: 'max' });
+        expect(body.max_tokens).toBe(128000);
+    });
+
     test('streams SSE events, reports deltas, and assembles tool inputs', async () => {
         const encoder = new TextEncoder();
         const events = [

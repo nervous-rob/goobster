@@ -1,7 +1,7 @@
 # ADR 0011: Model compatibility is deployment policy
 
 Date: 2026-09-22
-Status: Implemented; extended with live provider-default models (2026-10-09)
+Status: Implemented; extended with live provider-default models (2026-10-09) and the full Claude effort range (2026-10-10)
 
 ## Problem
 
@@ -57,9 +57,24 @@ review date. Registry version 1 is exposed by the API.
 Profiles reuse serialization behavior; model entries can narrow it. The fields
 represent the **Goobster adapter contract**. For example, Haiku's underlying
 extended-thinking capability is not exposed as an effort control by this adapter.
-Claude's initial effort controls are the low/medium/high subset implemented here.
+The `claude-adaptive` profile exposes all five Claude effort levels (low, medium,
+high, xhigh, max), reviewed on 2026-10-10 against Anthropic's effort
+documentation, which lists `max` and `xhigh` for every model the catalog
+registers on that profile (Sonnet 5, Fable 5, Fable 5.1, Opus 5.5). Each entry
+keeps its documented default: high, except medium on Opus 5.5. A future entry
+for a model that supports `max` but not `xhigh` (Opus 4.6, Sonnet 4.6) must
+narrow the profile per entry rather than widen a shared list. Haiku 4.5 stays on
+`claude-standard` with no effort control.
 Unknown token limits and pricing are null; they are never represented as zero,
 unlimited, free, or an invented estimate.
+
+Thoughtful Mode stays pinned at `high` on every provider, including Claude. The
+preset is a chat latency tier, not a maximum-quality tier: `xhigh` and `max`
+add 49k and 65k tokens of output allowance per reply and, on Fable, can turn a
+single chat turn into a multi-minute wait. A person who wants more can pick
+Xhigh or Max explicitly in Settings → Chat & models or `/aisettings`; the
+Thoughtful toggle and its detection (`model === thoughtfulModel && effort ===
+'high'`) are unchanged.
 
 Reasoning contains allowed levels, the effective default for budget accounting,
 and explicit translations of legacy values (such as minimal to low). Sampling is
