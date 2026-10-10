@@ -369,11 +369,12 @@ test.describe('Host operator pages, keyboard only', () => {
         await expect(colleague.getByRole('button', { name: 'Make operator' })).toBeVisible();
 
         // Another confirm, closed with its Cancel button by Enter: no reset link is issued.
-        await press(page, colleague.getByRole('button', { name: 'Reset link' }), 'Enter');
+        const resetLink = colleague.getByRole('button', { name: 'Reset link' });
+        await press(page, resetLink, 'Enter');
         await expect(page.getByRole('dialog')).toBeVisible();
         await press(page, page.getByRole('dialog').getByRole('button', { name: 'Cancel' }), 'Enter');
         await expect(page.getByRole('dialog')).toHaveCount(0);
-        await expect(makeOperator).toBeFocused();
+        await expect(resetLink).toBeFocused();
         await expect(page.getByText('Reset link for native-colleague')).toHaveCount(0);
     });
 
