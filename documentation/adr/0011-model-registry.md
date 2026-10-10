@@ -200,7 +200,7 @@ each labelled in the picker (`guess` on the public descriptor):
    probably good for, what is uncertain, and - only when a page was read - the
    controls the page states: context window, output limit, image input, web
    search, effort support and levels, sampling. Effort levels are clamped to
-   what the adapter implements for that provider (Claude: low/medium/high);
+   what the adapter implements for that provider (Claude: low through max);
    a page cannot widen the adapter contract. The row in `model_profile_guesses`
    (`evidence` `docs` or `name`, `sourceUrl`, `controlsJson`) is written once,
    decorates every later listing, and its controls overlay the registry fallback
