@@ -494,6 +494,7 @@ const tutorials = {
  */
 const tables = {
     exact: {
+        user_ai_connections: 'core',
         users: 'core',
         prompts: 'core',
         conversations: 'core',

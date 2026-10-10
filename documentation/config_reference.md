@@ -30,6 +30,7 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `ai.openai.apiKey` | secret | env `OPENAI_API_KEY`<br>config.json `openaiKey` | none | restart | core | OpenAI API key. |
 | `ai.anthropic.apiKey` | secret | env `ANTHROPIC_API_KEY`<br>config.json `anthropicKey` | none | restart | core | Anthropic API key. |
 | `ai.gemini.apiKey` | secret | env `GEMINI_API_KEY`<br>config.json `googleAIKey` | none | restart | core | Google Gemini API key. |
+| `ai.personalEndpointHosts` | list | env `GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS`<br>config.json `ai.personalEndpointHosts` | `[]` | restart | core | Additional trusted public HTTPS hosts for personal AI completion endpoints; OpenRouter is allowed by default. |
 
 ## AI models
 

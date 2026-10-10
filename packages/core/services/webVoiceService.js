@@ -186,6 +186,13 @@ class WebVoiceService {
         return { stt, tts, live };
     }
 
+    async capabilitiesFor(userId) {
+        const personal = require('./personalAiService');
+        const [stt, tts] = await Promise.all([personal.selection(userId, 'transcription'), personal.selection(userId, 'speech')]);
+        const host = this.capabilities();
+        return { ...host, stt: Boolean(stt) || host.stt, tts: Boolean(tts) || host.tts };
+    }
+
     /**
      * The ElevenLabs voice library, for the voice-picker UI.
      * @returns {Promise<{ voices: Array<{id: string, name: string, category: string|null}> }>}
@@ -295,6 +302,13 @@ class WebVoiceService {
 
         await this._checkRateLimit('web_voice_stt', userId, STT_RATE_LIMIT, 'transcriptions');
 
+        const personal = require('./personalAiService');
+        const selection = await personal.selection(userId, 'transcription');
+        if (selection) {
+            const wav = ['audio/wav', 'audio/x-wav'].includes(mime) ? buffer : await require('../utils/audioToWav').audioToWav(buffer);
+            return personal.transcribe(selection, wav, 'audio/wav');
+        }
+
         const transcription = this._transcription();
         let configured = false;
         try {
@@ -380,6 +394,10 @@ class WebVoiceService {
         if (accent) speakable = applyAccentTag(speakable, accent);
 
         await this._checkRateLimit('web_voice_tts', userId, TTS_RATE_LIMIT, 'read-alouds');
+
+        const personal = require('./personalAiService');
+        const selection = await personal.selection(userId, 'speech');
+        if (selection) return personal.speech(selection, speakable);
 
         // The user's saved voice (their dm scope), unless explicitly overridden
         let voice = voiceId;

@@ -112,6 +112,7 @@ const GROUPS = [
             'agentLoopObservatory',
             'agentOrchestrator',
             'aiModelListing',
+            'personalAiService',
             'anthropicService',
             'chatHandlerAgentTurn',
             'dmChat',

@@ -4,18 +4,33 @@ import type { ModelCatalog, ModelDescriptor } from '../lib/types';
 
 export function useModelCatalog(provider: string | undefined, workflow: 'chat' | 'parlor' | 'research') {
     const [state, setState] = useState<{ key: string; catalog: ModelCatalog | null; error: string | null } | null>(null);
+    const [refreshVersion, setRefreshVersion] = useState(0);
+    const [refreshing, setRefreshing] = useState(false);
     const key = `${provider || ''}:${workflow}`;
     useEffect(() => {
         let cancelled = false;
-        api.modelCatalog(provider, workflow).then(catalog => {
-            if (!cancelled) setState({ key, catalog, error: null });
-        }).catch((error: Error) => {
-            if (!cancelled) setState({ key, catalog: null, error: error.message });
-        });
-        return () => { cancelled = true; };
-    }, [key, provider, workflow]);
+        let pending = false;
+        const load = async (refresh = false) => {
+            if (pending) return;
+            pending = true;
+            setRefreshing(true);
+            try {
+                const catalog = await api.modelCatalog(provider, workflow, refresh);
+                if (!cancelled) setState({ key, catalog, error: null });
+            } catch (error) {
+                if (!cancelled) setState(prior => ({ key, catalog: prior?.key === key ? prior.catalog : null, error: (error as Error).message }));
+            } finally {
+                pending = false;
+                if (!cancelled) setRefreshing(false);
+            }
+        };
+        void load(refreshVersion > 0);
+        const timer = window.setInterval(() => { void load(); }, 10 * 60 * 1000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [key, provider, workflow, refreshVersion]);
     // Never display another provider's entries while this one loads.
-    return state?.key === key ? { ...state, loading: false } : { catalog: null, error: null, loading: true };
+    return { ...(state?.key === key ? { ...state, loading: false } : { catalog: null, error: null, loading: true }),
+        refreshing, refresh: () => setRefreshVersion(version => version + 1) };
 }
 
 export function findModel(catalog: ModelCatalog | null, id: string) {
@@ -51,6 +66,7 @@ function ModelDetails({ model }: { model: ModelDescriptor }) {
                 {model.capabilities.nativeSearchExcludedEfforts?.length && <p className="hint">Built-in search is unavailable at {model.capabilities.nativeSearchExcludedEfforts.join(', ')} reasoning.</p>}
                 {model.checkedAt && <p className="hint">Compatibility reviewed {model.checkedAt}. Provider access and quotas can vary.</p>}
                 {model.status === 'custom' && <p className="hint">Compatibility profile supplied by the host operator.</p>}
+                {model.status === 'discovered' && <p className="hint">Uses provider defaults. Advanced capabilities and limits are unverified.</p>}
                 {model.sources[0] && <a href={model.sources[0]} target="_blank" rel="noreferrer">Provider documentation</a>}
             </div>}
         </div>
@@ -61,7 +77,7 @@ export function ModelPicker({ id, label, value, defaultModel, onChange, state }:
     id: string; label: string; value: string; defaultModel?: string | null;
     onChange: (id: string) => void; state: ReturnType<typeof useModelCatalog>;
 }) {
-    const { catalog, error, loading } = state;
+    const { catalog, error, loading, refreshing, refresh } = state;
     const selected = findModel(catalog, value || defaultModel || '');
     const savedOnly = Boolean(value && !catalog?.models.some(model => model.id === value));
     const unavailable = catalog && ['stale', 'unavailable'].includes(catalog.discovery.status);
@@ -73,11 +89,14 @@ export function ModelPicker({ id, label, value, defaultModel, onChange, state }:
                 {savedOnly && <option value={value}>{value} (saved)</option>}
                 {(catalog?.models || []).filter(model => model.selectable || model.id === value).map(model => (
                     <option key={model.id} value={model.id} disabled={!model.selectable}>
-                        {model.displayName}{model.status === 'preview' ? ' · Preview' : model.status === 'custom' ? ' · Custom' : ''}
+                        {model.displayName}{model.status === 'preview' ? ' · Preview' : model.status === 'custom' ? ' · Custom' : model.status === 'discovered' ? ' · API model' : ''}
                         {!model.selectable ? ' · Not listed' : ''}
                     </option>
                 ))}
             </select>
+            <button type="button" className="btn secondary" aria-label={`Refresh ${label.toLowerCase()} list`}
+                disabled={loading || refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh models'}</button>
+            {catalog?.discovery.checkedAt && <span className="hint">Last checked {new Date(catalog.discovery.checkedAt).toLocaleString()}</span>}
             {loading && <span className="hint" role="status">Loading model catalog…</span>}
             {(error || unavailable) && <p className="hint" role="status">Live model listing unavailable. Saved choices are preserved; availability is unverified.</p>}
             {!loading && catalog && !selected && <p className="hint" role="status">This model has no supported profile. Choose a listed model or ask the host operator to add it.</p>}

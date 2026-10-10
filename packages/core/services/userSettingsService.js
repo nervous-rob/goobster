@@ -231,6 +231,7 @@ class UserSettingsService {
             providers,
             thoughtfulAvailable: Boolean(preset)
         };
+        chatSection.personalAi = await require('./personalAiService').settings(userId);
 
         // --- 3. Voice Section ---
         const voiceSpeed = voiceCurrent.speed != null ? Number(voiceCurrent.speed) : 1.0;
@@ -400,7 +401,7 @@ class UserSettingsService {
         let voiceCaps = { stt: false, tts: false, liveVoice: false };
         try {
             if (voice && typeof voice.capabilities === 'function') {
-                const caps = voice.capabilities();
+                const caps = voice.capabilitiesFor ? await voice.capabilitiesFor(userId) : voice.capabilities();
                 voiceCaps = { stt: Boolean(caps.stt), tts: Boolean(caps.tts), liveVoice: Boolean(caps.live) };
             } else {
                 const aiConfig = require('../config/aiConfig');

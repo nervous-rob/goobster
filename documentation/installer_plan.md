@@ -844,3 +844,15 @@ and verified backup. This replaces the direct relocation service call in the
 proof. Local backup/restore and credential-argument tests pass on SQLite; native
 PostgreSQL and distribution results remain pending the expanded hosted workflow.
 No #340 acceptance checkbox is closed by adding an unrun proof.
+
+
+### Native interruption qualification follow-up (#331–#333)
+
+The native bootstrap jobs now include real service-helper interruption/retry and
+browser-closure checks through `scripts/native-service-recovery-proof.js`.
+Windows registration retries finish recovery-policy and service-SID setup even
+when the previous helper stopped immediately after `sc create`. Local helper
+regressions pass; the new native journeys still need hosted results. No platform
+acceptance checkbox is closed by adding these checks. Toolchain-free hosts,
+physical reboot/login behavior, macOS pkg reproducibility and signing remain
+separate requirements.

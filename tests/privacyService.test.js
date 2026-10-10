@@ -25,6 +25,9 @@ const OTHER = '100000000000000002';  // must remain untouched
 const GUILD = '200000000000000001';
 
 async function seed() {
+    for (const userId of [USER, OTHER]) await db.run(`INSERT INTO user_ai_connections
+        (userId, completionUrl, encryptedKey, enabled, modelsJson)
+        VALUES (@userId, 'https://openrouter.ai/api/v1/chat/completions', 'ciphertext', 1, '{"chat":"vendor/chat"}')`, { userId });
     // users / conversations / messages / prompts (internal integer ids)
     await db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('rob', @id, 'rob')`, { id: USER });
     await db.run(`INSERT INTO users (discordUsername, discordId, username) VALUES ('alice', @id, 'alice')`, { id: OTHER });
@@ -276,6 +279,12 @@ describe('forgetUser', () => {
         expect(counts.nicknames).toBe(1);
         expect(counts.preferences).toBe(1);
         expect(counts.profile).toBe(1);
+    });
+
+    test('erases only the forgotten account personal AI credential and assignments', async () => {
+        expect(counts.personalAiConnections).toBe(1);
+        expect(await db.get('SELECT userId FROM user_ai_connections WHERE userId = @userId', { userId: USER })).toBeUndefined();
+        expect(await db.get('SELECT userId FROM user_ai_connections WHERE userId = @userId', { userId: OTHER })).toBeDefined();
     });
 
     test('deletes unified settings and revision records, leaving other users intact', async () => {
