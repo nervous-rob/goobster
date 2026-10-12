@@ -15,6 +15,8 @@ const { spawnSync } = require('node:child_process');
 const { GROUPS, groupById, resolveEngine } = require('../tests/ciGroups');
 
 const ROOT = path.join(__dirname, '..');
+// Lines of a failure message kept in the summary (the rest is in the Jest output).
+const FAILURE_MESSAGE_LINES = 12;
 const groupId = process.argv[2];
 
 if (!groupId) {
@@ -90,8 +92,6 @@ for (const failure of record.failures) {
 }
 
 process.exit(result.status === null ? 1 : result.status);
-
-const FAILURE_MESSAGE_LINES = 12;
 
 /** `[{ file, name, message }]` for every failed assertion and suite-level error in a Jest JSON report. */
 function collectFailures(report) {
