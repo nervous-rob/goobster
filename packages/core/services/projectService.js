@@ -15,8 +15,8 @@
  * services/sandboxService.js with all of its guardrails (isolation ladder,
  * rlimits, scrubbed env, wall-clock timeout, concurrency cap); the ONLY
  * addition is that a project's workspace directory is bind-mounted
- * read-write beside the throwaway run dir and exposed to the snippet as
- * $GOOBSTER_PROJECT_DIR.
+ * read-write and exposed to the snippet as $GOOBSTER_PROJECT_DIR, and its
+ * scratch/ folder is the run's persistent working directory (and /tmp).
  *
  * Background jobs are "many small legal runs, not one lawless big one": a
  * job runs the same snippet in segments, each a normal sandbox run holding a
@@ -62,6 +62,7 @@ const {
     CHECKPOINT_FILE,
     FRAMES_DIR,
     RUNS_DIR,
+    SCRATCH_DIR,
     layoutReminder,
     auditProjectSetup,
     formatSetupAuditText
@@ -2243,6 +2244,15 @@ class ObservatoryService {
         );
     }
 
+    /**
+     * The project's persistent working directory: cwd, HOME and (under
+     * bwrap) /tmp for every run and job. Inside the workspace on purpose,
+     * so it is quota-counted, browsable, and deleted with the project.
+     */
+    _scratchDir(projectDir) {
+        return path.join(projectDir, SCRATCH_DIR);
+    }
+
     /** Per-job run tree: `runs/<jobId>/` under the project workspace. */
     _runDir(projectDir, jobId) {
         return path.join(projectDir, RUNS_DIR, String(jobId));
@@ -2437,6 +2447,7 @@ class ObservatoryService {
                 }
                 const result = await this.sandbox.run({
                     language, code, stdin, userId, projectDir: row.dir,
+                    scratchDir: this._scratchDir(row.dir),
                     signal: handle.controller.signal
                 });
                 if (!(await this._ownsLease(job.id, leaseToken))) {
@@ -2747,6 +2758,7 @@ class ObservatoryService {
                     userId: job.segments === 0 ? job.userId : null,
                     projectDir,
                     runDir: this._runDir(projectDir, job.id),
+                    scratchDir: this._scratchDir(projectDir),
                     signal
                 });
             } catch (error) {

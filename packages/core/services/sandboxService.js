@@ -29,7 +29,9 @@
  *     data/sandbox/sessions that survives between turns until it sits idle
  *     past `sessionRetentionHours`; the files each run produced are still
  *     snapshotted into its own run dir, so delivered attachments never
- *     change underneath a message.
+ *     change underneath a message. A project run passes `scratchDir`
+ *     instead: the same persistent workspace, but inside the project tree,
+ *     so it lives (and is quota-counted and deleted) with the project.
  *
  * Concurrency and per-user rate limits are enforced in-memory on the
  * process that actually executes (the optional sandbox-runner service
@@ -689,6 +691,24 @@ class SandboxService {
         return files.slice(0, maxOutputFiles).map(({ mtime, ...rest }) => rest);
     }
 
+    /**
+     * A persistent workspace (and its tmp/) is writable by the snippets that
+     * run in it, so a previous run may have swapped either for a symlink to
+     * a host path; bwrap's --bind and our own writes would follow it. Make
+     * `dir` a real directory (a planted link or file is removed - the link
+     * itself, never its target) and refuse when any ancestor resolves
+     * elsewhere.
+     */
+    _ensureRealDir(dir) {
+        let stat = null;
+        try { stat = fs.lstatSync(dir); } catch { /* absent */ }
+        if (stat && !stat.isDirectory()) fs.rmSync(dir, { force: true });
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        if (fs.realpathSync(dir) !== path.resolve(dir) || !fs.lstatSync(dir).isDirectory()) {
+            throw new SandboxError(400, 'BAD_WORKSPACE', 'The sandbox workspace path is not a plain directory.');
+        }
+    }
+
     /** name -> { mtimeMs, size } of the top-level files in a workspace. */
     _snapshotFiles(workdir) {
         const seen = new Map();
@@ -812,6 +832,9 @@ class SandboxService {
      * @param {string} [params.sessionKey] - a conversation workspace
      *   (sessionKeyFor): the run's working directory and /tmp persist across
      *   calls with the same key instead of being thrown away.
+     * @param {string} [params.scratchDir] - a project's persistent working
+     *   directory (cwd, HOME, /tmp under bwrap); must lie inside projectDir.
+     *   Never pruned here: it lives and dies with the project.
      * @returns {Promise<{
      *   ok:boolean, exitCode:number|null, signal:string|null, timedOut:boolean,
      *   aborted:boolean, stdout:string, stderr:string,
@@ -899,14 +922,14 @@ class SandboxService {
         }
     }
 
-    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, sessionKey = null, signal = null } = {}) {
+    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, sessionKey = null, scratchDir = null, signal = null } = {}) {
         if (features.enforcedOff('sandbox')) throw this._featureUnavailable();
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
         const runnerUrl = String(process.env.GOOBSTER_SANDBOX_URL || '').replace(/\/+$/, '');
         if (runnerUrl && !this.config.forceLocal) {
-            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, sessionKey, signal });
+            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, sessionKey, scratchDir, signal });
         }
         const langKey = this._normalizeLanguage(language);
         if (!langKey) {
@@ -926,6 +949,14 @@ class SandboxService {
         }
         if (sessionKey !== null && (typeof sessionKey !== 'string' || !SESSION_KEY_RE.test(sessionKey))) {
             throw new SandboxError(400, 'BAD_SESSION', 'sessionKey must come from sessionKeyFor().');
+        }
+        if (scratchDir !== null) {
+            const resolved = path.resolve(String(scratchDir));
+            if (sessionKey !== null || projectDir === null || !path.isAbsolute(String(scratchDir))
+                || !resolved.startsWith(`${path.resolve(projectDir)}${path.sep}`)) {
+                throw new SandboxError(400, 'BAD_SCRATCH_DIR',
+                    'scratchDir must be an absolute directory inside projectDir.');
+            }
         }
         if (this._active >= this.config.maxConcurrent) {
             throw new SandboxError(429, 'BUSY', 'The sandbox is busy running other code - try again shortly.');
@@ -971,40 +1002,51 @@ class SandboxService {
             releaseProject = acquireProjectExec(projectDir);
             const runId = crypto.randomBytes(8).toString('hex');
             const runPath = path.join(this._runsRoot(), runId);
-            // A conversation workspace persists between runs (one at a time,
-            // same lock as a project); otherwise the run dir IS the workdir.
-            const workdir = sessionKey ? path.join(this._sessionsRoot(), ...sessionKey.split('/')) : runPath;
-            const releaseSession = sessionKey
-                ? acquireProjectExec(workdir, 'The sandbox is already running code in this conversation.')
+            // A conversation or project workspace persists between runs (one
+            // at a time, same lock as a project); otherwise the run dir IS
+            // the workdir.
+            const persistentDir = sessionKey
+                ? path.join(this._sessionsRoot(), ...sessionKey.split('/'))
+                : (scratchDir ? path.resolve(scratchDir) : null);
+            const workdir = persistentDir || runPath;
+            const releaseSession = persistentDir
+                ? acquireProjectExec(workdir, 'The sandbox is already running code in this workspace.')
                 : () => {};
             const prevRelease = releaseProject;
             releaseProject = () => { releaseSession(); prevRelease(); };
             const tmpdir = path.join(workdir, 'tmp');
-            const sourceFile = sessionKey ? `${SESSION_SOURCE_PREFIX}${path.extname(lang.file)}` : lang.file;
+            const sourceFile = persistentDir ? `${SESSION_SOURCE_PREFIX}${path.extname(lang.file)}` : lang.file;
 
-            fs.mkdirSync(tmpdir, { recursive: true });
+            if (persistentDir) {
+                this._ensureRealDir(workdir);
+                this._ensureRealDir(tmpdir);
+                // Never follow a source path a previous run planted as a link.
+                fs.rmSync(path.join(workdir, sourceFile), { recursive: true, force: true });
+            } else {
+                fs.mkdirSync(tmpdir, { recursive: true });
+            }
             fs.chmodSync(workdir, 0o700);
-            fs.writeFileSync(path.join(workdir, sourceFile), code, { mode: 0o600 });
+            fs.writeFileSync(path.join(workdir, sourceFile), code, { mode: 0o600, flag: 'wx' });
             // Activity keeps an idle workspace from being pruned.
             if (sessionKey) {
                 const now = new Date();
                 try { fs.utimesSync(workdir, now, now); } catch { /* best effort */ }
             }
-            const before = sessionKey ? this._snapshotFiles(workdir) : null;
+            const before = persistentDir ? this._snapshotFiles(workdir) : null;
 
             const script = this._wrapperScript(workdir, lang.argv(this.config, sourceFile));
-            const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir, sessionKey ? tmpdir : null);
+            const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir, persistentDir ? tmpdir : null);
 
             this._active += 1;
             const startedAt = Date.now();
             try {
                 const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal });
                 let files = this._collectOutputs(workdir, sourceFile, before);
-                if (sessionKey) {
+                if (persistentDir) {
                     try { fs.rmSync(path.join(workdir, sourceFile), { force: true }); } catch { /* best effort */ }
                     files = this._snapshotOutputs(files, runPath);
-                    this._pruneIdleSessions();
                 }
+                if (sessionKey) this._pruneIdleSessions();
                 this._pruneOldRuns();
                 return {
                     ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
@@ -1020,7 +1062,7 @@ class SandboxService {
                     durationMs: Date.now() - startedAt,
                     isolation,
                     language: langKey,
-                    persistent: Boolean(sessionKey),
+                    persistent: Boolean(persistentDir),
                     files
                 };
             } finally {
@@ -1037,7 +1079,7 @@ class SandboxService {
      * Proxy a run to the dedicated sandbox-runner (Phase 5d). The runner
      * shares the data volume, so projectDir paths resolve the same way.
      */
-    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, sessionKey = null, signal }) {
+    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, sessionKey = null, scratchDir = null, signal }) {
         const axios = require('axios');
         const token = process.env.GOOBSTER_INTERNAL_TOKEN;
         if (!token) {
@@ -1072,7 +1114,7 @@ class SandboxService {
         }
         try {
             const response = await axios.post(`${runnerUrl}/run`, {
-                language, code, stdin, userId, projectDir, runDir, sessionKey, runId
+                language, code, stdin, userId, projectDir, runDir, sessionKey, scratchDir, runId
             }, {
                 headers: { 'x-goobster-internal-token': token },
                 timeout: (this.config.timeoutMs || 30_000) + 5_000,

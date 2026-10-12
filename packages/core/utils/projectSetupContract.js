@@ -15,6 +15,8 @@ const RUN_DIR_ENV = 'GOOBSTER_RUN_DIR';
 const CHECKPOINT_FILE = 'checkpoint.json';
 const FRAMES_DIR = 'frames';
 const RUNS_DIR = 'runs';
+/** The project's persistent working directory (cwd, HOME, /tmp) for every run and job. */
+const SCRATCH_DIR = 'scratch';
 const FRAME_EXAMPLE = 'frame_0001.png';
 
 const checkpointPath = `$${RUN_DIR_ENV}/${CHECKPOINT_FILE}`;
@@ -34,7 +36,9 @@ function longJobConventionText() {
         + 'budget). Numbered frames saved to '
         + `${frameExamplePath} (and so on) are `
         + 'stitched into a video automatically when a background job completes. '
-        + `$${PROJECT_DIR_ENV} is the shared project root (inputs and published artifacts).`;
+        + `$${PROJECT_DIR_ENV} is the shared project root (inputs and published artifacts). `
+        + `Every run's working directory and /tmp are the project's ${SCRATCH_DIR}/ folder, which persists `
+        + 'across runs and conversations for as long as the project exists - reuse what earlier runs left there.';
 }
 
 /**
@@ -116,6 +120,7 @@ function createProjectResponse({ name, slug }) {
         + 'background jobs can resume and stitch video. '
         + `Do not put ${CHECKPOINT_FILE} or ${FRAMES_DIR}/ under $${PROJECT_DIR_ENV}; `
         + `new jobs only resume from ${checkpointPath}. `
+        + `Runs start in the project's ${SCRATCH_DIR}/ folder, which (with /tmp) persists between runs. `
         + 'Orient with action "inspect"; audit existing projects with action "audit".';
 }
 
@@ -342,6 +347,7 @@ module.exports = {
     CHECKPOINT_FILE,
     FRAMES_DIR,
     RUNS_DIR,
+    SCRATCH_DIR,
     FRAME_EXAMPLE,
     checkpointPath,
     legacyCheckpointPath,

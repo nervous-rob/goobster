@@ -160,7 +160,10 @@ hash covers the user plus the chat channel — a web conversation's
 ## Persistence (the Observatory)
 
 The conversation workspace is meant for a working session, not for durable
-results. When a user needs state that *survives* indefinitely — long
+results. Project runs use the same mechanism through `scratchDir`: their
+working directory and `/tmp` are the project's `scratch/` folder, shared by
+every conversation on the project and kept for the project's lifetime (see
+`documentation/projects.md`). When a user needs state that *survives* indefinitely — long
 simulations, checkpoints, frame sequences — that is the Observatory's job: named per-user projects whose workspace
 directory is mounted read-write beside the run dir, plus checkpointed
 background jobs and a frame→video render pipeline. See

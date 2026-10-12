@@ -84,15 +84,25 @@ A named, per-user directory at `data/sandbox/projects/<userId>/<slug>/`
 (`PUT`/`DELETE /api/app/projects/:slug/content/*`) land here too — same
 quota, same `legalizeWorkspacePath` helper the reader uses (traversal +
 symlink refusal, workspace-relative only). Every run belonging to the
-project keeps its normal throwaway run directory as its working
-directory, **plus** the workspace:
+project — foreground runs and background job segments alike — works in
+the workspace:
 
 - In bwrap isolation the workspace is bind-mounted **read-write** — the only
-  writable path beyond the run dir. In unshare/rlimits fallback modes the
-  same path is reachable directly.
+  writable path. In unshare/rlimits fallback modes the same path is
+  reachable directly.
 - The snippet finds it via **`$GOOBSTER_PROJECT_DIR`**. Anything written
-  there survives between runs; anything written to the cwd is collected and
-  attached to the chat like a normal `runCode` output, then pruned.
+  there survives between runs.
+- **The working directory is the project's `scratch/` folder**
+  (`SCRATCH_DIR` in `utils/projectSetupContract.js`), and it is also `HOME`,
+  `TMPDIR`, and — under bwrap — `/tmp`. It persists across runs, jobs, and
+  every conversation working on the project, for as long as the project
+  exists: clone a repository or build an environment once and every later
+  run, from any chat or collaborator, starts where the last one stopped.
+  It is never pruned on a timer; it counts toward the project's disk quota,
+  shows in the file explorer, and goes when the project is deleted (or by
+  `/forget-me` for the owner). Files a run creates or changes in it are
+  still attached to the chat like a normal `runCode` output, from a
+  per-run copy. One run at a time per project, as before.
 
 **Orienting from chat.** Prefer observatory action `inspect` (project slug)
 for a one-call overview — mission, assets, triggers, recent jobs with
