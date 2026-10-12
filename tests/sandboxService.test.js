@@ -418,6 +418,41 @@ describe('conversation workspaces', () => {
         expect(after.stdout).not.toMatch(/goobster-run\.py/);
     });
 
+    test('symlinks planted in a workspace are replaced, never followed', async () => {
+        const svc = new SandboxService(makeConfig());
+        const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-host-secret-'));
+        fs.writeFileSync(path.join(outside, 'config.json'), 'TOKEN');
+        try {
+            const sessionKey = key('web:u-session:symlinks');
+            const plant = await svc.run({
+                language: 'bash', sessionKey,
+                code: `rm -rf tmp && ln -s '${outside}' tmp && ln -s '${outside}/config.json' .goobster-run.py`
+            });
+            expect(plant.ok).toBe(true);
+            const next = await svc.run({ language: 'python', sessionKey, code: 'import os; print(os.listdir(os.environ["TMPDIR"]))' });
+            expect(next.ok).toBe(true);
+            expect(next.stdout).not.toContain('config.json');
+            expect(fs.readFileSync(path.join(outside, 'config.json'), 'utf8')).toBe('TOKEN');
+            const dir = path.join(`${SANDBOX_ROOT}-sessions`, ...sessionKey.split('/'));
+            expect(fs.lstatSync(path.join(dir, 'tmp')).isDirectory()).toBe(true);
+
+            const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-scratch-link-'));
+            try {
+                fs.symlinkSync(outside, path.join(projectDir, 'scratch'));
+                const res = await svc.run({
+                    language: 'bash', projectDir, scratchDir: path.join(projectDir, 'scratch'), code: 'ls -A'
+                });
+                expect(res.stdout).not.toContain('config.json');
+                expect(fs.lstatSync(path.join(projectDir, 'scratch')).isDirectory()).toBe(true);
+                expect(fs.readFileSync(path.join(outside, 'config.json'), 'utf8')).toBe('TOKEN');
+            } finally {
+                fs.rmSync(projectDir, { recursive: true, force: true });
+            }
+        } finally {
+            fs.rmSync(outside, { recursive: true, force: true });
+        }
+    });
+
     test('a forged session key is refused', async () => {
         const svc = new SandboxService(makeConfig());
         await expect(svc.run({ language: 'bash', code: 'true', sessionKey: '../../etc' }))
@@ -443,6 +478,55 @@ describe('conversation workspaces', () => {
         await svc.run({ language: 'bash', sessionKey: key('busy', 'u-prune'), code: 'true' });
         expect(fs.existsSync(dirOf(key('idle', 'u-prune')))).toBe(false);
         expect(fs.existsSync(dirOf(key('busy', 'u-prune')))).toBe(true);
+    });
+
+    test('a project scratchDir persists cwd and $TMPDIR, inside the project, never pruned', async () => {
+        const svc = new SandboxService(makeConfig({ sessionRetentionHours: 1 }));
+        const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-scratch-project-'));
+        try {
+            const scratchDir = path.join(projectDir, 'scratch');
+            const first = await svc.run({
+                language: 'bash', projectDir, scratchDir,
+                code: 'echo cloned > repo.txt; echo cached > "$TMPDIR/c"; pwd'
+            });
+            expect(first.ok).toBe(true);
+            expect(first.persistent).toBe(true);
+            expect(first.stdout.trim()).toBe(scratchDir);
+            expect(first.files.map(f => f.name)).toEqual(['repo.txt']);
+            expect(path.dirname(first.files[0].path)).toBe(path.join(SANDBOX_ROOT, first.runId));
+
+            const stale = new Date(Date.now() - 48 * 60 * 60 * 1000);
+            fs.utimesSync(scratchDir, stale, stale);
+            const second = await svc.run({
+                language: 'bash', projectDir, scratchDir,
+                code: 'cat repo.txt "$TMPDIR/c"; ls -A'
+            });
+            expect(second.stdout).toContain('cloned\ncached\n');
+            expect(second.stdout).not.toMatch(/goobster-run\.(py|js)/);
+            expect(second.files).toEqual([]);
+            expect(fs.existsSync(path.join(scratchDir, 'repo.txt'))).toBe(true);
+        } finally {
+            fs.rmSync(projectDir, { recursive: true, force: true });
+        }
+    });
+
+    test('scratchDir must sit inside projectDir and excludes a sessionKey', async () => {
+        const svc = new SandboxService(makeConfig());
+        const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-scratch-guard-'));
+        try {
+            for (const params of [
+                { scratchDir: path.join(projectDir, 'scratch') },
+                { projectDir, scratchDir: projectDir },
+                { projectDir, scratchDir: path.join(projectDir, '..', 'elsewhere') },
+                { projectDir, scratchDir: 'scratch' },
+                { projectDir, scratchDir: path.join(projectDir, 'scratch'), sessionKey: key('both') }
+            ]) {
+                await expect(svc.run({ language: 'bash', code: 'true', ...params }))
+                    .rejects.toMatchObject({ code: 'BAD_SCRATCH_DIR', status: 400 });
+            }
+        } finally {
+            fs.rmSync(projectDir, { recursive: true, force: true });
+        }
     });
 
     test('bwrap mounts the workspace tmp over /tmp instead of a tmpfs', () => {

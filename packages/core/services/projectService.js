@@ -15,8 +15,8 @@
  * services/sandboxService.js with all of its guardrails (isolation ladder,
  * rlimits, scrubbed env, wall-clock timeout, concurrency cap); the ONLY
  * addition is that a project's workspace directory is bind-mounted
- * read-write beside the throwaway run dir and exposed to the snippet as
- * $GOOBSTER_PROJECT_DIR.
+ * read-write and exposed to the snippet as $GOOBSTER_PROJECT_DIR, and its
+ * scratch/ folder is the run's persistent working directory (and /tmp).
  *
  * Background jobs are "many small legal runs, not one lawless big one": a
  * job runs the same snippet in segments, each a normal sandbox run holding a
@@ -52,6 +52,8 @@ const { discord, forModule } = require('../utils/optionalModule');
 const requireOptional = forModule(module);
 // Organisation works without the sandbox; only execution needs it.
 const sandboxService = requireOptional('./sandboxService', { feature: 'sandbox' });
+/** The sandbox's hidden per-run source files; never carried into a project. */
+const SESSION_SOURCE_PREFIX = '.goobster-run';
 const { buildDashboard } = require('./observatoryDashboard');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
@@ -62,6 +64,7 @@ const {
     CHECKPOINT_FILE,
     FRAMES_DIR,
     RUNS_DIR,
+    SCRATCH_DIR,
     layoutReminder,
     auditProjectSetup,
     formatSetupAuditText
@@ -2243,6 +2246,70 @@ class ObservatoryService {
         );
     }
 
+    /**
+     * The project's persistent working directory: cwd, HOME and (under
+     * bwrap) /tmp for every run and job. Inside the workspace on purpose,
+     * so it is quota-counted, browsable, and deleted with the project.
+     */
+    _scratchDir(projectDir) {
+        return path.join(projectDir, SCRATCH_DIR);
+    }
+
+    /**
+     * Copy a directory tree (a moved chat's workspace) into the project's
+     * scratch/<folder>/ - regular files and directories only: symlinks,
+     * sockets and devices a snippet left behind are skipped, never
+     * followed. Quota-checked up front against the files that would be
+     * copied. The folder name is made unique within scratch/.
+     * @returns {{ folder: string, files: number }}
+     */
+    importIntoScratch({ projectDir, sourceDir, folderName }) {
+        const files = [];
+        const dirs = [];
+        let bytes = 0;
+        const walk = (dir, rel) => {
+            let entries;
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            for (const entry of entries) {
+                if (entry.name.startsWith(SESSION_SOURCE_PREFIX)) continue;
+                const full = path.join(dir, entry.name);
+                const relPath = path.join(rel, entry.name);
+                if (entry.isDirectory()) {
+                    dirs.push(relPath);
+                    walk(full, relPath);
+                } else if (entry.isFile()) {
+                    try { bytes += fs.lstatSync(full).size; } catch { continue; }
+                    files.push(relPath);
+                }
+            }
+        };
+        walk(sourceDir, '');
+        if (files.length === 0) return { folder: null, files: 0 };
+        const sizeMb = this._dirSizeMb(projectDir) + bytes / (1024 * 1024);
+        if (sizeMb > this.config.maxProjectMb) {
+            throw new ObservatoryError(413, 'QUOTA_EXCEEDED',
+                `The chat's files would put the project over its ${this.config.maxProjectMb} MB quota `
+                + `(${sizeMb.toFixed(1)} MB). Free space in the project first.`);
+        }
+        const scratch = this._scratchDir(projectDir);
+        fs.mkdirSync(scratch, { recursive: true, mode: 0o700 });
+        const base = String(folderName || 'moved-chat').toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'moved-chat';
+        let folder = base;
+        for (let n = 2; fs.existsSync(path.join(scratch, folder)); n++) folder = `${base}-${n}`;
+        const target = path.join(scratch, folder);
+        fs.mkdirSync(target, { mode: 0o700 });
+        for (const rel of dirs) fs.mkdirSync(path.join(target, rel), { recursive: true, mode: 0o700 });
+        let copied = 0;
+        for (const rel of files) {
+            try {
+                fs.copyFileSync(path.join(sourceDir, rel), path.join(target, rel), fs.constants.COPYFILE_EXCL);
+                copied++;
+            } catch { /* raced away */ }
+        }
+        return { folder: `${SCRATCH_DIR}/${folder}`, files: copied };
+    }
+
     /** Per-job run tree: `runs/<jobId>/` under the project workspace. */
     _runDir(projectDir, jobId) {
         return path.join(projectDir, RUNS_DIR, String(jobId));
@@ -2437,6 +2504,7 @@ class ObservatoryService {
                 }
                 const result = await this.sandbox.run({
                     language, code, stdin, userId, projectDir: row.dir,
+                    scratchDir: this._scratchDir(row.dir),
                     signal: handle.controller.signal
                 });
                 if (!(await this._ownsLease(job.id, leaseToken))) {
@@ -2747,6 +2815,7 @@ class ObservatoryService {
                     userId: job.segments === 0 ? job.userId : null,
                     projectDir,
                     runDir: this._runDir(projectDir, job.id),
+                    scratchDir: this._scratchDir(projectDir),
                     signal
                 });
             } catch (error) {
@@ -3426,6 +3495,44 @@ class ObservatoryService {
                 title: conversation.title,
                 ownerId: conversation.ownerId,
                 projectId: conversation.projectId
+            },
+            role: row.role
+        };
+    }
+
+    /**
+     * Every conversation in a project, for any member (the primary one is
+     * created on first look). Collaborators see and join all of them.
+     */
+    async listProjectConversations({ userId, project, owner = null }) {
+        const { conversation, role } = await this.getProjectParlor({ userId, project, owner });
+        const conversations = await require('./parlorService').listProjectConversations(conversation.projectId);
+        return { conversations, role };
+    }
+
+    /** Start another conversation in a project (any member). */
+    async createProjectConversation({ userId, project, owner = null, title = null }) {
+        await this._requireOrganization();
+        const row = await this.resolveProjectForActor({ userId, project, owner });
+        const members = await db.all(
+            'SELECT userId, userName FROM project_members WHERE projectId = @id',
+            { id: row.id }
+        );
+        const created = await require('./parlorService').createProjectConversation({
+            project: { id: row.id, ownerId: row.ownerId, name: row.name },
+            members,
+            title
+        });
+        return {
+            conversation: {
+                id: created.id,
+                title: created.title,
+                ownerId: created.ownerId,
+                projectId: created.projectId,
+                createdAt: created.createdAt,
+                lastMessageAt: created.lastMessageAt,
+                messageCount: 0,
+                primary: false
             },
             role: row.role
         };

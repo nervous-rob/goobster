@@ -100,6 +100,9 @@ const BUILTIN_PERSONA_CHARTER =
     + 'you keep the project\'s shared knowledge, run its scripts and jobs when asked, and '
     + 'report honestly on what happened.';
 const PROJECT_SEAT_TOOL_NAMES = [...PERSONA_TOOL_NAMES, 'observatory'];
+// A project may hold several discussions (the first is its primary one,
+// removed only with the project). Bounded so the list stays a list.
+const MAX_PROJECT_CONVERSATIONS = 100;
 // Real project work (save scripts, run them, read results, wire triggers,
 // audit) is a sequence of steps; a seat cut off at a handful of them
 // leaves the goal undone with no reply explaining why. The seat therefore
@@ -1076,9 +1079,10 @@ class ParlorService {
      */
     async deleteConversation({ ownerId, conversationId }) {
         const conversation = await this._requireConversation(ownerId, conversationId);
-        if (conversation.projectId != null) {
+        if (conversation.projectId != null
+            && (await this.getProjectConversation(conversation.projectId))?.id === conversation.id) {
             throw new ParlorError(400, 'PROJECT_LINKED',
-                'This discussion belongs to a project - delete the project to remove it.');
+                'This is the project\'s main discussion - delete the project to remove it.');
         }
         await db.run('DELETE FROM parlor_conversations WHERE id = @id', { id: conversation.id });
         return { deleted: true };
@@ -1628,13 +1632,74 @@ class ParlorService {
         }
     }
 
-    /** The discussion linked to a project, or null. */
+    /** The project's primary (first) discussion, or null. */
     async getProjectConversation(projectId) {
         return await db.get(
             `SELECT id, title, ownerId, projectId, createdAt, lastMessageAt
-             FROM parlor_conversations WHERE projectId = @projectId`,
+             FROM parlor_conversations WHERE projectId = @projectId
+             ORDER BY id LIMIT 1`,
             { projectId: Number(projectId) }
         ) || null;
+    }
+
+    /**
+     * Every discussion linked to a project, most recently active first.
+     * Caller has already checked that the requester is the owner or a
+     * member (every member is seated in every linked discussion).
+     * @returns {Array<{id, title, ownerId, projectId, createdAt, lastMessageAt, messageCount, primary}>}
+     */
+    async listProjectConversations(projectId) {
+        const rows = await db.all(
+            `SELECT c.id, c.title, c.ownerId, c.projectId, c.createdAt, c.lastMessageAt,
+                    (SELECT COUNT(*) FROM parlor_messages m WHERE m.conversationId = c.id) AS messageCount
+             FROM parlor_conversations c
+             WHERE c.projectId = @projectId
+             ORDER BY COALESCE(c.lastMessageAt, c.createdAt) DESC, c.id DESC`,
+            { projectId: Number(projectId) }
+        );
+        const primaryId = rows.reduce((min, row) => (min === null || row.id < min ? row.id : min), null);
+        return rows.map(row => ({ ...row, messageCount: Number(row.messageCount) || 0, primary: row.id === primaryId }));
+    }
+
+    /**
+     * Start another discussion in a project (any member may): owned by the
+     * project owner like the primary one, Goobster seated, every current
+     * member seated. Caller has already checked access.
+     * @param {Object} params - { project: { id, ownerId, name }, members, title? }
+     */
+    async createProjectConversation({ project, members = [], title = null }) {
+        await this.ensureProjectConversation({ project, members });
+        const count = (await db.get(
+            'SELECT COUNT(*) AS c FROM parlor_conversations WHERE projectId = @projectId',
+            { projectId: project.id }
+        ))?.c || 0;
+        if (Number(count) >= MAX_PROJECT_CONVERSATIONS) {
+            throw new ParlorError(400, 'TOO_MANY_CONVERSATIONS',
+                `A project holds at most ${MAX_PROJECT_CONVERSATIONS} conversations - delete one first.`);
+        }
+        const clean = String(title ?? '').trim().slice(0, MAX_TITLE_LENGTH) || null;
+        return await this._createLinkedConversation({ project, members, title: clean });
+    }
+
+    /** Insert one project-linked discussion with the Goobster seat and the roster. */
+    async _createLinkedConversation({ project, members, title }) {
+        const persona = await this.ensureBuiltinPersona(project.ownerId);
+        const created = await db.transaction(async (tx) => {
+            const row = await tx.get(
+                `INSERT INTO parlor_conversations (ownerId, title, projectId)
+                 VALUES (@ownerId, @title, @projectId)
+                 RETURNING id, title, ownerId, projectId, createdAt, lastMessageAt`,
+                { ownerId: project.ownerId, title, projectId: project.id }
+            );
+            await tx.run(
+                `INSERT INTO parlor_participants (conversationId, personaId)
+                 VALUES (@conversationId, @personaId) ON CONFLICT DO NOTHING`,
+                { conversationId: row.id, personaId: persona.id }
+            );
+            return row;
+        });
+        await this._syncLinkedMembers(created.id, project.ownerId, members);
+        return created;
     }
 
     /**
@@ -1652,27 +1717,9 @@ class ParlorService {
             await this._syncLinkedMembers(existing.id, project.ownerId, members);
             return existing;
         }
-        const persona = await this.ensureBuiltinPersona(project.ownerId);
-        const created = await db.transaction(async (tx) => {
-            const row = await tx.get(
-                `INSERT INTO parlor_conversations (ownerId, title, projectId)
-                 VALUES (@ownerId, @title, @projectId)
-                 RETURNING id, title, ownerId, projectId, createdAt, lastMessageAt`,
-                {
-                    ownerId: project.ownerId,
-                    title: `🔭 ${project.name}`.slice(0, MAX_TITLE_LENGTH),
-                    projectId: project.id
-                }
-            );
-            await tx.run(
-                `INSERT INTO parlor_participants (conversationId, personaId)
-                 VALUES (@conversationId, @personaId) ON CONFLICT DO NOTHING`,
-                { conversationId: row.id, personaId: persona.id }
-            );
-            return row;
+        return await this._createLinkedConversation({
+            project, members, title: `🔭 ${project.name}`.slice(0, MAX_TITLE_LENGTH)
         });
-        await this._syncLinkedMembers(created.id, project.ownerId, members);
-        return created;
     }
 
     /**
@@ -1719,8 +1766,19 @@ class ParlorService {
      * best-effort there, so a failure never breaks the membership change.
      */
     async syncProjectMembership({ projectId, userId, userName = null, present }) {
-        const conversation = await this.getProjectConversation(projectId);
-        if (!conversation) return { synced: false };
+        const conversations = await db.all(
+            'SELECT id, ownerId FROM parlor_conversations WHERE projectId = @projectId',
+            { projectId: Number(projectId) }
+        );
+        if (conversations.length === 0) return { synced: false };
+        for (const conversation of conversations) {
+            await this._syncOneProjectMember({ conversation, userId, userName, present });
+        }
+        return { synced: true };
+    }
+
+    /** Mirror one person in or out of one linked discussion. */
+    async _syncOneProjectMember({ conversation, userId, userName, present }) {
         if (present) {
             await db.run(
                 `INSERT INTO parlor_members (conversationId, userId, userName, invitedBy)
@@ -1746,12 +1804,11 @@ class ParlorService {
             include: [String(userId)],
             extra: { invalidate: [`parlor-members:${conversation.id}`] }
         });
-        return { synced: true };
     }
 
     /**
-     * The project is gone: drop its discussion (messages, seats, and
-     * member rows cascade). Called by projectService.deleteProject.
+     * The project is gone: drop every discussion linked to it (messages,
+     * seats, and member rows cascade). Called by projectService.deleteProject.
      */
     async deleteProjectConversation(projectId) {
         const result = await db.run(
@@ -2507,11 +2564,14 @@ class ParlorService {
      * acting as the discussion owner (whose personas and limits they are).
      * @param {Object} params - { ownerId, ownerName, conversationId, collector, actorId?, actorName? }
      */
-    _buildPersonaToolContext({ ownerId, ownerName, conversationId, collector, actorId = null, actorName = null }) {
+    _buildPersonaToolContext({ ownerId, ownerName, conversationId, collector, actorId = null, actorName = null, project = null }) {
         const channelId = `web:parlor:${ownerId}:${conversationId}`;
         const userId = actorId || ownerId;
         const userName = (actorId ? actorName : ownerName) || `user_${userId}`;
         return {
+            // The Goobster seat at a project table: runCode works in the
+            // project (its workspace and persistent scratch/), as the actor.
+            project,
             guildId: null,
             guild: null,
             member: null,
@@ -2678,7 +2738,8 @@ class ParlorService {
                 // The seat acts as whoever spoke; owner-reserved project
                 // actions stay refused by actor resolution over there.
                 actorId: (projectSeat || turnState.inboxInstructions) ? (turnState.startedBy || ownerId) : null,
-                actorName: (projectSeat || turnState.inboxInstructions) ? (turnState.startedByName || null) : null
+                actorName: (projectSeat || turnState.inboxInstructions) ? (turnState.startedByName || null) : null,
+                project: projectSeat ? { id: linkedProjectId, ownerId } : null
             });
             const toolPolicy = await require('./personalPolicyService').toolPolicy(interactionContext);
             chatOptions.webSearch = toolPolicy.webSearch && aiService.supportsNativeWebSearch(chatOptions.provider, chatOptions.model, chatOptions.reasoning_effort);

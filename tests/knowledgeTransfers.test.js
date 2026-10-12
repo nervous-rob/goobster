@@ -749,6 +749,138 @@ describe('deleting the original (ADR 0010 §4)', () => {
     });
 });
 
+describe('Move a chat into a project (chat -> discussion)', () => {
+    const sandboxSingleton = require('@goobster/core/services/sandboxService');
+    const projectSingleton = require('@goobster/core/services/projectService');
+    let project;
+    let workspace;
+
+    beforeAll(async () => {
+        await svc.createProject({ userId: ROB, name: 'Moves' });
+        const { invite } = await svc.invite({ userId: ROB, project: 'moves', inviteeId: SAM });
+        await svc.respondInvite({ userId: SAM, inviteId: invite.id, accept: true });
+        project = await svc.resolveProjectForActor({ userId: ROB, project: 'moves' });
+    });
+    beforeEach(() => {
+        workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-move-ws-'));
+    });
+    afterEach(() => {
+        jest.restoreAllMocks();
+        fs.rmSync(workspace, { recursive: true, force: true });
+    });
+
+    const move = (cookie, conversationId, body = {}) => request({
+        method: 'POST', reqPath: `/api/app/projects/moves/conversations/from-chat?owner=${ROB}`,
+        headers: { Cookie: cookie },
+        body: { conversationId, requestId: `req-${conversationId}-${Date.now()}`, ...body }
+    });
+
+    test('the transcript and the working files become a project conversation every collaborator reads', async () => {
+        const cookie = await login(ROB, 'rob');
+        const { conversationId } = await seedConversation(ROB, [
+            ['user', 'Clone the repo and count the lines'],
+            ['assistant', 'Cloned it - 1,204 lines.']
+        ], { title: 'Line count' });
+        fs.mkdirSync(path.join(workspace, 'repo'));
+        fs.writeFileSync(path.join(workspace, 'repo', 'main.py'), 'print(1)\n');
+        fs.writeFileSync(path.join(workspace, '.goobster-run.py'), 'leftover');
+        fs.symlinkSync('/etc/passwd', path.join(workspace, 'escape'));
+        const sessionLookup = jest.spyOn(sandboxSingleton, 'sessionDirFor').mockReturnValue(workspace);
+
+        const res = await move(cookie, conversationId);
+        expect(res.status).toBe(200);
+        expect(sessionLookup).toHaveBeenCalledWith(expect.objectContaining({ userId: ROB }));
+        expect(res.json.audience.memberIds).toEqual([ROB, SAM]);
+        expect(res.json.messages).toBe(2);
+        expect(res.json.keptOriginal).toBe(false);
+        expect(res.json.files).toEqual({ folder: 'scratch/line-count', files: 1 });
+        const scratch = path.join(project.dir, 'scratch', 'line-count');
+        expect(fs.readFileSync(path.join(scratch, 'repo', 'main.py'), 'utf8')).toBe('print(1)\n');
+        expect(fs.existsSync(path.join(scratch, 'escape'))).toBe(false);
+        expect(fs.existsSync(path.join(scratch, '.goobster-run.py'))).toBe(false);
+
+        const moved = res.json.conversation;
+        expect(moved).toMatchObject({ title: 'Line count', projectId: project.id, ownerId: ROB });
+        const rows = await db.all(
+            'SELECT role, personaName, content, userId FROM parlor_messages WHERE conversationId = @id ORDER BY id',
+            { id: moved.id }
+        );
+        expect(rows).toEqual([
+            { role: 'user', personaName: null, content: 'Clone the repo and count the lines', userId: ROB },
+            { role: 'persona', personaName: 'Goobster', content: 'Cloned it - 1,204 lines.', userId: null }
+        ]);
+        // Sam, a collaborator, reads it; it is in the project's list.
+        await expect(parlorService.getMessages({ userId: SAM, conversationId: moved.id })).resolves.toBeDefined();
+        const { conversations } = await svc.listProjectConversations({ userId: SAM, project: 'moves', owner: ROB });
+        expect(conversations.map(c => c.id)).toContain(moved.id);
+        // The private chat is gone; the move is on the ledger.
+        await expect(webChatService.getHistory({ userId: ROB, conversationId }))
+            .rejects.toMatchObject({ code: 'NO_SUCH_CONVERSATION' });
+        expect(await db.get(
+            `SELECT sourceKind, targetKind, mode, sourceLabel FROM knowledge_transfers
+             WHERE userId = @u AND sourceConversationId = @c`, { u: ROB, c: conversationId }
+        )).toEqual({ sourceKind: 'chat_message', targetKind: 'discussion', mode: 'copy', sourceLabel: 'Line count' });
+        expect((await transfers.summarizeForUser(ROB)).movedChats).toBeGreaterThanOrEqual(1);
+    });
+
+    test('keepOriginal keeps the chat; a retry replays; a reused requestId elsewhere conflicts', async () => {
+        const cookie = await login(ROB, 'rob');
+        const { conversationId } = await seedConversation(ROB, [['user', 'hi'], ['assistant', 'hello']], { title: 'Keep me' });
+        const body = { keepOriginal: true, requestId: 'move-keep-1' };
+        const first = await move(cookie, conversationId, body);
+        expect(first.status).toBe(200);
+        expect(first.json.keptOriginal).toBe(true);
+        await expect(webChatService.getHistory({ userId: ROB, conversationId })).resolves.toHaveLength(2);
+
+        const again = await move(cookie, conversationId, body);
+        expect(again.status).toBe(200);
+        expect(again.json.replayed).toBe(true);
+        expect(again.json.conversation.id).toBe(first.json.conversation.id);
+        expect((await db.get(
+            `SELECT COUNT(*) AS c FROM parlor_conversations WHERE projectId = @p AND title = 'Keep me'`, { p: project.id }
+        )).c).toBe(1);
+
+        const other = await seedConversation(ROB, [['user', 'x']], { title: 'Other' });
+        const conflict = await move(cookie, other.conversationId, { requestId: 'move-keep-1' });
+        expect(conflict.status).toBe(409);
+        expect(conflict.json.error.code).toBe('REQUEST_CONFLICT');
+    });
+
+    test('strangers, other people\'s chats, empty chats and an over-quota workspace are refused', async () => {
+        const rob = await login(ROB, 'rob');
+        const tia = await login(TIA, 'tia');
+        const { conversationId } = await seedConversation(ROB, [['user', 'secret plan']], { title: 'Secret' });
+
+        const stranger = await request({
+            method: 'POST', reqPath: `/api/app/projects/moves/conversations/from-chat?owner=${ROB}`,
+            headers: { Cookie: tia }, body: { conversationId, requestId: 'tia-1' }
+        });
+        expect(stranger.status).toBe(404);
+        const sam = await login(SAM, 'sam');
+        const notTheirs = await request({
+            method: 'POST', reqPath: `/api/app/projects/moves/conversations/from-chat?owner=${ROB}`,
+            headers: { Cookie: sam }, body: { conversationId, requestId: 'sam-1' }
+        });
+        expect(notTheirs.status).toBe(404);
+        expect(notTheirs.json.error.code).toBe('NO_SUCH_CONVERSATION');
+
+        const empty = await webChatService.createConversation(ROB);
+        const none = await move(rob, empty.id);
+        expect(none.status).toBe(400);
+        expect(none.json.error.code).toBe('EMPTY_CONVERSATION');
+
+        fs.writeFileSync(path.join(workspace, 'big.bin'), Buffer.alloc(1024));
+        jest.spyOn(sandboxSingleton, 'sessionDirFor').mockReturnValue(workspace);
+        jest.spyOn(projectSingleton, '_dirSizeMb').mockReturnValue(1e9);
+        const before = (await db.get('SELECT COUNT(*) AS c FROM parlor_conversations WHERE projectId = @p', { p: project.id })).c;
+        const over = await move(rob, conversationId);
+        expect(over.status).toBe(413);
+        expect(over.json.error.code).toBe('QUOTA_EXCEEDED');
+        expect((await db.get('SELECT COUNT(*) AS c FROM parlor_conversations WHERE projectId = @p', { p: project.id })).c).toBe(before);
+        await expect(webChatService.getHistory({ userId: ROB, conversationId })).resolves.toHaveLength(1);
+    });
+});
+
 describe('privacy paths', () => {
     test('the ledger is on the transparency report, the audit and the erasure path', async () => {
         const summary = await transfers.summarizeForUser(ROB);

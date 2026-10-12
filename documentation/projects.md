@@ -84,15 +84,25 @@ A named, per-user directory at `data/sandbox/projects/<userId>/<slug>/`
 (`PUT`/`DELETE /api/app/projects/:slug/content/*`) land here too — same
 quota, same `legalizeWorkspacePath` helper the reader uses (traversal +
 symlink refusal, workspace-relative only). Every run belonging to the
-project keeps its normal throwaway run directory as its working
-directory, **plus** the workspace:
+project — foreground runs and background job segments alike — works in
+the workspace:
 
 - In bwrap isolation the workspace is bind-mounted **read-write** — the only
-  writable path beyond the run dir. In unshare/rlimits fallback modes the
-  same path is reachable directly.
+  writable path. In unshare/rlimits fallback modes the same path is
+  reachable directly.
 - The snippet finds it via **`$GOOBSTER_PROJECT_DIR`**. Anything written
-  there survives between runs; anything written to the cwd is collected and
-  attached to the chat like a normal `runCode` output, then pruned.
+  there survives between runs.
+- **The working directory is the project's `scratch/` folder**
+  (`SCRATCH_DIR` in `utils/projectSetupContract.js`), and it is also `HOME`,
+  `TMPDIR`, and — under bwrap — `/tmp`. It persists across runs, jobs, and
+  every conversation working on the project, for as long as the project
+  exists: clone a repository or build an environment once and every later
+  run, from any chat or collaborator, starts where the last one stopped.
+  It is never pruned on a timer; it counts toward the project's disk quota,
+  shows in the file explorer, and goes when the project is deleted (or by
+  `/forget-me` for the owner). Files a run creates or changes in it are
+  still attached to the chat like a normal `runCode` output, from a
+  per-run copy. One run at a time per project, as before.
 
 **Orienting from chat.** Prefer observatory action `inspect` (project slug)
 for a one-call overview — mission, assets, triggers, recent jobs with
@@ -618,10 +628,12 @@ from earlier phases stay readable in the Chat pane as history.
 
 ## The project parlor (project chat)
 
-Every project has one shared group discussion — a Parlor conversation
+Every project has shared group discussions — Parlor conversations
 linked to the project (`parlor_conversations.projectId`), rendered as
 the chat dock on the project page and equally usable from the Parlor
-room. Both surfaces render the transcript through the shared
+room. The first one is the project's **main conversation**; any member
+starts more from the dock's **New** button and switches between them with
+its picker. Both surfaces render the transcript through the shared
 `ParlorConversationView` (`apps/web/src/components/ParlorConversationView.tsx`)
 so persona colors, glyphs, grounding chips, and attachments cannot
 drift. The rules (spec §14):
@@ -629,12 +641,21 @@ drift. The rules (spec §14):
 - **Created lazily** on first open (`GET /api/app/projects/:slug/parlor`,
   any member), owned by the project owner, titled `🔭 <project name>`.
   Solo projects get one too — one chat model for every project.
+- **More conversations**: `GET /api/app/projects/:slug/conversations`
+  lists every one (any member; `primary` marks the main one) and
+  `POST` with an optional `title` starts another (any member, at most 100
+  per project; untitled ones are auto-titled from the first message).
+  Each is owned by the project owner, seats Goobster and the whole
+  roster, so **every collaborator sees every conversation** in the
+  project. The owner may rename or delete the extra ones through the
+  normal Parlor routes; the main one goes only with the project.
 - **Membership follows the project**, one way: accepting a project invite
   seats you, leaving or removal unseats you. Direct parlor invites,
   member removal, and deletion are refused on linked discussions
   (`PROJECT_LINKED`), and the roster follows `maxMembersPerProject`
-  rather than the standalone-parlor member cap. Deleting the project
-  deletes the discussion.
+  rather than the standalone-parlor member cap. Membership changes reach
+  every conversation in the project. Deleting the project deletes every
+  one of its conversations.
 - **The Goobster seat**: a per-owner built-in persona
   (`parlor_personas.builtin` — auto-created, undeletable, outside the
   persona cap) holds a permanent seat. At a project table its knowledge
@@ -645,8 +666,12 @@ drift. The rules (spec §14):
 - **Tool powers, actor-bound**: the seat's replies run the shared agent
   loop with the persona toolset **plus the observatory tool**, acting as
   the member who spoke (never the owner) — so owner-reserved project
-  actions stay refused by actor resolution. Generated files land on the
-  reply as attachments. One turn per discussion at a time (the existing
+  actions stay refused by actor resolution. The seat's `runCode` runs
+  **in the project** (`projectService.run`, as the speaker: access check,
+  quota, a job record, the project lock), so its working directory and
+  `/tmp` are the project's persistent `scratch/` — what one conversation
+  built, the next one finds. Generated files land on the reply as
+  attachments. One turn per discussion at a time (the existing
   per-conversation lock).
 - The owner may seat their own personas alongside Goobster (an architect
   or critic joins project chat); those keep their own workspaces.
@@ -666,6 +691,38 @@ notes, tags, and edges land in the project scope with unchanged
 provenance. Any member may launch one; budgets charge the launcher.
 Launch from Knowledge → Research ("into project X") or the project's
 Knowledge tab.
+
+### Moving a chat into a project
+
+A private web chat moves into a project through the chat header's
+**Move to project…** (`POST /api/app/projects/:slug/conversations/from-chat`
+with `{ conversationId, keepOriginal, requestId }`;
+`knowledgeTransferService.moveChatToProject`). It is an explicit transfer
+under [ADR 0010](adr/0010-explicit-transfers.md): nothing routes through a
+model, the dialog names who will read the chat before anything moves, and
+the move is one `knowledge_transfers` row (`chat_message → discussion`,
+`copy`, audience and imported folder in `audienceJson`).
+
+- The transcript becomes a **new conversation in the project**, titled
+  after the chat: the mover's messages stay theirs, the assistant's
+  replies become the project's Goobster seat, timestamps and attached files
+  are kept. Every collaborator reads it, like every project conversation.
+- The chat's sandbox workspace (its `runCode` files) is copied into the
+  project's `scratch/<chat-title>/` - regular files and folders only;
+  symlinks and other special files are skipped, never followed - after a
+  quota check against what would be copied (`QUOTA_EXCEEDED` leaves
+  nothing behind). Goobster finds it there from any project conversation.
+- The private chat is then **deleted** (with its workspace), unless the
+  person ticks *Keep my private copy*. Files the moved transcript still
+  points at are not unlinked with it.
+- Retrying with the same `requestId` returns the first result; reusing it
+  for another chat is `REQUEST_CONFLICT`. Refusals: `NO_SUCH_CONVERSATION`
+  (not the caller's chat), `NO_SUCH_PROJECT` (not a member),
+  `EMPTY_CONVERSATION`, `CONVERSATION_TOO_LONG` (over 2,000 messages).
+  Incognito chats are never saved, so they have nothing to move.
+- Privacy: the transparency report counts moves as `movedChats`. Erasing
+  the mover deletes their ledger rows; the moved conversation is project
+  data and goes with the project.
 
 ### Moving knowledge into a project
 

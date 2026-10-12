@@ -13,9 +13,11 @@ import { personaColor, personaGlyph } from '../parlor/persona';
 
 /**
  * The project parlor dock (§14): a slim view of the project's shared
- * group discussion - every member plus the built-in Goobster seat - on
- * the project page. The full discussion also appears in the Parlor room;
- * this is the same conversation through the same routes.
+ * group discussions - every member plus the built-in Goobster seat - on
+ * the project page. A project holds several conversations (the first is
+ * its primary one); any member switches between them or starts a new one,
+ * and every collaborator sees all of them. Each also appears in the Parlor
+ * room; this is the same conversation through the same routes.
  */
 export function ProjectChatDock({
     slug,
@@ -40,6 +42,12 @@ export function ProjectChatDock({
     const [composer, setComposer] = useState('');
     const [sending, setSending] = useState(false);
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
+    // "Open in project" after moving a chat lands on that conversation.
+    const [selectedId, setSelectedId] = useState<number | null>(() => {
+        const fromUrl = Number(new URLSearchParams(globalThis.location?.search || '').get('conversation'));
+        return Number.isSafeInteger(fromUrl) && fromUrl > 0 ? fromUrl : null;
+    });
+    const [creating, setCreating] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
     const logRef = useRef<HTMLDivElement>(null);
 
@@ -49,7 +57,21 @@ export function ProjectChatDock({
         enabled: open,
         retry: false
     });
-    const conversationId = parlorQ.data?.conversation?.id ?? null;
+    const conversationsKey = ['project-conversations', slug, ownerId || ''];
+    const conversationsQ = useQuery({
+        queryKey: conversationsKey,
+        queryFn: () => api.projectConversations(slug, ownerId),
+        enabled: open && parlorQ.isSuccess,
+        retry: false
+    });
+    const projectConversations = conversationsQ.data?.conversations || [];
+    const isOwner = conversationsQ.data?.role === 'owner';
+    // A selected conversation that disappeared (deleted elsewhere) falls
+    // back to the primary one.
+    const selectionValid = selectedId != null
+        && (!conversationsQ.data || projectConversations.some((c) => c.id === selectedId));
+    const conversationId = (selectionValid ? selectedId : null) ?? parlorQ.data?.conversation?.id ?? null;
+    const selected = projectConversations.find((c) => c.id === conversationId) || null;
     useInboxDraft('project', conversationId, composer, setComposer);
 
     // Same key the Parlor room uses, so parlor-turn invalidation hints
@@ -88,7 +110,46 @@ export function ProjectChatDock({
         setStreamMessages([]);
         await queryClient.invalidateQueries({ queryKey: ['parlor-messages', conversationId] });
         await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+        await queryClient.invalidateQueries({ queryKey: conversationsKey });
         await queryClient.invalidateQueries({ queryKey: keys.observatory });
+    }
+
+    function switchTo(id: number) {
+        if (sending || id === conversationId) return;
+        setStreamMessages([]);
+        setSelectedId(id);
+    }
+
+    async function newConversation() {
+        if (sending || creating) return;
+        setCreating(true);
+        try {
+            const { conversation } = await api.createProjectConversation(slug, ownerId);
+            await queryClient.invalidateQueries({ queryKey: conversationsKey });
+            await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+            setStreamMessages([]);
+            setSelectedId(conversation.id);
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            setCreating(false);
+        }
+    }
+
+    async function deleteSelected() {
+        if (!selected || selected.primary || sending) return;
+        const ok = await confirm(
+            `Delete "${selected.title || 'Untitled conversation'}"? It is removed for everyone on ${projectName}.`
+        );
+        if (!ok) return;
+        try {
+            await api.parlorDeleteConversation(selected.id);
+            setSelectedId(null);
+            await queryClient.invalidateQueries({ queryKey: conversationsKey });
+            await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
     }
 
     const turnHandlers = (fallbackPersonaId?: number) => ({
@@ -181,6 +242,32 @@ export function ProjectChatDock({
                             <span className="hint">Everyone on {projectName}, including Goobster</span>
                         </div>
                         <div className="obs-chat-dock-head-actions">
+                            {projectConversations.length > 0 && (
+                                <select
+                                    className="input"
+                                    aria-label="Project conversation"
+                                    value={conversationId ?? ''}
+                                    disabled={sending}
+                                    onChange={(e) => switchTo(Number(e.target.value))}
+                                >
+                                    {projectConversations.map((c) => (
+                                        <option key={c.id} value={c.id}>
+                                            {(c.title || 'Untitled conversation') + (c.primary ? ' (main)' : '')}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+                            <button
+                                type="button"
+                                className="btn"
+                                disabled={sending || creating || conversationsQ.isPending}
+                                onClick={() => void newConversation()}
+                            >New</button>
+                            {isOwner && selected && !selected.primary && (
+                                <button type="button" className="btn danger" disabled={sending} onClick={() => void deleteSelected()}>
+                                    Delete
+                                </button>
+                            )}
                             {sending && (
                                 <button type="button" className="btn danger" onClick={() => void stop()}>Stop</button>
                             )}

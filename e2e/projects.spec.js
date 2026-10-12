@@ -182,3 +182,45 @@ test('Conversation and People are views (the dock and modal stay secondary); Unf
     await expect(unfiled).toContainText('Unfiled apps');
     await expect(unfiled).toContainText('generated apps only');
 });
+
+test('a project holds several conversations: start a new one, then switch back to the main one', async ({ page }) => {
+    await page.goto(`${MINE}/conversation`);
+    const conversation = page.locator('[data-tour="project-conversation"]');
+    await expect(conversation.getByText(C.PARLOR_REPLY)).toBeVisible();
+    const picker = conversation.getByLabel('Project conversation');
+    await expect(picker.locator('option')).toHaveCount(1);
+
+    await conversation.getByRole('button', { name: 'New', exact: true }).click();
+    await expect(picker.locator('option')).toHaveCount(2);
+    await expect(picker.locator('option:checked')).toHaveText('Untitled conversation');
+    await expect(conversation.getByText(C.PARLOR_REPLY)).toHaveCount(0);
+    await expect(conversation.getByText(/Talk with Goobster/)).toBeVisible();
+
+    const main = await picker.locator('option', { hasText: '(main)' }).textContent();
+    await picker.selectOption({ label: String(main) });
+    await expect(conversation.getByText(C.PARLOR_REPLY)).toBeVisible();
+    // The owner may delete the extra conversation; the main one offers no delete.
+    await expect(conversation.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+});
+
+test('a private chat moves into a project: the dialog names the readers, then the project opens on it', async ({ page }) => {
+    const { conversations } = await page.request.get('/api/app/chat/conversations').then((r) => r.json());
+    const chat = conversations.find((c) => c.title === C.CHAT_TITLE);
+    expect(chat).toBeTruthy();
+    await page.goto(`/app/chat/${chat.id}`);
+    await expect(page.getByText(C.CHAT_ANSWER_BODY)).toBeVisible();
+
+    await page.getByTestId('move-chat').click();
+    await page.getByTestId('move-chat-project').selectOption(`${C.OWNER}:${C.PROJECT_SLUG}`);
+    await expect(page.getByTestId('move-chat-audience')).toContainText('you');
+    // Keep the seeded chat: later specs read it.
+    await page.getByTestId('move-chat-keep').check();
+    await page.getByTestId('move-chat-submit').click();
+    await expect(page.getByTestId('move-chat-done')).toContainText('Your private chat is still here.');
+
+    await page.getByTestId('move-chat-open').click();
+    await expect(page).toHaveURL(new RegExp(`${MINE}/conversation\\?conversation=\\d+`));
+    const conversation = page.locator('[data-tour="project-conversation"]');
+    await expect(conversation.getByLabel('Project conversation').locator('option:checked')).toHaveText(C.CHAT_TITLE);
+    await expect(conversation.getByText(C.CHAT_QUESTION)).toBeVisible();
+});

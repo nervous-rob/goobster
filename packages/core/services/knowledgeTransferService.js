@@ -15,6 +15,8 @@
  * untouched. Erasure: forgetUser / countUserData (privacyService).
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
 const db = require('../db');
 const logger = require('../utils/logger');
 const knowledgeGraphService = require('./knowledgeGraphService');
@@ -26,6 +28,9 @@ const { MAX_LABEL_LENGTH, MAX_CONTENT_LENGTH, MAX_TAGS_PER_NODE } = kgConfig;
 
 /** How much of a copied note a discussion message carries (well under the parlor cap). */
 const DISCUSSION_MESSAGE_MAX = 4000;
+// A chat moved into a project is copied whole; past this it is refused
+// rather than silently cut.
+const MOVE_CHAT_MAX_MESSAGES = 2000;
 
 class KnowledgeTransferError extends Error {
     constructor(status, code, message, details = null) {
@@ -471,6 +476,159 @@ class KnowledgeTransferService {
         return result;
     }
 
+    /**
+     * Move a private web chat into a project (ADR 0010: explicit, no model
+     * call, audience named before sending, one ledger row). The transcript
+     * becomes a NEW project conversation: the caller's messages stay theirs,
+     * the assistant's replies become the project's Goobster seat, attached
+     * files are carried by reference. The chat's sandbox workspace is copied
+     * into the project's scratch/<folder>/ so the work continues there. The
+     * private chat is deleted afterwards unless `keepOriginal`.
+     * Retrying with the same requestId returns the first result.
+     * @param {Object} params - { userId, userName?, conversationId, project, owner?, keepOriginal?, requestId }
+     */
+    async moveChatToProject({ userId, userName = null, conversationId, project, owner = null, keepOriginal = false, requestId } = {}) {
+        if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(requestId)) {
+            throw new KnowledgeTransferError(400, 'BAD_REQUEST', 'A valid requestId is required.');
+        }
+        const projects = requireOptional('./projectService', { feature: 'projects' });
+        if (!projects) throw new KnowledgeTransferError(404, 'FEATURE_UNAVAILABLE', 'Projects are not available on this installation.');
+        const parlorService = require('./parlorService');
+        const webChatService = require('./webChatService');
+
+        const prior = await db.get(
+            'SELECT * FROM knowledge_transfers WHERE userId = @userId AND requestId = @requestId',
+            { userId, requestId }
+        );
+        if (prior) {
+            if (prior.sourceKind !== 'chat_message' || prior.targetKind !== 'discussion'
+                || prior.sourceConversationId !== Number(conversationId)) {
+                throw new KnowledgeTransferError(409, 'REQUEST_CONFLICT', 'This requestId was used for another transfer.');
+            }
+            const conversation = await parlorService.requireConversationAccess(userId, prior.targetId);
+            const row = await projects.resolveProjectForActor({ userId, project: Number(conversation.projectId), owner: conversation.ownerId });
+            return this._moveResult({ conversation, row, transfer: await this._transferById(prior.id), replayed: true });
+        }
+
+        const chat = await webChatService._requireConversation(userId, conversationId);
+        const row = await projects.resolveProjectForActor({ userId, project, owner });
+        const guildConvId = await webChatService._guildConvIdFor(userId, chat.channelId);
+        const messages = guildConvId ? await db.all(
+            `SELECT id, message, isBot, createdAt, metadata FROM messages
+             WHERE guildConversationId = @guildConvId ORDER BY id ASC`,
+            { guildConvId }
+        ) : [];
+        if (messages.length === 0) {
+            throw new KnowledgeTransferError(400, 'EMPTY_CONVERSATION', 'This chat has no messages to move yet.');
+        }
+        if (messages.length > MOVE_CHAT_MAX_MESSAGES) {
+            throw new KnowledgeTransferError(400, 'CONVERSATION_TOO_LONG',
+                `Chats over ${MOVE_CHAT_MAX_MESSAGES} messages cannot be moved.`);
+        }
+
+        // Files first: a quota refusal must leave nothing half-moved.
+        const sandbox = requireOptional('./sandboxService', { feature: 'sandbox' });
+        const sessionDir = sandbox?.sessionDirFor({ userId, channelId: chat.channelId }) || null;
+        const files = sessionDir
+            ? projects.importIntoScratch({ projectDir: row.dir, sourceDir: sessionDir, folderName: chat.title || `chat-${chat.id}` })
+            : { folder: null, files: 0 };
+
+        const members = await db.all(
+            'SELECT userId, userName FROM project_members WHERE projectId = @id', { id: row.id }
+        );
+        const projectRef = { id: row.id, ownerId: row.ownerId, name: row.name };
+        const audience = await this.projectAudience(projectRef);
+        const speaker = userName || await this._displayName(userId) || null;
+        const result = await this._withImportRollback(row.dir, files, () => db.transaction(async () => {
+            const conversation = await parlorService.createProjectConversation({
+                project: projectRef, members, title: chat.title || null
+            });
+            const seat = await parlorService.ensureBuiltinPersona(row.ownerId);
+            let firstMessageId = null;
+            let lastAt = null;
+            for (const message of messages) {
+                const attachments = [];
+                try {
+                    for (const file of JSON.parse(message.metadata || 'null')?.attachments || []) {
+                        if (typeof file?.path === 'string') attachments.push(file.path);
+                    }
+                } catch { /* legacy metadata */ }
+                const id = await db.insert(
+                    `INSERT INTO parlor_messages
+                        (conversationId, role, personaId, personaName, content, attachments, userId, userName, createdAt)
+                     VALUES (@conversationId, @role, @personaId, @personaName, @content, @attachments, @userId, @userName, @createdAt)`,
+                    {
+                        conversationId: conversation.id,
+                        role: message.isBot ? 'persona' : 'user',
+                        personaId: message.isBot ? seat.id : null,
+                        personaName: message.isBot ? seat.name : null,
+                        content: String(message.message ?? ''),
+                        attachments: attachments.length ? JSON.stringify(attachments) : null,
+                        userId: message.isBot ? null : userId,
+                        userName: message.isBot ? null : speaker,
+                        createdAt: message.createdAt
+                    }
+                );
+                if (firstMessageId === null) firstMessageId = id;
+                lastAt = message.createdAt;
+            }
+            await db.run('UPDATE parlor_conversations SET lastMessageAt = @lastAt WHERE id = @id',
+                { lastAt, id: conversation.id });
+            const transferId = await db.insert(
+                `INSERT INTO knowledge_transfers
+                    (userId, sourceKind, sourceConversationId, sourceLabel, targetKind, targetId, mode,
+                     copyMessageId, audienceJson, requestId)
+                 VALUES
+                    (@userId, 'chat_message', @chatId, @label, 'discussion', @conversationId, 'copy',
+                     @firstMessageId, @audienceJson, @requestId)`,
+                {
+                    userId, chatId: chat.id, label: chat.title || null, conversationId: conversation.id,
+                    firstMessageId, audienceJson: JSON.stringify({ ...audience, files }), requestId
+                }
+            );
+            return { conversation, transferId };
+        }));
+
+        if (!keepOriginal) {
+            await webChatService.deleteConversation({ userId, conversationId: chat.id });
+        }
+        try { await parlorService._notifyTurn(result.conversation.id, userId); } catch { /* best effort */ }
+        const transfer = await this._transferById(result.transferId);
+        return this._moveResult({
+            conversation: { ...result.conversation, projectId: row.id },
+            row, transfer, replayed: false, keptOriginal: Boolean(keepOriginal), messages: messages.length, files
+        });
+    }
+
+    /** Run the database half of a move; on failure, remove the files already imported. */
+    async _withImportRollback(projectDir, files, fn) {
+        try {
+            return await fn();
+        } catch (error) {
+            if (files?.folder) {
+                try { fs.rmSync(path.join(projectDir, files.folder), { recursive: true, force: true }); } catch { /* best effort */ }
+            }
+            throw error;
+        }
+    }
+
+    _moveResult({ conversation, row, transfer, replayed, keptOriginal = null, messages = null, files = null }) {
+        const stored = transfer?.audience || {};
+        return {
+            conversation: {
+                id: conversation.id, title: conversation.title || null,
+                ownerId: conversation.ownerId, projectId: conversation.projectId
+            },
+            project: { id: row.id, slug: row.slug, name: row.name, ownerId: row.ownerId },
+            audience: transfer?.audience || null,
+            files: files || stored.files || { folder: null, files: 0 },
+            messages,
+            keptOriginal,
+            replayed,
+            transfer
+        };
+    }
+
     /** The Markdown a shared note becomes in a transcript. */
     formatNoteMessage(note) {
         const lines = [`📝 **${note.label}**`];
@@ -688,10 +846,11 @@ class KnowledgeTransferService {
     async summarizeForUser(userId) {
         const row = await db.get(
             `SELECT
-                 SUM(CASE WHEN sourceKind = 'chat_message' THEN 1 ELSE 0 END) AS savedAnswers,
+                 SUM(CASE WHEN sourceKind = 'chat_message' AND targetKind = 'note' THEN 1 ELSE 0 END) AS savedAnswers,
                  SUM(CASE WHEN mode = 'reference' THEN 1 ELSE 0 END) AS referenceCount,
                  SUM(CASE WHEN mode = 'copy' AND targetKind = 'project' THEN 1 ELSE 0 END) AS publishedToProjects,
-                 SUM(CASE WHEN targetKind = 'discussion' THEN 1 ELSE 0 END) AS publishedToDiscussions
+                 SUM(CASE WHEN sourceKind = 'note' AND targetKind = 'discussion' THEN 1 ELSE 0 END) AS publishedToDiscussions,
+                 SUM(CASE WHEN sourceKind = 'chat_message' AND targetKind = 'discussion' THEN 1 ELSE 0 END) AS movedChats
              FROM knowledge_transfers WHERE userId = @userId`,
             { userId }
         );
@@ -699,7 +858,8 @@ class KnowledgeTransferService {
             savedAnswers: Number(row?.savedAnswers) || 0,
             references: Number(row?.referenceCount) || 0,
             publishedToProjects: Number(row?.publishedToProjects) || 0,
-            publishedToDiscussions: Number(row?.publishedToDiscussions) || 0
+            publishedToDiscussions: Number(row?.publishedToDiscussions) || 0,
+            movedChats: Number(row?.movedChats) || 0
         };
     }
 

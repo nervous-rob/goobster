@@ -218,6 +218,40 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // Every conversation in the project (the parlor above is the primary
+    // one). Any member lists and starts them; transcripts and turns go
+    // through the normal /api/app/parlor routes.
+    app.get('/api/app/projects/:slug/conversations', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.listProjectConversations({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        })
+    ));
+    app.post('/api/app/projects/:slug/conversations', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.createProjectConversation({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            title: typeof req.body?.title === 'string' ? req.body.title : null
+        })
+    ));
+
+    // Move one of the caller's private chats into this project as a new
+    // conversation (ADR 0010: explicit, no model call, ledger row). The
+    // client names the audience first and sends a requestId for retries.
+    app.post('/api/app/projects/:slug/conversations/from-chat', requireAuth, chatRoute(async (req) =>
+        ctx.transfers.moveChatToProject({
+            userId: req.webUser.userId,
+            userName: req.webUser.userName,
+            conversationId: req.body?.conversationId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            keepOriginal: req.body?.keepOriginal === true,
+            requestId: req.body?.requestId
+        })
+    ));
+
     app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
         ctx.observatory.deleteProject({
             userId: req.webUser.userId,

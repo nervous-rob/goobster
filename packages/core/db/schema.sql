@@ -1562,11 +1562,12 @@ CREATE TABLE IF NOT EXISTS parlor_conversations (
     modelConfigJson TEXT,
     ownerId TEXT NOT NULL,
     title TEXT,
-    -- Project parlor: the linked project's row id (one discussion per
-    -- project, enforced in the service). Membership follows the project;
-    -- deleting the project deletes the discussion. No FK on purpose: the
-    -- project tables live in another feature area, and projectService
-    -- deletes the linked discussion explicitly.
+    -- Project parlor: the linked project's row id (a project may hold
+    -- several discussions; the lowest id is its main one, enforced in the
+    -- service). Membership follows the project; deleting the project
+    -- deletes them all. No FK on purpose: the project tables live in
+    -- another feature area, and projectService deletes the linked
+    -- discussions explicitly.
     projectId INTEGER,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     lastMessageAt TEXT

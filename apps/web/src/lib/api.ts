@@ -61,6 +61,30 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
     return json as T;
 }
 
+/** One conversation in a project (a project-linked parlor discussion). */
+export type ProjectConversation = {
+    id: number;
+    title: string | null;
+    ownerId: string;
+    projectId: number;
+    createdAt: string;
+    lastMessageAt: string | null;
+    messageCount: number;
+    /** The project's first conversation: removed only with the project. */
+    primary: boolean;
+};
+
+/** What a chat moved into a project became (ADR 0010 transfer). */
+export type MoveChatResult = {
+    conversation: { id: number; title: string | null; ownerId: string; projectId: number };
+    project: { id: number; slug: string; name: string; ownerId: string };
+    audience: import('./types').TransferAudience | null;
+    files: { folder: string | null; files: number };
+    messages: number | null;
+    keptOriginal: boolean | null;
+    replayed: boolean;
+};
+
 export const api = {
     uploadNoteAttachment: async (file: File): Promise<{ url: string; name: string }> => {
         const response = await accountFetch(`/api/app/note-attachments?name=${encodeURIComponent(file.name)}`, {
@@ -634,6 +658,19 @@ export const api = {
     projectParlor: (project: string, owner?: string | null) =>
         request<{ conversation: { id: number; title: string | null; ownerId: string; projectId: number }; role: string }>(
             `/api/app/projects/${encodeURIComponent(project)}/parlor${ownerQs(owner)}`),
+    projectConversations: (project: string, owner?: string | null) =>
+        request<{ conversations: ProjectConversation[]; role: string }>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversations${ownerQs(owner)}`),
+    createProjectConversation: (project: string, owner?: string | null, title?: string | null) =>
+        request<{ conversation: ProjectConversation; role: string }>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversations${ownerQs(owner)}`,
+            { method: 'POST', body: title ? { title } : {} }),
+    moveChatToProject: (project: string, owner: string | null | undefined, body: {
+        conversationId: number; keepOriginal: boolean; requestId: string;
+    }) =>
+        request<MoveChatResult>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversations/from-chat${ownerQs(owner)}`,
+            { method: 'POST', body }),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: (projectId?: number | null) =>
         request(`/api/app/spitball/expeditions${projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : ''}`),
