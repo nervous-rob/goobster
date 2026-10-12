@@ -13,14 +13,17 @@ import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { ParlorConversationView } from '../components/ParlorConversationView';
 import { useConversationDrawer } from '../hooks/useConversationDrawer';
+import { useStickToBottom } from '../hooks/useStickToBottom';
+import { applyParlorDelta, applyParlorMessage, applyParlorTool, settleParlorStream } from '../parlor/stream';
 import { useComposerAutosize } from '../hooks/useComposerAutosize';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useParlorLive } from '../hooks/useParlorLive';
 import { PersonaModal } from './parlor/PersonaModal';
 import { PeopleModal } from './parlor/PeopleModal';
 import type { Grounding, ParlorMessage, Persona } from '../parlor/types';
-import type { Friend } from '../lib/types';
+import type { Friend, ToolEvent } from '../lib/types';
 import { PERSONA_PALETTE, personaColor, personaGlyph, timeLabel } from '../parlor/persona';
+import { Icon } from '../icons/Icon';
 
 type Member = { userId: string; userName?: string | null };
 type Conversation = {
@@ -67,7 +70,7 @@ export function ParlorRoom() {
     const [personaModal, setPersonaModal] = useState<Persona | 'new' | null>(null);
     const [peopleOpen, setPeopleOpen] = useState(false);
     const [createConvOpen, setCreateConvOpen] = useState(false);
-    const chats = useConversationDrawer();
+    const chats = useConversationDrawer('parlor');
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const [mentionIndex, setMentionIndex] = useState(0);
@@ -116,7 +119,16 @@ export function ParlorRoom() {
     const conversation = conversations.find((c) => c.id === activeId) || null;
     useInboxDraft('project', conversation?.projectId ? activeId : null, composer, setComposer);
     const history = messagesQ.data?.messages || [];
-    const display = useMemo(() => [...history, ...streamMessages], [history, streamMessages]);
+    // The last stored message id when this tab's turn began. Once the
+    // refetched history moves past it, the stored rows replace the streamed
+    // ones in the same render, so the transcript never shrinks and jumps.
+    const streamBaseRef = useRef<number | null>(null);
+    const historyLastId = history[history.length - 1]?.id ?? 0;
+    const streamSuperseded = !sending && streamBaseRef.current !== null && historyLastId > streamBaseRef.current;
+    const display = useMemo(
+        () => (streamSuperseded ? history : [...history, ...streamMessages]),
+        [history, streamMessages, streamSuperseded]
+    );
 
     useEffect(() => {
         if (activeId === null && conversations[0] && paramId == null) setActiveId(conversations[0].id);
@@ -126,10 +138,35 @@ export function ParlorRoom() {
         if (Number.isFinite(paramId) && paramId !== activeId) setActiveId(paramId);
     }, [paramId, activeId]);
 
+    const stick = useStickToBottom(logRef, display);
     useEffect(() => {
-        const el = logRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-    }, [display.length, sending]);
+        if (!streamSuperseded) return;
+        streamBaseRef.current = null;
+        setStreamMessages([]);
+    }, [streamSuperseded]);
+    useEffect(() => {
+        streamBaseRef.current = null;
+        setStreamMessages([]);
+        stick.pin();
+    }, [activeId, stick.pin]);
+
+    function beginStream(first: ParlorMessage) {
+        streamBaseRef.current = historyLastId;
+        setStreamMessages([first]);
+        stick.pin();
+    }
+
+    /** After a turn: drop the streamed copy unless the stored rows are about to replace it. */
+    async function settleStream(conversationId: number | null) {
+        setStreamMessages((prev) => settleParlorStream(prev));
+        await queryClient.invalidateQueries({ queryKey: ['parlor-messages', conversationId] });
+        const stored = queryClient.getQueryData<{ messages: ParlorMessage[] }>(['parlor-messages', conversationId])?.messages || [];
+        const storedLastId = stored[stored.length - 1]?.id ?? 0;
+        if (streamBaseRef.current === null || storedLastId <= streamBaseRef.current) {
+            streamBaseRef.current = null;
+            setStreamMessages([]);
+        }
+    }
 
     useEffect(() => () => {
         abortRef.current?.abort();
@@ -217,47 +254,30 @@ export function ParlorRoom() {
                 }]);
                 return;
             }
+            const liveSpeaker = (): ParlorMessage => ({
+                role: 'assistant', personaId: livePersonaRef.current?.id, personaName: livePersonaRef.current?.name, content: ''
+            });
             if (event === 'delta') {
                 const delta = String((data as { text?: string }).text || '');
-                setStreamMessages((prev) => {
-                    const next = [...prev];
-                    const last = next[next.length - 1];
-                    if (last?.role === 'assistant' && (last.draft || last.typing || last.content === '')) {
-                        next[next.length - 1] = {
-                            ...last,
-                            content: (last.typing ? '' : last.content) + delta,
-                            typing: false,
-                            draft: true
-                        };
-                    } else {
-                        const persona = livePersonaRef.current;
-                        next.push({
-                            role: 'assistant',
-                            personaId: persona?.id,
-                            personaName: persona?.name,
-                            content: delta,
-                            draft: true
-                        });
-                    }
-                    return next;
-                });
+                setStreamMessages((prev) => applyParlorDelta(prev, delta, liveSpeaker()));
+                return;
+            }
+            if (event === 'tool') {
+                setStreamMessages((prev) => applyParlorTool(prev, data as unknown as ToolEvent, liveSpeaker()));
                 return;
             }
             if (event === 'persona_message') {
-                setStreamMessages((prev) => {
-                    const next = prev.filter((m) => !m.draft && !m.typing);
-                    next.push({
-                        role: 'assistant',
-                        content: String(data.content || ''),
-                        personaId: (data.personaId as number | undefined) || livePersonaRef.current?.id,
-                        grounding: data.grounding as Grounding[] | undefined
-                    });
-                    return next;
-                });
+                setStreamMessages((prev) => applyParlorMessage(prev, {
+                    role: 'assistant',
+                    content: String(data.content || ''),
+                    personaId: (data.personaId as number | undefined) || livePersonaRef.current?.id,
+                    grounding: data.grounding as Grounding[] | undefined,
+                    steps: data.steps as ParlorMessage['steps']
+                }));
                 return;
             }
             if (event === 'turn_error') {
-                setStreamMessages((prev) => [...prev.filter((m) => !m.typing && !m.draft), {
+                setStreamMessages((prev) => [...settleParlorStream(prev), {
                     role: 'assistant', content: String(data.message || 'Something went wrong.'), isError: true
                 }]);
                 return;
@@ -289,8 +309,12 @@ export function ParlorRoom() {
             return;
         }
         setComposer('');
-        setStreamMessages([{ role: 'user', content: text }]);
+        beginStream({ role: 'user', content: text });
         let currentPersona: Persona | undefined;
+        const speaker = (): ParlorMessage => ({
+            role: 'assistant', personaId: currentPersona?.id, personaName: currentPersona?.name, content: ''
+        });
+        const conversationId = activeId;
         setSending(true);
         const controller = new AbortController();
         abortRef.current = controller;
@@ -304,31 +328,22 @@ export function ParlorRoom() {
                     }]);
                 },
                 onDelta: (delta) => {
-                    setStreamMessages((prev) => {
-                        const next = [...prev];
-                        const last = next[next.length - 1];
-                        if (last?.role === 'assistant' && (last.draft || last.typing || last.content === '')) {
-                            next[next.length - 1] = { ...last, content: (last.typing ? '' : last.content) + delta, typing: false, draft: true };
-                        } else {
-                            next.push({ role: 'assistant', personaId: currentPersona?.id, personaName: currentPersona?.name, content: delta, draft: true });
-                        }
-                        return next;
-                    });
+                    setStreamMessages((prev) => applyParlorDelta(prev, delta, speaker()));
+                },
+                onTool: (event) => {
+                    setStreamMessages((prev) => applyParlorTool(prev, event, speaker()));
                 },
                 onPersonaMessage: (data) => {
-                    setStreamMessages((prev) => {
-                        const next = prev.filter((m) => !m.draft && !m.typing);
-                        next.push({
-                            role: 'assistant',
-                            content: data.content || '',
-                            personaId: data.personaId || currentPersona?.id,
-                            grounding: data.grounding as Grounding[] | undefined
-                        });
-                        return next;
-                    });
+                    setStreamMessages((prev) => applyParlorMessage(prev, {
+                        role: 'assistant',
+                        content: data.content || '',
+                        personaId: data.personaId || currentPersona?.id,
+                        grounding: data.grounding as Grounding[] | undefined,
+                        steps: data.steps
+                    }));
                 },
                 onError: (error) => {
-                    setStreamMessages((prev) => [...prev.filter((m) => !m.typing), {
+                    setStreamMessages((prev) => [...settleParlorStream(prev), {
                         role: 'assistant', content: error.message || 'Something went wrong.', isError: true
                     }]);
                 }
@@ -338,8 +353,7 @@ export function ParlorRoom() {
         } finally {
             setSending(false);
             abortRef.current = null;
-            setStreamMessages([]);
-            await queryClient.invalidateQueries({ queryKey: ['parlor-messages', activeId] });
+            await settleStream(conversationId);
             await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
         }
     }
@@ -355,27 +369,28 @@ export function ParlorRoom() {
         const controller = new AbortController();
         abortRef.current = controller;
         const persona = personaById(personaId);
-        setStreamMessages([{ role: 'assistant', personaId, personaName: persona?.name, content: '', typing: true }]);
+        const speaker: ParlorMessage = { role: 'assistant', personaId, personaName: persona?.name, content: '' };
+        const conversationId = activeId;
+        beginStream({ ...speaker, typing: true });
         try {
             await streamParlorNudge(activeId, personaId, {
                 onDelta: (delta) => {
-                    setStreamMessages((prev) => {
-                        const next = [...prev];
-                        const last = next[next.length - 1];
-                        if (last) next[next.length - 1] = { ...last, content: (last.typing ? '' : last.content) + delta, typing: false, draft: true };
-                        return next;
-                    });
+                    setStreamMessages((prev) => applyParlorDelta(prev, delta, speaker));
+                },
+                onTool: (event) => {
+                    setStreamMessages((prev) => applyParlorTool(prev, event, speaker));
                 },
                 onPersonaMessage: (data) => {
-                    setStreamMessages([{
+                    setStreamMessages((prev) => applyParlorMessage(prev, {
                         role: 'assistant',
                         content: data.content || '',
                         personaId: data.personaId || personaId,
-                        grounding: data.grounding as Grounding[] | undefined
-                    }]);
+                        grounding: data.grounding as Grounding[] | undefined,
+                        steps: data.steps
+                    }));
                 },
                 onError: (error) => {
-                    setStreamMessages([{ role: 'assistant', content: error.message || 'Something went wrong.', isError: true }]);
+                    setStreamMessages((prev) => [...settleParlorStream(prev), { role: 'assistant', content: error.message || 'Something went wrong.', isError: true }]);
                 }
             }, controller.signal);
         } catch (error) {
@@ -383,8 +398,7 @@ export function ParlorRoom() {
         } finally {
             setSending(false);
             abortRef.current = null;
-            setStreamMessages([]);
-            await queryClient.invalidateQueries({ queryKey: ['parlor-messages', activeId] });
+            await settleStream(conversationId);
         }
     }
 
@@ -407,13 +421,18 @@ export function ParlorRoom() {
     const workspacePersona = personas.find((p) => p.id === workspacePersonaId) || null;
 
     return (
-        <main className="pane next-pane is-in" id="pane-parlor">
+        <main className={`pane next-pane is-in${chats.paneClassName}`} id="pane-parlor" style={chats.paneStyle}>
             <div
                 className={`conversations-backdrop${chats.open ? '' : ' hidden'}`}
                 onClick={chats.close}
             />
-            <aside className={`conversations-panel${chats.open ? ' open' : ''}`}>
-                <button type="button" className="btn new-chat" onClick={() => { setCreateConvOpen(true); chats.close(); }}>✚ New discussion</button>
+            <aside className={`conversations-panel${chats.open ? ' open' : ''}`} ref={chats.panelRef}>
+                <div className="convs-top">
+                    <button type="button" className="btn new-chat" onClick={() => { setCreateConvOpen(true); chats.close(); }}><Icon glyph="plus" emoji="✚" /> New discussion</button>
+                    <button type="button" className="icon-action convs-hide" title="Hide discussions" aria-label="Hide discussions" onClick={chats.collapse}>
+                        <Icon glyph="sidebar" emoji="◧" />
+                    </button>
+                </div>
                 {invites.length > 0 && (
                     <div className="parlor-invites">
                         <div className="panel-section-head"><span>Invitations</span></div>
@@ -486,12 +505,13 @@ export function ParlorRoom() {
                                 className="conv-action persona-edit"
                                 title={`Edit ${persona.name}`}
                                 onClick={(event) => { event.stopPropagation(); setPersonaModal(persona); }}
-                            >✎</button>
+                            ><Icon glyph="pencil" emoji="✎" /></button>
                         </div>
                     ))}
                 </div>
                 <FriendsSection conversation={conversation} />
             </aside>
+            <div {...chats.resizerProps} />
 
             {workspacePersona ? (
                 <WorkspaceView
@@ -508,11 +528,11 @@ export function ParlorRoom() {
                             <button
                                 type="button"
                                 className={`icon-action chats-btn${chats.open ? ' on' : ''}`}
-                                title="Discussions"
-                                aria-label="Open discussions"
+                                title={chats.collapsed ? 'Show discussions' : 'Discussions'}
+                                aria-label={chats.collapsed ? 'Show discussions' : 'Open discussions'}
                                 aria-expanded={chats.open}
                                 onClick={chats.toggle}
-                            >💬</button>
+                            ><Icon glyph="sidebar" emoji="💬" /></button>
                             <div className="chat-title">{conversation?.title || 'Discussions'}</div>
                         </div>
                         <div className="chat-header-actions">
@@ -586,7 +606,7 @@ export function ParlorRoom() {
                             <button type="button" className="btn danger live-leave-btn" onClick={() => live.leave()}>End live</button>
                         </div>
                     )}
-                    <div className="chat-scroll" ref={logRef}>
+                    <div className="chat-scroll" ref={logRef} onScroll={stick.onScroll}>
                         <div className="chat-log">
                             <ParlorConversationView
                                 messages={display}
@@ -774,7 +794,7 @@ function ConvItem({
                     <span className="conv-actions">
                         {mine && (
                             <>
-                                <button type="button" className="conv-action" title="Rename" onClick={(e) => { e.stopPropagation(); setRenaming(true); }}>✎</button>
+                                <button type="button" className="conv-action" title="Rename" aria-label="Rename" onClick={(e) => { e.stopPropagation(); setRenaming(true); }}><Icon glyph="pencil" emoji="✎" /></button>
                                 <button
                                     type="button"
                                     className="conv-action"
@@ -788,7 +808,7 @@ function ConvItem({
                                             onDeleted();
                                         } catch (error) { toast((error as Error).message, true); }
                                     }}
-                                >🗑</button>
+                                ><Icon glyph="trash" emoji="🗑" /></button>
                             </>
                         )}
                     </span>
@@ -954,7 +974,7 @@ function WorkspaceView({
     persona: Persona;
     onBack: () => void;
     onEdit: () => void;
-    chats: { open: boolean; toggle: () => void };
+    chats: { open: boolean; collapsed: boolean; toggle: () => void };
 }) {
     const toast = useToast();
     const confirm = useConfirm();
@@ -989,17 +1009,17 @@ function WorkspaceView({
                     <button
                         type="button"
                         className={`icon-action chats-btn${chats.open ? ' on' : ''}`}
-                        title="Discussions"
-                        aria-label="Open discussions"
+                        title={chats.collapsed ? 'Show discussions' : 'Discussions'}
+                        aria-label={chats.collapsed ? 'Show discussions' : 'Open discussions'}
                         aria-expanded={chats.open}
                         onClick={chats.toggle}
-                    >💬</button>
+                    ><Icon glyph="sidebar" emoji="💬" /></button>
                     <button type="button" className="icon-action" title="Back to discussions" onClick={onBack}>←</button>
                     <div className="chat-title">
                         <span className="persona-dot" style={{ background: personaColor(persona) }}>{personaGlyph(persona)}</span>
                         {' '}{persona.name}&apos;s workspace
                     </div>
-                    <button type="button" className="icon-action" title={`Edit ${persona.name}`} onClick={onEdit}>✎</button>
+                    <button type="button" className="icon-action" title={`Edit ${persona.name}`} onClick={onEdit}><Icon glyph="pencil" emoji="✎" /></button>
                 </div>
                 <div className="segment">
                     <button type="button" className={`segment-btn${tab === 'notes' ? ' active' : ''}`} onClick={() => setTab('notes')}>Notes</button>
@@ -1010,7 +1030,7 @@ function WorkspaceView({
                 <div className="workspace-content">
                     <div className="workspace-toolbar">
                         <input className="input" type="search" placeholder="Search this workspace…" value={search} onChange={(e) => setSearch(e.target.value)} />
-                        <button type="button" className="btn primary" onClick={() => setNoteModal('new')}>✚ New note</button>
+                        <button type="button" className="btn primary" onClick={() => setNoteModal('new')}><Icon glyph="plus" emoji="✚" /> New note</button>
                     </div>
                     <div className="workspace-notes">
                         {notesQ.isPending && <div className="empty">Loading…</div>}
@@ -1023,7 +1043,7 @@ function WorkspaceView({
                                 <div className="note-head">
                                     <span className="note-title">{note.title}</span>
                                     <span className="note-actions">
-                                        <button type="button" className="conv-action" title="Edit" onClick={() => setNoteModal(note)}>✎</button>
+                                        <button type="button" className="conv-action" title="Edit" onClick={() => setNoteModal(note)}><Icon glyph="pencil" emoji="✎" /></button>
                                         <button
                                             type="button"
                                             className="conv-action"
@@ -1036,7 +1056,7 @@ function WorkspaceView({
                                                     queryClient.invalidateQueries({ queryKey: notesKey });
                                                 } catch (error) { toast((error as Error).message, true); }
                                             }}
-                                        >🗑</button>
+                                        ><Icon glyph="trash" emoji="🗑" /></button>
                                     </span>
                                 </div>
                                 <div className="note-body">{note.content}</div>

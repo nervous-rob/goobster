@@ -13,7 +13,9 @@ export const GLYPH_NAMES = [
     // room views
     'notes', 'map', 'compass', 'target', 'folder', 'puzzle', 'play', 'timer', 'heart', 'mail', 'calendar',
     // settings sections and shell
-    'idcard', 'mic', 'palette', 'person', 'gradcap', 'moon', 'sun', 'plug', 'code', 'notebook'
+    'idcard', 'mic', 'palette', 'person', 'gradcap', 'moon', 'sun', 'plug', 'code', 'notebook',
+    // chat actions (Study and Parlor headers, conversation rows, composer)
+    'incognito', 'pencil', 'trash', 'plus', 'speaker', 'file', 'sidebar'
 ] as const;
 
 export type GlyphName = typeof GLYPH_NAMES[number];
@@ -22,7 +24,8 @@ export const GLYPH_EMOJI: Record<GlyphName, string> = {
     home: '🏠', chat: '💬', knowledge: '🧠', projects: '🔭', discussions: '🛋️', people: '👥', activity: '📥', tools: '🧰',
     music: '🎹', trading: '📊', decks: '🃏', usage: '📈', settings: '⚙️', host: '🗝️', docs: '📖', share: '🔗',
     notes: '📝', map: '🕸️', compass: '🧭', target: '🎯', folder: '📁', puzzle: '🧩', play: '▶️', timer: '⏱️', heart: '🤝', mail: '✉️', calendar: '🗓️',
-    idcard: '🪪', mic: '🎙️', palette: '🎨', person: '👤', gradcap: '🎓', moon: '🌙', sun: '☀️', plug: '🔌', code: '🐙', notebook: '📓'
+    idcard: '🪪', mic: '🎙️', palette: '🎨', person: '👤', gradcap: '🎓', moon: '🌙', sun: '☀️', plug: '🔌', code: '🐙', notebook: '📓',
+    incognito: '🕶️', pencil: '✏️', trash: '🗑️', plus: '➕', speaker: '🔊', file: '📄', sidebar: '🗂️'
 };
 
 /** Room id (lib/rooms.cjs) → glyph. */

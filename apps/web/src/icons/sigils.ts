@@ -43,5 +43,12 @@ export const SIGILS: Record<GlyphName, () => string> = {
     sun: () => f(circ(12, 12, 5), A) + stroke(circ(12, 12, 9), A2, 2),
     plug: () => f(rr(8, 2, 3, 6, 1.5) + rr(13, 2, 3, 6, 1.5), A2) + f(rr(5, 8, 14, 10, 4), A) + f(rr(11, 17, 2, 5, 1), A2),
     code: () => stroke('M8 7l-5 5 5 5M16 7l5 5-5 5', A, 2.6) + stroke('M13.5 5l-3 14', A2, 2.2),
-    notebook: () => f(rr(5, 3, 15, 18, 3), A2) + f(rr(5, 3, 5, 18, 2), A)
+    notebook: () => f(rr(5, 3, 15, 18, 3), A2) + f(rr(5, 3, 5, 18, 2), A),
+    incognito: () => stroke('M3 9h18', A2, 2.4) + f(circ(7, 15, 4), A2) + f(circ(17, 15, 4), A),
+    pencil: () => stroke('M6 18 18 6', A2, 4) + f(circ(5, 19, 2.6), A),
+    trash: () => f(rr(4, 4, 16, 3, 1.5), A) + f(rr(6, 9, 12, 12, 3), A2),
+    plus: () => f(rr(3, 10, 18, 4, 2), A2) + f(rr(10, 3, 4, 18, 2), A),
+    speaker: () => f(rr(3, 8, 7, 8, 2), A) + stroke('M14 8a5 5 0 0 1 0 8', A2, 2.4) + stroke('M17 5a9 9 0 0 1 0 14', A2, 2.4),
+    file: () => f(rr(5, 3, 14, 18, 3), A2) + f(circ(17, 5, 3), A),
+    sidebar: () => f(rr(3, 4, 6, 16, 3), A) + f(rr(11, 4, 10, 16, 3), A2)
 };

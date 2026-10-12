@@ -67,6 +67,7 @@ async function streamParlorTurn(res, turn, ctx) {
             onPersonaPass: (payload) => emit('persona_pass', payload),
             onDelta: (text) => emit('delta', { text }),
             onPersonaTool: (payload) => emit('persona_tool', payload),
+            onTool: (payload) => emit('tool', payload),
             onPersonaMessage: (message) => emit('persona_message', message),
             onLearned: (payload) => emit('learned', payload)
         });

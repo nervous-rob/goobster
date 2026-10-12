@@ -2,7 +2,7 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
-import type { AccountExportJob } from './types';
+import type { AccountExportJob, TurnStep } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 
 export class ApiError extends Error {
@@ -895,7 +895,7 @@ type ParlorHandlers = ChatHandlers & {
     onPersonaStart?: (data: { personaId?: number; name?: string }) => void;
     onPersonaPass?: (data: unknown) => void;
     onPersonaTool?: (data: { phase: string; name: string }) => void;
-    onPersonaMessage?: (data: { content?: string; personaId?: number; grounding?: unknown[] }) => void;
+    onPersonaMessage?: (data: { content?: string; personaId?: number; grounding?: unknown[]; steps?: TurnStep[] }) => void;
     onLearned?: (data: unknown) => void;
 };
 
@@ -1018,6 +1018,7 @@ function dispatchParlor(handlers: ParlorHandlers, event: string, data: unknown) 
     else if (event === 'persona_pass') handlers.onPersonaPass?.(data);
     else if (event === 'delta') handlers.onDelta?.((data as { text?: string }).text || '');
     else if (event === 'persona_tool') handlers.onPersonaTool?.(data as { phase: string; name: string });
+    else if (event === 'tool') handlers.onTool?.(data as ToolEvent);
     else if (event === 'persona_message') handlers.onPersonaMessage?.(data as { content?: string });
     else if (event === 'learned') handlers.onLearned?.(data);
     else if (event === 'error') handlers.onError?.(data as { message?: string });

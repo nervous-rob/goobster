@@ -1605,6 +1605,10 @@ CREATE TABLE IF NOT EXISTS parlor_messages (
     -- before sharing existed (rendered as the owner).
     userId TEXT,
     userName TEXT,
+    -- JSON array: the persona reply's "Thinking" timeline (interstitial
+    -- text + tool steps from runAgentLoop), same shape as a Study reply's
+    -- metadata.steps. NULL when the reply used no tools.
+    stepsJson TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

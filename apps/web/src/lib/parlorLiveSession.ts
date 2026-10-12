@@ -8,7 +8,7 @@ import { int16ToBase64, UtteranceGate } from './parlorLiveAudio.js';
 const WORKLET_URL = '/app/liveAudioWorklet.js';
 const TURN_EVENTS = new Set([
     'user_message', 'persona_start', 'persona_pass', 'delta',
-    'persona_tool', 'persona_message', 'learned', 'turn_done', 'turn_error'
+    'persona_tool', 'tool', 'persona_message', 'learned', 'turn_done', 'turn_error'
 ]);
 
 export type LiveTurnEvent = string;

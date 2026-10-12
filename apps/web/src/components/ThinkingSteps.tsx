@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Markdown } from './Markdown';
+import { Icon } from '../icons/Icon';
 import { ToolChip } from './ToolChip';
 import { describeToolChip } from '../lib/toolChipLabel';
 import type { TurnStep } from '../lib/types';
@@ -44,7 +45,7 @@ export function ThinkingSteps({ steps, live = false, defaultOpen }: { steps: Tur
                 <span className="thinking-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
                 {live && !steps.some((step) => step.type === 'tool' && step.running)
                     ? <span className="tool-spinner" />
-                    : <span aria-hidden="true">🧠</span>}
+                    : <Icon glyph="knowledge" emoji="🧠" />}
                 <span>{thinkingHeader(steps, live)}</span>
             </button>
             {open && (

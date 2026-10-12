@@ -1834,7 +1834,7 @@ class ParlorService {
         if (beforeId) params.beforeId = Number(beforeId);
         const rows = await db.all(
             `SELECT id, role, personaId, personaName, content, contextNoteIds, attachments,
-                    userId, userName, createdAt
+                    stepsJson, userId, userName, createdAt
              FROM parlor_messages
              WHERE conversationId = @conversationId ${beforeId ? 'AND id < @beforeId' : ''}
              ORDER BY id DESC LIMIT @limit`,
@@ -1872,10 +1872,22 @@ class ParlorService {
                 grounding: this._parseNoteIds(row.contextNoteIds)
                     .filter(id => noteTitles.has(id))
                     .map(id => ({ id, title: noteTitles.get(id) })),
-                attachments: await this._serveAttachments(row.attachments, userId)
+                attachments: await this._serveAttachments(row.attachments, userId),
+                ...this._parseSteps(row.stepsJson)
             });
         }
         return messages;
+    }
+
+    /** `{ steps }` for a reply that used tools, `{}` otherwise. */
+    _parseSteps(json) {
+        if (!json) return {};
+        try {
+            const parsed = JSON.parse(json);
+            return Array.isArray(parsed) && parsed.length > 0 ? { steps: parsed } : {};
+        } catch {
+            return {};
+        }
     }
 
     _parseNoteIds(json) {
@@ -2123,6 +2135,7 @@ class ParlorService {
      *  - onPersonaPass({ personaName, reason })  the gate decided to stay quiet
      *  - onDelta(text)                      streamed token delta (current persona)
      *  - onPersonaTool({ tools })           a tool round began (draft resets)
+     *  - onTool({ phase, id, name, ..., personaId })  per-tool progress (Thinking trail)
      *  - onPersonaMessage(message)          a completed persona reply (with grounding)
      *  - onLearned({ personaId, notes })    the write-back filed new notes
      *
@@ -2761,6 +2774,12 @@ class ParlorService {
                         });
                     } catch { /* never break the turn */ }
                 },
+                onToolEvent: (event) => {
+                    // Per-tool progress for the "Thinking" trail (the same
+                    // SSE `tool` shape the Study streams), tagged with the
+                    // speaking persona.
+                    try { events.onTool?.({ ...event, personaId: persona.id }); } catch { /* never break the turn */ }
+                },
                 shouldAbort: () => turnState.aborted,
                 maxToolRounds: projectSeat ? PROJECT_MAX_TOOL_ROUNDS : PERSONA_MAX_TOOL_ROUNDS
             });
@@ -2774,9 +2793,10 @@ class ParlorService {
                 throw new Error('The provider returned an empty reply.');
             }
 
+            const steps = Array.isArray(result?.steps) ? result.steps : [];
             const stored = await db.get(
-                `INSERT INTO parlor_messages (conversationId, role, personaId, personaName, content, contextNoteIds, attachments)
-                 VALUES (@conversationId, 'persona', @personaId, @personaName, @content, @contextNoteIds, @attachments)
+                `INSERT INTO parlor_messages (conversationId, role, personaId, personaName, content, contextNoteIds, attachments, stepsJson)
+                 VALUES (@conversationId, 'persona', @personaId, @personaName, @content, @contextNoteIds, @attachments, @stepsJson)
                  RETURNING id, role, personaId, personaName, content, createdAt`,
                 {
                     conversationId,
@@ -2784,7 +2804,8 @@ class ParlorService {
                     personaName: persona.name,
                     content: content || '(see attachment)',
                     contextNoteIds: JSON.stringify(retrieved.map(n => n.id)),
-                    attachments: collector.files.length > 0 ? JSON.stringify(collector.files) : null
+                    attachments: collector.files.length > 0 ? JSON.stringify(collector.files) : null,
+                    stepsJson: steps.length > 0 ? JSON.stringify(steps) : null
                 }
             );
             await db.run(
@@ -2794,6 +2815,7 @@ class ParlorService {
             try {
                 events.onPersonaMessage?.({
                     ...stored,
+                    ...(steps.length > 0 ? { steps } : {}),
                     grounding: retrieved.map(n => ({ id: n.id, title: n.title })),
                     // The SSE stream belongs to whoever started the turn
                     attachments: await this._serveAttachments(

@@ -29,6 +29,7 @@ import { BerryMark } from '../components/BerryMark';
 import { consumeSharedPayload } from '../lib/shareTarget';
 import { useOnline } from '../lib/pwa';
 import { featureActive } from '../lib/rooms';
+import { Icon } from '../icons/Icon';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -144,7 +145,7 @@ export function StudyRoom() {
     const [noteTarget, setNoteTarget] = useState<{ conversationId: number; messageId: number; content: string } | null>(null);
     const [shareOpen, setShareOpen] = useState(false);
     const [moveOpen, setMoveOpen] = useState(false);
-    const chats = useConversationDrawer();
+    const chats = useConversationDrawer('chat');
     const openSettings = useOpenSettings();
     const abortRef = useRef<AbortController | null>(null);
     const attachAbortRef = useRef<AbortController | null>(null);
@@ -769,13 +770,18 @@ export function StudyRoom() {
     const visibleConvs = conversations.filter((c) => !filter || (c.title || 'New chat').toLowerCase().includes(filter));
 
     return (
-        <main className={`pane next-pane is-in${incognito ? ' incognito' : ''}`} id="pane-chat">
+        <main className={`pane next-pane is-in${incognito ? ' incognito' : ''}${chats.paneClassName}`} id="pane-chat" style={chats.paneStyle}>
             <div
                 className={`conversations-backdrop${chats.open ? '' : ' hidden'}`}
                 onClick={chats.close}
             />
-            <aside className={`conversations-panel${chats.open ? ' open' : ''}`}>
-                <button type="button" className="btn new-chat" onClick={() => void newChat()}>✚ New chat</button>
+            <aside className={`conversations-panel${chats.open ? ' open' : ''}`} ref={chats.panelRef}>
+                <div className="convs-top">
+                    <button type="button" className="btn new-chat" onClick={() => void newChat()}><Icon glyph="plus" emoji="✚" /> New chat</button>
+                    <button type="button" className="icon-action convs-hide" title="Hide chats" aria-label="Hide chats" onClick={chats.collapse}>
+                        <Icon glyph="sidebar" emoji="◧" />
+                    </button>
+                </div>
                 <input
                     className="input conv-search"
                     type="search"
@@ -819,6 +825,7 @@ export function StudyRoom() {
                     )}
                 </div>
             </aside>
+            <div {...chats.resizerProps} />
             <div className="study-main attachment-drop-zone" {...drop.dropProps}>
                 {drop.indicator}
                 <header className="chat-header">
@@ -827,35 +834,35 @@ export function StudyRoom() {
                         <button
                             type="button"
                             className={`icon-action chats-btn${chats.open ? ' on' : ''}`}
-                            title="Chats"
-                            aria-label="Open chats"
+                            title={chats.collapsed ? 'Show chats' : 'Chats'}
+                            aria-label={chats.collapsed ? 'Show chats' : 'Open chats'}
                             aria-expanded={chats.open}
                             onClick={chats.toggle}
-                        >💬</button>
+                        ><Icon glyph="sidebar" emoji="💬" /></button>
                         <div className="chat-title">{title}</div>
                     </div>
                     <div className="chat-header-actions">
                         <HeaderOverflow>
-                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} aria-label="Incognito" title="Incognito" onClick={toggleIncognito}>🕶<span className="menu-label">Incognito</span></button>
+                        <button type="button" className={`icon-action${incognito ? ' on' : ''}`} aria-pressed={incognito} aria-label="Incognito" title="Incognito" onClick={toggleIncognito}><Icon glyph="incognito" emoji="🕶" /><span className="menu-label">Incognito</span></button>
                         <button type="button" className="icon-action" onClick={() => {
                             if (incognito) { toast('Incognito chats cannot be shared.', true); return; }
                             if (activeId === null) { toast('Say something first — an empty chat has nothing to share.', true); return; }
                             setShareOpen(true);
-                        }}>🔗<span className="menu-label">Share</span></button>
+                        }}><Icon glyph="share" emoji="🔗" /><span className="menu-label">Share</span></button>
                         {featureActive(me, 'projects') && (
                             <button type="button" className="icon-action" data-testid="move-chat" onClick={() => {
                                 if (incognito) { toast('Incognito chats are never saved, so there is nothing to move.', true); return; }
                                 if (activeId === null) { toast('Say something first — an empty chat has nothing to move.', true); return; }
                                 setMoveOpen(true);
-                            }}>📁<span className="menu-label">Move to project</span></button>
+                            }}><Icon glyph="folder" emoji="📁" /><span className="menu-label">Move to project</span></button>
                         )}
-                        <button type="button" className="icon-action" onClick={() => openSettings('connections')}>🧩<span className="menu-label">Connections</span></button>
-                        <button type="button" className="icon-action" data-tour="chat-personal-memory" title="Personal memory — what Goobster knows about you" aria-label="Personal memory" onClick={() => openSettings('memory', 'memory-report')}>🧠<span className="menu-label">Personal memory</span></button>
+                        <button type="button" className="icon-action" onClick={() => openSettings('connections')}><Icon glyph="puzzle" emoji="🧩" /><span className="menu-label">Connections</span></button>
+                        <button type="button" className="icon-action" data-tour="chat-personal-memory" title="Personal memory — what Goobster knows about you" aria-label="Personal memory" onClick={() => openSettings('memory', 'memory-report')}><Icon glyph="knowledge" emoji="🧠" /><span className="menu-label">Personal memory</span></button>
                         </HeaderOverflow>
                     </div>
                 </header>
                 {incognito && (
-                    <div className="incognito-banner">🕶 Incognito — messages here aren't saved to history or long-term memory.</div>
+                    <div className="incognito-banner"><Icon glyph="incognito" emoji="🕶" /> Incognito — messages here aren't saved to history or long-term memory.</div>
                 )}
                 {orphanTurn && !matchingOrphan && (
                     <div className="turn-banner">
@@ -908,10 +915,12 @@ export function StudyRoom() {
                                         data-testid={`save-as-note-${message.id}`}
                                         data-tour="chat-save-as-note"
                                         onClick={() => setNoteTarget({ conversationId: activeId, messageId: message.id, content: message.content })}
-                                    >📝 Save as note</button>
+                                    >
+                                        <Icon glyph="notes" emoji="📝" /> Save as note
+                                    </button>
                                 )}
                                 {message.role === 'assistant' && voice.data?.tts && message.content && (
-                                    <button type="button" className="msg-action listen" onClick={() => void listen(message.content)}>🔊 Listen</button>
+                                    <button type="button" className="msg-action listen" onClick={() => void listen(message.content)}><Icon glyph="speaker" emoji="🔊" /> Listen</button>
                                 )}
                                 {message.role === 'user' && message.id > 0 && activeId !== null && (
                                     <button type="button" className="msg-action" onClick={() => void branchFrom(message)}>⑂ Branch</button>
@@ -943,7 +952,7 @@ export function StudyRoom() {
                             ))}
                             {files.map((file, index) => (
                                 <div key={`${file.name}-${index}`} className="pending-file-chip">
-                                    <span>📄 {file.name}</span>
+                                    <span><Icon glyph="file" emoji="📄" /> {file.name}</span>
                                     <button type="button" disabled={preparingFiles || drop.busy} onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}>✕</button>
                                 </div>
                             ))}
@@ -976,7 +985,7 @@ export function StudyRoom() {
                                 </svg>
                             </button>
                             <button type="button" className="model-chip composer-model-chip" onClick={() => openSettings('chat')} title="Chat settings — model & reasoning" aria-label="Chat settings">
-                                <span className="model-chip-gear" aria-hidden="true">⚙</span>
+                                <span className="model-chip-gear" aria-hidden="true"><Icon glyph="settings" emoji="⚙" /></span>
                                 <span className="model-chip-label wide-only">{settings?.effective?.model || 'Model'}{settings?.effective?.reasoningEffort ? ` · ${settings.effective.reasoningEffort}` : ''}</span>
                             </button>
                             <input
@@ -1001,10 +1010,10 @@ export function StudyRoom() {
                                         if (voiceChat.active) voiceChat.stop();
                                         else void voiceChat.start({ live: Boolean(voice.data?.live) });
                                     }}
-                                >🎤</button>
+                                ><Icon glyph="mic" emoji="🎤" /></button>
                             )}
                             {voice.data?.stt && !voice.data?.tts && (
-                                <button type="button" className="icon-action attach" title="Dictate a message" aria-label="Dictate a message" onClick={() => void toggleMic()}>🎤</button>
+                                <button type="button" className="icon-action attach" title="Dictate a message" aria-label="Dictate a message" onClick={() => void toggleMic()}><Icon glyph="mic" emoji="🎤" /></button>
                             )}
                         </div>
                         <textarea
@@ -1111,13 +1120,14 @@ function ConvRow({
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                 />
             ) : <span className="conv-title-text">{conversation.title || 'New chat'}</span>}
-            {conversation.shareToken ? <span className="conv-badge shared" title="Has an active share link">🔗</span> : null}
+            {conversation.shareToken ? <span className="conv-badge shared" title="Has an active share link"><Icon glyph="share" emoji="🔗" /></span> : null}
             <span className="conv-actions">
-                <button type="button" className="conv-action" title="Rename" onClick={(e) => { e.stopPropagation(); setRenaming(true); }}>✎</button>
+                <button type="button" className="conv-action" title="Rename" aria-label="Rename" onClick={(e) => { e.stopPropagation(); setRenaming(true); }}><Icon glyph="pencil" emoji="✎" /></button>
                 <button
                     type="button"
                     className="conv-action"
                     title="Delete"
+                    aria-label="Delete"
                     onClick={async (e) => {
                         e.stopPropagation();
                         if (!await confirm(`Delete "${conversation.title || 'New chat'}"? Its messages are gone for good.`)) return;
@@ -1127,7 +1137,7 @@ function ConvRow({
                             onDeleted();
                         } catch (error) { toast((error as Error).message, true); }
                     }}
-                >🗑</button>
+                ><Icon glyph="trash" emoji="🗑" /></button>
             </span>
         </div>
     );
@@ -1184,7 +1194,7 @@ function ShareModal({ conversationId, onClose }: { conversationId: number; onClo
                             queryClient.invalidateQueries({ queryKey: keys.conversations });
                         } catch (error) { toast((error as Error).message, true); }
                     }}
-                >🔗 Create share link</button>
+                ><Icon glyph="share" emoji="🔗" /> Create share link</button>
             )}
             <div className="modal-actions">
                 <button type="button" className="btn" onClick={onClose}>Close</button>

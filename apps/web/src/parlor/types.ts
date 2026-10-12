@@ -1,3 +1,5 @@
+import type { TurnStep } from '../lib/types';
+
 export type Persona = {
     id: number;
     name: string;
@@ -24,6 +26,8 @@ export type ParlorMessage = {
     isError?: boolean;
     grounding?: Grounding[];
     attachments?: Attachment[];
+    /** The reply's "Thinking" timeline (tool steps + interstitial text). */
+    steps?: TurnStep[];
     draft?: boolean;
     typing?: boolean;
 };

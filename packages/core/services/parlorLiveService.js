@@ -709,6 +709,7 @@ class ParlorLiveService {
             onPersonaPass: (payload) => this._broadcast(session, 'persona_pass', payload),
             onDelta: (text) => this._broadcast(session, 'delta', { text }),
             onPersonaTool: (payload) => this._broadcast(session, 'persona_tool', payload),
+            onTool: (payload) => this._broadcast(session, 'tool', payload),
             onPersonaMessage: async (message) => {
                 this._broadcast(session, 'persona_message', message);
                 if (message?.content && !message.isError && message.personaId) {
@@ -738,6 +739,7 @@ class ParlorLiveService {
             else if (event === 'persona_pass') events.onPersonaPass(data);
             else if (event === 'delta') events.onDelta(data?.text || '');
             else if (event === 'persona_tool') events.onPersonaTool(data);
+            else if (event === 'tool') events.onTool(data);
             else if (event === 'persona_message') events.onPersonaMessage(data);
             else if (event === 'learned') events.onLearned(data);
             else if (event === 'done') this._broadcast(session, 'turn_done', {});
