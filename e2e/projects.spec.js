@@ -182,3 +182,23 @@ test('Conversation and People are views (the dock and modal stay secondary); Unf
     await expect(unfiled).toContainText('Unfiled apps');
     await expect(unfiled).toContainText('generated apps only');
 });
+
+test('a project holds several conversations: start a new one, then switch back to the main one', async ({ page }) => {
+    await page.goto(`${MINE}/conversation`);
+    const conversation = page.locator('[data-tour="project-conversation"]');
+    await expect(conversation.getByText(C.PARLOR_REPLY)).toBeVisible();
+    const picker = conversation.getByLabel('Project conversation');
+    await expect(picker.locator('option')).toHaveCount(1);
+
+    await conversation.getByRole('button', { name: 'New', exact: true }).click();
+    await expect(picker.locator('option')).toHaveCount(2);
+    await expect(picker.locator('option:checked')).toHaveText('Untitled conversation');
+    await expect(conversation.getByText(C.PARLOR_REPLY)).toHaveCount(0);
+    await expect(conversation.getByText(/Talk with Goobster/)).toBeVisible();
+
+    const main = await picker.locator('option', { hasText: '(main)' }).textContent();
+    await picker.selectOption({ label: String(main) });
+    await expect(conversation.getByText(C.PARLOR_REPLY)).toBeVisible();
+    // The owner may delete the extra conversation; the main one offers no delete.
+    await expect(conversation.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+});

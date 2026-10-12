@@ -61,6 +61,19 @@ async function request<T = unknown>(path: string, { method = 'GET', body = null 
     return json as T;
 }
 
+/** One conversation in a project (a project-linked parlor discussion). */
+export type ProjectConversation = {
+    id: number;
+    title: string | null;
+    ownerId: string;
+    projectId: number;
+    createdAt: string;
+    lastMessageAt: string | null;
+    messageCount: number;
+    /** The project's first conversation: removed only with the project. */
+    primary: boolean;
+};
+
 export const api = {
     uploadNoteAttachment: async (file: File): Promise<{ url: string; name: string }> => {
         const response = await accountFetch(`/api/app/note-attachments?name=${encodeURIComponent(file.name)}`, {
@@ -634,6 +647,13 @@ export const api = {
     projectParlor: (project: string, owner?: string | null) =>
         request<{ conversation: { id: number; title: string | null; ownerId: string; projectId: number }; role: string }>(
             `/api/app/projects/${encodeURIComponent(project)}/parlor${ownerQs(owner)}`),
+    projectConversations: (project: string, owner?: string | null) =>
+        request<{ conversations: ProjectConversation[]; role: string }>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversations${ownerQs(owner)}`),
+    createProjectConversation: (project: string, owner?: string | null, title?: string | null) =>
+        request<{ conversation: ProjectConversation; role: string }>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversations${ownerQs(owner)}`,
+            { method: 'POST', body: title ? { title } : {} }),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: (projectId?: number | null) =>
         request(`/api/app/spitball/expeditions${projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : ''}`),

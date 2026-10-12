@@ -9,6 +9,24 @@ const { sessionKeyFor } = require('../../services/sandboxService');
 const sandboxConfig = require('../../config/sandboxConfig');
 const sandboxRequestService = require('../../services/sandboxRequestService');
 const { clipStream } = require('../toolResultWindow');
+const requireOptional = require('../optionalModule').forModule(module);
+
+/**
+ * A run on behalf of a project conversation goes through the project
+ * (actor-checked, quota, job record, the project's persistent scratch/ as
+ * cwd) instead of a chat workspace. Falls back to null when the projects
+ * feature is not loaded, so the caller runs a plain conversation run.
+ */
+async function runInProject({ project, language, code, stdin, userId, signal }) {
+    const projects = requireOptional('../../services/projectService', { feature: 'projects' });
+    if (!projects) return null;
+    const outcome = await projects.run({
+        userId, project: Number(project.id), owner: project.ownerId,
+        language, code, stdin: stdin || '', signal, startedBy: 'chat'
+    });
+    // An aborted project run comes back without files/timing.
+    return { files: [], durationMs: 0, language, ...outcome.result, project: outcome.project };
+}
 
 module.exports = {
     runCode: {
@@ -67,9 +85,17 @@ module.exports = {
                 return '❌ The code sandbox is only available in Goobster\'s web app, not here.';
             }
 
-            let result;
+            let result = null;
             try {
-                result = await sandboxService.run({
+                if (interactionContext?.project?.id != null && interactionContext?.user?.id) {
+                    result = await runInProject({
+                        project: interactionContext.project,
+                        language, code, stdin,
+                        userId: interactionContext.user.id,
+                        signal: interactionContext?.abortSignal || null
+                    });
+                }
+                result = result || await sandboxService.run({
                     language,
                     code,
                     stdin,
@@ -114,6 +140,7 @@ module.exports = {
                 lines.push(`⏱️ The code hit the time limit and was stopped after ~${Math.round(result.durationMs / 1000)}s.`);
             } else if (result.ok) {
                 lines.push(`✅ Ran ${result.language} successfully (${result.durationMs} ms, isolation: ${result.isolation}).`);
+                if (result.project) lines.push(`Ran in project "${result.project}" (working directory: its persistent scratch/ folder).`);
             } else {
                 lines.push(`⚠️ ${result.language} exited with code ${result.exitCode}`
                     + `${result.signal ? ` (signal ${result.signal})` : ''} after ${result.durationMs} ms.`);

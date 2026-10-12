@@ -311,6 +311,168 @@ describe('the linked project conversation', () => {
     });
 });
 
+describe('several conversations per project', () => {
+    test('any member starts one; every collaborator lists and is seated in all of them', async () => {
+        const svc = makeService();
+        const project = await makeProject(svc);
+        await addMember(svc, project);
+
+        const { conversation: primary } = await svc.getProjectParlor({ userId: OWNER, project: project.slug });
+        const { conversation: second, role } = await svc.createProjectConversation({
+            userId: MEMBER, project: project.slug, owner: OWNER, title: 'Data cleanup'
+        });
+        expect(role).toBe('collaborator');
+        expect(second.projectId).toBe(project.id);
+        // Owned by the project owner like the primary, Goobster seated
+        expect(second.ownerId).toBe(OWNER);
+        expect((await parlorService.listParticipants(second.id)).map(p => p.name)).toEqual(['Goobster']);
+        const seated = await db.all('SELECT userId FROM parlor_members WHERE conversationId = @id', { id: second.id });
+        expect(seated.map(m => m.userId)).toEqual([MEMBER]);
+
+        for (const userId of [OWNER, MEMBER]) {
+            const { conversations } = await svc.listProjectConversations({
+                userId, project: project.slug, owner: OWNER
+            });
+            expect(conversations.map(c => c.id).sort()).toEqual([primary.id, second.id].sort());
+            expect(conversations.find(c => c.id === primary.id).primary).toBe(true);
+            expect(conversations.find(c => c.id === second.id)).toMatchObject({ primary: false, title: 'Data cleanup' });
+        }
+        // The member reads the transcript of a conversation they did not start
+        await expect(parlorService.getMessages({ userId: OWNER, conversationId: second.id })).resolves.toBeDefined();
+
+        await expectCode(
+            () => svc.listProjectConversations({ userId: STRANGER, project: project.slug, owner: OWNER }),
+            'NO_SUCH_PROJECT'
+        );
+        await expectCode(
+            () => svc.createProjectConversation({ userId: STRANGER, project: project.slug, owner: OWNER }),
+            'NO_SUCH_PROJECT'
+        );
+    });
+
+    test('membership changes reach every conversation in the project', async () => {
+        const svc = makeService();
+        const project = await makeProject(svc);
+        await svc.getProjectParlor({ userId: OWNER, project: project.slug });
+        await svc.createProjectConversation({ userId: OWNER, project: project.slug });
+        const ids = (await db.all('SELECT id FROM parlor_conversations WHERE projectId = @p', { p: project.id }))
+            .map(r => r.id);
+        expect(ids).toHaveLength(2);
+
+        await addMember(svc, project);
+        for (const id of ids) {
+            expect(await db.get('SELECT COUNT(*) AS c FROM parlor_members WHERE conversationId = @id AND userId = @u',
+                { id, u: MEMBER })).toEqual({ c: 1 });
+        }
+        await svc.removeMember({ userId: OWNER, project: project.slug, memberId: MEMBER });
+        for (const id of ids) {
+            expect(await db.get('SELECT COUNT(*) AS c FROM parlor_members WHERE conversationId = @id', { id }))
+                .toEqual({ c: 0 });
+        }
+        // Removed: no longer sees the project's conversations
+        await expect(parlorService.getMessages({ userId: MEMBER, conversationId: ids[1] }))
+            .rejects.toMatchObject({ code: 'NO_SUCH_CONVERSATION' });
+    });
+
+    test('the owner deletes extra conversations; the primary only goes with the project', async () => {
+        const svc = makeService();
+        const project = await makeProject(svc);
+        await addMember(svc, project);
+        const { conversation: primary } = await svc.getProjectParlor({ userId: OWNER, project: project.slug });
+        const { conversation: extra } = await svc.createProjectConversation({
+            userId: MEMBER, project: project.slug, owner: OWNER
+        });
+        await expectCode(
+            () => parlorService.deleteConversation({ ownerId: MEMBER, conversationId: extra.id }),
+            'NO_SUCH_CONVERSATION'
+        );
+        await expectCode(
+            () => parlorService.deleteConversation({ ownerId: OWNER, conversationId: primary.id }),
+            'PROJECT_LINKED'
+        );
+        await expect(parlorService.deleteConversation({ ownerId: OWNER, conversationId: extra.id }))
+            .resolves.toEqual({ deleted: true });
+        const { conversations } = await svc.listProjectConversations({ userId: OWNER, project: project.slug });
+        expect(conversations.map(c => c.id)).toEqual([primary.id]);
+    });
+
+    test('deleting the project deletes every one of its conversations', async () => {
+        const svc = makeService();
+        const project = await makeProject(svc);
+        await svc.getProjectParlor({ userId: OWNER, project: project.slug });
+        const { conversation: extra } = await svc.createProjectConversation({ userId: OWNER, project: project.slug });
+        await db.run(
+            `INSERT INTO parlor_messages (conversationId, role, content, userId)
+             VALUES (@id, 'user', 'side thread', @userId)`,
+            { id: extra.id, userId: OWNER }
+        );
+        await svc.deleteProject({ userId: OWNER, project: project.slug });
+        expect(await db.get('SELECT COUNT(*) AS c FROM parlor_conversations WHERE projectId = @p', { p: project.id }))
+            .toEqual({ c: 0 });
+        expect(await db.get('SELECT COUNT(*) AS c FROM parlor_messages WHERE conversationId = @id', { id: extra.id }))
+            .toEqual({ c: 0 });
+    });
+});
+
+describe('runCode in a project conversation', () => {
+    const sandboxService = require('@goobster/core/services/sandboxService');
+    const projectService = require('@goobster/core/services/projectService');
+    const { runCode } = require('@goobster/core/utils/tools/sandbox');
+
+    beforeEach(() => {
+        Object.defineProperty(sandboxService, 'enabled', { get: () => true, configurable: true });
+    });
+    afterEach(() => {
+        delete sandboxService.enabled;
+        jest.restoreAllMocks();
+    });
+
+    test('runs through the project as the speaking member, never a chat workspace', async () => {
+        const run = jest.spyOn(projectService, 'run').mockResolvedValue({
+            mode: 'foreground', project: 'neuro-lab',
+            result: { ok: true, exitCode: 0, timedOut: false, stdout: 'hi\n', stderr: '', durationMs: 5, isolation: 'none', language: 'python', files: [] }
+        });
+        const plain = jest.spyOn(sandboxService, 'run');
+        const out = await runCode.execute({
+            language: 'python', code: 'print("hi")',
+            interactionContext: {
+                channelId: `web:parlor:${OWNER}:7`, user: { id: MEMBER },
+                project: { id: 42, ownerId: OWNER }
+            }
+        });
+        expect(run).toHaveBeenCalledWith(expect.objectContaining({
+            userId: MEMBER, project: 42, owner: OWNER, language: 'python', startedBy: 'chat'
+        }));
+        expect(plain).not.toHaveBeenCalled();
+        expect(out).toContain('Ran in project "neuro-lab"');
+    });
+
+    test('an aborted project run still renders', async () => {
+        jest.spyOn(projectService, 'run').mockResolvedValue({
+            mode: 'foreground', project: 'neuro-lab',
+            result: { ok: false, aborted: true, timedOut: false, stdout: '', stderr: 'Cancelled', exitCode: null }
+        });
+        const out = await runCode.execute({
+            language: 'bash', code: 'sleep 100',
+            interactionContext: { channelId: 'web:parlor:x:1', user: { id: MEMBER }, project: { id: 42, ownerId: OWNER } }
+        });
+        expect(out).toContain('exited with code null');
+    });
+
+    test('the Goobster seat hands its project to the tool context; salon personas do not', async () => {
+        const svc = makeService();
+        const project = await makeProject(svc);
+        await addMember(svc, project);
+        const { conversation } = await svc.getProjectParlor({ userId: OWNER, project: project.slug });
+        const contextSpy = jest.spyOn(parlorService, '_buildPersonaToolContext');
+        const turn = await parlorService.startTurn({
+            userId: MEMBER, userName: 'Frieda', conversationId: conversation.id, message: 'Goobster, run it.'
+        });
+        await turn.run({});
+        expect(contextSpy.mock.results[0].value.project).toEqual({ id: project.id, ownerId: OWNER });
+    });
+});
+
 describe('the Goobster seat at the table', () => {
     async function makeTable(svc) {
         const project = await makeProject(svc);

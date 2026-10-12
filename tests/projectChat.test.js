@@ -415,3 +415,33 @@ describe('project refetch hints', () => {
         spy.mockRestore();
     });
 });
+
+describe('project conversations routes', () => {
+    test('list and create pass the actor, project, owner and title through', async () => {
+        const cookie = await login();
+        fakeObservatory.listProjectConversations = jest.fn(async () => ({
+            conversations: [{ id: 5, title: '🔭 Lab', primary: true }], role: 'collaborator'
+        }));
+        fakeObservatory.createProjectConversation = jest.fn(async ({ title }) => ({
+            conversation: { id: 6, title, primary: false }, role: 'collaborator'
+        }));
+
+        const list = await request({ reqPath: '/api/app/projects/lab/conversations?owner=777', headers: { Cookie: cookie } });
+        expect(list.status).toBe(200);
+        expect(list.json.conversations[0]).toMatchObject({ id: 5, primary: true });
+        expect(fakeObservatory.listProjectConversations).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, project: 'lab', owner: '777' }));
+
+        const created = await request({
+            method: 'POST', reqPath: '/api/app/projects/lab/conversations?owner=777',
+            headers: { Cookie: cookie }, body: { title: 'Side quest' }
+        });
+        expect(created.status).toBe(200);
+        expect(created.json.conversation).toMatchObject({ id: 6, title: 'Side quest' });
+        expect(fakeObservatory.createProjectConversation).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, project: 'lab', owner: '777', title: 'Side quest' }));
+
+        const anonymous = await request({ reqPath: '/api/app/projects/lab/conversations' });
+        expect(anonymous.status).toBe(401);
+    });
+});

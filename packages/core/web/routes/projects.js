@@ -218,6 +218,25 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // Every conversation in the project (the parlor above is the primary
+    // one). Any member lists and starts them; transcripts and turns go
+    // through the normal /api/app/parlor routes.
+    app.get('/api/app/projects/:slug/conversations', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.listProjectConversations({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req)
+        })
+    ));
+    app.post('/api/app/projects/:slug/conversations', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.createProjectConversation({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            title: typeof req.body?.title === 'string' ? req.body.title : null
+        })
+    ));
+
     app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
         ctx.observatory.deleteProject({
             userId: req.webUser.userId,

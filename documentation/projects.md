@@ -628,10 +628,12 @@ from earlier phases stay readable in the Chat pane as history.
 
 ## The project parlor (project chat)
 
-Every project has one shared group discussion — a Parlor conversation
+Every project has shared group discussions — Parlor conversations
 linked to the project (`parlor_conversations.projectId`), rendered as
 the chat dock on the project page and equally usable from the Parlor
-room. Both surfaces render the transcript through the shared
+room. The first one is the project's **main conversation**; any member
+starts more from the dock's **New** button and switches between them with
+its picker. Both surfaces render the transcript through the shared
 `ParlorConversationView` (`apps/web/src/components/ParlorConversationView.tsx`)
 so persona colors, glyphs, grounding chips, and attachments cannot
 drift. The rules (spec §14):
@@ -639,12 +641,21 @@ drift. The rules (spec §14):
 - **Created lazily** on first open (`GET /api/app/projects/:slug/parlor`,
   any member), owned by the project owner, titled `🔭 <project name>`.
   Solo projects get one too — one chat model for every project.
+- **More conversations**: `GET /api/app/projects/:slug/conversations`
+  lists every one (any member; `primary` marks the main one) and
+  `POST` with an optional `title` starts another (any member, at most 100
+  per project; untitled ones are auto-titled from the first message).
+  Each is owned by the project owner, seats Goobster and the whole
+  roster, so **every collaborator sees every conversation** in the
+  project. The owner may rename or delete the extra ones through the
+  normal Parlor routes; the main one goes only with the project.
 - **Membership follows the project**, one way: accepting a project invite
   seats you, leaving or removal unseats you. Direct parlor invites,
   member removal, and deletion are refused on linked discussions
   (`PROJECT_LINKED`), and the roster follows `maxMembersPerProject`
-  rather than the standalone-parlor member cap. Deleting the project
-  deletes the discussion.
+  rather than the standalone-parlor member cap. Membership changes reach
+  every conversation in the project. Deleting the project deletes every
+  one of its conversations.
 - **The Goobster seat**: a per-owner built-in persona
   (`parlor_personas.builtin` — auto-created, undeletable, outside the
   persona cap) holds a permanent seat. At a project table its knowledge
@@ -655,8 +666,12 @@ drift. The rules (spec §14):
 - **Tool powers, actor-bound**: the seat's replies run the shared agent
   loop with the persona toolset **plus the observatory tool**, acting as
   the member who spoke (never the owner) — so owner-reserved project
-  actions stay refused by actor resolution. Generated files land on the
-  reply as attachments. One turn per discussion at a time (the existing
+  actions stay refused by actor resolution. The seat's `runCode` runs
+  **in the project** (`projectService.run`, as the speaker: access check,
+  quota, a job record, the project lock), so its working directory and
+  `/tmp` are the project's persistent `scratch/` — what one conversation
+  built, the next one finds. Generated files land on the reply as
+  attachments. One turn per discussion at a time (the existing
   per-conversation lock).
 - The owner may seat their own personas alongside Goobster (an architect
   or critic joins project chat); those keep their own workspaces.

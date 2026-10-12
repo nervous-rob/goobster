@@ -3443,6 +3443,44 @@ class ObservatoryService {
         };
     }
 
+    /**
+     * Every conversation in a project, for any member (the primary one is
+     * created on first look). Collaborators see and join all of them.
+     */
+    async listProjectConversations({ userId, project, owner = null }) {
+        const { conversation, role } = await this.getProjectParlor({ userId, project, owner });
+        const conversations = await require('./parlorService').listProjectConversations(conversation.projectId);
+        return { conversations, role };
+    }
+
+    /** Start another conversation in a project (any member). */
+    async createProjectConversation({ userId, project, owner = null, title = null }) {
+        await this._requireOrganization();
+        const row = await this.resolveProjectForActor({ userId, project, owner });
+        const members = await db.all(
+            'SELECT userId, userName FROM project_members WHERE projectId = @id',
+            { id: row.id }
+        );
+        const created = await require('./parlorService').createProjectConversation({
+            project: { id: row.id, ownerId: row.ownerId, name: row.name },
+            members,
+            title
+        });
+        return {
+            conversation: {
+                id: created.id,
+                title: created.title,
+                ownerId: created.ownerId,
+                projectId: created.projectId,
+                createdAt: created.createdAt,
+                lastMessageAt: created.lastMessageAt,
+                messageCount: 0,
+                primary: false
+            },
+            role: row.role
+        };
+    }
+
     /** Pending project invitations addressed to this user. */
     async listInvites(userId) {
         return await db.all(
