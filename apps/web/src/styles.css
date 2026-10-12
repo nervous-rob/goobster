@@ -70,12 +70,40 @@ a.nav-btn {
 }
 #pane-chat .conversations-panel,
 #pane-parlor .conversations-panel {
-  width: 260px;
+  width: var(--convs-width, 260px);
   flex: none;
   border-right: 1px solid var(--border);
   padding: 12px 10px;
   overflow: auto;
   background: var(--bg-raise);
+  --ic-ink: var(--bg-raise);
+}
+/* New chat + the hide-column button share the top row. */
+.convs-top { display: flex; align-items: stretch; gap: 6px; flex: none; }
+.convs-top .new-chat { flex: 1; min-width: 0; }
+.convs-top .convs-hide { height: auto; min-height: 34px; }
+/* Drag handle on the column's right edge (useConversationDrawer): an 8px hit
+   area centred on the border, a visible rule only on hover, focus or drag. */
+.convs-resizer {
+  flex: none; position: relative; z-index: 2;
+  width: 8px; margin: 0 -4px;
+  cursor: col-resize; touch-action: none;
+}
+.convs-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: transparent; transition: background 120ms ease;
+}
+.convs-resizer:hover::after, .convs-resizer:focus-visible::after, .convs-resizer.dragging::after { background: var(--accent); }
+.convs-resizer:focus-visible { outline: none; }
+/* While dragging, text must not select and the cursor must not flicker. */
+.convs-resizing { cursor: col-resize; user-select: none; }
+/* Icon-only buttons centre their glyph (drawn glyphs carry a text gap). */
+:is(.icon-action, .conv-action, .panel-add) > svg.glyph:only-child { margin-right: 0; }
+/* A wide pane can hide the column; the header's chats button brings it back. */
+@container (min-width: 721px) {
+  :is(#pane-chat, #pane-parlor).convs-collapsed .conversations-panel,
+  :is(#pane-chat, #pane-parlor).convs-collapsed .convs-resizer { display: none; }
+  :is(#pane-chat, #pane-parlor).convs-collapsed .icon-action.chats-btn { display: inline-flex; flex: none; }
 }
 
 /* Conversation library toggle — desktop keeps the column, so this stays hidden. */
@@ -96,6 +124,7 @@ a.nav-btn {
 @container (max-width: 720px) {
   .icon-action.chats-btn { display: inline-flex; flex: none; }
   .conversations-backdrop { display: block; }
+  .convs-resizer, .convs-hide { display: none; }
   #pane-chat .conversations-panel,
   #pane-parlor .conversations-panel {
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 36;
@@ -955,6 +984,7 @@ a.nav-btn {
   /* Fallback for browsers without container queries — same drawer as @container. */
   .icon-action.chats-btn { display: inline-flex; flex: none; }
   .conversations-backdrop { display: block; }
+  .convs-resizer, .convs-hide { display: none; }
   #pane-chat .conversations-panel,
   #pane-parlor .conversations-panel {
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 36;
@@ -1543,7 +1573,9 @@ svg.glyph { margin-right: 0.12em; }
 .btn.is-muted { opacity: 0.55; cursor: not-allowed; }
 .btn.is-muted:hover { opacity: 0.7; }
 .view-tab .badge { margin-left: 4px; font-size: 0.625rem; }
-.obs-chat-dock.is-inline { width: auto; flex: 1; min-height: min(70dvh, 720px); }
+/* The inline Conversation view scrolls its transcript, not the page, so the
+   composer stays in reach and the transcript can stay pinned to the latest. */
+.obs-chat-dock.is-inline { width: auto; flex: 1; min-height: min(70dvh, 720px); height: max(420px, calc(100dvh - 220px)); }
 .obs-chat-dock.is-inline .obs-chat-dock-scroll { min-height: 320px; }
 .obs-people-view .project-people { max-width: 640px; }
 .obs-people-view .obs-section-head { margin-bottom: 10px; }

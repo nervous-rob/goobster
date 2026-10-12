@@ -550,6 +550,7 @@ describe('the turn workflow', () => {
             .mockResolvedValueOnce({ content: 'The dice have spoken.', toolCalls: [] });
 
         const toolEvents = [];
+        const progress = [];
         const messages = [];
         const turn = await parlorService.startTurn({
             userId: OWNER, userName: 'Rob',
@@ -557,11 +558,25 @@ describe('the turn workflow', () => {
         });
         await turn.run({
             onPersonaTool: (payload) => toolEvents.push(payload),
+            onTool: (payload) => progress.push(payload),
             onPersonaMessage: (m) => messages.push(m)
         });
 
         expect(toolEvents).toEqual([{ personaId: persona.id, tools: ['rollDice'] }]);
         expect(messages[0].content).toBe('The dice have spoken.');
+
+        // Per-tool progress streams for the Thinking trail, tagged with the
+        // speaker, and the timeline rides on the reply and on reload.
+        expect(progress.map(e => [e.phase, e.name, e.personaId])).toEqual([
+            ['start', 'rollDice', persona.id],
+            ['result', 'rollDice', persona.id]
+        ]);
+        expect(messages[0].steps.map(step => step.type)).toEqual(['text', 'tool']);
+        expect(messages[0].steps[0].content).toBe('Let me roll for it.');
+        const stored = await parlorService.getMessages({ userId: OWNER, conversationId: conversation.id });
+        const reply = stored.find(m => m.role === 'persona');
+        expect(reply.steps).toEqual(messages[0].steps);
+        expect(stored.find(m => m.role === 'user').steps).toBeUndefined();
 
         // The offered subset is curated: conversation-partner tools only,
         // and never manageParlor (a persona must not rewire the parlor).

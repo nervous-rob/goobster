@@ -1,4 +1,6 @@
 import { Markdown } from './Markdown';
+import { ThinkingSteps } from './ThinkingSteps';
+import { Icon } from '../icons/Icon';
 import type { ParlorMessage, Persona } from '../parlor/types';
 import { personaColor, personaGlyph, timeLabel } from '../parlor/persona';
 
@@ -44,16 +46,21 @@ export function ParlorMessageBubble({
                     {message.personaName || persona?.name || fallbackName}
                 {message.typing ? <span className="hint"> {typingLabel}</span> : null}
             </div>
-            <div className="msg-bubble" style={{ borderLeft: `3px solid ${color}` }}>
-                {message.typing
-                    ? <span className="typing"><i /><i /><i /></span>
-                    : <Markdown source={message.content} requestGrant={requestGrant} />}
-            </div>
+            {message.steps && message.steps.length > 0 && (
+                <ThinkingSteps steps={message.steps} live={Boolean(message.draft || message.typing)} />
+            )}
+            {(message.typing || message.content || !message.steps?.length) && (
+                <div className="msg-bubble" style={{ borderLeft: `3px solid ${color}` }}>
+                    {message.typing
+                        ? <span className="typing"><i /><i /><i /></span>
+                        : <Markdown source={message.content} requestGrant={requestGrant} />}
+                </div>
+            )}
             {message.attachments && message.attachments.length > 0 && (
                 <div className="grounding">
                     {message.attachments.map((file) => (
                         <a key={file.url} className="gchip" href={file.url} target="_blank" rel="noreferrer">
-                            📄 {file.name}
+                            <Icon glyph="file" emoji="📄" /> {file.name}
                         </a>
                     ))}
                 </div>

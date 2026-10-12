@@ -25,6 +25,7 @@ the emoji it replaces:
 | Rooms | `home`, `chat`, `knowledge`, `projects`, `discussions`, `people`, `activity`, `tools`, `music`, `trading`, `decks`, `usage`, `settings`, `host`, `docs`, `share` |
 | Room views | `notes`, `map`, `compass` (Research, Attention, Initiative), `target` (Plan), `folder` (Files), `puzzle` (Apps), `play` (Runs), `timer` (Automations), `heart` (Friends), `mail` (Messages), `calendar` (Scheduled) |
 | Settings and shell | `idcard` (Profile), `mic` (Voice), `palette` (Appearance), `person` (Account, the avatar fallback), `gradcap` (Tutorials), `moon` and `sun` (the theme toggle), `plug`, `code` (GitHub), `notebook` (Notion) |
+| Chat actions | `incognito`, `pencil` (rename/edit), `trash` (delete), `plus` (New chat, New discussion, New note), `speaker` (Listen), `file` (attached files), `sidebar` (show/hide the conversation list) |
 
 Three maps join the registries to glyphs: `ROOM_GLYPH` (room id →
 glyph), `VIEW_GLYPH` (view id → glyph; a view that reuses a room's emoji
@@ -92,6 +93,14 @@ sample glyphs. It previews live, saves with the rest of Appearance, keeps
 a device copy (`goobster-icon-style`) that `index.html` paints before the
 app mounts, and Reset returns it to emoji. See
 [user_settings.md](user_settings.md).
+
+The Study and the Parlor draw their action buttons through `<Icon>` too:
+the chat header (incognito, share, move to project, connections, personal
+memory), the conversation rows (share badge, rename, delete), the composer
+(settings chip, dictation and voice chat), message actions (Save as note,
+Listen), attached-file chips and the Thinking trail's header. Each passes
+the character it used to show as `emoji`, so the default `emoji` style
+looks exactly as before.
 
 Emoji that are not navigation (status marks in lists, one-off decorations
 inside components, the Music Lab's notation) are unchanged; they are not

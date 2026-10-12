@@ -47,7 +47,14 @@ export const CONSTELLATION: Record<GlyphName, Figure> = {
     sun: { loops: [ring(12, 12, 4, 6, -Math.PI / 2), ...ring(12, 12, 9, 8, -Math.PI / 2).map((p, i) => [ring(12, 12, 6.3, 8, -Math.PI / 2)[i], p])], open: [false, true, true, true, true, true, true, true, true], star: [12, 12] },
     plug: { loops: [[[6, 8], [18, 8], [17, 14], [12, 17], [7, 14]], [[9, 3], [9, 8]], [[15, 3], [15, 8]], [[12, 17], [12, 21]]], open: [false, true, true, true], star: [9, 3] },
     code: { loops: [[[8, 7], [3, 12], [8, 17]], [[16, 7], [21, 12], [16, 17]], [[14, 4], [10, 20]]], open: [true, true, true], star: [14, 4] },
-    notebook: { loops: [[[7, 3], [20, 3], [20, 21], [7, 21]], [[11, 3], [11, 21]], [[4, 7.5], [8, 7.5]], [[4, 12], [8, 12]], [[4, 16.5], [8, 16.5]]], open: [false, true, true, true, true], star: [20, 3] }
+    notebook: { loops: [[[7, 3], [20, 3], [20, 21], [7, 21]], [[11, 3], [11, 21]], [[4, 7.5], [8, 7.5]], [[4, 12], [8, 12]], [[4, 16.5], [8, 16.5]]], open: [false, true, true, true, true], star: [20, 3] },
+    incognito: { loops: [[[3, 10], [21, 10]], [[6, 10], [8, 4], [16, 4], [18, 10]], ring(7, 16, 3, 6, 0), ring(17, 16, 3, 6, Math.PI), [[10, 16], [14, 16]]], open: [true, true, false, false, true], star: [16, 4] },
+    pencil: { loops: [[[4, 20], [5.5, 15.5], [16, 5], [19, 8], [8.5, 18.5]], [[14, 7], [17, 10]]], open: [false, true], star: [4, 20] },
+    trash: { loops: [[[4, 7], [20, 7]], [[9, 7], [9, 4], [15, 4], [15, 7]], [[6, 7], [7, 20], [17, 20], [18, 7]], [[10, 11], [10, 17]], [[14, 11], [14, 17]]], open: [true, true, true, true, true], star: [15, 4] },
+    plus: { loops: [[[12, 4], [12, 20]], [[4, 12], [20, 12]]], open: [true, true], star: [12, 12] },
+    speaker: { loops: [[[4, 9.5], [8, 9.5], [12, 5.5], [12, 18.5], [8, 14.5], [4, 14.5]], [[15.5, 9], [17, 12], [15.5, 15]], [[18, 6.5], [20.5, 12], [18, 17.5]]], open: [false, true, true], star: [20.5, 12] },
+    file: { loops: [[[5, 3], [14, 3], [19, 8], [19, 21], [5, 21]], [[14, 3], [14, 8], [19, 8]]], open: [false, true], star: [19, 8] },
+    sidebar: { loops: [[[3, 4], [21, 4], [21, 20], [3, 20]], [[9, 4], [9, 20]]], open: [false, true], star: [9, 4] }
 };
 
 export function constellationMarkup(name: GlyphName, uid: string): string {

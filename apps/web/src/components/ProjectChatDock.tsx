@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, streamParlorChat, streamParlorNudge } from '../lib/api';
 import { InboxContextChips } from './InboxContextChips';
 import { useInboxDraft } from '../hooks/useInboxDraft';
+import { useStickToBottom } from '../hooks/useStickToBottom';
 import { keys } from '../lib/query';
 import { useMe } from '../hooks/useSession';
 import { useToast } from '../hooks/useToast';
@@ -10,6 +11,8 @@ import { useConfirm } from '../hooks/useConfirm';
 import { ParlorConversationView } from './ParlorConversationView';
 import type { Attachment, Grounding, ParlorMessage, Persona } from '../parlor/types';
 import { personaColor, personaGlyph } from '../parlor/persona';
+import { applyParlorDelta, applyParlorMessage, applyParlorTool, settleParlorStream } from '../parlor/stream';
+import type { ToolEvent } from '../lib/types';
 
 /**
  * The project parlor dock (§14): a slim view of the project's shared
@@ -96,19 +99,42 @@ export function ProjectChatDock({
     const personaById = (id?: number) => participants.find((p) => p.id === id);
 
     const history = messagesQ.data?.messages || [];
-    const display = useMemo(() => [...history, ...streamMessages], [history, streamMessages]);
+    // The last stored message id when this turn began. Once the refetched
+    // history moves past it, the stored rows replace the streamed ones in
+    // the same render, so the transcript never shrinks and jumps mid-settle.
+    const streamBaseRef = useRef<number | null>(null);
+    const historyLastId = history[history.length - 1]?.id ?? 0;
+    const streamSuperseded = !sending && streamBaseRef.current !== null && historyLastId > streamBaseRef.current;
+    const display = useMemo(
+        () => (streamSuperseded ? history : [...history, ...streamMessages]),
+        [history, streamMessages, streamSuperseded]
+    );
+    const stick = useStickToBottom(logRef, display);
 
     useEffect(() => {
-        const el = logRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
-    }, [display.length, streamMessages]);
+        if (!streamSuperseded) return;
+        streamBaseRef.current = null;
+        setStreamMessages([]);
+    }, [streamSuperseded]);
+
+    function beginStream(first: ParlorMessage) {
+        streamBaseRef.current = historyLastId;
+        setStreamMessages([first]);
+        stick.pin();
+    }
 
     async function settleTurn() {
         setSending(false);
         abortRef.current = null;
-        setStreamMessages([]);
+        setStreamMessages((prev) => settleParlorStream(prev));
         await queryClient.invalidateQueries({ queryKey: ['parlor-messages', conversationId] });
+        const stored = queryClient.getQueryData<{ messages: ParlorMessage[] }>(['parlor-messages', conversationId])?.messages || [];
+        const storedLastId = stored[stored.length - 1]?.id ?? 0;
+        if (streamBaseRef.current === null || storedLastId <= streamBaseRef.current) {
+            // Nothing new was stored (stopped or failed before a reply).
+            streamBaseRef.current = null;
+            setStreamMessages([]);
+        }
         await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
         await queryClient.invalidateQueries({ queryKey: conversationsKey });
         await queryClient.invalidateQueries({ queryKey: keys.observatory });
@@ -116,8 +142,10 @@ export function ProjectChatDock({
 
     function switchTo(id: number) {
         if (sending || id === conversationId) return;
+        streamBaseRef.current = null;
         setStreamMessages([]);
         setSelectedId(id);
+        stick.pin();
     }
 
     async function newConversation() {
@@ -152,53 +180,45 @@ export function ProjectChatDock({
         }
     }
 
-    const turnHandlers = (fallbackPersonaId?: number) => ({
-        onPersonaStart: (data: { personaId?: number; name?: string }) => {
-            const persona = personaById(data.personaId) || { id: data.personaId || 0, name: data.name || 'Goobster' };
-            setStreamMessages((prev) => [...prev, {
-                role: 'persona' as const, personaId: persona.id, personaName: persona.name,
-                content: '', typing: true
-            }]);
-        },
-        onDelta: (delta: string) => {
-            setStreamMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last && last.role !== 'user' && (last.draft || last.typing || last.content === '')) {
-                    next[next.length - 1] = { ...last, content: (last.typing ? '' : last.content) + delta, typing: false, draft: true };
-                } else {
-                    next.push({ role: 'persona', personaId: fallbackPersonaId, content: delta, draft: true });
-                }
-                return next;
-            });
-        },
-        onPersonaMessage: (data: { content?: string; personaId?: number; grounding?: unknown; attachments?: unknown }) => {
-            setStreamMessages((prev) => {
-                const next = prev.filter((m) => !m.draft && !m.typing);
-                next.push({
+    const turnHandlers = (fallbackPersonaId?: number) => {
+        let speaker: ParlorMessage = { role: 'persona', personaId: fallbackPersonaId, personaName: personaById(fallbackPersonaId)?.name, content: '' };
+        return {
+            onPersonaStart: (data: { personaId?: number; name?: string }) => {
+                const persona = personaById(data.personaId) || { id: data.personaId || 0, name: data.name || 'Goobster' };
+                speaker = { role: 'persona', personaId: persona.id, personaName: persona.name, content: '' };
+                setStreamMessages((prev) => [...prev, { ...speaker, typing: true }]);
+            },
+            onDelta: (delta: string) => {
+                setStreamMessages((prev) => applyParlorDelta(prev, delta, speaker));
+            },
+            onTool: (event: ToolEvent) => {
+                setStreamMessages((prev) => applyParlorTool(prev, event, speaker));
+            },
+            onPersonaMessage: (data: { content?: string; personaId?: number; grounding?: unknown; attachments?: unknown; steps?: ParlorMessage['steps'] }) => {
+                setStreamMessages((prev) => applyParlorMessage(prev, {
                     role: 'persona',
                     content: data.content || '',
                     personaId: data.personaId || fallbackPersonaId,
                     personaName: personaById(data.personaId || fallbackPersonaId)?.name,
                     grounding: data.grounding as Grounding[] | undefined,
-                    attachments: data.attachments as Attachment[] | undefined
-                });
-                return next;
-            });
-        },
-        onError: (error: { message?: string }) => {
-            setStreamMessages((prev) => [...prev.filter((m) => !m.typing), {
-                role: 'persona' as const, content: error.message || 'Something went wrong.', isError: true
-            }]);
-        }
-    });
+                    attachments: data.attachments as Attachment[] | undefined,
+                    steps: data.steps
+                }));
+            },
+            onError: (error: { message?: string }) => {
+                setStreamMessages((prev) => [...settleParlorStream(prev), {
+                    role: 'persona' as const, content: error.message || 'Something went wrong.', isError: true
+                }]);
+            }
+        };
+    };
 
     async function sendMessage() {
         const text = composer.trim();
         if (!text || sending || conversationId == null) return;
         setComposer('');
         setSending(true);
-        setStreamMessages([{ role: 'user', content: text, userId: me.user.id }]);
+        beginStream({ role: 'user', content: text, userId: me.user.id });
         const controller = new AbortController();
         abortRef.current = controller;
         try {
@@ -214,7 +234,7 @@ export function ProjectChatDock({
         if (sending || conversationId == null) return;
         setSending(true);
         const persona = personaById(personaId);
-        setStreamMessages([{ role: 'persona', personaId, personaName: persona?.name, content: '', typing: true }]);
+        beginStream({ role: 'persona', personaId, personaName: persona?.name, content: '', typing: true });
         const controller = new AbortController();
         abortRef.current = controller;
         try {
@@ -295,7 +315,7 @@ export function ProjectChatDock({
                             ))}
                         </div>
                     )}
-                    <div className="obs-chat-dock-scroll" ref={logRef}>
+                    <div className="obs-chat-dock-scroll" ref={logRef} onScroll={stick.onScroll}>
                         {parlorQ.isPending || (conversationId != null && messagesQ.isPending) ? (
                             <div className="empty">Setting the table…</div>
                         ) : parlorQ.isError ? (

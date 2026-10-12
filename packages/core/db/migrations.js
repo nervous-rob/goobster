@@ -187,6 +187,8 @@ const COLUMN_MIGRATIONS = [
     // timestamp and the account session-version snapshot.
     ['web_sessions', 'authenticatedAt', 'authenticatedAt TEXT'],
     ['web_sessions', 'sessionVersion', 'sessionVersion INTEGER'],
+    // Parlor / project-table replies keep their "Thinking" timeline.
+    ['parlor_messages', 'stepsJson', 'stepsJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };
