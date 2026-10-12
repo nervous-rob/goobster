@@ -62,7 +62,7 @@ Every directory the application writes under its data directory is classified, i
 | `features.json` | left out | | | The feature choice belongs to the installed payload and is set again through the Features page or the manager. |
 | `command-deploy.json`, `.command-deploy-hash` | left out | | | Derived: the last slash-command deployment. |
 | `account-exports` | left out | | | Temporary account export archives; a restore deletes them on purpose. |
-| `sandbox/runs`, `sandbox/venv`, `sandbox/overlay` | left out | | | Temporary workspaces and the derived Python toolkit (`npm run sandbox-python`). |
+| `sandbox/runs`, `sandbox/sessions`, `sandbox/venv`, `sandbox/overlay` | left out | | | Temporary workspaces (per run and per conversation) and the derived Python toolkit (`npm run sandbox-python`). |
 | `backups` | left out | | | The default destination of backups: an archive never contains archives. |
 | `music`, `ambience`, `playlists`, `voiceLimits.json` (relative to the working directory) | left out | | | Downloaded media, generated clips, in-memory playlists and transient counters. |
 

@@ -1242,6 +1242,10 @@ class PrivacyService {
         // Sandbox requests (they carry reasons/URLs the user wrote) go;
         // installed packages stay - they are shared host state - with the
         // requester/approver attribution nulled.
+        // runCode conversation workspaces: files the user's code wrote.
+        const sandbox = requireOptional('./sandboxService', { feature: 'sandbox' });
+        counts.sandboxWorkspaces = sandbox ? sandbox.forgetUser(userId) : 0;
+
         const sandboxRequests = await dormantData.forgetSandboxRequests(userId);
         counts.sandboxRequests = sandboxRequests.requests;
         counts.anonymizedSandboxPackages = sandboxRequests.packagesAnonymized;

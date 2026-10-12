@@ -122,6 +122,7 @@ function createSandboxApp({ sandbox = sandboxService, logger = console, worker =
                 userId: req.body?.userId || null,
                 projectDir: req.body?.projectDir || null,
                 runDir: req.body?.runDir || null,
+                sessionKey: req.body?.sessionKey || null,
                 signal: controller.signal,
                 // The submitting process records the ledger rows: it knows
                 // which piece of work this run belongs to.

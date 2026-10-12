@@ -19,6 +19,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const db = require('../db');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 const { toGateway } = require('../gateway');
 const { resolveAssistantUser } = require('./assistantIdentity');
 const identityConfig = require('../config/identityConfig');
@@ -586,6 +587,11 @@ class WebChatService {
             return { deleted: true, deletedMessages };
         });
         await this._removeOrphanAttachments(userId, attachmentPaths);
+        // The conversation's runCode workspace goes with it.
+        try {
+            requireOptional('./sandboxService', { feature: 'sandbox' })
+                ?.discardSession({ userId, channelId: conversation.channelId });
+        } catch { /* best effort */ }
         return result;
     }
 

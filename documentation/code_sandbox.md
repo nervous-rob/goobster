@@ -104,6 +104,7 @@ large datasets, batches of plots) without patching code:
 | `runsPerWindow` | 10 | 10,000 |
 | `maxConcurrent` | 1 | 400 |
 | `retentionHours` | 24 | 16,800 (700 days) |
+| `sessionRetentionHours` | 72 | 16,800 (700 days) |
 
 A ceiling means the knob still exists, not that the number is comfortable —
 raising one is a deliberate act with real consequences. In particular: a run
@@ -127,11 +128,40 @@ so the web portal persists them in message history and re-serves them through
 the owner-bound `/api/app/files/:id` route. Delivery is best effort; the run
 summary lists the produced files either way.
 
+## Conversation workspaces
+
+Inside one chat conversation, every `runCode` call shares a single working
+directory, so Goobster can clone, generate, or compute something once and
+keep building on it turn after turn instead of rebuilding it for every
+question. The workspace lives at `data/sandbox/sessions/<owner>/<conversation>/`
+(both components are hashes; the owner hash is per user, the conversation
+hash covers the user plus the chat channel — a web conversation's
+`web:<user>:<id>`, a Discord thread, or a Discord channel).
+
+- **Same guardrails.** It is mounted exactly where the throwaway workdir
+  would be (`HOME`, `TMPDIR`, cwd), and under bubblewrap its `tmp/` is
+  bind-mounted over `/tmp`, so `/tmp` persists too. Isolation, rlimits,
+  timeout and the scrubbed environment are unchanged.
+- **One run at a time** per conversation (`BUSY` otherwise).
+- **Only new or changed files are attached.** The workspace is snapshotted
+  before each run; files the run created or modified are copied into that
+  run's own `data/sandbox/runs/<id>/` and delivered from there, so an
+  attachment on an old message never changes when a later run overwrites
+  `chart.png`.
+- **The snippet's source** is written as a hidden `.goobster-run.*` file and
+  removed after the run, so it never clobbers a user's own `main.py`.
+- **Lifetime.** Each run refreshes the workspace's clock; one idle longer
+  than `sessionRetentionHours` (default 72) is pruned. Deleting a web
+  conversation deletes its workspace, and `/forget-me` (`privacyService`)
+  deletes every workspace of the user. Incognito turns stay throwaway.
+- With a dedicated runner (`GOOBSTER_SANDBOX_URL`), the key travels with the
+  run and resolves on the runner's shared data volume.
+
 ## Persistence (the Observatory)
 
-The sandbox workdir is throwaway by design. When a user needs state that
-*survives* between runs — long simulations, checkpoints, frame sequences —
-that is the Observatory's job: named per-user projects whose workspace
+The conversation workspace is meant for a working session, not for durable
+results. When a user needs state that *survives* indefinitely — long
+simulations, checkpoints, frame sequences — that is the Observatory's job: named per-user projects whose workspace
 directory is mounted read-write beside the run dir, plus checkpointed
 background jobs and a frame→video render pipeline. See
 `documentation/observatory.md`.
