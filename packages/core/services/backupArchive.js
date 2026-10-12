@@ -102,6 +102,7 @@ const DATA_CLASSIFICATION = Object.freeze([
     { path: '.command-deploy-hash', disposition: 'excluded', reason: 'derived: legacy slash-command deployment marker' },
     { path: 'account-exports', disposition: 'excluded', reason: 'temporary account export archives, deleted by a restore on purpose' },
     { path: 'sandbox/runs', disposition: 'excluded', reason: 'temporary code-execution workspaces' },
+    { path: 'sandbox/sessions', disposition: 'excluded', reason: 'temporary per-conversation code-execution workspaces, pruned when idle' },
     { path: 'sandbox/venv', disposition: 'excluded', reason: 'derived Python environment, rebuilt by npm run sandbox-python' },
     { path: 'sandbox/overlay', disposition: 'excluded', reason: 'derived package overlay for the sandbox' },
     { path: 'backups', disposition: 'excluded', reason: 'the default destination of backups: an archive never contains archives' },

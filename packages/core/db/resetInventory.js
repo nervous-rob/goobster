@@ -179,6 +179,7 @@ const BACKUP_SET_KEPT = Object.freeze({
 /** Sets a backup does not carry (derived, temporary or regenerable), resolved against the data and cache roots. */
 const EXTRA_SETS = Object.freeze([
     { id: 'sandbox-runs', owner: 'sandbox', label: 'sandbox run workspaces', base: 'data', segments: ['sandbox', 'runs'], kind: 'dir' },
+    { id: 'sandbox-sessions', owner: 'sandbox', label: 'sandbox conversation workspaces', base: 'data', segments: ['sandbox', 'sessions'], kind: 'dir' },
     { id: 'account-exports', owner: CORE_ID, label: 'account export archives', base: 'data', segments: ['account-exports'], kind: 'dir' },
     { id: 'music-library', owner: 'music', label: 'downloaded music', base: 'data', segments: ['music'], kind: 'dir' },
     { id: 'ambience', owner: 'music', label: 'generated ambience', base: 'data', segments: ['ambience'], kind: 'dir' },

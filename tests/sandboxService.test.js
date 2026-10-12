@@ -12,7 +12,7 @@ process.env.GOOBSTER_DB_PATH = require('node:path').join(require('node:os').tmpd
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { SandboxService, SandboxError } = require('@goobster/core/services/sandboxService');
+const { SandboxService, SandboxError, sessionKeyFor } = require('@goobster/core/services/sandboxService');
 
 const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-sandbox-runs-${process.pid}`);
 
@@ -41,6 +41,7 @@ function makeConfig(overrides = {}) {
 
 afterAll(() => {
     try { fs.rmSync(SANDBOX_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(`${SANDBOX_ROOT}-sessions`, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
 describe('gates and validation', () => {
@@ -346,6 +347,111 @@ describe('strong isolation', () => {
             try { fs.rmSync(secretDir, { recursive: true, force: true }); } catch { /* ignore */ }
             try { fs.rmSync(projectsRoot, { recursive: true, force: true }); } catch { /* ignore */ }
         }
+    });
+});
+
+describe('conversation workspaces', () => {
+    const key = (channelId, userId = 'u-session') => sessionKeyFor({ userId, channelId });
+
+    test('sessionKeyFor is stable, per user and per channel, and hides both ids', () => {
+        expect(key('web:u-session:a')).toBe(key('web:u-session:a'));
+        expect(key('web:u-session:a')).not.toBe(key('web:u-session:b'));
+        expect(key('chan', 'u1')).not.toBe(key('chan', 'u2'));
+        expect(key('chan', 'u1').split('/')[0]).toBe(key('other', 'u1').split('/')[0]);
+        expect(key('web:u-session:a')).not.toMatch(/u-session/);
+        expect(sessionKeyFor({ userId: 'u1' })).toBeNull();
+        expect(sessionKeyFor({ channelId: 'c' })).toBeNull();
+    });
+
+    test('files and $TMPDIR survive between runs with the same key only', async () => {
+        const svc = new SandboxService(makeConfig());
+        const sessionKey = key('web:u-session:persist');
+        const first = await svc.run({
+            language: 'bash', sessionKey,
+            code: 'mkdir -p repo && echo built > repo/state.txt && echo scratch > "$TMPDIR/cache.txt"'
+        });
+        expect(first.ok).toBe(true);
+        expect(first.persistent).toBe(true);
+        const second = await svc.run({
+            language: 'bash', sessionKey,
+            code: 'cat repo/state.txt "$TMPDIR/cache.txt"'
+        });
+        expect(second.stdout).toBe('built\nscratch\n');
+        const other = await svc.run({
+            language: 'bash', sessionKey: key('web:u-session:elsewhere'),
+            code: 'test -e repo/state.txt && echo leaked || echo clean'
+        });
+        expect(other.stdout.trim()).toBe('clean');
+        const oneOff = await svc.run({ language: 'bash', code: 'test -e repo/state.txt && echo leaked || echo clean' });
+        expect(oneOff.stdout.trim()).toBe('clean');
+        expect(oneOff.persistent).toBe(false);
+    });
+
+    test('only new or changed files are attached, from a stable per-run copy', async () => {
+        const svc = new SandboxService(makeConfig());
+        const sessionKey = key('web:u-session:outputs');
+        const first = await svc.run({ language: 'bash', sessionKey, code: 'echo v1 > chart.png; echo keep > notes.txt' });
+        expect(first.files.map(f => f.name).sort()).toEqual(['chart.png', 'notes.txt']);
+        const firstChart = first.files.find(f => f.name === 'chart.png');
+
+        const second = await svc.run({ language: 'bash', sessionKey, code: 'sleep 0.05; echo v2-longer > chart.png' });
+        expect(second.files.map(f => f.name)).toEqual(['chart.png']);
+        // The earlier attachment is untouched by the overwrite.
+        expect(fs.readFileSync(firstChart.path, 'utf8')).toBe('v1\n');
+        expect(fs.readFileSync(second.files[0].path, 'utf8')).toBe('v2-longer\n');
+        expect(path.dirname(second.files[0].path)).toBe(path.join(SANDBOX_ROOT, second.runId));
+
+        const quiet = await svc.run({ language: 'bash', sessionKey, code: 'cat notes.txt' });
+        expect(quiet.files).toEqual([]);
+    });
+
+    test('the snippet source never clobbers or shows up beside the user\'s files', async () => {
+        const svc = new SandboxService(makeConfig());
+        const sessionKey = key('web:u-session:source');
+        await svc.run({ language: 'bash', sessionKey, code: 'echo "print(\'mine\')" > main.py' });
+        const res = await svc.run({ language: 'python', sessionKey, code: 'import os; print(open("main.py").read().strip()); print(sorted(os.listdir(".")))' });
+        expect(res.ok).toBe(true);
+        expect(res.stdout).toContain("print('mine')");
+        expect(res.files).toEqual([]);
+        const after = await svc.run({ language: 'bash', sessionKey, code: 'ls -A' });
+        // Only this run's own script; the previous run's source was removed.
+        expect(after.stdout).not.toMatch(/goobster-run\.py/);
+    });
+
+    test('a forged session key is refused', async () => {
+        const svc = new SandboxService(makeConfig());
+        await expect(svc.run({ language: 'bash', code: 'true', sessionKey: '../../etc' }))
+            .rejects.toMatchObject({ code: 'BAD_SESSION', status: 400 });
+    });
+
+    test('discardSession and forgetUser remove workspaces; idle ones are pruned', async () => {
+        const svc = new SandboxService(makeConfig({ sessionRetentionHours: 1 }));
+        const root = `${SANDBOX_ROOT}-sessions`;
+        const dirOf = (k) => path.join(root, ...k.split('/'));
+
+        await svc.run({ language: 'bash', sessionKey: key('c1', 'u-erase'), code: 'echo x > f' });
+        await svc.run({ language: 'bash', sessionKey: key('c2', 'u-erase'), code: 'echo x > f' });
+        expect(svc.discardSession({ userId: 'u-erase', channelId: 'c1' })).toBe(true);
+        expect(fs.existsSync(dirOf(key('c1', 'u-erase')))).toBe(false);
+        expect(fs.existsSync(dirOf(key('c2', 'u-erase')))).toBe(true);
+        expect(svc.forgetUser('u-erase')).toBe(1);
+        expect(fs.existsSync(dirOf(key('c2', 'u-erase')))).toBe(false);
+
+        await svc.run({ language: 'bash', sessionKey: key('idle', 'u-prune'), code: 'echo x > f' });
+        const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(dirOf(key('idle', 'u-prune')), stale, stale);
+        await svc.run({ language: 'bash', sessionKey: key('busy', 'u-prune'), code: 'true' });
+        expect(fs.existsSync(dirOf(key('idle', 'u-prune')))).toBe(false);
+        expect(fs.existsSync(dirOf(key('busy', 'u-prune')))).toBe(true);
+    });
+
+    test('bwrap mounts the workspace tmp over /tmp instead of a tmpfs', () => {
+        const svc = new SandboxService(makeConfig({ allowNetwork: true }));
+        const throwaway = svc._buildArgv('bwrap', '/tmp/work', 'true').args;
+        expect(throwaway.join(' ')).toContain('--tmpfs /tmp');
+        const kept = svc._buildArgv('bwrap', '/data/s/w', 'true', null, null, '/data/s/w/tmp').args;
+        expect(kept.join(' ')).toContain('--bind /data/s/w/tmp /tmp');
+        expect(kept).not.toContain('--tmpfs');
     });
 });
 

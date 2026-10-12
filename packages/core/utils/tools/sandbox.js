@@ -5,6 +5,7 @@
 
 const path = require('node:path');
 const sandboxService = require('../../services/sandboxService');
+const { sessionKeyFor } = require('../../services/sandboxService');
 const sandboxConfig = require('../../config/sandboxConfig');
 const sandboxRequestService = require('../../services/sandboxRequestService');
 const { clipStream } = require('../toolResultWindow');
@@ -20,7 +21,10 @@ module.exports = {
                 + 'transform data, or - the headline use case - GENERATE DIAGRAMS/CHARTS. For a plot, write Python '
                 + 'that uses matplotlib with the "Agg" backend and saves to a file (e.g. plt.savefig("chart.png")) '
                 + 'instead of calling plt.show(); the saved image is returned to the user. The sandbox has no network '
-                + 'access, a hard CPU/memory/time limit, and a throwaway working directory that is wiped after a day. '
+                + 'access and a hard CPU/memory/time limit. Within one conversation every run shares the same working '
+                + 'directory and /tmp: files you wrote in an earlier call (cloned code, generated data, intermediate '
+                + 'results) are still there, so build on them instead of recreating them. Only files a run creates or '
+                + 'changes are attached. The workspace is deleted after a few idle days or with the conversation. '
                 + 'Do not attempt long-running servers, installs, or anything that needs the internet.',
             parameters: {
                 type: 'object',
@@ -70,6 +74,12 @@ module.exports = {
                     code,
                     stdin,
                     userId: interactionContext?.user?.id || null,
+                    // One persistent workspace per conversation. Incognito
+                    // turns persist nothing, so they stay throwaway.
+                    sessionKey: interactionContext?.skipHistory === true ? null : sessionKeyFor({
+                        userId: interactionContext?.user?.id,
+                        channelId: interactionContext?.channel?.id || interactionContext?.channelId
+                    }),
                     // Stop button / turn watchdog: kill the run instead of
                     // holding the turn until the sandbox wall clock.
                     signal: interactionContext?.abortSignal || null

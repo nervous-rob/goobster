@@ -24,7 +24,12 @@
  *     allowlist plus a headless-matplotlib nudge.
  *   - A private per-run working directory under data/sandbox; output files
  *     are collected from it (count- and size-capped) and everything is
- *     pruned after a retention window.
+ *     pruned after a retention window. A chat conversation may instead
+ *     pass a `sessionKey`: its runs share one workspace (and /tmp) under
+ *     data/sandbox/sessions that survives between turns until it sits idle
+ *     past `sessionRetentionHours`; the files each run produced are still
+ *     snapshotted into its own run dir, so delivered attachments never
+ *     change underneath a message.
  *
  * Concurrency and per-user rate limits are enforced in-memory on the
  * process that actually executes (the optional sandbox-runner service
@@ -43,13 +48,18 @@ const sandboxConfig = require('../config/sandboxConfig');
 const sandboxPackages = require('../config/sandboxPackages');
 
 const SANDBOX_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'runs');
+const SESSIONS_ROOT = path.join(require('../runtimePaths').dataDir, 'sandbox', 'sessions');
+/** `<owner>/<conversation>`: two hex digests (see sessionKeyFor). */
+const SESSION_KEY_RE = /^[0-9a-f]{24}\/[0-9a-f]{32}$/;
+/** Hidden source names in a session workspace, so a run never clobbers the user's main.py. */
+const SESSION_SOURCE_PREFIX = '.goobster-run';
 const RATE_WINDOW_MS = 5 * 60 * 1000;
 
 /** Per-language source file name and interpreter argv builder. */
 const LANGUAGES = {
-    python: { file: 'main.py', argv: (cfg) => [cfg.pythonCommand, 'main.py'] },
-    javascript: { file: 'main.js', argv: () => ['node', 'main.js'] },
-    bash: { file: 'main.sh', argv: () => ['bash', 'main.sh'] }
+    python: { file: 'main.py', argv: (cfg, file) => [cfg.pythonCommand, file] },
+    javascript: { file: 'main.js', argv: (cfg, file) => ['node', file] },
+    bash: { file: 'main.sh', argv: (cfg, file) => ['bash', file] }
 };
 const LANGUAGE_ALIASES = {
     python: 'python', py: 'python', python3: 'python',
@@ -110,15 +120,35 @@ function detectUnshare() {
     }
 }
 
+function sha256Hex(value) {
+    return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+/** Owner component of a session key: every conversation workspace of one user shares it. */
+function sessionOwnerKey(userId) {
+    return sha256Hex(`sandbox-session-owner\0${userId}`).slice(0, 24);
+}
+
+/**
+ * The conversation workspace key for one user in one chat channel (a web
+ * conversation's `web:<user>:<id>` channel, a Discord thread, or a channel).
+ * Hashed so neither id reaches the filesystem; the owner prefix lets erasure
+ * find every workspace of a user without a table.
+ * @returns {string|null}
+ */
+function sessionKeyFor({ userId, channelId } = {}) {
+    if (!userId || !channelId) return null;
+    return `${sessionOwnerKey(userId)}/${sha256Hex(`sandbox-session\0${userId}\0${channelId}`).slice(0, 32)}`;
+}
+
 /** One live child per project workspace across SandboxService instances. */
 const projectExecLocks = new Set();
 
-function acquireProjectExec(projectDir) {
+function acquireProjectExec(projectDir, busyMessage = 'The sandbox is already running code in this project.') {
     if (!projectDir) return () => {};
     const key = path.resolve(projectDir);
     if (projectExecLocks.has(key)) {
-        throw new SandboxError(429, 'BUSY',
-            'The sandbox is already running code in this project.');
+        throw new SandboxError(429, 'BUSY', busyMessage);
     }
     projectExecLocks.add(key);
     return () => projectExecLocks.delete(key);
@@ -206,6 +236,21 @@ class SandboxService {
             return path.resolve(configured);
         }
         return SANDBOX_ROOT;
+    }
+
+    /**
+     * Conversation workspace root. Follows a configured `runsDir` (tests)
+     * so parallel workers never share it.
+     */
+    _sessionsRoot() {
+        const configured = this.config.sessionsDir;
+        if (typeof configured === 'string' && configured.trim()) {
+            return path.resolve(configured);
+        }
+        if (typeof this.config.runsDir === 'string' && this.config.runsDir.trim()) {
+            return `${path.resolve(this.config.runsDir)}-sessions`;
+        }
+        return SESSIONS_ROOT;
     }
 
     /** Languages the sandbox will accept (for tool docs / validation). */
@@ -538,7 +583,7 @@ class SandboxService {
      * kill the whole tree.
      * @returns {{ command: string, args: string[], viaTimeout: boolean }}
      */
-    _buildArgv(isolation, workdir, script, projectDir = null, runDir = null) {
+    _buildArgv(isolation, workdir, script, projectDir = null, runDir = null, persistentTmp = null) {
         const { timeoutMs, allowNetwork } = this.config;
         const timeoutSec = Math.ceil(timeoutMs / 1000);
         const timeoutBin = resolveOnPath('timeout');
@@ -553,7 +598,9 @@ class SandboxService {
                 ...core,
                 '--dev', '/dev',
                 '--proc', '/proc',
-                '--tmpfs', '/tmp',
+                // A conversation workspace keeps its /tmp between runs;
+                // a one-off run gets a fresh tmpfs.
+                ...(persistentTmp ? ['--bind', persistentTmp, '/tmp'] : ['--tmpfs', '/tmp']),
                 '--bind', workdir, workdir,
                 '--chdir', workdir,
                 '--die-with-parent'
@@ -611,7 +658,7 @@ class SandboxService {
      * size-capped.
      * @returns {Array<{path:string, name:string, size:number, isImage:boolean}>}
      */
-    _collectOutputs(workdir, sourceFile) {
+    _collectOutputs(workdir, sourceFile, before = null) {
         const { maxOutputFiles, maxFileSizeBytes } = this.config;
         let entries;
         try {
@@ -627,6 +674,9 @@ class SandboxService {
             let stat;
             try { stat = fs.statSync(full); } catch { continue; }
             if (stat.size === 0 || stat.size > maxFileSizeBytes) continue;
+            // A conversation workspace: only what this run wrote or changed.
+            const prior = before?.get(entry.name);
+            if (prior && prior.mtimeMs === stat.mtimeMs && prior.size === stat.size) continue;
             files.push({
                 path: full,
                 name: entry.name,
@@ -637,6 +687,92 @@ class SandboxService {
         }
         files.sort((a, b) => b.mtime - a.mtime);
         return files.slice(0, maxOutputFiles).map(({ mtime, ...rest }) => rest);
+    }
+
+    /** name -> { mtimeMs, size } of the top-level files in a workspace. */
+    _snapshotFiles(workdir) {
+        const seen = new Map();
+        let entries;
+        try { entries = fs.readdirSync(workdir, { withFileTypes: true }); } catch { return seen; }
+        for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            try {
+                const stat = fs.statSync(path.join(workdir, entry.name));
+                seen.set(entry.name, { mtimeMs: stat.mtimeMs, size: stat.size });
+            } catch { /* vanished */ }
+        }
+        return seen;
+    }
+
+    /**
+     * Copy a session run's produced files into its own run dir, so the paths
+     * handed back (and persisted on the message) stay stable when a later
+     * run in the same workspace overwrites chart.png.
+     */
+    _snapshotOutputs(files, runDir) {
+        if (files.length === 0) return files;
+        fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
+        const copied = [];
+        for (const file of files) {
+            const target = path.join(runDir, file.name);
+            try {
+                fs.copyFileSync(file.path, target);
+                copied.push({ ...file, path: target });
+            } catch { /* best effort, like collection */ }
+        }
+        return copied;
+    }
+
+    /** Remove conversation workspaces idle past sessionRetentionHours (best effort). */
+    _pruneIdleSessions() {
+        const hours = this.config.sessionRetentionHours || this.config.retentionHours || 24;
+        const cutoff = Date.now() - hours * 60 * 60 * 1000;
+        const root = this._sessionsRoot();
+        let owners;
+        try { owners = fs.readdirSync(root, { withFileTypes: true }); } catch { return; }
+        for (const owner of owners) {
+            if (!owner.isDirectory()) continue;
+            const ownerDir = path.join(root, owner.name);
+            let sessions;
+            try { sessions = fs.readdirSync(ownerDir, { withFileTypes: true }); } catch { continue; }
+            for (const session of sessions) {
+                if (!session.isDirectory()) continue;
+                const full = path.join(ownerDir, session.name);
+                if (projectExecLocks.has(path.resolve(full))) continue;
+                try {
+                    if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { recursive: true, force: true });
+                } catch { /* ignore prune failures */ }
+            }
+            try { fs.rmdirSync(ownerDir); } catch { /* not empty */ }
+        }
+    }
+
+    /**
+     * Delete one conversation's workspace (the conversation was deleted).
+     * Runs on the caller's filesystem; a dedicated runner shares the data
+     * volume, so the same path is the runner's workspace.
+     * @returns {boolean} whether a workspace existed
+     */
+    discardSession({ userId, channelId } = {}) {
+        const key = sessionKeyFor({ userId, channelId });
+        if (!key) return false;
+        const dir = path.join(this._sessionsRoot(), ...key.split('/'));
+        const existed = fs.existsSync(dir);
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        return existed;
+    }
+
+    /**
+     * Erasure: every conversation workspace of one user.
+     * @returns {number} workspaces removed
+     */
+    forgetUser(userId) {
+        if (!userId) return 0;
+        const dir = path.join(this._sessionsRoot(), sessionOwnerKey(userId));
+        let count;
+        try { count = fs.readdirSync(dir).length; } catch { return 0; }
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        return count;
     }
 
     /** Remove run directories older than the retention window (best effort). */
@@ -673,6 +809,9 @@ class SandboxService {
      * @param {string} [params.runDir] - per-job tree (checkpoint/frames)
      *   exposed as $GOOBSTER_RUN_DIR. When inside projectDir it shares that bind.
      * @param {AbortSignal} [params.signal] - kills the run early (job cancel).
+     * @param {string} [params.sessionKey] - a conversation workspace
+     *   (sessionKeyFor): the run's working directory and /tmp persist across
+     *   calls with the same key instead of being thrown away.
      * @returns {Promise<{
      *   ok:boolean, exitCode:number|null, signal:string|null, timedOut:boolean,
      *   aborted:boolean, stdout:string, stderr:string,
@@ -760,14 +899,14 @@ class SandboxService {
         }
     }
 
-    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, signal = null } = {}) {
+    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, sessionKey = null, signal = null } = {}) {
         if (features.enforcedOff('sandbox')) throw this._featureUnavailable();
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
         }
         const runnerUrl = String(process.env.GOOBSTER_SANDBOX_URL || '').replace(/\/+$/, '');
         if (runnerUrl && !this.config.forceLocal) {
-            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, signal });
+            return this._runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, sessionKey, signal });
         }
         const langKey = this._normalizeLanguage(language);
         if (!langKey) {
@@ -784,6 +923,9 @@ class SandboxService {
                 throw new SandboxError(400, 'BAD_PROJECT_DIR',
                     'projectDir must be an existing absolute directory.');
             }
+        }
+        if (sessionKey !== null && (typeof sessionKey !== 'string' || !SESSION_KEY_RE.test(sessionKey))) {
+            throw new SandboxError(400, 'BAD_SESSION', 'sessionKey must come from sessionKeyFor().');
         }
         if (this._active >= this.config.maxConcurrent) {
             throw new SandboxError(429, 'BUSY', 'The sandbox is busy running other code - try again shortly.');
@@ -828,21 +970,41 @@ class SandboxService {
         try {
             releaseProject = acquireProjectExec(projectDir);
             const runId = crypto.randomBytes(8).toString('hex');
-            const workdir = path.join(this._runsRoot(), runId);
+            const runPath = path.join(this._runsRoot(), runId);
+            // A conversation workspace persists between runs (one at a time,
+            // same lock as a project); otherwise the run dir IS the workdir.
+            const workdir = sessionKey ? path.join(this._sessionsRoot(), ...sessionKey.split('/')) : runPath;
+            const releaseSession = sessionKey
+                ? acquireProjectExec(workdir, 'The sandbox is already running code in this conversation.')
+                : () => {};
+            const prevRelease = releaseProject;
+            releaseProject = () => { releaseSession(); prevRelease(); };
             const tmpdir = path.join(workdir, 'tmp');
+            const sourceFile = sessionKey ? `${SESSION_SOURCE_PREFIX}${path.extname(lang.file)}` : lang.file;
 
             fs.mkdirSync(tmpdir, { recursive: true });
             fs.chmodSync(workdir, 0o700);
-            fs.writeFileSync(path.join(workdir, lang.file), code, { mode: 0o600 });
+            fs.writeFileSync(path.join(workdir, sourceFile), code, { mode: 0o600 });
+            // Activity keeps an idle workspace from being pruned.
+            if (sessionKey) {
+                const now = new Date();
+                try { fs.utimesSync(workdir, now, now); } catch { /* best effort */ }
+            }
+            const before = sessionKey ? this._snapshotFiles(workdir) : null;
 
-            const script = this._wrapperScript(workdir, lang.argv(this.config));
-            const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir);
+            const script = this._wrapperScript(workdir, lang.argv(this.config, sourceFile));
+            const { command, args, viaTimeout } = this._buildArgv(isolation, workdir, script, projectDir, runDir, sessionKey ? tmpdir : null);
 
             this._active += 1;
             const startedAt = Date.now();
             try {
                 const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal });
-                const files = this._collectOutputs(workdir, lang.file);
+                let files = this._collectOutputs(workdir, sourceFile, before);
+                if (sessionKey) {
+                    try { fs.rmSync(path.join(workdir, sourceFile), { force: true }); } catch { /* best effort */ }
+                    files = this._snapshotOutputs(files, runPath);
+                    this._pruneIdleSessions();
+                }
                 this._pruneOldRuns();
                 return {
                     ok: result.exitCode === 0 && !result.timedOut && !result.aborted,
@@ -858,6 +1020,7 @@ class SandboxService {
                     durationMs: Date.now() - startedAt,
                     isolation,
                     language: langKey,
+                    persistent: Boolean(sessionKey),
                     files
                 };
             } finally {
@@ -874,7 +1037,7 @@ class SandboxService {
      * Proxy a run to the dedicated sandbox-runner (Phase 5d). The runner
      * shares the data volume, so projectDir paths resolve the same way.
      */
-    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, signal }) {
+    async _runRemote({ runnerUrl, language, code, stdin, userId, projectDir, runDir, sessionKey = null, signal }) {
         const axios = require('axios');
         const token = process.env.GOOBSTER_INTERNAL_TOKEN;
         if (!token) {
@@ -909,7 +1072,7 @@ class SandboxService {
         }
         try {
             const response = await axios.post(`${runnerUrl}/run`, {
-                language, code, stdin, userId, projectDir, runDir, runId
+                language, code, stdin, userId, projectDir, runDir, sessionKey, runId
             }, {
                 headers: { 'x-goobster-internal-token': token },
                 timeout: (this.config.timeoutMs || 30_000) + 5_000,
@@ -1056,3 +1219,4 @@ class SandboxService {
 module.exports = new SandboxService();
 module.exports.SandboxService = SandboxService;
 module.exports.SandboxError = SandboxError;
+module.exports.sessionKeyFor = sessionKeyFor;

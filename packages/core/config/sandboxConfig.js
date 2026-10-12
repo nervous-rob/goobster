@@ -121,6 +121,12 @@ module.exports = {
     maxPerAccount: bounded(process.env.GOOBSTER_SANDBOX_MAX_PER_ACCOUNT || sandbox.maxPerAccount, 1, 1, 40),
     /** Hours collected output files are kept before pruning. */
     retentionHours: bounded(sandbox.retentionHours, 24, 1, 24 * 700),
+    /**
+     * Hours a chat conversation's runCode workspace (data/sandbox/sessions)
+     * may sit idle before it is pruned. Every run in the conversation resets
+     * the clock; deleting the conversation or /forget-me removes it at once.
+     */
+    sessionRetentionHours: bounded(sandbox.sessionRetentionHours, 72, 1, 24 * 700),
 
     /**
      * Networking inside the sandbox. Default OFF: bwrap runs get no

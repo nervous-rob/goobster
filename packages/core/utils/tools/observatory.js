@@ -64,7 +64,7 @@ module.exports = {
             description:
                 'The Observatory: persistent, long-running simulation projects layered on the code sandbox. '
                 + `A project gives every run a durable workspace directory (exposed as $${PROJECT_DIR_ENV}) `
-                + 'whose files SURVIVE between runs - unlike runCode, whose working directory is wiped. '
+                + 'whose files SURVIVE indefinitely - unlike runCode, whose workspace only lasts for the conversation. '
                 + 'Actions: "inspect" (ONE call for what\'s going on: mission, assets, triggers, recent jobs '
                 + 'with tails, workspace, checkpoint, knowledge, members — prefer this before chaining '
                 + 'status/files/list_assets/list_triggers/mission get), '

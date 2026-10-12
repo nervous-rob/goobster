@@ -203,6 +203,7 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `sandbox.maxConcurrent` | integer | env `GOOBSTER_SANDBOX_MAX_CONCURRENT`<br>config.json `sandbox.maxConcurrent` | `1` | restart | sandbox | Concurrent runs across the installation. |
 | `sandbox.maxPerAccount` | integer | env `GOOBSTER_SANDBOX_MAX_PER_ACCOUNT`<br>config.json `sandbox.maxPerAccount` | `1` | restart | sandbox | Concurrent runs per account. |
 | `sandbox.retentionHours` | integer | config.json `sandbox.retentionHours` | `24` | restart | sandbox | Hours collected output files are kept. |
+| `sandbox.sessionRetentionHours` | integer | config.json `sandbox.sessionRetentionHours` | `72` | restart | sandbox | Hours an idle conversation workspace for runCode is kept. |
 | `sandbox.allowNetwork` | boolean | config.json `sandbox.allowNetwork` | `false` | restart | sandbox | Network access inside the sandbox. |
 | `sandbox.pythonCommand` | string | env `GOOBSTER_SANDBOX_PYTHON`<br>config.json `sandbox.pythonCommand` | `"python3"` | restart | sandbox | Interpreter for python runs; empty uses the managed toolkit venv when present, else python3. |
 | `sandbox.pythonBundles` | list | env `GOOBSTER_SANDBOX_PYTHON_BUNDLES`<br>config.json `sandbox.pythonBundles` | `["core","astro","imaging"]` | restart | sandbox | Bundles of the curated Python toolkit to install. |
