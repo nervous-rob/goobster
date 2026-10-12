@@ -67,7 +67,10 @@ const record = {
     total: summary.numTotalTests,
     durationMs,
     skipReason: null,
-    jestStatus: result.status
+    jestStatus: result.status,
+    // Named failures, so the CI summary (and the tail of a long job log)
+    // says which test failed, not just how many.
+    failures: collectFailures(summary)
 };
 
 fs.writeFileSync(
@@ -81,8 +84,37 @@ console.log(
     `passed=${record.passed} failed=${record.failed} skipped=${record.skipped} ` +
     `duration=${seconds}s`
 );
+for (const failure of record.failures) {
+    console.log(`[test-group]   FAILED ${failure.file} › ${failure.name}`);
+    for (const line of failure.message.split('\n')) console.log(`[test-group]     ${line}`);
+}
 
 process.exit(result.status === null ? 1 : result.status);
+
+const FAILURE_MESSAGE_LINES = 12;
+
+/** `[{ file, name, message }]` for every failed assertion and suite-level error in a Jest JSON report. */
+function collectFailures(report) {
+    const out = [];
+    for (const suite of report.testResults || []) {
+        const file = path.relative(ROOT, suite.name || '').split(path.sep).join('/');
+        for (const test of suite.assertionResults || []) {
+            if (test.status !== 'failed') continue;
+            out.push({ file, name: test.fullName || test.title || '(unnamed)', message: trimMessage(test.failureMessages) });
+        }
+        if (suite.status === 'failed' && !(suite.assertionResults || []).some((t) => t.status === 'failed')) {
+            out.push({ file, name: '(suite failed to run)', message: trimMessage([suite.message || suite.failureMessage || '']) });
+        }
+    }
+    return out;
+}
+
+function trimMessage(messages) {
+    const text = (Array.isArray(messages) ? messages : [messages]).filter(Boolean).join('\n')
+        .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'), '');
+    const lines = text.split('\n').filter((line) => line.trim() && !/^\s+at /.test(line));
+    return lines.slice(0, FAILURE_MESSAGE_LINES).join('\n');
+}
 
 function readJestJson(filePath, fallback) {
     try {
