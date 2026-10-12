@@ -226,3 +226,14 @@ The dialog retains the ID after a failed response. Project publication runs in
 a transaction and edits an existing copy by ID, so a source rename or cleared
 body cannot leave an orphaned copy. Audience lookup must succeed before the
 dialog enables publication; failed lookups offer Retry.
+
+### Addendum: moving a whole chat into a project
+
+`chat_message → discussion` (mode `copy`, `sourceMessageId` NULL) records a
+private chat moved into a project as a new project conversation
+(`moveChatToProject`, documented in
+[projects.md](../projects.md#moving-a-chat-into-a-project)). It follows this
+ADR's rules - explicit button, no model call, audience named before sending,
+`requestId` receipts - and reuses the existing `CHECK` values, so no table
+rebuild. The transparency report counts it as `movedChats`; `savedAnswers`
+and `publishedToDiscussions` exclude it.

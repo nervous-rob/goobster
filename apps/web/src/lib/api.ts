@@ -74,6 +74,17 @@ export type ProjectConversation = {
     primary: boolean;
 };
 
+/** What a chat moved into a project became (ADR 0010 transfer). */
+export type MoveChatResult = {
+    conversation: { id: number; title: string | null; ownerId: string; projectId: number };
+    project: { id: number; slug: string; name: string; ownerId: string };
+    audience: import('./types').TransferAudience | null;
+    files: { folder: string | null; files: number };
+    messages: number | null;
+    keptOriginal: boolean | null;
+    replayed: boolean;
+};
+
 export const api = {
     uploadNoteAttachment: async (file: File): Promise<{ url: string; name: string }> => {
         const response = await accountFetch(`/api/app/note-attachments?name=${encodeURIComponent(file.name)}`, {
@@ -654,6 +665,12 @@ export const api = {
         request<{ conversation: ProjectConversation; role: string }>(
             `/api/app/projects/${encodeURIComponent(project)}/conversations${ownerQs(owner)}`,
             { method: 'POST', body: title ? { title } : {} }),
+    moveChatToProject: (project: string, owner: string | null | undefined, body: {
+        conversationId: number; keepOriginal: boolean; requestId: string;
+    }) =>
+        request<MoveChatResult>(
+            `/api/app/projects/${encodeURIComponent(project)}/conversations/from-chat${ownerQs(owner)}`,
+            { method: 'POST', body }),
     spitballLenses: () => request('/api/app/spitball/lenses'),
     spitballExpeditions: (projectId?: number | null) =>
         request(`/api/app/spitball/expeditions${projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : ''}`),

@@ -11,6 +11,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
 import { SaveToProjectModal, type SaveToProjectTarget } from '../components/SaveToProjectModal';
+import { MoveChatModal } from '../components/MoveChatModal';
 import { SaveNoteModal } from '../components/SaveNoteModal';
 import { ChatTranscript } from '../components/ChatTranscript';
 import type { ChatMessage, ChatQueueItem, Conversation, TurnProgress } from '../lib/types';
@@ -142,6 +143,7 @@ export function StudyRoom() {
     const [saveTarget, setSaveTarget] = useState<SaveToProjectTarget | null>(null);
     const [noteTarget, setNoteTarget] = useState<{ conversationId: number; messageId: number; content: string } | null>(null);
     const [shareOpen, setShareOpen] = useState(false);
+    const [moveOpen, setMoveOpen] = useState(false);
     const chats = useConversationDrawer();
     const openSettings = useOpenSettings();
     const abortRef = useRef<AbortController | null>(null);
@@ -840,6 +842,13 @@ export function StudyRoom() {
                             if (activeId === null) { toast('Say something first — an empty chat has nothing to share.', true); return; }
                             setShareOpen(true);
                         }}>🔗<span className="menu-label">Share</span></button>
+                        {featureActive(me, 'projects') && (
+                            <button type="button" className="icon-action" data-testid="move-chat" onClick={() => {
+                                if (incognito) { toast('Incognito chats are never saved, so there is nothing to move.', true); return; }
+                                if (activeId === null) { toast('Say something first — an empty chat has nothing to move.', true); return; }
+                                setMoveOpen(true);
+                            }}>📁<span className="menu-label">Move to project</span></button>
+                        )}
                         <button type="button" className="icon-action" onClick={() => openSettings('connections')}>🧩<span className="menu-label">Connections</span></button>
                         <button type="button" className="icon-action" data-tour="chat-personal-memory" title="Personal memory — what Goobster knows about you" aria-label="Personal memory" onClick={() => openSettings('memory', 'memory-report')}>🧠<span className="menu-label">Personal memory</span></button>
                         </HeaderOverflow>
@@ -1034,6 +1043,16 @@ export function StudyRoom() {
             </div>
             {shareOpen && activeId !== null && (
                 <ShareModal conversationId={activeId} onClose={() => setShareOpen(false)} />
+            )}
+            {moveOpen && activeId !== null && (
+                <MoveChatModal
+                    conversationId={activeId}
+                    title={title}
+                    onClose={() => setMoveOpen(false)}
+                    onMoved={(result) => {
+                        if (!result.keptOriginal) goToConversation(null);
+                    }}
+                />
             )}
             {saveTarget && (
                 <SaveToProjectModal

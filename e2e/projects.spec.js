@@ -202,3 +202,25 @@ test('a project holds several conversations: start a new one, then switch back t
     // The owner may delete the extra conversation; the main one offers no delete.
     await expect(conversation.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
 });
+
+test('a private chat moves into a project: the dialog names the readers, then the project opens on it', async ({ page }) => {
+    const { conversations } = await page.request.get('/api/app/chat/conversations').then((r) => r.json());
+    const chat = conversations.find((c) => c.title === C.CHAT_TITLE);
+    expect(chat).toBeTruthy();
+    await page.goto(`/app/chat/${chat.id}`);
+    await expect(page.getByText(C.CHAT_ANSWER_BODY)).toBeVisible();
+
+    await page.getByTestId('move-chat').click();
+    await page.getByTestId('move-chat-project').selectOption(`${C.OWNER}:${C.PROJECT_SLUG}`);
+    await expect(page.getByTestId('move-chat-audience')).toContainText('you');
+    // Keep the seeded chat: later specs read it.
+    await page.getByTestId('move-chat-keep').check();
+    await page.getByTestId('move-chat-submit').click();
+    await expect(page.getByTestId('move-chat-done')).toContainText('Your private chat is still here.');
+
+    await page.getByTestId('move-chat-open').click();
+    await expect(page).toHaveURL(new RegExp(`${MINE}/conversation\\?conversation=\\d+`));
+    const conversation = page.locator('[data-tour="project-conversation"]');
+    await expect(conversation.getByLabel('Project conversation').locator('option:checked')).toHaveText(C.CHAT_TITLE);
+    await expect(conversation.getByText(C.CHAT_QUESTION)).toBeVisible();
+});

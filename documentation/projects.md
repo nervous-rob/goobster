@@ -692,6 +692,38 @@ provenance. Any member may launch one; budgets charge the launcher.
 Launch from Knowledge → Research ("into project X") or the project's
 Knowledge tab.
 
+### Moving a chat into a project
+
+A private web chat moves into a project through the chat header's
+**Move to project…** (`POST /api/app/projects/:slug/conversations/from-chat`
+with `{ conversationId, keepOriginal, requestId }`;
+`knowledgeTransferService.moveChatToProject`). It is an explicit transfer
+under [ADR 0010](adr/0010-explicit-transfers.md): nothing routes through a
+model, the dialog names who will read the chat before anything moves, and
+the move is one `knowledge_transfers` row (`chat_message → discussion`,
+`copy`, audience and imported folder in `audienceJson`).
+
+- The transcript becomes a **new conversation in the project**, titled
+  after the chat: the mover's messages stay theirs, the assistant's
+  replies become the project's Goobster seat, timestamps and attached files
+  are kept. Every collaborator reads it, like every project conversation.
+- The chat's sandbox workspace (its `runCode` files) is copied into the
+  project's `scratch/<chat-title>/` - regular files and folders only;
+  symlinks and other special files are skipped, never followed - after a
+  quota check against what would be copied (`QUOTA_EXCEEDED` leaves
+  nothing behind). Goobster finds it there from any project conversation.
+- The private chat is then **deleted** (with its workspace), unless the
+  person ticks *Keep my private copy*. Files the moved transcript still
+  points at are not unlinked with it.
+- Retrying with the same `requestId` returns the first result; reusing it
+  for another chat is `REQUEST_CONFLICT`. Refusals: `NO_SUCH_CONVERSATION`
+  (not the caller's chat), `NO_SUCH_PROJECT` (not a member),
+  `EMPTY_CONVERSATION`, `CONVERSATION_TOO_LONG` (over 2,000 messages).
+  Incognito chats are never saved, so they have nothing to move.
+- Privacy: the transparency report counts moves as `movedChats`. Erasing
+  the mover deletes their ledger rows; the moved conversation is project
+  data and goes with the project.
+
 ### Moving knowledge into a project
 
 A note a person kept in their own space enters a project through

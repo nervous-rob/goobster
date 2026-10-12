@@ -42,7 +42,11 @@ export function ProjectChatDock({
     const [composer, setComposer] = useState('');
     const [sending, setSending] = useState(false);
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
-    const [selectedId, setSelectedId] = useState<number | null>(null);
+    // "Open in project" after moving a chat lands on that conversation.
+    const [selectedId, setSelectedId] = useState<number | null>(() => {
+        const fromUrl = Number(new URLSearchParams(globalThis.location?.search || '').get('conversation'));
+        return Number.isSafeInteger(fromUrl) && fromUrl > 0 ? fromUrl : null;
+    });
     const [creating, setCreating] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
     const logRef = useRef<HTMLDivElement>(null);

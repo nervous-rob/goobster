@@ -534,6 +534,15 @@ class WebChatService {
                 if (file.path) referenced.add(path.resolve(file.path));
             } } catch { /* legacy metadata */ }
         }
+        // A chat moved into a project lives on as a discussion transcript
+        // that still points at these files.
+        const parlorRows = await db.all('SELECT attachments FROM parlor_messages WHERE attachments IS NOT NULL');
+        for (const row of parlorRows) {
+            try { for (const file of JSON.parse(row.attachments) || []) {
+                const filePath = typeof file === 'string' ? file : file?.path;
+                if (typeof filePath === 'string') referenced.add(path.resolve(filePath));
+            } } catch { /* malformed */ }
+        }
         const uploadDir = path.resolve(require('../utils/webUploads').userUploadDir(userId));
         for (const file of candidates) {
             const resolved = path.resolve(file);

@@ -237,6 +237,21 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // Move one of the caller's private chats into this project as a new
+    // conversation (ADR 0010: explicit, no model call, ledger row). The
+    // client names the audience first and sends a requestId for retries.
+    app.post('/api/app/projects/:slug/conversations/from-chat', requireAuth, chatRoute(async (req) =>
+        ctx.transfers.moveChatToProject({
+            userId: req.webUser.userId,
+            userName: req.webUser.userName,
+            conversationId: req.body?.conversationId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            keepOriginal: req.body?.keepOriginal === true,
+            requestId: req.body?.requestId
+        })
+    ));
+
     app.delete('/api/app/observatory/projects/:slug', requireAuth, chatRoute(async (req) =>
         ctx.observatory.deleteProject({
             userId: req.webUser.userId,

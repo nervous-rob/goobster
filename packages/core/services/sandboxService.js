@@ -783,6 +783,18 @@ class SandboxService {
     }
 
     /**
+     * The existing workspace directory of one conversation, or null (a
+     * chat that never ran code has none). Used to carry a chat's files
+     * along when it moves into a project.
+     */
+    sessionDirFor({ userId, channelId } = {}) {
+        const key = sessionKeyFor({ userId, channelId });
+        if (!key) return null;
+        const dir = path.join(this._sessionsRoot(), ...key.split('/'));
+        try { return fs.lstatSync(dir).isDirectory() ? dir : null; } catch { return null; }
+    }
+
+    /**
      * Erasure: every conversation workspace of one user.
      * @returns {number} workspaces removed
      */
