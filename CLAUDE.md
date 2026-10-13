@@ -87,6 +87,9 @@ Routes between OpenAI, Anthropic, Gemini, and Ollama (local fallback; auto-detec
 ### Self-knowledge (`services/selfDocsService.js`, the `consultDocs` tool)
 `documentation/**/*.md` and `README.md` are chunked and seeded into `self_docs` on every bot start (idempotent, hash-compared; `withSingletonLock('self_docs_seed')`), from `db-init`, and from `npm run docs:seed`. The model reads them with `consultDocs` (`search` = BM25 + optional embeddings fused by RRF, `read` = line-windowed doc/section, `list` = index; `kind=skill` lists the authored procedures under `documentation/skills/`). Retrieval must keep working with no keys; embeddings are an enhancement. The corpus is public docs, not user data (no privacy path). **Ship every feature with its doc and keep tool/command/config names in docs accurate** — the docs are what Goobster knows about himself. Spec: `documentation/self_knowledge.md`.
 
+### Brand names
+The product name is spelled in exactly one place for the portal, `apps/web/brand.config.cjs`; components read it as `PRODUCT_NAME` from `apps/web/src/lib/brand.ts`, and the HTML entries use `%PRODUCT_NAME%`. The assistant's name is runtime configuration (`identityConfig.assistantName`): the portal reads it with `assistantName()` from the same module (never at module load - build labels lazily), slash-command descriptions template it, and server copy uses `identityConfig.assistantName`. `tests/portalBrand.test.js` fails when the literal appears in portal source. Refer to the assistant as *it*. `documentation/commands.md` is generated (`npm run docs:commands`), never edited.
+
 ### DM scope rule
 Everything keyed on `guildId` uses the synthetic scope `dm:<userId>` (`utils/dmScope.js`) in DMs. Never store DM data under a NULL or shared guild id.
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-13
+
+### Added
+- **One rename point for the portal.** `apps/web/brand.config.cjs` is the only place the product name is spelled; both Vite builds inline it (`__PRODUCT_NAME__` for `src/lib/brand.ts`, `%PRODUCT_NAME%` in `index.html` and `setup.html`) and rewrite the static PWA files in `dist`. The assistant's own name is runtime configuration (`identity.assistantName`), published on `/api/app/config` as well as `/api/app/me`, and every portal label, placeholder and hint reads it through `lib/brand` (225 hard-coded occurrences in 83 files replaced). `tests/portalBrand.test.js` fails when the literal comes back. The rename plan and the UX cut list are in `documentation/ux_audit_and_rebrand.md`.
+- **`npm run docs:commands`** regenerates `documentation/commands.md` from the command builders (every command, subcommand and option, DM availability, owning feature); `tests/commandDocsSync.test.js` fails when a command is added or removed without it. The hand-written reference described five commands that no longer existed.
+
+### Changed
+- **`/help` is generated from the commands the bot loaded.** Categories are the command folders, each line is the command's real description, a DM shows only the commands that work there, and a command whose feature is off is absent. The hand-written embeds listed `/addmessage`, `/createconversation`, `/createprompt`, `/viewconversations`, `/viewprompts` and `/regeneratemusic`, none of which exist, and missed most of what does. The reply is ephemeral.
+- **Slash-command descriptions name the configured assistant** (`identityConfig.assistantName`) instead of a literal, in 51 descriptions across 24 commands. Command names are unchanged.
+- **One vocabulary per destination.** The sidebar, top bar, Knowledge and Activity tabs, Tools cards and the unavailable-room page no longer show the house names beside the descriptive ones ("Chat · the Study", "Knowledge · Spitball", "Research · Expeditions"). The registry keeps them as `secondaryName` and legacy ids so old links, the hash scheme and the start-page preference still resolve. Playwright: `navigation`, `knowledge`.
+- **Plain product copy.** The sign-in subtitle, the Home greeting line, the HTML meta description, the web-app manifest and the offline page describe what the application does instead of "the tools he built you"; the empty Discussions room no longer welcomes you to a parlor. The assistant is referred to as *it* throughout the portal (31 lines).
+
 ## 2026-09-30
 
 ### Added
