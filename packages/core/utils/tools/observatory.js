@@ -57,6 +57,41 @@ function describeContractResult(result) {
     return [head, ...failed].join('\n');
 }
 
+/** Why repositories are off, for the model. */
+function describeReposOff(reason) {
+    if (reason === 'GIT_MISSING') return 'Project repositories are off on this installation: git is not installed.';
+    if (reason === 'GITHUB_OFF') return 'Project repositories need the GitHub feature, which is off on this installation.';
+    return 'Project repositories are turned off on this installation.';
+}
+
+/** One line per clone for repo_list / repo_status. */
+function describeRepo(entry) {
+    const st = entry.status || {};
+    const sync = st.error
+        ? `status unavailable: ${st.error}`
+        : `${st.branch || 'detached'}${st.upstream ? ` ↔ ${st.upstream}` : ''} · ${st.ahead || 0} ahead / ${st.behind || 0} behind`
+            + ` · ${st.changed || 0} uncommitted · head ${st.head || '?'}`;
+    return `- ${entry.name} → ${entry.repo} (${entry.path}) · ${sync}`
+        + `${entry.lastPushAt ? ` · last push ${entry.lastPushAt}` : ''}`;
+}
+
+/** Detail block for one clone's status. */
+function describeRepoStatus(st) {
+    if (!st || st.error) return `Status unavailable${st?.error ? `: ${st.error}` : '.'}`;
+    const lines = [
+        `Branch ${st.branch || '(detached)'}${st.upstream ? ` tracking ${st.upstream}` : ''} · ${st.ahead} ahead / ${st.behind} behind · ${st.sizeMb} MB of history`
+    ];
+    if (st.changed) {
+        lines.push(`Uncommitted (${st.changed}): ${st.changes.map(c => `${c.code} ${c.path}`).join(', ')}${st.changed > st.changes.length ? ', …' : ''}`);
+    } else {
+        lines.push('Working tree clean.');
+    }
+    if (st.commits?.length) {
+        lines.push('Recent commits:', ...st.commits.map(c => `  ${c.short} ${c.when} ${c.author}: ${c.message}`));
+    }
+    return lines.join('\n');
+}
+
 module.exports = {
     observatory: {
         definition: {
@@ -85,6 +120,17 @@ module.exports = {
                 + 'optional path=), "restore" (put path= — or the whole workspace when path is omitted — back '
                 + 'as it was in snapshot rev=; the current state is snapshotted first so a restore is reversible), '
                 + '"commit" (snapshot the workspace now with note= as the message), '
+                + '"repo_clone" (clone a GitHub repository into repos/<name> with the USER\'S OWN connected GitHub '
+                + 'account - repo=owner/name or URL, optional branch= and name=; shallow, one branch), "repo_list", '
+                + '"repo_status" (branch, upstream, ahead/behind, uncommitted changes, recent commits of one clone), '
+                + '"repo_pull" (fetch + fast-forward only; a diverged branch is reported, never merged), "repo_commit" '
+                + '(stage everything in the clone and commit with note= as the message, authored as the user\'s GitHub '
+                + 'identity), "repo_push" (push the current branch, or HEAD to branch=<name>; never forced; a rejected '
+                + 'push says to pull first; pushing a new branch returns the compare URL for a pull request), '
+                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), "repo_reset" (discard local commits '
+                + 'and changes back to origin - a workspace snapshot is taken first), "repo_remove" (drop the clone; '
+                + 'its files stay in workspace history). Edit a clone\'s files like any other workspace file '
+                + '(run, read, portal); repos/<name> is plain files to the sandbox, which has no git and no network. '
                 + '"render" (stitch frames into an mp4 at an optional fps), '
                 + '"dashboard" (regenerate and attach the project\'s shareable HTML results dashboard - it is '
                 + 'also refreshed automatically after every run and job), "fetch-data" (download a public '
@@ -125,18 +171,21 @@ module.exports = {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_reset', 'repo_remove',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'list_deliveries', 'delete_trigger', 'invite_user', 'list_members', 'remove_member',
                             'note_knowledge', 'recall_knowledge', 'mission'],
                         description: 'What to do. Prefer "inspect" for overview; "audit" for setup-contract review; "needs-you" for the human decision board.'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/history/diff/restore/commit/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/list_deliveries/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
+                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/history/diff/restore/commit/repo_*/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/list_deliveries/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
                     path: { type: 'string', description: 'read / history / diff / restore: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
                     offset: { type: 'integer', description: 'read / get_asset / diff: 1-based line to start at (default 1)' },
                     limit: { type: 'integer', description: 'read / get_asset / diff: max lines to return (default 400, max 800); history: max snapshots (default 30)' },
                     rev: { type: 'string', description: 'read / diff / restore: a snapshot hash from history (e.g. "3f2a1c9") or HEAD' },
                     to: { type: 'string', description: 'diff: the second snapshot to compare rev against, or "workspace" for the current files' },
+                    repo: { type: 'string', description: 'repo_clone: the GitHub repository, owner/name or a github.com URL' },
+                    branch: { type: 'string', description: 'repo_clone: branch to clone (default: the repository\'s default branch); repo_push: push HEAD to this branch on origin; repo_branch: the branch to switch to or create' },
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
                     tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
@@ -145,12 +194,12 @@ module.exports = {
                     relation: { type: 'string', description: 'note_knowledge: relation to the related node (default relates_to)' },
                     owner: { type: 'string', description: 'Owner user id qualifier when two accessible projects share a slug' },
                     inviteeId: { type: 'string', description: 'invite_user / remove_member: Discord user id of the collaborator' },
-                    name: { type: 'string', description: 'New project name (create-project), asset name (save_*), or trigger name (set_trigger / list_deliveries / delete_trigger)' },
+                    name: { type: 'string', description: 'New project name (create-project), asset name (save_*), trigger name (set_trigger / list_deliveries / delete_trigger), or clone name (repo_*: the repos/<name> folder; repo_clone derives it from the repository when omitted)' },
                     slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
                     code: { type: 'string', description: 'Source code for run or save_*' },
                     version: { type: 'integer', description: 'Asset version number (get_asset / rollback_asset)' },
-                    note: { type: 'string', description: 'One-line note for save_* versions and commit snapshots' },
+                    note: { type: 'string', description: 'One-line note for save_* versions and commit snapshots; the commit message for repo_commit' },
                     kind: { type: 'string', enum: ['app', 'script', 'note', 'cron', 'event'], description: 'list_assets: optional kind filter; set_trigger: cron or event' },
                     stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
                     background: { type: 'boolean', description: 'run / run_script: detach as a checkpointable background job (default false for run, true for trigger-fired run_script)' },
@@ -223,7 +272,7 @@ module.exports = {
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, rev, to, missionAction, title, objective,
+            relation, path: workspacePath, offset, limit, rev, to, repo, branch, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
             choices, selectedId,
@@ -533,6 +582,66 @@ module.exports = {
                         await sendFiles([render.path]);
                         return `🎬 Stitched ${render.frames} frame(s) at ${render.fps} fps into `
                             + `${render.relPath} (${(render.sizeBytes / (1024 * 1024)).toFixed(1)} MB) [attached above].`;
+                    }
+                    case 'repo_list': {
+                        const listing = await observatoryService.repos.list({ userId, project, owner });
+                        if (!listing.enabled) return `📦 ${describeReposOff(listing.reason)}`;
+                        if (listing.repos.length === 0) {
+                            return `📦 No repositories in "${listing.project}" yet (up to ${listing.maxRepos}). `
+                                + 'Clone one with repo_clone repo=owner/name - it uses the user\'s own connected GitHub account.';
+                        }
+                        return `📦 Repositories in "${listing.project}" (${listing.repos.length}/${listing.maxRepos}):\n`
+                            + listing.repos.map(describeRepo).join('\n');
+                    }
+                    case 'repo_status': {
+                        if (!name) return '❌ repo_status needs name (the clone, from repo_list).';
+                        const one = await observatoryService.repos.status({ userId, project, owner, name });
+                        return `📦 ${describeRepo(one)}\n${describeRepoStatus(one.status)}`;
+                    }
+                    case 'repo_clone': {
+                        if (!repo) return '❌ repo_clone needs repo (owner/name or a github.com URL).';
+                        const cloned = await observatoryService.repos.clone({ userId, project, owner, repo, branch, name });
+                        return `📦 Cloned ${cloned.repo} (${cloned.clonedBranch}) into "${cloned.project}" at ${cloned.path} `
+                            + `· head ${cloned.status?.head || '?'} · ${cloned.status?.sizeMb ?? '?'} MB of history. `
+                            + `Runs see it at $${PROJECT_DIR_ENV}/${cloned.path}; edit, run and read its files like any other workspace file, `
+                            + 'then repo_commit and repo_push.';
+                    }
+                    case 'repo_pull': {
+                        if (!name) return '❌ repo_pull needs name (the clone, from repo_list).';
+                        const pulled = await observatoryService.repos.pull({ userId, project, owner, name });
+                        return pulled.updated
+                            ? `📦 Pulled ${pulled.repo} ${pulled.status.branch}: ${pulled.from || '?'} → ${pulled.to}.\n${describeRepoStatus(pulled.status)}`
+                            : `📦 ${pulled.repo} ${pulled.status.branch} is already up to date at ${pulled.to}.`;
+                    }
+                    case 'repo_commit': {
+                        if (!name) return '❌ repo_commit needs name (the clone) and note (the commit message).';
+                        const committed = await observatoryService.repos.commit({ userId, project, owner, name, message: note || title });
+                        if (!committed.committed) return `📦 Nothing to commit in ${committed.repo}: the clone has no uncommitted changes.`;
+                        return `📦 Committed ${committed.short} to ${committed.repo} as ${committed.author} `
+                            + `(${committed.status.branch}, ${committed.status.ahead} ahead of origin). Push it with repo_push.`;
+                    }
+                    case 'repo_push': {
+                        if (!name) return '❌ repo_push needs name (the clone, from repo_list).';
+                        const pushed = await observatoryService.repos.push({ userId, project, owner, name, branch });
+                        return `📦 Pushed ${pushed.head} to ${pushed.repo} ${pushed.branch}: ${pushed.url}`
+                            + (pushed.compareUrl ? `\nOpen a pull request: ${pushed.compareUrl}` : '')
+                            + (pushed.status.changed ? `\n(${pushed.status.changed} uncommitted change(s) were not pushed - repo_commit them first.)` : '');
+                    }
+                    case 'repo_branch': {
+                        if (!name || !branch) return '❌ repo_branch needs name (the clone) and branch.';
+                        const switched = await observatoryService.repos.checkout({ userId, project, owner, name, branch });
+                        return `📦 ${switched.repo} is now on ${switched.branch}${switched.created ? ' (new branch)' : ''}.\n${describeRepoStatus(switched.status)}`;
+                    }
+                    case 'repo_reset': {
+                        if (!name) return '❌ repo_reset needs name (the clone, from repo_list).';
+                        const reset = await observatoryService.repos.reset({ userId, project, owner, name });
+                        return `📦 Reset ${reset.repo} to origin/${reset.branch} (${reset.status.head}); local commits and changes are gone from the clone`
+                            + (reset.snapshot ? `, but workspace snapshot ${reset.snapshot.slice(0, 7)} still has them (restore rev=${reset.snapshot.slice(0, 7)} path=repos/${reset.name}).` : '.');
+                    }
+                    case 'repo_remove': {
+                        if (!name) return '❌ repo_remove needs name (the clone, from repo_list).';
+                        const removed = await observatoryService.repos.remove({ userId, project, owner, name });
+                        return `🗑️ Removed the clone of ${removed.repo} (repos/${removed.name}). Its files stay in workspace history.`;
                     }
                     case 'fetch-data': {
                         // Legalization (https-only, DNS pinning, allowlist vs

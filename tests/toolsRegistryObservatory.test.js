@@ -127,8 +127,12 @@ describe('getDefinitions gating', () => {
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers', 'list_deliveries',
             'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read', 'mission',
-            'history', 'diff', 'restore', 'commit'
+            'history', 'diff', 'restore', 'commit',
+            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_reset', 'repo_remove'
         ]));
+        expect(def.parameters.properties.repo).toBeTruthy();
+        expect(def.parameters.properties.branch).toBeTruthy();
+        expect(def.description).toMatch(/repo_clone/);
         expect(def.parameters.properties.rev).toBeTruthy();
         expect(def.description).toMatch(/"history"/);
         expect(def.description).toMatch(/awaiting settlement/);
@@ -518,6 +522,26 @@ describe('execute happy path (through the registry)', () => {
             interactionContext: webContext()
         });
         expect(bad).toMatch(/^❌/);
+
+        // Repositories through the tool: the listing answers even when the
+        // feature is off, and a clone without a connected GitHub account (or
+        // with the feature off) is refused with a reason, never attempted.
+        const repoList = await toolsRegistry.execute('observatory', {
+            action: 'repo_list', project: 'read-tool-lab',
+            interactionContext: webContext()
+        });
+        expect(repoList).toMatch(/^📦 (No repositories in "read-tool-lab" yet|Project repositories)/);
+        const refusedClone = await toolsRegistry.execute('observatory', {
+            action: 'repo_clone', project: 'read-tool-lab', repo: 'nervous-rob/goobster',
+            interactionContext: webContext()
+        });
+        expect(refusedClone).toMatch(/^❌ (No GitHub account connected|Project repositories)/);
+        expect(refusedClone).not.toMatch(/Cloned/);
+        const noName = await toolsRegistry.execute('observatory', {
+            action: 'repo_push', project: 'read-tool-lab',
+            interactionContext: webContext()
+        });
+        expect(noName).toMatch(/^❌ repo_push needs name/);
 
         const payload = 'Z'.repeat(5000);
         const run = await toolsRegistry.execute('observatory', {

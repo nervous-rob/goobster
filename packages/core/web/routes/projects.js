@@ -589,6 +589,44 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // --- Project repositories (ADR 0015) -----------------------------------------
+    // GitHub clones beside the workspace, driven by the host with the
+    // person's own connected GitHub account. The listing always answers.
+    const repos = () => ctx.observatory.repos;
+    const repoArgs = (req) => ({
+        userId: req.webUser.userId,
+        project: req.params.slug,
+        owner: projectOwner(req),
+        name: req.params.name
+    });
+
+    app.get('/api/app/projects/:slug/repos', requireAuth, chatRoute(async (req) =>
+        repos().list({ userId: req.webUser.userId, project: req.params.slug, owner: projectOwner(req) })
+    ));
+    app.post('/api/app/projects/:slug/repos', requireAuth, chatRoute(async (req) =>
+        repos().clone({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            repo: req.body?.repo,
+            branch: req.body?.branch ?? null,
+            name: req.body?.name ?? null
+        })
+    ));
+    app.get('/api/app/projects/:slug/repos/:name', requireAuth, chatRoute(async (req) => repos().status(repoArgs(req))));
+    app.delete('/api/app/projects/:slug/repos/:name', requireAuth, chatRoute(async (req) => repos().remove(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/pull', requireAuth, chatRoute(async (req) => repos().pull(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/commit', requireAuth, chatRoute(async (req) =>
+        repos().commit({ ...repoArgs(req), message: req.body?.message })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/push', requireAuth, chatRoute(async (req) =>
+        repos().push({ ...repoArgs(req), branch: req.body?.branch ?? null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/branch', requireAuth, chatRoute(async (req) =>
+        repos().checkout({ ...repoArgs(req), branch: req.body?.branch })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/reset', requireAuth, chatRoute(async (req) => repos().reset(repoArgs(req))));
+
     // --- Project assets (versioned apps / scripts / notes) -------------------
     // Auth + error contract match the Observatory routes: requireAuth and
     // chatRoute (status+code from ProjectAssetError). Ownership is

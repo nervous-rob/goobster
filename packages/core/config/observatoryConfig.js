@@ -134,8 +134,23 @@ module.exports = {
      * snapshots pause until the workspace shrinks.
      */
     historyMaxMb: bounded(observatory.historyMaxMb, 256, 1, 10_240),
-    /** git binary used for workspace history. */
+    /** git binary used for workspace history and project repositories. */
     gitCommand: process.env.GOOBSTER_OBSERVATORY_GIT
         || observatory.gitCommand
-        || 'git'
+        || 'git',
+
+    /**
+     * Project repositories (ADR 0015): GitHub repositories cloned for a
+     * project with the person's own connected GitHub account, pulled,
+     * committed and pushed by the host. On by default; needs git and the
+     * github feature. `GOOBSTER_PROJECT_REPOS_ENABLED=0` or
+     * `"observatory": { "reposEnabled": false }` turns it off.
+     */
+    reposEnabled: flag(process.env.GOOBSTER_PROJECT_REPOS_ENABLED, observatory.reposEnabled, true),
+    /** Repositories one project may hold. */
+    maxReposPerProject: bounded(observatory.maxReposPerProject, 3, 1, 50),
+    /** History depth fetched per clone and pull (a shallow clone; bounds disk and time). */
+    repoCloneDepth: bounded(observatory.repoCloneDepth, 50, 1, 100_000),
+    /** Largest repository (its git directory, MB) a project may clone. */
+    repoMaxMb: bounded(observatory.repoMaxMb, 512, 1, 10_240)
 };

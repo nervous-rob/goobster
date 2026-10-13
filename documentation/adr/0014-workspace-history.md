@@ -99,17 +99,15 @@ Two facts decide it:
    chains work per git directory in memory (transient, re-derivable
    state, the allowed exception to the SQLite rule).
 
-## Out of scope (a later decision)
+## Out of scope here: remotes
 
-Remotes. Cloning, fetching and pushing need a credential story the
-installation does not have: the only GitHub credential today is the
-operator's token, so per-person authorship and permissions would need a
-design; the push would have to run on the host through a credential
-helper, never with a token in the sandbox; the repository allowlist should
-reuse the one `/github watch` maintains; and in paired mode every git
-operation would have to route through the internal gateway because
-`apps/api` has no disk. Nothing in this ADR prevents that work, and nothing
-here depends on it.
+Cloning, fetching and pushing need a credential story. This ADR keeps
+history local; [ADR 0015](0015-project-repositories.md) adds GitHub clones
+driven by the host with the person's own connected account (a credential
+helper reading the token from one call's environment, never a token in the
+sandbox, the person's own repository allowlist). The full profile shares
+the `goobster-data` volume between the bot and `apps/api`, so host-side git
+works in both runtime modes without routing through the gateway.
 
 ## Consequences
 

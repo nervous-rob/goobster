@@ -56,6 +56,7 @@ const sandboxService = requireOptional('./sandboxService', { feature: 'sandbox' 
 const SESSION_SOURCE_PREFIX = '.goobster-run';
 const { buildDashboard } = require('./observatoryDashboard');
 const { ProjectHistoryService } = require('./projectHistoryService');
+const { ProjectRepoService } = require('./projectRepoService');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const dormantData = require('./dormantDataService');
@@ -301,6 +302,11 @@ class ObservatoryService {
          * taken by this process after runs, writes, fetches and restores.
          */
         this.history = new ProjectHistoryService({ config, projects: this });
+        /**
+         * Project repositories (ADR 0015): GitHub clones beside the workspace,
+         * driven by this process with the person's own GitHub connection.
+         */
+        this.repos = new ProjectRepoService({ config, projects: this });
     }
 
     /**
@@ -887,6 +893,7 @@ class ObservatoryService {
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
         this.history.forgetProject(row);
+        this.repos.forgetProject(row);
         try { fs.rmSync(this._dashboardPath(row.ownerId, row.slug), { force: true }); } catch { /* best effort */ }
         await this.notifyProjectsGone(
             [{ name: row.name, slug: row.slug, memberIds: members.map(m => m.userId) }],

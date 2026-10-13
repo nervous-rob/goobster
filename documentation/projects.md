@@ -98,8 +98,9 @@ the workspace:
   every conversation working on the project, for as long as the project
   exists: build an environment or unpack a dataset once and every later
   run, from any chat or collaborator, starts where the last one stopped
-  (sandbox runs have no network, so a repository arrives through
-  `fetch-data` or a portal upload, not `git clone`). It is never pruned on
+  (sandbox runs have no network; a repository arrives through
+  [Repositories](#repositories), a `fetch-data` download or a portal
+  upload, never a `git clone` inside a run). It is never pruned on
   a timer; it counts toward the project's disk quota, shows in the file
   explorer, and goes when the project is deleted (or by `/forget-me` for
   the owner). Files a run creates or changes in it are
@@ -218,6 +219,66 @@ bytes for good - without touching how assets work.
 - **Erasure.** Deleting the project removes its history directory; owner
   `/forget-me` removes the whole `data/sandbox/projects/<owner>/` tree,
   history included.
+
+### Repositories
+
+A project can hold **GitHub clones** at `repos/<name>`, decided in
+[ADR 0015](adr/0015-project-repositories.md). They are driven by the host
+with the **person's own connected GitHub account** (Settings →
+Connections), never the server's token and never from the sandbox.
+
+- **Your account, your allowlist.** Clone, pull, push and the branch
+  lookup use the token of the person asking, handed to git through a
+  credential helper that reads it from the environment of that one call
+  (never a URL, a command line or a file). No connected account is a
+  clear `NO_GITHUB` refusal. The personal repository allowlist from
+  Settings → Connections applies to clones and pushes the way it applies
+  to the GitHub chat tools.
+- **Where it lives.** The clone's git directory is a sibling of the
+  workspace (`data/sandbox/projects/<owner>/<slug>.repos/<name>.git`); its
+  work tree is `workspace/repos/<name>`, plain files to runs (reachable at
+  `$GOOBSTER_PROJECT_DIR/repos/<name>`), to the portal and to
+  [workspace history](#workspace-history), which snapshots them like any
+  other file (honouring the clone's own `.gitignore`). There is never a
+  `.git` inside the workspace.
+- **Actions.** Tool: `repo_clone` (`repo=owner/name` or a github.com URL,
+  optional `branch=` and `name=`), `repo_list`, `repo_status` (branch,
+  upstream, ahead/behind, uncommitted changes, recent commits),
+  `repo_pull` (fetch + fast-forward only), `repo_commit` (stage everything
+  in the clone, `note=` is the message, authored as the person's GitHub
+  identity `<id>+<login>@users.noreply.github.com`), `repo_push` (the
+  current branch, or HEAD to `branch=`; never forced; pushing a branch
+  other than the cloned one returns the compare URL for a pull request),
+  `repo_branch` (switch, creating the branch when it exists nowhere),
+  `repo_reset` (back to origin, discarding local commits and changes),
+  `repo_remove`. Portal: the `repos/` panel in the Files view with the same
+  buttons and a clone form. API: `GET`/`POST /api/app/projects/:slug/repos`,
+  `GET`/`DELETE .../repos/:name`, `POST .../repos/:name/{pull,commit,push,
+  branch,reset}`.
+- **Honest about conflicts.** A diverged branch is reported (`DIVERGED`:
+  push the local commits, or `repo_reset`), never merged; a rejected push
+  says to pull first (`REJECTED`); a protected branch says to push elsewhere
+  and open a pull request (`PROTECTED_BRANCH`). Editing happens through
+  the workspace like any other file; there is no merge or rebase on the
+  person's behalf.
+- **Reversible.** `repo_reset`, `repo_branch` and `repo_remove` take a
+  workspace snapshot first, so what they discard is one `restore` away
+  (`restore rev=<hash> path=repos/<name>`).
+- **Bounded.** Shallow clones (`observatory.repoCloneDepth`, default 50
+  commits), one branch at a time, at most `observatory.maxReposPerProject`
+  (default 3) per project, at most `observatory.repoMaxMb` (default 512 MB)
+  of history per clone (checked against GitHub's reported size before the
+  clone and against the git directory after). The work tree counts toward
+  the project quota; a clone that would break it is undone.
+- **Attributable.** Every clone and push writes an `integration_audit` row
+  under the person's DM scope (project, repository, branch; never a token).
+- **Switches.** On by default; needs git and the `github` feature.
+  `GOOBSTER_PROJECT_REPOS_ENABLED=0` or `"observatory": { "reposEnabled":
+  false }` turns it off; `repo_list` and the portal panel say why
+  (`DISABLED`, `GIT_MISSING`, `GITHUB_OFF`). Git 2.31 or newer.
+- **Erasure.** Deleting the project removes its clones; owner `/forget-me`
+  removes the whole owner tree. A collaborator's erasure nulls
+  `project_repos.createdBy`; the clone is project data and stays.
 
 ### Assets
 
@@ -575,7 +636,9 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   content route. Every workspace file and directory carries a
   **Snapshots** rail ([Workspace history](#workspace-history)): pick a
   snapshot to see what changed since it, download the file as it was, or
-  restore it; the workspace root adds **Snapshot now**. PUT/DELETE `/api/app/projects/:slug/content/*` write
+  restore it; the workspace root adds **Snapshot now**. A `repos/` panel
+  lists the project's GitHub clones ([Repositories](#repositories)) with
+  pull, commit, push, branch, reset and remove, and a clone form. PUT/DELETE `/api/app/projects/:slug/content/*` write
   that same quota'd sandbox (multipart for binaries). A ▶ Run button on
   script assets calls `POST .../assets/:asset/run` with the head version
   and `startedBy='portal'`.
@@ -955,7 +1018,10 @@ project are project data and stay.
 `tests/projectHistoryService.test.js` / `tests/projectHistoryApi.test.js`
 (workspace history: sibling git dir, excludes, budget squash and pause,
 pseudonymous authors, restore, erasure, missing-git degradation, route
-contract),
+contract), `tests/projectRepoService.test.js` / `tests/projectRepoApi.test.js`
+(repositories against a local bare remote: clone, identity-authored
+commits, push, fast-forward pull, branches, rejected push, diverged pull,
+reset, caps, quota, erasure, route contract),
 `tests/projectAssetService.test.js` / `tests/projectAssetApi.test.js`
 (versioning, pruning, rollback, dedupe, API auth),
 `tests/projectTriggerService.test.js` / `tests/projectTriggerApi.test.js`

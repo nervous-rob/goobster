@@ -1,0 +1,804 @@
+/**
+ * Project repositories (ADR 0015): a GitHub repository cloned for a
+ * project, pulled, committed and pushed by the HOST process with the acting
+ * person's OWN GitHub connection (user_integrations). Phase B of workspace
+ * history; the asset layer and the sandbox are untouched.
+ *
+ * Shape:
+ *   - The clone's git directory is a sibling of the workspace,
+ *     data/sandbox/projects/<owner>/<slug>.repos/<name>.git. Its work tree is
+ *     <workspace>/repos/<name>: plain files to the sandbox (which has no git
+ *     and no network) and to workspace history, which snapshots them like
+ *     any other file. There is never a `.git` inside the workspace.
+ *   - Every remote operation uses the acting person's connected GitHub
+ *     token, handed to git through a credential helper that reads it from
+ *     the environment of that one call. Never the operator's token, never a
+ *     token in a URL, on a command line or on disk. No connection = no
+ *     remote operation. The person's own GitHub allowlist
+ *     (Settings -> Connections) applies, the same way it does to the
+ *     GitHub chat tools.
+ *   - Commits made here carry the person's GitHub identity
+ *     (<id>+<login>@users.noreply.github.com), because they are theirs to
+ *     push. Workspace history keeps its pseudonyms; this is a different
+ *     repository with a different audience.
+ *   - Pushes are never forced; a rejected push is reported. Destructive
+ *     local operations (reset, checkout, remove) take a workspace-history
+ *     snapshot first, so they can be undone with `restore`.
+ *   - Clones are shallow (repoCloneDepth), capped in number
+ *     (maxReposPerProject) and size (repoMaxMb for the git directory; the
+ *     work tree counts toward the project quota like any other file).
+ *   - Only https://github.com/<owner>/<name> remotes; GIT_ALLOW_PROTOCOL is
+ *     pinned so a remote can never be a local path, ssh or a command.
+ *
+ * The project-history `history` / `diff` / `restore` actions cover the
+ * files of a clone too; this service's `status` is about the clone's own
+ * branch, upstream and uncommitted changes.
+ */
+
+const path = require('node:path');
+const fs = require('node:fs');
+const db = require('../db');
+const logger = require('../utils/logger');
+const observatoryConfig = require('../config/observatoryConfig');
+const { dmScopeId } = require('../utils/dmScope');
+const { probeGit, sealedEnv, runGit, SerialQueues, dirBytes } = require('../utils/sealedGit');
+const { forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
+
+/** Machine-readable repository error (the PanelError contract: status + code). */
+class ProjectRepoError extends Error {
+    constructor(status, code, message) {
+        super(message);
+        this.name = 'ProjectRepoError';
+        this.status = status;
+        this.code = code;
+    }
+}
+
+const REPOS_DIR = 'repos';
+const DEFAULT_TRANSPORT_BASE = 'https://github.com/';
+const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
+const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const BRANCH_MAX_LENGTH = 120;
+const MAX_MESSAGE_CHARS = 500;
+const IDENTITY_TTL_MS = 10 * 60 * 1000;
+const STATUS_MAX_PATHS = 20;
+const RECENT_COMMITS = 5;
+/** The credential helper: reads the token from the call's environment, never from argv or disk. */
+const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then echo username=x-access-token; echo "password=$GOOBSTER_GIT_TOKEN"; fi; }; f';
+
+/** A git branch name we are willing to pass on (then validated by git itself). */
+function cleanBranch(branch) {
+    const text = String(branch ?? '').trim();
+    if (!text) return null;
+    const hasControl = Array.from(text).some(ch => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+    if (text.length > BRANCH_MAX_LENGTH || text.startsWith('-') || hasControl || /[\s~^:?*[\\]/.test(text)
+        || text.includes('..') || text.includes('@{') || text.endsWith('/') || text.endsWith('.lock')
+        || text.startsWith('/') || text.includes('//') || text === 'HEAD') {
+        throw new ProjectRepoError(400, 'BAD_BRANCH', `"${text}" is not a usable branch name.`);
+    }
+    return text;
+}
+
+/** A one-paragraph commit message without control characters. */
+function cleanMessage(message) {
+    const text = String(message ?? '')
+        .split('')
+        .map(ch => ((ch.charCodeAt(0) < 0x20 && ch !== '\n') || ch.charCodeAt(0) === 0x7f ? ' ' : ch))
+        .join('')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .slice(0, MAX_MESSAGE_CHARS);
+    if (!text) throw new ProjectRepoError(400, 'EMPTY_MESSAGE', 'A commit needs a message.');
+    return text;
+}
+
+class ProjectRepoService {
+    /**
+     * @param {Object} [deps]
+     * @param {Object} [deps.config] observatoryConfig shape
+     * @param {Object} [deps.projects] the ObservatoryService that owns the workspaces
+     * @param {string} [deps.transportBase] remote URL prefix (tests use a file:// base)
+     * @param {(userId: string) => Promise<string|null>} [deps.token] the person's GitHub token
+     * @param {(userId: string) => Promise<string[]|null>} [deps.allowlist] their personal repo allowlist
+     * @param {(token: string) => Promise<{login: string, id: number|string}>} [deps.identity] GET /user
+     * @param {(token: string, repo: string) => Promise<{sizeKb?: number, defaultBranch?: string}|null>} [deps.repoInfo]
+     */
+    constructor({
+        config = observatoryConfig, projects = null, transportBase = null,
+        token = null, allowlist = null, identity = null, repoInfo = null
+    } = {}) {
+        this.config = config;
+        this._projects = projects;
+        this.transportBase = transportBase || DEFAULT_TRANSPORT_BASE;
+        this._tokenOf = token;
+        this._allowlistOf = allowlist;
+        this._identityOf = identity;
+        this._repoInfoOf = repoInfo;
+        this._queues = new SerialQueues();
+        this._probe = null;
+        /** userId -> { until, identity } */
+        this._identities = new Map();
+    }
+
+    get projects() {
+        if (!this._projects) this._projects = require('./projectService');
+        return this._projects;
+    }
+
+    get gitCommand() {
+        return this.config.gitCommand || 'git';
+    }
+
+    get history() {
+        return this.projects.history;
+    }
+
+    gitAvailable() {
+        if (this._probe === null) this._probe = probeGit(this.gitCommand);
+        return this._probe;
+    }
+
+    _githubService() {
+        return requireOptional('./githubService', { feature: 'github' });
+    }
+
+    /**
+     * Whether repositories work on this installation and, if not, why.
+     * @returns {{ enabled: boolean, reason: null | 'DISABLED' | 'GIT_MISSING' | 'GITHUB_OFF' }}
+     */
+    availability() {
+        if (this.config.reposEnabled === false) return { enabled: false, reason: 'DISABLED' };
+        if (!this.gitAvailable()) return { enabled: false, reason: 'GIT_MISSING' };
+        if (!this._identityOf && !this._githubService()) return { enabled: false, reason: 'GITHUB_OFF' };
+        return { enabled: true, reason: null };
+    }
+
+    get enabled() {
+        return this.availability().enabled;
+    }
+
+    _requireEnabled() {
+        const availability = this.availability();
+        if (availability.enabled) return;
+        const messages = {
+            DISABLED: 'Project repositories are turned off on this installation.',
+            GIT_MISSING: 'Project repositories are off on this installation: git is not installed.',
+            GITHUB_OFF: 'Project repositories need the GitHub feature, which is off on this installation.'
+        };
+        throw new ProjectRepoError(503, availability.reason === 'DISABLED' ? 'REPOS_DISABLED' : availability.reason,
+            messages[availability.reason]);
+    }
+
+    // --- Paths -------------------------------------------------------------------
+
+    /** The sibling directory holding every clone's git dir for one project. */
+    reposDir(row) {
+        const ownerId = row.ownerId ?? row.userId;
+        const dir = row.dir || this.projects._projectDir(ownerId, row.slug);
+        return path.join(path.dirname(path.resolve(dir)), `${row.slug}.repos`);
+    }
+
+    gitDirFor(row, name) {
+        return path.join(this.reposDir(row), `${name}.git`);
+    }
+
+    workTreeFor(row, name) {
+        return path.join(path.resolve(row.dir), REPOS_DIR, name);
+    }
+
+    /** Remove every clone's git dir (deleteProject; erasure removes the owner tree). */
+    forgetProject(row) {
+        try {
+            fs.rmSync(this.reposDir(row), { recursive: true, force: true });
+        } catch { /* best effort */ }
+    }
+
+    // --- Plumbing ------------------------------------------------------------------
+
+    _allowProtocol() {
+        return this.transportBase.startsWith('file:') ? 'file:https' : 'https';
+    }
+
+    _git(row, name, args, { token = null, author = null, authorEmail = null, ...opts } = {}) {
+        const extra = token
+            ? {
+                GIT_CONFIG_COUNT: '2',
+                GIT_CONFIG_KEY_0: 'credential.helper',
+                GIT_CONFIG_VALUE_0: '',
+                GIT_CONFIG_KEY_1: 'credential.helper',
+                GIT_CONFIG_VALUE_1: CREDENTIAL_HELPER,
+                GOOBSTER_GIT_TOKEN: token
+            }
+            : {};
+        const workTree = this.workTreeFor(row, name);
+        return runGit(this.gitCommand, args, {
+            cwd: fs.existsSync(workTree) ? workTree : path.resolve(row.dir),
+            env: sealedEnv({
+                gitDir: this.gitDirFor(row, name), workTree, author, authorEmail,
+                allowProtocol: this._allowProtocol(), extra
+            }),
+            ...opts
+        });
+    }
+
+    _serial(row, name, fn) {
+        return this._queues.run(this.gitDirFor(row, name), fn);
+    }
+
+    /** Map a git failure to the person's problem: access, missing branch, network. */
+    _explain(error, { repo = null, branch = null } = {}) {
+        if (error?.code !== 'GIT_FAILED') return error;
+        const text = String(error.gitStderr || error.message || '');
+        if (/Authentication failed|could not read Username|Invalid username or password|403|Permission to .* denied/i.test(text)) {
+            return new ProjectRepoError(403, 'NO_ACCESS',
+                `Your GitHub account cannot ${repo ? `access ${repo}` : 'do that'}: check the token's repository access and permissions.`);
+        }
+        if (/Repository not found|not found|does not appear to be a git repository/i.test(text)) {
+            return new ProjectRepoError(404, 'NOT_FOUND',
+                `${repo || 'That repository'} was not found, or your GitHub account cannot see it.`);
+        }
+        if (branch && /couldn't find remote ref|Remote branch .* not found|invalid refspec/i.test(text)) {
+            return new ProjectRepoError(404, 'NO_SUCH_BRANCH', `No branch "${branch}" on ${repo || 'the remote'}.`);
+        }
+        if (/Could not resolve host|unable to access|Connection (timed out|refused)|network is unreachable/i.test(text)) {
+            return new ProjectRepoError(502, 'NETWORK', 'GitHub could not be reached from this server.');
+        }
+        return error;
+    }
+
+    // --- Resolution --------------------------------------------------------------------
+
+    async _resolve({ row = null, userId, project, owner = null }) {
+        if (row) return row;
+        await this.projects._requireOrganization();
+        return this.projects.resolveProjectForActor({ userId, project, owner });
+    }
+
+    _cleanName(name) {
+        const text = String(name ?? '').trim().toLowerCase();
+        if (!NAME_PATTERN.test(text)) {
+            throw new ProjectRepoError(400, 'BAD_NAME',
+                'A repository name is 1-48 lowercase letters, digits and dashes (e.g. "goobster").');
+        }
+        return text;
+    }
+
+    /** owner/name from a bare reference or a github.com URL. */
+    _cleanRepo(input) {
+        let cleaned = String(input || '').trim();
+        const urlMatch = cleaned.match(/github\.com[/:]([^/]+\/[^/#?]+)/i);
+        if (urlMatch) cleaned = urlMatch[1];
+        cleaned = cleaned.replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
+        if (!REPO_PATTERN.test(cleaned) || cleaned.split('/').some(part => part === '.' || part === '..')) {
+            throw new ProjectRepoError(400, 'BAD_REPO', `"${input}" doesn't look like an owner/name GitHub repository.`);
+        }
+        return cleaned;
+    }
+
+    _remoteUrl(repo) {
+        return `${this.transportBase}${repo}.git`;
+    }
+
+    async _row(projectRow, name) {
+        const row = await db.get(
+            'SELECT * FROM project_repos WHERE projectId = @projectId AND name = @name',
+            { projectId: projectRow.id, name: this._cleanName(name) }
+        );
+        if (!row) {
+            throw new ProjectRepoError(404, 'NO_SUCH_REPO',
+                `No repository "${name}" in this project - see repo_list.`);
+        }
+        return row;
+    }
+
+    /** The person's GitHub token, or a clear refusal. */
+    async _token(userId) {
+        const token = this._tokenOf
+            ? await this._tokenOf(userId)
+            : await require('./userIntegrationService').getToken(userId, 'github');
+        if (!token) {
+            throw new ProjectRepoError(403, 'NO_GITHUB',
+                'No GitHub account connected. Connect one in the web portal (Settings → Connections) first; '
+                + 'repositories are cloned, pulled and pushed with your own account, never the server\'s.');
+        }
+        return token;
+    }
+
+    /** The person's own repo allowlist (Settings → Connections); empty means no extra restriction. */
+    async _checkAllowlist(userId, repo) {
+        let allow;
+        try {
+            allow = this._allowlistOf
+                ? await this._allowlistOf(userId)
+                : await require('./userSettingsService').getPreference(userId, 'githubAllowlist');
+        } catch {
+            throw new ProjectRepoError(503, 'POLICY_UNAVAILABLE', 'Could not verify your GitHub resource policy. Try again later.');
+        }
+        if (Array.isArray(allow) && allow.length > 0) {
+            const ok = allow.some(item => String(item).toLowerCase() === repo.toLowerCase());
+            if (!ok) {
+                throw new ProjectRepoError(403, 'REPO_NOT_ALLOWED',
+                    `${repo} is not on your personal GitHub allowlist. Add it in Settings → Connections.`);
+            }
+        }
+    }
+
+    /** Commit identity: the person's GitHub login and noreply address (cached briefly). */
+    async _identity(userId, token) {
+        const cached = this._identities.get(userId);
+        if (cached && cached.until > Date.now()) return cached.identity;
+        let viewer;
+        try {
+            viewer = this._identityOf
+                ? await this._identityOf(token)
+                : await this._githubService().withToken(token).getViewer();
+        } catch (error) {
+            throw new ProjectRepoError(403, 'NO_GITHUB',
+                `Your GitHub connection did not answer (${error.message}). Reconnect it in Settings → Connections.`);
+        }
+        const login = String(viewer?.login || '').trim();
+        if (!login) throw new ProjectRepoError(403, 'NO_GITHUB', 'Your GitHub connection has no account behind it.');
+        const identity = {
+            name: login,
+            email: viewer?.id != null ? `${viewer.id}+${login}@users.noreply.github.com` : `${login}@users.noreply.github.com`
+        };
+        this._identities.set(userId, { until: Date.now() + IDENTITY_TTL_MS, identity });
+        return identity;
+    }
+
+    async _repoInfo(token, repo) {
+        try {
+            if (this._repoInfoOf) return await this._repoInfoOf(token, repo);
+            const info = await this._githubService().withToken(token).getRepo(repo);
+            return { sizeKb: Number(info?.size) || 0, defaultBranch: info?.default_branch || null };
+        } catch (error) {
+            if (error?.code === 'NOT_FOUND' || /404|not found/i.test(String(error?.message))) {
+                throw new ProjectRepoError(404, 'NOT_FOUND', `${repo} was not found, or your GitHub account cannot see it.`);
+            }
+            return null; // the clone itself decides
+        }
+    }
+
+    async _serialize(projectRow, row, { withStatus = true } = {}) {
+        const out = {
+            id: row.id,
+            project: projectRow.slug,
+            name: row.name,
+            repo: row.repo,
+            path: `${REPOS_DIR}/${row.name}`,
+            url: `https://github.com/${row.repo}`,
+            clonedBranch: row.branch,
+            createdBy: row.createdBy || null,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+            lastFetchAt: row.lastFetchAt || null,
+            lastPushAt: row.lastPushAt || null
+        };
+        if (withStatus) out.status = await this._status(projectRow, row.name).catch(error => ({ error: error.message }));
+        return out;
+    }
+
+    async _status(projectRow, name) {
+        const branchRes = await this._git(projectRow, name, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true });
+        const branch = branchRes.status === 0 ? String(branchRes.stdout).trim() : null;
+        const upstreamRes = await this._git(projectRow, name, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { allowFail: true });
+        const upstream = upstreamRes.status === 0 ? String(upstreamRes.stdout).trim() : null;
+        let ahead = 0;
+        let behind = 0;
+        if (upstream) {
+            const counts = await this._git(projectRow, name, ['rev-list', '--left-right', '--count', 'HEAD...@{u}'], { allowFail: true });
+            if (counts.status === 0) {
+                const [a, b] = String(counts.stdout).trim().split(/\s+/).map(Number);
+                ahead = a || 0;
+                behind = b || 0;
+            }
+        }
+        const porcelain = await this._git(projectRow, name, ['status', '--porcelain', '-z', '--untracked-files=all'], { allowFail: true });
+        const entries = porcelain.status === 0
+            ? String(porcelain.stdout).split('\0').filter(Boolean)
+            : [];
+        const changes = [];
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            const code = entry.slice(0, 2);
+            const file = entry.slice(3);
+            if (code[0] === 'R' || code[0] === 'C') i++; // the next NUL-separated entry is the source path
+            changes.push({ code: code.trim() || '??', path: file });
+        }
+        const log = await this._git(projectRow, name, ['log', `-n${RECENT_COMMITS}`, '--format=%h%x1f%an%x1f%aI%x1f%s'], { allowFail: true });
+        const commits = log.status === 0
+            ? String(log.stdout).split('\n').filter(Boolean).map(line => {
+                const [short, author, when, subject] = line.split('\x1f');
+                return { short, author, when: when ? new Date(when).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') : null, message: subject || '' };
+            })
+            : [];
+        const head = commits[0]?.short || null;
+        return {
+            branch: branch === 'HEAD' ? null : branch,
+            detached: branch === 'HEAD',
+            upstream,
+            ahead,
+            behind,
+            head,
+            changed: changes.length,
+            changes: changes.slice(0, STATUS_MAX_PATHS),
+            commits,
+            sizeMb: Number((dirBytes(this.gitDirFor(projectRow, name)) / (1024 * 1024)).toFixed(2))
+        };
+    }
+
+    _publish(projectRow, userId) {
+        try {
+            require('./eventBusService').publishProjectChange({
+                userId, slug: projectRow.slug, reason: 'workspace', projectId: projectRow.id
+            });
+        } catch { /* bus is optional */ }
+    }
+
+    async _touch(projectRow, row, fields = {}) {
+        const sets = ['updatedAt = datetime(\'now\')'];
+        const params = { id: row.id };
+        for (const [key, value] of Object.entries(fields)) {
+            sets.push(`${key} = @${key}`);
+            params[key] = value;
+        }
+        await db.run(`UPDATE project_repos SET ${sets.join(', ')} WHERE id = @id`, params);
+        try { await this.projects._touchProject(projectRow.id); } catch { /* best effort */ }
+    }
+
+    async _audit(userId, action, detail) {
+        try {
+            await require('./integrationAudit').record({ guildId: dmScopeId(userId), userId, action, detail });
+        } catch { /* never breaks the action */ }
+    }
+
+    // --- Public API ----------------------------------------------------------------------
+
+    /** Every clone in the project with its live status. Always answers (enabled:false names why). */
+    async list({ row = null, userId, project = null, owner = null, withStatus = true }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        const availability = this.availability();
+        const rows = await db.all(
+            'SELECT * FROM project_repos WHERE projectId = @projectId ORDER BY name',
+            { projectId: projectRow.id }
+        );
+        const repos = [];
+        for (const repoRow of rows) {
+            repos.push(await this._serialize(projectRow, repoRow, { withStatus: withStatus && availability.enabled }));
+        }
+        return {
+            project: projectRow.slug,
+            enabled: availability.enabled,
+            reason: availability.reason,
+            maxRepos: this.config.maxReposPerProject,
+            repos
+        };
+    }
+
+    /** One clone's branch, upstream, ahead/behind, uncommitted changes and recent commits. */
+    async status({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        return this._serialize(projectRow, repoRow);
+    }
+
+    /**
+     * Clone a GitHub repository into repos/<name> with the person's own
+     * connection. Shallow, one branch, size- and count-capped.
+     */
+    async clone({ row = null, userId, project = null, owner = null, repo, branch = null, name = null }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const cleanRepo = this._cleanRepo(repo);
+        const wantedBranch = cleanBranch(branch);
+        const token = await this._token(userId);
+        await this._checkAllowlist(userId, cleanRepo);
+
+        let cleanName = this._cleanName(name || cleanRepo.split('/')[1].toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'repo');
+        if (!name) {
+            const base = cleanName;
+            for (let n = 2; await db.get('SELECT 1 AS ok FROM project_repos WHERE projectId = @projectId AND name = @name', { projectId: projectRow.id, name: cleanName }); n++) {
+                cleanName = `${base.slice(0, 44)}-${n}`;
+            }
+        } else if (await db.get('SELECT 1 AS ok FROM project_repos WHERE projectId = @projectId AND name = @name', { projectId: projectRow.id, name: cleanName })) {
+            throw new ProjectRepoError(409, 'DUPLICATE_REPO', `This project already has a repository called "${cleanName}".`);
+        }
+        const count = (await db.get(
+            'SELECT COUNT(*) AS c FROM project_repos WHERE projectId = @projectId', { projectId: projectRow.id }
+        ))?.c || 0;
+        if (count >= this.config.maxReposPerProject) {
+            throw new ProjectRepoError(400, 'TOO_MANY_REPOS',
+                `At most ${this.config.maxReposPerProject} repositories per project - remove one first.`);
+        }
+
+        const info = await this._repoInfo(token, cleanRepo);
+        const maxMb = Number(this.config.repoMaxMb) || 512;
+        if (info?.sizeKb && info.sizeKb / 1024 > maxMb) {
+            throw new ProjectRepoError(413, 'REPO_TOO_LARGE',
+                `${cleanRepo} is about ${(info.sizeKb / 1024).toFixed(0)} MB, over the ${maxMb} MB repository cap.`);
+        }
+
+        const gitDir = this.gitDirFor(projectRow, cleanName);
+        const workTree = this.workTreeFor(projectRow, cleanName);
+        const legal = this.projects.legalizeWorkspacePath(projectRow.dir, `${REPOS_DIR}/${cleanName}`);
+        if (fs.existsSync(legal.absolutePath) && fs.readdirSync(legal.absolutePath).length > 0) {
+            throw new ProjectRepoError(409, 'PATH_IN_USE', `workspace/${REPOS_DIR}/${cleanName} already has files in it.`);
+        }
+        if (fs.existsSync(gitDir)) {
+            throw new ProjectRepoError(409, 'PATH_IN_USE', `A repository directory for "${cleanName}" already exists.`);
+        }
+
+        return this._serial(projectRow, cleanName, async () => {
+            const cleanup = () => {
+                try { fs.rmSync(gitDir, { recursive: true, force: true }); } catch { /* best effort */ }
+                try { fs.rmSync(workTree, { recursive: true, force: true }); } catch { /* best effort */ }
+                for (const parent of [path.dirname(gitDir), path.dirname(workTree)]) {
+                    try { if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent); } catch { /* not empty or gone */ }
+                }
+            };
+            let branchName = wantedBranch;
+            try {
+                fs.mkdirSync(gitDir, { recursive: true, mode: 0o700 });
+                fs.mkdirSync(workTree, { recursive: true, mode: 0o700 });
+                await this._git(projectRow, cleanName, ['init', '-q']);
+                const settings = [
+                    ['core.bare', 'false'],
+                    ['core.worktree', workTree],
+                    ['core.hooksPath', path.join(gitDir, 'no-hooks')],
+                    ['core.symlinks', 'false'],
+                    ['core.autocrlf', 'false'],
+                    ['core.quotepath', 'false'],
+                    ['core.fsmonitor', 'false'],
+                    ['gc.autoDetach', 'false'],
+                    ['commit.gpgsign', 'false'],
+                    ['push.default', 'nothing'],
+                    ['fetch.prune', 'true']
+                ];
+                for (const [key, value] of settings) await this._git(projectRow, cleanName, ['config', key, value]);
+                await this._git(projectRow, cleanName, ['remote', 'add', 'origin', this._remoteUrl(cleanRepo)]);
+                if (!branchName) {
+                    branchName = info?.defaultBranch || null;
+                    if (!branchName) {
+                        const head = await this._git(projectRow, cleanName, ['ls-remote', '--symref', 'origin', 'HEAD'], { token });
+                        const match = String(head.stdout).match(/^ref: refs\/heads\/(\S+)\tHEAD/m);
+                        branchName = match ? match[1] : 'main';
+                    }
+                    branchName = cleanBranch(branchName);
+                }
+                await this._git(projectRow, cleanName,
+                    ['fetch', '-q', `--depth=${this.config.repoCloneDepth || 50}`, '--no-tags', 'origin', branchName], { token });
+                await this._git(projectRow, cleanName, ['checkout', '-q', '--track', '-B', branchName, `origin/${branchName}`]);
+            } catch (error) {
+                cleanup();
+                throw this._explain(error, { repo: cleanRepo, branch: branchName });
+            }
+
+            const usedMb = this.projects.workspaceSizeMb(projectRow);
+            if (usedMb > this.config.maxProjectMb) {
+                cleanup();
+                throw new ProjectRepoError(413, 'QUOTA_EXCEEDED',
+                    `Cloning ${cleanRepo} would put the workspace over its ${this.config.maxProjectMb} MB quota (${usedMb.toFixed(1)} MB).`);
+            }
+            const repoMb = dirBytes(gitDir) / (1024 * 1024);
+            if (repoMb > maxMb) {
+                cleanup();
+                throw new ProjectRepoError(413, 'REPO_TOO_LARGE',
+                    `${cleanRepo} is ${repoMb.toFixed(0)} MB of history, over the ${maxMb} MB repository cap.`);
+            }
+
+            const id = await db.insert(
+                `INSERT INTO project_repos (projectId, userId, name, repo, branch, createdBy, lastFetchAt)
+                 VALUES (@projectId, @userId, @name, @repo, @branch, @createdBy, datetime('now'))`,
+                { projectId: projectRow.id, userId: projectRow.ownerId ?? projectRow.userId, name: cleanName, repo: cleanRepo, branch: branchName, createdBy: userId }
+            );
+            try { await this.projects._touchProject(projectRow.id); } catch { /* best effort */ }
+            await this.history.commitQuietly(projectRow, { userId, message: `cloned ${cleanRepo} into ${REPOS_DIR}/${cleanName}` });
+            await this._audit(userId, 'project-repo-clone', { project: projectRow.slug, repo: cleanRepo, branch: branchName, name: cleanName });
+            this._publish(projectRow, userId);
+            const repoRow = await db.get('SELECT * FROM project_repos WHERE id = @id', { id });
+            return this._serialize(projectRow, repoRow);
+        });
+    }
+
+    /** Fetch the current branch and fast-forward; a diverged branch is reported, never merged. */
+    async pull({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const token = await this._token(userId);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            if (!status.branch) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; switch to one with repo_branch first.');
+            await this.history.commitQuietly(projectRow, { userId, message: `before pulling ${REPOS_DIR}/${repoRow.name}` });
+            const before = status.head;
+            try {
+                await this._git(projectRow, repoRow.name,
+                    ['fetch', '-q', `--depth=${this.config.repoCloneDepth || 50}`, '--no-tags', 'origin', status.branch], { token });
+                await this._git(projectRow, repoRow.name, ['merge', '-q', '--ff-only', '--no-edit', `origin/${status.branch}`]);
+            } catch (error) {
+                const text = String(error.gitStderr || error.message || '');
+                if (/Not possible to fast-forward|diverg|fatal: Not possible|cannot fast-forward/i.test(text)) {
+                    throw new ProjectRepoError(409, 'DIVERGED',
+                        `Local commits on ${status.branch} are not on origin: push them first, or repo_reset to discard them.`);
+                }
+                if (/would be overwritten by merge|local changes/i.test(text)) {
+                    throw new ProjectRepoError(409, 'DIRTY',
+                        'Uncommitted changes would be overwritten: commit them (repo_commit) or discard them (repo_reset) first.');
+                }
+                throw this._explain(error, { repo: repoRow.repo, branch: status.branch });
+            }
+            await this._touch(projectRow, repoRow, { lastFetchAt: new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') });
+            const after = await this._status(projectRow, repoRow.name);
+            if (after.head !== before) {
+                await this.history.commitQuietly(projectRow, { userId, message: `pulled ${REPOS_DIR}/${repoRow.name} (${before || '?'}..${after.head})` });
+            }
+            this._publish(projectRow, userId);
+            return { ...await this._serialize(projectRow, repoRow, { withStatus: false }), status: after, updated: after.head !== before, from: before, to: after.head };
+        });
+    }
+
+    /** Stage everything in the clone and commit it as the person's GitHub identity. */
+    async commit({ row = null, userId, project = null, owner = null, name, message }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const text = cleanMessage(message);
+        const token = await this._token(userId);
+        const identity = await this._identity(userId, token);
+        return this._serial(projectRow, repoRow.name, async () => {
+            await this._git(projectRow, repoRow.name, ['add', '-A', '--ignore-errors', '--', '.']);
+            const staged = await this._git(projectRow, repoRow.name, ['diff', '--cached', '--quiet'], { allowFail: true });
+            if (staged.status === 0) return { committed: false, reason: 'NO_CHANGES', name: repoRow.name, repo: repoRow.repo };
+            await this._git(projectRow, repoRow.name, ['commit', '-q', '--no-verify', '-m', text],
+                { author: identity.name, authorEmail: identity.email });
+            const hash = (await this._git(projectRow, repoRow.name, ['rev-parse', 'HEAD'])).stdout.trim();
+            await this._touch(projectRow, repoRow);
+            const status = await this._status(projectRow, repoRow.name);
+            return { committed: true, name: repoRow.name, repo: repoRow.repo, hash, short: hash.slice(0, 7), author: identity.name, status };
+        });
+    }
+
+    /** Push the current branch (or HEAD to a named branch) to origin. Never forced. */
+    async push({ row = null, userId, project = null, owner = null, name, branch = null }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(branch);
+        const token = await this._token(userId);
+        await this._checkAllowlist(userId, repoRow.repo);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            if (!status.head) throw new ProjectRepoError(409, 'NOTHING_TO_PUSH', 'The clone has no commits yet.');
+            const branchName = target || status.branch;
+            if (!branchName) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; pass branch=<name> to push HEAD there.');
+            if (status.changed > 0 && !target) {
+                logger.info?.(`[project-repos] ${projectRow.slug}/${repoRow.name}: pushing with ${status.changed} uncommitted change(s) left behind`);
+            }
+            try {
+                await this._git(projectRow, repoRow.name, ['push', '-q', '--no-verify', 'origin', `HEAD:refs/heads/${branchName}`], { token });
+            } catch (error) {
+                const text = String(error.gitStderr || error.message || '');
+                if (/rejected|non-fast-forward|fetch first|stale info/i.test(text)) {
+                    throw new ProjectRepoError(409, 'REJECTED',
+                        `origin/${branchName} has commits this clone does not: repo_pull first, then push again. Pushes are never forced.`);
+                }
+                if (/protected branch|GH006/i.test(text)) {
+                    throw new ProjectRepoError(403, 'PROTECTED_BRANCH',
+                        `${branchName} is protected on GitHub: push to another branch (branch=<name>) and open a pull request.`);
+                }
+                throw this._explain(error, { repo: repoRow.repo, branch: branchName });
+            }
+            if (branchName === status.branch) {
+                await this._git(projectRow, repoRow.name, ['branch', `--set-upstream-to=origin/${branchName}`, branchName], { allowFail: true });
+            }
+            const when = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+            await this._touch(projectRow, repoRow, { lastPushAt: when });
+            await this._audit(userId, 'project-repo-push', { project: projectRow.slug, repo: repoRow.repo, branch: branchName, head: status.head });
+            const compareUrl = branchName !== repoRow.branch
+                ? `https://github.com/${repoRow.repo}/compare/${encodeURIComponent(repoRow.branch)}...${encodeURIComponent(branchName)}?expand=1`
+                : null;
+            return {
+                pushed: true, name: repoRow.name, repo: repoRow.repo, branch: branchName, head: status.head,
+                url: `https://github.com/${repoRow.repo}/tree/${encodeURIComponent(branchName)}`,
+                compareUrl,
+                status: await this._status(projectRow, repoRow.name)
+            };
+        });
+    }
+
+    /** Switch to a branch, creating it when it exists neither locally nor on origin. */
+    async checkout({ row = null, userId, project = null, owner = null, name, branch }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const branchName = cleanBranch(branch);
+        if (!branchName) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
+        const token = await this._token(userId);
+        return this._serial(projectRow, repoRow.name, async () => {
+            await this.history.commitQuietly(projectRow, { userId, message: `before switching ${REPOS_DIR}/${repoRow.name} to ${branchName}` });
+            let created = false;
+            try {
+                const local = await this._git(projectRow, repoRow.name, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`], { allowFail: true });
+                if (local.status === 0) {
+                    await this._git(projectRow, repoRow.name, ['checkout', '-q', branchName]);
+                } else {
+                    const fetched = await this._git(projectRow, repoRow.name,
+                        ['fetch', '-q', `--depth=${this.config.repoCloneDepth || 50}`, '--no-tags', 'origin', branchName], { token, allowFail: true });
+                    if (fetched.status === 0) {
+                        await this._git(projectRow, repoRow.name, ['checkout', '-q', '--track', '-B', branchName, `origin/${branchName}`]);
+                    } else {
+                        await this._git(projectRow, repoRow.name, ['checkout', '-q', '-b', branchName]);
+                        created = true;
+                    }
+                }
+            } catch (error) {
+                const text = String(error.gitStderr || error.message || '');
+                if (/would be overwritten by checkout|local changes/i.test(text)) {
+                    throw new ProjectRepoError(409, 'DIRTY',
+                        'Uncommitted changes would be overwritten: commit them (repo_commit) or discard them (repo_reset) first.');
+                }
+                throw this._explain(error, { repo: repoRow.repo, branch: branchName });
+            }
+            await this._touch(projectRow, repoRow);
+            this._publish(projectRow, userId);
+            return { name: repoRow.name, repo: repoRow.repo, branch: branchName, created, status: await this._status(projectRow, repoRow.name) };
+        });
+    }
+
+    /** Discard local commits and changes: back to origin/<branch>. A snapshot is taken first. */
+    async reset({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const token = await this._token(userId);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            if (!status.branch) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; switch to one with repo_branch first.');
+            const snapshot = await this.history.commitQuietly(projectRow, { userId, message: `before resetting ${REPOS_DIR}/${repoRow.name}` });
+            try {
+                await this._git(projectRow, repoRow.name,
+                    ['fetch', '-q', `--depth=${this.config.repoCloneDepth || 50}`, '--no-tags', 'origin', status.branch], { token });
+                await this._git(projectRow, repoRow.name, ['reset', '-q', '--hard', `origin/${status.branch}`]);
+                await this._git(projectRow, repoRow.name, ['clean', '-fdq']);
+            } catch (error) {
+                throw this._explain(error, { repo: repoRow.repo, branch: status.branch });
+            }
+            await this._touch(projectRow, repoRow, { lastFetchAt: new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') });
+            await this.history.commitQuietly(projectRow, { userId, message: `reset ${REPOS_DIR}/${repoRow.name} to origin/${status.branch}` });
+            this._publish(projectRow, userId);
+            return {
+                name: repoRow.name, repo: repoRow.repo, branch: status.branch,
+                snapshot: snapshot?.hash || null,
+                status: await this._status(projectRow, repoRow.name)
+            };
+        });
+    }
+
+    /** Remove the clone (work tree and git dir). The files stay in workspace history. */
+    async remove({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        const repoRow = await this._row(projectRow, name);
+        return this._serial(projectRow, repoRow.name, async () => {
+            await this.history.commitQuietly(projectRow, { userId, message: `before removing ${REPOS_DIR}/${repoRow.name}` });
+            try { fs.rmSync(this.workTreeFor(projectRow, repoRow.name), { recursive: true, force: true }); } catch { /* best effort */ }
+            try { fs.rmSync(this.gitDirFor(projectRow, repoRow.name), { recursive: true, force: true }); } catch { /* best effort */ }
+            for (const parent of [this.reposDir(projectRow), path.join(path.resolve(projectRow.dir), REPOS_DIR)]) {
+                try { if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent); } catch { /* not empty or gone */ }
+            }
+            await db.run('DELETE FROM project_repos WHERE id = @id', { id: repoRow.id });
+            try { await this.projects._touchProject(projectRow.id); } catch { /* best effort */ }
+            await this.history.commitQuietly(projectRow, { userId, message: `removed ${REPOS_DIR}/${repoRow.name}` });
+            this._publish(projectRow, userId);
+            return { removed: true, name: repoRow.name, repo: repoRow.repo };
+        });
+    }
+}
+
+module.exports = new ProjectRepoService();
+module.exports.ProjectRepoService = ProjectRepoService;
+module.exports.ProjectRepoError = ProjectRepoError;
+module.exports.REPOS_DIR = REPOS_DIR;
+module.exports.cleanBranch = cleanBranch;

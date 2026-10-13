@@ -658,6 +658,14 @@ export const api = {
     commitProjectHistory: (project: string, message: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/history/commit${ownerQs(owner)}`,
             { method: 'POST', body: { message } }),
+    projectRepos: (project: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`),
+    cloneProjectRepo: (project: string, body: { repo: string; branch?: string | null; name?: string | null }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`, { method: 'POST', body }),
+    projectRepoAction: (project: string, name: string, action: 'pull' | 'commit' | 'push' | 'branch' | 'reset', body: Record<string, unknown> = {}, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
+    removeProjectRepo: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}${ownerQs(owner)}`, { method: 'DELETE' }),
     projectTriggers: (project: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/triggers${ownerQs(owner)}`),
     createProjectTrigger: (project: string, body: Record<string, unknown>, owner?: string | null) =>

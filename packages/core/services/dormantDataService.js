@@ -193,6 +193,9 @@ async function forgetProjects(userId, { abortJob = null } = {}) {
     const memberships = (await db.run(
         'DELETE FROM project_members WHERE userId = @userId', { userId }
     )).changes;
+    // Clones they made in someone else's project are project data; the
+    // attribution goes (ADR 0015).
+    await db.run('UPDATE project_repos SET createdBy = NULL WHERE createdBy = @userId', { userId });
     const invites = (await db.run(
         'DELETE FROM project_invites WHERE inviteeId = @userId', { userId }
     )).changes;
@@ -281,7 +284,10 @@ async function countProjects(userId) {
          WHERE guildId = @dmScope AND scopeKey LIKE 'PROJECT:%'`,
         { dmScope: dmScopeId(userId) }
     )).c;
-    return { projects, jobs, shareLinks, memberships, invites, workspaceDirs: countWorkspaceDirs(userId), projectNodes };
+    const repoAttributions = (await db.get(
+        'SELECT COUNT(*) AS c FROM project_repos WHERE createdBy = @userId', { userId }
+    )).c;
+    return { projects, jobs, shareLinks, memberships, invites, workspaceDirs: countWorkspaceDirs(userId), projectNodes, repoAttributions };
 }
 
 module.exports = {

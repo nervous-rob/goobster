@@ -132,6 +132,14 @@ channel.
 
 All four refuse repos that aren't watched in the asking server.
 
+## Repositories inside projects
+
+A person with a connected GitHub account (Settings → Connections) can also
+clone a repository into a project, edit it through the workspace, and
+commit and push with their own account - never the server's token. That
+lives with projects: see [projects.md → Repositories](projects.md#repositories)
+and [ADR 0015](adr/0015-project-repositories.md).
+
 ## Conversation → issue with a reaction
 
 React 📋 on any message (a bug report, a feature idea) and Goobster drafts a

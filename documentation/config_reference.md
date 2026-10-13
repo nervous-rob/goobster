@@ -235,7 +235,11 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `observatory.historyEnabled` | boolean | env `GOOBSTER_PROJECT_HISTORY_ENABLED`<br>config.json `observatory.historyEnabled` | `true` | restart | projects | Git snapshots of project workspaces (needs git on the host). |
 | `observatory.historyMaxFileMb` | integer | config.json `observatory.historyMaxFileMb` | `8` | restart | projects | Files larger than this are left out of workspace snapshots, in MB. |
 | `observatory.historyMaxMb` | integer | config.json `observatory.historyMaxMb` | `256` | restart | projects | Disk budget for one project's workspace history, in MB; past it the history is squashed, then paused. |
-| `observatory.gitCommand` | string | env `GOOBSTER_OBSERVATORY_GIT`<br>config.json `observatory.gitCommand` | `"git"` | restart | projects | git binary for workspace history. |
+| `observatory.gitCommand` | string | env `GOOBSTER_OBSERVATORY_GIT`<br>config.json `observatory.gitCommand` | `"git"` | restart | projects | git binary for workspace history and project repositories. |
+| `observatory.reposEnabled` | boolean | env `GOOBSTER_PROJECT_REPOS_ENABLED`<br>config.json `observatory.reposEnabled` | `true` | restart | projects | GitHub repositories cloned into projects with the person's own GitHub connection (needs git and the github feature). |
+| `observatory.maxReposPerProject` | integer | config.json `observatory.maxReposPerProject` | `3` | restart | projects | Repositories one project may hold. |
+| `observatory.repoCloneDepth` | integer | config.json `observatory.repoCloneDepth` | `50` | restart | projects | Commits of history fetched per clone and pull (shallow). |
+| `observatory.repoMaxMb` | integer | config.json `observatory.repoMaxMb` | `512` | restart | projects | Largest repository a project may clone, in MB. |
 | `gbaRun.enabled` | boolean | config.json `gbaRun.enabled` | `false` | restart | gba | The Game Boy Advance harness. |
 
 ## Self-knowledge

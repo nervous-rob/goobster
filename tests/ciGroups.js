@@ -257,6 +257,8 @@ const GROUPS = [
             'projectMissionApi',
             'projectMissionService',
             'projectOrganization',
+            'projectRepoApi',
+            'projectRepoService',
             'projectService',
             'projectSetupAudit',
             'projectSetupContract',

@@ -93,7 +93,11 @@
         "historyEnabled": true,
         "historyMaxFileMb": 8,
         "historyMaxMb": 256,
-        "gitCommand": "git"
+        "gitCommand": "git",
+        "reposEnabled": true,
+        "maxReposPerProject": 3,
+        "repoCloneDepth": 50,
+        "repoMaxMb": 512
     },
 
     "selfDocs": {

@@ -1941,6 +1941,34 @@ CREATE TABLE IF NOT EXISTS project_members (
 
 CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(userId);
 
+-- Project repositories (ADR 0015): a GitHub repository cloned for a project
+-- and driven by the host with the acting person's own GitHub connection.
+-- The git directory is a sibling of the workspace
+-- (data/sandbox/projects/<owner>/<slug>.repos/<name>.git); the work tree is
+-- <workspace>/repos/<name>, plain files to the sandbox and to workspace
+-- history. Never a token or a URL with credentials in this table.
+CREATE TABLE IF NOT EXISTS project_repos (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    -- Denormalized owner so erasure and audits never need a join
+    userId TEXT NOT NULL,
+    -- repos/<name> in the workspace
+    name TEXT NOT NULL,
+    -- owner/name on github.com
+    repo TEXT NOT NULL,
+    -- The branch that was cloned (the current branch is read from git)
+    branch TEXT NOT NULL,
+    -- Who cloned it; NULL after their erasure
+    createdBy TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastFetchAt TEXT,
+    lastPushAt TEXT,
+    UNIQUE (projectId, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_repos_user ON project_repos(userId);
+
 -- Only the owner invites; invitee accepts/declines from a Discord DM
 -- button or the portal invitation list. Mirrors parlor_invites exactly
 -- (status lifecycle, name snapshots, /forget-me deletes rows addressed

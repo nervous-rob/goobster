@@ -43,8 +43,8 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const { execFile, spawnSync } = require('node:child_process');
 const logger = require('../utils/logger');
+const { COMMITTER_NAME, probeGit, sealedEnv, runGit, SerialQueues, dirBytes } = require('../utils/sealedGit');
 const observatoryConfig = require('../config/observatoryConfig');
 const { windowLines } = require('../utils/toolResultWindow');
 const { RUNS_DIR, FRAMES_DIR } = require('../utils/projectSetupContract');
@@ -61,8 +61,6 @@ class ProjectHistoryError extends Error {
 }
 
 const BRANCH = 'main';
-const COMMITTER_NAME = 'goobster';
-const AUTHOR_DOMAIN = 'history.goobster.invalid';
 const PAUSED_MARKER = 'goobster-paused';
 const EXCLUDE_HEADER = '# Managed by Goobster (projectHistoryService). Edits are overwritten.';
 /** Workspace paths never snapshotted: derived media, caches, the sandbox's hidden run sources. */
@@ -81,7 +79,6 @@ const STATIC_EXCLUDES = Object.freeze([
 ]);
 /** Directory names the size scan skips (the excludes above, by basename). */
 const SKIPPED_DIR_NAMES = new Set([FRAMES_DIR, 'renders', '__pycache__', 'node_modules', '.venv', 'venv', '.cache', '.ipynb_checkpoints']);
-const GIT_TIMEOUT_MS = 120_000;
 const DEFAULT_LOG_LIMIT = 30;
 const MAX_LOG_LIMIT = 200;
 const MAX_MESSAGE_CHARS = 160;
@@ -113,8 +110,8 @@ class ProjectHistoryService {
     constructor({ config = observatoryConfig, projects = null } = {}) {
         this.config = config;
         this._projects = projects;
-        /** gitDir -> promise chain; serializes git against one repository. */
-        this._queues = new Map();
+        /** Serializes git against one repository (a run settling while the portal saves). */
+        this._queues = new SerialQueues();
         this._probe = null;
         this._warnedMissing = false;
     }
@@ -137,14 +134,7 @@ class ProjectHistoryService {
     /** True when `git --version` answers (memoized per process). */
     gitAvailable() {
         if (this._probe === null) {
-            try {
-                const res = spawnSync(this.gitCommand, ['--version'], {
-                    stdio: 'ignore', windowsHide: true, timeout: 10_000
-                });
-                this._probe = res.status === 0;
-            } catch {
-                this._probe = false;
-            }
+            this._probe = probeGit(this.gitCommand);
             if (!this._probe && !this._warnedMissing) {
                 this._warnedMissing = true;
                 logger.warn?.(`[project-history] "${this.gitCommand}" is not installed - workspace history is off. `
@@ -185,81 +175,24 @@ class ProjectHistoryService {
     // --- Plumbing --------------------------------------------------------------
 
     _env(row, { author = null } = {}) {
-        const gitDir = this.historyDir(row);
-        const env = {
-            PATH: process.env.PATH || process.env.Path || '',
-            GIT_DIR: gitDir,
-            GIT_WORK_TREE: path.resolve(row.dir),
-            HOME: gitDir,
-            XDG_CONFIG_HOME: path.join(gitDir, 'xdg'),
-            GIT_CONFIG_NOSYSTEM: '1',
-            GIT_CONFIG_GLOBAL: path.join(gitDir, 'no-global-config'),
-            GIT_TERMINAL_PROMPT: '0',
-            GIT_OPTIONAL_LOCKS: '0',
-            GIT_PAGER: 'cat',
-            PAGER: 'cat',
-            LC_ALL: 'C',
-            GIT_COMMITTER_NAME: COMMITTER_NAME,
-            GIT_COMMITTER_EMAIL: `${COMMITTER_NAME}@${AUTHOR_DOMAIN}`,
-            GIT_AUTHOR_NAME: author || COMMITTER_NAME,
-            GIT_AUTHOR_EMAIL: `${author || COMMITTER_NAME}@${AUTHOR_DOMAIN}`
-        };
-        if (process.platform === 'win32') {
-            for (const key of ['SYSTEMROOT', 'SystemRoot', 'TEMP', 'TMP', 'COMSPEC', 'PATHEXT']) {
-                if (process.env[key]) env[key] = process.env[key];
-            }
-        }
-        return env;
+        return sealedEnv({ gitDir: this.historyDir(row), workTree: row.dir, author });
     }
 
     /**
      * Run one git command against the project's repository.
      * @returns {Promise<{ stdout: string|Buffer, stderr: string, status: number }>}
      */
-    _git(row, args, { author = null, input = null, binary = false, maxBuffer = 16 * 1024 * 1024, allowFail = false } = {}) {
-        return new Promise((resolve, reject) => {
-            const child = execFile(this.gitCommand, args, {
-                cwd: path.resolve(row.dir),
-                env: this._env(row, { author }),
-                encoding: binary ? 'buffer' : 'utf8',
-                maxBuffer,
-                timeout: GIT_TIMEOUT_MS,
-                windowsHide: true
-            }, (error, stdout, stderr) => {
-                const status = error && typeof error.code === 'number' ? error.code : (error ? -1 : 0);
-                const err = String(stderr || '').trim();
-                if (error && (!allowFail || typeof error.code !== 'number')) {
-                    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-                        reject(new ProjectHistoryError(413, 'TOO_LARGE', 'That output is too large to show.'));
-                        return;
-                    }
-                    const failure = new Error(`git ${args[0]} failed (${status}): ${err || error.message}`);
-                    failure.status = 500;
-                    failure.code = 'GIT_FAILED';
-                    failure.gitStatus = status;
-                    failure.gitStderr = err;
-                    reject(failure);
-                    return;
-                }
-                resolve({ stdout, stderr: err, status });
-            });
-            if (input != null) {
-                child.stdin.on('error', () => { /* git closed early */ });
-                child.stdin.end(input);
-            }
+    _git(row, args, { author = null, ...opts } = {}) {
+        return runGit(this.gitCommand, args, {
+            cwd: path.resolve(row.dir),
+            env: this._env(row, { author }),
+            ...opts
         });
     }
 
     /** Serialize work on one repository (a run settling while the portal saves a file). */
     _serial(row, fn) {
-        const key = this.historyDir(row);
-        const prev = this._queues.get(key) || Promise.resolve();
-        const next = prev.catch(() => {}).then(fn);
-        this._queues.set(key, next);
-        next.finally(() => {
-            if (this._queues.get(key) === next) this._queues.delete(key);
-        }).catch(() => {});
-        return next;
+        return this._queues.run(this.historyDir(row), fn);
     }
 
     _repoExists(row) {
@@ -338,20 +271,7 @@ class ProjectHistoryService {
     }
 
     _dirBytes(dir) {
-        let bytes = 0;
-        const walk = (current) => {
-            let entries;
-            try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { return; }
-            for (const entry of entries) {
-                const full = path.join(current, entry.name);
-                if (entry.isDirectory()) walk(full);
-                else if (entry.isFile()) {
-                    try { bytes += fs.statSync(full).size; } catch { /* raced away */ }
-                }
-            }
-        };
-        walk(dir);
-        return bytes;
+        return dirBytes(dir);
     }
 
     _budgetBytes() {

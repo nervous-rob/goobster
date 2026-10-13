@@ -2,19 +2,21 @@
 module.exports = {
     projects: {
         title: 'Projects',
-        summary: 'Workshop projects: rooms, members, files with git-backed workspace history, assets, plans, missions, triggers and applets. Organisation works without code execution.',
+        summary: 'Workshop projects: rooms, members, files with git-backed workspace history and GitHub clones, assets, plans, missions, triggers and applets. Organisation works without code execution.',
         legacy: {
             kind: 'flag',
             semantics: 'env-bool-or-boolean',
             note: 'GOOBSTER_PROJECTS_ENABLED 0/false off or 1/true on, then projects.enabled true/false, default on (config/observatoryConfig.js projectsEnabled).'
         },
         apiKeys: [],
-        configKeys: ['projects.enabled', 'observatory.historyEnabled', 'observatory.historyMaxFileMb', 'observatory.historyMaxMb', 'observatory.gitCommand'],
+        configKeys: ['projects.enabled', 'observatory.historyEnabled', 'observatory.historyMaxFileMb', 'observatory.historyMaxMb', 'observatory.gitCommand',
+            'observatory.reposEnabled', 'observatory.maxReposPerProject', 'observatory.repoCloneDepth', 'observatory.repoMaxMb'],
         docs: ['documentation/projects.md'],
         payload: {
             files: [
                 'packages/core/services/{projectService,projectAssetService,projectMissionService,projectTriggerService}.js',
-                'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService,projectHistoryService}.js',
+                'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService,projectHistoryService,projectRepoService}.js',
+                'packages/core/utils/sealedGit.js',
                 'packages/core/utils/{projectSetupContract,outputContract}.js',
                 'packages/core/web/routes/projects.js',
                 'apps/web/src/rooms/projects/**',

@@ -64,6 +64,27 @@ type HistoryPayload = {
     commits: HistoryCommit[];
 };
 type HistoryDiff = { label: string; empty: boolean; content: string; truncated?: boolean };
+type RepoStatus = {
+    branch: string | null;
+    upstream?: string | null;
+    ahead: number;
+    behind: number;
+    head: string | null;
+    changed: number;
+    changes: { code: string; path: string }[];
+    sizeMb?: number;
+    error?: string;
+};
+type RepoEntry = {
+    name: string;
+    repo: string;
+    path: string;
+    url: string;
+    clonedBranch: string;
+    lastPushAt?: string | null;
+    status?: RepoStatus;
+};
+type ReposPayload = { enabled: boolean; reason?: string | null; maxRepos: number; repos: RepoEntry[] };
 
 type Selection =
     | { root: 'assets'; slug: string }
@@ -377,6 +398,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                 ))}
                 <div className="obs-tree-root">workspace/</div>
                 {renderWorkspaceNodes('', 1)}
+                <RepoPanel slug={slug} ownerId={ownerId} onChanged={() => void refreshWorkspace()} />
                 <div className="obs-tree-actions">
                     <p className="hint">Drop files here to upload into workspace/{uploadDir}. Web links become .url shortcut files.</p>
                     <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload</button>
@@ -578,6 +600,143 @@ function WorkspaceFileView({
                 </div>
                 <WorkspaceHistoryRail slug={slug} ownerId={ownerId} filePath={filePath} onRestored={onRestored} />
             </div>
+        </>
+    );
+}
+
+/**
+ * Project repositories (ADR 0015): GitHub clones under workspace/repos/<name>,
+ * pulled, committed and pushed by the server with the viewer's own connected
+ * GitHub account. Files are edited through the workspace tree like any other.
+ */
+function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: string | null; onChanged: () => void }) {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+    const [cloneRepo, setCloneRepo] = useState('');
+    const [cloneBranch, setCloneBranch] = useState('');
+    const [busy, setBusy] = useState<string | null>(null);
+    const repos = useQuery({
+        queryKey: keys.projectRepos(slug, ownerId),
+        queryFn: () => api.projectRepos(slug, ownerId) as Promise<ReposPayload>,
+        retry: false
+    });
+    const data = repos.data;
+
+    async function refresh() {
+        await queryClient.invalidateQueries({ queryKey: keys.projectRepos(slug, ownerId) });
+        onChanged();
+    }
+
+    async function run(label: string, fn: () => Promise<unknown>, done: (result: unknown) => string) {
+        setBusy(label);
+        try {
+            const result = await fn();
+            toast(done(result));
+            await refresh();
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    async function clone() {
+        const repo = cloneRepo.trim();
+        if (!repo) return;
+        await run('clone', () => api.cloneProjectRepo(slug, { repo, branch: cloneBranch.trim() || null }, ownerId),
+            (result) => `Cloned ${(result as RepoEntry).repo} into ${(result as RepoEntry).path}.`);
+        setCloneRepo('');
+        setCloneBranch('');
+    }
+
+    async function commit(entry: RepoEntry) {
+        const message = window.prompt(`Commit message for ${entry.repo}:`);
+        if (!message?.trim()) return;
+        await run(`${entry.name}:commit`, () => api.projectRepoAction(slug, entry.name, 'commit', { message }, ownerId),
+            (result) => (result as { committed: boolean; short?: string }).committed
+                ? `Committed ${(result as { short?: string }).short}.`
+                : 'Nothing to commit.');
+    }
+
+    async function push(entry: RepoEntry) {
+        await run(`${entry.name}:push`, () => api.projectRepoAction(slug, entry.name, 'push', {}, ownerId),
+            (result) => {
+                const pushed = result as { branch: string; compareUrl?: string | null };
+                return pushed.compareUrl ? `Pushed ${pushed.branch}. Open a pull request: ${pushed.compareUrl}` : `Pushed ${pushed.branch}.`;
+            });
+    }
+
+    async function pull(entry: RepoEntry) {
+        await run(`${entry.name}:pull`, () => api.projectRepoAction(slug, entry.name, 'pull', {}, ownerId),
+            (result) => (result as { updated: boolean; to?: string }).updated
+                ? `Pulled to ${(result as { to?: string }).to}.`
+                : 'Already up to date.');
+    }
+
+    async function branch(entry: RepoEntry) {
+        const name = window.prompt(`Switch ${entry.repo} to branch (created if new):`, entry.status?.branch || '');
+        if (!name?.trim()) return;
+        await run(`${entry.name}:branch`, () => api.projectRepoAction(slug, entry.name, 'branch', { branch: name.trim() }, ownerId),
+            (result) => `Now on ${(result as { branch: string }).branch}.`);
+    }
+
+    async function reset(entry: RepoEntry) {
+        if (!await confirm(`Discard local commits and changes in ${entry.path}, back to origin? A workspace snapshot is taken first.`)) return;
+        await run(`${entry.name}:reset`, () => api.projectRepoAction(slug, entry.name, 'reset', {}, ownerId),
+            (result) => `Reset to origin/${(result as { branch: string }).branch}.`);
+    }
+
+    async function remove(entry: RepoEntry) {
+        if (!await confirm(`Remove the clone of ${entry.repo} (${entry.path})? Its files stay in workspace history.`)) return;
+        await run(`${entry.name}:remove`, () => api.removeProjectRepo(slug, entry.name, ownerId), () => 'Removed.');
+    }
+
+    return (
+        <>
+            <div className="obs-tree-root">repos/</div>
+            {repos.isError && <div className="hint" style={{ padding: '0 12px' }}>Could not load repositories.</div>}
+            {data && !data.enabled && (
+                <div className="hint" style={{ padding: '0 12px' }}>
+                    {data.reason === 'GIT_MISSING' ? 'Repositories are off: git is not installed on this server.'
+                        : data.reason === 'GITHUB_OFF' ? 'Repositories need the GitHub feature, which is off on this server.'
+                            : 'Repositories are turned off on this server.'}
+                </div>
+            )}
+            {data?.enabled && data.repos.map((entry) => {
+                const st = entry.status;
+                const sync = !st || st.error ? 'status unavailable'
+                    : `${st.branch || 'detached'} · ${st.ahead}↑ ${st.behind}↓ · ${st.changed} changed`;
+                return (
+                    <div key={entry.name} className="obs-tree-item" style={{ paddingLeft: 26, display: 'block', cursor: 'default' }}>
+                        <div><span>📦</span> <a href={entry.url} target="_blank" rel="noreferrer">{entry.repo}</a></div>
+                        <div className="hint">{entry.path} · {sync}</div>
+                        <div className="obs-explorer-crumb" style={{ gap: 4, marginTop: 4 }}>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void pull(entry)}>Pull</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void commit(entry)}>Commit</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void push(entry)}>Push</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void branch(entry)}>Branch</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void reset(entry)}>Reset</button>
+                            <button type="button" className="btn danger" disabled={busy != null} onClick={() => void remove(entry)}>Remove</button>
+                        </div>
+                    </div>
+                );
+            })}
+            {data?.enabled && data.repos.length < data.maxRepos && (
+                <div className="obs-tree-actions">
+                    <label className="field">
+                        <span className="hint">Clone a GitHub repository (with your connected account)</span>
+                        <input className="input" value={cloneRepo} onChange={(e) => setCloneRepo(e.target.value)} placeholder="owner/name" />
+                    </label>
+                    <label className="field">
+                        <span className="hint">Branch (optional)</span>
+                        <input className="input" value={cloneBranch} onChange={(e) => setCloneBranch(e.target.value)} placeholder="default branch" />
+                    </label>
+                    <button type="button" className="btn" disabled={busy != null || !cloneRepo.trim()} onClick={() => void clone()}>
+                        {busy === 'clone' ? 'Cloning…' : '⬇ Clone'}
+                    </button>
+                </div>
+            )}
         </>
     );
 }
