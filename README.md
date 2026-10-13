@@ -75,6 +75,10 @@ this feature. Jobs (shown as **Runs**) run through the sandbox
 (persistence, never new execution powers). Triggers schedule future work.
 Collaborators sit at the project table; the built-in Goobster seat acts
 as the member who spoke and writes back into the project’s Spitball.
+The workspace keeps a git history of itself (a snapshot after every run,
+save, upload and restore), and a person with a connected GitHub account
+can clone repositories into a project and commit and push with their own
+account - git runs on the host, never inside the sandbox.
 Organizing projects is on by default; running code in them needs
 `observatory.enabled` and the sandbox. In the portal each project has its
 own address (`/projects/<owner>/<slug>/<view>`) with Overview, Plan,

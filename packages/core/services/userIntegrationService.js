@@ -36,8 +36,8 @@ class IntegrationError extends Error {
 const PROVIDERS = {
     github: {
         name: 'GitHub',
-        description: 'Search code and read files in any repository your account can access, straight from chat.',
-        tokenHint: 'Fine-grained personal access token (github.com → Settings → Developer settings). Read-only Contents access is enough.',
+        description: 'Search code and read files in any repository your account can access, straight from chat; clone, commit and push repositories inside your projects.',
+        tokenHint: 'Fine-grained personal access token (github.com → Settings → Developer settings). Contents: Read is enough for chat; Contents: Read and write lets project repositories push.',
         docsUrl: 'https://github.com/settings/personal-access-tokens',
         async verify(token) {
             const githubService = requireOptional('./githubService', { feature: 'github' });

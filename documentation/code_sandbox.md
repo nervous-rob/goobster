@@ -55,6 +55,11 @@ what the snippet asks for:
   2. **`unshare -rn`** — an unprivileged user + network namespace. Drops
      network access at least (no filesystem isolation).
   3. **rlimits + timeout only** — best effort with no OS isolation.
+- **No git inside a run.** The sandbox image installs no git and a run has
+  no network. A project's workspace history and its GitHub clones are
+  driven by the host process with a sealed environment
+  (`utils/sealedGit.js`); a run only ever sees their files
+  ([projects.md](projects.md#workspace-history)).
 - **Fail closed** (`sandbox.requireStrongIsolation`, default **on**): if
   bubblewrap is missing, `run()` throws `ISOLATION_UNAVAILABLE` instead of
   executing beside the data volume. Set `requireStrongIsolation: false` or

@@ -5,8 +5,9 @@ feature: projects
 # Projects
 
 A **Project** is the per-user aggregate for one piece of work: a durable
-workspace, versioned source assets (apps, scripts, notes), checkpointed
-jobs, and project-scoped triggers. The Observatory *is* this feature —
+workspace with git-backed history, GitHub repositories cloned beside it,
+versioned source assets (apps, scripts, notes), checkpointed jobs, and
+project-scoped triggers. The Observatory *is* this feature —
 grown until the Workshop inbox and the scheduling glue fit inside it.
 The `observatory` tool, `observatory_*` tables, and `/api/app/observatory/*`
 routes are unchanged; `projectService.js` is the service-layer name
@@ -14,13 +15,17 @@ routes are unchanged; `projectService.js` is the service-layer name
 
 - Service: `services/projectService.js` (projects, workspace, jobs, quota)
 - Assets: `services/projectAssetService.js`
+- Workspace history: `services/projectHistoryService.js` (ADR 0014)
+- Repositories: `services/projectRepoService.js` (ADR 0015); both on
+  `utils/sealedGit.js`, host-side git only
 - Triggers: `services/projectTriggerService.js`
 - Config: `config/observatoryConfig.js` (env-first, then `config.json`, then defaults)
 - Tool: `observatory` in `utils/toolsRegistry.js` (also registered as `project`)
 - Tables: `observatory_projects`, `observatory_jobs`, `project_assets`,
   `project_asset_versions`, `project_triggers`, `project_members`,
   `project_invites`, `project_missions` (+ steps/evidence/events),
-  `project_decisions` in `db/schema.sql`
+  `project_decisions`, `project_repos` in `db/schema.sql`; workspace
+  history lives on disk beside the workspace, not in a table
 - Portal: the **Projects** room (`/projects`, secondary name "the
   Observatory"; `apps/web/src/rooms/projects/*`) - the list with a direct
   create form, one project per owner-qualified address, nine registered
