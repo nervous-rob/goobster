@@ -625,6 +625,32 @@ function mountProjects(app, ctx, h) {
     app.post('/api/app/projects/:slug/repos/:name/branch', requireAuth, chatRoute(async (req) =>
         repos().checkout({ ...repoArgs(req), branch: req.body?.branch })
     ));
+    app.get('/api/app/projects/:slug/repos/:name/branches', requireAuth, chatRoute(async (req) => repos().branches(repoArgs(req))));
+    app.get('/api/app/projects/:slug/repos/:name/compare', requireAuth, chatRoute(async (req) =>
+        repos().compare({ ...repoArgs(req), base: req.query?.base || null, head: req.query?.head || null })
+    ));
+    app.get('/api/app/projects/:slug/repos/:name/ci', requireAuth, chatRoute(async (req) =>
+        repos().ci({ ...repoArgs(req), ref: req.query?.ref || null })
+    ));
+    app.get('/api/app/projects/:slug/repos/:name/pulls', requireAuth, chatRoute(async (req) =>
+        repos().pullRequests({ ...repoArgs(req), state: req.query?.state || 'open' })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/pulls', requireAuth, chatRoute(async (req) =>
+        repos().createPullRequest({
+            ...repoArgs(req),
+            title: req.body?.title, body: req.body?.body ?? '',
+            base: req.body?.base ?? null, head: req.body?.head ?? null,
+            draft: req.body?.draft === true, push: req.body?.push === true
+        })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/merge', requireAuth, chatRoute(async (req) =>
+        repos().merge({ ...repoArgs(req), branch: req.body?.branch ?? null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/rebase', requireAuth, chatRoute(async (req) =>
+        repos().rebase({ ...repoArgs(req), branch: req.body?.branch ?? null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/continue', requireAuth, chatRoute(async (req) => repos().continue(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/abort', requireAuth, chatRoute(async (req) => repos().abort(repoArgs(req))));
     app.post('/api/app/projects/:slug/repos/:name/reset', requireAuth, chatRoute(async (req) => repos().reset(repoArgs(req))));
 
     // --- Project assets (versioned apps / scripts / notes) -------------------

@@ -168,6 +168,212 @@ describe('gates', () => {
     });
 });
 
+describe('merge and rebase', () => {
+    async function setup(name) {
+        const remote = makeRemote(`acme/${name}`, { files: { 'a.txt': 'one\n', 'shared.txt': 'base\n' } });
+        const service = makeService();
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: `Merge ${name}` });
+        await service.repos.clone({ userId, project: slug, repo: `acme/${name}` });
+        const args = { userId, project: slug, name };
+        const file = (rel) => path.join(workspace(userId, slug), 'repos', name, rel);
+        return { remote, service, userId, slug, args, file };
+    }
+
+    test('a clean merge, a fast-forward merge and an up-to-date merge', async () => {
+        const { remote, service, args, file } = await setup('mergeclean');
+        await service.repos.checkout({ ...args, branch: 'feature' });
+        fs.writeFileSync(file('feature.txt'), 'f\n');
+        await service.repos.commit({ ...args, message: 'feature work' });
+        expect(await service.repos.merge(args)).toMatchObject({ result: 'up-to-date', base: 'main' });
+
+        // main moves on with a different file: a true merge commit, authored as the person.
+        remote.upstream('main-only.txt', 'm\n', 'main moves');
+        const merged = await service.repos.merge(args);
+        expect(merged).toMatchObject({ result: 'merged', kind: 'merge', base: 'main', conflicts: [] });
+        expect(fs.existsSync(file('main-only.txt'))).toBe(true);
+        expect(fs.existsSync(file('feature.txt'))).toBe(true);
+        expect(merged.status).toMatchObject({ operation: null, changed: 0 });
+
+        // A branch with no local commits just fast-forwards.
+        await service.repos.checkout({ ...args, branch: 'main' });
+        await service.repos.checkout({ ...args, branch: 'empty' });
+        remote.upstream('later.txt', 'l\n', 'main moves again');
+        expect(await service.repos.merge(args)).toMatchObject({ result: 'fast-forwarded' });
+        expect(fs.existsSync(file('later.txt'))).toBe(true);
+        await expectThrow(() => service.repos.merge({ ...args, branch: 'main-is-not-a-branch' }), { code: 'NO_SUCH_BRANCH' });
+    }, 60_000);
+
+    test('a conflicted merge stays in progress until it is continued or aborted', async () => {
+        const { remote, service, args, file } = await setup('mergeconflict');
+        await service.repos.checkout({ ...args, branch: 'feature' });
+        fs.writeFileSync(file('shared.txt'), 'feature side\n');
+        await service.repos.commit({ ...args, message: 'feature edit' });
+        remote.upstream('shared.txt', 'main side\n', 'main edit');
+
+        const stopped = await service.repos.merge(args);
+        expect(stopped).toMatchObject({ result: 'conflicted', conflicts: ['shared.txt'] });
+        expect(stopped.status).toMatchObject({ operation: 'merge', conflicts: ['shared.txt'] });
+        expect(fs.readFileSync(file('shared.txt'), 'utf8')).toContain('<<<<<<<');
+        // Everything that would tangle the state is refused while it is open.
+        for (const op of ['pull', 'merge', 'rebase']) {
+            await expectThrow(() => service.repos[op](args), { status: 409, code: 'IN_PROGRESS' });
+        }
+        await expectThrow(() => service.repos.commit({ ...args, message: 'nope' }), { code: 'IN_PROGRESS' });
+        await expectThrow(() => service.repos.checkout({ ...args, branch: 'main' }), { code: 'IN_PROGRESS' });
+        // Markers left in place are not committed.
+        await expectThrow(() => service.repos.continue(args), { status: 409, code: 'UNRESOLVED' });
+
+        fs.writeFileSync(file('shared.txt'), 'both sides\n');
+        const finished = await service.repos.continue(args);
+        expect(finished).toMatchObject({ result: 'merged', conflicts: [] });
+        expect(finished.status).toMatchObject({ operation: null, changed: 0 });
+        expect(fs.readFileSync(file('shared.txt'), 'utf8')).toBe('both sides\n');
+        const pushed = await service.repos.push({ ...args });
+        expect(pushed.pushed).toBe(true);
+        expect(remote.log('feature')).toContain('dana 4242+dana@users.noreply.github.com');
+
+        // Abort puts the branch back exactly as it was.
+        await service.repos.checkout({ ...args, branch: 'second' });
+        fs.writeFileSync(file('shared.txt'), 'second side\n');
+        await service.repos.commit({ ...args, message: 'second edit' });
+        remote.upstream('shared.txt', 'main again\n', 'main edit 2');
+        expect((await service.repos.merge(args)).result).toBe('conflicted');
+        const aborted = await service.repos.abort(args);
+        expect(aborted).toMatchObject({ aborted: 'merge' });
+        expect(aborted.status).toMatchObject({ operation: null, changed: 0 });
+        expect(fs.readFileSync(file('shared.txt'), 'utf8')).toBe('second side\n');
+        await expectThrow(() => service.repos.abort(args), { status: 409, code: 'NO_OPERATION' });
+        await expectThrow(() => service.repos.continue(args), { status: 409, code: 'NO_OPERATION' });
+    }, 60_000);
+
+    test('rebase replays unpublished commits, stops on conflicts, and refuses published ones', async () => {
+        const { remote, service, args, file } = await setup('rebasing');
+        await service.repos.checkout({ ...args, branch: 'topic' });
+        fs.writeFileSync(file('topic.txt'), 't\n');
+        await service.repos.commit({ ...args, message: 'topic work' });
+        remote.upstream('main-only.txt', 'm\n', 'main moves');
+
+        const rebased = await service.repos.rebase(args);
+        expect(rebased).toMatchObject({ result: 'rebased', kind: 'rebase', conflicts: [] });
+        expect(rebased.status).toMatchObject({ operation: null });
+        expect(fs.existsSync(file('main-only.txt'))).toBe(true);
+        expect(fs.existsSync(file('topic.txt'))).toBe(true);
+
+        // Dirty trees are refused up front; same-branch rebases make no sense.
+        fs.writeFileSync(file('loose.txt'), 'x\n');
+        await expectThrow(() => service.repos.rebase(args), { code: 'DIRTY' });
+        fs.rmSync(file('loose.txt'));
+        await service.repos.checkout({ ...args, branch: 'main' });
+        await expectThrow(() => service.repos.rebase(args), { code: 'SAME_BRANCH' });
+
+        // A conflicting rebase stops, and can be continued.
+        await service.repos.checkout({ ...args, branch: 'clash' });
+        fs.writeFileSync(file('shared.txt'), 'clash side\n');
+        await service.repos.commit({ ...args, message: 'clash edit' });
+        remote.upstream('shared.txt', 'main side\n', 'main edit');
+        const stopped = await service.repos.rebase(args);
+        expect(stopped).toMatchObject({ result: 'conflicted', conflicts: ['shared.txt'] });
+        expect(stopped.status.operation).toBe('rebase');
+        await expectThrow(() => service.repos.continue(args), { code: 'UNRESOLVED' });
+        fs.writeFileSync(file('shared.txt'), 'resolved\n');
+        expect(await service.repos.continue(args)).toMatchObject({ result: 'rebased' });
+        expect((await service.repos.status(args)).status).toMatchObject({ operation: null, changed: 0 });
+
+        // Once the commits are on origin, a rebase would need a forced push: refused, merge instead.
+        await service.repos.push(args);
+        remote.upstream('another.txt', 'a\n', 'main moves again');
+        await expectThrow(() => service.repos.rebase(args), { status: 409, code: 'REBASE_PUBLISHED' });
+        expect((await service.repos.merge(args)).result).toBe('merged');
+
+        // reset gets out of a stopped operation too.
+        await service.repos.checkout({ ...args, branch: 'clash2' });
+        fs.writeFileSync(file('shared.txt'), 'clash 2\n');
+        await service.repos.commit({ ...args, message: 'clash 2' });
+        remote.upstream('shared.txt', 'main 3\n', 'main edit 3');
+        expect((await service.repos.rebase(args)).result).toBe('conflicted');
+        await service.repos.push({ ...args, branch: 'clash2' }).catch(() => {});
+        const reset = await service.repos.reset(args).catch(error => error);
+        expect(reset.status?.operation ?? reset.code).toBeFalsy();
+    }, 90_000);
+});
+
+describe('branches, comparison, pull requests and CI', () => {
+    function fakeGithub(remote) {
+        const calls = { created: [] };
+        const github = () => ({
+            listBranches: async () => [{ name: 'main', protected: true, commit: { sha: 'abcdef123456' } }, { name: 'remote-only', protected: false, commit: { sha: '1234567890ab' } }],
+            listPullRequests: async () => [{ number: 7, title: 'Add thing', html_url: 'https://github.com/acme/x/pull/7', state: 'open', draft: false, user: { login: 'dana' }, head: { ref: 'feature', sha: 'sha7' }, base: { ref: 'main' } }],
+            getChecks: async (repo, ref) => (ref === 'feature' || ref === 'sha7'
+                ? { runs: [{ name: 'lint', status: 'completed', conclusion: 'success' }, { name: 'test', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/acme/x/runs/1', output: { title: '3 tests failed' } }, { name: 'e2e', status: 'in_progress' }], statuses: [] }
+                : (() => { const error = new Error('nf'); error.code = 'NOT_FOUND'; throw error; })()),
+            createPullRequest: async (repo, input) => { calls.created.push({ repo, ...input }); return { number: 8, html_url: 'https://github.com/acme/x/pull/8', title: input.title, draft: input.draft }; }
+        });
+        return { github, calls };
+    }
+
+    test('lists branches, compares them, opens a pull request and reports CI', async () => {
+        const remote = makeRemote('acme/x', { files: { 'a.txt': 'one\n' } });
+        const { github, calls } = fakeGithub(remote);
+        const service = makeService({}, { github });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Branch Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/x' });
+        const args = { userId, project: slug, name: 'x' };
+        const file = (rel) => path.join(workspace(userId, slug), 'repos', 'x', rel);
+
+        await service.repos.checkout({ ...args, branch: 'feature' });
+        fs.writeFileSync(file('a.txt'), 'one\ntwo\n');
+        fs.writeFileSync(file('b.txt'), 'bee\n');
+        await service.repos.commit({ ...args, message: 'feature work' });
+
+        const listing = await service.repos.branches(args);
+        expect(listing).toMatchObject({ current: 'feature', base: 'main', remoteError: null });
+        expect(listing.branches.map(b => b.name)).toEqual(['feature', 'main', 'remote-only']);
+        expect(listing.branches[0]).toMatchObject({ current: true, local: true, remote: false, aheadOfBase: 1, behindBase: 0 });
+        expect(listing.branches[1]).toMatchObject({ isBase: true, remote: true, protected: true });
+        expect(listing.branches[2]).toMatchObject({ local: false, remote: true });
+
+        const cmp = await service.repos.compare(args);
+        expect(cmp).toMatchObject({ base: 'main', head: 'feature', ahead: 1, behind: 0, fileCount: 2, additions: 2, deletions: 0, identical: false, truncated: false });
+        expect(cmp.files.map(f => f.path).sort()).toEqual(['a.txt', 'b.txt']);
+        expect(cmp.patch).toContain('+two');
+        expect(cmp.commits[0].message).toBe('feature work');
+        remote.upstream('m.txt', 'm\n', 'main moves');
+        expect(await service.repos.compare(args)).toMatchObject({ ahead: 1, behind: 1 });
+        expect(await service.repos.compare({ ...args, head: 'main', base: 'main' })).toMatchObject({ identical: true });
+        await expectThrow(() => service.repos.compare({ ...args, head: 'nope' }), { code: 'NO_SUCH_BRANCH' });
+
+        // A pull request needs the branch on GitHub first; push=true does it.
+        await expectThrow(() => service.repos.createPullRequest({ ...args, title: 'Add thing' }), { status: 409, code: 'NOT_PUSHED' });
+        await expectThrow(() => service.repos.createPullRequest({ ...args, title: '  ' }), { code: 'EMPTY_TITLE' });
+        const pr = await service.repos.createPullRequest({ ...args, title: 'Add thing', body: 'why', push: true, draft: true });
+        expect(pr).toMatchObject({ number: 8, head: 'feature', base: 'main', draft: true });
+        expect(calls.created[0]).toMatchObject({ repo: 'acme/x', head: 'feature', base: 'main', body: 'why' });
+        expect(remote.log('feature')).toContain('feature work');
+        await service.repos.checkout({ ...args, branch: 'main' });
+        await expectThrow(() => service.repos.createPullRequest({ ...args, title: 't' }), { code: 'SAME_BRANCH' });
+
+        const pulls = await service.repos.pullRequests(args);
+        expect(pulls.pulls[0]).toMatchObject({ number: 7, head: 'feature', ci: { state: 'failure', passed: 1 } });
+        const ci = await service.repos.ci({ ...args, ref: 'feature' });
+        expect(ci).toMatchObject({ state: 'failure', total: 3, pending: ['e2e'] });
+        expect(ci.failing[0]).toMatchObject({ name: 'test', summary: '3 tests failed' });
+        expect(await service.repos.ci(args)).toMatchObject({ state: 'none', notOnGitHub: true });
+    }, 60_000);
+
+    test('GitHub being unreachable degrades the branch list instead of failing it', async () => {
+        makeRemote('acme/y');
+        const service = makeService({}, { github: () => ({ listBranches: async () => { const e = new Error('x'); e.code = 'UNAVAILABLE'; throw e; } }) });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Offline Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/y' });
+        const listing = await service.repos.branches({ userId, project: slug, name: 'y' });
+        expect(listing.branches.map(b => b.name)).toEqual(['main']);
+        expect(listing.remoteError).toMatch(/could not be reached/);
+    }, 30_000);
+});
+
 describe('the clone lifecycle', () => {
     test('clone, commit as the GitHub identity, push, pull, branch, reset, remove', async () => {
         const remote = makeRemote('acme/widgets');

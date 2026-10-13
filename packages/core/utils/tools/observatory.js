@@ -76,11 +76,47 @@ function describeRepo(entry) {
 }
 
 /** Detail block for one clone's status. */
+function describeCi(ci) {
+    if (!ci || ci.state === 'none') return 'no CI';
+    return ci.state === 'success' ? `CI passing (${ci.passed})`
+        : ci.state === 'pending' ? `CI running (${ci.pending.length} pending)`
+            : `CI FAILING (${ci.failing.length} of ${ci.total})`;
+}
+
+function describeCompare(cmp) {
+    if (cmp.identical) return `📦 ${cmp.head} and ${cmp.base} are identical on ${cmp.repo}.`;
+    const lines = [
+        `📦 ${cmp.head} vs ${cmp.base} on ${cmp.repo}: ${cmp.ahead ?? '?'} ahead / ${cmp.behind ?? '?'} behind · `
+        + `${cmp.fileCount} file(s) +${cmp.additions} -${cmp.deletions}${cmp.sharedHistory ? '' : ' (no shared history visible: direct diff)'}`
+    ];
+    if (cmp.commits.length) lines.push('Commits:', ...cmp.commits.map(c => `  ${c.short} ${c.author}: ${c.message}`));
+    lines.push('Files:', ...cmp.files.slice(0, 40).map(f => `  ${f.binary ? 'bin' : `+${f.additions} -${f.deletions}`}  ${f.path}`));
+    if (cmp.patch) lines.push('', cmp.patch.slice(0, 6000) + (cmp.patch.length > 6000 || cmp.truncated ? '\n… (diff truncated; read the files for more)' : ''));
+    return lines.join('\n');
+}
+
+/** One answer for repo_merge / repo_rebase / repo_continue. */
+function describeIntegration(done) {
+    const what = `${done.kind} of ${done.base} into ${done.repo} ${done.branch}`;
+    if (done.result === 'conflicted') {
+        return `⚠️ The ${what} stopped on conflicts in: ${done.conflicts.join(', ') || '(see repo_status)'}.\n`
+            + 'Open each file (read, then edit or run), remove the <<<<<<< / ======= / >>>>>>> markers keeping the right content, '
+            + 'then repo_continue; or repo_abort to put the branch back as it was.';
+    }
+    if (done.result === 'up-to-date') return `📦 ${done.repo} ${done.branch} already contains ${done.base}: nothing to ${done.kind}.`;
+    return `📦 ${done.result[0].toUpperCase()}${done.result.slice(1)} ${done.base} ${done.kind === 'rebase' ? 'under' : 'into'} ${done.repo} ${done.branch}: `
+        + `${done.from || '?'} → ${done.to}. repo_push to publish it.`;
+}
+
 function describeRepoStatus(st) {
     if (!st || st.error) return `Status unavailable${st?.error ? `: ${st.error}` : '.'}`;
     const lines = [
         `Branch ${st.branch || '(detached)'}${st.upstream ? ` tracking ${st.upstream}` : ''} · ${st.ahead} ahead / ${st.behind} behind · ${st.sizeMb} MB of history`
     ];
+    if (st.operation) {
+        lines.push(`A ${st.operation} is stopped on conflicts${st.conflicts?.length ? ` in: ${st.conflicts.join(', ')}` : ''} - `
+            + 'fix the files, then repo_continue (or repo_abort).');
+    }
     if (st.changed) {
         lines.push(`Uncommitted (${st.changed}): ${st.changes.map(c => `${c.code} ${c.path}`).join(', ')}${st.changed > st.changes.length ? ', …' : ''}`);
     } else {
@@ -127,7 +163,12 @@ module.exports = {
                 + '(stage everything in the clone and commit with note= as the message, authored as the user\'s GitHub '
                 + 'identity), "repo_push" (push the current branch, or HEAD to branch=<name>; never forced; a rejected '
                 + 'push says to pull first; pushing a new branch returns the compare URL for a pull request), '
-                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), "repo_reset" (discard local commits '
+                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), "repo_merge" (merge origin/<branch> - '
+                + 'default the branch the clone started from - into the current branch), "repo_rebase" (replay the current '
+                + 'branch\'s local commits on origin/<branch>; refused once they are already on origin, since pushes are never '
+                + 'forced - merge instead), "repo_continue" / "repo_abort" (a merge or rebase that hits conflicts is left '
+                + 'in progress with the conflicted files listed: edit the conflict markers out of them like any workspace file, '
+                + 'then repo_continue, or repo_abort to put the branch back), "repo_reset" (discard local commits '
                 + 'and changes back to origin - a workspace snapshot is taken first), "repo_remove" (drop the clone; '
                 + 'its files stay in workspace history). Edit a clone\'s files like any other workspace file '
                 + '(run, read, portal); repos/<name> is plain files to the sandbox, which has no git and no network. '
@@ -171,7 +212,7 @@ module.exports = {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
-                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_reset', 'repo_remove',
+                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'list_deliveries', 'delete_trigger', 'invite_user', 'list_members', 'remove_member',
@@ -185,7 +226,8 @@ module.exports = {
                     rev: { type: 'string', description: 'read / diff / restore: a snapshot hash from history (e.g. "3f2a1c9") or HEAD' },
                     to: { type: 'string', description: 'diff: the second snapshot to compare rev against, or "workspace" for the current files' },
                     repo: { type: 'string', description: 'repo_clone: the GitHub repository, owner/name or a github.com URL' },
-                    branch: { type: 'string', description: 'repo_clone: branch to clone (default: the repository\'s default branch); repo_push: push HEAD to this branch on origin; repo_branch: the branch to switch to or create' },
+                    branch: { type: 'string', description: 'repo_clone: branch to clone (default: the repository\'s default branch); repo_push: push HEAD to this branch on origin; repo_branch: the branch to switch to or create; repo_merge / repo_rebase: the branch to bring in (default: the branch the clone started from); repo_compare / repo_pr / repo_ci: the head branch or ref (default: the current branch)' },
+                    base: { type: 'string', description: 'repo_compare / repo_pr / repo_merge-style comparisons: the base branch (default: the branch the clone started from)' },
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
                     tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
@@ -272,7 +314,7 @@ module.exports = {
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, rev, to, repo, branch, missionAction, title, objective,
+            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
             choices, selectedId,
@@ -631,6 +673,57 @@ module.exports = {
                         if (!name || !branch) return '❌ repo_branch needs name (the clone) and branch.';
                         const switched = await observatoryService.repos.checkout({ userId, project, owner, name, branch });
                         return `📦 ${switched.repo} is now on ${switched.branch}${switched.created ? ' (new branch)' : ''}.\n${describeRepoStatus(switched.status)}`;
+                    }
+                    case 'repo_branches': {
+                        if (!name) return '❌ repo_branches needs name (the clone, from repo_list).';
+                        const listing = await observatoryService.repos.branches({ userId, project, owner, name });
+                        return `📦 Branches of ${listing.repo} (active: ${listing.current || 'none'}, base: ${listing.base}):\n`
+                            + listing.branches.map(b => `- ${b.current ? '▶ ' : ''}${b.name}${b.isBase ? ' (base)' : ''}`
+                                + `${b.local ? '' : ' · remote only'}${b.local && !b.remote ? ' · local only' : ''}${b.protected ? ' · protected' : ''}`
+                                + `${b.aheadOfBase != null ? ` · ${b.aheadOfBase} ahead / ${b.behindBase} behind ${listing.base}` : ''}`).join('\n')
+                            + (listing.remoteError ? `\n(GitHub's branch list is unavailable: ${listing.remoteError})` : '');
+                    }
+                    case 'repo_compare': {
+                        if (!name) return '❌ repo_compare needs name (the clone, from repo_list).';
+                        const cmp = await observatoryService.repos.compare({ userId, project, owner, name, base, head: branch });
+                        return describeCompare(cmp);
+                    }
+                    case 'repo_prs': {
+                        if (!name) return '❌ repo_prs needs name (the clone, from repo_list).';
+                        const prs = await observatoryService.repos.pullRequests({ userId, project, owner, name });
+                        if (prs.pulls.length === 0) return `📦 ${prs.repo} has no open pull requests.`;
+                        return `📦 Open pull requests on ${prs.repo}:\n` + prs.pulls.map(pr =>
+                            `- #${pr.number} ${pr.title} (${pr.head} → ${pr.base}${pr.draft ? ', draft' : ''}) ${describeCi(pr.ci)} ${pr.url}`).join('\n');
+                    }
+                    case 'repo_pr': {
+                        if (!name) return '❌ repo_pr needs name (the clone), note (the title) and optionally content (the body).';
+                        const pr = await observatoryService.repos.createPullRequest({
+                            userId, project, owner, name, title: note || title, body: content || '',
+                            head: branch, base, draft: enabled === false, push: background === true
+                        });
+                        return `📦 Opened pull request #${pr.number} on ${pr.repo} (${pr.head} → ${pr.base}${pr.draft ? ', draft' : ''}): ${pr.url}`;
+                    }
+                    case 'repo_ci': {
+                        if (!name) return '❌ repo_ci needs name (the clone, from repo_list).';
+                        const ci = await observatoryService.repos.ci({ userId, project, owner, name, ref: branch });
+                        return `📦 CI for ${ci.repo} ${ci.ref}: ${describeCi(ci)}`
+                            + (ci.failing.length ? '\n' + ci.failing.map(f => `  ✗ ${f.name} (${f.conclusion})${f.summary ? `: ${f.summary}` : ''}${f.url ? ` ${f.url}` : ''}`).join('\n') : '')
+                            + (ci.pending.length ? `\n  … still running: ${ci.pending.join(', ')}` : '');
+                    }
+                    case 'repo_merge':
+                    case 'repo_rebase': {
+                        if (!name) return `❌ ${action} needs name (the clone, from repo_list).`;
+                        const verb = action === 'repo_merge' ? 'merge' : 'rebase';
+                        return describeIntegration(await observatoryService.repos[verb]({ userId, project, owner, name, branch }));
+                    }
+                    case 'repo_continue': {
+                        if (!name) return '❌ repo_continue needs name (the clone, from repo_list).';
+                        return describeIntegration(await observatoryService.repos.continue({ userId, project, owner, name }));
+                    }
+                    case 'repo_abort': {
+                        if (!name) return '❌ repo_abort needs name (the clone, from repo_list).';
+                        const aborted = await observatoryService.repos.abort({ userId, project, owner, name });
+                        return `📦 Aborted the ${aborted.aborted} in ${aborted.repo}; the branch is back as it was.\n${describeRepoStatus(aborted.status)}`;
                     }
                     case 'repo_reset': {
                         if (!name) return '❌ repo_reset needs name (the clone, from repo_list).';
