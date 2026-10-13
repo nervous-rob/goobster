@@ -72,9 +72,12 @@ type RepoStatus = {
     head: string | null;
     changed: number;
     changes: { code: string; path: string }[];
+    operation?: 'merge' | 'rebase' | null;
+    conflicts?: string[];
     sizeMb?: number;
     error?: string;
 };
+type IntegrationResult = { kind: string; base: string; result: string; conflicts: string[]; to?: string };
 type RepoEntry = {
     name: string;
     repo: string;
@@ -604,6 +607,12 @@ function WorkspaceFileView({
     );
 }
 
+function describeIntegration(done: IntegrationResult): string {
+    if (done.result === 'conflicted') return `${done.kind} stopped on conflicts in ${done.conflicts.join(', ')}. Fix the files, then Continue (or Abort).`;
+    if (done.result === 'up-to-date') return `Already contains ${done.base}.`;
+    return `${done.result[0].toUpperCase()}${done.result.slice(1)} ${done.base} (now ${done.to}).`;
+}
+
 /**
  * Project repositories (ADR 0015): GitHub clones under workspace/repos/<name>,
  * pulled, committed and pushed by the server with the viewer's own connected
@@ -681,6 +690,18 @@ function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: strin
             (result) => `Now on ${(result as { branch: string }).branch}.`);
     }
 
+    async function integrate(entry: RepoEntry, action: 'merge' | 'rebase') {
+        const base = window.prompt(`${action === 'merge' ? 'Merge' : 'Rebase onto'} which branch of ${entry.repo}?`, entry.clonedBranch);
+        if (!base?.trim()) return;
+        await run(`${entry.name}:${action}`, () => api.projectRepoAction(slug, entry.name, action, { branch: base.trim() }, ownerId),
+            (result) => describeIntegration(result as IntegrationResult));
+    }
+
+    async function finish(entry: RepoEntry, action: 'continue' | 'abort') {
+        await run(`${entry.name}:${action}`, () => api.projectRepoAction(slug, entry.name, action, {}, ownerId),
+            (result) => action === 'abort' ? 'Aborted; the branch is back as it was.' : describeIntegration(result as IntegrationResult));
+    }
+
     async function reset(entry: RepoEntry) {
         if (!await confirm(`Discard local commits and changes in ${entry.path}, back to origin? A workspace snapshot is taken first.`)) return;
         await run(`${entry.name}:reset`, () => api.projectRepoAction(slug, entry.name, 'reset', {}, ownerId),
@@ -706,7 +727,8 @@ function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: strin
             {data?.enabled && data.repos.map((entry) => {
                 const st = entry.status;
                 const sync = !st || st.error ? 'status unavailable'
-                    : `${st.branch || 'detached'} · ${st.ahead}↑ ${st.behind}↓ · ${st.changed} changed`;
+                    : `${st.branch || 'detached'} · ${st.ahead}↑ ${st.behind}↓ · ${st.changed} changed`
+                    + (st.operation ? ` · ${st.operation} stopped on ${st.conflicts?.length || 0} conflict(s)` : '');
                 return (
                     <div key={entry.name} className="obs-tree-item" style={{ paddingLeft: 26, display: 'block', cursor: 'default' }}>
                         <div><span>📦</span> <a href={entry.url} target="_blank" rel="noreferrer">{entry.repo}</a></div>
@@ -716,6 +738,17 @@ function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: strin
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void commit(entry)}>Commit</button>
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void push(entry)}>Push</button>
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void branch(entry)}>Branch</button>
+                            {st?.operation ? (
+                                <>
+                                    <button type="button" className="btn" disabled={busy != null} onClick={() => void finish(entry, 'continue')}>Continue</button>
+                                    <button type="button" className="btn" disabled={busy != null} onClick={() => void finish(entry, 'abort')}>Abort</button>
+                                </>
+                            ) : (
+                                <>
+                                    <button type="button" className="btn" disabled={busy != null} onClick={() => void integrate(entry, 'merge')}>Merge</button>
+                                    <button type="button" className="btn" disabled={busy != null} onClick={() => void integrate(entry, 'rebase')}>Rebase</button>
+                                </>
+                            )}
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void reset(entry)}>Reset</button>
                             <button type="button" className="btn danger" disabled={busy != null} onClick={() => void remove(entry)}>Remove</button>
                         </div>

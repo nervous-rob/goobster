@@ -625,6 +625,14 @@ function mountProjects(app, ctx, h) {
     app.post('/api/app/projects/:slug/repos/:name/branch', requireAuth, chatRoute(async (req) =>
         repos().checkout({ ...repoArgs(req), branch: req.body?.branch })
     ));
+    app.post('/api/app/projects/:slug/repos/:name/merge', requireAuth, chatRoute(async (req) =>
+        repos().merge({ ...repoArgs(req), branch: req.body?.branch ?? null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/rebase', requireAuth, chatRoute(async (req) =>
+        repos().rebase({ ...repoArgs(req), branch: req.body?.branch ?? null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/continue', requireAuth, chatRoute(async (req) => repos().continue(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/abort', requireAuth, chatRoute(async (req) => repos().abort(repoArgs(req))));
     app.post('/api/app/projects/:slug/repos/:name/reset', requireAuth, chatRoute(async (req) => repos().reset(repoArgs(req))));
 
     // --- Project assets (versioned apps / scripts / notes) -------------------

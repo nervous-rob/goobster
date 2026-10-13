@@ -30,6 +30,13 @@
  *   - Only https://github.com/<owner>/<name> remotes; GIT_ALLOW_PROTOCOL is
  *     pinned so a remote can never be a local path, ssh or a command.
  *
+ * - Merge and rebase onto another branch (usually the one the clone started
+ *   from) are the person's tools for conflicts: a clean one just happens; a
+ *   conflicted one is LEFT in progress (status.operation + status.conflicts)
+ *   for the files to be edited like any other workspace file, then `continue`
+ *   or `abort`. A rebase is refused once its commits are on origin (it would
+ *   need a forced push); merge is the answer there.
+ *
  * The project-history `history` / `diff` / `restore` actions cover the
  * files of a clone too; this service's `status` is about the clone's own
  * branch, upstream and uncommitted changes.
@@ -64,6 +71,9 @@ const MAX_MESSAGE_CHARS = 500;
 const IDENTITY_TTL_MS = 10 * 60 * 1000;
 const STATUS_MAX_PATHS = 20;
 const RECENT_COMMITS = 5;
+const DEEPEN_COMMITS = 500;
+const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
+const DIRTY_PATTERN = /local changes|unstaged changes|uncommitted changes|would be overwritten|commit or stash/i;
 /** The credential helper: reads the token from the call's environment, never from argv or disk. */
 const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then echo username=x-access-token; echo "password=$GOOBSTER_GIT_TOKEN"; fi; }; f';
 
@@ -380,6 +390,20 @@ class ProjectRepoService {
         return out;
     }
 
+    /** 'merge' or 'rebase' while one is stopped on conflicts, else null. */
+    _operation(projectRow, name) {
+        const gitDir = this.gitDirFor(projectRow, name);
+        if (fs.existsSync(path.join(gitDir, 'rebase-merge')) || fs.existsSync(path.join(gitDir, 'rebase-apply'))) return 'rebase';
+        if (fs.existsSync(path.join(gitDir, 'MERGE_HEAD'))) return 'merge';
+        return null;
+    }
+
+    _requireIdle(status) {
+        if (!status.operation) return;
+        throw new ProjectRepoError(409, 'IN_PROGRESS',
+            `A ${status.operation} is stopped on conflicts: fix the conflicted files and repo_continue, or repo_abort.`);
+    }
+
     async _status(projectRow, name) {
         const branchRes = await this._git(projectRow, name, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true });
         const branch = branchRes.status === 0 ? String(branchRes.stdout).trim() : null;
@@ -400,12 +424,14 @@ class ProjectRepoService {
             ? String(porcelain.stdout).split('\0').filter(Boolean)
             : [];
         const changes = [];
+        const conflicts = [];
         for (let i = 0; i < entries.length; i++) {
             const entry = entries[i];
             const code = entry.slice(0, 2);
             const file = entry.slice(3);
             if (code[0] === 'R' || code[0] === 'C') i++; // the next NUL-separated entry is the source path
             changes.push({ code: code.trim() || '??', path: file });
+            if (CONFLICT_CODES.has(code)) conflicts.push(file);
         }
         const log = await this._git(projectRow, name, ['log', `-n${RECENT_COMMITS}`, '--format=%h%x1f%an%x1f%aI%x1f%s'], { allowFail: true });
         const commits = log.status === 0
@@ -422,6 +448,8 @@ class ProjectRepoService {
             ahead,
             behind,
             head,
+            operation: this._operation(projectRow, name),
+            conflicts: conflicts.slice(0, STATUS_MAX_PATHS),
             changed: changes.length,
             changes: changes.slice(0, STATUS_MAX_PATHS),
             commits,
@@ -611,6 +639,7 @@ class ProjectRepoService {
         const token = await this._token(userId);
         return this._serial(projectRow, repoRow.name, async () => {
             const status = await this._status(projectRow, repoRow.name);
+            this._requireIdle(status);
             if (!status.branch) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; switch to one with repo_branch first.');
             await this.history.commitQuietly(projectRow, { userId, message: `before pulling ${REPOS_DIR}/${repoRow.name}` });
             const before = status.head;
@@ -649,6 +678,7 @@ class ProjectRepoService {
         const token = await this._token(userId);
         const identity = await this._identity(userId, token);
         return this._serial(projectRow, repoRow.name, async () => {
+            this._requireIdle(await this._status(projectRow, repoRow.name));
             await this._git(projectRow, repoRow.name, ['add', '-A', '--ignore-errors', '--', '.']);
             const staged = await this._git(projectRow, repoRow.name, ['diff', '--cached', '--quiet'], { allowFail: true });
             if (staged.status === 0) return { committed: false, reason: 'NO_CHANGES', name: repoRow.name, repo: repoRow.repo };
@@ -718,6 +748,7 @@ class ProjectRepoService {
         if (!branchName) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
         const token = await this._token(userId);
         return this._serial(projectRow, repoRow.name, async () => {
+            this._requireIdle(await this._status(projectRow, repoRow.name));
             await this.history.commitQuietly(projectRow, { userId, message: `before switching ${REPOS_DIR}/${repoRow.name} to ${branchName}` });
             let created = false;
             try {
@@ -748,6 +779,170 @@ class ProjectRepoService {
         });
     }
 
+    // --- Merge and rebase ------------------------------------------------------------------
+
+    /** Fetch origin/<base>, deepening a shallow clone when the two lines have no visible common ancestor. */
+    async _fetchBase(projectRow, repoRow, base, token) {
+        const name = repoRow.name;
+        try {
+            await this._git(projectRow, name,
+                ['fetch', '-q', `--depth=${this.config.repoCloneDepth || 50}`, '--no-tags', 'origin', base], { token });
+        } catch (error) {
+            throw this._explain(error, { repo: repoRow.repo, branch: base });
+        }
+        const ref = `origin/${base}`;
+        const hasBase = async () => (await this._git(projectRow, name, ['merge-base', 'HEAD', ref], { allowFail: true })).status === 0;
+        if (await hasBase()) return ref;
+        try {
+            await this._git(projectRow, name, ['fetch', '-q', `--deepen=${DEEPEN_COMMITS}`, '--no-tags', 'origin', base], { token });
+        } catch (error) {
+            throw this._explain(error, { repo: repoRow.repo, branch: base });
+        }
+        if (!await hasBase()) {
+            throw new ProjectRepoError(409, 'NO_COMMON_HISTORY',
+                `This branch and ${ref} share no history this shallow clone can see, so they cannot be combined here.`);
+        }
+        return ref;
+    }
+
+    /** Shared by merge and rebase: bring origin/<base> into the current branch. */
+    async _integrate(kind, { row = null, userId, project = null, owner = null, name, branch = null }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const requested = cleanBranch(branch);
+        const token = await this._token(userId);
+        await this._checkAllowlist(userId, repoRow.repo);
+        const identity = await this._identity(userId, token);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            this._requireIdle(status);
+            if (!status.branch) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; switch to one with repo_branch first.');
+            const base = requested || repoRow.branch;
+            if (base === status.branch) {
+                throw new ProjectRepoError(409, 'SAME_BRANCH',
+                    `${base} is the branch you are on: repo_pull brings in what origin has; pass branch=<other branch> to ${kind} that instead.`);
+            }
+            if (status.changed > 0) {
+                throw new ProjectRepoError(409, 'DIRTY',
+                    `Uncommitted changes would be in the way of the ${kind}: commit them (repo_commit) or discard them (repo_reset) first.`);
+            }
+            await this.history.commitQuietly(projectRow, { userId, message: `before ${kind} of ${REPOS_DIR}/${repoRow.name} with ${base}` });
+            const ref = await this._fetchBase(projectRow, repoRow, base, token);
+            const repoName = repoRow.name;
+            const base_ = { repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
+
+            const contained = await this._git(projectRow, repoName, ['merge-base', '--is-ancestor', ref, 'HEAD'], { allowFail: true });
+            if (contained.status === 0) {
+                return { ...base_, result: 'up-to-date', conflicts: [], from: status.head, to: status.head, status };
+            }
+            if (kind === 'rebase') {
+                const published = await this._git(projectRow, repoName,
+                    ['rev-list', '--count', `origin/${status.branch}`, '--not', ref], { allowFail: true });
+                if (published.status === 0 && Number(String(published.stdout).trim()) > 0) {
+                    throw new ProjectRepoError(409, 'REBASE_PUBLISHED',
+                        `${status.branch} already has commits on origin, and a rebase would rewrite them (pushes are never forced): `
+                        + `use repo_merge branch=${base} instead.`);
+                }
+            }
+            const fastForward = (await this._git(projectRow, repoName, ['merge-base', '--is-ancestor', 'HEAD', ref], { allowFail: true })).status === 0;
+            const args = kind === 'rebase' ? ['rebase', '-q', ref] : ['merge', '-q', '--no-edit', ref];
+            const run = await this._git(projectRow, repoName, args,
+                { author: identity.name, authorEmail: identity.email, allowFail: true });
+            return this._finishIntegration({
+                projectRow, repoRow, userId, kind, base, ref, run, fastForward, from: status.head, extra: base_
+            });
+        });
+    }
+
+    async _finishIntegration({ projectRow, repoRow, userId, kind, base, run, fastForward = false, from, extra }) {
+        const after = await this._status(projectRow, repoRow.name);
+        this._publish(projectRow, userId);
+        if (after.operation) {
+            await this.history.commitQuietly(projectRow, { userId, message: `${kind} of ${REPOS_DIR}/${repoRow.name} stopped on conflicts` });
+            return { ...extra, result: 'conflicted', conflicts: after.conflicts, from, to: after.head, status: after };
+        }
+        if (run && run.status !== 0) {
+            const text = String(run.stderr || run.stdout || '');
+            if (DIRTY_PATTERN.test(text)) {
+                throw new ProjectRepoError(409, 'DIRTY',
+                    `Uncommitted changes would be in the way of the ${kind}: commit them (repo_commit) or discard them (repo_reset) first.`);
+            }
+            throw new ProjectRepoError(500, 'GIT_FAILED', `The ${kind} failed: ${text.trim().slice(0, 300) || `git exited ${run.status}`}`);
+        }
+        await this._touch(projectRow, repoRow);
+        await this.history.commitQuietly(projectRow, { userId, message: `${kind}d ${REPOS_DIR}/${repoRow.name} with ${base} (${from || '?'}..${after.head})` });
+        await this._audit(userId, `project-repo-${kind}`, { project: projectRow.slug, repo: repoRow.repo, base, branch: after.branch, head: after.head });
+        return {
+            ...extra,
+            result: kind === 'rebase' ? 'rebased' : (fastForward ? 'fast-forwarded' : 'merged'),
+            conflicts: [], from, to: after.head, status: after
+        };
+    }
+
+    /** Merge origin/<branch> (default: the branch the clone started from) into the current branch. */
+    merge(args) {
+        return this._integrate('merge', args);
+    }
+
+    /** Replay the current branch's local commits on origin/<branch>. Refused once they are on origin. */
+    rebase(args) {
+        return this._integrate('rebase', args);
+    }
+
+    /** Finish a merge or rebase stopped on conflicts, once the conflicted files are fixed. */
+    async continue({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const token = await this._token(userId);
+        const identity = await this._identity(userId, token);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            if (!status.operation) throw new ProjectRepoError(409, 'NO_OPERATION', 'No merge or rebase is in progress here.');
+            const unresolved = [];
+            for (const file of status.conflicts) {
+                try {
+                    const text = fs.readFileSync(path.join(this.workTreeFor(projectRow, repoRow.name), file), 'utf8');
+                    if (/^(<{7}|={7}|>{7})( |$)/m.test(text)) unresolved.push(file);
+                } catch { /* deleted or binary: the person's call */ }
+            }
+            if (unresolved.length > 0) {
+                throw new ProjectRepoError(409, 'UNRESOLVED',
+                    `Conflict markers (<<<<<<<, =======, >>>>>>>) are still in: ${unresolved.join(', ')}. Edit them out, then repo_continue.`);
+            }
+            await this._git(projectRow, repoRow.name, ['add', '-A', '--ignore-errors', '--', '.']);
+            const run = await this._git(projectRow, repoRow.name,
+                ['-c', 'core.editor=true', status.operation, '--continue'],
+                { author: identity.name, authorEmail: identity.email, allowFail: true });
+            const base = status.operation === 'rebase' ? 'its base' : 'the other branch';
+            return this._finishIntegration({
+                projectRow, repoRow, userId, kind: status.operation, base, run, from: status.head,
+                extra: { repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
+            });
+        });
+    }
+
+    /** Give up a merge or rebase stopped on conflicts: the branch goes back to how it was. */
+    async abort({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            if (!status.operation) throw new ProjectRepoError(409, 'NO_OPERATION', 'No merge or rebase is in progress here.');
+            try {
+                await this._git(projectRow, repoRow.name, [status.operation, '--abort']);
+            } catch (error) {
+                throw this._explain(error, { repo: repoRow.repo });
+            }
+            await this._touch(projectRow, repoRow);
+            await this.history.commitQuietly(projectRow, { userId, message: `aborted ${status.operation} of ${REPOS_DIR}/${repoRow.name}` });
+            this._publish(projectRow, userId);
+            return { aborted: status.operation, name: repoRow.name, repo: repoRow.repo, status: await this._status(projectRow, repoRow.name) };
+        });
+    }
+
     /** Discard local commits and changes: back to origin/<branch>. A snapshot is taken first. */
     async reset({ row = null, userId, project = null, owner = null, name }) {
         const projectRow = await this._resolve({ row, userId, project, owner });
@@ -755,7 +950,11 @@ class ProjectRepoService {
         const repoRow = await this._row(projectRow, name);
         const token = await this._token(userId);
         return this._serial(projectRow, repoRow.name, async () => {
-            const status = await this._status(projectRow, repoRow.name);
+            let status = await this._status(projectRow, repoRow.name);
+            if (status.operation) {
+                await this._git(projectRow, repoRow.name, [status.operation, '--abort'], { allowFail: true });
+                status = await this._status(projectRow, repoRow.name);
+            }
             if (!status.branch) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; switch to one with repo_branch first.');
             const snapshot = await this.history.commitQuietly(projectRow, { userId, message: `before resetting ${REPOS_DIR}/${repoRow.name}` });
             try {
