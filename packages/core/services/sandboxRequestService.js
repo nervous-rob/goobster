@@ -536,6 +536,7 @@ class SandboxRequestService {
             timeoutMs: 120_000,
             ...(this._transport ? { transport: this._transport } : {})
         });
+        await observatoryService.history?.commitQuietly(row, { userId, message: `fetched data/${payload.fileName}` });
         return { relPath: `data/${payload.fileName}`, bytes: result.bytes, contentType: result.contentType };
     }
 

@@ -160,16 +160,16 @@ test('project drops upload to the selected owner and folder, retaining successfu
     await page.getByRole('button', { name: '📁 out', exact: true }).click();
     await page.route('**/content/out/fail.txt*', route => route.fulfill({ status: 413, json: { error: { message: 'Upload too large', code: 'FILE_TOO_LARGE' } } }));
     await dropOn(page, '.obs-explorer', { files: [{ name: 'fail.txt', text: 'fail' }, { name: 'drop-ok.txt', text: 'correct folder' }] });
-    await expect(page.getByRole('button', { name: /drop-ok.txt/ })).toBeVisible();
+    await expect(page.locator('.obs-tree').getByRole('button', { name: /drop-ok.txt/ })).toBeVisible();
     const response = await page.request.get(`/api/app/projects/${C.PROJECT_SLUG}/content/out/drop-ok.txt?owner=${C.OWNER}`);
     expect(response.ok()).toBe(true);
     expect(await response.text()).toBe('correct folder');
     await dropOn(page, '.obs-explorer', { strings: { 'text/uri-list': 'https://example.org/research' } });
-    await expect(page.getByRole('button', { name: /example.org-1.url/ })).toBeVisible();
+    await expect(page.locator('.obs-tree').getByRole('button', { name: /example.org-1.url/ })).toBeVisible();
     const shortcut = await page.request.get(`/api/app/projects/${C.PROJECT_SLUG}/content/out/example.org-1.url?owner=${C.OWNER}`);
     expect(await shortcut.text()).toContain('URL=https://example.org/research');
     await page.locator('.obs-explorer input[type=file]').setInputFiles({ name: 'picker-file.txt', mimeType: 'text/plain', buffer: Buffer.from('picker still works') });
-    await expect(page.getByRole('button', { name: /picker-file.txt/ })).toBeVisible();
+    await expect(page.locator('.obs-tree').getByRole('button', { name: /picker-file.txt/ })).toBeVisible();
 });
 
 test('direct browser PDF links become document attachments when copying is allowed', async ({ page }) => {

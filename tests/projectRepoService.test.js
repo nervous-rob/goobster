@@ -1,0 +1,333 @@
+/**
+ * Project repositories (ADR 0015): GitHub clones beside the workspace,
+ * driven by the host with the person's own GitHub connection.
+ *
+ * The remote is a local bare repository reached through a file:// transport
+ * base; identity, token and allowlist are injected. The real git on PATH
+ * does the work, so clone, commit, push, fast-forward pull, branch, reset
+ * and remove are exercised for real.
+ */
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
+
+const TEST_DB = path.join(os.tmpdir(), `goobster-project-repos-${process.pid}.sqlite`);
+process.env.GOOBSTER_DB_PATH = TEST_DB;
+
+const db = require('@goobster/core/db');
+const { ObservatoryService, PROJECTS_ROOT } = require('@goobster/core/services/projectService');
+const { ProjectRepoService, cleanBranch } = require('@goobster/core/services/projectRepoService');
+const { SandboxService } = require('@goobster/core/services/sandboxService');
+const privacyService = require('@goobster/core/services/privacyService');
+
+const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-project-repos-runs-${process.pid}`);
+const REMOTES = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-repo-remotes-'));
+const TEST_USERS = [];
+const SEED_ENV = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'seed', GIT_AUTHOR_EMAIL: 'seed@example.invalid',
+    GIT_COMMITTER_NAME: 'seed', GIT_COMMITTER_EMAIL: 'seed@example.invalid',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(REMOTES, 'no-global')
+};
+
+function git(args, cwd = REMOTES) {
+    return execFileSync('git', args, { cwd, env: SEED_ENV, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+}
+
+/** A bare "GitHub" repository plus a seed checkout that can push to it. */
+function makeRemote(repo, { files = { 'README.md': '# hi\n' } } = {}) {
+    const bare = path.join(REMOTES, `${repo}.git`);
+    fs.mkdirSync(path.dirname(bare), { recursive: true });
+    git(['init', '-q', '--bare', '--initial-branch=main', bare]);
+    const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-repo-seed-'));
+    git(['init', '-q', '--initial-branch=main', seed]);
+    for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(seed, name), body);
+    git(['add', '-A'], seed);
+    git(['commit', '-q', '-m', 'seed'], seed);
+    git(['push', '-q', bare, 'main'], seed);
+    const upstream = (name, body, message) => {
+        git(['pull', '-q', '--ff-only', bare, 'main'], seed);
+        fs.writeFileSync(path.join(seed, name), body);
+        git(['add', '-A'], seed);
+        git(['commit', '-q', '-m', message], seed);
+        git(['push', '-q', bare, 'main'], seed);
+    };
+    const log = (branch = 'main') => git(['--git-dir', bare, 'log', '--format=%an %ae %s', branch]);
+    return { bare, seed, upstream, log };
+}
+
+const BASE_CONFIG = {
+    enabled: true, projectsEnabled: true, scope: 'everywhere',
+    maxProjectsPerUser: 5, maxMembersPerProject: 5, maxProjectMb: 8, maxActiveJobsPerUser: 2, maxResumes: 2,
+    maxWorkspaceFiles: 50, maxWorkspaceReadMb: 8, maxUploadMb: 2, maxRenderFrames: 10, renderFps: 24,
+    ffmpegCommand: 'ffmpeg', historyEnabled: true, historyMaxFileMb: 8, historyMaxMb: 64, gitCommand: 'git',
+    reposEnabled: true, maxReposPerProject: 2, repoCloneDepth: 50, repoMaxMb: 64
+};
+
+function makeService(observatory = {}, deps = {}) {
+    const config = { ...BASE_CONFIG, ...observatory };
+    const service = new ObservatoryService({
+        config,
+        sandbox: new SandboxService({
+            enabled: true, scope: 'everywhere', timeoutMs: 15_000, maxCpuSeconds: 15, maxMemoryMb: 2048,
+            maxWriteMb: 16, maxOutputBytes: 64 * 1024, maxOutputFiles: 8, maxFileSizeBytes: 8 * 1024 * 1024,
+            runsPerWindow: 1000, maxConcurrent: 4, retentionHours: 24, allowNetwork: false,
+            requireStrongIsolation: false, pythonCommand: 'python3', extraBinds: [], runsDir: SANDBOX_ROOT
+        })
+    });
+    service.repos = new ProjectRepoService({
+        config,
+        projects: service,
+        transportBase: `file://${REMOTES}/`,
+        token: async () => 'token-of-the-person',
+        allowlist: async () => [],
+        identity: async () => ({ login: 'dana', id: 4242 }),
+        repoInfo: async () => ({ sizeKb: 12, defaultBranch: 'main' }),
+        ...deps
+    });
+    return service;
+}
+
+let userSeq = 0;
+function nextUser() {
+    const id = `${200_000_000_000_000_000n + BigInt(process.pid) * 1000n + BigInt(userSeq++)}`;
+    TEST_USERS.push(id);
+    return id;
+}
+
+const workspace = (userId, slug) => path.join(PROJECTS_ROOT, userId, slug);
+const reposDir = (userId, slug) => path.join(PROJECTS_ROOT, userId, `${slug}.repos`);
+
+async function expectThrow(fn, expected) {
+    let caught = null;
+    try { await fn(); } catch (error) { caught = error; }
+    expect(caught).not.toBeNull();
+    expect(caught).toMatchObject(expected);
+    return caught;
+}
+
+afterAll(async () => {
+    await db.closeConnection();
+    for (const userId of TEST_USERS) {
+        try { fs.rmSync(path.join(PROJECTS_ROOT, userId), { recursive: true, force: true }); } catch { /* gone */ }
+    }
+    for (const dir of [SANDBOX_ROOT, REMOTES]) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* gone */ }
+    }
+    for (const suffix of ['', '-wal', '-shm']) {
+        try { fs.unlinkSync(TEST_DB + suffix); } catch { /* gone */ }
+    }
+});
+
+describe('gates', () => {
+    test('branch names are legalized before git sees them', () => {
+        expect(cleanBranch(' feature/x ')).toBe('feature/x');
+        expect(cleanBranch('')).toBeNull();
+        for (const bad of ['--output=x', '-n', 'a b', 'a..b', 'x@{1}', 'HEAD', '/x', 'x/', 'x.lock', 'a\u0000b', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b']) {
+            expect(() => cleanBranch(bad)).toThrow(expect.objectContaining({ code: 'BAD_BRANCH' }));
+        }
+    });
+
+    test('off without git, off when disabled, and the listing still answers', async () => {
+        const noGit = makeService({ gitCommand: 'goobster-no-such-git-binary' });
+        expect(noGit.repos.availability()).toEqual({ enabled: false, reason: 'GIT_MISSING' });
+        const off = makeService({ reposEnabled: false });
+        expect(off.repos.availability()).toEqual({ enabled: false, reason: 'DISABLED' });
+
+        const userId = nextUser();
+        const project = await off.createProject({ userId, name: 'Off Lab' });
+        expect(await off.repos.list({ userId, project: project.slug })).toMatchObject({ enabled: false, reason: 'DISABLED', repos: [] });
+        await expectThrow(
+            () => off.repos.clone({ userId, project: project.slug, repo: 'acme/widgets' }),
+            { status: 503, code: 'REPOS_DISABLED' }
+        );
+    });
+
+    test('no connected GitHub account means no remote operation, and the personal allowlist applies', async () => {
+        makeRemote('acme/gated');
+        const userId = nextUser();
+        const noToken = makeService({}, { token: async () => null });
+        const project = await noToken.createProject({ userId, name: 'Gate Lab' });
+        await expectThrow(
+            () => noToken.repos.clone({ userId, project: project.slug, repo: 'acme/gated' }),
+            { status: 403, code: 'NO_GITHUB' }
+        );
+        const listed = makeService({}, { allowlist: async () => ['someone/else'] });
+        await expectThrow(
+            () => listed.repos.clone({ userId, project: project.slug, repo: 'acme/gated' }),
+            { status: 403, code: 'REPO_NOT_ALLOWED' }
+        );
+        for (const bad of ['', 'acme', 'acme/../x', 'https://gitlab.com/a/b', 'a/b/c']) {
+            await expectThrow(
+                () => listed.repos.clone({ userId, project: project.slug, repo: bad }),
+                { status: 400, code: 'BAD_REPO' }
+            );
+        }
+        expect(fs.existsSync(reposDir(userId, project.slug))).toBe(false);
+    });
+});
+
+describe('the clone lifecycle', () => {
+    test('clone, commit as the GitHub identity, push, pull, branch, reset, remove', async () => {
+        const remote = makeRemote('acme/widgets');
+        const service = makeService();
+        const userId = nextUser();
+        const project = await service.createProject({ userId, name: 'Repo Lab' });
+        const slug = project.slug;
+        const ws = workspace(userId, slug);
+
+        const cloned = await service.repos.clone({ userId, project: slug, repo: 'https://github.com/acme/widgets' });
+        expect(cloned).toMatchObject({ name: 'widgets', repo: 'acme/widgets', path: 'repos/widgets', clonedBranch: 'main' });
+        expect(cloned.status).toMatchObject({ branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0, changed: 0 });
+        expect(fs.readFileSync(path.join(ws, 'repos/widgets/README.md'), 'utf8')).toBe('# hi\n');
+        // No .git inside the workspace; the git dir is a sibling of the workspace.
+        expect(fs.existsSync(path.join(ws, 'repos/widgets/.git'))).toBe(false);
+        expect(fs.existsSync(path.join(reposDir(userId, slug), 'widgets.git', 'HEAD'))).toBe(true);
+        // The remote URL never carries a credential.
+        const remoteUrl = git(['--git-dir', path.join(reposDir(userId, slug), 'widgets.git'), 'remote', 'get-url', 'origin']);
+        expect(remoteUrl).not.toContain('token');
+        // Workspace history recorded the clone and sees its files as plain files.
+        const history = await service.history.log({ userId, project: slug });
+        expect(history.commits[0].message).toBe('cloned acme/widgets into repos/widgets');
+        expect(history.commits[0].files).toContain('repos/widgets/README.md');
+
+        // Status sees an uncommitted file.
+        fs.writeFileSync(path.join(ws, 'repos/widgets/notes.txt'), 'hello\n');
+        const dirty = await service.repos.status({ userId, project: slug, name: 'widgets' });
+        expect(dirty.status.changed).toBe(1);
+        expect(dirty.status.changes).toEqual([{ code: '??', path: 'notes.txt' }]);
+
+        // Commit is authored as the person's GitHub identity, then pushed (never forced).
+        const committed = await service.repos.commit({ userId, project: slug, name: 'widgets', message: 'add notes' });
+        expect(committed).toMatchObject({ committed: true, author: 'dana' });
+        expect(committed.status.ahead).toBe(1);
+        expect(await service.repos.commit({ userId, project: slug, name: 'widgets', message: 'again' }))
+            .toMatchObject({ committed: false, reason: 'NO_CHANGES' });
+        const pushed = await service.repos.push({ userId, project: slug, name: 'widgets' });
+        expect(pushed).toMatchObject({ pushed: true, branch: 'main', compareUrl: null, url: 'https://github.com/acme/widgets/tree/main' });
+        expect(remote.log()).toContain('dana 4242+dana@users.noreply.github.com add notes');
+        expect(pushed.status.ahead).toBe(0);
+        const audit = await db.all(`SELECT action, detail FROM integration_audit WHERE guildId = @scope ORDER BY id`, { scope: `dm:${userId}` });
+        expect(audit.map(a => a.action)).toEqual(['project-repo-clone', 'project-repo-push']);
+        expect(audit[1].detail).not.toContain('token');
+
+        // Upstream moves on: pull fast-forwards and snapshots the workspace.
+        remote.upstream('B.md', 'b\n', 'upstream change');
+        const pulled = await service.repos.pull({ userId, project: slug, name: 'widgets' });
+        expect(pulled.updated).toBe(true);
+        expect(fs.existsSync(path.join(ws, 'repos/widgets/B.md'))).toBe(true);
+        expect(await service.repos.pull({ userId, project: slug, name: 'widgets' })).toMatchObject({ updated: false });
+        expect((await service.history.log({ userId, project: slug })).commits.map(c => c.message))
+            .toEqual(expect.arrayContaining([expect.stringMatching(/^pulled repos\/widgets/)]));
+
+        // A new branch, a commit on it, a push that returns the compare URL.
+        const switched = await service.repos.checkout({ userId, project: slug, name: 'widgets', branch: 'feature/x' });
+        expect(switched).toMatchObject({ branch: 'feature/x', created: true });
+        fs.writeFileSync(path.join(ws, 'repos/widgets/notes.txt'), 'changed\n');
+        await service.repos.commit({ userId, project: slug, name: 'widgets', message: 'tweak' });
+        const featurePush = await service.repos.push({ userId, project: slug, name: 'widgets' });
+        expect(featurePush.compareUrl).toBe('https://github.com/acme/widgets/compare/main...feature%2Fx?expand=1');
+        expect(remote.log('feature/x')).toContain('tweak');
+
+        // Back on main with a local-only commit while upstream also moved: the
+        // push is rejected, the pull reports divergence, reset goes back to origin.
+        expect((await service.repos.checkout({ userId, project: slug, name: 'widgets', branch: 'main' })).created).toBe(false);
+        fs.writeFileSync(path.join(ws, 'repos/widgets/local.txt'), 'local\n');
+        await service.repos.commit({ userId, project: slug, name: 'widgets', message: 'local only' });
+        remote.upstream('C.md', 'c\n', 'upstream 2');
+        await expectThrow(() => service.repos.push({ userId, project: slug, name: 'widgets' }), { status: 409, code: 'REJECTED' });
+        await expectThrow(() => service.repos.pull({ userId, project: slug, name: 'widgets' }), { status: 409, code: 'DIVERGED' });
+        const reset = await service.repos.reset({ userId, project: slug, name: 'widgets' });
+        expect(reset.status).toMatchObject({ ahead: 0, behind: 0, changed: 0 });
+        expect(fs.existsSync(path.join(ws, 'repos/widgets/local.txt'))).toBe(false);
+        expect(fs.existsSync(path.join(ws, 'repos/widgets/C.md'))).toBe(true);
+        // The discarded file is still in a workspace snapshot.
+        const snapshots = await service.history.log({ userId, project: slug, path: 'repos/widgets/local.txt' });
+        expect(snapshots.commits.length).toBeGreaterThan(0);
+
+        // Listing, caps and removal.
+        const listing = await service.repos.list({ userId, project: slug });
+        expect(listing.repos.map(r => r.name)).toEqual(['widgets']);
+        makeRemote('acme/second');
+        makeRemote('acme/third');
+        await service.repos.clone({ userId, project: slug, repo: 'acme/second' });
+        await expectThrow(
+            () => service.repos.clone({ userId, project: slug, repo: 'acme/third' }),
+            { status: 400, code: 'TOO_MANY_REPOS' }
+        );
+        await expectThrow(
+            () => service.repos.clone({ userId, project: slug, repo: 'acme/widgets', name: 'widgets' }),
+            { status: 409, code: 'DUPLICATE_REPO' }
+        );
+        const removed = await service.repos.remove({ userId, project: slug, name: 'widgets' });
+        expect(removed).toMatchObject({ removed: true });
+        expect(fs.existsSync(path.join(ws, 'repos/widgets'))).toBe(false);
+        expect(fs.existsSync(path.join(reposDir(userId, slug), 'widgets.git'))).toBe(false);
+        expect(await db.get('SELECT 1 AS ok FROM project_repos WHERE projectId = @id AND name = @name', { id: project.id, name: 'widgets' })).toBeFalsy();
+        await expectThrow(
+            () => service.repos.status({ userId, project: slug, name: 'widgets' }),
+            { status: 404, code: 'NO_SUCH_REPO' }
+        );
+    }, 60_000);
+
+    test('a missing repository, a missing branch and an oversized repository are refused cleanly', async () => {
+        makeRemote('acme/small');
+        const service = makeService();
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Refusal Lab' });
+        await expectThrow(
+            () => service.repos.clone({ userId, project: slug, repo: 'acme/nope' }),
+            { status: 404, code: 'NOT_FOUND' }
+        );
+        await expectThrow(
+            () => service.repos.clone({ userId, project: slug, repo: 'acme/small', branch: 'no-such-branch' }),
+            { status: 404, code: 'NO_SUCH_BRANCH' }
+        );
+        const huge = makeService({}, { repoInfo: async () => ({ sizeKb: 999_999, defaultBranch: 'main' }) });
+        await expectThrow(
+            () => huge.repos.clone({ userId, project: slug, repo: 'acme/small' }),
+            { status: 413, code: 'REPO_TOO_LARGE' }
+        );
+        // Nothing half-cloned is left behind.
+        expect(fs.existsSync(path.join(workspace(userId, slug), 'repos'))).toBe(false);
+        expect(fs.existsSync(reposDir(userId, slug))).toBe(false);
+        expect((await service.repos.list({ userId, project: slug })).repos).toEqual([]);
+    });
+
+    test('the clone counts toward the workspace quota and is undone when it breaks it', async () => {
+        makeRemote('acme/fat', { files: { 'blob.bin': 'x'.repeat(1024 * 1024 + 1) } });
+        const service = makeService({ maxProjectMb: 1 });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Quota Lab' });
+        await expectThrow(
+            () => service.repos.clone({ userId, project: slug, repo: 'acme/fat' }),
+            { status: 413, code: 'QUOTA_EXCEEDED' }
+        );
+        expect(fs.existsSync(path.join(workspace(userId, slug), 'repos', 'fat'))).toBe(false);
+    });
+
+    test('deleting the project removes the clones; a collaborator\'s erasure only drops their attribution', async () => {
+        makeRemote('acme/shared');
+        const service = makeService();
+        const ownerId = nextUser();
+        const memberId = nextUser();
+        const project = await service.createProject({ userId: ownerId, name: 'Shared Repo Lab' });
+        await db.run(
+            `INSERT INTO project_members (projectId, userId, userName, invitedBy)
+             VALUES (@projectId, @userId, 'Dana', @ownerId)`,
+            { projectId: project.id, userId: memberId, ownerId }
+        );
+        const cloned = await service.repos.clone({ userId: memberId, project: project.slug, owner: ownerId, repo: 'acme/shared' });
+        expect(cloned.createdBy).toBe(memberId);
+
+        await privacyService.forgetUser({ userId: memberId });
+        const row = await db.get('SELECT createdBy FROM project_repos WHERE id = @id', { id: cloned.id });
+        expect(row.createdBy).toBeNull();
+        expect(fs.existsSync(path.join(reposDir(ownerId, project.slug), 'shared.git'))).toBe(true);
+
+        await service.deleteProject({ userId: ownerId, project: project.slug });
+        expect(fs.existsSync(reposDir(ownerId, project.slug))).toBe(false);
+        expect(await db.get('SELECT 1 AS ok FROM project_repos WHERE id = @id', { id: cloned.id })).toBeFalsy();
+    });
+});

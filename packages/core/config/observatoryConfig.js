@@ -116,5 +116,41 @@ module.exports = {
     /** ffmpeg binary used by the frame->video render pipeline. */
     ffmpegCommand: process.env.GOOBSTER_OBSERVATORY_FFMPEG
         || observatory.ffmpegCommand
-        || 'ffmpeg'
+        || 'ffmpeg',
+
+    /**
+     * Workspace history (ADR 0014): a git repository beside every project
+     * workspace, driven by the host process, snapshotting the files after
+     * every run, portal write, fetch and restore. On by default; it degrades
+     * to a warning when git is not installed. `GOOBSTER_PROJECT_HISTORY_ENABLED=0`
+     * or `"observatory": { "historyEnabled": false }` turns it off.
+     */
+    historyEnabled: flag(process.env.GOOBSTER_PROJECT_HISTORY_ENABLED, observatory.historyEnabled, true),
+    /** Files larger than this (MB) are left out of snapshots. */
+    historyMaxFileMb: bounded(observatory.historyMaxFileMb, 8, 1, 512),
+    /**
+     * Disk budget (MB) for one project's history directory. Past it the
+     * history is squashed to a single snapshot; if even that is over, new
+     * snapshots pause until the workspace shrinks.
+     */
+    historyMaxMb: bounded(observatory.historyMaxMb, 256, 1, 10_240),
+    /** git binary used for workspace history and project repositories. */
+    gitCommand: process.env.GOOBSTER_OBSERVATORY_GIT
+        || observatory.gitCommand
+        || 'git',
+
+    /**
+     * Project repositories (ADR 0015): GitHub repositories cloned for a
+     * project with the person's own connected GitHub account, pulled,
+     * committed and pushed by the host. On by default; needs git and the
+     * github feature. `GOOBSTER_PROJECT_REPOS_ENABLED=0` or
+     * `"observatory": { "reposEnabled": false }` turns it off.
+     */
+    reposEnabled: flag(process.env.GOOBSTER_PROJECT_REPOS_ENABLED, observatory.reposEnabled, true),
+    /** Repositories one project may hold. */
+    maxReposPerProject: bounded(observatory.maxReposPerProject, 3, 1, 50),
+    /** History depth fetched per clone and pull (a shallow clone; bounds disk and time). */
+    repoCloneDepth: bounded(observatory.repoCloneDepth, 50, 1, 100_000),
+    /** Largest repository (its git directory, MB) a project may clone. */
+    repoMaxMb: bounded(observatory.repoMaxMb, 512, 1, 10_240)
 };

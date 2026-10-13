@@ -151,7 +151,7 @@ The registered views, in tab order:
 | Plan | `plan` (was `mission`) | The open plan - criteria, steps, approvals, evidence - and earlier plans. |
 | Conversation | `conversation` | The project's shared discussion (the project parlor), also available docked beside any other view. |
 | Knowledge | `knowledge` | The project's Spitball: map, notes, research. |
-| Files | `files` (was `explorer`) | The workspace tree and versioned source assets. |
+| Files | `files` (was `explorer`) | The workspace tree with its snapshot history, the project's GitHub clones, and versioned source assets. |
 | Apps | `apps` | Rendered generated apps with the version picker. |
 | Runs | `runs` (was `jobs`) | Every run, its status and provenance, cancel / resume. |
 | People | `people` | Owner, collaborators, invitations (also a modal from the header). |

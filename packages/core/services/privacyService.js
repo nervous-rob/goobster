@@ -30,7 +30,9 @@ const requireOptional = require('../utils/optionalModule').forModule(module);
  *   queued Study follow-ups (web_chat_queue),
  *   cached new-chat suggestions (web_suggested_queries),
  *   and the user's Observatory (project registry, job records, and the
- *   whole on-disk workspace tree; live jobs are cancelled first), the
+ *   whole on-disk workspace tree, its history and its repository clones;
+ *   live jobs are cancelled first; their attribution on clones in other
+ *   people's projects is nulled), the
  *   developer-integration footprint (Cursor agent runs with their prompts,
  *   queued GitHub/Cursor confirmations the user requested, the screen-vision
  *   companion pairing) and the push devices.

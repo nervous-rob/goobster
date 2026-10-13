@@ -26,6 +26,8 @@ All keys resolve environment-first, then `config.json` (see `config/integrations
 2. Resource owner: your user or org; Repository access: **Only select repositories** (pick the repos Goobster should see).
 3. Repository permissions:
    - **Contents: Read** (files, commits)
+     (a *person's own* connected token - Settings → Connections - needs
+     **Contents: Read and write** to push from [project repositories](projects.md#repositories))
    - **Metadata: Read** (always required)
    - **Issues: Read and write** (write is only needed for the `createGithubIssue` conversation→issue flow; use Read if you don't want Goobster filing issues)
    - **Pull requests: Read**
@@ -132,6 +134,14 @@ channel.
 
 All four refuse repos that aren't watched in the asking server.
 
+## Repositories inside projects
+
+A person with a connected GitHub account (Settings → Connections) can also
+clone a repository into a project, edit it through the workspace, and
+commit and push with their own account - never the server's token. That
+lives with projects: see [projects.md → Repositories](projects.md#repositories)
+and [ADR 0015](adr/0015-project-repositories.md).
+
 ## Conversation → issue with a reaction
 
 React 📋 on any message (a bug report, a feature idea) and Goobster drafts a
@@ -167,8 +177,10 @@ still decides.
 
 - Repo allowlist per guild: tools and agent launches only touch watched repos.
 - `Manage Server` required for watches and anything that spends compute or changes state — including confirming tool-proposed actions and sending thread follow-ups.
-- Chat/voice tools never write directly: every write goes through an explicit confirmation button.
-- Every write-side action is recorded in the `integration_audit` table.
+- Chat/voice tools never write with the server's token: every such write goes through an explicit confirmation button.
+  The one exception is scoped on purpose: [project repositories](projects.md#repositories) commit and push with the
+  **person's own** connected GitHub account, under their own allowlist, never with the operator's token.
+- Every write-side action is recorded in the `integration_audit` table (project clones and pushes under the person's DM scope).
 - Privacy: `/forget-me` deletes the person's `agent_runs` (the prompt they wrote) and the
   `pending_integration_actions` they requested, and clears them as the resolver of someone
   else's. `integration_audit` rows and `repo_watches` are guild records: the row stays and

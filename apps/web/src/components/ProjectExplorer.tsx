@@ -46,6 +46,46 @@ type WsEntry = {
     modifiedAt?: string;
 };
 
+type HistoryCommit = {
+    hash: string;
+    short: string;
+    when: string;
+    author: { role: string; name: string };
+    message: string;
+    files: string[];
+    fileCount: number;
+};
+type HistoryPayload = {
+    enabled: boolean;
+    reason?: string | null;
+    paused?: boolean;
+    sizeMb?: number;
+    budgetMb?: number;
+    commits: HistoryCommit[];
+};
+type HistoryDiff = { label: string; empty: boolean; content: string; truncated?: boolean };
+type RepoStatus = {
+    branch: string | null;
+    upstream?: string | null;
+    ahead: number;
+    behind: number;
+    head: string | null;
+    changed: number;
+    changes: { code: string; path: string }[];
+    sizeMb?: number;
+    error?: string;
+};
+type RepoEntry = {
+    name: string;
+    repo: string;
+    path: string;
+    url: string;
+    clonedBranch: string;
+    lastPushAt?: string | null;
+    status?: RepoStatus;
+};
+type ReposPayload = { enabled: boolean; reason?: string | null; maxRepos: number; repos: RepoEntry[] };
+
 type Selection =
     | { root: 'assets'; slug: string }
     | { root: 'workspace'; path: string; kind: 'file' | 'directory' };
@@ -83,6 +123,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
     const fileInputRef = useRef<HTMLInputElement>(null);
     const uploadingRef = useRef(false);
     const [uploading, setUploading] = useState(false);
+    const [wsRefresh, setWsRefresh] = useState(0);
     const uploadDir = selected?.root === 'workspace'
         ? selected.kind === 'directory' ? selected.path : selected.path.split('/').slice(0, -1).join('/')
         : '';
@@ -166,6 +207,14 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
 
     function toggleWorkspace(dirPath: string) {
         setWsOpen((prev) => ({ ...prev, [dirPath]: !prev[dirPath] }));
+    }
+
+    /** After a snapshot restore: every open directory and the open file reload. */
+    async function refreshWorkspace() {
+        await queryClient.invalidateQueries({ queryKey: ['project-files', slug] });
+        setDraft(null);
+        setWsRefresh((n) => n + 1);
+        onChanged();
     }
 
     async function saveAsset() {
@@ -349,6 +398,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                 ))}
                 <div className="obs-tree-root">workspace/</div>
                 {renderWorkspaceNodes('', 1)}
+                <RepoPanel slug={slug} ownerId={ownerId} onChanged={() => void refreshWorkspace()} />
                 <div className="obs-tree-actions">
                     <p className="hint">Drop files here to upload into workspace/{uploadDir}. Web links become .url shortcut files.</p>
                     <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload</button>
@@ -440,11 +490,22 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                 )}
 
                 {selected?.root === 'workspace' && selected.kind === 'directory' && (
-                    <div className="obs-explorer-crumb">
-                        <strong>workspace/{selected.path || ''}</strong>
-                        <span className="hint">Directory</span>
-                        <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload here</button>
-                    </div>
+                    <>
+                        <div className="obs-explorer-crumb">
+                            <strong>workspace/{selected.path || ''}</strong>
+                            <span className="hint">Directory</span>
+                            <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload here</button>
+                        </div>
+                        <div className="obs-explorer-split" style={{ minHeight: 0 }}>
+                            <div style={{ flex: 1, minWidth: 0 }} />
+                            <WorkspaceHistoryRail
+                                slug={slug}
+                                ownerId={ownerId}
+                                filePath={selected.path || null}
+                                onRestored={refreshWorkspace}
+                            />
+                        </div>
+                    </>
                 )}
                 {selected?.root === 'workspace' && selected.kind === 'file' && (
                     <WorkspaceFileView
@@ -456,6 +517,8 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                         onDraft={setDraft}
                         onSave={() => void saveWorkspaceFile()}
                         onDelete={() => void deleteWorkspaceFile()}
+                        refreshToken={wsRefresh}
+                        onRestored={refreshWorkspace}
                     />
                 )}
             </section>
@@ -464,7 +527,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
 }
 
 function WorkspaceFileView({
-    slug, ownerId, filePath, entry, draft, onDraft, onSave, onDelete
+    slug, ownerId, filePath, entry, draft, onDraft, onSave, onDelete, refreshToken = 0, onRestored
 }: {
     slug: string;
     ownerId?: string | null;
@@ -474,6 +537,8 @@ function WorkspaceFileView({
     onDraft: (value: string) => void;
     onSave: () => void;
     onDelete: () => void;
+    refreshToken?: number;
+    onRestored: () => void | Promise<void>;
 }) {
     const toast = useToast();
     const [text, setText] = useState<string | null>(null);
@@ -499,7 +564,7 @@ function WorkspaceFileView({
             .then((body) => { setText(body); onDraft(body); })
             .catch((error) => toast((error as Error).message, true));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slug, ownerId, filePath]);
+    }, [slug, ownerId, filePath, refreshToken]);
 
     return (
         <>
@@ -514,22 +579,298 @@ function WorkspaceFileView({
                 {kind === 'text' && <button type="button" className="btn primary" disabled={draft == null} onClick={onSave}>Save</button>}
                 <button type="button" className="btn danger" onClick={onDelete}>Delete</button>
             </div>
-            {kind === 'image' && <img className="obs-file-preview" src={url} alt={filePath} />}
-            {kind === 'video' && <video className="obs-video" src={url} controls preload="metadata" />}
-            {kind === 'binary' && (
-                <div className="empty">
-                    Binary file. <a href={api.projectContentUrl(slug, filePath, true, ownerId)}>Download</a>
+            <div className="obs-explorer-split">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    {kind === 'image' && <img className="obs-file-preview" src={url} alt={filePath} />}
+                    {kind === 'video' && <video className="obs-video" src={url} controls preload="metadata" />}
+                    {kind === 'binary' && (
+                        <div className="empty">
+                            Binary file. <a href={api.projectContentUrl(slug, filePath, true, ownerId)}>Download</a>
+                        </div>
+                    )}
+                    {kind === 'text' && text != null && (
+                        <div className="obs-explorer-editor" style={{ minHeight: 360 }}>
+                            <CodeEditor
+                                value={draft ?? text}
+                                language={languageFromPath(filePath)}
+                                onChange={onDraft}
+                            />
+                        </div>
+                    )}
+                </div>
+                <WorkspaceHistoryRail slug={slug} ownerId={ownerId} filePath={filePath} onRestored={onRestored} />
+            </div>
+        </>
+    );
+}
+
+/**
+ * Project repositories (ADR 0015): GitHub clones under workspace/repos/<name>,
+ * pulled, committed and pushed by the server with the viewer's own connected
+ * GitHub account. Files are edited through the workspace tree like any other.
+ */
+function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: string | null; onChanged: () => void }) {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+    const [cloneRepo, setCloneRepo] = useState('');
+    const [cloneBranch, setCloneBranch] = useState('');
+    const [busy, setBusy] = useState<string | null>(null);
+    const repos = useQuery({
+        queryKey: keys.projectRepos(slug, ownerId),
+        queryFn: () => api.projectRepos(slug, ownerId) as Promise<ReposPayload>,
+        retry: false
+    });
+    const data = repos.data;
+
+    async function refresh() {
+        await queryClient.invalidateQueries({ queryKey: keys.projectRepos(slug, ownerId) });
+        onChanged();
+    }
+
+    async function run(label: string, fn: () => Promise<unknown>, done: (result: unknown) => string) {
+        setBusy(label);
+        try {
+            const result = await fn();
+            toast(done(result));
+            await refresh();
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    async function clone() {
+        const repo = cloneRepo.trim();
+        if (!repo) return;
+        await run('clone', () => api.cloneProjectRepo(slug, { repo, branch: cloneBranch.trim() || null }, ownerId),
+            (result) => `Cloned ${(result as RepoEntry).repo} into ${(result as RepoEntry).path}.`);
+        setCloneRepo('');
+        setCloneBranch('');
+    }
+
+    async function commit(entry: RepoEntry) {
+        const message = window.prompt(`Commit message for ${entry.repo}:`);
+        if (!message?.trim()) return;
+        await run(`${entry.name}:commit`, () => api.projectRepoAction(slug, entry.name, 'commit', { message }, ownerId),
+            (result) => (result as { committed: boolean; short?: string }).committed
+                ? `Committed ${(result as { short?: string }).short}.`
+                : 'Nothing to commit.');
+    }
+
+    async function push(entry: RepoEntry) {
+        await run(`${entry.name}:push`, () => api.projectRepoAction(slug, entry.name, 'push', {}, ownerId),
+            (result) => {
+                const pushed = result as { branch: string; compareUrl?: string | null };
+                return pushed.compareUrl ? `Pushed ${pushed.branch}. Open a pull request: ${pushed.compareUrl}` : `Pushed ${pushed.branch}.`;
+            });
+    }
+
+    async function pull(entry: RepoEntry) {
+        await run(`${entry.name}:pull`, () => api.projectRepoAction(slug, entry.name, 'pull', {}, ownerId),
+            (result) => (result as { updated: boolean; to?: string }).updated
+                ? `Pulled to ${(result as { to?: string }).to}.`
+                : 'Already up to date.');
+    }
+
+    async function branch(entry: RepoEntry) {
+        const name = window.prompt(`Switch ${entry.repo} to branch (created if new):`, entry.status?.branch || '');
+        if (!name?.trim()) return;
+        await run(`${entry.name}:branch`, () => api.projectRepoAction(slug, entry.name, 'branch', { branch: name.trim() }, ownerId),
+            (result) => `Now on ${(result as { branch: string }).branch}.`);
+    }
+
+    async function reset(entry: RepoEntry) {
+        if (!await confirm(`Discard local commits and changes in ${entry.path}, back to origin? A workspace snapshot is taken first.`)) return;
+        await run(`${entry.name}:reset`, () => api.projectRepoAction(slug, entry.name, 'reset', {}, ownerId),
+            (result) => `Reset to origin/${(result as { branch: string }).branch}.`);
+    }
+
+    async function remove(entry: RepoEntry) {
+        if (!await confirm(`Remove the clone of ${entry.repo} (${entry.path})? Its files stay in workspace history.`)) return;
+        await run(`${entry.name}:remove`, () => api.removeProjectRepo(slug, entry.name, ownerId), () => 'Removed.');
+    }
+
+    return (
+        <>
+            <div className="obs-tree-root">repos/</div>
+            {repos.isError && <div className="hint" style={{ padding: '0 12px' }}>Could not load repositories.</div>}
+            {data && !data.enabled && (
+                <div className="hint" style={{ padding: '0 12px' }}>
+                    {data.reason === 'GIT_MISSING' ? 'Repositories are off: git is not installed on this server.'
+                        : data.reason === 'GITHUB_OFF' ? 'Repositories need the GitHub feature, which is off on this server.'
+                            : 'Repositories are turned off on this server.'}
                 </div>
             )}
-            {kind === 'text' && text != null && (
-                <div className="obs-explorer-editor" style={{ minHeight: 360 }}>
-                    <CodeEditor
-                        value={draft ?? text}
-                        language={languageFromPath(filePath)}
-                        onChange={onDraft}
-                    />
+            {data?.enabled && data.repos.map((entry) => {
+                const st = entry.status;
+                const sync = !st || st.error ? 'status unavailable'
+                    : `${st.branch || 'detached'} · ${st.ahead}↑ ${st.behind}↓ · ${st.changed} changed`;
+                return (
+                    <div key={entry.name} className="obs-tree-item" style={{ paddingLeft: 26, display: 'block', cursor: 'default' }}>
+                        <div><span>📦</span> <a href={entry.url} target="_blank" rel="noreferrer">{entry.repo}</a></div>
+                        <div className="hint">{entry.path} · {sync}</div>
+                        <div className="obs-explorer-crumb" style={{ gap: 4, marginTop: 4 }}>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void pull(entry)}>Pull</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void commit(entry)}>Commit</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void push(entry)}>Push</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void branch(entry)}>Branch</button>
+                            <button type="button" className="btn" disabled={busy != null} onClick={() => void reset(entry)}>Reset</button>
+                            <button type="button" className="btn danger" disabled={busy != null} onClick={() => void remove(entry)}>Remove</button>
+                        </div>
+                    </div>
+                );
+            })}
+            {data?.enabled && data.repos.length < data.maxRepos && (
+                <div className="obs-tree-actions">
+                    <label className="field">
+                        <span className="hint">Clone a GitHub repository (with your connected account)</span>
+                        <input className="input" value={cloneRepo} onChange={(e) => setCloneRepo(e.target.value)} placeholder="owner/name" />
+                    </label>
+                    <label className="field">
+                        <span className="hint">Branch (optional)</span>
+                        <input className="input" value={cloneBranch} onChange={(e) => setCloneBranch(e.target.value)} placeholder="default branch" />
+                    </label>
+                    <button type="button" className="btn" disabled={busy != null || !cloneRepo.trim()} onClick={() => void clone()}>
+                        {busy === 'clone' ? 'Cloning…' : '⬇ Clone'}
+                    </button>
                 </div>
             )}
         </>
+    );
+}
+
+/** A unified diff from the server, coloured by line. */
+function DiffView({ text }: { text: string }) {
+    return (
+        <pre className="obs-diff">
+            {text.split('\n').map((line, index) => (
+                <span
+                    key={index}
+                    className={line.startsWith('+') && !line.startsWith('+++') ? 'add'
+                        : line.startsWith('-') && !line.startsWith('---') ? 'del' : ''}
+                >{line}{'\n'}</span>
+            ))}
+        </pre>
+    );
+}
+
+/**
+ * Workspace snapshots (ADR 0014): the git history the host keeps beside the
+ * workspace. With a filePath, only snapshots touching that path; without,
+ * the whole workspace. Picking a snapshot shows what changed since it and
+ * offers a restore (the current state is snapshotted first).
+ */
+function WorkspaceHistoryRail({ slug, ownerId, filePath, onRestored }: {
+    slug: string;
+    ownerId?: string | null;
+    filePath: string | null;
+    onRestored: () => void | Promise<void>;
+}) {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+    const [rev, setRev] = useState<string | null>(null);
+    const history = useQuery({
+        queryKey: keys.projectHistory(slug, filePath || '', ownerId),
+        queryFn: () => api.projectHistory(slug, filePath || undefined, ownerId) as Promise<HistoryPayload>,
+        retry: false
+    });
+    const diff = useQuery({
+        queryKey: [...keys.projectHistory(slug, filePath || '', ownerId), 'diff', rev || ''],
+        queryFn: () => api.projectHistoryDiff(slug, { rev, to: 'workspace', path: filePath || null }, ownerId) as Promise<HistoryDiff>,
+        enabled: Boolean(rev),
+        retry: false
+    });
+
+    useEffect(() => { setRev(null); }, [slug, ownerId, filePath]);
+
+    const target = filePath ? `workspace/${filePath}` : 'the whole workspace';
+
+    async function restore() {
+        if (!rev) return;
+        if (!await confirm(`Restore ${target} from snapshot ${rev.slice(0, 7)}? The current state is snapshotted first, so this can be undone.`)) return;
+        try {
+            const result = await api.restoreProjectHistory(slug, rev, filePath, ownerId) as { changed?: boolean; short?: string };
+            toast(result.changed ? `Restored from ${result.short}.` : 'Nothing differed - the workspace is unchanged.');
+            setRev(null);
+            await queryClient.invalidateQueries({ queryKey: ['project-history', slug] });
+            await onRestored();
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    async function snapshot() {
+        try {
+            const result = await api.commitProjectHistory(slug, 'snapshot from the portal', ownerId) as {
+                committed: boolean; short?: string; reason?: string;
+            };
+            toast(result.committed ? `Snapshot ${result.short} taken.`
+                : result.reason === 'NO_CHANGES' ? 'Nothing changed since the latest snapshot.'
+                    : result.reason === 'PAUSED' ? 'Snapshots are paused: the workspace is over its history budget.'
+                        : 'Workspace history is off on this server.');
+            await queryClient.invalidateQueries({ queryKey: ['project-history', slug] });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    const data = history.data;
+    return (
+        <aside className="obs-version-rail">
+            <div className="section-title">Snapshots</div>
+            {history.isError && <div className="hint">Could not load snapshots.</div>}
+            {data && !data.enabled && (
+                <div className="hint">
+                    {data.reason === 'GIT_MISSING'
+                        ? 'Workspace history is off: git is not installed on this server.'
+                        : 'Workspace history is turned off on this server.'}
+                </div>
+            )}
+            {data?.enabled && (
+                <>
+                    <div className="hint">
+                        {data.sizeMb ?? 0} / {data.budgetMb ?? 0} MB of history{data.paused ? ' · paused (over budget)' : ''}
+                    </div>
+                    {!filePath && (
+                        <button type="button" className="btn" onClick={() => void snapshot()}>📸 Snapshot now</button>
+                    )}
+                    {data.commits.length === 0 && (
+                        <div className="hint">No snapshots yet. One is taken after every run, save, upload, fetch and restore.</div>
+                    )}
+                    {data.commits.map((row) => (
+                        <button
+                            key={row.hash}
+                            type="button"
+                            className={`obs-version-item${rev === row.hash ? ' active' : ''}`}
+                            onClick={() => setRev(rev === row.hash ? null : row.hash)}
+                        >
+                            <strong>{row.short}</strong>
+                            <div className="row-meta">
+                                {[row.author.name, row.message, whenLabel(row.when)].filter(Boolean).join(' · ')}
+                            </div>
+                        </button>
+                    ))}
+                    {rev && (
+                        <>
+                            <button type="button" className="btn" onClick={() => void restore()}>
+                                ↩️ Restore {filePath ? 'from' : 'workspace from'} {rev.slice(0, 7)}
+                            </button>
+                            {filePath && (
+                                <a className="btn" href={api.projectHistoryContentUrl(slug, rev, filePath, true, ownerId)}>
+                                    ⬇ Download at {rev.slice(0, 7)}
+                                </a>
+                            )}
+                            {diff.data && (diff.data.empty
+                                ? <div className="hint">Same as the current {filePath ? 'file' : 'workspace'}.</div>
+                                : <DiffView text={diff.data.content} />)}
+                            {diff.data?.truncated && <div className="hint">Diff shortened; the chat tool pages the rest.</div>}
+                        </>
+                    )}
+                </>
+            )}
+        </aside>
     );
 }

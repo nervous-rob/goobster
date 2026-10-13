@@ -616,6 +616,7 @@ const systemDependencies = {
     'yt-dlp': 'music',
     'python3-venv': { owner: 'music', softConsumers: ['sandbox'] },
     bubblewrap: 'sandbox',
+    git: 'projects',
     mgba: 'gba',
     nodemailer: 'mail',
     'web-push': 'push',

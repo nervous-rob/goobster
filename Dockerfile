@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     bubblewrap \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Python tools in an isolated venv

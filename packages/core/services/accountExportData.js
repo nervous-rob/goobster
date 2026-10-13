@@ -56,6 +56,7 @@ const INVENTORY = [
     ['project_missions', `id IN (${MISSIONS})`],
     ...['project_mission_steps', 'project_mission_evidence', 'project_mission_events'].map(t => [t, `missionId IN (${MISSIONS})`]),
     ['project_decisions', `projectId IN (${PROJECTS})`],
+    ['project_repos', `projectId IN (${PROJECTS})`],
     ['spitball_expeditions', 'userId = @userId'], ['spitball_expedition_cycles', `expeditionId IN (${EXPEDITIONS})`],
     ['research_sources', `userId = @userId AND expeditionId IN (${EXPEDITIONS})`],
     ['research_claims', `sourceId IN (SELECT id FROM research_sources WHERE userId = @userId) AND expeditionId IN (${EXPEDITIONS})`],

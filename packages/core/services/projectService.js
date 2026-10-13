@@ -55,6 +55,8 @@ const sandboxService = requireOptional('./sandboxService', { feature: 'sandbox' 
 /** The sandbox's hidden per-run source files; never carried into a project. */
 const SESSION_SOURCE_PREFIX = '.goobster-run';
 const { buildDashboard } = require('./observatoryDashboard');
+const { ProjectHistoryService } = require('./projectHistoryService');
+const { ProjectRepoService } = require('./projectRepoService');
 const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const dormantData = require('./dormantDataService');
@@ -295,6 +297,16 @@ class ObservatoryService {
          */
         this._jobs = new Map();
         this.runnerId = makeRunnerId();
+        /**
+         * Workspace history (ADR 0014): git snapshots of the workspace,
+         * taken by this process after runs, writes, fetches and restores.
+         */
+        this.history = new ProjectHistoryService({ config, projects: this });
+        /**
+         * Project repositories (ADR 0015): GitHub clones beside the workspace,
+         * driven by this process with the person's own GitHub connection.
+         */
+        this.repos = new ProjectRepoService({ config, projects: this });
     }
 
     /**
@@ -880,6 +892,8 @@ class ObservatoryService {
         // the dashboard file and workspace tree are removed by hand.
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        this.history.forgetProject(row);
+        this.repos.forgetProject(row);
         try { fs.rmSync(this._dashboardPath(row.ownerId, row.slug), { force: true }); } catch { /* best effort */ }
         await this.notifyProjectsGone(
             [{ name: row.name, slug: row.slug, memberIds: members.map(m => m.userId) }],
@@ -1193,7 +1207,7 @@ class ObservatoryService {
     async writeWorkspaceFile({ userId, slug, relativePath, bytes, owner = null }) {
         await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
-        return db.transaction(async tx => {
+        const written = await db.transaction(async tx => {
             await require('../utils/editConflict').lockProjectWrite(tx, row.id, userId);
             const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
                 row.dir, relativePath
@@ -1245,6 +1259,8 @@ class ObservatoryService {
                 size: buf.length
             };
         });
+        await this.history.commitQuietly(row, { userId, message: `wrote ${written.relativePath}` });
+        return written;
     }
 
     /**
@@ -1254,7 +1270,7 @@ class ObservatoryService {
     async deleteWorkspaceFile({ userId, slug, relativePath, owner = null }) {
         await this._requireOrganization();
         const row = await this._requireProject(userId, slug, owner);
-        return db.transaction(async tx => {
+        const deleted = await db.transaction(async tx => {
             await require('../utils/editConflict').lockProjectWrite(tx, row.id, userId);
             const { relativePath: rel, absolutePath: resolved } = legalizeWorkspacePath(
                 row.dir, relativePath, { mustExist: true }
@@ -1280,6 +1296,8 @@ class ObservatoryService {
             });
             return { deleted: true, relativePath: rel };
         });
+        await this.history.commitQuietly(row, { userId, message: `deleted ${deleted.relativePath}` });
+        return deleted;
     }
 
     /** Latest job-owned checkpoint, then the legacy project-root file. */
@@ -1483,13 +1501,23 @@ class ObservatoryService {
         const projectAssetService = require('./projectAssetService');
         const projectTriggerService = require('./projectTriggerService');
 
-        const [assets, triggers, roster, topLevel] = await Promise.all([
+        const [assets, triggers, roster, topLevel, history] = await Promise.all([
             projectAssetService.list({ userId, project: p.slug, owner: p.ownerId }),
             projectTriggerService.list({ userId, project: p.slug, owner: p.ownerId }),
             this.listMembers({ userId, project: p.slug, owner: p.ownerId }).catch(() => null),
             this.listFiles({ userId, project: p.slug, path: '', owner: p.ownerId })
-                .catch(() => ({ entries: [] }))
+                .catch(() => ({ entries: [] })),
+            this.history.log({ userId, project: p.slug, owner: p.ownerId, limit: 3 }).catch(() => null)
         ]);
+        const historyLine = !history
+            ? null
+            : !history.enabled
+                ? `History: off (${history.reason === 'GIT_MISSING' ? 'git is not installed' : 'disabled'})`
+                : history.commits.length === 0
+                    ? 'History: no snapshots yet (one is taken after every run, write, fetch and restore)'
+                    : `History (${history.sizeMb} MB${history.paused ? ', PAUSED - over budget' : ''}): `
+                        + history.commits.map(c => `${c.short} ${c.when} ${c.author.name}: ${c.message}`).join('; ')
+                        + ' - actions history / diff / restore';
 
         const jobCap = Math.max(1, Number(maxJobs) || INSPECT_MAX_JOBS);
         const assetCap = Math.max(1, Number(maxAssets) || MANIFEST_MAX_ASSETS);
@@ -1606,6 +1634,7 @@ class ObservatoryService {
                 ? `Checkpoint:\n${clip(detail.checkpoint, INSPECT_CHECKPOINT_CHARS)}`
                 : 'Checkpoint: (none — background jobs must write $GOOBSTER_RUN_DIR/checkpoint.json)',
             `Knowledge:\n${knowledgeText}`,
+            historyLine,
             memberLine
         ].filter(Boolean);
 
@@ -2517,6 +2546,7 @@ class ObservatoryService {
                         errorCode: JOB_ERROR_CODES.CANCELLED
                     }, leaseToken, { silent: true });
                     await this._touchProject(row.id);
+                    await this._snapshotAfterJob(job.id);
                     return { mode: 'foreground', project: row.slug, result };
                 }
                 // Exit 0 is necessary, not sufficient: the frozen output
@@ -2529,6 +2559,7 @@ class ObservatoryService {
                     contractResult: verdict.contractResult
                 }, leaseToken, { silent: true });
                 await this._touchProject(row.id);
+                await this._snapshotAfterJob(job.id);
                 await this._refreshDashboard(userId, row.slug, row.ownerId);
                 return {
                     mode: 'foreground',
@@ -2864,6 +2895,40 @@ class ObservatoryService {
     }
 
     /**
+     * Snapshot the workspace after a job settled (ADR 0014). The message
+     * names the job and its outcome - never code, output or a prompt. Best
+     * effort: history must never fail or delay a job's settlement.
+     */
+    async _snapshotAfterJob(jobId) {
+        try {
+            const job = await db.get(
+                `SELECT j.id, j.userId, j.status, j.exitCode, j.errorCode, j.startedBy,
+                        p.id AS projectId, p.userId AS ownerId, p.slug
+                 FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
+                 WHERE j.id = @jobId`,
+                { jobId }
+            );
+            if (!job) return null;
+            const row = {
+                id: job.projectId, slug: job.slug, ownerId: job.ownerId, userId: job.ownerId,
+                dir: this._projectDir(job.ownerId, job.slug)
+            };
+            const outcome = String(job.status || '').toLowerCase().replace(/_/g, ' ');
+            const detail = job.errorCode === JOB_ERROR_CODES.EXIT_NONZERO && job.exitCode != null
+                ? ` (exit ${job.exitCode})`
+                : job.errorCode === OUTPUT_CONTRACT_FAILED ? ' (output contract)' : '';
+            const kind = job.startedBy === 'foreground' ? 'run' : 'job';
+            return await this.history.commitQuietly(row, {
+                userId: job.userId,
+                message: `${kind} #${job.id} ${outcome}${detail}`
+            });
+        } catch (error) {
+            logger.warn?.(`[observatory] Snapshot after job #${jobId} failed: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
      * The work_failures row for a job that ended FAILED or TIMED_OUT
      * (documentation/work_ledger.md). The reason is derived from the code
      * and the exit status - never the stderr tail, which is program output.
@@ -3077,8 +3142,9 @@ class ObservatoryService {
             break;
         }
 
-        // Terminal: best-effort frame render, then the dashboard artifact,
-        // then the completion follow-up.
+        // Terminal: the workspace snapshot, best-effort frame render, then
+        // the dashboard artifact, then the completion follow-up.
+        await this._snapshotAfterJob(jobId);
         try {
             await this._autoRender(jobId);
         } catch (error) {
@@ -3929,6 +3995,11 @@ module.exports.DASHBOARDS_ROOT = DASHBOARDS_ROOT;
 module.exports.WORKSHOP_SLUG = WORKSHOP_SLUG;
 module.exports.WORKSHOP_NAME = WORKSHOP_NAME;
 module.exports.legalizeWorkspacePath = legalizeWorkspacePath;
+/** The portal's MIME for a workspace file name (history content route). */
+module.exports.portalMimeFor = (name) => {
+    const ext = path.extname(String(name || '')).toLowerCase();
+    return WORKSPACE_READ_MIME[ext] || PORTAL_READ_MIME[ext] || 'application/octet-stream';
+};
 module.exports.normalizeWorkspaceRelPath = normalizeWorkspaceRelPath;
 module.exports.JOB_ERROR_CODES = JOB_ERROR_CODES;
 module.exports.MANIFEST_MAX_ASSETS = MANIFEST_MAX_ASSETS;

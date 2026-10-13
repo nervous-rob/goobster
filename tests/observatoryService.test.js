@@ -1394,7 +1394,7 @@ describe('privacy (/forget-me)', () => {
         expect(fs.existsSync(path.join(DASHBOARDS_ROOT, userId))).toBe(false);
         expect(await svc.countUserData(userId)).toEqual({
             projects: 0, jobs: 0, shareLinks: 0, memberships: 0, invites: 0, workspaceDirs: 0,
-            projectNodes: 0
+            projectNodes: 0, repoAttributions: 0
         });
         // The killed job's loop must not resurrect anything
         await new Promise(resolve => setTimeout(resolve, 500));

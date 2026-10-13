@@ -6,6 +6,7 @@
 const { OBSERVATORY_COMMAND_MAX_LENGTH } = require('../appHelpers');
 const { streamWebChatTurn } = require('../appStream');
 const { backgroundJobHint } = require('../../utils/projectSetupContract');
+const { portalMimeFor } = require('../../services/projectService');
 
 function mountProjects(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, projectOwner } = h;
@@ -518,6 +519,113 @@ function mountProjects(app, ctx, h) {
     app.delete('/api/app/projects/:slug/content/*', requireAuth, deleteWorkspaceContent);
     app.put('/api/app/observatory/projects/:slug/content/*', requireAuth, writeWorkspaceContent);
     app.delete('/api/app/observatory/projects/:slug/content/*', requireAuth, deleteWorkspaceContent);
+
+    // --- Workspace history (ADR 0014) -----------------------------------------
+    // Git snapshots of the on-disk workspace, taken by the host process. The
+    // listing always answers (enabled:false names why when history is off);
+    // diff / content / restore refuse with HISTORY_DISABLED or GIT_MISSING.
+    const history = () => ctx.observatory.history;
+
+    app.get('/api/app/projects/:slug/history', requireAuth, chatRoute(async (req) =>
+        history().log({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            path: req.query.path ? String(req.query.path) : null,
+            limit: req.query.limit
+        })
+    ));
+
+    app.post('/api/app/projects/:slug/history/commit', requireAuth, chatRoute(async (req) =>
+        history().commit({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            message: req.body?.message || 'snapshot'
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/history/diff', requireAuth, chatRoute(async (req) =>
+        history().diff({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            rev: req.query.rev ? String(req.query.rev) : null,
+            to: req.query.to ? String(req.query.to) : null,
+            path: req.query.path ? String(req.query.path) : null,
+            offset: req.query.offset,
+            limit: req.query.limit
+        })
+    ));
+
+    app.get('/api/app/projects/:slug/history/:rev/content/*', requireAuth, async (req, res) => {
+        try {
+            const file = await history().show({
+                userId: req.webUser.userId,
+                project: req.params.slug,
+                owner: projectOwner(req),
+                rev: req.params.rev,
+                path: req.params[0]
+            });
+            const asDownload = String(req.query.download || '') === '1';
+            sendWorkspaceFile(res, { ...file, mime: portalMimeFor(file.name) }, asDownload ? 'attachment' : 'inline');
+        } catch (error) {
+            if (error?.status && error?.code) {
+                sendError(res, error.status, error.code, error.message);
+                return;
+            }
+            ctx.logger.error?.('Project history read failed:', error.message);
+            sendError(res, 500, 'INTERNAL', 'Something went wrong.');
+        }
+    });
+
+    app.post('/api/app/projects/:slug/history/:rev/restore', requireAuth, chatRoute(async (req) =>
+        history().restore({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            rev: req.params.rev,
+            path: req.body?.path ?? null
+        })
+    ));
+
+    // --- Project repositories (ADR 0015) -----------------------------------------
+    // GitHub clones beside the workspace, driven by the host with the
+    // person's own connected GitHub account. The listing always answers.
+    const repos = () => ctx.observatory.repos;
+    const repoArgs = (req) => ({
+        userId: req.webUser.userId,
+        project: req.params.slug,
+        owner: projectOwner(req),
+        name: req.params.name
+    });
+
+    app.get('/api/app/projects/:slug/repos', requireAuth, chatRoute(async (req) =>
+        repos().list({ userId: req.webUser.userId, project: req.params.slug, owner: projectOwner(req) })
+    ));
+    app.post('/api/app/projects/:slug/repos', requireAuth, chatRoute(async (req) =>
+        repos().clone({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            repo: req.body?.repo,
+            branch: req.body?.branch ?? null,
+            name: req.body?.name ?? null
+        })
+    ));
+    app.get('/api/app/projects/:slug/repos/:name', requireAuth, chatRoute(async (req) => repos().status(repoArgs(req))));
+    app.delete('/api/app/projects/:slug/repos/:name', requireAuth, chatRoute(async (req) => repos().remove(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/pull', requireAuth, chatRoute(async (req) => repos().pull(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/commit', requireAuth, chatRoute(async (req) =>
+        repos().commit({ ...repoArgs(req), message: req.body?.message })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/push', requireAuth, chatRoute(async (req) =>
+        repos().push({ ...repoArgs(req), branch: req.body?.branch ?? null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/branch', requireAuth, chatRoute(async (req) =>
+        repos().checkout({ ...repoArgs(req), branch: req.body?.branch })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/reset', requireAuth, chatRoute(async (req) => repos().reset(repoArgs(req))));
 
     // --- Project assets (versioned apps / scripts / notes) -------------------
     // Auth + error contract match the Observatory routes: requireAuth and

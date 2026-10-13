@@ -639,6 +639,33 @@ export const api = {
         return request(`/api/app/projects/${encodeURIComponent(project)}/content/${pathPart}${ownerQs(owner)}`,
             { method: 'DELETE' });
     },
+    projectHistory: (project: string, filePath?: string, owner?: string | null, limit?: number) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/history${ownerQs(owner, { path: filePath, limit })}`),
+    projectHistoryDiff: (project: string, { rev, to, path: filePath }: { rev?: string | null; to?: string | null; path?: string | null }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/history/diff${ownerQs(owner, { rev, to, path: filePath })}`),
+    projectHistoryContentUrl: (project: string, rev: string, filePath: string, download = false, owner?: string | null) => {
+        const pathPart = String(filePath || '')
+            .replace(/\\/g, '/')
+            .split('/')
+            .filter(Boolean)
+            .map(encodeURIComponent)
+            .join('/');
+        return `/api/app/projects/${encodeURIComponent(project)}/history/${encodeURIComponent(rev)}/content/${pathPart}${ownerQs(owner, { download: download ? 1 : undefined })}`;
+    },
+    restoreProjectHistory: (project: string, rev: string, filePath: string | null, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/history/${encodeURIComponent(rev)}/restore${ownerQs(owner)}`,
+            { method: 'POST', body: { path: filePath || null } }),
+    commitProjectHistory: (project: string, message: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/history/commit${ownerQs(owner)}`,
+            { method: 'POST', body: { message } }),
+    projectRepos: (project: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`),
+    cloneProjectRepo: (project: string, body: { repo: string; branch?: string | null; name?: string | null }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`, { method: 'POST', body }),
+    projectRepoAction: (project: string, name: string, action: 'pull' | 'commit' | 'push' | 'branch' | 'reset', body: Record<string, unknown> = {}, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
+    removeProjectRepo: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}${ownerQs(owner)}`, { method: 'DELETE' }),
     projectTriggers: (project: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/triggers${ownerQs(owner)}`),
     createProjectTrigger: (project: string, body: Record<string, unknown>, owner?: string | null) =>
