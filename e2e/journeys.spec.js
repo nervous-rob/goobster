@@ -72,8 +72,11 @@ test('project run → output → Attention notice', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'Outputs' })).toBeVisible();
     await page.getByRole('button', { name: 'Browse all files' }).click();
     await expect(page).toHaveURL(new RegExp(`/app/projects/${C.OWNER}/${C.PROJECT_SLUG}/files$`));
-    await page.getByRole('button', { name: '📁 out' }).click();
-    await expect(page.getByRole('button', { name: /result\.json/ })).toBeVisible();
+    // Scope to the file tree: the Snapshots rail also names the file in a
+    // "wrote out/result.json" snapshot button.
+    const tree = page.locator('.obs-tree');
+    await tree.getByRole('button', { name: '📁 out' }).click();
+    await expect(tree.getByRole('button', { name: /result\.json/ })).toBeVisible();
 
     await openRoom(page, /Activity/);
     await page.getByRole('navigation', { name: 'Activity views' }).getByRole('link', { name: /Attention/ }).click();
