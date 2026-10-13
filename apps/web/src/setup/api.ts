@@ -33,7 +33,7 @@ type RequestOptions = { method?: string; body?: unknown; signal?: AbortSignal };
 export async function managerRequest<T>(path: string, { method = 'GET', body, signal }: RequestOptions = {}): Promise<T> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (method !== 'GET') headers['X-Goobster-Nonce'] = newNonce();
+    if (method !== 'GET') headers[`X-Goobster-Nonce`] = newNonce();
     let response: Response;
     try {
         response = await fetch(`${BASE}${path}`, {

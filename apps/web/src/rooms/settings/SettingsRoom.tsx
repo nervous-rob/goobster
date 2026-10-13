@@ -6,7 +6,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { MenuButton } from '../../shell/MenuButton';
 import type { SettingsSectionId } from '../../lib/types';
 import { roomDisplayName } from '../../lib/rooms';
-import { SECTIONS, SECTION_BY_ID, isSectionId, searchSettings } from './sectionMeta';
+import { isSectionId, searchSettings, sectionById, sections } from './sectionMeta';
 import { useFieldAnchor } from './SectionFrame';
 import { SectionIcon } from '../../icons/Icon';
 import { ProfileSection } from './ProfileSection';
@@ -18,6 +18,7 @@ import { ConnectionsSection } from './ConnectionsSection';
 import { AppearanceSection } from './AppearanceSection';
 import { AccountSection } from './AccountSection';
 import { TutorialsSection } from './TutorialsSection';
+import { assistantName } from '../../lib/brand';
 
 const UNSAVED = 'You have unsaved settings changes. Leave and discard them?';
 
@@ -93,7 +94,7 @@ export function SettingsRoom() {
                     {active && (
                         <Link to="/settings" className="btn subtle settings-back" aria-label="Back to all settings">← All settings</Link>
                     )}
-                    <h1>{active ? SECTION_BY_ID[active].title : 'Settings'}</h1>
+                    <h1>{active ? sectionById(active).title : 'Settings'}</h1>
                     {returnTo && (
                         <Link to={returnTo} className="btn subtle settings-return" title={`Back to ${roomName(returnTo)}`}>
                             ↩ Back to {roomName(returnTo)}
@@ -136,7 +137,7 @@ export function SettingsRoom() {
             </header>
             <div className="settings-layout">
                 <nav className={`settings-nav${listOnlyOnMobile ? '' : ' narrow-hidden'}`} aria-label="Settings sections">
-                    {SECTIONS.map((s) => (
+                    {sections().map((s) => (
                         <Link key={s.id} to="/settings/$section" params={{ section: s.id }}
                             className={`settings-nav-item${active === s.id ? ' active' : ''}`}
                             aria-current={active === s.id ? 'page' : undefined}>
@@ -159,7 +160,7 @@ export function SettingsRoom() {
                     )}
                     {data && !active && (
                         <div className="empty settings-welcome">
-                            <div className="empty-title">Everything about how Goobster works with you</div>
+                            <div className="empty-title">Everything about how {assistantName()} works with you</div>
                             <p className="hint">Pick a section, or search. Each control says where it applies — your account, your private chats, or just this device. Server-wide settings stay with <code>/</code> commands in each server.</p>
                         </div>
                     )}

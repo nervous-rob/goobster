@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
+import { assistantName } from '../../lib/brand';
 
 /**
  * Personal memory: what Goobster knows about you in one scope - the
@@ -149,7 +150,7 @@ export function AboutYou({ scope, scopeKind, scopeName, onForget }: {
             <div className="privacy-stage">
                 <p className="hint">
                     This is the same data <code>/what-do-you-know-about-me</code> reports in Discord.
-                    Facts and memories are what Goobster inferred; delete them one by one on their tabs.
+                    Facts and memories are what {assistantName()} inferred; delete them one by one on their tabs.
                     Notes you kept on purpose are Knowledge, not memory —{' '}
                     <Link to="/knowledge/notes">open Knowledge → Notes</Link>
                     {kg && (kg.distilled || 0) > 0 ? <> (the {kg.distilled} distilled notes are under <em>All retained knowledge</em> there)</> : null}.
@@ -202,7 +203,7 @@ export function FactsList({ scope, scopeKind, scopeName }: { scope: string; scop
             {facts.data && facts.data.facts.length > 0 && (
                 <>
                     <div className="hint" style={{ marginBottom: 10 }}>
-                        Distilled facts Goobster keeps about {scopeKind === 'dm' ? 'you from your DMs and web chats' : `you in ${scopeName}`} — separate from raw memories and from the notes you kept.
+                        Distilled facts {assistantName()} keeps about {scopeKind === 'dm' ? 'you from your DMs and web chats' : `you in ${scopeName}`} — separate from raw memories and from the notes you kept.
                         Forgetting one also removes its copy on the Map; the memories it came from stay.
                     </div>
                     <div className="list-card">
@@ -219,7 +220,7 @@ export function FactsList({ scope, scopeKind, scopeName }: { scope: string; scop
                                     title="Forget this fact"
                                     aria-label={`Forget fact: ${fact.content}`}
                                     onClick={async () => {
-                                        if (!await confirm('Forget this fact? Goobster will no longer know it, and its copy leaves the Map. The memories it was distilled from stay.')) return;
+                                        if (!await confirm(`Forget this fact? ${assistantName()} will no longer know it, and its copy leaves the Map. The memories it was distilled from stay.`)) return;
                                         try {
                                             await api.deleteFact(scope, fact.id);
                                             toast('Fact forgotten.');

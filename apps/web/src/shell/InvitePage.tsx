@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { BerryMark } from '../components/BerryMark';
+import { assistantName } from '../lib/brand';
 
 /** `?token=` from the address bar; the router's search is left untyped on purpose. */
 export function tokenFromLocation(): string {
@@ -84,7 +85,7 @@ export function InvitePage() {
                                 required minLength={3} maxLength={32} pattern="[A-Za-z0-9][A-Za-z0-9._-]*"
                                 title="3-32 letters, digits, dots, dashes, or underscores"
                                 value={loginName} onChange={(e) => setLoginName(e.target.value)} />
-                            <label className="hint" htmlFor="invite-display">What Goobster should call you (optional)</label>
+                            <label className="hint" htmlFor="invite-display">What {assistantName()} should call you (optional)</label>
                             <input id="invite-display" className="input" autoComplete="nickname" maxLength={100}
                                 value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
                             <label className="hint" htmlFor="invite-password">Passphrase (at least {minLength} characters)</label>

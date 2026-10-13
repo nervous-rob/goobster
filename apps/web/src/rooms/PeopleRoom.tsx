@@ -10,6 +10,7 @@ import { useToast } from '../hooks/useToast';
 import { useMe } from '../hooks/useSession';
 import { MenuButton } from '../shell/MenuButton';
 import type { DmMessage, DmThread, Friend, FriendCandidate, FriendRequest } from '../lib/types';
+import { assistantName } from '../lib/brand';
 
 /**
  * People: Goobster's own friends and direct messages
@@ -64,7 +65,6 @@ function initial(name: string): string {
 // --- Friends -----------------------------------------------------------------
 
 export function FriendsView() {
-    const me = useMe();
     const toast = useToast();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -172,7 +172,7 @@ export function FriendsView() {
                             autoComplete="off"
                         />
                         <p className="hint">
-                            Names match people who use this portal and members of Discord servers you share with {me.assistant?.name || 'Goobster'}.
+                            Names match people who use this portal and members of Discord servers you share with {assistantName()}.
                             An email address only finds someone who has verified it here, and is never shown to anyone.
                         </p>
                         {searching && (
@@ -363,7 +363,7 @@ export function MessagesView() {
                             <div className="empty-state people-empty">
                                 <div className="empty-logo" aria-hidden="true">✉️</div>
                                 <div className="empty-title">Pick a conversation</div>
-                                <p className="hint">Messages stay between the two of you: nothing here goes to Discord or to {me.assistant?.name || 'Goobster'}.</p>
+                                <p className="hint">Messages stay between the two of you: nothing here goes to Discord or to {assistantName()}.</p>
                             </div>
                         )}
                 </section>

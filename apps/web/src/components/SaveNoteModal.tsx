@@ -9,6 +9,7 @@ import { Modal } from './Modal';
 import { TransferNoteModal } from './TransferNoteModal';
 import type { SaveMessageAsNoteResult, UserNote } from '../lib/types';
 import { featureActive } from '../lib/rooms';
+import { assistantName } from '../lib/brand';
 
 const MAX_LABEL = 120;
 const MAX_CONTENT = 1000;
@@ -110,7 +111,7 @@ export function SaveNoteModal({
             <Modal onClose={onClose} className="save-note-modal">
                 <h2>Saved as a note</h2>
                 <p className="hint" data-testid="save-note-done">
-                    “{saved.label}” is in Knowledge → Notes and on your Map, filed with what you kept — not with what Goobster
+                    “{saved.label}” is in Knowledge → Notes and on your Map, filed with what you kept — not with what {assistantName()}
                     inferred about you. It remembers which answer it came from.
                 </p>
                 <div className="modal-actions">

@@ -13,6 +13,7 @@ import { useForgetOpener } from '../../shell/AppShell';
 import { useMe } from '../../hooks/useSession';
 import { PersonalMemoryPanel, type ReportPayload } from '../../components/memory/PersonalMemoryPanel';
 import { AccountExport } from '../../components/AccountExport';
+import { assistantName } from '../../lib/brand';
 
 const RETENTION_OPTIONS: Array<{ value: number | null; label: string }> = [
     { value: null, label: 'Keep forever' },
@@ -199,8 +200,8 @@ export function MemorySection({ section, userId, onDirty }: {
                 <div className="hint">Currently: <strong>{historyCurrent ? `after ${historyCurrent} days` : 'kept forever'}</strong>.</div>
             </Field>
 
-            <Field id="memory-report" label="What Goobster knows about you" scope="Private chats & DMs"
-                hint="Personal memory: the facts and raw memories Goobster inferred about you in your private space, with one-by-one deletion. Notes you kept on purpose are Knowledge, not memory, and live in their own room.">
+            <Field id="memory-report" label={`What ${assistantName()} knows about you`} scope="Private chats & DMs"
+                hint={`Personal memory: the facts and raw memories ${assistantName()} inferred about you in your private space, with one-by-one deletion. Notes you kept on purpose are Knowledge, not memory, and live in their own room.`}>
                 <div className="list-card settings-report" id="memory-report-input">
                     {report.isPending && <div className="list-row"><span className="hint">Counting…</span></div>}
                     {report.isError && <div className="list-row"><span className="hint">{(report.error as Error).message}</span></div>}
@@ -226,7 +227,7 @@ export function MemorySection({ section, userId, onDirty }: {
             <Field id="deletion-rules" label="What deleting removes — and what it leaves"
                 hint="Memories, facts, notes and transcripts are separate copies with separate controls. None of them promises to erase the others; only Forget me does.">
                 <ul className="hint deletion-rules" id="deletion-rules-input" data-tour="memory-deletion-rules">
-                    <li><strong>Delete a memory</strong> removes that raw memory and its recall vector. Notes Goobster distilled from it stay, pointing at a source that is gone.</li>
+                    <li><strong>Delete a memory</strong> removes that raw memory and its recall vector. Notes {assistantName()} distilled from it stay, pointing at a source that is gone.</li>
                     <li><strong>Forget a fact</strong> removes the fact and its copy on the Knowledge Map. The memories it was distilled from stay.</li>
                     <li><strong>Delete a note</strong> (in Knowledge) removes the note, its connections, tags and evidence links. If it mirrored a fact, the fact goes too. The memories or chats it came from stay.</li>
                     <li><strong>Chat-history retention</strong> deletes transcripts only; memories and notes are untouched.</li>
@@ -235,7 +236,7 @@ export function MemorySection({ section, userId, onDirty }: {
             </Field>
 
             <Field id="forget-me" label="Forget me"
-                hint="Erases every row Goobster has about you — memories, facts, chats, settings, sessions — and signs you out. This is separate from resetting preferences and cannot be undone.">
+                hint={`Erases every row ${assistantName()} has about you — memories, facts, chats, settings, sessions — and signs you out. This is separate from resetting preferences and cannot be undone.`}>
                 <button id="forget-me-input" type="button" className="btn danger" onClick={openForget}>Forget me…</button>
             </Field>
 
@@ -296,7 +297,7 @@ export function MemorySection({ section, userId, onDirty }: {
 
 /**
  * Advanced: the same personal-memory views for a server you share with
- * Goobster - what he keeps about *you in that server*. Always labelled with
+ * Goobster - what it keeps about *you in that server*. Always labelled with
  * the server's name; never folded into the private-space report above.
  * Absent when there are no server scopes (no Discord, or none in common).
  */
@@ -308,7 +309,7 @@ function ServerScopeInspector() {
     const selected = guilds.find((item) => item.id === guildId) || null;
     return (
         <Field id="memory-scopes" label="Inspect a server scope" scope="A server you pick"
-            hint="Advanced. Goobster keeps a separate set of facts and memories about you in each server. Pick one to review or delete them; nothing here touches your private space.">
+            hint={`Advanced. ${assistantName()} keeps a separate set of facts and memories about you in each server. Pick one to review or delete them; nothing here touches your private space.`}>
             <select id="memory-scopes-input" className="select" value={guildId} onChange={(e) => setGuildId(e.target.value)} data-tour="memory-server-scope">
                 <option value="">Choose a server…</option>
                 {guilds.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -316,7 +317,7 @@ function ServerScopeInspector() {
             {selected && (
                 <div className="settings-scoped-panel" data-scope={selected.id}>
                     <div className="settings-scoped-title">
-                        <span className="badge settings-scope">Server</span> What Goobster knows about you in <strong>{selected.name}</strong>
+                        <span className="badge settings-scope">Server</span> What {assistantName()} knows about you in <strong>{selected.name}</strong>
                     </div>
                     <PersonalMemoryPanel
                         key={selected.id}

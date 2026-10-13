@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { ApiError } from '../lib/api';
 import type { InstallFinding, InstallStepRecord } from '../lib/types';
 import { failureOf } from '../rooms/host/shared';
+import { PRODUCT_NAME } from '../lib/brand';
 
 export function formatBytes(bytes: number | null | undefined): string {
     if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return 'unknown';
@@ -117,7 +118,7 @@ const STEP_LABEL: Record<string, string> = {
     mutate: 'Replace the data', cutover: 'Restart onto the restored data', release: 'Release maintenance',
     'docker-postgres': 'Set up the PostgreSQL in Docker', 'native-postgres': 'Set up the PostgreSQL on this machine', create: 'Create the network, storage and container', 'wait-healthy': 'Wait until the database answers',
     provision: 'Create the application role and database', start: 'Start the database', stop: 'Stop the database', repair: 'Repair the database over the same data',
-    packages: 'Install the PostgreSQL packages', cluster: 'Create the cluster, its role and database', schema: 'Create Goobster\'s tables', 'verify-database': 'Check the database answers and holds its tables', 'wait-ready': 'Wait until the database answers', relocate: 'Move the data folder',
+    packages: 'Install the PostgreSQL packages', cluster: 'Create the cluster, its role and database', schema: `Create ${PRODUCT_NAME}'s tables`, 'verify-database': 'Check the database answers and holds its tables', 'wait-ready': 'Wait until the database answers', relocate: 'Move the data folder',
     recreate: 'Recreate the container over the same data', 'update-url': 'Point the connection at the new port',
     tombstone: 'Leave a marker', 'remove-code': 'Remove the program files', 'remove-data': 'Remove the data', 'remove-ownership': 'Remove the record'
 };
@@ -171,7 +172,7 @@ export function ServiceOutcome({ result }: { result: Record<string, unknown> | n
     if (service.registered) {
         return (
             <p role="status" className="wizard-success" data-testid="service-registered">
-                Goobster is registered as the service <code>{service.unit || 'goobster.service'}</code>{service.runtimeUser ? <> and runs as <code>{service.runtimeUser}</code></> : null}.
+                {PRODUCT_NAME} is registered as the service <code>{service.unit || 'goobster.service'}</code>{service.runtimeUser ? <> and runs as <code>{service.runtimeUser}</code></> : null}.
                 Check it with <code>systemctl status goobster</code>; its log is <code>journalctl -u goobster</code>.
             </p>
         );
@@ -200,7 +201,7 @@ export function Tunnel({ port = 3400 }: { port?: number | null }) {
     return (
         <div className="wizard-tunnel" data-testid="tunnel">
             <p>
-                Goobster&apos;s setup page only answers on the machine it runs on. On a machine with no screen, forward it to the computer you are sitting at,
+                {PRODUCT_NAME}'s setup page only answers on the machine it runs on. On a machine with no screen, forward it to the computer you are sitting at,
                 then open the address on that computer:
             </p>
             <pre><code>ssh -L {shown}:127.0.0.1:{shown} &lt;host&gt;</code></pre>

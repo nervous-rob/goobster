@@ -3,6 +3,7 @@ import { forgetConservatory } from '../music-lab/lib/forget';
 import { api } from '../lib/api';
 import { Modal } from './Modal';
 import { berryIconSrc, paintedAccent } from '../lib/berry';
+import { assistantName } from '../lib/brand';
 
 export function ForgetModal({
     onClose,
@@ -35,7 +36,7 @@ export function ForgetModal({
     return (
         <Modal onClose={onClose}>
             <h2>Forget me</h2>
-            <p className="hint">Type FORGET ME to erase every row Goobster has about you.</p>
+            <p className="hint">Type FORGET ME to erase every row {assistantName()} has about you.</p>
             <input className="input" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
             <div className="modal-actions">
                 <button type="button" className="btn" onClick={onClose}>Cancel</button>

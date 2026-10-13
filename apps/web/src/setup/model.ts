@@ -2,6 +2,7 @@ import type { HostConfigField, InstallSource, InstallSuggest } from '../lib/type
 import { buildChanges } from '../rooms/host/drafts';
 import { OWNER_PASSWORD, typedSecret, type Answers } from './answers';
 import { connectionBody, connectionProblems, dockerBody, dockerProblems, nativeBody, nativeProblems } from './database/model';
+import { PRODUCT_NAME } from '../lib/brand';
 
 export const OWNER_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
 export const PASSWORD_MIN = 15;
@@ -96,7 +97,7 @@ export function installInput(params: {
     const { answers, suggest, source, fields } = params;
     const layout = layoutFor(answers, fields);
     return {
-        ownerLabel: answers.label.trim() || 'Goobster',
+        ownerLabel: answers.label.trim() || PRODUCT_NAME,
         source: answers.sourceDir.trim(),
         features: selectedFeatures(answers, source),
         layout,

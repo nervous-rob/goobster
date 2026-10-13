@@ -5,6 +5,7 @@ import { KEYS } from '../data';
 import { writeRun } from './Review';
 import { useTransport } from '../transport';
 import { StepFrame, Tunnel } from '../ui';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** Open Goobster: enabled only when every process is healthy and the portal answers. */
 export function Done({ onFinished }: { onFinished: () => void }) {
@@ -29,15 +30,15 @@ export function Done({ onFinished }: { onFinished: () => void }) {
     }
 
     return (
-        <StepFrame id="done" title="Goobster is ready" lead="Everything checked out. Sign in with the owner account you just made.">
+        <StepFrame id="done" title={`${PRODUCT_NAME} is ready`} lead="Everything checked out. Sign in with the owner account you just made.">
             {ready && portal ? (
                 <p>
-                    <a className="btn primary big" href={portal.url} data-testid="open-goobster" onClick={clearAnswers}>Open Goobster</a>
+                    <a className="btn primary big" href={portal.url} data-testid="open-goobster" onClick={clearAnswers}>Open {PRODUCT_NAME}</a>
                     {' '}<button type="button" className="btn" onClick={() => void signOut()} data-testid="end-session">End this setup session</button>
                 </p>
             ) : (
                 <p>
-                    <button type="button" className="btn primary big" disabled data-testid="open-goobster" aria-describedby="open-reason">Open Goobster</button>
+                    <button type="button" className="btn primary big" disabled data-testid="open-goobster" aria-describedby="open-reason">Open {PRODUCT_NAME}</button>
                     <span id="open-reason" className="hint" data-testid="open-reason">
                         {' '}{failing.length > 0 ? `Waiting for: ${failing.map((item) => item.label).join(', ')}.` : 'Checking…'}
                     </span>

@@ -5,6 +5,7 @@ import { FieldList } from '../fields';
 import { fieldProblems, layoutFor } from '../model';
 import { describeError, ErrorSummary, StepFrame, StepNav, Tunnel, type Problem } from '../ui';
 import type { StepProps } from './order';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** Who can reach Goobster: the addresses, local-only or network, and the public address people will use. */
 export function Access({ go }: StepProps) {
@@ -23,7 +24,7 @@ export function Access({ go }: StepProps) {
 
     return (
         <StepFrame id="access" title="Who can reach it?"
-            lead="By default Goobster answers only on this machine. Opening it to your network is a separate, deliberate step.">
+            lead={`By default ${PRODUCT_NAME} answers only on this machine. Opening it to your network is a separate, deliberate step.`}>
             <ErrorSummary problems={problems} />
             {suggest.isError && <p role="alert" className="settings-danger">{describeError(suggest.error).message}</p>}
             {data && (
@@ -40,7 +41,7 @@ export function Access({ go }: StepProps) {
                         </dd>
                     </dl>
                     <div className="wizard-callout" data-testid="access-explainer">
-                        <p><strong>This machine only</strong> means nothing outside it can connect, which is the safe choice for a first install. To use Goobster from another computer on a machine with no screen, forward the port over SSH:</p>
+                        <p><strong>This machine only</strong> means nothing outside it can connect, which is the safe choice for a first install. To use {PRODUCT_NAME} from another computer on a machine with no screen, forward the port over SSH:</p>
                         <Tunnel port={data.ports.manager} />
                         <p><strong>Network access</strong> is turned on when the manager is started (<code>GOOBSTER_MANAGER_LAN=1</code> with a certificate and a host name, see <code>documentation/manager.md</code>). It is not something a web page can switch on for itself; the Host room explains how.</p>
                     </div>

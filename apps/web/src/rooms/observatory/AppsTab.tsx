@@ -6,6 +6,7 @@ import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../../renderers/codeblocks.js';
 import { whenLabel } from './format';
+import { assistantName } from '../../lib/brand';
 
 type AppAsset = {
     slug: string;
@@ -131,7 +132,7 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
                 <div className="empty-title">No apps yet</div>
                 <div className="hint">
                     Save an html or svg fence from the Study with “Save to project…”,
-                    or ask Goobster to save_app.
+                    or ask {assistantName()} to save_app.
                 </div>
             </div>
         );

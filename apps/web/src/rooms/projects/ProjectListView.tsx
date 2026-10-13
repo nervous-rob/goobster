@@ -10,10 +10,11 @@ import { MenuButton } from '../../shell/MenuButton';
 import { HeaderOverflow } from '../../shell/HeaderOverflow';
 import { WorkshopInbox, type InboxApplet } from '../../components/WorkshopInbox';
 import { whenLabel } from '../observatory/format';
-import { CommandButton, CommandModal, CommandStrip, EXECUTION_OFF, useProjectCommand } from './Command';
+import { CommandButton, CommandModal, CommandStrip, executionOff, useProjectCommand } from './Command';
 import { CreateProjectForm } from './CreateProjectForm';
 import { NeedsYouBoard } from './NeedsYouBoard';
 import type { Project, ProjectInvite } from './types';
+import { assistantName } from '../../lib/brand';
 
 /**
  * `/projects`: every project the person owns or collaborates on, each a
@@ -86,15 +87,15 @@ export function ProjectListView() {
                             <div className="hint" style={{ maxWidth: 460, margin: '0 auto 18px' }}>
                                 A project is a durable home for one piece of work: a plan, runs, files, apps,
                                 knowledge and the people on it. Create one with a name and a goal
-                                {executionOn ? ', or let Goobster set one up from your instructions.' : '.'}
+                                {executionOn ? `, or let ${assistantName()} set one up from your instructions.` : '.'}
                             </div>
                             <div className="modal-actions" style={{ justifyContent: 'center' }}>
                                 <button type="button" className="btn primary big" onClick={() => setCreating(true)}>+ New project</button>
                                 {executionOn && (
-                                    <CommandButton big label="✨ Give Goobster instructions" onOpen={() => setCommandOpen(true)} />
+                                    <CommandButton big label={`✨ Give ${assistantName()} instructions`} onOpen={() => setCommandOpen(true)} />
                                 )}
                             </div>
-                            {!executionOn && <p className="hint" style={{ marginTop: 14 }}>{EXECUTION_OFF}</p>}
+                            {!executionOn && <p className="hint" style={{ marginTop: 14 }}>{executionOff()}</p>}
                         </div>
                     )}
                     {!inboxPreview && invites.length > 0 && (
@@ -171,7 +172,7 @@ export function ProjectListView() {
                                 Open a project for its plan, runs, files, apps, knowledge, people and automations.
                                 {executionOn
                                     ? ' Background runs notify you in your Inbox (and Discord, when connected) when they finish.'
-                                    : ` ${EXECUTION_OFF}`}
+                                    : ` ${executionOff()}`}
                             </div>
                         </>
                     )}

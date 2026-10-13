@@ -7,7 +7,7 @@ import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { ArtifactGallery } from '../observatory/ArtifactGallery';
 import { whenLabel } from '../observatory/format';
-import { EXECUTION_OFF } from './Command';
+import { executionOff } from './Command';
 import { RunsList } from './RunsList';
 import type { Detail } from './types';
 import { featureActive } from '../../lib/rooms';
@@ -66,9 +66,9 @@ export function OverviewView({
                         type="button"
                         className={`btn${executionOn ? '' : ' is-muted'}`}
                         aria-disabled={!executionOn}
-                        title={executionOn ? 'Render the workspace frames into a video' : EXECUTION_OFF}
+                        title={executionOn ? 'Render the workspace frames into a video' : executionOff()}
                         onClick={async () => {
-                            if (!executionOn) { toast(EXECUTION_OFF, true); return; }
+                            if (!executionOn) { toast(executionOff(), true); return; }
                             try {
                                 const result = await api.observatoryRender(p.slug, null, ownerId) as { frames: number; fps: number };
                                 toast(`Rendered ${result.frames} frame(s) at ${result.fps} fps.`);

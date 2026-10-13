@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { api } from '../lib/api';
 import type { ModelCatalog, ModelDescriptor, ModelGuess } from '../lib/types';
+import { assistantName, assistantPossessive } from '../lib/brand';
 
 /** How often, and how long, to re-read a listing while Goobster is still writing descriptions. */
 const GUESS_POLL_MS = 3000;
@@ -70,11 +71,11 @@ function guessNote(guess: ModelGuess) {
     const family = guess.basisName ? `the rest follows ${guess.basisName}'s profile` : 'the rest is provider defaults because the name matches no known family';
     const listed = words(guess.listing, ['displayName', 'description']);
     const read = words(guess.controls);
-    const evidence = [listed && `the provider's listing gives ${listed}`, read && `Goobster read ${read} from the provider's documentation`].filter(Boolean).join('; ');
+    const evidence = [listed && `the provider's listing gives ${listed}`, read && `${assistantName()} read ${read} from the provider's documentation`].filter(Boolean).join('; ');
     if (guess.source === 'ai') {
         const written = guess.writtenAt ? writtenOn(guess.writtenAt) : null;
         const from = guess.evidence === 'docs' ? 'from the provider\'s documentation' : 'from the name alone';
-        return `Goobster's best guess ${from}${written ? `, written ${written}` : ''}. ${evidence ? `${evidence[0].toUpperCase()}${evidence.slice(1)}; ${family}` : `${family[0].toUpperCase()}${family.slice(1)}`}. Nothing here is a reviewed profile.`;
+        return `${assistantPossessive()} best guess ${from}${written ? `, written ${written}` : ''}. ${evidence ? `${evidence[0].toUpperCase()}${evidence.slice(1)}; ${family}` : `${family[0].toUpperCase()}${family.slice(1)}`}. Nothing here is a reviewed profile.`;
     }
     if (evidence) return `${evidence[0].toUpperCase()}${evidence.slice(1)}; ${family} as a best guess from the name.`;
     return `Best guess from the model name: ${family.replace(/^the rest /, '')}; limits stay unverified until reviewed.`;
@@ -97,9 +98,9 @@ function ModelDetails({ model, pending }: { model: ModelDescriptor; pending: boo
                 onClick={() => { setPinned(!pinned); setDismissed(pinned); }}>About this model</button>
             {open && <div id={id} className="model-info-panel" role="region" aria-label={`${model.displayName} details`}>
                 <strong>{model.displayName}</strong>
-                {model.status === 'discovered' && <span className="model-guess-badge">{guess?.source === 'ai' ? "Goobster's guess" : 'Best guess'}</span>}
+                {model.status === 'discovered' && <span className="model-guess-badge">{guess?.source === 'ai' ? `${assistantPossessive()} guess` : 'Best guess'}</span>}
                 <p>{model.description}</p>
-                {pending && guess?.source !== 'ai' && <p className="hint" role="status">Goobster is writing a short description of this model…</p>}
+                {pending && guess?.source !== 'ai' && <p className="hint" role="status">{assistantName()} is writing a short description of this model…</p>}
                 <dl>
                     {guess?.bestFor && <><dt>Probably good for</dt><dd>{guess.bestFor}</dd></>}
                     {guess?.caveat && <><dt>Uncertain</dt><dd>{guess.caveat}</dd></>}

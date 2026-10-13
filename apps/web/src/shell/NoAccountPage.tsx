@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { BerryMark } from '../components/BerryMark';
+import { PRODUCT_NAME, assistantName } from '../lib/brand';
 
 const STATUS_KEY = ['access-request-status'];
 
@@ -86,8 +87,8 @@ export function NoAccountPage({ error, onApproved }: { error: ApiError; onApprov
 
                 {!disabled && view && pending && request && (
                     <p className="hint" data-testid="access-request-pending">
-                        Sent {whenLabel(request.createdAt)} to the host&apos;s Goobster Inbox{view.discord ? ' and Discord DMs' : ''}.
-                        Everything Goobster already knows about you from Discord stays with you when they approve.
+                        Sent {whenLabel(request.createdAt)} to the host&apos;s {PRODUCT_NAME} Inbox{view.discord ? ' and Discord DMs' : ''}.
+                        Everything {assistantName()} already knows about you from Discord stays with you when they approve.
                     </p>
                 )}
 
@@ -101,7 +102,7 @@ export function NoAccountPage({ error, onApproved }: { error: ApiError; onApprov
                 {!disabled && view && view.canRequest && (
                     <form className="native-login" onSubmit={ask} data-testid="access-request-form" aria-label="Ask the host to let you in">
                         <p className="hint">
-                            This installation lets people in one at a time. Ask the host from here - the request lands in their Goobster
+                            This installation lets people in one at a time. Ask the host from here - the request lands in their {PRODUCT_NAME}
                             Inbox{view.discord ? ' and Discord DMs' : ''}, where one click lets you in. No need to create a separate account
                             with an email address; that would start from scratch.
                         </p>
@@ -116,7 +117,7 @@ export function NoAccountPage({ error, onApproved }: { error: ApiError; onApprov
 
                 {!disabled && status.isError && (
                     <p className="hint">
-                        Ask the host to grant your account from Host → Accounts. Everything Goobster already knows about you from
+                        Ask the host to grant your account from Host → Accounts. Everything {assistantName()} already knows about you from
                         Discord stays with it; there is no need to create a separate account with an email address.
                     </p>
                 )}

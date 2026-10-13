@@ -1,4 +1,5 @@
 import { fileName, parentDir, whenLabel } from './format';
+import { assistantName } from '../../lib/brand';
 
 export type ArtifactFile = {
     path: string;
@@ -30,7 +31,7 @@ export function ArtifactGallery({
                     <h3>Outputs</h3>
                 </div>
                 <p className="hint obs-artifacts-empty">
-                    No renders or images in the workspace yet. Command Goobster to
+                    No renders or images in the workspace yet. Command {assistantName()} to
                     produce some, or drop files in Files.
                 </p>
             </section>

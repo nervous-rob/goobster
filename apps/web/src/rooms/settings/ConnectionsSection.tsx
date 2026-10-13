@@ -7,6 +7,7 @@ import { PersonalAiSettings } from '../../components/PersonalAiSettings';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
+import { assistantName } from '../../lib/brand';
 
 type Values = UserSettingsResponse['sections']['connections']['values'];
 type Draft = { githubAllowlist: string; notionAllowlist: string };
@@ -38,7 +39,7 @@ export function ConnectionsSection({ section, onDirty }: {
         <section className="settings-section" aria-labelledby="settings-connections-title">
             <SectionHeader id="connections" scope={SCOPE_FOR[section.scope]} appliesTo={section.appliesTo} />
             <p className="hint">
-                Connected accounts let Goobster act through them for you in the Study, your DMs, and proactive work
+                Connected accounts let {assistantName()} act through them for you in the Study, your DMs, and proactive work
                 (within your <Link to="/settings/$section" params={{ section: 'initiative' }} hash="boundaries">Initiative boundaries</Link>). Tokens are stored
                 encrypted and never shown again; only the connection status and account label appear here.
                 Resetting other settings or forgetting preferences never disconnects anything.
@@ -47,14 +48,14 @@ export function ConnectionsSection({ section, onDirty }: {
             <PersonalAiSettings onDirty={setPersonalDirty} />
             <McpAccess />
 
-            <Field id="github-allowlist" label="GitHub repos Goobster may use" scope="Your account"
+            <Field id="github-allowlist" label={`GitHub repos ${assistantName()} may use`} scope="Your account"
                 hint="Optional. Empty means no extra restriction beyond the connected account. Enforced on GitHub tools in DMs and the Study, not just hidden in this menu.">
                 <textarea id="github-allowlist-input" className="input" rows={3}
                     value={d.draft.githubAllowlist}
                     placeholder="owner/repo, one per line"
                     onChange={(e) => d.set({ githubAllowlist: e.target.value })} />
             </Field>
-            <Field id="notion-allowlist" label="Notion pages Goobster may use" scope="Your account"
+            <Field id="notion-allowlist" label={`Notion pages ${assistantName()} may use`} scope="Your account"
                 hint="Complete page IDs or URLs only. Replace any older title entries; they no longer grant access. Empty means every page shared with the integration.">
                 <textarea id="notion-allowlist-input" className="input" rows={3}
                     value={d.draft.notionAllowlist}

@@ -4,6 +4,7 @@ import { describeError, ErrorSummary } from '../ui';
 import { useDatabaseApi } from './api';
 import { connectionBody, connectionProblems, signatureOf, TLS_CHOICES, type DatabaseAnswer, type FormProblem } from './model';
 import { ProbeReport } from './ProbeReport';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type Props = {
     value: DatabaseAnswer;
@@ -36,9 +37,9 @@ export function ConnectionForm({ value, onChange, problems = [], passwordLabel =
             {field('db-database', 'Database', <input id="db-database" className="input" value={value.database} spellCheck={false} autoComplete="off"
                 onChange={(event) => set('database', event.target.value)} data-testid="db-database" />)}
             {field('db-schema', 'Schema', <input id="db-schema" className="input" value={value.schema} spellCheck={false} autoComplete="off" aria-describedby="db-schema-help"
-                onChange={(event) => set('schema', event.target.value)} data-testid="db-schema" />, 'Goobster creates its tables here and never in another schema. It must hold nothing that is not Goobster\'s. Default: public.')}
+                onChange={(event) => set('schema', event.target.value)} data-testid="db-schema" />, `${PRODUCT_NAME} creates its tables here and never in another schema. It must hold nothing that is not ${PRODUCT_NAME}'s. Default: public.`)}
             {field('db-user', 'User', <input id="db-user" className="input" value={value.user} spellCheck={false} autoComplete="off"
-                onChange={(event) => set('user', event.target.value)} data-testid="db-user" />, 'The role Goobster runs as. Use a role of its own, not a superuser.')}
+                onChange={(event) => set('user', event.target.value)} data-testid="db-user" />, `The role ${PRODUCT_NAME} runs as. Use a role of its own, not a superuser.`)}
             {field('db-password', passwordLabel, <input id="db-password" className="input" type="password" value={value.password} autoComplete="new-password" aria-describedby="db-password-help"
                 onChange={(event) => set('password', event.target.value)} data-testid="db-password" />,
             'Sent once to the manager for a test or a plan and then forgotten by this page. It is saved only inside the connection the manager writes to its own private file.')}

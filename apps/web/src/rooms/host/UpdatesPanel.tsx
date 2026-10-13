@@ -6,6 +6,7 @@ import { useToast } from '../../hooks/useToast';
 import { useDateLabel } from '../../hooks/useDateLabel';
 import type { HostUpdateStatus, UpdateOperationKind } from '../../lib/types';
 import { DocLink, failureOf, HOST_KEYS } from './shared';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 const MODES = [
     { id: 'off', label: 'Off', hint: 'Nothing is checked on its own.' },
@@ -81,7 +82,7 @@ export function UpdatesPanel({ enabled = true }: { enabled?: boolean }) {
         const lead = staged
             ? `Apply ${staged.version}? `
             : 'Apply the newest release? ';
-        const body = 'Goobster takes a verified backup, stops accepting work, switches releases and checks that it is healthy. '
+        const body = `${PRODUCT_NAME} takes a verified backup, stops accepting work, switches releases and checks that it is healthy. `
             + 'It is unavailable for a short time while that happens'
             + (staged?.schemaChanging ? ', and this release changes the database schema, so if it fails after it started you decide whether to restore the backup (writes since are lost) or retry.' : ', and a failed update puts the previous release back automatically.');
         if (!await confirm(lead + body)) return;
@@ -181,10 +182,10 @@ export function UpdatesPanel({ enabled = true }: { enabled?: boolean }) {
                     <div className="list-row"><span><strong>An update needs a decision</strong></span></div>
                     <div className="list-row"><span>
                         The update from {recovery.from.version} to {recovery.to.version} failed after the database was already changed ({recovery.code}).
-                        Goobster is paused so nothing else is written. {recovery.warning}
+                        {PRODUCT_NAME} is paused so nothing else is written. {recovery.warning}
                     </span></div>
                     <div className="list-row"><span className="hint">
-                        This is decided on the machine that runs Goobster, with the manager&apos;s local recovery session:
+                        This is decided on the machine that runs {PRODUCT_NAME}, with the manager&apos;s local recovery session:
                         {' '}<code>goobster-manager update recovery --decision restore --yes</code> or <code>--decision retry</code>.
                     </span></div>
                     <div className="list-row"><DocLink slug="manager-update" hash="recovery">What each decision does</DocLink></div>

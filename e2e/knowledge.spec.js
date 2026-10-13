@@ -21,7 +21,8 @@ test('Knowledge opens on Notes, with Map and Research as registered views', asyn
     const tabs = page.getByRole('navigation', { name: 'Knowledge views' });
     await expect(tabs.getByRole('link', { name: /Notes/ })).toHaveAttribute('aria-current', 'page');
     await expect(tabs.getByRole('link', { name: /Map/ })).toBeVisible();
-    await expect(tabs.getByRole('link', { name: /Research/ })).toContainText('Expeditions');
+    await expect(tabs.getByRole('link', { name: /Research/ })).toBeVisible();
+    await expect(tabs.getByRole('link', { name: /Research/ })).not.toContainText('Expeditions');
     // The personal-memory tabs left this room.
     await expect(page.getByRole('button', { name: 'About you' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Facts' })).toHaveCount(0);

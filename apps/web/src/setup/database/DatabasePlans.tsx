@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 import type { InstallOperation } from '../../lib/types';
 import { Findings, StepList } from '../ui';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type Target = { host?: string; port?: number; database?: string; schema?: string; user?: string; tls?: { mode?: string; ca?: boolean } };
 
 const SCHEMA_EFFECT: Record<string, string> = {
-    'apply-schema': 'Create Goobster\'s tables in the empty schema.',
-    'update-schema': 'Bring Goobster\'s older tables up to date. Nothing is deleted.',
+    'apply-schema': `Create ${PRODUCT_NAME}'s tables in the empty schema.`,
+    'update-schema': `Bring ${PRODUCT_NAME}'s older tables up to date. Nothing is deleted.`,
     none: 'The schema already matches this release; nothing will change.'
 };
 
@@ -36,7 +37,7 @@ export function describeDatabase(plan: InstallOperation['plan']): ReactNode {
     }
     if (engine === 'postgres') {
         const target = (plan as { databaseTarget?: Target }).databaseTarget;
-        return <span data-testid="plan-database-postgres">PostgreSQL on a server you run: <code>{where(target)}</code> <span className="hint">(never deleted by Goobster)</span></span>;
+        return <span data-testid="plan-database-postgres">PostgreSQL on a server you run: <code>{where(target)}</code> <span className="hint">(never deleted by {PRODUCT_NAME})</span></span>;
     }
     return engine || '';
 }

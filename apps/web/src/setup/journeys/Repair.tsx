@@ -6,6 +6,7 @@ import { OperationProgress, useRun } from '../run';
 import { useTransport } from '../transport';
 import { describeError, formatBytes, StepFrame, StepNav } from '../ui';
 import { JourneyFrame, PlanFailure, usePlanCheck } from './common';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** Put the program files, the database schema and the feature choice back. Your data and settings are never touched. */
 export function Repair({ step, id, go }: { step: string; id: string | null; go: (step: string, id?: string | null) => void }) {
@@ -91,7 +92,7 @@ export function Repair({ step, id, go }: { step: string; id: string | null; go: 
                             {(suggest.data?.sources || []).map((entry) => (
                                 <label key={entry.dir} className="wizard-choice">
                                     <input type="radio" name="repair-source" checked={source === entry.dir} onChange={() => setSource(entry.dir)} />
-                                    {' '}Goobster {entry.version} <span className="hint">({formatBytes(entry.totalBytes)} · {entry.dir})</span>
+                                    {' '}{PRODUCT_NAME} {entry.version} <span className="hint">({formatBytes(entry.totalBytes)} · {entry.dir})</span>
                                 </label>
                             ))}
                         </div>

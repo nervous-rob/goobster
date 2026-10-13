@@ -9,15 +9,16 @@ import { useConfirm } from '../hooks/useConfirm';
 import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { useOpenSettings } from '../hooks/useOpenSettings';
+import { assistantName } from '../lib/brand';
 
 /**
  * The Assistant Inbox: everything Goobster noticed but judged not worth
  * interrupting you about, plus the ledger of open loops behind those
- * judgements and the dials that govern how loud he is allowed to be.
+ * judgements and the dials that govern how loud it is allowed to be.
  *
  * The pane deliberately cannot create an open loop. Loops come from evidence
- * — something you said, a reflection pass, a tool call he made — so every one
- * of them can be traced back to why he believes it. A ledger you could type
+ * — something you said, a reflection pass, a tool call it made — so every one
+ * of them can be traced back to why it believes it. A ledger you could type
  * into would just be a task list.
  */
 
@@ -95,7 +96,7 @@ type Overview = {
     initiativeLevels: string[];
 };
 
-/** A hollow bullet is something he chose not to bother you with. */
+/** A hollow bullet is something the assistant chose not to bother you with. */
 const DISPOSITION_MARK: Record<string, string> = {
     inbox: '○', mention: '◐', dm: '●', urgent: '❗'
 };
@@ -179,13 +180,13 @@ export function NoticedRoom() {
                 <div className="pane-body">
                     <div className="empty-state" style={{ marginTop: '6vh' }}>
                         <div className="empty-logo">🧭</div>
-                        <div className="empty-title">Goobster isn't paying attention yet</div>
+                        <div className="empty-title">{assistantName()} isn't paying attention yet</div>
                         <div className="hint" style={{ maxWidth: 520, margin: '0 auto 18px' }}>
-                            Turn this on and he keeps a small ledger of your open loops — commitments,
+                            Turn this on and it keeps a small ledger of your open loops — commitments,
                             deadlines, things you're waiting on — and checks whether anything about them
-                            changed. Most of what he notices lands here quietly rather than reaching you;
-                            he only messages you when something clears a fairly high bar, and dismissing
-                            things teaches him to raise that kind less.
+                            changed. Most of what it notices lands here quietly rather than reaching you;
+                            it only messages you when something clears a fairly high bar, and dismissing
+                            things teaches it to raise that kind less.
                         </div>
                         <button type="button" className="btn primary" onClick={async () => {
                             try {
@@ -235,7 +236,7 @@ export function NoticedRoom() {
 
                 {data.notices.length > 0 && (
                     <>
-                        <div className="section-title">Goobster noticed</div>
+                        <div className="section-title">{assistantName()} noticed</div>
                         <div className="list-card">
                             {data.notices.map((notice) => (
                                 <div key={notice.id} id={`notice-${notice.id}`} className="list-row task-row">
@@ -266,7 +267,7 @@ export function NoticedRoom() {
                                     <button type="button" className="btn subtle"
                                         onClick={() => act(notice, 'snooze', 'Snoozed for a day.')}>Snooze</button>
                                     <button type="button" className="row-delete" aria-label={`Dismiss ${notice.title}`}
-                                        onClick={() => act(notice, 'dismiss', 'Dismissed — he\'ll raise that kind less.')}>✕</button>
+                                        onClick={() => act(notice, 'dismiss', 'Dismissed — it will raise that kind less.')}>✕</button>
                                 </div>
                             ))}
                         </div>
@@ -275,7 +276,7 @@ export function NoticedRoom() {
 
                 {data.items.length > 0 && (
                     <>
-                        <div className="section-title">Open loops he's tracking</div>
+                        <div className="section-title">Open loops being tracked</div>
                         <div className="list-card">
                             {data.items.map((item) => (
                                 <div key={item.id} className="list-row task-row">
@@ -350,7 +351,7 @@ export function NoticedRoom() {
 
                 {data.calibration.some((row) => row.samples > 0) && (
                     <>
-                        <div className="section-title">What he's learned about interrupting you</div>
+                        <div className="section-title">What it has learned about interrupting you</div>
                         <div className="list-card">
                             {data.calibration.filter((row) => row.samples > 0).map((row) => (
                                 <div key={row.category} className="list-row task-row">
@@ -380,13 +381,13 @@ function ExplainModal({ notice, onClose }: { notice: Notice; onClose: () => void
     const rows: Array<[string, number, string]> = [
         ['Urgency', notice.factors.urgency, 'how time-pressured this is'],
         ['Importance', notice.factors.importance, 'how much it seems to matter to you'],
-        ['Confidence', notice.factors.confidence, 'how sure he is he understood it'],
+        ['Confidence', notice.factors.confidence, 'how sure it is that it understood it'],
         ['Actionability', notice.factors.actionability, 'whether there is something to do'],
         ['Interruption cost', notice.factors.interruptionCost, 'what speaking up costs right now']
     ];
     return (
         <Modal onClose={onClose}>
-            <h2>Why he raised this</h2>
+            <h2>Why this was raised</h2>
             <div className="task-prompt" style={{ marginBottom: 12 }}>{notice.title}</div>
             <div className="list-card">
                 {rows.map(([label, value, hint]) => (
@@ -401,7 +402,7 @@ function ExplainModal({ notice, onClose }: { notice: Notice; onClose: () => void
             <div className="row-meta" style={{ marginTop: 12 }}>
                 The first four multiply together, then the interruption cost is subtracted, giving{' '}
                 <strong>{notice.score.toFixed(2)}</strong> — enough for <strong>{notice.disposition}</strong>.
-                A single weak factor is enough to keep him quiet.
+                A single weak factor is enough to keep it quiet.
             </div>
             <div className="modal-actions">
                 <button type="button" className="btn primary" onClick={onClose}>Close</button>

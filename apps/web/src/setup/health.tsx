@@ -5,6 +5,7 @@ import { MINT_RECOVERY } from './commands';
 import { KEYS, useSuggest } from './data';
 import { useTransport, type FirstRun } from './transport';
 import { describeError, LiveRegion } from './ui';
+import { PRODUCT_NAME } from '../lib/brand';
 
 export type WorkerStage = 'starting' | 'acknowledged' | 'healthy' | 'failed' | 'stopped';
 
@@ -118,7 +119,7 @@ export function HealthPanel({ onResult, canStart = true }: { onResult?: (result:
             <WorkerRows workers={workers} current={lifecycle.data?.current ?? 0} />
             {!supervising && canStart && (
                 <p>
-                    <button type="button" className="btn" onClick={() => void start()} disabled={starting} data-testid="start-workers">{starting ? 'Starting…' : 'Start Goobster'}</button>
+                    <button type="button" className="btn" onClick={() => void start()} disabled={starting} data-testid="start-workers">{starting ? 'Starting…' : `Start ${PRODUCT_NAME}`}</button>
                     {startError && <span role="alert" className="settings-danger"> {startError}</span>}
                 </p>
             )}

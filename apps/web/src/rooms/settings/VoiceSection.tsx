@@ -149,7 +149,7 @@ export function VoiceSection({ section, capabilities, onDirty }: {
             </Field>
 
             <Field id="voice-speed" label="Playback speed"
-                hint="Applies to the next thing he says; already-playing audio keeps its speed.">
+                hint="Applies to the next thing the assistant says; already-playing audio keeps its speed.">
                 <div className="segment settings-segment" role="radiogroup" aria-label="Playback speed" id="voice-speed-input">
                     {SPEEDS.map((s) => (
                         <button key={s} type="button" role="radio" aria-checked={d.draft.speed === s}

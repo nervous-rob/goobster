@@ -15,6 +15,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { ApiError } from '../lib/api';
 import { canonicalPath, normalize, resolveRoom, roomDisplayName } from '../lib/rooms';
 import type { TutorialCatalogEntry, TutorialProgress, TutorialSample } from '../lib/types';
+import { assistantName } from '../lib/brand';
 
 type Step = TutorialCatalogEntry['steps'][number];
 
@@ -24,7 +25,7 @@ function SampleAnswer({ sample }: { sample: TutorialSample }) {
             <div className="tutorial-demo-kicker">Sample only · no provider call</div>
             <p className="tutorial-demo-q"><span className="tutorial-demo-role">You</span>{sample.question}</p>
             <p className="tutorial-demo-a">
-                <span className="tutorial-demo-role">Goobster</span>
+                <span className="tutorial-demo-role">{assistantName()}</span>
                 <strong>{sample.answer.heading}</strong><br />{sample.answer.body}
             </p>
         </div>

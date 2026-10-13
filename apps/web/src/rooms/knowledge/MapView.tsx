@@ -22,6 +22,7 @@ import {
     type GraphPayload
 } from './graphParts';
 import { useKnowledgeScope } from './scope';
+import { assistantName } from '../../lib/brand';
 
 const TYPE_COLOR_MAP = TYPE_COLORS as Record<string, string>;
 const EMPTY_SLICERS: SlicerSelection = { types: [], tags: [], sources: [] };
@@ -163,7 +164,7 @@ function PersonalMap({
                     type="button"
                     className={`notes-chip${view === 'all' ? ' on' : ''}`}
                     aria-pressed={view === 'all'}
-                    title="Every row kept in this scope, including what Goobster distilled from conversation"
+                    title={`Every row kept in this scope, including what ${assistantName()} distilled from conversation`}
                     onClick={() => changeView('all')}
                 >
                     All retained knowledge
@@ -295,7 +296,7 @@ function ServerGraph({
     return (
         <div className="mtab mtab-graph" data-tour="knowledge-server-graph">
             <div className="hint" style={{ marginBottom: 0 }}>
-                <strong>{scopeName}’s shared graph.</strong> What this server has collected for everyone in it - separate from your notes and from what Goobster knows about you.
+                <strong>{scopeName}’s shared graph.</strong> What this server has collected for everyone in it - separate from your notes and from what {assistantName()} knows about you.
             </div>
             {graph.isPending && <div className="empty">Loading…</div>}
             {graph.isError && <div className="empty">{(graph.error as Error).message}</div>}

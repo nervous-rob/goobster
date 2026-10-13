@@ -7,6 +7,7 @@ import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import type { Curation, CurationCounts, NoteEvidence, UserNote } from '../../lib/types';
 import { featureActive } from '../../lib/rooms';
+import { assistantName } from '../../lib/brand';
 
 /** A node as the Map and the Server graph payloads shape it. */
 export type GraphNode = {
@@ -79,16 +80,19 @@ export const CURATION_LABEL: Record<Curation, string> = {
     unclassified: 'unsorted'
 };
 
-export const CURATION_TITLE: Record<Curation, string> = {
-    saved: 'You chose to keep this as knowledge.',
-    memory: 'Goobster distilled this from conversation - it is what he knows about you, managed from Personal memory.',
-    unclassified: 'Written before notes were sorted, or by a tool that did not say. Keep it to file it with your knowledge.'
-};
+/** Read at render time: the assistant's name is runtime configuration (lib/brand). */
+export function curationTitle(curation: Curation): string {
+    switch (curation) {
+        case 'saved': return 'You chose to keep this as knowledge.';
+        case 'memory': return `${assistantName()} distilled this from conversation - it is what it knows about you, managed from Personal memory.`;
+        default: return 'Written before notes were sorted, or by a tool that did not say. Keep it to file it with your knowledge.';
+    }
+}
 
 export function CurationBadge({ curation }: { curation?: Curation | null }) {
     const value: Curation = curation || 'unclassified';
     return (
-        <span className={`badge curation-badge curation-${value}`} title={CURATION_TITLE[value]}>
+        <span className={`badge curation-badge curation-${value}`} title={curationTitle(value)}>
             {CURATION_LABEL[value]}
         </span>
     );
@@ -112,7 +116,7 @@ export function NoteEvidenceView({ nodeId }: { nodeId: number }) {
     if (!data || (data.claims.length === 0 && data.expeditions.length === 0)) return null;
     return (
         <div className="gd-evidence">
-            <div className="gd-evidence-title">Why Goobster believes this</div>
+            <div className="gd-evidence-title">Why {assistantName()} believes this</div>
             {data.claims.slice(0, 4).map((claim) => (
                 <div key={claim.id} className="gd-evidence-claim">
                     “{claim.text}”

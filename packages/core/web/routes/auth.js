@@ -87,6 +87,8 @@ function mountAuth(app, ctx, h) {
             registrationPaused,
             emailRecovery: ctx.nativeAuth.emailEnabled(ctx.publicUrl),
             installationName: ctx.identityConfig.installationName,
+            // The persona's name, so unauthenticated pages (sign-in, shared conversations) can speak of it.
+            assistantName: ctx.identityConfig.assistantName,
             discord: ctx.discordConfig.enabled,
             passwordMinLength: ctx.identityConfig.passwordMinLength,
             maxInputLength: ctx.chat.maxInputLength

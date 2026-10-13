@@ -4,6 +4,7 @@ import { useSource, useSuggest } from '../data';
 import { pathProblem } from '../model';
 import { describeError, ErrorSummary, formatBytes, insideBase, StepFrame, StepNav, type Problem } from '../ui';
 import type { StepProps } from './order';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 const EDITABLE = [
     { role: 'code', label: 'Program files', help: 'The program itself, in versioned folders so an update can be undone.' },
@@ -52,8 +53,8 @@ export function Where({ go }: StepProps) {
     const needed = source.data ? source.data.totalBytes : null;
     const freeCode = data?.roots.code.freeBytes;
     return (
-        <StepFrame id="where" title="Where should Goobster go?"
-            lead="Pick the release to install and the folders it uses. The defaults are safe; change them only if you want Goobster on another disk.">
+        <StepFrame id="where" title={`Where should ${PRODUCT_NAME} go?`}
+            lead={`Pick the release to install and the folders it uses. The defaults are safe; change them only if you want ${PRODUCT_NAME} on another disk.`}>
             <ErrorSummary problems={problems} />
             {suggest.isPending && <p role="status" className="hint">Looking at this machine…</p>}
             {suggest.isError && <p role="alert" className="settings-danger">{describeError(suggest.error).message}</p>}
@@ -67,7 +68,7 @@ export function Where({ go }: StepProps) {
                                     <label key={entry.dir} className="wizard-choice">
                                         <input type="radio" name="release" checked={answers.sourceDir === entry.dir}
                                             onChange={() => update((previous) => ({ ...previous, sourceDir: entry.dir, features: null }))} data-testid="release-choice" />
-                                        {' '}Goobster {entry.version} <span className="hint">({formatBytes(entry.totalBytes)} · {entry.dir})</span>
+                                        {' '}{PRODUCT_NAME} {entry.version} <span className="hint">({formatBytes(entry.totalBytes)} · {entry.dir})</span>
                                     </label>
                                 ))}
                             </div>
@@ -80,7 +81,7 @@ export function Where({ go }: StepProps) {
                         </div>
                         <div role="status" aria-live="polite" data-testid="source-status">
                             {source.isFetching && <span className="hint">Checking that folder…</span>}
-                            {source.data && <span className="hint">Goobster {source.data.version} for {source.data.target}, {formatBytes(source.data.totalBytes)} in {source.data.features.length} parts.</span>}
+                            {source.data && <span className="hint">{PRODUCT_NAME} {source.data.version} for {source.data.target}, {formatBytes(source.data.totalBytes)} in {source.data.features.length} parts.</span>}
                             {source.isError && <span className="settings-danger">{describeError(source.error).message}</span>}
                         </div>
                         <label className="wizard-choice">
@@ -124,7 +125,7 @@ export function Where({ go }: StepProps) {
                     </div>
                     {data.candidates.length > 0 && (
                         <p className="hint" data-testid="existing-found">
-                            An existing Goobster was found at <code>{data.candidates[0].code}</code>. This setup does not touch it; adopt it from the command line if you want the manager to take it over.
+                            An existing {PRODUCT_NAME} was found at <code>{data.candidates[0].code}</code>. This setup does not touch it; adopt it from the command line if you want the manager to take it over.
                         </p>
                     )}
                 </>

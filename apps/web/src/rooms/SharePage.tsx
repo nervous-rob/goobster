@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { Markdown } from '../components/Markdown';
 import { MenuButton } from '../shell/MenuButton';
 import { BerryMark } from '../components/BerryMark';
+import { PRODUCT_NAME, assistantName } from '../lib/brand';
 
 type ShareMessage = { role: string; content: string; createdAt?: string };
 type ShareData = { title: string; sharedAt?: string; messages: ShareMessage[] };
@@ -76,7 +77,7 @@ export function SharePage() {
     }, [params.token]);
 
     useEffect(() => {
-        if (data?.title) document.title = `${data.title} — Goobster`;
+        if (data?.title) document.title = `${data.title} — ${PRODUCT_NAME}`;
     }, [data?.title]);
 
     return (
@@ -86,7 +87,7 @@ export function SharePage() {
                     <header className="share-header">
                         <MenuButton />
                         <div className="brand">
-                            <BerryMark className="brand-logo" size={24} /> Goobster
+                            <BerryMark className="brand-logo" size={24} /> {PRODUCT_NAME}
                         </div>
                         <div className="hint">{data?.sharedAt ? `Shared ${timeLabel(data.sharedAt)}` : ''}</div>
                     </header>
@@ -101,7 +102,7 @@ export function SharePage() {
                                         ? <div className="msg-bubble"><Markdown source={message.content} /></div>
                                         : <UserMessage content={message.content} />}
                                     <div className="msg-meta">
-                                        {message.role === 'assistant' ? 'Goobster' : 'User'} · {timeLabel(message.createdAt)}
+                                        {message.role === 'assistant' ? assistantName() : 'User'} · {timeLabel(message.createdAt)}
                                     </div>
                                 </div>
                             ))}
@@ -111,7 +112,7 @@ export function SharePage() {
                         </div>
                     )}
                     <footer className="share-footer hint">
-                        Read-only snapshot shared from a self-hosted Goobster. The owner can revoke this link at any time.
+                        Read-only snapshot shared from a self-hosted {PRODUCT_NAME}. The owner can revoke this link at any time.
                     </footer>
                 </div>
             </div>

@@ -4,6 +4,7 @@ import { useSource } from '../data';
 import { CORE, dependentsOf, everyFeature, missingDependencies, recommendedFeatures, selectedFeatures, titleOf } from '../model';
 import { describeError, ErrorSummary, formatBytes, StepFrame, StepNav, type Problem } from '../ui';
 import type { StepProps } from './order';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** Which parts of Goobster to install. A part left out is not copied at all; it can be added later. */
 export function Features({ go }: StepProps) {
@@ -37,7 +38,7 @@ export function Features({ go }: StepProps) {
     }
 
     return (
-        <StepFrame id="features" title="What should Goobster be able to do?"
+        <StepFrame id="features" title={`What should ${PRODUCT_NAME} be able to do?`}
             lead="Core is always installed. Everything else is a part you can leave out; a part you skip is not copied at all, and you can add it later.">
             <ErrorSummary problems={problems} />
             {source.isPending && source.fetchStatus !== 'idle' && <p role="status" className="hint">Reading the release…</p>}

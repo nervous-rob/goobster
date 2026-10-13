@@ -620,7 +620,7 @@ export function ParlorRoom() {
                         {display.length === 0 && (
                             <div className="empty-state">
                                 <div className="empty-logo">🛋️</div>
-                                <div className="empty-title">Welcome to Goobster&apos;s Parlor</div>
+                                <div className="empty-title">Discussions</div>
                                 <div className="hint" style={{ maxWidth: 460, margin: '0 auto 22px' }}>
                                     A salon of thinking companions. Create personas, seed their workspaces, and discuss with one or several at once.
                                 </div>

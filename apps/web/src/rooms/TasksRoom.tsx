@@ -9,6 +9,7 @@ import { Modal } from '../components/Modal';
 import { MenuButton } from '../shell/MenuButton';
 import { Link } from '@tanstack/react-router';
 import { useMe } from '../hooks/useSession';
+import { assistantName } from '../lib/brand';
 
 const CRON_LABELS = new Map([
     ['0 9 * * *', 'Daily at 9:00'],
@@ -167,7 +168,7 @@ function CreateTaskModal({ onClose, onCreated }: { onClose: () => void; onCreate
         <Modal onClose={onClose}>
             <h2>New task</h2>
             <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-            <textarea className="input" placeholder="Prompt Goobster will run" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} />
+            <textarea className="input" placeholder={`Prompt ${assistantName()} will run`} value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} />
             <div className="segment" role="tablist">
                 <button type="button" className={`segment-btn${kind === 'recurring' ? ' active' : ''}`} onClick={() => setKind('recurring')}>Recurring</button>
                 <button type="button" className={`segment-btn${kind === 'once' ? ' active' : ''}`} onClick={() => setKind('once')}>Once</button>

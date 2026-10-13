@@ -2,6 +2,7 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
+import { setAssistantName } from './brand';
 import type { AccountExportJob, TurnStep } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 
@@ -95,8 +96,15 @@ export const api = {
         return body;
     },
     deleteNoteAttachment: (url: string) => request(url, { method: 'DELETE' }),
-    config: () => request<AppConfig>('/api/app/config'),
-    me: () => request<Me>('/api/app/me'),
+    config: () => request<AppConfig>('/api/app/config').then((cfg) => {
+        // The persona's name reaches the client before any room renders (lib/brand).
+        if (cfg.assistantName) setAssistantName(cfg.assistantName);
+        return cfg;
+    }),
+    me: () => request<Me>('/api/app/me').then((me) => {
+        setAssistantName(me.assistant?.name);
+        return me;
+    }),
     features: () => request<FeatureStatus>('/api/app/features'),
     logout: () => request('/api/app/auth/logout', { method: 'POST' }),
     // Asking the host to let a kept-out (403 NO_ACCOUNT) session in

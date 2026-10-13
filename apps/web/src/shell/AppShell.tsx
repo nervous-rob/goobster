@@ -31,6 +31,7 @@ import { setAppBadge, useInstallPrompt, useOnline, useServiceWorkerUpdate, useWo
 import { showLocalNotification } from '../lib/notifications';
 import { InstallBanner, InstallEntry } from '../components/InstallEntry';
 import { UnavailableRoom } from './UnavailableState';
+import { PRODUCT_NAME } from '../lib/brand';
 
 function inboxNoticeTitle(kind?: string): string {
     if (kind === 'reminder') return 'A reminder came due';
@@ -45,7 +46,6 @@ function NavLink({ room, active, count, onClick }: { room: Room; active: boolean
         <Link to={room.path as never} className={`nav-btn${active ? ' active' : ''}`}
             aria-current={active ? 'page' : undefined} data-room={room.id} onClick={onClick}>
             <RoomIcon room={room} /> {room.name}
-            {room.secondaryName && <span className="nav-secondary">{room.secondaryName}</span>}
             {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
         </Link>
     );
@@ -153,7 +153,7 @@ export function AppShell() {
             const detail = (event as CustomEvent<InboxEvent>).detail || {};
             void showLocalNotification({
                 title: inboxNoticeTitle(detail.kind),
-                body: 'Open your Inbox in Goobster',
+                body: `Open your Inbox in ${PRODUCT_NAME}`,
                 link: '/activity/inbox',
                 tag: detail.itemId ? `inbox-${detail.itemId}` : null
             });
@@ -302,7 +302,7 @@ export function AppShell() {
             <aside id="sidebar" className={drawer ? 'open' : ''}>
                 <div className="sidebar-top">
                     <Link to="/" className={`brand brand-home${room === 'home' ? ' active' : ''}`} onClick={() => setDrawer(false)}>
-                        <BerryMark className="brand-logo" size={24} /> Goobster
+                        <BerryMark className="brand-logo" size={24} /> {PRODUCT_NAME}
                     </Link>
                     <nav className="nav" aria-label="Rooms">
                         {PRIMARY_ROOMS.filter((item) => item.path !== '/').map((item) => {
@@ -364,7 +364,7 @@ export function AppShell() {
                 )}
                 {online && swUpdate.available && (
                     <div className="instance-banner update-banner" role="status" data-testid="update-banner">
-                        <span>✨ <strong>Goobster was updated.</strong> Reload to pick up the new version.</span>
+                        <span>✨ <strong>{PRODUCT_NAME} was updated.</strong> Reload to pick up the new version.</span>
                         <button type="button" className="btn small primary" onClick={swUpdate.apply}>Reload</button>
                     </div>
                 )}

@@ -95,9 +95,9 @@ export function HomeRoom() {
                                 <h1 className="home-hello">{greeting(me.user.name || '')}</h1>
                                 <p className="home-sub" data-tour="home-private">
                                     {me.discord?.enabled === false
-                                        ? `${me.assistant.name} lives here. Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.`
-                                        : 'Same brain as Discord. Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.'}
-                                    {' '}Your work starts Private.
+                                        ? 'Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects.'
+                                        : 'Work through a question in Chat, keep what matters in Knowledge, carry it through in Projects. Memory is shared with Discord.'}
+                                    {' '}New work starts private.
                                 </p>
                             </div>
                         </header>

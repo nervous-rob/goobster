@@ -11,6 +11,7 @@ import { useConfigReport, useSuggest } from '../data';
 import { layoutFor } from '../model';
 import { describeError, formatBytes, StepFrame, StepNav } from '../ui';
 import type { StepProps } from './order';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /**
  * Where the data lives: one file on this machine, a PostgreSQL server that
@@ -48,7 +49,7 @@ export function Database({ go }: StepProps) {
 
     return (
         <StepFrame id="database" title="Where does the data live?"
-            lead="Goobster keeps people, conversations and memory in a database. Choose the one file on this machine, or a PostgreSQL server you already run.">
+            lead={`${PRODUCT_NAME} keeps people, conversations and memory in a database. Choose the one file on this machine, or a PostgreSQL server you already run.`}>
             {suggest.isError && <p role="alert" className="settings-danger">{describeError(suggest.error).message}</p>}
             <EngineGuidance layout={layout} engine={database.engine} />
             {data && (
@@ -68,7 +69,7 @@ export function Database({ go }: StepProps) {
                                 onChange={() => { setReport(null); setDatabase({ ...database, engine: 'postgres', source: 'docker' }); }} data-testid="engine-postgres-docker" />
                             {' '}<strong>{DOCKER_LABEL}</strong>{' '}
                             <span id="docker-availability" className="hint" data-testid="docker-availability">
-                                {gate.state === 'ready' && 'Docker answered; the installer creates and looks after one container for Goobster.'}
+                                {gate.state === 'ready' && `Docker answered; the installer creates and looks after one container for ${PRODUCT_NAME}.`}
                                 {gate.state === 'checking' && 'Checking Docker…'}
                                 {gate.state === 'unavailable' && `Not available: ${gate.reason}`}
                                 {gate.state === 'blocked' && `Not available: ${gate.reason}`}
@@ -79,7 +80,7 @@ export function Database({ go }: StepProps) {
                                 onChange={() => { setReport(null); setDatabase({ ...database, engine: 'postgres', source: 'native' }); }} data-testid="engine-postgres-native" />
                             {' '}<strong>{NATIVE_LABEL}</strong>{' '}
                             <span id="native-availability" className="hint" data-testid="native-availability">
-                                {nativeGate.state === 'ready' && 'This machine can run it; the installer creates and looks after one cluster for Goobster and leaves any other alone.'}
+                                {nativeGate.state === 'ready' && `This machine can run it; the installer creates and looks after one cluster for ${PRODUCT_NAME} and leaves any other alone.`}
                                 {nativeGate.state === 'checking' && 'Checking this machine…'}
                                 {(nativeGate.state === 'unavailable' || nativeGate.state === 'blocked') && `Not available: ${nativeBlockText(nativeGate)}`}
                             </span>
@@ -112,7 +113,7 @@ export function Database({ go }: StepProps) {
                     <StorageOwnership engine="postgres" docker />
                     <p className="hint" data-testid="docker-next-hint">
                         {ready
-                            ? 'Docker is ready. The installer creates the container, the application\'s role and Goobster\'s tables when you press Install.'
+                            ? `Docker is ready. The installer creates the container, the application's role and ${PRODUCT_NAME}'s tables when you press Install.`
                             : 'Continue unlocks when the check above passes and what it asks for is ticked.'}
                     </p>
                 </>
@@ -123,7 +124,7 @@ export function Database({ go }: StepProps) {
                     <StorageOwnership engine="postgres" native />
                     <p className="hint" data-testid="native-next-hint">
                         {ready
-                            ? 'This machine is ready. The installer installs what you approved, creates the cluster, the application\'s role and Goobster\'s tables when you press Install.'
+                            ? `This machine is ready. The installer installs what you approved, creates the cluster, the application's role and ${PRODUCT_NAME}'s tables when you press Install.`
                             : 'Continue unlocks when the check above passes and what it asks for is ticked.'}
                     </p>
                 </>
@@ -137,7 +138,7 @@ export function Database({ go }: StepProps) {
                     <StorageOwnership engine="postgres" />
                     <p className="hint" data-testid="postgres-next-hint">
                         {ready
-                            ? 'The server is ready. The installer creates Goobster\'s tables in it when you press Install.'
+                            ? `The server is ready. The installer creates ${PRODUCT_NAME}'s tables in it when you press Install.`
                             : 'Test the connection first; Continue unlocks when the server can be used. The installer never writes into a schema that holds anything else.'}
                     </p>
                 </>

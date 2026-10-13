@@ -10,6 +10,7 @@ import { Modal } from './Modal';
 import { BriefView, ExpeditionBriefs } from './ExpeditionBrief';
 import type { ContinuationProposal, Expedition, ExpeditionDetail, Lead, Lens, ResearchClaim, ResearchSource } from '../lib/types';
 import { featureActive } from '../lib/rooms';
+import { assistantName } from '../lib/brand';
 
 const STATUS_ICONS: Record<string, string> = {
     DRAFT: '📝', QUEUED: '⏳', RUNNING: '🧭', PAUSED: '⏸️',
@@ -196,7 +197,7 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
         <Modal onClose={onClose} className="expedition-modal">
             <h2>New expedition</h2>
             <p className="hint expedition-lead">
-                Goobster researches a topic on its own: gathering sources, extracting
+                {assistantName()} researches a topic on its own: gathering sources, extracting
                 evidence, and growing connected notes in your Spitball — or a project’s graph.
             </p>
 
@@ -227,7 +228,7 @@ function StartExpeditionModal({ onClose, onCreated }: { onClose: () => void; onC
                 <input
                     id="exp-seed"
                     className="input"
-                    placeholder="What should Goobster research?"
+                    placeholder={`What should ${assistantName()} research?`}
                     value={seed}
                     maxLength={200}
                     autoFocus
@@ -628,14 +629,14 @@ export function ExpeditionsTab() {
     return (
         <div className="mtab">
             <div className="hint usage-legend">
-                <span className="key">Deliberate research: Goobster grows a region of your Spitball on its own.</span>
+                <span className="key">Deliberate research: {assistantName()} grows a region of your Knowledge map on its own.</span>
                 <button type="button" className="btn small primary" onClick={() => setCreating(true)}>+ New expedition</button>
             </div>
             {list.isPending && <div className="empty">Loading…</div>}
             {list.isError && <div className="empty">{(list.error as Error).message}</div>}
             {list.data && expeditions.length === 0 && (
                 <div className="empty">
-                    No expeditions yet. Give Goobster a topic and a lens, and it will research it into
+                    No expeditions yet. Give {assistantName()} a topic and a lens, and it will research it into
                     connected, sourced notes.
                 </div>
             )}

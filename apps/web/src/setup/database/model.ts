@@ -1,4 +1,5 @@
 import type { DatabaseConnectionBody, DatabaseReport } from '../../lib/types';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /**
  * What the person typed about the database (documentation/database_connection.md).
@@ -109,7 +110,7 @@ export function connectionProblems(answer: DatabaseAnswer, { needPassword = true
     if (!answer.database.trim()) found.push({ field: 'db-database', message: 'Enter the database name.' });
     else if (!/^[A-Za-z0-9_][A-Za-z0-9_$-]{0,62}$/.test(answer.database.trim())) found.push({ field: 'db-database', message: 'The database name uses letters, digits, underscores, dashes and dollar signs.' });
     if (answer.schema.trim() && !NAME.test(answer.schema.trim())) found.push({ field: 'db-schema', message: 'The schema name uses letters, digits and underscores, and does not start with a digit.' });
-    if (!answer.user.trim()) found.push({ field: 'db-user', message: 'Enter the user name Goobster signs in with.' });
+    if (!answer.user.trim()) found.push({ field: 'db-user', message: `Enter the user name ${PRODUCT_NAME} signs in with.` });
     if (needPassword && answer.password === '') found.push({ field: 'db-password', message: 'Enter the password for that user (this page does not keep it).' });
     if (answer.tlsMode === 'verify-full' && !answer.caFile.trim()) found.push({ field: 'db-ca', message: 'verify-full needs the CA file that signed the server\'s certificate.' });
     if (answer.caFile.trim() && !ABSOLUTE.test(answer.caFile.trim())) found.push({ field: 'db-ca', message: 'The CA file needs a full path, like /etc/ssl/certs/ca.pem.' });
@@ -122,7 +123,7 @@ export const GUIDANCE = {
     sqlite: 'One machine, one process: SQLite is the right choice. It is a single file in the data folder, there is nothing to run or tune, and backing it up is copying the folder.',
     paired: 'You chose the layout where the bot and the portal run apart. They share the data through a server, so PostgreSQL is required; SQLite cannot be used with it.',
     heavy: 'Many Discord servers, or several of the heavy features (the exchange, long-term memory, research) used at the same time, are good reasons to consider PostgreSQL: several processes can write at once, and the database can live on its own machine.',
-    existing: 'Choose PostgreSQL if you already run a server you trust and want Goobster\'s data kept there, or you plan to run the bot and the portal apart. Moving data that is already in SQLite is a separate step (the migration).'
+    existing: `Choose PostgreSQL if you already run a server you trust and want ${PRODUCT_NAME}'s data kept there, or you plan to run the bot and the portal apart. Moving data that is already in SQLite is a separate step (the migration).`
 };
 
 export type Verdict = { tone: 'ok' | 'warn' | 'block'; text: string };

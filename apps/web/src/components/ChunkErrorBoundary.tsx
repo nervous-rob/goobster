@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { isChunkLoadError, reloadOnce } from '../lib/pwa';
+import { PRODUCT_NAME } from '../lib/brand';
 
 type State = { error: Error | null; reloading: boolean };
 
@@ -31,11 +32,11 @@ export class ChunkErrorBoundary extends Component<{ children: ReactNode }, State
             <main className="pane next-pane is-in">
                 <div className="empty" role="alert">
                     {reloading ? (
-                        <p>Goobster was updated - reloading…</p>
+                        <p>{PRODUCT_NAME} was updated - reloading…</p>
                     ) : (
                         <>
                             <p>{isChunkLoadError(error)
-                                ? 'Part of the app could not be loaded. You may be offline, or Goobster was just updated.'
+                                ? `Part of the app could not be loaded. You may be offline, or ${PRODUCT_NAME} was just updated.`
                                 : 'Something went wrong drawing this room.'}</p>
                             <button type="button" className="btn primary" onClick={() => window.location.reload()}>Reload</button>
                         </>

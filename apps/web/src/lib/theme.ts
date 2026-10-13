@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from './brand';
+
 export type ThemeChoice = 'light' | 'dark' | 'system';
 
 /**
@@ -8,7 +10,7 @@ export type ThemeChoice = 'light' | 'dark' | 'system';
 export type AccentChoice = 'blueberry' | 'ocean' | 'mint' | 'sunset' | 'rose' | 'violet' | 'amber' | 'graphite';
 
 export const ACCENTS: ReadonlyArray<{ value: AccentChoice; label: string; hint: string }> = [
-    { value: 'blueberry', label: 'Blueberry', hint: 'Goobster\'s own indigo. The default.' },
+    { value: 'blueberry', label: 'Blueberry', hint: `${PRODUCT_NAME}'s own indigo. The default.` },
     { value: 'ocean', label: 'Ocean', hint: 'A clear sky blue.' },
     { value: 'mint', label: 'Mint', hint: 'Fresh green.' },
     { value: 'sunset', label: 'Sunset', hint: 'Warm coral.' },

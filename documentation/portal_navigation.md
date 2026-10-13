@@ -7,12 +7,14 @@ tags: [portal, navigation, routes, rooms, web, shared-instance, aliases, tutoria
 
 # Portal navigation
 
-The portal is organised around what a person is doing, with the house room
-names kept as secondary labels: **Chat** (the Study), **Knowledge**
-(Spitball), **Projects** (the Observatory), **Discussions** (the Parlor),
-**People** (Friends, Messages), **Activity** (Inbox, Attention, Scheduled)
-and **Tools** (Music Lab, Trading game, Card decks), with **Home** as the
-front door. Usage & limits, Settings
+The portal is organised around what a person is doing: **Chat**,
+**Knowledge**, **Projects**, **Discussions**, **People** (Friends, Messages),
+**Activity** (Inbox, Attention, Scheduled) and **Tools** (Music Lab, Trading
+game, Card decks), with **Home** as the front door. The older house names
+(the Study, Spitball, the Observatory, the Parlor, Noticed, Expeditions, the
+Conservatory) are no longer shown anywhere in navigation; they survive as
+registry data so old links keep resolving (see `secondaryName` and
+`legacyIds` below). Usage & limits, Settings
 and the operator-only Host room form the account area in the sidebar footer.
 
 Only the visible organisation changed. Internal ids (`observatory`,
@@ -29,7 +31,7 @@ entry declares:
 | Field | Meaning |
 |---|---|
 | `id` | Stable room id (`chat`, `knowledge`, `projects`, …). Tutorials, anchors and tests key on it, never on the visible name. |
-| `name` / `secondaryName` | Descriptive label first, house name second ("Knowledge · Spitball"). |
+| `name` / `secondaryName` | The visible label, and the older house name kept as data only (`"Spitball"` for Knowledge). Nothing renders `secondaryName` any more: one vocabulary per destination. It stays so tests and the hash scheme can still name the old rooms. |
 | `path` | Canonical destination, relative to the `/app` base. |
 | `group` | `primary` (sidebar), `tools` (cards under Tools), `account` (footer), `public` (share viewer). |
 | `parent` | For specialist rooms: the primary entry that lights up (`tools`). |

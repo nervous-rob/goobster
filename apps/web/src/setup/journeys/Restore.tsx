@@ -8,6 +8,7 @@ import { describeError, formatBytes, StepFrame, StepNav } from '../ui';
 import { ENCRYPTION_NOTE, useBackupStatus } from './Backup';
 import { BarrierPanel } from './barrier';
 import { JourneyFrame, PlanFailure, usePlanCheck } from './common';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type RestorePlan = {
     archive: { dir: string; createdAt: string | null; engine: string; tables: number; rows: number; fileSets: Array<{ id: string; label: string; files: number }> };
@@ -255,7 +256,7 @@ function InspectionView({ view }: { view: BackupInspection }) {
     return (
         <div data-testid="restore-inspection" data-restorable={view.restorable ? 'true' : 'false'}>
             <dl className="wizard-facts">
-                <div className="wizard-fact"><dt>Made</dt><dd>{view.createdAt || 'unknown'}{view.version ? ` by Goobster ${view.version}` : ''}</dd></div>
+                <div className="wizard-fact"><dt>Made</dt><dd>{view.createdAt || 'unknown'}{view.version ? ` by ${PRODUCT_NAME} ${view.version}` : ''}</dd></div>
                 <div className="wizard-fact"><dt>Database</dt><dd>{view.engine}: {view.tables} tables, {view.rows} rows {view.engineMatches ? '(matches this installation)' : '(does NOT match this installation)'}</dd></div>
                 <div className="wizard-fact"><dt>Files</dt><dd>{view.fileSets.length > 0 ? view.fileSets.map((set) => `${set.label} (${set.files})`).join(', ') : 'none'}{sets > 0 ? `, ${formatBytes(sets)}` : ''}</dd></div>
                 <div className="wizard-fact"><dt>config.json</dt><dd data-testid="inspect-config">{view.configIncluded ? 'included, encrypted with the backup passphrase' : 'not included'}</dd></div>

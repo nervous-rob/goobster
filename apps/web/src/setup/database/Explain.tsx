@@ -1,6 +1,7 @@
 import type { DatabaseStatus } from '../../lib/types';
 import { DocLink } from '../../rooms/host/shared';
 import { GUIDANCE, type DatabaseAnswer } from './model';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** Which engine fits which workload. Said in terms of how it is run, not of a number of users. */
 export function EngineGuidance({ layout, engine }: { layout: string; engine: DatabaseAnswer['engine'] }) {
@@ -30,9 +31,9 @@ export function ServerStorageBlock({ host, port, database, schema, local }: { ho
                 <div className="wizard-fact"><dt>Data directory, listen address, port</dt><dd>set on the server; read-only here</dd></div>
             </dl>
             <p className="hint">
-                The server belongs to whoever runs it. Goobster uses one database and one schema on it and changes nothing else: not the server&apos;s data
+                The server belongs to whoever runs it. {PRODUCT_NAME} uses one database and one schema on it and changes nothing else: not the server&apos;s data
                 directory, the address it listens on, its port, its memory settings or its other databases. To change those, change the server, then
-                edit the connection here. Uninstalling Goobster never drops this database or its tables.
+                edit the connection here. Uninstalling {PRODUCT_NAME} never drops this database or its tables.
             </p>
         </section>
     );
@@ -44,9 +45,9 @@ export function ThreeKinds() {
         <section className="wizard-callout" aria-labelledby="db-kinds-title" data-testid="db-three-kinds">
             <h3 id="db-kinds-title" className="section-title">Three different jobs</h3>
             <dl className="wizard-facts">
-                <div className="wizard-fact"><dt>Connection setup</dt><dd>Telling Goobster where the server is and how to sign in: this page. It never moves data.</dd></div>
-                <div className="wizard-fact"><dt>Schema update</dt><dd>Adding the tables and columns this release needs to a database Goobster already owns. Safe to repeat; it never runs on a schema that holds anything else.</dd></div>
-                <div className="wizard-fact"><dt>PostgreSQL server upgrade</dt><dd>Moving the server itself to a newer major version. That is the administrator&apos;s job, outside Goobster; <DocLink slug="postgres" hash="upgrading-the-server">read how in the PostgreSQL guide</DocLink>.</dd></div>
+                <div className="wizard-fact"><dt>Connection setup</dt><dd>Telling {PRODUCT_NAME} where the server is and how to sign in: this page. It never moves data.</dd></div>
+                <div className="wizard-fact"><dt>Schema update</dt><dd>Adding the tables and columns this release needs to a database {PRODUCT_NAME} already owns. Safe to repeat; it never runs on a schema that holds anything else.</dd></div>
+                <div className="wizard-fact"><dt>PostgreSQL server upgrade</dt><dd>Moving the server itself to a newer major version. That is the administrator&apos;s job, outside {PRODUCT_NAME}; <DocLink slug="postgres" hash="upgrading-the-server">read how in the PostgreSQL guide</DocLink>.</dd></div>
             </dl>
         </section>
     );
@@ -55,15 +56,15 @@ export function ThreeKinds() {
 /** Who owns the storage, and what a failure of it means. */
 export function StorageOwnership({ engine, docker = false, native = false }: { engine: 'sqlite' | 'postgres'; docker?: boolean; native?: boolean }) {
     if (native) {
-        return <p className="hint" data-testid="storage-owner">The database is a PostgreSQL cluster this installer creates on this machine, with its data in a folder of its own. Uninstalling keeps that data and the installed packages unless you ask for the data to be removed, and then removes only that cluster. A Goobster backup does not contain it: back it up with the backup command, which reads it through <code>pg_dump</code>.</p>;
+        return <p className="hint" data-testid="storage-owner">The database is a PostgreSQL cluster this installer creates on this machine, with its data in a folder of its own. Uninstalling keeps that data and the installed packages unless you ask for the data to be removed, and then removes only that cluster. A {PRODUCT_NAME} backup does not contain it: back it up with the backup command, which reads it through <code>pg_dump</code>.</p>;
     }
     if (docker) {
-        return <p className="hint" data-testid="storage-owner">The database runs in a container this installer creates, with its data in a Docker volume or a folder you chose. Uninstalling keeps that data unless you ask for it to be removed, and then removes only what the installer created. A Goobster backup does not contain it: back it up with the backup command, which reads it through <code>pg_dump</code>.</p>;
+        return <p className="hint" data-testid="storage-owner">The database runs in a container this installer creates, with its data in a Docker volume or a folder you chose. Uninstalling keeps that data unless you ask for it to be removed, and then removes only what the installer created. A {PRODUCT_NAME} backup does not contain it: back it up with the backup command, which reads it through <code>pg_dump</code>.</p>;
     }
     return engine === 'sqlite' ? (
         <p className="hint" data-testid="storage-owner">The database is a file in this installation&apos;s data folder. The installation owns it: backups copy it and a full uninstall can remove it.</p>
     ) : (
-        <p className="hint" data-testid="storage-owner">The database lives on a server you run. The installation does not own it: a backup of Goobster does not contain it, and an uninstall never drops it.</p>
+        <p className="hint" data-testid="storage-owner">The database lives on a server you run. The installation does not own it: a backup of {PRODUCT_NAME} does not contain it, and an uninstall never drops it.</p>
     );
 }
 
@@ -75,7 +76,7 @@ export function FailureHelp({ status }: { status: DatabaseStatus | undefined }) 
             <ul className="wizard-list">
                 <li><strong>The server is down or unreachable:</strong> the application keeps trying and recovers by itself when it is back. Start the server; check the host and port.</li>
                 <li><strong>The password changed:</strong> connect again below with the new password. The old connection stays in use until you do.</li>
-                <li><strong>The schema is behind:</strong> use &ldquo;Update the schema&rdquo;; it brings an older Goobster schema up to date without losing anything.</li>
+                <li><strong>The schema is behind:</strong> use &ldquo;Update the schema&rdquo;; it brings an older {PRODUCT_NAME} schema up to date without losing anything.</li>
                 {status?.engine === 'sqlite' && <li><strong>The file is damaged:</strong> Repair opens it again; restore a backup if it cannot be read.</li>}
             </ul>
         </details>

@@ -4,7 +4,7 @@ import type { ResetPreviewResponse, SettingsSectionId } from '../../lib/types';
 import { Modal } from '../../components/Modal';
 import { useToast } from '../../hooks/useToast';
 import type { SectionDraft } from '../../hooks/useUserSettings';
-import { SECTION_BY_ID, type ScopeLabel } from './sectionMeta';
+import { sectionById, type ScopeLabel } from './sectionMeta';
 import { SectionIcon } from '../../icons/Icon';
 
 export function ScopeBadge({ scope }: { scope: ScopeLabel }) {
@@ -62,7 +62,7 @@ export function SectionHeader({
     appliesTo?: string[];
     children?: ReactNode;
 }) {
-    const meta = SECTION_BY_ID[id];
+    const meta = sectionById(id);
     return (
         <div className="settings-section-head">
             <div>
@@ -134,7 +134,7 @@ export function SaveBar<D>({
         const result = await draft.reset(preview.currentRevision);
         setPreview(null);
         if (result) {
-            toast(`${SECTION_BY_ID[section].title} reset to defaults.`);
+            toast(`${sectionById(section).title} reset to defaults.`);
             onSaved?.();
         }
     }
@@ -142,7 +142,7 @@ export function SaveBar<D>({
     async function save() {
         const result = await draft.save();
         if (result) {
-            toast(`${SECTION_BY_ID[section].title} saved.`);
+            toast(`${sectionById(section).title} saved.`);
             onSaved?.();
         }
     }
@@ -174,7 +174,7 @@ export function SaveBar<D>({
             </div>
             {preview && (
                 <Modal onClose={() => setPreview(null)}>
-                    <h2>Reset {SECTION_BY_ID[section].title.toLowerCase()}?</h2>
+                    <h2>Reset {sectionById(section).title.toLowerCase()}?</h2>
                     {Object.keys(preview.changes).length === 0 ? (
                         <p className="hint">Everything in this section is already at its default. Nothing would change.</p>
                     ) : (

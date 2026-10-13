@@ -10,6 +10,7 @@ import { Modal } from './Modal';
 import { describeAudience } from './TransferNoteModal';
 import type { ProjectAudience } from '../lib/types';
 import type { Project } from '../rooms/projects/types';
+import { assistantName } from '../lib/brand';
 
 /**
  * Move a private chat into a project (ADR 0010: explicit, no model call).
@@ -116,7 +117,7 @@ export function MoveChatModal({
         <Modal onClose={onClose} className="transfer-modal">
             <h2>Move to project…</h2>
             <p className="hint">
-                The whole chat becomes a conversation in the project, and the files Goobster made while you
+                The whole chat becomes a conversation in the project, and the files {assistantName()} made while you
                 worked go into the project’s scratch folder. Nothing is sent to a model.
             </p>
             {projectsQ.isError && <div className="hint">{(projectsQ.error as Error).message}</div>}

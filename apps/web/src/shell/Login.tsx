@@ -5,6 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { BerryMark } from '../components/BerryMark';
+import { PRODUCT_NAME } from '../lib/brand';
 
 export function Login() {
     const toast = useToast();
@@ -52,11 +53,11 @@ export function Login() {
             <div className="login-glow" aria-hidden="true" />
             <div className="login-card">
                 <BerryMark className="login-logo" size={72} />
-                <h1>{cfg?.installationName || 'Goobster'}</h1>
+                <h1>{cfg?.installationName || PRODUCT_NAME}</h1>
                 <p className="login-sub">
                     {cfg && cfg.discord === false
-                        ? 'Come in. Memory, parlor, and the tools he built you — all here.'
-                        : 'Come in. Same brain as Discord — memory, parlor, and the tools he built you.'}
+                        ? 'Sign in to chat, keep notes and run projects.'
+                        : 'Sign in to chat, keep notes and run projects. Shares memory with Discord.'}
                 </p>
                 {cfg?.nativeLogin && (
                     <form className="native-login" onSubmit={onNative} aria-label="Sign in with a login name and password">

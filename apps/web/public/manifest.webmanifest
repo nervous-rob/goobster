@@ -1,7 +1,7 @@
 {
   "name": "Goobster",
   "short_name": "Goobster",
-  "description": "Chat with Goobster and browse what he remembers - outside Discord, same brain.",
+  "description": "Goobster: chat, knowledge and projects on your own server, with optional Discord.",
   "id": "/app/",
   "start_url": "/app/",
   "scope": "/app/",

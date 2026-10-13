@@ -30,6 +30,7 @@ import { consumeSharedPayload } from '../lib/shareTarget';
 import { useOnline } from '../lib/pwa';
 import { featureActive } from '../lib/rooms';
 import { Icon } from '../icons/Icon';
+import { assistantName } from '../lib/brand';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -40,9 +41,9 @@ const SUGGESTIONS = [
     'Help me plan a movie night for the server'
 ];
 
-const DEFAULT_HINT = 'Goobster shares memory with your Discord DMs. He can make mistakes.';
+const defaultHint = () => `${assistantName()} shares memory with your Discord DMs. It can make mistakes.`;
 const OFFLINE_HINT = 'You are offline. The draft stays here; sending waits for the connection.';
-const LOCAL_HINT = 'Goobster remembers across your chats here. He can make mistakes.';
+const localHint = () => `${assistantName()} remembers across your chats here. It can make mistakes.`;
 const QUEUE_HINT = 'Enter queues a follow-up — it sends when this reply finishes. Stop is the square beside Send.';
 const INCOGNITO_HINT = 'Incognito: nothing here is saved to history or memory. Close or switch chats and it’s gone.';
 
@@ -757,7 +758,7 @@ export function StudyRoom() {
     async function stopLiveTurn() {
         try {
             await api.stop();
-            toast('Asked Goobster to stop — the partial reply (if any) is kept.');
+            toast(`Asked ${assistantName()} to stop — the partial reply (if any) is kept.`);
         } catch (error) {
             toast((error as Error).message, true);
         }
@@ -847,7 +848,7 @@ export function StudyRoom() {
                                     }}
                                 >
                                     <span className="conv-title-text">{hit.title || 'New chat'}</span>
-                                    <span className="search-snippet">{hit.role === 'assistant' ? 'Goobster: ' : 'You: '}{hit.snippet}</span>
+                                    <span className="search-snippet">{hit.role === 'assistant' ? `${assistantName()}: ` : 'You: '}{hit.snippet}</span>
                                 </button>
                             ))}
                         </>
@@ -886,7 +887,7 @@ export function StudyRoom() {
                             }}><Icon glyph="folder" emoji="📁" /><span className="menu-label">Move to project</span></button>
                         )}
                         <button type="button" className="icon-action" onClick={() => openSettings('connections')}><Icon glyph="puzzle" emoji="🧩" /><span className="menu-label">Connections</span></button>
-                        <button type="button" className="icon-action" data-tour="chat-personal-memory" title="Personal memory — what Goobster knows about you" aria-label="Personal memory" onClick={() => openSettings('memory', 'memory-report')}><Icon glyph="knowledge" emoji="🧠" /><span className="menu-label">Personal memory</span></button>
+                        <button type="button" className="icon-action" data-tour="chat-personal-memory" title={`Personal memory — what ${assistantName()} knows about you`} aria-label="Personal memory" onClick={() => openSettings('memory', 'memory-report')}><Icon glyph="knowledge" emoji="🧠" /><span className="menu-label">Personal memory</span></button>
                         </HeaderOverflow>
                     </div>
                 </header>
@@ -897,7 +898,7 @@ export function StudyRoom() {
                     <div className="turn-banner">
                         <span className="tool-spinner" aria-hidden="true" />
                         <span className="turn-banner-text">
-                            Goobster is still writing a reply you asked for {elapsedLabel(orphanTurn.elapsedMs)} ago
+                            {assistantName()} is still writing a reply you asked for {elapsedLabel(orphanTurn.elapsedMs)} ago
                             {orphanTurn.conversationId != null ? ' in another chat' : ''}.
                             Open that chat to watch it live.
                         </span>
@@ -960,7 +961,7 @@ export function StudyRoom() {
                     {display.length === 0 && (
                         <div className="empty-state">
                             <BerryMark className="empty-logo" size={60} />
-                            <div className="empty-title">{hasInboxContext ? 'Ask about this Inbox item' : 'What can Goobster do for you?'}</div>
+                            <div className="empty-title">{hasInboxContext ? 'Ask about this Inbox item' : `What can ${assistantName()} do for you?`}</div>
                             {hasInboxContext ? <div className="hint">Review the question below, then send when you are ready.</div> : <div className="suggestions">
                                 {suggestions.map((text) => (
                                     <button key={text} type="button" className="suggestion" onClick={() => { setComposer(text); }}>{text}</button>
@@ -1032,7 +1033,7 @@ export function StudyRoom() {
                                 <button
                                     type="button"
                                     className={`icon-action attach voice-chat-btn${voiceChat.active ? ' on' : ''}`}
-                                    title={voiceChat.active ? 'End voice chat' : 'Voice chat — talk with Goobster out loud'}
+                                    title={voiceChat.active ? 'End voice chat' : `Voice chat — talk with ${assistantName()} out loud`}
                                     aria-label={voiceChat.active ? 'End voice chat' : 'Voice chat'}
                                     aria-pressed={voiceChat.active}
                                     onClick={() => {
@@ -1052,8 +1053,8 @@ export function StudyRoom() {
                             data-tour="chat-composer"
                             value={composer}
                             onChange={(e) => setComposer(e.target.value)}
-                            placeholder={enterToSend ? 'Message Goobster… (Enter to send, Shift+Enter for a new line)' : 'Message Goobster… (Enter for a new line, Ctrl/Cmd+Enter to send)'}
-                            aria-label="Message Goobster"
+                            placeholder={enterToSend ? `Message ${assistantName()}… (Enter to send, Shift+Enter for a new line)` : `Message ${assistantName()}… (Enter for a new line, Ctrl/Cmd+Enter to send)`}
+                            aria-label={`Message ${assistantName()}`}
                             maxLength={me.maxInputLength || undefined}
                             onKeyDown={(event) => {
                                 if (event.nativeEvent.isComposing) return;
@@ -1076,7 +1077,7 @@ export function StudyRoom() {
                         </button>
                     </form>
                     <div className="hint attachment-hint">Drop images, PDFs, text files or web links anywhere in this chat.</div>
-                    <div className="composer-hint hint">{!online ? OFFLINE_HINT : incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : (me.discord?.enabled === false ? LOCAL_HINT : DEFAULT_HINT))}</div>
+                    <div className="composer-hint hint">{!online ? OFFLINE_HINT : incognito ? INCOGNITO_HINT : (liveTurn ? QUEUE_HINT : (me.discord?.enabled === false ? localHint() : defaultHint()))}</div>
                 </div>
             </div>
             {shareOpen && activeId !== null && (

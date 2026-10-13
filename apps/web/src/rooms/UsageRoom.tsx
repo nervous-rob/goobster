@@ -7,6 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { Link } from '@tanstack/react-router';
 import { MenuButton } from '../shell/MenuButton';
 import { FailureList, ResourceTotals } from '../components/WorkLedger';
+import { assistantName } from '../lib/brand';
 
 type DayRow = { day: string; inputTokens?: number; outputTokens?: number; calls?: number };
 type ModelRow = { provider: string; model: string; calls: number; inputTokens: number; outputTokens: number };
@@ -220,7 +221,7 @@ export function UsageRoom() {
                             </div>
                         </div>
                         {total === 0 && stats.totals.calls === 0 ? (
-                            <div className="empty">No AI usage recorded in this window — go chat with Goobster!</div>
+                            <div className="empty">No AI usage recorded in this window — go chat with {assistantName()}!</div>
                         ) : (
                             <>
                                 <div className="section-title">Tokens per day</div>

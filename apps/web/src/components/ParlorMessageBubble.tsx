@@ -3,6 +3,7 @@ import { ThinkingSteps } from './ThinkingSteps';
 import { Icon } from '../icons/Icon';
 import type { ParlorMessage, Persona } from '../parlor/types';
 import { personaColor, personaGlyph, timeLabel } from '../parlor/persona';
+import { assistantName } from '../lib/brand';
 
 /**
  * Shared parlor bubble used by the Parlor room and the project chat dock.
@@ -16,7 +17,7 @@ export function ParlorMessageBubble({
     requestGrant,
     showTimestamp = false,
     typingLabel = 'consulting their notes…',
-    fallbackName = 'Goobster'
+    fallbackName = assistantName()
 }: {
     message: ParlorMessage;
     meId: string;

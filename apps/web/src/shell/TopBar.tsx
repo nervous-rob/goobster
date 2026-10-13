@@ -6,6 +6,7 @@ import { ActiveFriends } from './ActiveFriends';
 import { BerryMark } from '../components/BerryMark';
 import { InstallEntry } from '../components/InstallEntry';
 import { Icon, RoomIcon } from '../icons/Icon';
+import { PRODUCT_NAME } from '../lib/brand';
 
 /**
  * The horizontal navigation layout (Settings → Appearance → Navigation →
@@ -49,7 +50,7 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
         <header id="topbar">
             <Link to="/" className={`brand brand-home${room === 'home' ? ' active' : ''}`} aria-label="Home">
                 <BerryMark className="brand-logo" size={24} />
-                <span className="brand-text">Goobster</span>
+                <span className="brand-text">{PRODUCT_NAME}</span>
             </Link>
             <nav className="nav topbar-nav" aria-label="Rooms">
                 {PRIMARY_ROOMS.filter((item) => item.path !== '/' && visible(item)).map((item) => {
@@ -57,9 +58,8 @@ export function TopBar({ me, room, activeNav, themeLabel, onToggleTheme, onLogou
                     const count = roomBadgeCount(item, me);
                     return (
                         <Link key={item.id} to={item.path as never} className={`nav-btn${active ? ' active' : ''}`}
-                            aria-current={active ? 'page' : undefined} data-room={item.id} title={item.secondaryName ? `${item.name} · ${item.secondaryName}` : item.name}>
+                            aria-current={active ? 'page' : undefined} data-room={item.id} title={item.name}>
                             <RoomIcon room={item} /> {item.name}
-                            {item.secondaryName && <span className="nav-secondary">{item.secondaryName}</span>}
                             {count > 0 && <span className="nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
                         </Link>
                     );

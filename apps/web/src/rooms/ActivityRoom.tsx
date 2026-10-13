@@ -29,7 +29,6 @@ export function ActivityRoom() {
                         aria-current={current === view.id ? 'page' : undefined}
                         data-tour={`activity-tab-${view.id}`}>
                         <ViewIcon view={view} /> {view.name}
-                        {view.secondaryName && <span className="activity-tab-secondary">{view.secondaryName}</span>}
                         {view.id === 'inbox' && unread > 0 && (
                             <span className="nav-count" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span>
                         )}

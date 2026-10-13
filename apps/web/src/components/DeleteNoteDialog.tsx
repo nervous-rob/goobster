@@ -7,6 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { Modal } from './Modal';
 import { describeAudience } from './TransferNoteModal';
 import type { NoteDestinations, UserNote } from '../lib/types';
+import { assistantName } from '../lib/brand';
 
 /** The caller's own space (`dm:<userId>`) - the only scope whose notes can be transferred. */
 export function isPersonalScope(scope: string): boolean {
@@ -17,7 +18,7 @@ export function isPersonalScope(scope: string): boolean {
 export function deleteNoteWarning(note: UserNote): string {
     const base = `Delete “${note.label}”? This removes the note, its connections, tags and evidence links from the Map.`;
     if (note.type === 'fact') {
-        return `${base} It is a distilled fact, so Goobster forgets the fact too. The raw memories and chats it came from are not deleted.`;
+        return `${base} It is a distilled fact, so ${assistantName()} forgets the fact too. The raw memories and chats it came from are not deleted.`;
     }
     return `${base} Raw memories and chat transcripts it was distilled from are not deleted - manage those in Personal memory.`;
 }

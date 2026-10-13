@@ -43,7 +43,7 @@ export function UnavailableRoom({ info }: { info: RouteUnavailability }) {
             <header className="pane-header">
                 <div className="title-row">
                     <MenuButton />
-                    <h1>{room.name}{room.secondaryName && <span className="room-secondary">{room.secondaryName}</span>}</h1>
+                    <h1>{room.name}</h1>
                 </div>
             </header>
             <div className="pane-body">

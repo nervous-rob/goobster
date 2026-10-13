@@ -4,6 +4,7 @@ import { managerApi } from './api';
 import { MINT_BOOTSTRAP, MINT_RECOVERY } from './commands';
 import type { ManagerStatus } from './transport';
 import { describeError, Details, ErrorSummary, type Problem } from './ui';
+import { PRODUCT_NAME } from '../lib/brand';
 
 const CREDENTIAL_TEXT: Record<string, string> = {
     BOOTSTRAP_INVALID: 'That setup credential is not valid. It works once and is replaced when it is used or when the manager restarts.',
@@ -21,7 +22,7 @@ export function CredentialHelp({ state, why }: { state: ManagerStatus['state'] |
     return (
         <div className="wizard-callout" data-testid="credential-help">
             {why && <p>{why}</p>}
-            <p>On the machine Goobster is installed on, run this in its folder to get a new one-time {state === 'unclaimed' ? 'setup' : 'recovery'} credential:</p>
+            <p>On the machine {PRODUCT_NAME} is installed on, run this in its folder to get a new one-time {state === 'unclaimed' ? 'setup' : 'recovery'} credential:</p>
             <pre><code data-testid="mint-command">{command}</code></pre>
             <p className="hint">It prints the credential once and it expires in about 15 minutes. Paste it below.</p>
         </div>
@@ -37,7 +38,7 @@ function problemsFor(error: unknown, fieldId: string): { problems: Problem[]; co
 /** First-time setup: the one-time credential and the name of this installation. */
 export function ClaimForm({ status, onDone }: { status: ManagerStatus; onDone: () => void }) {
     const [credential, setCredential] = useState('');
-    const [label, setLabel] = useState('Goobster');
+    const [label, setLabel] = useState(PRODUCT_NAME);
     const [busy, setBusy] = useState(false);
     const [failure, setFailure] = useState<ReturnType<typeof problemsFor> | null>(null);
     const [attempted, setAttempted] = useState(false);

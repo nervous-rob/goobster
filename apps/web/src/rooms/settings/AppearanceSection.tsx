@@ -36,6 +36,7 @@ import { Icon } from '../../icons/Icon';
 import { SCOPE_FOR } from './sectionMeta';
 import { useSession } from '../../hooks/useSession';
 import { START_PAGE_OPTIONS, TOOL_ROOMS, startPageOptionFor } from '../../lib/rooms';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type Values = UserSettingsResponse['sections']['appearance']['values'];
 type Draft = {
@@ -409,7 +410,7 @@ export function AppearanceSection({ section, onDirty }: {
                     onClick={() => d.set({ linkByTag: !d.draft.linkByTag })} />
             </Field>
 
-            <Field id="install-app" label="Install Goobster as an app" scope="This device"
+            <Field id="install-app" label={`Install ${PRODUCT_NAME} as an app`} scope="This device"
                 hint="The portal works as an installed app: its own window, an icon, shortcuts to Chat and the Inbox, an unread badge, and notifications when no tab is open.">
                 <div id="install-app-input">
                     <InstallPrompt />

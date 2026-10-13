@@ -7,6 +7,7 @@ import {
     disablePush, enablePush, getPushSubscription, permissionState, pushSupported, PUSH_STATE_EVENT
 } from '../lib/notifications';
 import { isIos, isStandalone } from '../lib/pwa';
+import { PRODUCT_NAME } from '../lib/brand';
 
 const PUSH_KEY = ['push'] as const;
 
@@ -114,7 +115,7 @@ export function PushSettings() {
         return (
             <div className="hint" data-testid="push-unsupported">
                 {isIos() && !isStandalone()
-                    ? 'On iPhone and iPad, add Goobster to your Home Screen first (Share → Add to Home Screen), then turn notifications on from the installed app.'
+                    ? `On iPhone and iPad, add ${PRODUCT_NAME} to your Home Screen first (Share → Add to Home Screen), then turn notifications on from the installed app.`
                     : 'This browser cannot receive push notifications.'}
             </div>
         );
@@ -125,7 +126,7 @@ export function PushSettings() {
             <div className="hint" data-testid="push-disabled">
                 {data?.reason === 'disabled'
                     ? 'The host turned browser notifications off for this installation.'
-                    : 'This installation has no push keys configured, so browser notifications are unavailable. The host can set them in config.json (webapp.push) or let Goobster generate a pair under data/.'}
+                    : `This installation has no push keys configured, so browser notifications are unavailable. The host can set them in config.json (webapp.push) or let ${PRODUCT_NAME} generate a pair under data/.`}
             </div>
         );
     }

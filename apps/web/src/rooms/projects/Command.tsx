@@ -8,6 +8,7 @@ import { Markdown } from '../../components/Markdown';
 import { Modal } from '../../components/Modal';
 import { ToolChip } from '../../components/ToolChip';
 import { featureActive } from '../../lib/rooms';
+import { assistantName } from '../../lib/brand';
 
 type CommandChip = { name: string; phase: string; isError?: boolean; argsPreview?: string };
 
@@ -23,7 +24,8 @@ export type CommandState = {
 export type CommandTarget = { slug: string; ownerId: string; name?: string } | null;
 
 /** Why the ✨ Command controls are unavailable, in words a person can act on. */
-export const EXECUTION_OFF = 'Code execution is off on this installation. Projects can be organized here, but Goobster cannot run commands, runs or renders in them.';
+/** Read at render time: the assistant's name is runtime configuration (lib/brand). */
+export const executionOff = () => `Code execution is off on this installation. Projects can be organized here, but ${assistantName()} cannot run commands, runs or renders in them.`;
 
 /**
  * The ✨ Command turn: one agent turn with the observatory tool, streamed
@@ -39,7 +41,7 @@ export function useProjectCommand() {
     async function run(instructions: string, target: CommandTarget) {
         const text = instructions.trim();
         if (!text) {
-            toast('Tell Goobster what to do first.', true);
+            toast(`Tell ${assistantName()} what to do first.`, true);
             return;
         }
         const name = target?.name || target?.slug;
@@ -150,9 +152,9 @@ export function CommandButton({ onOpen, big = false, label = '✨ Command' }: { 
             type="button"
             className={`btn primary${big ? ' big' : ''}${executionOn ? '' : ' is-muted'}`}
             aria-disabled={!executionOn}
-            title={executionOn ? 'Give Goobster instructions for this project' : EXECUTION_OFF}
+            title={executionOn ? `Give ${assistantName()} instructions for this project` : executionOff()}
             data-tour="project-command"
-            onClick={() => (executionOn ? onOpen() : toast(EXECUTION_OFF, true))}
+            onClick={() => (executionOn ? onOpen() : toast(executionOff(), true))}
         >{label}</button>
     );
 }
@@ -172,15 +174,15 @@ export function CommandModal({
             <h2>{target ? `Command "${name}"` : 'Command Projects'}</h2>
             <p className="hint">
                 {target
-                    ? 'Goobster continues this project with your instructions — running code, starting runs, or rendering.'
-                    : 'Goobster acts across all your projects — it can create projects, start runs, and render results.'}
+                    ? `${assistantName()} continues this project with your instructions — running code, starting runs, or rendering.`
+                    : `${assistantName()} acts across all your projects — it can create projects, start runs, and render results.`}
             </p>
             <textarea
                 className="input"
                 rows={5}
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
-                placeholder="What should Goobster do?"
+                placeholder={`What should ${assistantName()} do?`}
                 autoFocus
                 onKeyDown={(event) => {
                     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {

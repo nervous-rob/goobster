@@ -49,13 +49,13 @@ export async function accountFetch(url: string, init: RequestInit = {}): Promise
     const scope = lifetime;
     const headers = new Headers(init.headers);
     if (current && privateRequest) {
-        headers.set('X-Goobster-Account', current.user.id);
-        if (current.sessionId) headers.set('X-Goobster-Session', String(current.sessionId));
+        headers.set(`X-Goobster-Account`, current.user.id);
+        if (current.sessionId) headers.set(`X-Goobster-Session`, String(current.sessionId));
     }
     const signal = init.signal ? AbortSignal.any([init.signal, scope.signal]) : scope.signal;
     const response = await fetch(url, { ...init, headers, signal });
     if (scope.signal.aborted) throw new DOMException('Account changed', 'AbortError');
-    if (privateRequest && (response.status === 401 || response.headers.get('X-Goobster-Session-Invalid') === '1')) {
+    if (privateRequest && (response.status === 401 || response.headers.get(`X-Goobster-Session-Invalid`) === '1')) {
         sessionChanged();
         throw new DOMException('Session ended', 'AbortError');
     }

@@ -5,6 +5,7 @@ import { useOpenSettings } from '../../hooks/useOpenSettings';
 import { ROOM_BY_ID, availableViews, resolveKnowledgeView } from '../../lib/rooms';
 import { MenuButton } from '../../shell/MenuButton';
 import { KnowledgeScopeProvider, useKnowledgeScope } from './scope';
+import { assistantName } from '../../lib/brand';
 
 /**
  * Knowledge (Spitball): the things a person keeps. One destination with
@@ -50,7 +51,7 @@ function KnowledgeShell() {
                         type="button"
                         className="btn small"
                         data-tour="knowledge-personal-memory"
-                        title="What Goobster knows about you - facts and memories - lives in Settings → Memory & privacy"
+                        title={`What ${assistantName()} knows about you - facts and memories - lives in Settings → Memory & privacy`}
                         onClick={() => openSettings('memory', 'memory-report')}
                     >
                         🧠 Personal memory
@@ -64,7 +65,6 @@ function KnowledgeShell() {
                         aria-current={current === view.id ? 'page' : undefined}
                         data-tour={`knowledge-view-${view.id}`}>
                         <ViewIcon view={view} /> {view.name}
-                        {view.secondaryName && <span className="view-tab-secondary">{view.secondaryName}</span>}
                     </Link>
                 ))}
             </nav>

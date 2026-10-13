@@ -169,6 +169,7 @@ const GROUPS = [
             'activityCorrelation',
             'tutorialFramework',
             'portalRooms',
+            'portalBrand',
             'projectParlor',
             'pushService',
             'toolChipLabel',

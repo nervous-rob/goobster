@@ -6,6 +6,7 @@ import { OperationProgress, useRun } from '../run';
 import { useTransport } from '../transport';
 import { describeError, ErrorSummary, StepFrame, StepNav, type Problem } from '../ui';
 import { JourneyFrame, PlanFailure, usePlanCheck } from './common';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 const MANAGER_URL = 'http://127.0.0.1:3400/manager/';
 
@@ -67,7 +68,7 @@ export function Uninstall({ step, id, go }: { step: string; id: string | null; g
                         failureHelp={<p>It can be run again; it picks up where it stopped. <a href="#/uninstall/choose">Start again</a>.</p>}>
                         {run.phase === 'applied' && (
                             <div data-testid="uninstall-done" className="wizard-success" role="status">
-                                <p><strong>Goobster has been removed.</strong></p>
+                                <p><strong>{PRODUCT_NAME} has been removed.</strong></p>
                                 <p>{run.operation?.plan.keepData
                                     ? 'Your data and settings were kept; installing again picks them up.'
                                     : 'Your data and settings were deleted with it.'}</p>
@@ -98,16 +99,16 @@ export function Uninstall({ step, id, go }: { step: string; id: string | null; g
                     )}
                     {running && (
                         <div className="wizard-callout" data-testid="workers-running">
-                            <p><strong>Goobster is still running.</strong> It cannot be removed while its programs are running.</p>
+                            <p><strong>{PRODUCT_NAME} is still running.</strong> It cannot be removed while its programs are running.</p>
                             {transport.mode === 'manager' ? (
                                 <p>
-                                    <button type="button" className="btn" onClick={() => void stopWorkers()} disabled={stopping} data-testid="stop-workers">{stopping ? 'Stopping…' : 'Stop Goobster'}</button>
+                                    <button type="button" className="btn" onClick={() => void stopWorkers()} disabled={stopping} data-testid="stop-workers">{stopping ? 'Stopping…' : `Stop ${PRODUCT_NAME}`}</button>
                                     {stopError && <span role="alert" className="settings-danger"> {stopError}</span>}
                                     <span className="hint"> If this manager did not start them, stop them yourself, then check again.</span>
                                 </p>
                             ) : (
                                 <p data-testid="portal-uninstall-note">
-                                    You are using Goobster&apos;s portal, which is one of those programs, so it cannot remove itself from here. Stop Goobster, then finish from the manager at{' '}
+                                    You are using {PRODUCT_NAME}'s portal, which is one of those programs, so it cannot remove itself from here. Stop {PRODUCT_NAME}, then finish from the manager at{' '}
                                     <code>{MANAGER_URL}</code> with a recovery credential.
                                 </p>
                             )}
@@ -125,7 +126,7 @@ export function Uninstall({ step, id, go }: { step: string; id: string | null; g
 
     return (
         <JourneyFrame title="Uninstall">
-            <StepFrame id="uninstall-choose" title="Uninstall Goobster" lead="Choose what happens to your data. Keeping it is the default, and installing again will find it.">
+            <StepFrame id="uninstall-choose" title={`Uninstall ${PRODUCT_NAME}`} lead="Choose what happens to your data. Keeping it is the default, and installing again will find it.">
                 <ErrorSummary problems={problems} />
                 {record.isError && <p role="alert" className="settings-danger">{describeError(record.error).message}</p>}
                 <div role="radiogroup" aria-label="What to do with your data" className="wizard-fieldset">

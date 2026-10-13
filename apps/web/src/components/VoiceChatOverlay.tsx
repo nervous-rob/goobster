@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import type { useVoiceChat, VoiceChatStatus } from '../hooks/useVoiceChat';
+import { assistantName } from '../lib/brand';
 
 /**
  * Full-screen voice-chat surface (the ChatGPT/Gemini voice-mode pattern):
@@ -15,13 +16,16 @@ import type { useVoiceChat, VoiceChatStatus } from '../hooks/useVoiceChat';
 
 type VoiceChatHandle = ReturnType<typeof useVoiceChat>;
 
-const STATUS_LABELS: Record<VoiceChatStatus, string> = {
-    idle: '',
-    listening: 'Listening',
-    transcribing: 'Got it — transcribing…',
-    thinking: 'Goobster is thinking…',
-    speaking: 'Goobster is speaking'
-};
+/** Read at render time: the assistant's name is runtime configuration (lib/brand). */
+function statusLabel(status: VoiceChatStatus): string {
+    switch (status) {
+        case 'listening': return 'Listening';
+        case 'transcribing': return 'Got it — transcribing…';
+        case 'thinking': return `${assistantName()} is thinking…`;
+        case 'speaking': return `${assistantName()} is speaking`;
+        default: return '';
+    }
+}
 
 const SPEED_STEPS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -97,12 +101,12 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
                     className={`voice-orb ${status}${muted ? ' muted' : ''}${talking ? ' talking' : ''}`}
                     style={{ transform: `scale(${orbScale.toFixed(3)})` }}
                     onClick={() => { if (status === 'speaking') voiceChat.interrupt(); }}
-                    aria-label={status === 'speaking' ? 'Interrupt Goobster' : STATUS_LABELS[status]}
+                    aria-label={status === 'speaking' ? `Interrupt ${assistantName()}` : statusLabel(status)}
                 >
                     <span className="voice-orb-core" />
                 </button>
                 <div className="voice-overlay-status">
-                    {muted && status === 'listening' ? 'Muted' : STATUS_LABELS[status]}
+                    {muted && status === 'listening' ? 'Muted' : statusLabel(status)}
                 </div>
                 {hint && <div className="voice-overlay-hint">{hint}</div>}
 
@@ -114,7 +118,7 @@ export function VoiceChatOverlay({ voiceChat }: { voiceChat: VoiceChatHandle }) 
                 ) : null}
                 {showCaptions && status === 'speaking' && speakingText ? (
                     <div className="voice-caption bot">
-                        <span className="voice-caption-who">Goobster</span>
+                        <span className="voice-caption-who">{assistantName()}</span>
                         {speakingText}
                     </div>
                 ) : null}

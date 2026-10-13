@@ -909,6 +909,8 @@ export type AppConfig = {
     /** "Forgot password" by email is available. */
     emailRecovery: boolean;
     installationName: string;
+    /** The assistant's name on this installation (`identity.assistantName`); see lib/brand. */
+    assistantName?: string;
     /** Whether this installation has a Discord adapter at all. */
     discord: boolean;
     passwordMinLength: number;

@@ -8,6 +8,7 @@ import { whenLabel } from '../observatory/format';
 import { STATUS_ICONS, type Job } from './types';
 import type { Trigger } from './AutomationsTab';
 import { featureActive } from '../../lib/rooms';
+import { assistantName } from '../../lib/brand';
 
 const CONTRACT_REASONS: Record<string, string> = {
     missing: 'missing',
@@ -54,7 +55,7 @@ export function RunsList({
         return (
             <div className="empty" data-tour="project-runs-empty">
                 {emptyHint || (executionOn
-                    ? 'No runs yet — open the Conversation and ask Goobster to start one, or run a script from Files.'
+                    ? `No runs yet — open the Conversation and ask ${assistantName()} to start one, or run a script from Files.`
                     : 'No runs yet. Code execution is off on this installation, so runs cannot start here; the project can still be organized.')}
             </div>
         );

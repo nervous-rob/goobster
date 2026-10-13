@@ -10,6 +10,7 @@ import { useTransport } from '../transport';
 import { describeError, ErrorSummary, StepFrame, StepNav, type Problem } from '../ui';
 import { readRun, writeRun } from './Review';
 import type { StepProps } from './order';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type StageState = 'waiting' | 'running' | 'done' | 'skipped' | 'failed';
 type Stage = { id: 'owner' | 'defaults' | 'start'; label: string; state: StageState; note?: string; error?: { message: string; code: string } };
@@ -31,7 +32,7 @@ function PostInstall({ go }: StepProps) {
     const [stages, setStages] = useState<Stage[]>([
         { id: 'owner', label: 'Create the owner account', state: 'waiting' },
         { id: 'defaults', label: 'Save your defaults', state: 'waiting' },
-        { id: 'start', label: 'Start Goobster', state: 'waiting' }
+        { id: 'start', label: `Start ${PRODUCT_NAME}`, state: 'waiting' }
     ]);
     const began = useRef(false);
     const [retryProblems, setRetryProblems] = useState<Problem[]>([]);
@@ -154,7 +155,7 @@ function PostInstall({ go }: StepProps) {
                 </div>
             )}
             {startFailed && (
-                <p className="hint">Goobster could not be started from here. You can try again on the next page, or start it the way you normally do. Recovery: <code>{MINT_RECOVERY}</code></p>
+                <p className="hint">{PRODUCT_NAME} could not be started from here. You can try again on the next page, or start it the way you normally do. Recovery: <code>{MINT_RECOVERY}</code></p>
             )}
             <StepNav onNext={() => go('first-run')} nextLabel="Check that it works" nextDisabled={!settled && !startFailed} />
         </div>
@@ -172,7 +173,7 @@ export function Progress({ go, id }: StepProps & { id: string | null }) {
         );
     }
     return (
-        <StepFrame id="progress" title="Installing Goobster"
+        <StepFrame id="progress" title={`Installing ${PRODUCT_NAME}`}
             lead="Each step is recorded as it finishes. You can reload this page or close it; the install carries on and this page finds it again.">
             <OperationProgress run={run} title="The install" autoStart
                 kept="Nothing of yours was touched: your data and settings are only written once the files are in place."

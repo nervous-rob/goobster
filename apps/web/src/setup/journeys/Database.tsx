@@ -16,6 +16,7 @@ import { blocks } from '../plan';
 import { OperationProgress, useRun } from '../run';
 import { describeError, Findings, StepFrame, StepNav } from '../ui';
 import { JourneyFrame, PlanFailure, usePlanCheck } from './common';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type Go = (step: string, id?: string | null) => void;
 
@@ -24,8 +25,8 @@ const TITLE = 'Database';
 const HELP_BY_CODE: Record<string, string> = {
     MIGRATION_REQUIRED: 'This installation\'s SQLite database holds data. Connecting it to an empty server would leave that data behind, so it is refused: moving the data is the migration (the `migrate` command of the manager, documented in the migration guide). Nothing was changed.',
     NOT_MANAGED: 'This installation was not set up by the manager, so the manager does not change where its data lives. Adopt it first.',
-    SCHEMA_FOREIGN: 'That schema holds tables that are not Goobster\'s. Choose another schema or database; Goobster never writes into one that is shared.',
-    SCHEMA_NEWER: 'That database was written by a newer release of Goobster. Update this installation rather than connecting it.',
+    SCHEMA_FOREIGN: `That schema holds tables that are not ${PRODUCT_NAME}'s. Choose another schema or database; ${PRODUCT_NAME} never writes into one that is shared.`,
+    SCHEMA_NEWER: `That database was written by a newer release of ${PRODUCT_NAME}. Update this installation rather than connecting it.`,
     PROBE_BLOCKED: 'The server test found something that blocks this. Test the connection above and read what it says.',
     ENV_OVERRIDES_OVERLAY: 'The environment this manager runs in sets a database connection of its own, which wins over what is saved here. Remove it from the service environment, then try again.'
 };
@@ -115,14 +116,14 @@ function ConnectionStep({ mode, go }: { mode: 'connect' | 'schema'; go: Go }) {
     const reason = !report || ready || !report.verdict.ok ? null
         : mode === 'connect'
             ? (state === 'empty' ? 'The schema is empty. Update the schema first (back on the Database page), then connect.' : null)
-            : (state === 'goobster-current' ? 'The schema is already up to date: there is nothing to apply.' : 'The schema can only be applied to an empty schema or to Goobster\'s own older one.');
+            : (state === 'goobster-current' ? 'The schema is already up to date: there is nothing to apply.' : `The schema can only be applied to an empty schema or to ${PRODUCT_NAME}'s own older one.`);
 
     return (
         <JourneyFrame title={mode === 'connect' ? 'Connect to a server' : 'Update the schema'}>
             <StepFrame id={`database-${mode}`} title={mode === 'connect' ? 'Connect to a PostgreSQL server' : 'Update the schema'}
                 lead={mode === 'connect'
-                    ? 'Tell Goobster where an existing server is and how to sign in. This saves the connection; it moves no data.'
-                    : 'Brings Goobster\'s tables up to date in a database it already uses, or creates them in an empty schema. Never touches a schema that holds anything else.'}>
+                    ? `Tell ${PRODUCT_NAME} where an existing server is and how to sign in. This saves the connection; it moves no data.`
+                    : `Brings ${PRODUCT_NAME}'s tables up to date in a database it already uses, or creates them in an empty schema. Never touches a schema that holds anything else.`}>
                 {mode === 'connect' && <EngineGuidance layout={status.data?.layout || 'lite'} engine="postgres" />}
                 <ConnectionForm value={database} onChange={setDatabase} problems={problems} passwordLabel={mode === 'connect' ? 'Password of the application user' : 'Password'} />
                 <TestConnection value={database} onReport={setReport} onProblems={setShown} />
@@ -195,7 +196,7 @@ function DockerSetup({ go }: { go: Go }) {
     return (
         <JourneyFrame title="PostgreSQL in Docker">
             <StepFrame id="database-docker" title="Set up PostgreSQL in Docker"
-                lead="The installer creates one container for Goobster, with its own network and storage, and keeps it running. Nothing is connected yet: that is a separate, reviewed step.">
+                lead={`The installer creates one container for ${PRODUCT_NAME}, with its own network and storage, and keeps it running. Nothing is connected yet: that is a separate, reviewed step.`}>
                 <DockerOption value={value} onChange={(next) => update((previous) => ({ ...previous, database: { ...previous.database, docker: next } }))} problems={shown} />
                 <StepNav onBack={() => go('status')}
                     onNext={() => { if (!check.ok) { setShown(check.problems); return; } go('review-docker'); }}
@@ -269,7 +270,7 @@ function NativeSetup({ go }: { go: Go }) {
     return (
         <JourneyFrame title="PostgreSQL on this machine">
             <StepFrame id="database-native" title="Set up PostgreSQL on this machine"
-                lead="The installer creates one PostgreSQL cluster for Goobster, with its own data folder and service, and leaves every other cluster alone. Nothing is connected yet: that is a separate, reviewed step.">
+                lead={`The installer creates one PostgreSQL cluster for ${PRODUCT_NAME}, with its own data folder and service, and leaves every other cluster alone. Nothing is connected yet: that is a separate, reviewed step.`}>
                 <NativeOption value={value} onChange={(next) => update((previous) => ({ ...previous, database: { ...previous.database, native: next } }))} problems={shown} />
                 <StepNav onBack={() => go('status')}
                     onNext={() => { if (!check.ok) { setShown(check.problems); return; } go('review-native'); }}
@@ -295,7 +296,7 @@ function NativeProvisionPlan({ plan }: { plan: NativePlan }) {
     return (
         <div data-testid="plan-native">
             <dl className="wizard-facts">
-                <div className="wizard-fact"><dt>This will</dt><dd>{plan.mode === 'fresh' ? `${installing.length > 0 ? 'Install the PostgreSQL packages, then create' : 'Create'} a cluster of its own, its role, its database and Goobster's tables.` : "Continue an earlier setup of this installation's own cluster."}</dd></div>
+                <div className="wizard-fact"><dt>This will</dt><dd>{plan.mode === 'fresh' ? `${installing.length > 0 ? 'Install the PostgreSQL packages, then create' : 'Create'} a cluster of its own, its role, its database and ${PRODUCT_NAME}'s tables.` : "Continue an earlier setup of this installation's own cluster."}</dd></div>
                 <div className="wizard-fact"><dt>Cluster</dt><dd><code data-testid="plan-native-cluster">{plan.names?.cluster}</code></dd></div>
                 <div className="wizard-fact"><dt>Data</dt><dd><code data-testid="plan-native-data">{plan.names?.dataDirectory || plan.request?.dataDirectory}</code></dd></div>
                 <div className="wizard-fact"><dt>Listens on</dt><dd><code data-testid="plan-native-listen">{plan.request?.bind}:{plan.port?.chosen ?? plan.request?.port}</code></dd></div>

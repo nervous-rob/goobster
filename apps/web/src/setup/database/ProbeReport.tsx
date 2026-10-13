@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { DatabaseFinding, DatabaseReport } from '../../lib/types';
 import { verdictOf } from './model';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 const AUTH_TEXT: Record<DatabaseReport['auth'], string> = {
     ok: 'signed in',
@@ -13,11 +14,11 @@ const AUTH_TEXT: Record<DatabaseReport['auth'], string> = {
 
 const SCHEMA_TEXT: Record<string, string> = {
     'missing-schema': 'does not exist',
-    empty: 'exists and is empty: ready for Goobster\'s tables',
-    'goobster-current': 'already holds Goobster\'s tables for this release',
-    'goobster-older': 'holds Goobster\'s tables from an older release: applying the schema brings them up to date',
-    'goobster-newer': 'was written by a newer release of Goobster: this release will not write into it',
-    foreign: 'holds objects that are not Goobster\'s: Goobster will not write into it'
+    empty: `exists and is empty: ready for ${PRODUCT_NAME}'s tables`,
+    'goobster-current': `already holds ${PRODUCT_NAME}'s tables for this release`,
+    'goobster-older': `holds ${PRODUCT_NAME}'s tables from an older release: applying the schema brings them up to date`,
+    'goobster-newer': `was written by a newer release of ${PRODUCT_NAME}: this release will not write into it`,
+    foreign: `holds objects that are not ${PRODUCT_NAME}'s: ${PRODUCT_NAME} will not write into it`
 };
 
 function Rows({ rows }: { rows: Array<[string, ReactNode]> }) {
@@ -59,7 +60,7 @@ export function ProbeReport({ report, stale = false }: { report: DatabaseReport;
             <FindingList title="Note" items={report.verdict.notes} tone="info" />
             <Rows rows={[
                 ['Server', report.server ? <span key="s" data-testid="db-server">PostgreSQL {report.server.text}{report.server.supported ? '' : ` (needs ${Math.floor(report.server.minimum / 10000)} or newer)`}</span> : 'not reached'],
-                ['Driver in Goobster', report.client.pg ? `pg ${report.client.pg}` : 'unknown'],
+                [`Driver in ${PRODUCT_NAME}`, report.client.pg ? `pg ${report.client.pg}` : 'unknown'],
                 ['Sign-in', <span key="a" data-testid="db-auth" data-auth={report.auth}>{AUTH_TEXT[report.auth]}</span>],
                 ['Encryption', <span key="t" data-testid="db-tls-result">
                     {tls.requested === tls.effective ? tls.effective : `${tls.requested}, used ${tls.effective}`}

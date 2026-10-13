@@ -16,6 +16,7 @@ import { TYPE_COLORS } from '../renderers/graph.js';
 import { CURATION_LABEL, CurationBadge } from '../rooms/knowledge/graphParts';
 import type { Curation, CurationView, UserNote, NotesPayload } from '../lib/types';
 import { featureActive } from '../lib/rooms';
+import { assistantName } from '../lib/brand';
 
 type SortKey = 'updated' | 'label' | 'type';
 
@@ -162,7 +163,7 @@ export function NotesTab({
                             type="button"
                             className={`notes-chip${view === 'all' ? ' on' : ''}`}
                             aria-pressed={view === 'all'}
-                            title="Every row kept in this scope, including what Goobster distilled from conversation"
+                            title={`Every row kept in this scope, including what ${assistantName()} distilled from conversation`}
                             onClick={() => changeView('all')}
                         >
                             All retained knowledge
@@ -171,7 +172,7 @@ export function NotesTab({
                     </div>
                     {view === 'knowledge' && distilled > 0 && (
                         <span className="hint notes-projection-hint">
-                            {distilled} distilled {distilled === 1 ? 'note' : 'notes'} Goobster inferred about you {distilled === 1 ? 'is' : 'are'} not shown here —{' '}
+                            {distilled} distilled {distilled === 1 ? 'note' : 'notes'} {assistantName()} inferred about you {distilled === 1 ? 'is' : 'are'} not shown here —{' '}
                             <button type="button" className="link-btn" onClick={() => changeView('all')}>show everything</button>
                             {' '}or manage them in{' '}
                             <button type="button" className="link-btn" onClick={() => openSettings('memory', 'memory-report')}>Personal memory</button>.

@@ -5,6 +5,7 @@ import { FieldList } from '../fields';
 import { fieldProblems, hasDiscordToken, ownerProblems, PASSWORD_MIN } from '../model';
 import { describeError, ErrorSummary, StepFrame, StepNav, type Problem } from '../ui';
 import type { StepProps } from './order';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 const DISCORD = ['discord.token', 'discord.clientId', 'discord.guildIds'];
 const CLOUD_AI = ['ai.provider', 'ai.openai.apiKey', 'ai.anthropic.apiKey', 'ai.gemini.apiKey'];
@@ -82,14 +83,14 @@ export function Connections({ go }: StepProps) {
                 <>
                     <h3 className="section-title">Discord <span className="hint">(optional)</span></h3>
                     <p className="hint">
-                        With a bot token Goobster joins your Discord server and serves the portal itself. Without one it runs as a web portal only{hasDiscord ? '' : ' (this is what you get now)'}.
+                        With a bot token {PRODUCT_NAME} joins your Discord server and serves the portal itself. Without one it runs as a web portal only{hasDiscord ? '' : ' (this is what you get now)'}.
                     </p>
                     <FieldList ids={DISCORD} report={report} />
                     <h3 className="section-title">AI provider <span className="hint">(optional)</span></h3>
-                    <p className="hint">A cloud key, or a model on this machine (below). With neither, Goobster still runs and falls back to local rules where it can.</p>
+                    <p className="hint">A cloud key, or a model on this machine (below). With neither, {PRODUCT_NAME} still runs and falls back to local rules where it can.</p>
                     <FieldList ids={CLOUD_AI} report={report} />
                     <h3 className="section-title">Local AI with Ollama <span className="hint">(optional, no cloud key)</span></h3>
-                    <p className="hint">If Ollama runs on this machine, point Goobster at it and test the connection.</p>
+                    <p className="hint">If Ollama runs on this machine, point {PRODUCT_NAME} at it and test the connection.</p>
                     <FieldList ids={LOCAL_AI} report={report} />
                     <h3 className="section-title">Sign in</h3>
                     <OwnerForm />

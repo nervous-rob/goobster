@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import type { McpScope, McpScopeInfo, McpToken } from '../lib/types';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
+import { assistantName } from '../lib/brand';
 
 const MCP_KEY = ['mcp-access'] as const;
 const EXPIRY_CHOICES = [30, 90, 365];
@@ -99,7 +100,7 @@ export function McpAccess() {
                     your docs, memories, knowledge, projects, inbox, and research. A documentation-only token
                     reads the manual and nothing private. Tokens expire unless you choose otherwise.
                     {data && !data.enabled && (
-                        <> The endpoint is off until the host turns the <code>mcp</code> feature on (<code>mcp.enabled</code> in config.json or the feature state file) and Goobster restarts. Tokens you create here start working then.</>
+                        <> The endpoint is off until the host turns the <code>mcp</code> feature on (<code>mcp.enabled</code> in config.json or the feature state file) and {assistantName()} restarts. Tokens you create here start working then.</>
                     )}
                     {data?.enabled && <> The server is on at <code>{data.endpoint}</code>.</>}
                 </div>
@@ -107,7 +108,7 @@ export function McpAccess() {
             <div className="settings-field-control">
                 {fresh && (
                     <div className="mcp-secret-block">
-                        <p className="hint">Copy this token now. Goobster stores only a hash of it.</p>
+                        <p className="hint">Copy this token now. {assistantName()} stores only a hash of it.</p>
                         <pre className="mcp-secret">{fresh}</pre>
                         <button type="button" className="btn subtle" onClick={() => copy(fresh)}>Copy token</button>
                     </div>

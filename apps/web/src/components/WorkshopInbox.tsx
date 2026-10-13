@@ -10,6 +10,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../renderers/codeblocks.js';
 import { SaveToProjectModal, type SaveToProjectTarget } from './SaveToProjectModal';
+import { assistantName } from '../lib/brand';
 
 export type InboxApplet = {
     id?: number;
@@ -288,7 +289,7 @@ export function WorkshopInbox({
         <div className="workshop-shell workshop-inbox" data-tour="project-unfiled-apps">
             <div className="section-title">Unfiled apps</div>
             <p className="hint workshop-lead">
-                Mini-apps Goobster built in Chat that do not live in a project yet, plus
+                Mini-apps {assistantName()} built in Chat that do not live in a project yet, plus
                 leftover Workshop pins. This lists generated apps only - not files or reports.
                 Add one to a project to give it a versioned home; pinning still works during
                 this deprecation window.

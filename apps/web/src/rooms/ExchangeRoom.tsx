@@ -6,6 +6,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { MenuButton } from '../shell/MenuButton';
 import { useUserSettings } from '../hooks/useUserSettings';
+import { assistantName } from '../lib/brand';
 
 type ExchangeTab = 'portfolio' | 'trade' | 'options' | 'orders' | 'leaderboard';
 const GUILD_KEY = 'goobster-exchange-guild';
@@ -95,7 +96,7 @@ function errorText(error: unknown): string {
         return 'This installation is not connected to Discord, and the Exchange is a Discord-server game - there is nothing to trade here.';
     }
     if (isBotOffline(error)) {
-        return 'Goobster is offline right now — the Exchange needs the Discord bot connected. Try again once it is back.';
+        return `${assistantName()} is offline right now — the Exchange needs the Discord bot connected. Try again once it is back.`;
     }
     return (error as Error).message || 'Request failed';
 }
@@ -761,8 +762,8 @@ export function ExchangeRoom() {
                         {me.discord?.enabled === false
                             ? 'The Exchange is a Discord-server game - wallets, positions, and the feature switches all live in a server - and this installation is not connected to Discord.'
                             : me.identity && !me.identity.discordLinked
-                                ? 'The Exchange is per-server: wallets and positions live in a Discord server. Connect Discord in Settings → Account and join a server Goobster is in to play.'
-                                : 'The exchange is per-server: wallets, positions, and the feature switches all live in a Discord server. Join a server Goobster is in (or invite him to yours) and it shows up here.'}
+                                ? `The Exchange is per-server: wallets and positions live in a Discord server. Connect Discord in Settings → Account and join a server ${assistantName()} is in to play.`
+                                : `The exchange is per-server: wallets, positions, and the feature switches all live in a Discord server. Join a server ${assistantName()} is in (or invite it to yours) and it shows up here.`}
                     </div>
                 </div>
             </main>

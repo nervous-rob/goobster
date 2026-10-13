@@ -9,6 +9,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { PushSettings } from '../../components/PushSettings';
+import { PRODUCT_NAME, assistantName } from '../../lib/brand';
 
 type Values = UserSettingsResponse['sections']['initiative']['values'];
 type Boundary = { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean };
@@ -113,7 +114,7 @@ export function InitiativeSection({ section, onDirty }: {
     const [toggling, setToggling] = useState(false);
     async function toggleEnabled() {
         if (enabled) {
-            const ok = await confirm('Stop paying attention? Existing notices stay in the inbox; nothing new is generated and he will not DM you.');
+            const ok = await confirm('Stop paying attention? Existing notices stay in the inbox; nothing new is generated and it will not DM you.');
             if (!ok) return;
         }
         setToggling(true);
@@ -124,7 +125,7 @@ export function InitiativeSection({ section, onDirty }: {
             });
             applyResult(result);
             await queryClient.invalidateQueries({ queryKey: keys.attention });
-            toast(!enabled ? 'Goobster is paying attention.' : 'Attention off.');
+            toast(!enabled ? `${assistantName()} is paying attention.` : 'Attention off.');
         } catch (error) {
             toast((error as Error).message, true);
         } finally {
@@ -155,8 +156,8 @@ export function InitiativeSection({ section, onDirty }: {
 
             <Field id="attention-enabled" label="Pay attention on my behalf" inline
                 hint={enabled
-                    ? 'On. He reviews what he can see, keeps a Noticed inbox, and may reach out within the limits below.'
-                    : 'Off. Nothing is generated and he never reaches out. You can still edit the limits below; they take effect when you turn this on.'}>
+                    ? 'On. It reviews what it can see, keeps an Attention list, and may reach out within the limits below.'
+                    : 'Off. Nothing is generated and it never reaches out. You can still edit the limits below; they take effect when you turn this on.'}>
                 <button id="attention-enabled-input" type="button" className={`toggle${enabled ? ' on' : ''}`}
                     role="switch" aria-checked={enabled} aria-label="Pay attention on my behalf"
                     disabled={toggling} onClick={toggleEnabled} />
@@ -230,7 +231,7 @@ export function InitiativeSection({ section, onDirty }: {
             </Field>
 
             <Field id="browser-notifications" label="Browser notifications" scope="This device"
-                hint="Reach this device even when no Goobster tab is open: new Inbox items, mentions in shared discussions and direct messages. Only a title and where to look are sent - never the text.">
+                hint={`Reach this device even when no ${PRODUCT_NAME} tab is open: new Inbox items, mentions in shared discussions and direct messages. Only a title and where to look are sent - never the text.`}>
                 <div id="browser-notifications-input">
                     <PushSettings />
                 </div>
@@ -252,7 +253,7 @@ export function InitiativeSection({ section, onDirty }: {
             </Field>
 
             <Field id="boundaries" label="Boundaries by category"
-                hint="What he may do ahead of time in each area. The initiative level above still gates all of it, and external writes always respect each integration's own approvals.">
+                hint="What it may do ahead of time in each area. The initiative level above still gates all of it, and external writes always respect each integration's own approvals.">
                 <div className="list-card settings-boundaries" id="boundaries-input">
                     <div className="settings-boundary-row head" aria-hidden="true">
                         <span>Area</span><span>Read ahead</span><span>Compute ahead</span><span>External writes</span>

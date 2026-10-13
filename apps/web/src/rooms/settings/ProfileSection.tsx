@@ -3,6 +3,7 @@ import type { UserSettingsResponse } from '../../lib/types';
 import { diffKeys, useReportDirty, useSectionDraft } from '../../hooks/useUserSettings';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
+import { assistantName } from '../../lib/brand';
 
 type Values = UserSettingsResponse['sections']['profile']['values'];
 type Draft = {
@@ -65,10 +66,11 @@ const toDraft = (v: Values): Draft => ({
     personalityPreset: v.personalityPreset || ''
 });
 
-const LABELS: Record<string, string> = {
-    callUser: 'What Goobster calls you in private chats',
+/** Read at render time: the assistant's name is runtime configuration (lib/brand). */
+const labels = (): Record<string, string> => ({
+    callUser: `What ${assistantName()} calls you in private chats`,
     accountPreferredName: 'Account-wide preferred name',
-    callGoobster: 'What you call Goobster',
+    callGoobster: `What you call ${assistantName()}`,
     customInstructions: 'Custom instructions',
     personalityDirective: 'Personality directive',
     memeMode: 'Meme mode',
@@ -81,7 +83,7 @@ const LABELS: Record<string, string> = {
     timeFormat: 'Clock',
     dateLocale: 'Date locale',
     personalityPreset: 'Personality preset'
-};
+});
 
 const TIMEZONES = (() => {
     try {
@@ -114,7 +116,7 @@ export function ProfileSection({ section, onDirty }: {
         <section className="settings-section" aria-labelledby="settings-profile-title">
             <SectionHeader id="profile" scope={SCOPE_FOR[section.scope]} appliesTo={section.appliesTo} />
 
-            <Field id="preferred-name" label="What Goobster calls you" scope="Private chats & DMs"
+            <Field id="preferred-name" label={`What ${assistantName()} calls you`} scope="Private chats & DMs"
                 hint={<>Used in the Study and your DMs. Currently <strong>{effective.callUser}</strong>{!section.values.callUser && ' (from account fallback or Discord)'}. Servers keep their own nickname via <code>/nickname</code>.</>}
                 error={d.draft.callUser.length > NAME_MAX ? nameError : null}>
                 <input id="preferred-name-input" className="input" maxLength={NAME_MAX + 8} value={d.draft.callUser}
@@ -130,16 +132,16 @@ export function ProfileSection({ section, onDirty }: {
                     onChange={(e) => d.set({ accountPreferredName: e.target.value })} />
             </Field>
 
-            <Field id="bot-name" label="What you call Goobster" scope="Private chats & DMs"
-                hint={<>A private alias for him in your DMs and the Study. Currently <strong>{effective.callGoobster}</strong>.</>}
+            <Field id="bot-name" label={`What you call ${assistantName()}`} scope="Private chats & DMs"
+                hint={<>A private alias for the assistant in your DMs and Chat. Currently <strong>{effective.callGoobster}</strong>.</>}
                 error={d.draft.callGoobster.length > NAME_MAX ? nameError : null}>
                 <input id="bot-name-input" className="input" maxLength={NAME_MAX + 8} value={d.draft.callGoobster}
-                    placeholder="Goobster"
+                    placeholder={assistantName()}
                     onChange={(e) => d.set({ callGoobster: e.target.value })} />
             </Field>
 
             <Field id="custom-instructions" label="Custom instructions" scope="Your account"
-                hint="Standing guidance for how he should respond to you — tone, format, things to always keep in mind. Applies in the Study and DMs; servers may add their own directives."
+                hint="Standing guidance for how the assistant should respond to you — tone, format, things to always keep in mind. Applies in Chat and DMs; servers may add their own directives."
                 error={d.draft.customInstructions.length > TEXT_MAX ? `At most ${TEXT_MAX} characters.` : null}>
                 <textarea id="custom-instructions-input" className="input" rows={4} maxLength={TEXT_MAX + 50}
                     value={d.draft.customInstructions}
@@ -149,7 +151,7 @@ export function ProfileSection({ section, onDirty }: {
             </Field>
 
             <Field id="personality-directive" label="Personality directive" scope="Private chats & DMs"
-                hint="A private character note for your conversations only — who he is when it's just you two. Server owners set a separate directive for their server."
+                hint="A private character note for your conversations only — who the assistant is when it's just you two. Server owners set a separate directive for their server."
                 error={d.draft.personalityDirective.length > TEXT_MAX ? `At most ${TEXT_MAX} characters.` : null}>
                 <textarea id="personality-directive-input" className="input" rows={3} maxLength={TEXT_MAX + 50}
                     value={d.draft.personalityDirective}
@@ -170,7 +172,7 @@ export function ProfileSection({ section, onDirty }: {
             </Field>
 
             <Field id="meme-mode" label="Meme mode" inline scope="Your account"
-                hint="Lets him lean into internet humour and references. When this is on, it wins over the structured humor preference below.">
+                hint="Lets the assistant lean into internet humour and references. When this is on, it wins over the structured humor preference below.">
                 <button id="meme-mode-input" type="button" className={`toggle${d.draft.memeMode ? ' on' : ''}`}
                     role="switch" aria-checked={d.draft.memeMode} aria-label="Meme mode"
                     onClick={() => d.set({ memeMode: !d.draft.memeMode })} />
@@ -247,7 +249,7 @@ export function ProfileSection({ section, onDirty }: {
                 </div>
             </Field>
 
-            <SaveBar section="profile" draft={d} describe={(k) => LABELS[k] || k} />
+            <SaveBar section="profile" draft={d} describe={(k) => labels()[k] || k} />
         </section>
     );
 }

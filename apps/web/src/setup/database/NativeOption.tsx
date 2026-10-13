@@ -4,6 +4,7 @@ import type { NativeFinding, NativeStatus } from '../../lib/types';
 import { describeError, formatBytes } from '../ui';
 import { useDatabaseApi } from './api';
 import { nativeProblems, type FormProblem, type NativeAnswer } from './model';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** The host check as a gate: still asking, unusable here, or ready. */
 export type NativeGate =
@@ -141,7 +142,7 @@ export function NativeForm({ value, onChange, status, problems = [] }: FormProps
             )}
             {backup && (
                 <div className="wizard-callout" data-testid="native-tools-problem">
-                    <p>{backup.code === 'BACKUP_TOOLS_MISSING' ? 'pg_dump is not installed on this machine, so Goobster\'s backups cannot read this database.' : `The pg_dump on this machine (${versionOf(backup.version) || 'unknown'}) is older than the database, so Goobster\'s backups cannot read it.`}</p>
+                    <p>{backup.code === 'BACKUP_TOOLS_MISSING' ? `pg_dump is not installed on this machine, so ${PRODUCT_NAME}'s backups cannot read this database.` : `The pg_dump on this machine (${versionOf(backup.version) || 'unknown'}) is older than the database, so ${PRODUCT_NAME}\'s backups cannot read it.`}</p>
                     {backup.remedy && <p className="hint">{backup.remedy}</p>}
                     <label className="wizard-choice">
                         <input type="checkbox" checked={value.acknowledgeBackupTools} onChange={(event) => set('acknowledgeBackupTools', event.target.checked)} data-testid="native-tools-ack" />

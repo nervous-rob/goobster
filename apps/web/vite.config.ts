@@ -9,6 +9,33 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const requireCjs = createRequire(import.meta.url);
 const docsBuilder = requireCjs('./docs/build.cjs');
 const frontendChunks = requireCjs('../../scripts/lib/frontendChunks.js');
+const brand = requireCjs('./brand.config.cjs') as { productName: string };
+
+/**
+ * The product name reaches the bundle three ways (apps/web/brand.config.cjs is
+ * the one place it is spelled): `__PRODUCT_NAME__` for src/lib/brand.ts,
+ * `%PRODUCT_NAME%` in index.html, and a rewrite of the static PWA files in
+ * dist that Vite copies verbatim from public/ (they keep the default name in
+ * their source so the dev server can serve them unchanged).
+ */
+function brandPlugin(): Plugin {
+    const STATIC_FILES = ['manifest.webmanifest', 'offline.html', 'sw.js'];
+    return {
+        name: 'goobster-brand',
+        transformIndexHtml(html) {
+            return html.replace(/%PRODUCT_NAME%/g, brand.productName);
+        },
+        closeBundle(error?: Error) {
+            if (error || brand.productName === 'Goobster') return;
+            const dist = path.join(root, 'dist');
+            for (const file of STATIC_FILES) {
+                const target = path.join(dist, file);
+                if (!fs.existsSync(target)) continue;
+                fs.writeFileSync(target, fs.readFileSync(target, 'utf8').replace(/Goobster/g, brand.productName));
+            }
+        }
+    };
+}
 
 /** Only the explicit shipped Markdown manifest can enter the public bundle. */
 function documentationPlugin(): Plugin {
@@ -141,8 +168,9 @@ function setupClientPlugin(): Plugin {
 }
 
 export default defineConfig({
-    plugins: [react(), stableCssPlugin(), documentationPlugin(), featureChunksPlugin(), setupClientPlugin()],
+    plugins: [react(), brandPlugin(), stableCssPlugin(), documentationPlugin(), featureChunksPlugin(), setupClientPlugin()],
     base: '/app/',
+    define: { __PRODUCT_NAME__: JSON.stringify(brand.productName) },
     resolve: {
         alias: {
             '@music-lab': path.join(root, 'src/music-lab')

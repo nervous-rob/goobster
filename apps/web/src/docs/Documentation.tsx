@@ -4,6 +4,7 @@ import corpus from 'virtual:goobster-docs';
 import search from './search.cjs';
 import { MenuButton } from '../shell/MenuButton';
 import './documentation.css';
+import { PRODUCT_NAME } from '../lib/brand';
 
 const byId = new Map(corpus.pages.map((page) => [page.id, page]));
 
@@ -20,8 +21,8 @@ export function Documentation() {
     const results = useMemo(() => search.searchDocumentation(corpus.pages, query), [query]);
 
     useEffect(() => {
-        document.title = `${page?.title || 'Page not found'} · Goobster Documentation`;
-        return () => { document.title = 'Goobster'; };
+        document.title = `${page?.title || 'Page not found'} · ${PRODUCT_NAME} Documentation`;
+        return () => { document.title = PRODUCT_NAME; };
     }, [page]);
 
     useEffect(() => {
@@ -125,7 +126,7 @@ export function Documentation() {
                             <span>{corpus.revision ? `Source revision ${corpus.revision.slice(0, 8)}` : 'Documentation included in this web build'}</span>
                         </footer>
                     </div> : <div className="docs-reading">
-                        <h2>Page not found</h2><p>This documentation page is not included in this version of Goobster.</p>
+                        <h2>Page not found</h2><p>This documentation page is not included in this version of {PRODUCT_NAME}.</p>
                         <Link to="/docs/$slug" params={{ slug: 'getting-started' }}>Open Getting started</Link>
                     </div>}
                 </article>

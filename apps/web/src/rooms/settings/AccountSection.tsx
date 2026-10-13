@@ -9,6 +9,7 @@ import { Field, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { clearDeviceLocalData, previewDeviceClear } from '../../lib/appearance';
 import { SignInMethods } from './SignInMethods';
+import { assistantName } from '../../lib/brand';
 
 export function AccountSection({ section }: { section: UserSettingsResponse['sections']['account'] }) {
     const me = useSession();
@@ -71,7 +72,7 @@ export function AccountSection({ section }: { section: UserSettingsResponse['sec
             <SectionHeader id="account" scope={SCOPE_FOR[section.scope]} appliesTo={section.appliesTo} />
 
             <Field id="identity" label="Signed in as"
-                hint="Your account id never changes. Changing what Goobster calls you (Profile) never changes this.">
+                hint={`Your account id never changes. Changing what ${assistantName()} calls you (Profile) never changes this.`}>
                 <div className="settings-identity" id="identity-input">
                     {avatar && <img className="avatar" src={avatar} alt="" width={40} height={40} />}
                     <div>

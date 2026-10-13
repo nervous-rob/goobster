@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useToast } from '../hooks/useToast';
 import { INSTALL_FIELD_ID, useInstallPrompt } from '../lib/pwa';
+import { PRODUCT_NAME } from '../lib/brand';
 
 /**
  * One click to install, wherever it is placed (documentation/pwa.md).
@@ -25,7 +26,7 @@ export function useInstallAction(onNavigate?: () => void): { busy: boolean; run:
             setBusy(true);
             const outcome = await install();
             setBusy(false);
-            if (outcome === 'accepted') toast('Goobster is installing.');
+            if (outcome === 'accepted') toast(`${PRODUCT_NAME} is installing.`);
             else if (outcome === 'unavailable') toast('The browser did not offer an install prompt.', true);
         }
     };
@@ -41,7 +42,7 @@ export function InstallEntry({ onNavigate, className = 'nav-btn', role }: {
     if (done) return null;
     return (
         <button type="button" className={`${className} install-entry`} role={role} data-testid="install-nav"
-            disabled={action.busy} title="Install Goobster as an app on this device" onClick={() => void action.run()}>
+            disabled={action.busy} title={`Install ${PRODUCT_NAME} as an app on this device`} onClick={() => void action.run()}>
             <span aria-hidden="true">📲</span> {action.busy ? 'Installing…' : 'Install app'}
         </button>
     );
@@ -59,7 +60,7 @@ export function InstallBanner({ onNavigate }: { onNavigate?: () => void }) {
     return (
         <div className="instance-banner install-banner" role="status" data-testid="install-banner">
             <span>
-                📲 <strong>Install Goobster as an app.</strong>
+                📲 <strong>Install {PRODUCT_NAME} as an app.</strong>
                 {ios && !available
                     ? ' Add it to your Home Screen for full-screen use and notifications.'
                     : ' Own window, an unread badge on the icon, and notifications when no tab is open.'}

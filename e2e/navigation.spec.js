@@ -82,9 +82,9 @@ test.describe('sidebar', () => {
         await expect(nav.getByRole('link', { name: /Usage & limits/ })).toBeVisible();
         await expect(nav.getByRole('link', { name: /Host/ })).toHaveCount(0);
         await expect(page.getByRole('link', { name: /Settings/ })).toBeVisible();
-        // The old room names stay visible as secondary names, never as entries.
-        await expect(nav.getByText('Spitball')).toBeVisible();
-        await expect(nav.getByText('the Parlor')).toBeVisible();
+        // The old house names are not rendered: one vocabulary per destination.
+        await expect(nav.getByText('Spitball')).toHaveCount(0);
+        await expect(nav.getByText('the Parlor')).toHaveCount(0);
         await expect(nav.getByRole('link', { name: /^(Study|Noticed|Tasks|Inbox|Exchange|Decks|Conservatory)\b/ })).toHaveCount(0);
         expect(await nav.locator('a.nav-btn').count()).toBe(PRIMARY.length + 1);
     });

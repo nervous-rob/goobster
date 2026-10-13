@@ -6,6 +6,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { useToast } from '../../hooks/useToast';
 import { Field } from './SectionFrame';
 import { useMe } from '../../hooks/useSession';
+import { assistantName } from '../../lib/brand';
 
 const ACCOUNT_KEY = ['account-summary'];
 
@@ -252,7 +253,7 @@ export function SignInMethods() {
                     ? 'This account is its Discord identity, so Discord cannot be disconnected from it. Add a login name and password above to sign in without Discord.'
                     : data.discord.linked
                         ? 'Connected. Disconnecting keeps your data and password; Discord DMs and server-scoped features stop.'
-                        : 'Connect Discord to reach Goobster from DMs and servers with this account.'}>
+                        : `Connect Discord to reach ${assistantName()} from DMs and servers with this account.`}>
                 <div className="list-card" id="sign-in-discord-input">
                     <div className="list-row">
                         <span>

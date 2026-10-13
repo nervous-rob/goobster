@@ -4,6 +4,7 @@ import { OperationProgress, useRun } from '../run';
 import { useTransport } from '../transport';
 import { describeError, formatBytes, StepFrame, StepNav } from '../ui';
 import { JourneyFrame, PlanFailure, usePlanCheck } from './common';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 type BackupPlan = {
     destination: string; engine: string;
@@ -116,7 +117,7 @@ export function Backup({ step, id, go }: { step: string; id: string | null; go: 
     return (
         <JourneyFrame title="Backup">
             <StepFrame id="backup-form" title="Back up this installation"
-                lead="Write a verified copy of the database, the data files and (optionally) config.json. It only reads the application, so Goobster keeps running.">
+                lead={`Write a verified copy of the database, the data files and (optionally) config.json. It only reads the application, so ${PRODUCT_NAME} keeps running.`}>
                 {status.isError && <p role="alert" className="settings-danger">{describeError(status.error).message}</p>}
                 <div className="wizard-field">
                     <label htmlFor="backup-dir">Where to write it</label>

@@ -30,6 +30,7 @@ import { Welcome } from './steps/Welcome';
 import { Where } from './steps/Where';
 import { type ManagerStatus, WizardTransportProvider } from './transport';
 import { describeError, isSessionProblem, LiveRegion, StepFrame } from './ui';
+import { PRODUCT_NAME } from '../lib/brand';
 
 const MAINTENANCE_ANSWERS = 'goobster-setup-maintenance-answers';
 const AFTER_INSTALL = new Set(['progress', 'first-run', 'done']);
@@ -67,7 +68,7 @@ function Page({ children, banner }: { children: ReactNode; banner?: ReactNode })
     return (
         <main className="wizard-page">
             <header className="wizard-header">
-                <h1>Goobster</h1>
+                <h1>{PRODUCT_NAME}</h1>
                 <span className="hint">Installation manager</span>
             </header>
             {banner}
@@ -80,7 +81,7 @@ function RecoveryState({ reason }: { reason?: string | null }) {
     return (
         <StepFrame id="recovery-state" title="This installation needs attention first"
             lead={reason ? `The manager reports: ${reason}` : 'The manager is in recovery: it cannot read the installation record or the saved settings.'}>
-            <p>Goobster files already exist here, but the manager has no record of installing them. Nothing is installed over them from this page. Adopting or restoring the record is done from the command line on the machine:</p>
+            <p>{PRODUCT_NAME} files already exist here, but the manager has no record of installing them. Nothing is installed over them from this page. Adopting or restoring the record is done from the command line on the machine:</p>
             <pre><code>node apps/manager/cli.js adopt</code></pre>
             <p className="hint">Run the manager&apos;s command line help to see every option. When the record reads again, reload this page.</p>
         </StepFrame>
@@ -238,7 +239,7 @@ function Shell() {
     }
 
     const note = !installed && manager.existingInstallation && !maintenance && (step === 'welcome' || step === 'where')
-        ? <p className="wizard-callout" data-testid="existing-files">The manager found Goobster files on this machine already (a settings file or a database). Setup works with them; it never deletes anything.</p>
+        ? <p className="wizard-callout" data-testid="existing-files">The manager found {PRODUCT_NAME} files on this machine already (a settings file or a database). Setup works with them; it never deletes anything.</p>
         : null;
 
     return (

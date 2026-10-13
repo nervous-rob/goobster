@@ -13,6 +13,7 @@ import { WizardTransportProvider } from '../../setup/transport';
 import '../../setup/setup.css';
 import { ManagerNotice, useManagerStatus } from './ManagerCard';
 import { DocLink } from './shared';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 const ANSWERS_KEY = 'goobster-portal-maintenance-answers';
 const FIRST_STEP: Record<string, string> = { backup: 'form', restore: 'source', reset: 'scope', migration: 'status' };
@@ -49,7 +50,7 @@ function Hub() {
             <BarrierPanel canRelease={false} />
             {restore && restore.status !== 'completed' && <RestoreStatusPanel restore={restore} />}
             <ul className="wizard-list" data-testid="maintenance-list">
-                <li><strong>Backup</strong>: a verified copy of the database, the data files and (encrypted) <code>config.json</code>. Goobster keeps running.</li>
+                <li><strong>Backup</strong>: a verified copy of the database, the data files and (encrypted) <code>config.json</code>. {PRODUCT_NAME} keeps running.</li>
                 <li><strong>Restore</strong>: replace the data from a backup. The portal goes offline while it runs and the instance comes back paused; you continue on the manager page.</li>
                 <li><strong>Reset</strong>: empty one feature&apos;s data or all of it, after a verified backup. It runs from the manager page or the command line.</li>
                 <li><strong>Migration</strong>: SQLite to Postgres. Status and the rollback boundary here; the move itself is a command.</li>

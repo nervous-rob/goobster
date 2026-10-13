@@ -67,10 +67,7 @@ export function ToolsRoom() {
                             <>
                                 <div className="tools-card-head">
                                     <span className="tools-card-icon" aria-hidden="true"><RoomIcon room={tool} /></span>
-                                    <div>
-                                        <div className="tools-card-title">{tool.name}</div>
-                                        {tool.secondaryName && <div className="hint tools-card-secondary">{tool.secondaryName}</div>}
-                                    </div>
+                                    <div className="tools-card-title">{tool.name}</div>
                                 </div>
                                 <p className="tools-card-blurb">{tool.blurb}</p>
                                 {available

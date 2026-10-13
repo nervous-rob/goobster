@@ -11,6 +11,7 @@ import { Markdown } from '../components/Markdown';
 import { MenuButton } from '../shell/MenuButton';
 import { failureKindLabel } from '../components/WorkLedger';
 import type { InboxItem, InboxKind } from '../lib/types';
+import { assistantName } from '../lib/brand';
 
 /**
  * The Inbox: where the results of unattended work land - reminders,
@@ -393,10 +394,10 @@ export function InboxRoom() {
                                             <div className="inbox-body">
                                                 <div className="inbox-ask-details">
                                                     {item.ask?.available ? <>
-                                                        <button type="button" className="btn primary" disabled={asking} onClick={() => void ask(item)}>Ask Goobster</button>
+                                                        <button type="button" className="btn primary" disabled={asking} onClick={() => void ask(item)}>Ask {assistantName()}</button>
                                                         {item.ask.project && <button type="button" className="btn" disabled={asking} onClick={() => void ask(item, true)}>Ask in the project</button>}
                                                     </> : <div className="hint">{item.ask?.reason}</div>}
-                                                    {item.ask?.project && <div className="hint">Ask Goobster opens private Chat. Ask in the project opens its shared Conversation.</div>}
+                                                    {item.ask?.project && <div className="hint">Ask {assistantName()} opens private Chat. Ask in the project opens its shared Conversation.</div>}
                                                 </div>
                                                 {item.body || item.attachments.length > 0
                                                     ? <Markdown source={item.body || ''} attachments={item.attachments.map((a) => ({ url: a.url, name: a.name || undefined }))} />
@@ -408,8 +409,8 @@ export function InboxRoom() {
                                         {item.link && (
                                             <Link to={item.link as never} className="btn subtle" title="Open where this came from">Open →</Link>
                                         )}
-                                        {item.ask?.available && <button type="button" className="btn subtle inbox-ask-compact" aria-label={`Ask Goobster about ${item.title}`} disabled={asking}
-                                            onClick={() => void ask(item)}>Ask Goobster</button>}
+                                        {item.ask?.available && <button type="button" className="btn subtle inbox-ask-compact" aria-label={`Ask ${assistantName()} about ${item.title}`} disabled={asking}
+                                            onClick={() => void ask(item)}>Ask {assistantName()}</button>}
                                         <button type="button" className="btn subtle" onClick={() => toggleRead(item)}>
                                             {item.read ? 'Unread' : 'Read'}
                                         </button>

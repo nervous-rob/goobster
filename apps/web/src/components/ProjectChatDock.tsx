@@ -13,6 +13,7 @@ import type { Attachment, Grounding, ParlorMessage, Persona } from '../parlor/ty
 import { personaColor, personaGlyph } from '../parlor/persona';
 import { applyParlorDelta, applyParlorMessage, applyParlorTool, settleParlorStream } from '../parlor/stream';
 import type { ToolEvent } from '../lib/types';
+import { assistantName } from '../lib/brand';
 
 /**
  * The project parlor dock (§14): a slim view of the project's shared
@@ -184,7 +185,7 @@ export function ProjectChatDock({
         let speaker: ParlorMessage = { role: 'persona', personaId: fallbackPersonaId, personaName: personaById(fallbackPersonaId)?.name, content: '' };
         return {
             onPersonaStart: (data: { personaId?: number; name?: string }) => {
-                const persona = personaById(data.personaId) || { id: data.personaId || 0, name: data.name || 'Goobster' };
+                const persona = personaById(data.personaId) || { id: data.personaId || 0, name: data.name || assistantName() };
                 speaker = { role: 'persona', personaId: persona.id, personaName: persona.name, content: '' };
                 setStreamMessages((prev) => [...prev, { ...speaker, typing: true }]);
             },
@@ -259,7 +260,7 @@ export function ProjectChatDock({
                     <div className="obs-chat-dock-head">
                         <div className="obs-chat-dock-title">
                             <strong>Project chat</strong>
-                            <span className="hint">Everyone on {projectName}, including Goobster</span>
+                            <span className="hint">Everyone on {projectName}, including {assistantName()}</span>
                         </div>
                         <div className="obs-chat-dock-head-actions">
                             {projectConversations.length > 0 && (
@@ -322,7 +323,7 @@ export function ProjectChatDock({
                             <div className="empty">{(parlorQ.error as Error)?.message || 'The project table is unavailable.'}</div>
                         ) : display.length === 0 ? (
                             <div className="empty">
-                                Talk with Goobster - and everyone on this project - about {projectName}.
+                                Talk with {assistantName()} - and everyone on this project - about {projectName}.
                             </div>
                         ) : (
                             <ParlorConversationView
@@ -344,7 +345,7 @@ export function ProjectChatDock({
                             rows={3}
                             value={composer}
                             onChange={(e) => setComposer(e.target.value)}
-                            placeholder={`Message the ${projectName} table… ("Goobster, …" to put it to work)`}
+                            placeholder={`Message the ${projectName} table… ("${assistantName()}, …" to put it to work)`}
                             disabled={sending || conversationId == null}
                             onKeyDown={(event) => {
                                 if (event.key === 'Enter' && !event.shiftKey) {

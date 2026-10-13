@@ -5,6 +5,7 @@ import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { whenLabel } from './format';
+import { assistantName } from '../../lib/brand';
 
 type Criterion = { id: string; text: string };
 type Choice = { id: string; label: string };
@@ -170,7 +171,7 @@ function DraftForm({
             <div className="section-title">Start a plan</div>
             <p className="hint">
                 One outcome, how you will know it worked, and a plan you can approve in under a minute.
-                Ask Goobster in the project Conversation if you would rather draft it conversationally.
+                Ask {assistantName()} in the project Conversation if you would rather draft it conversationally.
             </p>
             <label className="obs-mission-field">
                 <span>Title</span>
@@ -303,7 +304,7 @@ function MissionView({
 
             <div className="section-title">Steps</div>
             {mission.steps.length === 0
-                ? <div className="empty">No steps yet — add one below or ask Goobster to plan.</div>
+                ? <div className="empty">No steps yet — add one below or ask {assistantName()} to plan.</div>
                 : (
                     <div className="list-card">
                         {mission.steps.map((step) => {

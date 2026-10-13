@@ -4,6 +4,7 @@ import type { DockerFinding, DockerStatus } from '../../lib/types';
 import { describeError, formatBytes } from '../ui';
 import { useDatabaseApi } from './api';
 import { dockerProblems, type DockerAnswer, type FormProblem } from './model';
+import { PRODUCT_NAME } from '../../lib/brand';
 
 /** The daemon check as a gate: still asking, usable, or blocked with the first reason and its remedy. */
 export type DockerGate =
@@ -135,7 +136,7 @@ export function DockerForm({ value, onChange, status, problems = [] }: FormProps
             )}
             {toolsProblem && (
                 <div className="wizard-callout" data-testid="docker-tools-problem">
-                    <p>{toolsProblem.code === 'BACKUP_TOOLS_MISSING' ? 'pg_dump is not installed on this machine, so Goobster\'s backups cannot read this database.' : `The pg_dump on this machine (${toolsProblem.version || 'unknown'}) is older than the database, so Goobster\'s backups cannot read it.`}</p>
+                    <p>{toolsProblem.code === 'BACKUP_TOOLS_MISSING' ? `pg_dump is not installed on this machine, so ${PRODUCT_NAME}'s backups cannot read this database.` : `The pg_dump on this machine (${toolsProblem.version || 'unknown'}) is older than the database, so ${PRODUCT_NAME}\'s backups cannot read it.`}</p>
                     {toolsProblem.remedy && <p className="hint">{toolsProblem.remedy}</p>}
                     <label className="wizard-choice">
                         <input type="checkbox" checked={value.acknowledgeBackupTools} onChange={(event) => set('acknowledgeBackupTools', event.target.checked)} data-testid="docker-tools-ack" />

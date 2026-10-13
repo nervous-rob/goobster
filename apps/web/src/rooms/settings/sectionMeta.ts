@@ -1,4 +1,5 @@
 import type { SettingsSectionId } from '../../lib/types';
+import { PRODUCT_NAME, assistantName } from '../../lib/brand';
 
 export type ScopeLabel = 'Your account' | 'Private chats & DMs' | 'This device' | 'A server you pick';
 
@@ -25,13 +26,14 @@ export const SCOPE_FOR: Record<'private' | 'account' | 'device', ScopeLabel> = {
     device: 'This device'
 };
 
-export const SECTIONS: SectionMeta[] = [
+function buildSections(): SectionMeta[] {
+    return [
     {
         id: 'profile',
         title: 'Profile',
         icon: '🪪',
         scope: 'Private chats & DMs',
-        blurb: 'What Goobster calls you, what you call him, standing instructions, and conversation-style defaults.',
+        blurb: `What ${assistantName()} calls you, what you call it, standing instructions, and conversation-style defaults.`,
         keywords: ['name', 'nickname', 'call me', 'alias', 'identity', 'instructions', 'personality', 'directive', 'meme', 'tone', 'length', 'language', 'timezone', 'units', 'preset']
     },
     {
@@ -55,7 +57,7 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Initiative',
         icon: '🧭',
         scope: 'Your account',
-        blurb: 'How proactive Goobster is allowed to be, how often he may reach out, and when to stay quiet.',
+        blurb: `How proactive ${assistantName()} is allowed to be, how often it may reach out, and when to stay quiet.`,
         keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm', 'presence', 'snooze', 'push', 'browser notifications']
     },
     {
@@ -63,7 +65,7 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Memory & privacy',
         icon: '🧠',
         scope: 'Private chats & DMs',
-        blurb: 'How long private memories are kept, new-chat privacy, what Goobster knows about you, and the exits.',
+        blurb: `How long private memories are kept, new-chat privacy, what ${assistantName()} knows about you, and the exits.`,
         keywords: ['memory', 'retention', 'privacy', 'forget me', 'facts', 'remember', 'history', 'purge', 'delete', 'report', 'what do you know', 'incognito', 'export', 'shares', 'learn', 'recall']
     },
     {
@@ -71,7 +73,7 @@ export const SECTIONS: SectionMeta[] = [
         title: 'Connections',
         icon: '🔗',
         scope: 'Your account',
-        blurb: 'Developer accounts Goobster may act through on your behalf, and read-only MCP tokens for external clients.',
+        blurb: `Developer accounts ${assistantName()} may act through on your behalf, and read-only MCP tokens for external clients.`,
         keywords: ['github', 'notion', 'integrations', 'connect', 'accounts', 'tokens', 'pat', 'allowlist', 'repos', 'pages', 'mcp', 'cursor', 'claude', 'personal ai', 'openrouter', 'byok', 'api key']
     },
     {
@@ -98,14 +100,14 @@ export const SECTIONS: SectionMeta[] = [
         blurb: 'Resume, replay, or reset each room tour. Auto-start offers orientation once; resetting never changes your notes or tools.',
         keywords: ['tutorial', 'tour', 'onboarding', 'guide', 'resume', 'replay', 'reset', 'orientation', 'auto-start', 'walkthrough']
     }
-];
+    ];
+}
 
-export const SECTION_BY_ID = Object.fromEntries(SECTIONS.map((s) => [s.id, s])) as Record<SettingsSectionId, SectionMeta>;
-
-export const FIELDS: FieldMeta[] = [
-    { section: 'profile', fieldId: 'preferred-name', label: 'What Goobster calls you', keywords: ['name', 'nickname', 'call me', 'alias', 'my name'] },
+function buildFields(): FieldMeta[] {
+    return [
+    { section: 'profile', fieldId: 'preferred-name', label: `What ${assistantName()} calls you`, keywords: ['name', 'nickname', 'call me', 'alias', 'my name'] },
     { section: 'profile', fieldId: 'account-name', label: 'Account-wide preferred name', keywords: ['fallback name', 'account name', 'preferred name', 'display name'] },
-    { section: 'profile', fieldId: 'bot-name', label: 'What you call Goobster', keywords: ['bot name', 'rename goobster', 'alias', 'call him'] },
+    { section: 'profile', fieldId: 'bot-name', label: `What you call ${assistantName()}`, keywords: ['bot name', 'rename', 'alias', 'assistant name'] },
     { section: 'profile', fieldId: 'custom-instructions', label: 'Custom instructions', keywords: ['instructions', 'how to respond', 'style', 'prompt'] },
     { section: 'profile', fieldId: 'personality-directive', label: 'Personality directive', keywords: ['personality', 'directive', 'character', 'persona'] },
     { section: 'profile', fieldId: 'meme-mode', label: 'Meme mode', keywords: ['meme', 'jokes', 'silly', 'fun'] },
@@ -156,7 +158,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'memory', fieldId: 'account-export', label: 'Export your account', keywords: ['export', 'archive', 'download everything', 'takeout', 'backup', 'markdown', 'json'] },
     { section: 'memory', fieldId: 'shares', label: 'Shared links', keywords: ['shares', 'links', 'revoke', 'public'] },
     { section: 'memory', fieldId: 'applets', label: 'Applet access', keywords: ['applets', 'grants', 'workshop', 'capabilities'] },
-    { section: 'memory', fieldId: 'memory-report', label: 'What Goobster knows about you', keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency', 'personal memory', 'about you', 'distilled'] },
+    { section: 'memory', fieldId: 'memory-report', label: `What ${assistantName()} knows about you`, keywords: ['report', 'what do you know', 'facts', 'memories', 'transparency', 'personal memory', 'about you', 'distilled'] },
     { section: 'memory', fieldId: 'memory-scopes', label: 'Inspect a server scope', keywords: ['server', 'guild', 'scope', 'advanced', 'facts in a server', 'server memories'] },
     { section: 'memory', fieldId: 'deletion-rules', label: 'What deleting removes', keywords: ['delete', 'deletion', 'linked copies', 'provenance', 'what is removed', 'transcripts'] },
     { section: 'memory', fieldId: 'forget-me', label: 'Forget me', keywords: ['forget', 'erase', 'delete everything', 'wipe', 'gdpr'] },
@@ -164,8 +166,8 @@ export const FIELDS: FieldMeta[] = [
     { section: 'connections', fieldId: 'mcp-access', label: 'MCP access', keywords: ['mcp', 'cursor', 'claude', 'model context protocol', 'token', 'read only'] },
     { section: 'connections', fieldId: 'github', label: 'GitHub', keywords: ['github', 'git', 'repos', 'pull requests', 'token'] },
     { section: 'connections', fieldId: 'notion', label: 'Notion', keywords: ['notion', 'pages', 'notes', 'token'] },
-    { section: 'connections', fieldId: 'github-allowlist', label: 'GitHub repos Goobster may use', keywords: ['allowlist', 'repos', 'github repos'] },
-    { section: 'connections', fieldId: 'notion-allowlist', label: 'Notion pages Goobster may use', keywords: ['allowlist', 'pages', 'notion pages'] },
+    { section: 'connections', fieldId: 'github-allowlist', label: `GitHub repos ${assistantName()} may use`, keywords: ['allowlist', 'repos', 'github repos'] },
+    { section: 'connections', fieldId: 'notion-allowlist', label: `Notion pages ${assistantName()} may use`, keywords: ['allowlist', 'pages', 'notion pages'] },
     { section: 'appearance', fieldId: 'theme', label: 'Theme', keywords: ['theme', 'dark', 'light', 'system', 'color scheme'] },
     { section: 'appearance', fieldId: 'accent', label: 'Accent color', keywords: ['accent', 'color', 'colour', 'palette', 'tint', 'blueberry', 'ocean', 'mint', 'sunset', 'rose', 'violet', 'amber', 'graphite'] },
     { section: 'appearance', fieldId: 'surface', label: 'Surface', keywords: ['surface', 'whitespace', 'background', 'grey', 'gray', 'neutral', 'tinted', 'tint', 'orb', 'glow'] },
@@ -183,7 +185,7 @@ export const FIELDS: FieldMeta[] = [
     { section: 'appearance', fieldId: 'link-by-tag', label: 'Link notes by shared tag', keywords: ['tags', 'link by tag', 'map', 'graph', 'spitball'] },
     { section: 'appearance', fieldId: 'expedition-defaults', label: 'Defaults for new expeditions', keywords: ['expedition', 'depth', 'lens', 'spitball defaults'] },
     { section: 'appearance', fieldId: 'parlor-defaults', label: 'Defaults for new personas', keywords: ['parlor', 'persona defaults', 'charter', 'emoji'] },
-    { section: 'appearance', fieldId: 'install-app', label: 'Install Goobster as an app', keywords: ['install', 'pwa', 'app', 'home screen', 'desktop', 'standalone', 'shortcut', 'badge'] },
+    { section: 'appearance', fieldId: 'install-app', label: `Install ${PRODUCT_NAME} as an app`, keywords: ['install', 'pwa', 'app', 'home screen', 'desktop', 'standalone', 'shortcut', 'badge'] },
     { section: 'appearance', fieldId: 'conservatory', label: 'Music Lab library', keywords: ['conservatory', 'music lab', 'music', 'local storage'] },
     { section: 'account', fieldId: 'identity', label: 'Signed in as', keywords: ['account', 'discord', 'who am i', 'identity', 'user id'] },
     { section: 'account', fieldId: 'sign-in-password', label: 'Login name & password', keywords: ['password', 'passphrase', 'login name', 'username', 'change password', 'sign in without discord'] },
@@ -195,7 +197,34 @@ export const FIELDS: FieldMeta[] = [
     { section: 'tutorials', fieldId: 'tutorial-auto-start', label: 'Auto-start tours', keywords: ['auto-start', 'orientation', 'offer'] },
     { section: 'tutorials', fieldId: 'tutorial-list', label: 'Tours', keywords: ['resume', 'replay', 'reset', 'tour', 'progress'] },
     { section: 'tutorials', fieldId: 'tutorial-reset-all', label: 'Reset all tours', keywords: ['reset all', 'clear tutorials'] }
-];
+    ];
+}
+
+const SECTION_IDS: readonly SettingsSectionId[] = ['profile', 'chat', 'voice', 'initiative', 'memory', 'connections', 'appearance', 'account', 'tutorials'];
+
+/**
+ * Labels and blurbs name the assistant, whose name is runtime configuration
+ * (lib/brand), so the registry is built on first read and rebuilt only if
+ * that name changes.
+ */
+let registryCache: { name: string; sections: SectionMeta[]; fields: FieldMeta[]; byId: Record<SettingsSectionId, SectionMeta> } | null = null;
+function registry() {
+    const name = assistantName();
+    if (!registryCache || registryCache.name !== name) {
+        const built = buildSections();
+        registryCache = {
+            name,
+            sections: built,
+            fields: buildFields(),
+            byId: Object.fromEntries(built.map((s) => [s.id, s])) as Record<SettingsSectionId, SectionMeta>
+        };
+    }
+    return registryCache;
+}
+
+export function sections(): SectionMeta[] { return registry().sections; }
+export function fields(): FieldMeta[] { return registry().fields; }
+export function sectionById(id: SettingsSectionId): SectionMeta { return registry().byId[id]; }
 
 export type SearchHit = { field: FieldMeta; section: SectionMeta; score: number };
 
@@ -213,8 +242,8 @@ export function searchSettings(query: string): SearchHit[] {
     if (!q) return [];
     const qTokens = tokens(q);
     const hits: SearchHit[] = [];
-    for (const field of FIELDS) {
-        const section = SECTION_BY_ID[field.section];
+    for (const field of fields()) {
+        const section = sectionById(field.section);
         const label = field.label.toLowerCase();
         let score = 0;
         if (label.includes(q)) score += 10;
@@ -234,5 +263,5 @@ export function searchSettings(query: string): SearchHit[] {
 }
 
 export function isSectionId(value: string | undefined): value is SettingsSectionId {
-    return Boolean(value) && Object.prototype.hasOwnProperty.call(SECTION_BY_ID, value as string);
+    return Boolean(value) && (SECTION_IDS as readonly string[]).includes(value as string);
 }
