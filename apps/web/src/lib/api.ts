@@ -664,6 +664,16 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`, { method: 'POST', body }),
     projectRepoAction: (project: string, name: string, action: 'pull' | 'commit' | 'push' | 'branch' | 'merge' | 'rebase' | 'continue' | 'abort' | 'reset', body: Record<string, unknown> = {}, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
+    projectRepoBranches: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/branches${ownerQs(owner)}`),
+    projectRepoCompare: (project: string, name: string, base: string, head: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/compare${ownerQs(owner, { base, head })}`),
+    projectRepoCi: (project: string, name: string, ref: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/ci${ownerQs(owner, { ref })}`),
+    projectRepoPulls: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/pulls${ownerQs(owner)}`),
+    createProjectRepoPull: (project: string, name: string, body: Record<string, unknown>, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/pulls${ownerQs(owner)}`, { method: 'POST', body }),
     removeProjectRepo: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}${ownerQs(owner)}`, { method: 'DELETE' }),
     projectTriggers: (project: string, owner?: string | null) =>

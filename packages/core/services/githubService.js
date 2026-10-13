@@ -115,6 +115,14 @@ class GitHubService {
                     : 'GitHub refused the request (403).'
             );
         }
+        if (response.status === 422) {
+            let detail = '';
+            try {
+                const parsed = await response.json();
+                detail = [parsed?.message, ...(parsed?.errors || []).map(e => e?.message).filter(Boolean)].filter(Boolean).join(' - ');
+            } catch { /* no body */ }
+            throw new GitHubError('INVALID', `GitHub rejected the request: ${detail.slice(0, 300) || '422'}`);
+        }
         if (!response.ok) {
             throw new GitHubError('UNAVAILABLE', `GitHub request failed (${response.status}).`);
         }
@@ -149,6 +157,47 @@ class GitHubService {
     async listPullRequestFiles(rawRepo, number, { limit = 30 } = {}) {
         const repo = this.parseRepo(rawRepo);
         return await this._request(`/repos/${repo}/pulls/${Number(number)}/files`, { params: { per_page: limit } });
+    }
+
+    /** Branches of a repository (name, protected, head sha), up to 100. */
+    async listBranches(rawRepo, { limit = 100 } = {}) {
+        const repo = this.parseRepo(rawRepo);
+        return await this._request(`/repos/${repo}/branches`, { params: { per_page: Math.min(limit, 100) } });
+    }
+
+    /**
+     * Open a pull request. Write operation: requires a token with
+     * "Pull requests: Read and write" on the repo.
+     * @returns {Promise<{number, html_url, title, draft}>}
+     */
+    async createPullRequest(rawRepo, { title, body = '', head, base, draft = false } = {}) {
+        if (!this.hasToken()) {
+            throw new GitHubError('TOKEN_REQUIRED', 'Opening a pull request needs a GitHub token with Pull requests write access.');
+        }
+        const repo = this.parseRepo(rawRepo);
+        const cleanTitle = String(title || '').trim();
+        if (!cleanTitle) throw new GitHubError('BAD_INPUT', 'A pull request needs a title.');
+        return await this._request(`/repos/${repo}/pulls`, {
+            method: 'POST',
+            body: { title: cleanTitle.slice(0, 250), body: String(body || '').slice(0, 60_000), head, base, draft: Boolean(draft) }
+        });
+    }
+
+    /** Check runs and the legacy combined status for one ref (branch, tag or sha). */
+    async getChecks(rawRepo, ref) {
+        const repo = this.parseRepo(rawRepo);
+        const encoded = encodeURIComponent(String(ref));
+        const [runs, status] = await Promise.all([
+            this._request(`/repos/${repo}/commits/${encoded}/check-runs`, { params: { per_page: 50 } }).catch(error => {
+                if (error.code === 'NOT_FOUND') return { check_runs: [] };
+                throw error;
+            }),
+            this._request(`/repos/${repo}/commits/${encoded}/status`).catch(error => {
+                if (error.code === 'NOT_FOUND') return { statuses: [] };
+                throw error;
+            })
+        ]);
+        return { runs: runs?.check_runs || [], statuses: status?.statuses || [] };
     }
 
     /** Issues (GitHub's endpoint also returns PRs; callers may filter on pull_request). */

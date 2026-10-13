@@ -89,12 +89,30 @@ rest:
 
 ## Out of scope
 
-Pull-request creation, reviews and GitHub Actions stay with the existing
-`github` tools and the Cursor integration. Non-GitHub hosts need their own
-connection story and are not accepted as remotes. Merging on the person's
-behalf (rebases, conflict resolution) is deliberately absent: the clone
-exposes the state and the honest ways out, and a run in the project can do
-the rest as plain file edits.
+Reviews and GitHub Actions logs stay with the existing `github` tools and
+the Cursor integration. Non-GitHub hosts need their own connection story and
+are not accepted as remotes.
+
+## Amendment: branches, merge, rebase, pull requests, CI
+
+The first cut left merging and pull requests out. They are now in, under the
+same rules (host-side sealed git, the person's own token, never forced):
+
+- `repo_merge` / `repo_rebase` bring `origin/<branch>` into the current
+  branch. Conflicts leave the operation in progress (`status.operation`,
+  `status.conflicts`) so the files are fixed as plain workspace files, then
+  `repo_continue` (refuses leftover conflict markers) or `repo_abort`. A
+  rebase is refused once its commits are on origin, because publishing it
+  would need a forced push; merge is the answer there. A shallow clone is
+  deepened once when the two lines show no common ancestor.
+- `repo_branches`, `repo_compare`, `repo_prs`, `repo_pr`, `repo_ci` use
+  git locally (compare) and the GitHub REST API with the person's token
+  (branch list, pull requests, check runs and statuses). All of it degrades
+  to the local branches when GitHub is unreachable. Pull requests are opened
+  only for branches already on GitHub (or with an explicit push first).
+- New routes `.../repos/:name/{merge,rebase,continue,abort}` (POST) and
+  `.../repos/:name/{branches,compare,ci,pulls}` (GET), `POST .../pulls`; the
+  portal gains a per-clone detail view.
 
 ## Consequences
 
@@ -103,7 +121,7 @@ the rest as plain file edits.
   `repoMaxMb`.
 - New tool actions on `observatory`: `repo_clone`, `repo_list`,
   `repo_status`, `repo_pull`, `repo_commit`, `repo_push`, `repo_branch`,
-  `repo_reset`, `repo_remove`.
+  `repo_reset`, `repo_remove` (plus the amendment's additions).
 - New routes under `/api/app/projects/:slug/repos`; the portal Files view
   gains a `repos/` panel with clone, pull, commit, push, branch, reset and
   remove.

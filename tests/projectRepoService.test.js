@@ -298,6 +298,82 @@ describe('merge and rebase', () => {
     }, 90_000);
 });
 
+describe('branches, comparison, pull requests and CI', () => {
+    function fakeGithub(remote) {
+        const calls = { created: [] };
+        const github = () => ({
+            listBranches: async () => [{ name: 'main', protected: true, commit: { sha: 'abcdef123456' } }, { name: 'remote-only', protected: false, commit: { sha: '1234567890ab' } }],
+            listPullRequests: async () => [{ number: 7, title: 'Add thing', html_url: 'https://github.com/acme/x/pull/7', state: 'open', draft: false, user: { login: 'dana' }, head: { ref: 'feature', sha: 'sha7' }, base: { ref: 'main' } }],
+            getChecks: async (repo, ref) => (ref === 'feature' || ref === 'sha7'
+                ? { runs: [{ name: 'lint', status: 'completed', conclusion: 'success' }, { name: 'test', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/acme/x/runs/1', output: { title: '3 tests failed' } }, { name: 'e2e', status: 'in_progress' }], statuses: [] }
+                : (() => { const error = new Error('nf'); error.code = 'NOT_FOUND'; throw error; })()),
+            createPullRequest: async (repo, input) => { calls.created.push({ repo, ...input }); return { number: 8, html_url: 'https://github.com/acme/x/pull/8', title: input.title, draft: input.draft }; }
+        });
+        return { github, calls };
+    }
+
+    test('lists branches, compares them, opens a pull request and reports CI', async () => {
+        const remote = makeRemote('acme/x', { files: { 'a.txt': 'one\n' } });
+        const { github, calls } = fakeGithub(remote);
+        const service = makeService({}, { github });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Branch Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/x' });
+        const args = { userId, project: slug, name: 'x' };
+        const file = (rel) => path.join(workspace(userId, slug), 'repos', 'x', rel);
+
+        await service.repos.checkout({ ...args, branch: 'feature' });
+        fs.writeFileSync(file('a.txt'), 'one\ntwo\n');
+        fs.writeFileSync(file('b.txt'), 'bee\n');
+        await service.repos.commit({ ...args, message: 'feature work' });
+
+        const listing = await service.repos.branches(args);
+        expect(listing).toMatchObject({ current: 'feature', base: 'main', remoteError: null });
+        expect(listing.branches.map(b => b.name)).toEqual(['feature', 'main', 'remote-only']);
+        expect(listing.branches[0]).toMatchObject({ current: true, local: true, remote: false, aheadOfBase: 1, behindBase: 0 });
+        expect(listing.branches[1]).toMatchObject({ isBase: true, remote: true, protected: true });
+        expect(listing.branches[2]).toMatchObject({ local: false, remote: true });
+
+        const cmp = await service.repos.compare(args);
+        expect(cmp).toMatchObject({ base: 'main', head: 'feature', ahead: 1, behind: 0, fileCount: 2, additions: 2, deletions: 0, identical: false, truncated: false });
+        expect(cmp.files.map(f => f.path).sort()).toEqual(['a.txt', 'b.txt']);
+        expect(cmp.patch).toContain('+two');
+        expect(cmp.commits[0].message).toBe('feature work');
+        remote.upstream('m.txt', 'm\n', 'main moves');
+        expect(await service.repos.compare(args)).toMatchObject({ ahead: 1, behind: 1 });
+        expect(await service.repos.compare({ ...args, head: 'main', base: 'main' })).toMatchObject({ identical: true });
+        await expectThrow(() => service.repos.compare({ ...args, head: 'nope' }), { code: 'NO_SUCH_BRANCH' });
+
+        // A pull request needs the branch on GitHub first; push=true does it.
+        await expectThrow(() => service.repos.createPullRequest({ ...args, title: 'Add thing' }), { status: 409, code: 'NOT_PUSHED' });
+        await expectThrow(() => service.repos.createPullRequest({ ...args, title: '  ' }), { code: 'EMPTY_TITLE' });
+        const pr = await service.repos.createPullRequest({ ...args, title: 'Add thing', body: 'why', push: true, draft: true });
+        expect(pr).toMatchObject({ number: 8, head: 'feature', base: 'main', draft: true });
+        expect(calls.created[0]).toMatchObject({ repo: 'acme/x', head: 'feature', base: 'main', body: 'why' });
+        expect(remote.log('feature')).toContain('feature work');
+        await service.repos.checkout({ ...args, branch: 'main' });
+        await expectThrow(() => service.repos.createPullRequest({ ...args, title: 't' }), { code: 'SAME_BRANCH' });
+
+        const pulls = await service.repos.pullRequests(args);
+        expect(pulls.pulls[0]).toMatchObject({ number: 7, head: 'feature', ci: { state: 'failure', passed: 1 } });
+        const ci = await service.repos.ci({ ...args, ref: 'feature' });
+        expect(ci).toMatchObject({ state: 'failure', total: 3, pending: ['e2e'] });
+        expect(ci.failing[0]).toMatchObject({ name: 'test', summary: '3 tests failed' });
+        expect(await service.repos.ci(args)).toMatchObject({ state: 'none', notOnGitHub: true });
+    }, 60_000);
+
+    test('GitHub being unreachable degrades the branch list instead of failing it', async () => {
+        makeRemote('acme/y');
+        const service = makeService({}, { github: () => ({ listBranches: async () => { const e = new Error('x'); e.code = 'UNAVAILABLE'; throw e; } }) });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Offline Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/y' });
+        const listing = await service.repos.branches({ userId, project: slug, name: 'y' });
+        expect(listing.branches.map(b => b.name)).toEqual(['main']);
+        expect(listing.remoteError).toMatch(/could not be reached/);
+    }, 30_000);
+});
+
 describe('the clone lifecycle', () => {
     test('clone, commit as the GitHub identity, push, pull, branch, reset, remove', async () => {
         const remote = makeRemote('acme/widgets');

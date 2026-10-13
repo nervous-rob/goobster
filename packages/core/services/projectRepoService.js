@@ -72,6 +72,12 @@ const IDENTITY_TTL_MS = 10 * 60 * 1000;
 const STATUS_MAX_PATHS = 20;
 const RECENT_COMMITS = 5;
 const DEEPEN_COMMITS = 500;
+const COMPARE_MAX_FILES = 200;
+const COMPARE_MAX_COMMITS = 30;
+const COMPARE_PATCH_BYTES = 2 * 1024 * 1024;
+const COMPARE_PATCH_CHARS = 200_000;
+const PR_LIST_MAX = 10;
+const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale']);
 const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 const DIRTY_PATTERN = /local changes|unstaged changes|uncommitted changes|would be overwritten|commit or stash/i;
 /** The credential helper: reads the token from the call's environment, never from argv or disk. */
@@ -114,10 +120,12 @@ class ProjectRepoService {
      * @param {(userId: string) => Promise<string[]|null>} [deps.allowlist] their personal repo allowlist
      * @param {(token: string) => Promise<{login: string, id: number|string}>} [deps.identity] GET /user
      * @param {(token: string, repo: string) => Promise<{sizeKb?: number, defaultBranch?: string}|null>} [deps.repoInfo]
+     * @param {(token: string) => Object} [deps.github] GitHub API bound to a token (listBranches, listPullRequests,
+     *   createPullRequest, getChecks); defaults to githubService.withToken
      */
     constructor({
         config = observatoryConfig, projects = null, transportBase = null,
-        token = null, allowlist = null, identity = null, repoInfo = null
+        token = null, allowlist = null, identity = null, repoInfo = null, github = null
     } = {}) {
         this.config = config;
         this._projects = projects;
@@ -126,6 +134,7 @@ class ProjectRepoService {
         this._allowlistOf = allowlist;
         this._identityOf = identity;
         this._repoInfoOf = repoInfo;
+        this._githubOf = github;
         this._queues = new SerialQueues();
         this._probe = null;
         /** userId -> { until, identity } */
@@ -356,6 +365,30 @@ class ProjectRepoService {
         };
         this._identities.set(userId, { until: Date.now() + IDENTITY_TTL_MS, identity });
         return identity;
+    }
+
+    /** GitHub API bound to the person's token, after the personal allowlist. */
+    async _api(userId, repoRow) {
+        const token = await this._token(userId);
+        await this._checkAllowlist(userId, repoRow.repo);
+        return { token, api: this._githubOf ? this._githubOf(token) : this._githubService().withToken(token) };
+    }
+
+    /** A GitHub API failure as the person's problem. */
+    _apiError(error, repo) {
+        if (error instanceof ProjectRepoError) return error;
+        const messages = {
+            NOT_FOUND: [404, 'NOT_FOUND', `${repo} was not found, or your GitHub account cannot see it.`],
+            BAD_TOKEN: [403, 'NO_GITHUB', 'GitHub rejected your connection: reconnect it in Settings → Connections.'],
+            FORBIDDEN: [403, 'NO_ACCESS', `Your GitHub token cannot do that on ${repo}: check its repository permissions.`],
+            TOKEN_REQUIRED: [403, 'NO_GITHUB', 'No GitHub account connected.'],
+            RATE_LIMITED: [429, 'RATE_LIMITED', 'GitHub is rate limiting this account: try again in a little while.'],
+            UNAVAILABLE: [502, 'NETWORK', 'GitHub could not be reached from this server.'],
+            INVALID: [409, 'REJECTED_BY_GITHUB', error?.message || 'GitHub rejected the request.'],
+            BAD_INPUT: [400, 'BAD_INPUT', error?.message || 'Bad input.']
+        };
+        const hit = messages[error?.code];
+        return hit ? new ProjectRepoError(hit[0], hit[1], hit[2]) : error;
     }
 
     async _repoInfo(token, repo) {
@@ -941,6 +974,263 @@ class ProjectRepoService {
             this._publish(projectRow, userId);
             return { aborted: status.operation, name: repoRow.name, repo: repoRow.repo, status: await this._status(projectRow, repoRow.name) };
         });
+    }
+
+    // --- Branches, comparison, pull requests, CI ----------------------------------------------
+
+    async _localBranchExists(projectRow, name, branch) {
+        return (await this._git(projectRow, name, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { allowFail: true })).status === 0;
+    }
+
+    /**
+     * Every branch of one clone: local ones (current, upstream, ahead/behind the
+     * branch the clone started from) merged with GitHub's list, so branches that
+     * exist only on the remote can be switched to. Remote data is best effort.
+     */
+    async branches({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const entries = new Map();
+        const listing = await this._git(projectRow, repoRow.name, [
+            'for-each-ref', '--format=%(refname:short)%1f%(upstream:short)%1f%(objectname:short)%1f%(HEAD)%1f%(committerdate:iso-strict)%1f%(subject)',
+            'refs/heads'
+        ], { allowFail: true });
+        const baseRef = `refs/remotes/origin/${repoRow.branch}`;
+        const hasBase = (await this._git(projectRow, repoRow.name, ['rev-parse', '--verify', '--quiet', baseRef], { allowFail: true })).status === 0;
+        for (const line of String(listing.stdout || '').split('\n').filter(Boolean)) {
+            const [branch, upstream, head, mark, when, subject] = line.split('\x1f');
+            let ahead = null;
+            let behind = null;
+            if (hasBase && branch !== repoRow.branch) {
+                const counts = await this._git(projectRow, repoRow.name, ['rev-list', '--left-right', '--count', `${baseRef}...refs/heads/${branch}`], { allowFail: true });
+                if (counts.status === 0) [behind, ahead] = String(counts.stdout).trim().split(/\s+/).map(Number);
+            }
+            entries.set(branch, {
+                name: branch, current: mark === '*', local: true, remote: false, protected: false,
+                isBase: branch === repoRow.branch, upstream: upstream || null, head,
+                when: when ? new Date(when).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') : null,
+                subject: subject || '', aheadOfBase: ahead, behindBase: behind
+            });
+        }
+        let remoteError = null;
+        try {
+            const { api } = await this._api(userId, repoRow);
+            for (const remote of await api.listBranches(repoRow.repo)) {
+                const entry = entries.get(remote.name) || {
+                    name: remote.name, current: false, local: false, isBase: remote.name === repoRow.branch,
+                    upstream: null, head: String(remote.commit?.sha || '').slice(0, 7), when: null, subject: '',
+                    aheadOfBase: null, behindBase: null
+                };
+                entry.remote = true;
+                entry.protected = Boolean(remote.protected);
+                entries.set(remote.name, entry);
+            }
+        } catch (error) {
+            remoteError = this._apiError(error, repoRow.repo).message;
+        }
+        const sorted = [...entries.values()].sort((a, b) =>
+            (b.current - a.current) || (b.isBase - a.isBase) || (b.local - a.local) || a.name.localeCompare(b.name));
+        return {
+            name: repoRow.name, repo: repoRow.repo, base: repoRow.branch,
+            current: sorted.find(entry => entry.current)?.name || null,
+            branches: sorted, remoteError
+        };
+    }
+
+    /** A usable ref for one branch: the person's local branch when asked for, else origin's, fetched fresh. */
+    async _refFor(projectRow, repoRow, branch, token, { preferLocal }) {
+        const local = await this._localBranchExists(projectRow, repoRow.name, branch);
+        if (preferLocal && local) return `refs/heads/${branch}`;
+        const fetched = await this._git(projectRow, repoRow.name,
+            ['fetch', '-q', `--depth=${this.config.repoCloneDepth || 50}`, '--no-tags', 'origin', branch], { token, allowFail: true });
+        if (fetched.status === 0) return `refs/remotes/origin/${branch}`;
+        if (local) return `refs/heads/${branch}`;
+        const text = String(fetched.stderr || '');
+        if (/couldn't find remote ref|not found/i.test(text) || !text) {
+            throw new ProjectRepoError(404, 'NO_SUCH_BRANCH', `No branch "${branch}" locally or on ${repoRow.repo}.`);
+        }
+        throw this._explain({ code: 'GIT_FAILED', gitStderr: text, message: text }, { repo: repoRow.repo, branch });
+    }
+
+    /**
+     * What `head` has that `base` does not (the pull-request view): ahead/behind,
+     * commits, per-file counts and a capped patch. Defaults: head = the current
+     * branch, base = the branch the clone started from. Read-only.
+     */
+    async compare({ row = null, userId, project = null, owner = null, name, base = null, head = null }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const wantedBase = cleanBranch(base) || repoRow.branch;
+        const wantedHead = cleanBranch(head);
+        const token = await this._token(userId);
+        await this._checkAllowlist(userId, repoRow.repo);
+        return this._serial(projectRow, repoRow.name, async () => {
+            const status = await this._status(projectRow, repoRow.name);
+            const headName = wantedHead || status.branch;
+            if (!headName) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; pass head=<branch>.');
+            const baseRef = await this._refFor(projectRow, repoRow, wantedBase, token, { preferLocal: false });
+            const headRef = await this._refFor(projectRow, repoRow, headName, token, { preferLocal: true });
+            const g = (args, opts = {}) => this._git(projectRow, repoRow.name, args, { allowFail: true, ...opts });
+
+            let threeDot = true;
+            const probe = await g(['merge-base', baseRef, headRef]);
+            if (probe.status !== 0) {
+                try {
+                    await this._git(projectRow, repoRow.name, ['fetch', '-q', `--deepen=${DEEPEN_COMMITS}`, '--no-tags', 'origin', wantedBase], { token });
+                } catch { /* compare what we have */ }
+                if ((await g(['merge-base', baseRef, headRef])).status !== 0) threeDot = false;
+            }
+            const range = `${baseRef}${threeDot ? '...' : '..'}${headRef}`;
+            const counts = await g(['rev-list', '--left-right', '--count', `${baseRef}...${headRef}`]);
+            const [behind, ahead] = counts.status === 0 ? String(counts.stdout).trim().split(/\s+/).map(Number) : [null, null];
+            const log = await g(['log', `-n${COMPARE_MAX_COMMITS}`, '--format=%h%x1f%an%x1f%aI%x1f%s', `${baseRef}..${headRef}`]);
+            const commits = log.status === 0
+                ? String(log.stdout).split('\n').filter(Boolean).map(line => {
+                    const [short, author, when, subject] = line.split('\x1f');
+                    return { short, author, when: when ? new Date(when).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') : null, message: subject || '' };
+                })
+                : [];
+            const numstat = await g(['diff', '--numstat', '--no-ext-diff', '--no-textconv', '-M', range]);
+            const files = String(numstat.stdout || '').split('\n').filter(Boolean).map(line => {
+                const [added, removed, ...rest] = line.split('\t');
+                const binary = added === '-';
+                return { path: rest.join('\t'), additions: binary ? 0 : Number(added) || 0, deletions: binary ? 0 : Number(removed) || 0, binary };
+            });
+            let patch = '';
+            let truncated = false;
+            try {
+                const diff = await g(['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-M', range], { maxBuffer: COMPARE_PATCH_BYTES });
+                patch = String(diff.stdout || '');
+            } catch (error) {
+                if (error.code !== 'TOO_LARGE') throw error;
+                truncated = true;
+            }
+            if (patch.length > COMPARE_PATCH_CHARS) {
+                patch = patch.slice(0, COMPARE_PATCH_CHARS);
+                truncated = true;
+            }
+            return {
+                name: repoRow.name, repo: repoRow.repo, base: wantedBase, head: headName,
+                ahead, behind, sharedHistory: threeDot,
+                identical: files.length === 0 && commits.length === 0,
+                commits, files: files.slice(0, COMPARE_MAX_FILES), fileCount: files.length,
+                additions: files.reduce((sum, file) => sum + file.additions, 0),
+                deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+                patch, truncated
+            };
+        });
+    }
+
+    /** Collapse check runs and legacy statuses into one verdict plus what failed. */
+    static summarizeChecks({ runs = [], statuses = [] } = {}) {
+        const failing = [];
+        const pending = [];
+        let passed = 0;
+        for (const run of runs) {
+            if (run.status && run.status !== 'completed') pending.push(run.name);
+            else if (FAILING_CONCLUSIONS.has(run.conclusion)) {
+                failing.push({
+                    name: run.name, conclusion: run.conclusion, url: run.html_url || null,
+                    summary: String(run.output?.title || run.output?.summary || '').replace(/\s+/g, ' ').trim().slice(0, 300)
+                });
+            } else passed++;
+        }
+        for (const entry of statuses) {
+            if (entry.state === 'pending') pending.push(entry.context);
+            else if (entry.state === 'failure' || entry.state === 'error') {
+                failing.push({ name: entry.context, conclusion: entry.state, url: entry.target_url || null, summary: String(entry.description || '').slice(0, 300) });
+            } else passed++;
+        }
+        const total = runs.length + statuses.length;
+        const state = total === 0 ? 'none' : failing.length ? 'failure' : pending.length ? 'pending' : 'success';
+        return { state, total, passed, failing, pending };
+    }
+
+    /** CI for a ref (default: the current branch as GitHub knows it). A branch GitHub has never seen is `none`. */
+    async ci({ row = null, userId, project = null, owner = null, name, ref = null }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(ref) || (await this._status(projectRow, repoRow.name)).branch;
+        if (!target) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; pass ref=<branch>.');
+        const { api } = await this._api(userId, repoRow);
+        try {
+            const checks = await api.getChecks(repoRow.repo, target);
+            return { name: repoRow.name, repo: repoRow.repo, ref: target, ...ProjectRepoService.summarizeChecks(checks) };
+        } catch (error) {
+            if (error?.code === 'NOT_FOUND') return { name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], notOnGitHub: true };
+            throw this._apiError(error, repoRow.repo);
+        }
+    }
+
+    /** Pull requests of the repository with their CI verdicts (capped, best effort per PR). */
+    async pullRequests({ row = null, userId, project = null, owner = null, name, state = 'open' }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const { api } = await this._api(userId, repoRow);
+        let list;
+        try {
+            list = await api.listPullRequests(repoRow.repo, { state: ['open', 'closed', 'all'].includes(state) ? state : 'open', limit: PR_LIST_MAX });
+        } catch (error) {
+            throw this._apiError(error, repoRow.repo);
+        }
+        const pulls = await Promise.all(list.slice(0, PR_LIST_MAX).map(async (pr) => {
+            let ci = null;
+            if (pr.head?.sha && pr.state === 'open') {
+                try { ci = ProjectRepoService.summarizeChecks(await api.getChecks(repoRow.repo, pr.head.sha)); } catch { /* CI is a bonus */ }
+            }
+            return {
+                number: pr.number, title: pr.title, url: pr.html_url, state: pr.merged_at ? 'merged' : pr.state,
+                draft: Boolean(pr.draft), author: pr.user?.login || null,
+                head: pr.head?.ref || null, base: pr.base?.ref || null, updatedAt: pr.updated_at || null, ci
+            };
+        }));
+        return { name: repoRow.name, repo: repoRow.repo, pulls };
+    }
+
+    /**
+     * Open a pull request from `head` (default: the current branch) into `base`
+     * (default: the branch the clone started from) as the person. The head must
+     * already be on GitHub: pass push=true to push it first (never forced).
+     */
+    async createPullRequest({ row = null, userId, project = null, owner = null, name, title, body = '', base = null, head = null, draft = false, push = false }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const cleanTitle = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 250);
+        if (!cleanTitle) throw new ProjectRepoError(400, 'EMPTY_TITLE', 'A pull request needs a title.');
+        const wantedBase = cleanBranch(base) || repoRow.branch;
+        const { api } = await this._api(userId, repoRow);
+        let status = await this._status(projectRow, repoRow.name);
+        const headName = cleanBranch(head) || status.branch;
+        if (!headName) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; pass head=<branch>.');
+        if (headName === wantedBase) {
+            throw new ProjectRepoError(409, 'SAME_BRANCH', `${headName} is also the base: switch to a work branch (repo_branch) first.`);
+        }
+        if (headName === status.branch) {
+            if (push && (status.ahead > 0 || !status.upstream)) {
+                await this.push({ row: projectRow, userId, name: repoRow.name });
+                status = await this._status(projectRow, repoRow.name);
+            }
+            if (!status.upstream || status.ahead > 0) {
+                throw new ProjectRepoError(409, 'NOT_PUSHED',
+                    `${headName} has commits GitHub does not: repo_push first (or pass push=true), then open the pull request.`);
+            }
+        }
+        let created;
+        try {
+            created = await api.createPullRequest(repoRow.repo, { title: cleanTitle, body, head: headName, base: wantedBase, draft });
+        } catch (error) {
+            throw this._apiError(error, repoRow.repo);
+        }
+        await this._audit(userId, 'project-repo-pr', { project: projectRow.slug, repo: repoRow.repo, number: created.number, head: headName, base: wantedBase });
+        return {
+            name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
+            title: created.title || cleanTitle, draft: Boolean(created.draft), head: headName, base: wantedBase
+        };
     }
 
     /** Discard local commits and changes: back to origin/<branch>. A snapshot is taken first. */

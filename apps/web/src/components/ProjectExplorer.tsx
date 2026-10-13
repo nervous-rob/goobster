@@ -77,6 +77,20 @@ type RepoStatus = {
     sizeMb?: number;
     error?: string;
 };
+type BranchEntry = {
+    name: string; current: boolean; local: boolean; remote: boolean; protected: boolean; isBase: boolean;
+    head: string; subject: string; aheadOfBase: number | null; behindBase: number | null;
+};
+type BranchesPayload = { base: string; current: string | null; branches: BranchEntry[]; remoteError: string | null };
+type ComparePayload = {
+    base: string; head: string; ahead: number | null; behind: number | null; identical: boolean; sharedHistory: boolean;
+    commits: { short: string; author: string; message: string }[];
+    files: { path: string; additions: number; deletions: number; binary: boolean }[];
+    fileCount: number; additions: number; deletions: number; patch: string; truncated: boolean;
+};
+type CiFailure = { name: string; conclusion: string; url: string | null; summary: string };
+type CiPayload = { ref: string; state: 'success' | 'failure' | 'pending' | 'none'; total: number; passed: number; failing: CiFailure[]; pending: string[]; notOnGitHub?: boolean };
+type PullEntry = { number: number; title: string; url: string; state: string; draft: boolean; author: string | null; head: string; base: string; ci: CiPayload | null };
 type IntegrationResult = { kind: string; base: string; result: string; conflicts: string[]; to?: string };
 type RepoEntry = {
     name: string;
@@ -625,6 +639,7 @@ function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: strin
     const [cloneRepo, setCloneRepo] = useState('');
     const [cloneBranch, setCloneBranch] = useState('');
     const [busy, setBusy] = useState<string | null>(null);
+    const [expanded, setExpanded] = useState<string | null>(null);
     const repos = useQuery({
         queryKey: keys.projectRepos(slug, ownerId),
         queryFn: () => api.projectRepos(slug, ownerId) as Promise<ReposPayload>,
@@ -750,8 +765,14 @@ function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: strin
                                 </>
                             )}
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void reset(entry)}>Reset</button>
+                            <button type="button" className="btn" onClick={() => setExpanded(expanded === entry.name ? null : entry.name)}>
+                                {expanded === entry.name ? 'Hide details' : 'Branches · PRs · CI'}
+                            </button>
                             <button type="button" className="btn danger" disabled={busy != null} onClick={() => void remove(entry)}>Remove</button>
                         </div>
+                        {expanded === entry.name && (
+                            <RepoDetail slug={slug} ownerId={ownerId} entry={entry} busy={busy} run={run} onChanged={onChanged} />
+                        )}
                     </div>
                 );
             })}
@@ -771,6 +792,199 @@ function RepoPanel({ slug, ownerId, onChanged }: { slug: string; ownerId?: strin
                 </div>
             )}
         </>
+    );
+}
+
+function ciBadge(ci: Pick<CiPayload, 'state' | 'failing' | 'pending' | 'passed' | 'total'> | null | undefined) {
+    if (!ci || ci.state === 'none') return <span className="hint">no CI</span>;
+    if (ci.state === 'success') return <span title={`${ci.passed} checks passed`}>✅ passing</span>;
+    if (ci.state === 'pending') return <span title={ci.pending.join(', ')}>🟡 running</span>;
+    return <span title={ci.failing.map((f) => f.name).join(', ')}>❌ {ci.failing.length} failing</span>;
+}
+
+/**
+ * One clone's repository management: pick the active branch, compare any two
+ * branches (the pull-request view), open pull requests and read CI. Remote
+ * data comes from GitHub with the viewer's own account and degrades quietly.
+ */
+function RepoDetail({ slug, ownerId, entry, busy, run, onChanged }: {
+    slug: string;
+    ownerId?: string | null;
+    entry: RepoEntry;
+    busy: string | null;
+    run: (label: string, fn: () => Promise<unknown>, done: (result: unknown) => string) => Promise<void>;
+    onChanged: () => void;
+}) {
+    const [tab, setTab] = useState<'branches' | 'compare' | 'pulls' | 'ci'>('branches');
+    const [base, setBase] = useState(entry.clonedBranch);
+    const [head, setHead] = useState('');
+    const [prTitle, setPrTitle] = useState('');
+    const [prBody, setPrBody] = useState('');
+    const [prDraft, setPrDraft] = useState(false);
+    const queryClient = useQueryClient();
+    const key = (part: string, extra = '') => keys.projectRepoDetail(slug, entry.name, part, ownerId, extra);
+
+    const branches = useQuery({
+        queryKey: key('branches'),
+        queryFn: () => api.projectRepoBranches(slug, entry.name, ownerId) as Promise<BranchesPayload>,
+        retry: false
+    });
+    const current = branches.data?.current || entry.status?.branch || '';
+    const headName = head || current;
+    const compare = useQuery({
+        queryKey: key('compare', `${base}...${headName}`),
+        queryFn: () => api.projectRepoCompare(slug, entry.name, base, headName, ownerId) as Promise<ComparePayload>,
+        enabled: tab === 'compare' && Boolean(headName && base),
+        retry: false
+    });
+    const ci = useQuery({
+        queryKey: key('ci', current),
+        queryFn: () => api.projectRepoCi(slug, entry.name, current, ownerId) as Promise<CiPayload>,
+        enabled: tab === 'ci' && Boolean(current),
+        retry: false
+    });
+    const pulls = useQuery({
+        queryKey: key('pulls'),
+        queryFn: () => api.projectRepoPulls(slug, entry.name, ownerId) as Promise<{ pulls: PullEntry[] }>,
+        enabled: tab === 'pulls',
+        retry: false
+    });
+
+    async function reload() {
+        await queryClient.invalidateQueries({ queryKey: ['project-repos', slug] });
+        onChanged();
+    }
+
+    async function activate(branch: BranchEntry) {
+        await run(`${entry.name}:branch`, () => api.projectRepoAction(slug, entry.name, 'branch', { branch: branch.name }, ownerId),
+            () => `Now on ${branch.name}.`);
+        await reload();
+    }
+
+    async function openPr(push: boolean) {
+        await run(`${entry.name}:pr`, () => api.createProjectRepoPull(slug, entry.name,
+            { title: prTitle.trim(), body: prBody, head: headName, base, draft: prDraft, push }, ownerId),
+        (result) => `Opened pull request #${(result as { number: number }).number}: ${(result as { url: string }).url}`);
+        setPrTitle('');
+        setPrBody('');
+        await reload();
+    }
+
+    const errorText = (error: unknown) => (error as Error)?.message || 'Unavailable.';
+    const cmp = compare.data;
+    const names = branches.data?.branches.map((b) => b.name) || [];
+
+    return (
+        <div style={{ marginTop: 6 }}>
+            <div className="obs-explorer-crumb" style={{ gap: 4 }}>
+                {(['branches', 'compare', 'pulls', 'ci'] as const).map((id) => (
+                    <button key={id} type="button" className={`btn${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
+                        {id === 'branches' ? 'Branches' : id === 'compare' ? 'Compare' : id === 'pulls' ? 'Pull requests' : 'CI'}
+                    </button>
+                ))}
+            </div>
+
+            {tab === 'branches' && (
+                <div style={{ marginTop: 6 }}>
+                    {branches.isLoading && <div className="hint">Loading branches…</div>}
+                    {branches.isError && <div className="hint">{errorText(branches.error)}</div>}
+                    {branches.data?.remoteError && <div className="hint">GitHub branches unavailable: {branches.data.remoteError}</div>}
+                    {branches.data?.branches.map((b) => (
+                        <div key={b.name} className="obs-tree-item" style={{ display: 'flex', gap: 8, cursor: 'default', alignItems: 'center' }}>
+                            <span>{b.current ? '▶' : ' '}</span>
+                            <strong style={{ flex: 1 }}>{b.name}</strong>
+                            <span className="hint">
+                                {b.isBase ? 'base · ' : ''}{b.local ? '' : 'remote only · '}{b.local && !b.remote ? 'local only · ' : ''}{b.protected ? 'protected · ' : ''}
+                                {b.aheadOfBase != null ? `${b.aheadOfBase}↑ ${b.behindBase}↓ vs ${branches.data?.base}` : b.head}
+                            </span>
+                            {!b.current && (
+                                <button type="button" className="btn" disabled={busy != null} onClick={() => void activate(b)}>Switch</button>
+                            )}
+                            {!b.current && !b.isBase && (
+                                <button type="button" className="btn" onClick={() => { setHead(b.name); setTab('compare'); }}>Compare</button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {tab === 'compare' && (
+                <div style={{ marginTop: 6 }}>
+                    <div className="obs-explorer-crumb" style={{ gap: 6, alignItems: 'center' }}>
+                        <select className="input" value={base} onChange={(e) => setBase(e.target.value)} aria-label="Base branch">
+                            {[...new Set([base, ...names])].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <span>←</span>
+                        <select className="input" value={headName} onChange={(e) => setHead(e.target.value)} aria-label="Head branch">
+                            {[...new Set([headName, ...names])].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                    </div>
+                    {compare.isLoading && <div className="hint">Comparing…</div>}
+                    {compare.isError && <div className="hint">{errorText(compare.error)}</div>}
+                    {cmp && (cmp.identical ? <div className="hint">{cmp.head} and {cmp.base} are identical.</div> : (
+                        <>
+                            <div className="hint">
+                                {cmp.ahead ?? '?'} ahead · {cmp.behind ?? '?'} behind · {cmp.fileCount} file(s) +{cmp.additions} −{cmp.deletions}
+                                {cmp.sharedHistory ? '' : ' · no shared history visible (direct diff)'}
+                            </div>
+                            {cmp.commits.map((c) => <div key={c.short} className="hint">{c.short} {c.author}: {c.message}</div>)}
+                            {cmp.files.map((f) => <div key={f.path} className="hint">{f.binary ? 'binary' : `+${f.additions} −${f.deletions}`} {f.path}</div>)}
+                            {cmp.patch && <DiffView text={cmp.patch} />}
+                            {cmp.truncated && <div className="hint">Diff truncated: open the files for the rest.</div>}
+                            {headName !== base && (
+                                <div className="obs-tree-actions">
+                                    <input className="input" value={prTitle} onChange={(e) => setPrTitle(e.target.value)}
+                                        placeholder={`Pull request title (${headName} → ${base})`} />
+                                    <textarea className="input" value={prBody} onChange={(e) => setPrBody(e.target.value)} placeholder="Description (optional)" rows={3} />
+                                    <label className="hint"><input type="checkbox" checked={prDraft} onChange={(e) => setPrDraft(e.target.checked)} /> Draft</label>
+                                    <div className="obs-explorer-crumb" style={{ gap: 4 }}>
+                                        <button type="button" className="btn" disabled={busy != null || !prTitle.trim()} onClick={() => void openPr(false)}>Open pull request</button>
+                                        {headName === current && (
+                                            <button type="button" className="btn" disabled={busy != null || !prTitle.trim()} onClick={() => void openPr(true)}>Push and open</button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    ))}
+                </div>
+            )}
+
+            {tab === 'pulls' && (
+                <div style={{ marginTop: 6 }}>
+                    {pulls.isLoading && <div className="hint">Loading pull requests…</div>}
+                    {pulls.isError && <div className="hint">{errorText(pulls.error)}</div>}
+                    {pulls.data?.pulls.length === 0 && <div className="hint">No open pull requests.</div>}
+                    {pulls.data?.pulls.map((pr) => (
+                        <div key={pr.number} className="obs-tree-item" style={{ display: 'block', cursor: 'default' }}>
+                            <a href={pr.url} target="_blank" rel="noreferrer">#{pr.number} {pr.title}</a> {ciBadge(pr.ci)}
+                            <div className="hint">{pr.head} → {pr.base}{pr.draft ? ' · draft' : ''}{pr.author ? ` · ${pr.author}` : ''}</div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {tab === 'ci' && (
+                <div style={{ marginTop: 6 }}>
+                    <div className="hint">CI for {current || 'the current branch'}</div>
+                    {ci.isLoading && <div className="hint">Loading checks…</div>}
+                    {ci.isError && <div className="hint">{errorText(ci.error)}</div>}
+                    {ci.data && (
+                        <>
+                            <div>{ciBadge(ci.data)}{ci.data.notOnGitHub ? <span className="hint"> · this branch is not on GitHub yet: push it</span> : null}</div>
+                            {ci.data.failing.map((f) => (
+                                <div key={f.name} className="obs-tree-item" style={{ display: 'block', cursor: 'default' }}>
+                                    ❌ {f.url ? <a href={f.url} target="_blank" rel="noreferrer">{f.name}</a> : f.name} <span className="hint">({f.conclusion})</span>
+                                    {f.summary && <div className="hint">{f.summary}</div>}
+                                </div>
+                            ))}
+                            {ci.data.pending.length > 0 && <div className="hint">Still running: {ci.data.pending.join(', ')}</div>}
+                        </>
+                    )}
+                    <button type="button" className="btn" onClick={() => void ci.refetch()}>Refresh</button>
+                </div>
+            )}
+        </div>
     );
 }
 

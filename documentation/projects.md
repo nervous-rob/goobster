@@ -256,17 +256,40 @@ Connections), never the server's token and never from the sandbox.
   other than the cloned one returns the compare URL for a pull request),
   `repo_branch` (switch, creating the branch when it exists nowhere),
   `repo_reset` (back to origin, discarding local commits and changes),
-  `repo_remove`. Portal: the `repos/` panel in the Files view with the same
-  buttons and a clone form. API: `GET`/`POST /api/app/projects/:slug/repos`,
+  `repo_remove`. Branch management and review: `repo_branches` (local and
+  GitHub branches, which is active, ahead/behind the base), `repo_compare`
+  (`branch=` head, `base=`: commits, files, counts and a capped diff),
+  `repo_prs` (the repository's open pull requests with CI verdicts),
+  `repo_pr` (open a pull request: `branch=` head, `base=`, `note=` title,
+  `content=` body, `enabled=false` for a draft, `background=true` to push
+  the branch first), `repo_ci` (check runs and statuses for `branch=` or the
+  current branch: passed, pending, and each failure with its summary and
+  link). Combining branches: `repo_merge` and `repo_rebase` (`branch=`, the
+  default is the branch the clone started from), `repo_continue` and
+  `repo_abort`. Portal: the `repos/` panel in the Files view with the same
+  buttons, a clone form and a "Branches · PRs · CI" detail view per clone
+  (switch branch, compare two branches with a diff, open a pull request,
+  see CI failures). API: `GET`/`POST /api/app/projects/:slug/repos`,
   `GET`/`DELETE .../repos/:name`, `POST .../repos/:name/{pull,commit,push,
-  branch,reset}`.
-- **Honest about conflicts.** A diverged branch is reported (`DIVERGED`:
-  push the local commits, or `repo_reset`), never merged; a rejected push
-  says to pull first (`REJECTED`); a protected branch says to push elsewhere
-  and open a pull request (`PROTECTED_BRANCH`). Editing happens through
-  the workspace like any other file; there is no merge or rebase on the
-  person's behalf.
-- **Reversible.** `repo_reset`, `repo_branch` and `repo_remove` take a
+  branch,merge,rebase,continue,abort,reset}`, `GET .../repos/:name/{branches,
+  compare?base=&head=,ci?ref=,pulls}` and `POST .../repos/:name/pulls`.
+  Pull-request and CI calls use the person's own GitHub token (needs
+  "Pull requests: write" and "Checks: read" on the repository); when GitHub
+  cannot be reached the branch list falls back to the local branches.
+- **Honest about conflicts.** `repo_pull` only fast-forwards: a diverged
+  branch is reported (`DIVERGED`), and the answer is `repo_merge` (or
+  `repo_rebase` for commits that are still local). A merge or rebase that
+  hits conflicts is left in progress: `repo_status` shows `operation` and
+  the `conflicts` files, which are edited like any workspace file (remove the
+  `<<<<<<<` markers), then `repo_continue` (refused with `UNRESOLVED` while
+  markers remain) or `repo_abort` to put the branch back. While one is open,
+  pull, commit, merge, rebase and branch switches are refused
+  (`IN_PROGRESS`); `repo_reset` abandons it. A rebase is refused once its
+  commits are on origin (`REBASE_PUBLISHED`): pushes are never forced, so
+  merge instead. A rejected push says to pull first (`REJECTED`); a
+  protected branch says to push elsewhere and open a pull request
+  (`PROTECTED_BRANCH`, then `repo_pr`).
+- **Reversible.** `repo_reset`, `repo_branch`, `repo_merge`, `repo_rebase` and `repo_remove` take a
   workspace snapshot first, so what they discard is one `restore` away
   (`restore rev=<hash> path=repos/<name>`).
 - **Bounded.** Shallow clones (`observatory.repoCloneDepth`, default 50
