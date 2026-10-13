@@ -264,8 +264,14 @@ export function StudyRoom() {
             // The orphaned turn settled: drop live progress (stale draft /
             // Queue-as-Send) even if the reconnect SSE died first. Saved
             // chats refetch history; incognito keeps the local transcript.
-            hydratedTurnId.current = null;
-            clearRestoreOverlay(turnApiRef.current, incognito);
+            // Only a turn this tab restored has an overlay to drop: the
+            // poll also flips for the turn this tab just streamed itself,
+            // and a failed one stored nothing, so clearing here would wipe
+            // the message and its error without a word.
+            if (hydratedTurnId.current) {
+                hydratedTurnId.current = null;
+                clearRestoreOverlay(turnApiRef.current, incognito);
+            }
             void queryClient.invalidateQueries({ queryKey: keys.conversations });
             void queryClient.invalidateQueries({ queryKey: keys.chatQueue });
             void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
@@ -635,12 +641,21 @@ export function StudyRoom() {
             return;
         }
         let conversationId = activeId;
+        // A brand-new chat is created here but the route only changes once
+        // the turn settles: /chat and /chat/$conversationId are different
+        // routes, so navigating now would remount this room and strand the
+        // turn in a dead closure - the first message would vanish until the
+        // live-turn snapshot restored it, and never come back if the turn
+        // failed before anything was stored.
+        let createdId: number | null = null;
         if (conversationId === null && !incognito) {
             try {
                 const created = await api.createConversation();
                 conversationId = created.id;
+                createdId = created.id;
+                setActiveId(created.id);
+                hydratedTurnId.current = null;
                 await queryClient.invalidateQueries({ queryKey: keys.conversations });
-                goToConversation(created.id);
             } catch (error) {
                 toast((error as Error).message, true);
                 return;
@@ -657,7 +672,11 @@ export function StudyRoom() {
         abortRef.current = controller;
         // Incognito keeps the whole session's exchanges on screen (nothing
         // is refetchable from history there); saved chats reconcile against
-        // the refetched history after the turn settles.
+        // the refetched history after the turn settles. A turn that failed
+        // stored nothing (the user row and the reply are written together
+        // once the model answers), so its local copy - the message and the
+        // error - stays on screen instead of vanishing without a word.
+        let failed = false;
         turn.begin({ role: 'user', content: text, images: pendingImages }, { keep: incognito });
         try {
             await streamChat({
@@ -674,6 +693,9 @@ export function StudyRoom() {
                 onDelta: turn.onDelta,
                 onTool: turn.onTool,
                 onMessage: (message) => {
+                    // The pipeline reports a failed turn as an error reply
+                    // (not an SSE error) and stores nothing for it.
+                    if (message.isError) failed = true;
                     turn.onMessage({
                         role: 'assistant',
                         content: message.content || '',
@@ -692,6 +714,7 @@ export function StudyRoom() {
                     }
                 },
                 onError: (error) => {
+                    failed = true;
                     turn.onMessage({
                         role: 'assistant',
                         content: error.message || 'Something went wrong.',
@@ -702,6 +725,7 @@ export function StudyRoom() {
             }, controller.signal);
         } catch (error) {
             if ((error as Error).name !== 'AbortError') {
+                failed = true;
                 if (error instanceof ApiError && error.status === 409) {
                     toast(`${error.message} Queue a follow-up, or stop it from the bar above the chat.`, true);
                     void queryClient.invalidateQueries({ queryKey: ['chat-turn'] });
@@ -720,7 +744,12 @@ export function StudyRoom() {
             if (!incognito && conversationId) {
                 await queryClient.invalidateQueries({ queryKey: keys.history(conversationId) });
                 await queryClient.invalidateQueries({ queryKey: keys.conversations });
-                turn.reset();
+                if (!failed) {
+                    turn.reset();
+                    // The stored exchange is now the history; the remount
+                    // the route change causes reads it back in full.
+                    if (createdId !== null) navigate({ to: '/chat/$conversationId', params: { conversationId: String(createdId) }, replace: true });
+                }
             }
         }
     }

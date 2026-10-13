@@ -40,6 +40,21 @@ function markdownTable(rows) {
     return [header, sep, ...body].join('\n');
 }
 
+/** One block per failed group naming each failed test, so nobody has to scroll a long job log. */
+function failureDetails(failedRows) {
+    const blocks = [];
+    for (const row of failedRows) {
+        const failures = Array.isArray(row.failures) ? row.failures : [];
+        if (!failures.length) continue;
+        const items = failures.map((failure) => {
+            const message = String(failure.message || '').trim();
+            return `- \`${failure.file}\` › ${failure.name}` + (message ? `\n\n  \`\`\`\n${message.replace(/^/gm, '  ')}\n  \`\`\`` : '');
+        });
+        blocks.push(`\n### ${row.groupName} (${row.engine}): ${failures.length} failed\n\n${items.join('\n')}\n`);
+    }
+    return blocks.join('');
+}
+
 const rows = loadSummaries();
 if (!rows.length) {
     const message = `No test group summaries in ${resultsDir}`;
@@ -55,7 +70,7 @@ const title = failed.length
     ? `Test groups (${failed.length} failed)`
     : 'Test groups';
 
-const markdown = `## ${title}\n\n${markdownTable(rows)}\n`;
+const markdown = `## ${title}\n\n${markdownTable(rows)}\n${failureDetails(failed)}`;
 process.stdout.write(`${markdown}\n`);
 
 if (process.env.GITHUB_STEP_SUMMARY) {
