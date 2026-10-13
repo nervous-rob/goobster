@@ -232,6 +232,10 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `observatory.maxRenderFrames` | integer | config.json `observatory.maxRenderFrames` | `2000` | restart | observatory | Frames stitched into one video. |
 | `observatory.renderFps` | integer | config.json `observatory.renderFps` | `24` | restart | observatory | Default render framerate. |
 | `observatory.ffmpegCommand` | string | env `GOOBSTER_OBSERVATORY_FFMPEG`<br>config.json `observatory.ffmpegCommand` | `"ffmpeg"` | restart | observatory | ffmpeg binary for the render pipeline. |
+| `observatory.historyEnabled` | boolean | env `GOOBSTER_PROJECT_HISTORY_ENABLED`<br>config.json `observatory.historyEnabled` | `true` | restart | projects | Git snapshots of project workspaces (needs git on the host). |
+| `observatory.historyMaxFileMb` | integer | config.json `observatory.historyMaxFileMb` | `8` | restart | projects | Files larger than this are left out of workspace snapshots, in MB. |
+| `observatory.historyMaxMb` | integer | config.json `observatory.historyMaxMb` | `256` | restart | projects | Disk budget for one project's workspace history, in MB; past it the history is squashed, then paused. |
+| `observatory.gitCommand` | string | env `GOOBSTER_OBSERVATORY_GIT`<br>config.json `observatory.gitCommand` | `"git"` | restart | projects | git binary for workspace history. |
 | `gbaRun.enabled` | boolean | config.json `gbaRun.enabled` | `false` | restart | gba | The Game Boy Advance harness. |
 
 ## Self-knowledge

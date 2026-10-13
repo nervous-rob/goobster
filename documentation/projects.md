@@ -96,11 +96,13 @@ the workspace:
   (`SCRATCH_DIR` in `utils/projectSetupContract.js`), and it is also `HOME`,
   `TMPDIR`, and — under bwrap — `/tmp`. It persists across runs, jobs, and
   every conversation working on the project, for as long as the project
-  exists: clone a repository or build an environment once and every later
-  run, from any chat or collaborator, starts where the last one stopped.
-  It is never pruned on a timer; it counts toward the project's disk quota,
-  shows in the file explorer, and goes when the project is deleted (or by
-  `/forget-me` for the owner). Files a run creates or changes in it are
+  exists: build an environment or unpack a dataset once and every later
+  run, from any chat or collaborator, starts where the last one stopped
+  (sandbox runs have no network, so a repository arrives through
+  `fetch-data` or a portal upload, not `git clone`). It is never pruned on
+  a timer; it counts toward the project's disk quota, shows in the file
+  explorer, and goes when the project is deleted (or by `/forget-me` for
+  the owner). Files a run creates or changes in it are
   still attached to the chat like a normal `runCode` output, from a
   per-run copy. One run at a time per project, as before.
 
@@ -143,6 +145,79 @@ Isolation, rlimits, scrubbed environment, wall-clock timeout, byte-capped
 output, concurrency slots, and per-user rate limits all come from the
 sandbox. See [code_sandbox.md](code_sandbox.md) for the Python toolkit
 (`npm run sandbox-python`) and [the fetch-data contract](#getting-real-data-in-fetch-data).
+
+### Workspace history
+
+The workspace has **history**: a git repository the host process keeps
+**beside** it, at `data/sandbox/projects/<owner>/<slug>.git`, decided in
+[ADR 0014](adr/0014-workspace-history.md). It fills the one hole the asset
+layer leaves - a run that overwrote `data/results.csv` used to lose the old
+bytes for good - without touching how assets work.
+
+- **Snapshots are automatic.** One is taken after every run and background
+  job settles (`run #12 completed`, `job #14 failed (exit 1)`), after every
+  portal save, upload or delete (`wrote data/a.csv`, `deleted old.txt`),
+  after `fetch-data` lands a file, after a chat's files move into
+  `scratch/`, and around every restore. Identical trees are a no-op. The
+  tool's `commit` action (and 📸 **Snapshot now** in the portal) takes one
+  on demand with a note.
+- **Reading it.** Tool actions `history` (newest first, optional `path=`
+  to see only snapshots touching a file; `inspect` shows the latest
+  three), `diff` (no `rev`: the workspace against the latest snapshot;
+  `rev`: what that snapshot changed; `rev` + `to`: between two snapshots,
+  `to=workspace` for the current files), and `read` with `rev=` for a file
+  as it was. The portal Files view has a **Snapshots** rail on every
+  workspace file and directory with the same diff, a download at that
+  snapshot, and a restore. API: `GET /api/app/projects/:slug/history`
+  (`?path=&limit=`; always answers, with `enabled: false` and a `reason`
+  when history is off), `GET .../history/diff?rev=&to=&path=`,
+  `GET .../history/:rev/content/*`, `POST .../history/:rev/restore
+  { path? }`, `POST .../history/commit { message }`.
+- **Restore is reversible.** `restore rev=<hash> [path=]` puts one path
+  (or, with no path, the whole workspace) back as it was. The current
+  state is snapshotted first (`before restoring …`), the result is
+  recorded as a new snapshot (`restored … from <hash>`), so a restore can
+  itself be restored. A whole-workspace restore removes files the snapshot
+  did not have; a path restore only writes the files under that path.
+  A restore that would put the workspace over its quota is rolled back
+  with `QUOTA_EXCEEDED`.
+- **Never the sandbox.** Every git call is made by the bot (or `apps/api`
+  in standalone mode) with a sealed environment: explicit `GIT_DIR` and
+  `GIT_WORK_TREE`, `HOME` inside the git dir, no system or global config,
+  no hooks, no pager, no prompts, `core.symlinks=false` so a snapshot can
+  never plant a symlink on restore. The sandbox bind-mounts only the
+  workspace, so a snippet can neither read nor damage history. There is
+  **no remote, no credential and no network**: cloning and pushing are a
+  separate decision (ADR 0014 §"Out of scope"). Revisions are a short hash
+  or `HEAD` (never a flag or a ref name) and paths go through the same
+  legalizer as every other workspace read.
+- **What stays out.** `runs/*/frames/`, `frames/`, `renders/`, interpreter
+  caches (`__pycache__/`, `*.pyc`, `node_modules/`, `.venv/`), the
+  sandbox's hidden run sources, and any file over
+  `observatory.historyMaxFileMb` (default 8 MB). The exclude list is
+  rewritten by Goobster before every snapshot.
+- **Budget.** History does not count toward the workspace quota; it has
+  its own `observatory.historyMaxMb` (default 256 MB). Past it, the
+  repository is packed, then **squashed to one snapshot**; if even one
+  snapshot is over budget, snapshots **pause** (the listing says so) until
+  the workspace shrinks.
+- **Who.** A snapshot's author is a project-scoped pseudonym (a hash of
+  the project id and the user id), never a Discord id or a name. Names are
+  resolved when history is read, against the current owner and members,
+  so a collaborator erased by `/forget-me` reads as *former collaborator*
+  with nothing rewritten. Commit messages name files, job ids and
+  outcomes - never code, output, prompts or replies.
+- **Switches.** On by default. `GOOBSTER_PROJECT_HISTORY_ENABLED=0` or
+  `"observatory": { "historyEnabled": false }` turns it off;
+  `observatory.gitCommand` (`GOOBSTER_OBSERVATORY_GIT`) names the binary.
+  Without git on the host the feature is off with one startup warning,
+  the listing answers `reason: "GIT_MISSING"`, and the tool and portal say
+  so - projects keep working. `git` is a system dependency of the
+  `projects` feature in the catalog (`documentation/features.md`) and is
+  installed by the Docker images and `scripts/install-rpi.sh`.
+- **Erasure.** Deleting the project removes its history directory; owner
+  `/forget-me` removes the whole `data/sandbox/projects/<owner>/` tree,
+  history included.
 
 ### Assets
 
@@ -497,7 +572,10 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   dedupe, and pruning as the tool. `workspace/` is the on-disk tree,
   listed lazily via `listFiles({ path })`. Text files edit in CodeMirror;
   images and video play inline; binaries download through the owner-only
-  content route. PUT/DELETE `/api/app/projects/:slug/content/*` write
+  content route. Every workspace file and directory carries a
+  **Snapshots** rail ([Workspace history](#workspace-history)): pick a
+  snapshot to see what changed since it, download the file as it was, or
+  restore it; the workspace root adds **Snapshot now**. PUT/DELETE `/api/app/projects/:slug/content/*` write
   that same quota'd sandbox (multipart for binaries). A ▶ Run button on
   script assets calls `POST .../assets/:asset/run` with the head version
   and `startedBy='portal'`.
@@ -850,8 +928,12 @@ heavy.
 Projects, jobs, share links, assets, versions, triggers, memberships,
 missions, decisions, and invites are personal data. `/what-do-you-know-about-me` reports
 owned and collaborated projects. Owner `/forget-me` deletes the whole
-project (rows, workspace, dashboards, share links, memberships, invites,
-and the `PROJECT:<id>` knowledge scope) and DMs members that it is gone.
+project (rows, workspace, workspace history, dashboards, share links,
+memberships, invites, and the `PROJECT:<id>` knowledge scope) and DMs
+members that it is gone. Workspace history never stores a user id: its
+authors are project-scoped pseudonyms resolved at read time, so an erased
+collaborator's snapshots read as *former collaborator* and nothing is
+rewritten.
 Member `/forget-me` deletes their memberships, invites addressed to
 them, authored asset versions (repairing each asset's head; deleting an
 asset left with zero versions), and authored jobs — workspace files and
@@ -870,6 +952,10 @@ project are project data and stay.
 `tests/observatoryConfig.test.js` (clamping),
 `tests/observatoryService.test.js` / `tests/projectService.test.js`
 (projects, quota, jobs, erasure, re-export parity),
+`tests/projectHistoryService.test.js` / `tests/projectHistoryApi.test.js`
+(workspace history: sibling git dir, excludes, budget squash and pause,
+pseudonymous authors, restore, erasure, missing-git degradation, route
+contract),
 `tests/projectAssetService.test.js` / `tests/projectAssetApi.test.js`
 (versioning, pruning, rollback, dedupe, API auth),
 `tests/projectTriggerService.test.js` / `tests/projectTriggerApi.test.js`

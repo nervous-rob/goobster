@@ -89,7 +89,11 @@
         "maxWorkspaceFiles": 50,
         "maxRenderFrames": 2000,
         "renderFps": 24,
-        "ffmpegCommand": "ffmpeg"
+        "ffmpegCommand": "ffmpeg",
+        "historyEnabled": true,
+        "historyMaxFileMb": 8,
+        "historyMaxMb": 256,
+        "gitCommand": "git"
     },
 
     "selfDocs": {

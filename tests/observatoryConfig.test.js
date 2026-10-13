@@ -31,7 +31,9 @@ const LIMITS = {
     maxWorkspaceReadMb: [8, 1, 32],
     maxUploadMb: [50, 1, 2_048],
     maxRenderFrames: [2_000, 2, 100_000],
-    renderFps: [24, 1, 120]
+    renderFps: [24, 1, 120],
+    historyMaxFileMb: [8, 1, 512],
+    historyMaxMb: [256, 1, 10_240]
 };
 const knobs = Object.entries(LIMITS);
 
@@ -68,6 +70,10 @@ describe('non-numeric knobs', () => {
     });
 
     test('ffmpeg command defaults to the system binary', () => {
+        expect(load({}).gitCommand).toBe('git');
+        expect(load({ gitCommand: '/usr/local/bin/git' }).gitCommand).toBe('/usr/local/bin/git');
+        expect(load({}).historyEnabled).toBe(true);
+        expect(load({ historyEnabled: false }).historyEnabled).toBe(false);
         expect(load({}).ffmpegCommand).toBe('ffmpeg');
         expect(load({ ffmpegCommand: '/opt/ffmpeg/bin/ffmpeg' }).ffmpegCommand)
             .toBe('/opt/ffmpeg/bin/ffmpeg');

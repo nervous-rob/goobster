@@ -209,7 +209,7 @@ Feature id: `gba`. The Game Boy Advance harness (/gbarun, gba-mcp pairing and au
 
 ## Projects
 
-Feature id: `projects`. Workshop projects: rooms, members, files, assets, plans, missions, triggers and applets. Organisation works without code execution.
+Feature id: `projects`. Workshop projects: rooms, members, files with git-backed workspace history, assets, plans, missions, triggers and applets. Organisation works without code execution.
 
 - **Kind:** feature
 - **Fresh install default:** on
@@ -217,7 +217,8 @@ Feature id: `projects`. Workshop projects: rooms, members, files, assets, plans,
 - **Owns:** 3 MCP tools (`get_project`, `list_project_files`, `list_projects`); 1 portal room (`projects`); 4 guided tours; 2 portal route groups
 - **Switch today:** `projects.enabled` or `GOOBSTER_PROJECTS_ENABLED`, default on.
 - **Host override:** `GOOBSTER_FEATURE_PROJECTS=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
-- **Config keys:** `projects.enabled`
+- **Config keys:** `projects.enabled`, `observatory.historyEnabled`, `observatory.historyMaxFileMb`, `observatory.historyMaxMb`, `observatory.gitCommand`
+- **System dependencies:** `git`
 - **Documentation:** [projects.md](projects.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.
 

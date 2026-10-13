@@ -28,6 +28,7 @@ export const keys = {
     projectMembers: (slug: string, owner?: string | null) => ['project-members', slug, owner || ''] as const,
     projectAssets: (slug: string, owner?: string | null) => ['project-assets', slug, owner || ''] as const,
     projectFiles: (slug: string, dir = '', owner?: string | null) => ['project-files', slug, dir, owner || ''] as const,
+    projectHistory: (slug: string, filePath = '', owner?: string | null) => ['project-history', slug, filePath, owner || ''] as const,
     projectTriggers: (slug: string, owner?: string | null) => ['project-triggers', slug, owner || ''] as const,
     projectConversation: (slug: string, owner?: string | null) => ['project-conversation', slug, owner || ''] as const,
     projectKnowledge: (slug: string, owner?: string | null) => ['project-knowledge', slug, owner || ''] as const,

@@ -588,6 +588,9 @@ class KnowledgeTransferService {
             );
             return { conversation, transferId };
         }));
+        if (files.folder) {
+            await projects.history?.commitQuietly(row, { userId, message: `moved chat files into ${files.folder}` });
+        }
 
         if (!keepOriginal) {
             await webChatService.deleteConversation({ userId, conversationId: chat.id });

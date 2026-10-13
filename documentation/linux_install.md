@@ -53,13 +53,13 @@ manager").
 
 System packages are the operator's job. The installer **reports** the system
 dependencies the selected features use (`ffmpeg`, `bubblewrap`, `python3-venv`,
-`mgba`, `spotdl`, `yt-dlp`, `ollama`) as `SYSTEM_DEPENDENCY_MISSING` warnings
+`git`, `mgba`, `spotdl`, `yt-dlp`, `ollama`) as `SYSTEM_DEPENDENCY_MISSING` warnings
 and never installs them: the `package.install` privileged operation answers
 `NOT_IMPLEMENTED` on Linux. For example:
 
 ```bash
-sudo apt install ffmpeg bubblewrap python3-venv        # Debian, Ubuntu, Raspberry Pi OS
-sudo dnf install ffmpeg bubblewrap python3             # AlmaLinux, Rocky (ffmpeg needs RPM Fusion or EPEL)
+sudo apt install ffmpeg bubblewrap python3-venv git    # Debian, Ubuntu, Raspberry Pi OS
+sudo dnf install ffmpeg bubblewrap python3 git         # AlmaLinux, Rocky (ffmpeg needs RPM Fusion or EPEL)
 ```
 
 `documentation/raspberry_pi_guide.md` covers the music tools (`spotdl`,

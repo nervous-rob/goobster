@@ -264,6 +264,8 @@ installer's preflight tells you which are missing.
 
 - Node.js v20 or higher (v22 recommended)
 - FFmpeg (`sudo apt install ffmpeg`)
+- git (`sudo apt install git`), for project workspace history; without it
+  projects still work and snapshots are off
 - A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications)),
   only for the lite profile or to connect Discord
 - Optional: [Ollama](https://ollama.com) for local AI chat with no cloud dependency

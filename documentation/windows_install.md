@@ -51,7 +51,7 @@ The baseline is the bundled Node.js 22's own. What is **exercised** is Windows
 Server 2022 on GitHub's `windows-2022` runner (see "What CI proves"); the other
 versions are expected to work and are not tested here.
 
-System programs the selected features use (`ffmpeg`, `python`, `yt-dlp`,
+System programs the selected features use (`ffmpeg`, `python`, `git`, `yt-dlp`,
 `ollama`) are the operator's job: the installer reports them as
 `SYSTEM_DEPENDENCY_MISSING` warnings and never installs them (`package.install`
 is `NOT_IMPLEMENTED` on Windows).

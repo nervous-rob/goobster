@@ -76,7 +76,15 @@ module.exports = {
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
                 + '"files" (workspace listing), "read" (one workspace text file by path; optional '
-                + '1-based offset + line limit — prefer this over cat/head/sed via run), '
+                + '1-based offset + line limit — prefer this over cat/head/sed via run; pass rev=<snapshot> '
+                + 'to read the file as it was in an earlier snapshot), '
+                + '"history" (workspace snapshots, newest first — one is taken automatically after every run, '
+                + 'job, portal write, fetch-data and restore; optional path= to see only snapshots touching a file), '
+                + '"diff" (no rev: what changed in the workspace since the latest snapshot; rev: what that '
+                + 'snapshot changed; rev + to: between two snapshots, to="workspace" for the current files; '
+                + 'optional path=), "restore" (put path= — or the whole workspace when path is omitted — back '
+                + 'as it was in snapshot rev=; the current state is snapshotted first so a restore is reversible), '
+                + '"commit" (snapshot the workspace now with note= as the message), '
                 + '"render" (stitch frames into an mp4 at an optional fps), '
                 + '"dashboard" (regenerate and attach the project\'s shareable HTML results dashboard - it is '
                 + 'also refreshed automatically after every run and job), "fetch-data" (download a public '
@@ -116,17 +124,19 @@ module.exports = {
                     action: {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'read', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'files', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'list_deliveries', 'delete_trigger', 'invite_user', 'list_members', 'remove_member',
                             'note_knowledge', 'recall_knowledge', 'mission'],
                         description: 'What to do. Prefer "inspect" for overview; "audit" for setup-contract review; "needs-you" for the human decision board.'
                     },
-                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/list_deliveries/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
-                    path: { type: 'string', description: 'read: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
-                    offset: { type: 'integer', description: 'read / get_asset: 1-based line to start at (default 1)' },
-                    limit: { type: 'integer', description: 'read / get_asset: max lines to return (default 400, max 800)' },
+                    project: { type: 'string', description: 'Project name or slug (required for inspect/run/files/read/history/diff/restore/commit/render/fetch-data/delete-project/save_*/list_assets/get_asset/rollback_asset/run_script/set_trigger/list_triggers/list_deliveries/delete_trigger/invite_user/list_members/remove_member/note_knowledge/recall_knowledge/mission; optional for audit — omit to audit all projects)' },
+                    path: { type: 'string', description: 'read / history / diff / restore: workspace-relative path (e.g. "src/main.py" or "data/notes.md")' },
+                    offset: { type: 'integer', description: 'read / get_asset / diff: 1-based line to start at (default 1)' },
+                    limit: { type: 'integer', description: 'read / get_asset / diff: max lines to return (default 400, max 800); history: max snapshots (default 30)' },
+                    rev: { type: 'string', description: 'read / diff / restore: a snapshot hash from history (e.g. "3f2a1c9") or HEAD' },
+                    to: { type: 'string', description: 'diff: the second snapshot to compare rev against, or "workspace" for the current files' },
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
                     tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
@@ -140,7 +150,7 @@ module.exports = {
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
                     code: { type: 'string', description: 'Source code for run or save_*' },
                     version: { type: 'integer', description: 'Asset version number (get_asset / rollback_asset)' },
-                    note: { type: 'string', description: 'One-line commit note for save_*' },
+                    note: { type: 'string', description: 'One-line note for save_* versions and commit snapshots' },
                     kind: { type: 'string', enum: ['app', 'script', 'note', 'cron', 'event'], description: 'list_assets: optional kind filter; set_trigger: cron or event' },
                     stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
                     background: { type: 'boolean', description: 'run / run_script: detach as a checkpointable background job (default false for run, true for trigger-fired run_script)' },
@@ -213,7 +223,7 @@ module.exports = {
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, missionAction, title, objective,
+            relation, path: workspacePath, offset, limit, rev, to, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
             choices, selectedId,
@@ -357,6 +367,17 @@ module.exports = {
                     case 'read': {
                         const rel = workspacePath || name || slug;
                         if (!rel) return '❌ read needs path (workspace-relative, e.g. "src/main.py").';
+                        if (rev) {
+                            const old = await observatoryService.history.showText({
+                                userId, project, owner, rev, path: rel, offset, limit
+                            });
+                            return formatTextWindow({
+                                label: `🕰️ ${old.relativePath} @ ${old.short}`,
+                                size: old.size,
+                                window: old,
+                                fence: fenceLanguage(old.name)
+                            });
+                        }
                         const got = await observatoryService.readWorkspaceText({
                             userId, slug: project, relativePath: rel, offset, limit, owner
                         });
@@ -366,6 +387,66 @@ module.exports = {
                             window: got,
                             fence: fenceLanguage(got.name)
                         });
+                    }
+                    case 'history': {
+                        const log = await observatoryService.history.log({
+                            userId, project, owner, path: workspacePath || null, limit
+                        });
+                        if (!log.enabled) {
+                            return log.reason === 'GIT_MISSING'
+                                ? '🕰️ Workspace history is off on this installation: git is not installed.'
+                                : '🕰️ Workspace history is turned off on this installation.';
+                        }
+                        if (log.commits.length === 0) {
+                            return `🕰️ ${log.project}: no snapshots yet${workspacePath ? ` touching ${workspacePath}` : ''}. `
+                                + 'One is taken after every run, write, fetch and restore, or now with action "commit".';
+                        }
+                        const head = `🕰️ ${log.project} snapshots${workspacePath ? ` touching ${workspacePath}` : ''}`
+                            + ` (${log.sizeMb}/${log.budgetMb} MB of history${log.paused ? ', PAUSED: the workspace is over the history budget' : ''}):`;
+                        return head + '\n' + log.commits.map(c =>
+                            `- ${c.short} · ${c.when} · ${c.author.name} (${c.author.role}) · ${c.message}`
+                            + ` · ${c.fileCount} file(s)${c.fileCount <= 4 ? `: ${c.files.join(', ')}` : ''}`
+                        ).join('\n')
+                            + '\nUse diff rev=<hash>, read path= rev=<hash>, or restore rev=<hash> [path=].';
+                    }
+                    case 'diff': {
+                        const changes = await observatoryService.history.diff({
+                            userId, project, owner, rev: rev || null, to: to || null,
+                            path: workspacePath || null, offset, limit
+                        });
+                        if (changes.empty) {
+                            return `🕰️ ${changes.label}${changes.path ? ` (${changes.path})` : ''}: no differences.`;
+                        }
+                        return formatTextWindow({
+                            label: `🕰️ ${changes.label}${changes.path ? ` (${changes.path})` : ''}`,
+                            size: changes.size,
+                            window: changes,
+                            fence: 'diff'
+                        });
+                    }
+                    case 'restore': {
+                        if (!rev) return '❌ restore needs rev (a snapshot hash from action "history").';
+                        const restored = await observatoryService.history.restore({
+                            userId, project, owner, rev, path: workspacePath || null
+                        });
+                        const what = restored.restored ? `"${restored.restored}"` : 'the whole workspace';
+                        return `↩️ Restored ${what} in "${restored.project}" from snapshot ${restored.short}. `
+                            + (restored.changed
+                                ? `The state before the restore is snapshot ${restored.before.slice(0, 7)}, so this can be undone.`
+                                : 'Nothing differed, so the workspace is unchanged.');
+                    }
+                    case 'commit': {
+                        const snap = await observatoryService.history.commit({
+                            userId, project, owner, message: note || name || 'snapshot'
+                        });
+                        if (snap.committed) {
+                            return `🕰️ Snapshot ${snap.short} of "${project}" taken.`
+                                + (snap.squashed ? ' Older snapshots were squashed to stay within the history budget.' : '');
+                        }
+                        if (snap.reason === 'NO_CHANGES') return `🕰️ Nothing changed in "${project}" since the latest snapshot.`;
+                        if (snap.reason === 'PAUSED') return `🕰️ Snapshots are paused for "${project}": the workspace is over the history budget. Delete large files to resume.`;
+                        if (snap.reason === 'GIT_MISSING') return '🕰️ Workspace history is off on this installation: git is not installed.';
+                        return '🕰️ Workspace history is turned off on this installation.';
                     }
                     case 'run': {
                         const outcome = await observatoryService.run({

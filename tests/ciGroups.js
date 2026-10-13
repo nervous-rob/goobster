@@ -252,6 +252,8 @@ const GROUPS = [
             'projectAssetService',
             'projectChat',
             'projectCollaboration',
+            'projectHistoryApi',
+            'projectHistoryService',
             'projectMissionApi',
             'projectMissionService',
             'projectOrganization',
