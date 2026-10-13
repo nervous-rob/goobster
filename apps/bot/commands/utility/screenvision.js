@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, AttachmentBuilder, MessageFlags } = require('discord.js');
 const screenVisionService = require('@goobster/core/services/screenVisionService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 /**
  * Pairing and status for the screen-vision companion app: a small program
@@ -10,7 +11,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('screenvision')
-        .setDescription('Let Goobster see your screen via the companion app (opt-in)')
+        .setDescription(`Let ${assistantName} see your screen via the companion app (opt-in)`)
         .addSubcommand(sub =>
             sub.setName('link')
                 .setDescription('Get a one-time code to pair the companion app on your PC'))

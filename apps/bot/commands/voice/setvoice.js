@@ -3,6 +3,7 @@ const { getTtsVoice, setTtsVoice } = require('@goobster/core/utils/guildSettings
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const { voiceService } = require('@goobster/core/services/serviceManager');
 const userSettingsService = require('@goobster/core/services/userSettingsService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
   // In a DM the voice is per-user (it also drives the web portal's voice
@@ -11,7 +12,7 @@ module.exports = {
   dmAllowed: true,
   data: new SlashCommandBuilder()
     .setName('setvoice')
-    .setDescription('Configure the ElevenLabs voice Goobster speaks with in this server or DM')
+    .setDescription(`Configure the ElevenLabs voice ${assistantName} speaks with in this server or DM`)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(subcommand =>
       subcommand

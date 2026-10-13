@@ -1,15 +1,16 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getReplyDetection, setReplyDetection, REPLY_DETECTION } = require('@goobster/core/utils/guildSettings');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('replydetection')
-        .setDescription('Configure whether Goobster answers replies to his own messages without a mention')
+        .setDescription(`Configure whether ${assistantName} answers replies to its own messages without a mention`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription('Answer messages that follow one of Goobster\'s and read as a reply to it'))
+                .setDescription(`Answer messages that follow one of ${assistantName}'s and read as a reply to it`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')

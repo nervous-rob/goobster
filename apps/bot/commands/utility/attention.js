@@ -4,6 +4,7 @@ const attentionLedgerService = require('@goobster/core/services/attentionLedgerS
 const attentionPolicyService = require('@goobster/core/services/attentionPolicyService');
 const attentionWatchService = require('@goobster/core/services/attentionWatchService');
 const attentionConfig = require('@goobster/core/config/attentionConfig');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 /**
  * /attention — the user's control surface for proactive attention.
@@ -42,15 +43,15 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('attention')
-        .setDescription('Control whether Goobster keeps track of your open loops and reaches out on his own.')
+        .setDescription(`Control whether ${assistantName} keeps track of your open loops and reaches out on its own.`)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription('Let Goobster track what matters to you and decide when to speak up')
+                .setDescription(`Let ${assistantName} track what matters to you and decide when to speak up`)
                 .addStringOption(option =>
                     option
                         .setName('initiative')
-                        .setDescription('How much initiative he gets (default: nudge)')
+                        .setDescription('How much initiative it gets (default: nudge)')
                         .addChoices(
                             { name: 'observe - notices, never reaches out', value: 'observe' },
                             { name: 'nudge - may surface useful things', value: 'nudge' },
@@ -68,7 +69,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('inbox')
-                .setDescription('Everything Goobster noticed but did not interrupt you about'))
+                .setDescription(`Everything ${assistantName} noticed but did not interrupt you about`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('dismiss')
@@ -89,7 +90,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('budget')
-                .setDescription('Cap how often he may reach out')
+                .setDescription('Cap how often it may reach out')
                 .addIntegerOption(option =>
                     option.setName('per-day').setDescription('Maximum DMs per day (0-20)'))
                 .addIntegerOption(option =>
@@ -97,7 +98,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('watches')
-                .setDescription('Show the conditions he is currently waiting on')),
+                .setDescription('Show the conditions it is currently waiting on')),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();

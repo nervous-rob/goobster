@@ -1,10 +1,11 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const memoryService = require('@goobster/core/services/memoryService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('memory')
-        .setDescription('Manage Goobster\'s long-term memory for this server.')
+        .setDescription(`Manage ${assistantName}'s long-term memory for this server.`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
@@ -13,7 +14,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('recall')
-                .setDescription('Test what Goobster remembers about a topic')
+                .setDescription(`Test what ${assistantName} remembers about a topic`)
                 .addStringOption(option =>
                     option.setName('topic')
                         .setDescription('What to search memories for')

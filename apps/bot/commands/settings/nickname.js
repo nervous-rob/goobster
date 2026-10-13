@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getBotNickname, setBotNickname, getUserNickname, setUserNickname } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const userSettingsService = require('@goobster/core/services/userSettingsService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     // In a DM, nicknames are keyed on the user's DM scope and the DM user
@@ -10,33 +11,33 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('nickname')
-        .setDescription('Manage nicknames for Goobster and users')
+        .setDescription(`Manage nicknames for ${assistantName} and users`)
         .addSubcommandGroup(group =>
             group
                 .setName('bot')
-                .setDescription('Manage Goobster\'s nickname in this server')
+                .setDescription(`Manage ${assistantName}'s nickname in this server`)
                 .addSubcommand(subcommand =>
                     subcommand
                         .setName('set')
-                        .setDescription('Set a custom nickname for Goobster in this server')
+                        .setDescription(`Set a custom nickname for ${assistantName} in this server`)
                         .addStringOption(option =>
                             option
                                 .setName('nickname')
-                                .setDescription('The new nickname for Goobster (max 32 characters)')
+                                .setDescription(`The new nickname for ${assistantName} (max 32 characters)`)
                                 .setRequired(true)
                                 .setMaxLength(32)))
                 .addSubcommand(subcommand =>
                     subcommand
                         .setName('clear')
-                        .setDescription('Clear Goobster\'s custom nickname in this server'))
+                        .setDescription(`Clear ${assistantName}'s custom nickname in this server`))
                 .addSubcommand(subcommand =>
                     subcommand
                         .setName('view')
-                        .setDescription('View Goobster\'s current nickname in this server')))
+                        .setDescription(`View ${assistantName}'s current nickname in this server`)))
         .addSubcommandGroup(group =>
             group
                 .setName('user')
-                .setDescription('Manage your nickname that Goobster will use to refer to you')
+                .setDescription(`Manage your nickname that ${assistantName} will use to refer to you`)
                 .addSubcommand(subcommand =>
                     subcommand
                         .setName('set')

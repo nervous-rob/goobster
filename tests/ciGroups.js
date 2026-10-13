@@ -34,6 +34,7 @@ const GROUPS = [
             'dbSchemaUpgrade',
             'dialectForeignKeys',
             'dmCommands',
+            'commandDocsSync',
             'postgresConnectRetry',
             'executionLease',
             'featureCatalog',

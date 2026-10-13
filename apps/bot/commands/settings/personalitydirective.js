@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { getPersonalityDirective, setPersonalityDirective } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const userSettingsService = require('@goobster/core/services/userSettingsService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     // In a DM the directive is per-user (the DM user is the "admin" of
@@ -10,14 +11,14 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('personalitydirective')
-        .setDescription('Configure Goobster\'s personality for this server or DM')
+        .setDescription(`Configure ${assistantName}'s personality for this server or DM`)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('set')
-                .setDescription('Set a custom personality directive for Goobster')
+                .setDescription(`Set a custom personality directive for ${assistantName}`)
                 .addStringOption(option =>
                     option.setName('directive')
-                        .setDescription('The personality directive that will modify Goobster\'s behavior')
+                        .setDescription(`The personality directive that will modify ${assistantName}'s behavior`)
                         .setRequired(true)))
         .addSubcommand(subcommand =>
             subcommand

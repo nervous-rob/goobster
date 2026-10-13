@@ -1,18 +1,19 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const voiceSessionService = require('@goobster/core/services/voice/voiceSessionService');
 const { voiceService } = require('@goobster/core/services/serviceManager');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('voicechat')
-        .setDescription('Have a live voice conversation with Goobster in your voice channel.')
+        .setDescription(`Have a live voice conversation with ${assistantName} in your voice channel.`)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('start')
-                .setDescription('Goobster joins your voice channel and starts listening')
+                .setDescription(`${assistantName} joins your voice channel and starts listening`)
                 .addStringOption(option =>
                     option.setName('mode')
-                        .setDescription('When Goobster replies (default: polite)')
+                        .setDescription(`When ${assistantName} replies (default: polite)`)
                         .addChoices(
                             { name: 'Polite - only when addressed or clearly needed', value: 'polite' },
                             { name: 'Open - replies to every turn', value: 'open' }

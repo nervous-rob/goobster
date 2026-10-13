@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getMonologueMode, setMonologueMode, MONOLOGUE_MODE } = require('@goobster/core/utils/guildSettings');
 const MonologueService = require('@goobster/core/services/monologueService');
 const knowledgeGraphService = require('@goobster/core/services/knowledgeGraphService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 // Reuse the live service when the bot started one; otherwise a detached
 // instance works fine for the DB-backed reads (thoughts, notes, stats).
@@ -12,12 +13,12 @@ function getService() {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('monologue')
-        .setDescription('Control Goobster\'s internal monologue (private thoughts, scratch pad, knowledge graph).')
+        .setDescription(`Control ${assistantName}'s internal monologue (private thoughts, scratch pad, knowledge graph).`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription('Let Goobster keep a private thought process about this server'))
+                .setDescription(`Let ${assistantName} keep a private thought process about this server`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')
@@ -29,7 +30,7 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('thoughts')
-                .setDescription('Peek at Goobster\'s recent private thoughts and scratch pad'))
+                .setDescription(`Peek at ${assistantName}'s recent private thoughts and scratch pad`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('graph')

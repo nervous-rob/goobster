@@ -3,6 +3,7 @@ const gamblingService = require('@goobster/core/services/gamblingService');
 const { EconomyError } = require('@goobster/core/services/economyService');
 const { formatHand } = require('@goobster/core/utils/pokerHands');
 const usageTracker = require('@goobster/core/services/usageTracker');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 const OUTCOME_COLORS = { win: 0x3ba55d, lose: 0xed4245, push: 0x99aab5 };
 
@@ -28,7 +29,7 @@ module.exports = {
                     .addChoices({ name: 'Heads', value: 'heads' }, { name: 'Tails', value: 'tails' })))
         .addSubcommand(sub =>
             sub.setName('d20')
-                .setDescription('Roll a d20 against Goobster - higher roll wins')
+                .setDescription(`Roll a d20 against ${assistantName} - higher roll wins`)
                 .addIntegerOption(opt => opt.setName('bet').setDescription('Points to wager').setRequired(true).setMinValue(1)))
         .addSubcommand(sub =>
             sub.setName('poker')

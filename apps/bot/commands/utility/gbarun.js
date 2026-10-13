@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, ChannelType, MessageFlags, PermissionFlagsBits } = require('discord.js');
 const gbaRunService = require('@goobster/core/services/gbaRunService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 /**
  * Pairing and status for the GBA run harness ("Goobster Plays Pokémon",
@@ -11,7 +12,7 @@ const gbaRunService = require('@goobster/core/services/gbaRunService');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('gbarun')
-        .setDescription('Broadcast a GBA game run (Goobster Plays Pokémon) into a channel')
+        .setDescription(`Broadcast a GBA game run (${assistantName} Plays Pokémon) into a channel`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .setDMPermission(false)
         .addSubcommand(sub =>

@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
 const privacyService = require('@goobster/core/services/privacyService');
 const usageTracker = require('@goobster/core/services/usageTracker');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 const CONFIRM_TIMEOUT_MS = 60 * 1000;
 
@@ -10,7 +11,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('forget-me')
-        .setDescription('Erase everything Goobster knows about you, bot-wide. Cannot be undone.'),
+        .setDescription(`Erase everything ${assistantName} knows about you, bot-wide. Cannot be undone.`),
 
     async execute(interaction) {
         const confirmRow = new ActionRowBuilder().addComponents(

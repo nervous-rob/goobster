@@ -1,17 +1,18 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { THREAD_PREFERENCE, getThreadPreference, setThreadPreference } = require('@goobster/core/utils/guildSettings');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('threadpreference')
-        .setDescription('Configure how Goobster responds to messages')
+        .setDescription(`Configure how ${assistantName} responds to messages`)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('set')
                 .setDescription('Set the thread preference for this server')
                 .addStringOption(option =>
                     option.setName('preference')
-                        .setDescription('Choose where Goobster should respond to messages')
+                        .setDescription(`Choose where ${assistantName} should respond to messages`)
                         .setRequired(true)
                         .addChoices(
                             { name: 'Always use threads', value: THREAD_PREFERENCE.ALWAYS_THREAD },

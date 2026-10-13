@@ -4,6 +4,7 @@ const {
     MAX_INSTRUCTIONS_LENGTH
 } = require('@goobster/core/utils/userInstructions');
 const userSettingsService = require('@goobster/core/services/userSettingsService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 /**
  * Per-user custom instructions from Discord - the same setting the web
@@ -16,7 +17,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('instructions')
-        .setDescription('Your custom instructions - how Goobster should respond to you, everywhere.')
+        .setDescription(`Your custom instructions - how ${assistantName} should respond to you, everywhere.`)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('view')
@@ -27,7 +28,7 @@ module.exports = {
                 .setDescription('Set your custom instructions (replaces the previous text)')
                 .addStringOption(option =>
                     option.setName('text')
-                        .setDescription('How should Goobster respond? Anything he should know about you?')
+                        .setDescription(`How should ${assistantName} respond? Anything it should know about you?`)
                         .setRequired(true)
                         .setMaxLength(MAX_INSTRUCTIONS_LENGTH)))
         .addSubcommand(subcommand =>

@@ -1,9 +1,10 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('cleanup')
-        .setDescription('Delete recent messages from Goobster')
+        .setDescription(`Delete recent messages from ${assistantName}`)
         .addIntegerOption(option =>
             option.setName('amount')
                 .setDescription('Number of messages to check (default: 100)')

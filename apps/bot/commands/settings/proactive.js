@@ -2,20 +2,21 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getProactiveMode, setProactiveMode, PROACTIVE_MODE } = require('@goobster/core/utils/guildSettings');
 const factsService = require('@goobster/core/services/factsService');
 const followupService = require('@goobster/core/services/followupService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('proactive')
-        .setDescription('Control Goobster\'s proactive mode (his "heartbeat" - unprompted participation).')
+        .setDescription(`Control ${assistantName}'s proactive mode (its "heartbeat" - unprompted participation).`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription('Let Goobster occasionally chime in, react, and follow up on his own'))
+                .setDescription(`Let ${assistantName} occasionally chime in, react, and follow up on its own`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')
-                .setDescription('Goobster only responds when addressed'))
+                .setDescription(`${assistantName} only responds when addressed`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('status')

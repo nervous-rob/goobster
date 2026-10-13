@@ -3,6 +3,7 @@ const memoryService = require('@goobster/core/services/memoryService');
 const activityService = require('@goobster/core/services/activityService');
 const { getMemoryRetentionDays, setMemoryRetentionDays } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     // DM admin rule: in a DM the user is the "admin" of their own dm:<userId>
@@ -11,7 +12,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('privacy')
-        .setDescription('Control what Goobster remembers here.')
+        .setDescription(`Control what ${assistantName} remembers here.`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
@@ -33,7 +34,7 @@ module.exports = {
                 .setDescription('Stop remembering a channel (and forget what\'s already stored from it)')
                 .addChannelOption(option =>
                     option.setName('channel')
-                        .setDescription('Channel Goobster must not remember')
+                        .setDescription(`Channel ${assistantName} must not remember`)
                         .addChannelTypes(ChannelType.GuildText)
                         .setRequired(true)))
         .addSubcommand(subcommand =>

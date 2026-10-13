@@ -4,6 +4,7 @@ const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
 const aiService = require('@goobster/core/services/aiService');
 const aiConfig = require('@goobster/core/config/aiConfig');
 const userSettingsService = require('@goobster/core/services/userSettingsService');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     // In a DM the overrides are per-user (keyed on the DM scope) -
@@ -12,7 +13,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('aisettings')
-        .setDescription('Configure which AI provider and model Goobster uses in this server or DM.')
+        .setDescription(`Configure which AI provider and model ${assistantName} uses in this server or DM.`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand

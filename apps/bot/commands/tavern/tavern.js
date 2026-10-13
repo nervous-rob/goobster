@@ -7,6 +7,7 @@ const adventureService = require('@goobster/core/services/tavern/adventureServic
 const { NPCS } = require('@goobster/core/services/tavern/content');
 const views = require('@goobster/core/utils/tavernViews');
 const usageTracker = require('@goobster/core/services/usageTracker');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 /**
  * The Goobster Tavern's Common Room: the status embed (daily rumor, NPCs,
@@ -16,7 +17,7 @@ const usageTracker = require('@goobster/core/services/usageTracker');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('tavern')
-        .setDescription('The Goobster Tavern - a magical inn between worlds.')
+        .setDescription(`The ${assistantName} Tavern - a magical inn between worlds.`)
         .addSubcommand(sub =>
             sub.setName('status')
                 .setDescription('Step into the Common Room: rumors, quests, and who\'s around'))
@@ -54,7 +55,7 @@ module.exports = {
                     opt.setName('force').setDescription('Regenerate scenes that already have art')))
         .addSubcommand(sub =>
             sub.setName('forge')
-                .setDescription('Have Goobster write a whole new campaign onto the quest board (Manage Server, needs AI)')
+                .setDescription(`Have ${assistantName} write a whole new campaign onto the quest board (Manage Server, needs AI)`)
                 .addStringOption(opt =>
                     opt.setName('prompt').setDescription('What should the adventure be about?').setRequired(true).setMaxLength(600)))
         .addSubcommand(sub =>

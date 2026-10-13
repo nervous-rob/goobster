@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const privacyService = require('@goobster/core/services/privacyService');
 const usageTracker = require('@goobster/core/services/usageTracker');
 const { dmScopeId } = require('@goobster/core/utils/dmScope');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     // In a DM the report covers the user's DM scope
@@ -9,7 +10,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('what-do-you-know-about-me')
-        .setDescription('See everything Goobster has stored about you (private reply).'),
+        .setDescription(`See everything ${assistantName} has stored about you (private reply).`),
 
     async execute(interaction) {
         // Guild-scoped tables report the current guild; in a DM they report

@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const aiService = require('@goobster/core/services/aiService');
 const { getGuildAI, setGuildAI } = require('@goobster/core/utils/guildSettings');
 const { getConversationScopeId } = require('@goobster/core/utils/dmScope');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     // In a DM the preset is per-user (keyed on the DM scope) - registered
@@ -10,7 +11,7 @@ module.exports = {
     dmAllowed: true,
     data: new SlashCommandBuilder()
         .setName('thoughtfulmode')
-        .setDescription('Toggle Goobster\'s Thoughtful Mode (deeper reasoning at higher latency/cost).')
+        .setDescription(`Toggle ${assistantName}'s Thoughtful Mode (deeper reasoning at higher latency/cost).`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand

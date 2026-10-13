@@ -1,19 +1,20 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDynamicResponse, setDynamicResponse, DYNAMIC_RESPONSE } = require('@goobster/core/utils/guildSettings');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('dynamicresponse')
-        .setDescription('Configure Goobster\'s ability to respond to messages without being explicitly mentioned')
+        .setDescription(`Configure ${assistantName}'s ability to respond to messages without being explicitly mentioned`)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('enable')
-                .setDescription('Enable Goobster to respond dynamically based on message context and content'))
+                .setDescription(`Enable ${assistantName} to respond dynamically based on message context and content`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')
-                .setDescription('Disable dynamic responses, requiring explicit mentions to trigger Goobster'))
+                .setDescription(`Disable dynamic responses, requiring explicit mentions to trigger ${assistantName}`))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('status')

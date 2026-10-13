@@ -7,6 +7,7 @@ const { CALLINGS } = require('@goobster/core/services/tavern/content');
 const views = require('@goobster/core/utils/tavernViews');
 const { buildSceneView, sendEnding } = require('@goobster/core/services/tavern/interactionHandler');
 const usageTracker = require('@goobster/core/services/usageTracker');
+const { assistantName } = require('@goobster/core/config/identityConfig');
 
 /**
  * Adventure Mode: browse the quest board, form and join parties, play scenes
@@ -28,7 +29,7 @@ module.exports = {
                         .setAutocomplete(true)))
         .addSubcommand(sub =>
             sub.setName('invite-goobster')
-                .setDescription('Invite Goobster himself to play in your forming party'))
+                .setDescription(`Invite ${assistantName} itself to play in your forming party`))
         .addSubcommand(sub =>
             sub.setName('begin')
                 .setDescription('Begin this channel\'s adventure once the party is ready'))
@@ -50,7 +51,7 @@ module.exports = {
                         )))
         .addSubcommand(sub =>
             sub.setName('twist')
-                .setDescription('Bend the story: Goobster writes new scenes that tie your idea back into the campaign')
+                .setDescription(`Bend the story: ${assistantName} writes new scenes that tie your idea back into the campaign`)
                 .addStringOption(opt =>
                     opt.setName('description').setDescription('What should happen instead?').setRequired(true).setMaxLength(400)))
         .addSubcommand(sub =>
