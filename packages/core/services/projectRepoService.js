@@ -863,7 +863,7 @@ class ProjectRepoService {
             await this.history.commitQuietly(projectRow, { userId, message: `before ${kind} of ${REPOS_DIR}/${repoRow.name} with ${base}` });
             const ref = await this._fetchBase(projectRow, repoRow, base, token);
             const repoName = repoRow.name;
-            const base_ = { repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
+            const base_ = { project: projectRow.slug, repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
 
             const contained = await this._git(projectRow, repoName, ['merge-base', '--is-ancestor', ref, 'HEAD'], { allowFail: true });
             if (contained.status === 0) {
@@ -951,7 +951,7 @@ class ProjectRepoService {
             const base = status.operation === 'rebase' ? 'its base' : 'the other branch';
             return this._finishIntegration({
                 projectRow, repoRow, userId, kind: status.operation, base, run, from: status.head,
-                extra: { repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
+                extra: { project: projectRow.slug, repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
             });
         });
     }
@@ -972,7 +972,7 @@ class ProjectRepoService {
             await this._touch(projectRow, repoRow);
             await this.history.commitQuietly(projectRow, { userId, message: `aborted ${status.operation} of ${REPOS_DIR}/${repoRow.name}` });
             this._publish(projectRow, userId);
-            return { aborted: status.operation, name: repoRow.name, repo: repoRow.repo, status: await this._status(projectRow, repoRow.name) };
+            return { aborted: status.operation, project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, status: await this._status(projectRow, repoRow.name) };
         });
     }
 
@@ -1112,7 +1112,7 @@ class ProjectRepoService {
                 truncated = true;
             }
             return {
-                name: repoRow.name, repo: repoRow.repo, base: wantedBase, head: headName,
+                project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, base: wantedBase, head: headName,
                 ahead, behind, sharedHistory: threeDot,
                 identical: files.length === 0 && commits.length === 0,
                 commits, files: files.slice(0, COMPARE_MAX_FILES), fileCount: files.length,
@@ -1123,8 +1123,43 @@ class ProjectRepoService {
         });
     }
 
-    /** Collapse check runs and legacy statuses into one verdict plus what failed. */
+    /**
+     * One clone at a glance: local status, plus (best effort, from GitHub)
+     * CI for the current branch and that branch's open pull request. The
+     * Code view's strip and the project overview read this.
+     */
+    async summary({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const status = await this._status(projectRow, repoRow.name);
+        const out = { ...await this._serialize(projectRow, repoRow, { withStatus: false }), status, ci: null, pr: null, remoteError: null };
+        if (!status.branch) return out;
+        try {
+            const { api } = await this._api(userId, repoRow);
+            const owner_ = repoRow.repo.split('/')[0];
+            const [checks, pulls] = await Promise.all([
+                api.getChecks(repoRow.repo, status.branch).catch(error => (error?.code === 'NOT_FOUND' ? { runs: [], statuses: [] } : Promise.reject(error))),
+                status.branch === repoRow.branch
+                    ? Promise.resolve([])
+                    : api.listPullRequests(repoRow.repo, { state: 'open', limit: 1, head: `${owner_}:${status.branch}` })
+            ]);
+            out.ci = ProjectRepoService.summarizeChecks(checks);
+            const pr = pulls?.[0];
+            if (pr) out.pr = { number: pr.number, title: pr.title, url: pr.html_url, draft: Boolean(pr.draft), base: pr.base?.ref || null };
+        } catch (error) {
+            out.remoteError = this._apiError(error, repoRow.repo).message;
+        }
+        return out;
+    }
+
+    /**
+     * Collapse check runs and legacy statuses into one verdict plus what
+     * failed. Links are kept only when they are https: a status target_url
+     * is whatever the app that posted it chose, and it becomes a link.
+     */
     static summarizeChecks({ runs = [], statuses = [] } = {}) {
+        const safeUrl = (url) => (typeof url === 'string' && /^https:\/\//i.test(url) ? url.slice(0, 500) : null);
         const failing = [];
         const pending = [];
         let passed = 0;
@@ -1132,7 +1167,7 @@ class ProjectRepoService {
             if (run.status && run.status !== 'completed') pending.push(run.name);
             else if (FAILING_CONCLUSIONS.has(run.conclusion)) {
                 failing.push({
-                    name: run.name, conclusion: run.conclusion, url: run.html_url || null,
+                    name: run.name, conclusion: run.conclusion, url: safeUrl(run.html_url),
                     summary: String(run.output?.title || run.output?.summary || '').replace(/\s+/g, ' ').trim().slice(0, 300)
                 });
             } else passed++;
@@ -1140,7 +1175,7 @@ class ProjectRepoService {
         for (const entry of statuses) {
             if (entry.state === 'pending') pending.push(entry.context);
             else if (entry.state === 'failure' || entry.state === 'error') {
-                failing.push({ name: entry.context, conclusion: entry.state, url: entry.target_url || null, summary: String(entry.description || '').slice(0, 300) });
+                failing.push({ name: entry.context, conclusion: entry.state, url: safeUrl(entry.target_url), summary: String(entry.description || '').slice(0, 300) });
             } else passed++;
         }
         const total = runs.length + statuses.length;
@@ -1158,9 +1193,9 @@ class ProjectRepoService {
         const { api } = await this._api(userId, repoRow);
         try {
             const checks = await api.getChecks(repoRow.repo, target);
-            return { name: repoRow.name, repo: repoRow.repo, ref: target, ...ProjectRepoService.summarizeChecks(checks) };
+            return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, ...ProjectRepoService.summarizeChecks(checks) };
         } catch (error) {
-            if (error?.code === 'NOT_FOUND') return { name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], notOnGitHub: true };
+            if (error?.code === 'NOT_FOUND') return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], notOnGitHub: true };
             throw this._apiError(error, repoRow.repo);
         }
     }
@@ -1228,7 +1263,7 @@ class ProjectRepoService {
         }
         await this._audit(userId, 'project-repo-pr', { project: projectRow.slug, repo: repoRow.repo, number: created.number, head: headName, base: wantedBase });
         return {
-            name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
+            project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
             title: created.title || cleanTitle, draft: Boolean(created.draft), head: headName, base: wantedBase
         };
     }

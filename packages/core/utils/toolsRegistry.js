@@ -26,6 +26,7 @@ const attentionTools = require('./tools/attention');
 const integrationTools = require('./tools/integrations');
 const fileTools = require('./tools/files');
 const selfDocsTools = require('./tools/selfDocs');
+const capabilityGapTools = require('./tools/capabilityGaps');
 const selfDocsConfig = require('../config/selfDocsConfig');
 const { isIncognitoToolBlocked } = require('./toolPrivacy');
 const { surfaceActive, requireSurface, GateError, FEATURE_UNAVAILABLE } = require('../features/gate');
@@ -41,7 +42,8 @@ const catalog = {
     ...attentionTools,
     ...integrationTools,
     ...fileTools,
-    ...selfDocsTools
+    ...selfDocsTools,
+    ...capabilityGapTools
 };
 
 const TOOL_ORDER = [
@@ -63,6 +65,7 @@ const TOOL_ORDER = [
     'saveArtifact',
     'lookupNotes',
     'consultDocs',
+    'noteCapabilityGap',
     'checkPoints',
     'gamblePoints',
     'tavernInfo',

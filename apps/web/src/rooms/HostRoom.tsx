@@ -4,7 +4,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { keys } from '../lib/query';
-import type { AccessRequest, AdminAccount, Invite, OperatorAuditEntry, SkippedSchedules } from '../lib/types';
+import type { AccessRequest, AdminAccount, CapabilityGap, Invite, OperatorAuditEntry, SkippedSchedules } from '../lib/types';
 import { useSession } from '../hooks/useSession';
 import { useConfirm } from '../hooks/useConfirm';
 import { useToast } from '../hooks/useToast';
@@ -502,6 +502,8 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
     'instance.restore': 'restored the instance',
     'instance.pause': 'paused the instance',
     'limits.change': 'changed a limit',
+    'capability-gap.status': 'triaged a capability gap',
+    'capability-gap.delete': 'deleted a capability gap',
     'host.features.apply': 'applied a feature change',
     'host.config.apply': 'applied a connection or setting change',
     'host.defaults.apply': 'applied an instance default change',
@@ -572,6 +574,69 @@ function AuditPanel() {
                 <button type="button" className="btn" disabled={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()} style={{ marginTop: 10 }}>
                     {audit.isFetchingNextPage ? 'Loading…' : 'Load older entries'}
                 </button>
+            )}
+        </section>
+    );
+}
+
+const GAPS_KEY = ['admin-capability-gaps'];
+
+/** What Goobster was asked to do and had no tool for: a counted, anonymous backlog (documentation/capability_gaps.md). */
+function CapabilityGapsPanel() {
+    const toast = useToast();
+    const queryClient = useQueryClient();
+    const whenLabel = useDateLabel();
+    const [status, setStatus] = useState<'open' | 'planned' | 'dismissed'>('open');
+    const gaps = useQuery({ queryKey: [...GAPS_KEY, status], queryFn: () => api.adminCapabilityGaps(status) });
+
+    async function act(gap: CapabilityGap, next: 'open' | 'planned' | 'dismissed' | 'delete') {
+        try {
+            if (next === 'delete') await api.adminDeleteCapabilityGap(gap.id);
+            else await api.adminSetCapabilityGap(gap.id, next);
+            await queryClient.invalidateQueries({ queryKey: GAPS_KEY });
+            await queryClient.invalidateQueries({ queryKey: AUDIT_KEY });
+        } catch (error) {
+            toast((error as ApiError).message, true);
+        }
+    }
+
+    const counts = gaps.data?.counts || {};
+    return (
+        <section className="settings-section" aria-labelledby="host-gaps-title" data-testid="host-capability-gaps">
+            <h2 id="host-gaps-title">Capability gaps</h2>
+            <p className="hint">
+                Things Goobster was asked to do and found no tool for, most requested first. Counted, never who asked or what they said.
+            </p>
+            <div className="view-tabs" role="tablist" aria-label="Gap status">
+                {(['open', 'planned', 'dismissed'] as const).map((id) => (
+                    <button key={id} type="button" role="tab" aria-selected={status === id}
+                        className={`view-tab${status === id ? ' active' : ''}`} onClick={() => setStatus(id)}>
+                        {id[0].toUpperCase() + id.slice(1)}{counts[id] ? ` (${counts[id]})` : ''}
+                    </button>
+                ))}
+            </div>
+            {gaps.isPending && <div className="hint">Loading…</div>}
+            {gaps.isError && <div className="hint">{(gaps.error as Error).message}</div>}
+            {gaps.data && gaps.data.gaps.length === 0 && <div className="hint">Nothing {status} yet.</div>}
+            {gaps.data && gaps.data.gaps.length > 0 && (
+                <div className="list-card">
+                    {gaps.data.gaps.map((gap) => (
+                        <div key={gap.id} className="list-row" data-testid="host-capability-gap">
+                            <div className="row-body">
+                                <strong>{gap.capability}</strong>
+                                <div className="row-meta">
+                                    {gap.hits}× · {gap.area || 'unsorted'} · last {whenLabel(gap.lastSeenAt)} · first {whenLabel(gap.firstSeenAt)}
+                                </div>
+                            </div>
+                            <div className="row-actions">
+                                {gap.status !== 'planned' && <button type="button" className="btn small" onClick={() => void act(gap, 'planned')}>Plan</button>}
+                                {gap.status !== 'dismissed' && <button type="button" className="btn small" onClick={() => void act(gap, 'dismissed')}>Dismiss</button>}
+                                {gap.status !== 'open' && <button type="button" className="btn small" onClick={() => void act(gap, 'open')}>Reopen</button>}
+                                <button type="button" className="btn small subtle" onClick={() => void act(gap, 'delete')}>Delete</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
             )}
         </section>
     );
@@ -706,6 +771,7 @@ function OverviewPage() {
             <SignupPanel />
             <InvitesPanel />
             <AccountsPanel />
+            <CapabilityGapsPanel />
             <AuditPanel />
             <ReportPanel />
         </>

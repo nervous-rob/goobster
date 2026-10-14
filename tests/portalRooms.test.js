@@ -67,7 +67,7 @@ describe('room registry shape', () => {
         const room = rooms.ROOM_BY_ID.projects;
         expect(room.detail).toEqual({ params: ['owner', 'slug'], defaultView: 'overview' });
         expect(room.views.map((view) => view.id)).toEqual([
-            'overview', 'plan', 'conversation', 'knowledge', 'files', 'apps', 'runs', 'people', 'automations'
+            'overview', 'plan', 'conversation', 'knowledge', 'files', 'code', 'apps', 'runs', 'people', 'automations'
         ]);
         // Visible names are Plan / Files / Runs; the internal names stay as secondary labels.
         expect(room.views.find((view) => view.id === 'plan').secondaryName).toBe('Mission');

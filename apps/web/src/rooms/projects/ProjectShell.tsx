@@ -10,6 +10,7 @@ import { MenuButton } from '../../shell/MenuButton';
 import { HeaderOverflow } from '../../shell/HeaderOverflow';
 import { ProjectChatDock } from '../../components/ProjectChatDock';
 import { ProjectExplorer } from '../../components/ProjectExplorer';
+import { RepoPanel } from '../../components/ProjectRepos';
 import { ProjectPeopleModal, ProjectPeople } from '../observatory/PeopleModal';
 import { KnowledgeTab } from '../observatory/KnowledgeTab';
 import { MissionTab } from '../observatory/MissionTab';
@@ -155,6 +156,13 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                 )}
                                 {view === 'knowledge' && <KnowledgeTab slug={slug} ownerId={ownerId} projectId={project.id} />}
                                 {view === 'files' && <ProjectExplorer slug={slug} ownerId={ownerId} onChanged={() => void refresh()} />}
+                                {view === 'code' && (
+                                    <div className="obs-section obs-code-view">
+                                        <div className="obs-section-head"><h3>Code</h3></div>
+                                        <p className="hint">GitHub repositories cloned into this project with your own connected account: branches, diffs, merges, pull requests and CI.</p>
+                                        <RepoPanel slug={slug} ownerId={ownerId} codeView onChanged={() => void refresh()} />
+                                    </div>
+                                )}
                                 {view === 'apps' && <AppsTab slug={slug} ownerId={ownerId} />}
                                 {view === 'runs' && (
                                     <section className="obs-overview-jobs">

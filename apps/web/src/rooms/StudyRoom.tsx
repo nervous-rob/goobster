@@ -30,6 +30,7 @@ import { consumeSharedPayload } from '../lib/shareTarget';
 import { useOnline } from '../lib/pwa';
 import { featureActive } from '../lib/rooms';
 import { Icon } from '../icons/Icon';
+import { useComposeListener } from '../hooks/useCompose';
 
 const SUGGESTIONS = [
     'What do you remember about me?',
@@ -118,6 +119,7 @@ export function StudyRoom() {
 
     const [activeId, setActiveId] = useState<number | null>(Number.isFinite(routeId) ? routeId : null);
     const [composer, setComposer] = useState('');
+    useComposeListener(setComposer);
     const [sending, setSending] = useState(false);
     const [incognito, setIncognito] = useState(false);
     useInboxDraft('chat', incognito ? null : activeId, composer, setComposer);

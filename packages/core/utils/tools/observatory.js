@@ -95,6 +95,46 @@ function describeCompare(cmp) {
     return lines.join('\n');
 }
 
+const CARD_PATCH_CHARS = 8000;
+
+/**
+ * Structured cards for the portal (the orchestrator's `_card`): the text
+ * stays the model's answer, the card is what the person can act on.
+ * `owner` is passed through so a card's buttons reach the same project.
+ */
+const repoCards = {
+    compare(cmp, owner) {
+        return {
+            kind: 'repo-compare', project: cmp.project, owner: owner || null, name: cmp.name, repo: cmp.repo,
+            base: cmp.base, head: cmp.head, ahead: cmp.ahead, behind: cmp.behind, identical: cmp.identical,
+            fileCount: cmp.fileCount, additions: cmp.additions, deletions: cmp.deletions,
+            files: cmp.files.slice(0, 30), commits: cmp.commits.slice(0, 10),
+            patch: (cmp.patch || '').slice(0, CARD_PATCH_CHARS),
+            truncated: Boolean(cmp.truncated || (cmp.patch || '').length > CARD_PATCH_CHARS)
+        };
+    },
+    ci(ci, owner) {
+        return {
+            kind: 'repo-ci', project: ci.project, owner: owner || null, name: ci.name, repo: ci.repo, ref: ci.ref,
+            state: ci.state, total: ci.total, passed: ci.passed, notOnGitHub: Boolean(ci.notOnGitHub),
+            failing: ci.failing.slice(0, 10), pending: ci.pending.slice(0, 10)
+        };
+    },
+    integration(done, owner) {
+        return {
+            kind: 'repo-integration', project: done.project, owner: owner || null, name: done.name, repo: done.repo,
+            operation: done.kind, base: done.base, branch: done.branch, result: done.result,
+            conflicts: (done.conflicts || []).slice(0, 20), from: done.from || null, to: done.to || null
+        };
+    },
+    pr(pr, owner) {
+        return {
+            kind: 'repo-pr', project: pr.project, owner: owner || null, name: pr.name, repo: pr.repo,
+            number: pr.number, url: pr.url, title: pr.title, head: pr.head, base: pr.base, draft: pr.draft
+        };
+    }
+};
+
 /** One answer for repo_merge / repo_rebase / repo_continue. */
 function describeIntegration(done) {
     const what = `${done.kind} of ${done.base} into ${done.repo} ${done.branch}`;
@@ -163,7 +203,17 @@ module.exports = {
                 + '(stage everything in the clone and commit with note= as the message, authored as the user\'s GitHub '
                 + 'identity), "repo_push" (push the current branch, or HEAD to branch=<name>; never forced; a rejected '
                 + 'push says to pull first; pushing a new branch returns the compare URL for a pull request), '
-                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), "repo_merge" (merge origin/<branch> - '
+                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), '
+                + '"repo_branches" (local and GitHub branches of a clone, which is active, ahead/behind the base), '
+                + '"repo_compare" (what branch= - default the current one - has that base= - default the branch the clone started '
+                + 'from - lacks: commits, files, counts and a capped diff), "repo_prs" (the repository\'s open pull requests with CI '
+                + 'verdicts), "repo_pr" (open a pull request from branch= into base= with note= as the title and content= as the '
+                + 'body; the branch must be pushed, or pass background=true to push it first; enabled=false for a draft), '
+                + '"repo_ci" (check runs and statuses for branch= or the current branch: what passed, is pending or failed, with links), '
+                + '"repo_watch" (watch CI on branch= - default the current branch - with the user\'s own GitHub connection: '
+                + 'each new commit\'s settled result goes to their Inbox; mode="fix" also starts up to 2 unattended fix turns '
+                + 'when it goes red), "repo_unwatch" (stop; branch= for one branch, else all), '
+                + '"repo_merge" (merge origin/<branch> - '
                 + 'default the branch the clone started from - into the current branch), "repo_rebase" (replay the current '
                 + 'branch\'s local commits on origin/<branch>; refused once they are already on origin, since pushes are never '
                 + 'forced - merge instead), "repo_continue" / "repo_abort" (a merge or rebase that hits conflicts is left '
@@ -212,7 +262,7 @@ module.exports = {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
-                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
+                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_watch', 'repo_unwatch', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'list_deliveries', 'delete_trigger', 'invite_user', 'list_members', 'remove_member',
@@ -227,6 +277,7 @@ module.exports = {
                     to: { type: 'string', description: 'diff: the second snapshot to compare rev against, or "workspace" for the current files' },
                     repo: { type: 'string', description: 'repo_clone: the GitHub repository, owner/name or a github.com URL' },
                     branch: { type: 'string', description: 'repo_clone: branch to clone (default: the repository\'s default branch); repo_push: push HEAD to this branch on origin; repo_branch: the branch to switch to or create; repo_merge / repo_rebase: the branch to bring in (default: the branch the clone started from); repo_compare / repo_pr / repo_ci: the head branch or ref (default: the current branch)' },
+                    mode: { type: 'string', enum: ['notify', 'fix'], description: 'repo_watch: notify only (default), or also try to fix a red build' },
                     base: { type: 'string', description: 'repo_compare / repo_pr / repo_merge-style comparisons: the base branch (default: the branch the clone started from)' },
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
@@ -314,7 +365,7 @@ module.exports = {
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, missionAction, title, objective,
+            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
             choices, selectedId,
@@ -686,7 +737,7 @@ module.exports = {
                     case 'repo_compare': {
                         if (!name) return '❌ repo_compare needs name (the clone, from repo_list).';
                         const cmp = await observatoryService.repos.compare({ userId, project, owner, name, base, head: branch });
-                        return describeCompare(cmp);
+                        return { _display: describeCompare(cmp), _card: repoCards.compare(cmp, owner) };
                     }
                     case 'repo_prs': {
                         if (!name) return '❌ repo_prs needs name (the clone, from repo_list).';
@@ -701,24 +752,48 @@ module.exports = {
                             userId, project, owner, name, title: note || title, body: content || '',
                             head: branch, base, draft: enabled === false, push: background === true
                         });
-                        return `📦 Opened pull request #${pr.number} on ${pr.repo} (${pr.head} → ${pr.base}${pr.draft ? ', draft' : ''}): ${pr.url}`;
+                        return {
+                            _display: `📦 Opened pull request #${pr.number} on ${pr.repo} (${pr.head} → ${pr.base}${pr.draft ? ', draft' : ''}): ${pr.url}`,
+                            _card: repoCards.pr(pr, owner)
+                        };
                     }
                     case 'repo_ci': {
                         if (!name) return '❌ repo_ci needs name (the clone, from repo_list).';
                         const ci = await observatoryService.repos.ci({ userId, project, owner, name, ref: branch });
-                        return `📦 CI for ${ci.repo} ${ci.ref}: ${describeCi(ci)}`
-                            + (ci.failing.length ? '\n' + ci.failing.map(f => `  ✗ ${f.name} (${f.conclusion})${f.summary ? `: ${f.summary}` : ''}${f.url ? ` ${f.url}` : ''}`).join('\n') : '')
-                            + (ci.pending.length ? `\n  … still running: ${ci.pending.join(', ')}` : '');
+                        return {
+                            _display: `📦 CI for ${ci.repo} ${ci.ref}: ${describeCi(ci)}`
+                                + (ci.failing.length ? '\n' + ci.failing.map(f => `  ✗ ${f.name} (${f.conclusion})${f.summary ? `: ${f.summary}` : ''}${f.url ? ` ${f.url}` : ''}`).join('\n') : '')
+                                + (ci.pending.length ? `\n  … still running: ${ci.pending.join(', ')}` : ''),
+                            _card: repoCards.ci(ci, owner)
+                        };
+                    }
+                    case 'repo_watch': {
+                        if (!name) return '❌ repo_watch needs name (the clone, from repo_list).';
+                        const watched = await require('../../services/projectCiWatchService').watch({
+                            userId, project, owner, name, branch, mode: mode === 'fix' ? 'fix' : 'notify'
+                        });
+                        return `👀 Watching CI on ${watched.repo} ${watched.branch} for you: each new commit's result goes to your Inbox`
+                            + (watched.mode === 'fix' ? `, and a red build starts up to ${watched.maxFixes} fix attempt(s) until it is green again.` : '.')
+                            + ' Stop with repo_unwatch.';
+                    }
+                    case 'repo_unwatch': {
+                        if (!name) return '❌ repo_unwatch needs name (the clone, from repo_list).';
+                        const unwatched = await require('../../services/projectCiWatchService').unwatch({ userId, project, owner, name, branch });
+                        return unwatched.removed
+                            ? `👀 Stopped ${unwatched.removed} CI watch(es) on ${unwatched.repo}.`
+                            : `👀 You had no CI watch on ${unwatched.repo}${branch ? ` ${branch}` : ''}.`;
                     }
                     case 'repo_merge':
                     case 'repo_rebase': {
                         if (!name) return `❌ ${action} needs name (the clone, from repo_list).`;
                         const verb = action === 'repo_merge' ? 'merge' : 'rebase';
-                        return describeIntegration(await observatoryService.repos[verb]({ userId, project, owner, name, branch }));
+                        const done = await observatoryService.repos[verb]({ userId, project, owner, name, branch });
+                        return { _display: describeIntegration(done), _card: repoCards.integration(done, owner) };
                     }
                     case 'repo_continue': {
                         if (!name) return '❌ repo_continue needs name (the clone, from repo_list).';
-                        return describeIntegration(await observatoryService.repos.continue({ userId, project, owner, name }));
+                        const done = await observatoryService.repos.continue({ userId, project, owner, name });
+                        return { _display: describeIntegration(done), _card: repoCards.integration(done, owner) };
                     }
                     case 'repo_abort': {
                         if (!name) return '❌ repo_abort needs name (the clone, from repo_list).';

@@ -211,6 +211,17 @@ export type AccountSupportView = {
     };
 };
 
+/** GET /api/app/admin/capability-gaps - one missing capability Goobster reported (anonymous, counted). */
+export type CapabilityGap = {
+    id: number;
+    capability: string;
+    area: string | null;
+    hits: number;
+    status: 'open' | 'planned' | 'dismissed';
+    firstSeenAt: string;
+    lastSeenAt: string;
+};
+
 /** GET /api/app/admin/audit - one operator action. */
 export type OperatorAuditEntry = {
     id: number;
@@ -932,8 +943,27 @@ export type Conversation = {
  * history render identically. `running` exists only client-side, marking a
  * tool whose result event hasn't arrived yet.
  */
+/**
+ * A tool's structured result card (agentOrchestrator `_card`), rendered
+ * under the reply with actions. `project`/`owner` address the project the
+ * card's buttons act on.
+ */
+export type ToolCard =
+    | { kind: 'repo-compare'; project: string; owner: string | null; name: string; repo: string; base: string; head: string;
+        ahead: number | null; behind: number | null; identical: boolean; fileCount: number; additions: number; deletions: number;
+        files: { path: string; additions: number; deletions: number; binary: boolean }[];
+        commits: { short: string; author: string; message: string }[]; patch: string; truncated: boolean }
+    | { kind: 'repo-ci'; project: string; owner: string | null; name: string; repo: string; ref: string;
+        state: 'success' | 'failure' | 'pending' | 'none'; total: number; passed: number; notOnGitHub: boolean;
+        failing: { name: string; conclusion: string; url: string | null; summary: string }[]; pending: string[] }
+    | { kind: 'repo-integration'; project: string; owner: string | null; name: string; repo: string; operation: string;
+        base: string; branch: string; result: string; conflicts: string[]; from: string | null; to: string | null }
+    | { kind: 'repo-pr'; project: string; owner: string | null; name: string; repo: string; number: number; url: string;
+        title: string; head: string; base: string; draft: boolean };
+
 export type TurnStep = {
     type: 'text' | 'tool';
+    card?: ToolCard;
     content?: string;
     id?: number;
     name?: string;
@@ -976,6 +1006,7 @@ export type ToolEvent = {
     argsPreview?: string;
     resultPreview?: string;
     durationMs?: number;
+    card?: ToolCard;
 };
 
 /**

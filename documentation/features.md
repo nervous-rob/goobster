@@ -19,7 +19,7 @@ See [configuration.md](configuration.md) for every config key and environment va
 
 | Feature | Id | Depends on | Commands | Chat tools | Rooms | Tours |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| Core | `core` | - | 38 | 20 | 12 | 13 |
+| Core | `core` | - | 38 | 21 | 12 | 13 |
 | Discord | `discord` | - | 0 | 1 | 0 | 0 |
 | Web Push | `push` | - | 0 | 0 | 0 | 0 |
 | Mail | `mail` | - | 0 | 0 | 0 | 0 |
@@ -47,7 +47,7 @@ Feature id: `core`. Chat, the portal shell and operator pages, settings, privacy
 
 - **Kind:** always available
 - **Depends on:** nothing
-- **Owns:** 38 slash commands; 20 chat tools (`consultDocs`, `echoMessage`, `executePlan`, `fetchWebFile`, `findImages`, `forgetFact`, `generateImage`, `lookupNotes`, `manageAutomations`, `manageParlor`, `performSearch`, `readNotionPage`, `rememberFact`, `saveArtifact`, `scheduleFollowUp`, `searchNotion`, `showSavedFiles`, `trackAttention`, `watchFor`, `web_search`); 7 MCP tools (`get_inbox_item`, `list_docs`, `list_facts`, `list_inbox`, `read_doc`, `search_docs`, `search_memories`); 12 portal rooms (`activity`, `chat`, `decks`, `discussions`, `docs`, `home`, `host`, `people`, `settings`, `share`, `tools`, `usage`); 13 guided tours; 14 portal route groups; 1 WebSocket path (`/api/app/parlor/live`)
+- **Owns:** 38 slash commands; 21 chat tools (`consultDocs`, `echoMessage`, `executePlan`, `fetchWebFile`, `findImages`, `forgetFact`, `generateImage`, `lookupNotes`, `manageAutomations`, `manageParlor`, `noteCapabilityGap`, `performSearch`, `readNotionPage`, `rememberFact`, `saveArtifact`, `scheduleFollowUp`, `searchNotion`, `showSavedFiles`, `trackAttention`, `watchFor`, `web_search`); 7 MCP tools (`get_inbox_item`, `list_docs`, `list_facts`, `list_inbox`, `read_doc`, `search_docs`, `search_memories`); 12 portal rooms (`activity`, `chat`, `decks`, `discussions`, `docs`, `home`, `host`, `people`, `settings`, `share`, `tools`, `usage`); 13 guided tours; 14 portal route groups; 1 WebSocket path (`/api/app/parlor/live`)
 - **System dependencies:** `ollama`, `sharp`, `sqlite-vec`
 - **Documentation:** [architecture.md](architecture.md), [feature_inventory.md](feature_inventory.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.

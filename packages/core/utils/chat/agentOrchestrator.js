@@ -76,6 +76,25 @@ const DIGEST_RESULT_CHARS = 300;
 const STEP_ARGS_PREVIEW_CHARS = 200;
 const STEP_RESULT_PREVIEW_CHARS = 500;
 const STEP_TEXT_CHARS = 4000;
+/** A tool's structured card for the UI (see toolCard) is dropped past this many JSON characters. */
+const STEP_CARD_CHARS = 16_000;
+
+/**
+ * A tool may return `{ _display, _card }`: `_display` is what the model
+ * reads, `_card` a small JSON object the portal renders as an actionable
+ * card under the reply (a diff, a CI verdict, a conflict). It rides the
+ * step and the `tool` result event; an oversized or malformed card is
+ * dropped, never the reply.
+ */
+function toolCard(card) {
+    if (!card || typeof card !== 'object' || Array.isArray(card) || typeof card.kind !== 'string') return null;
+    try {
+        const text = JSON.stringify(card);
+        return text.length <= STEP_CARD_CHARS ? JSON.parse(text) : null;
+    } catch {
+        return null;
+    }
+}
 
 // PRIOR_RESULT_CHARS / PRIOR_BLOCK_CHARS come from toolResultWindow so a
 // file window the model just saw is not recut to a few thousand characters
@@ -224,6 +243,7 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
         }
         const cacheKey = `${call.name}:${call.arguments || '{}'}`;
         let fnResult;
+        let card = null;
         let isError = false;
         const cached = resultCache.has(cacheKey);
         // Stable per-turn id so the client can pair start/result events even
@@ -261,6 +281,10 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
                 if (!unavailable && fnResult && typeof fnResult === 'object' && fnResult._display && fnResult._data) {
                     fnResult = fnResult._display;
                 }
+                if (!unavailable && fnResult && typeof fnResult === 'object' && typeof fnResult._display === 'string' && '_card' in fnResult) {
+                    card = toolCard(fnResult._card);
+                    fnResult = fnResult._display;
+                }
             } catch (toolErr) {
                 console.error(`Tool execution error for ${call.name}:`, toolErr);
                 isError = true;
@@ -275,7 +299,8 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
 
         emit({
             phase: 'result', id, name: call.name, isError, cached, resultPreview, durationMs,
-            ...(unavailable ? { unavailable: true } : {})
+            ...(unavailable ? { unavailable: true } : {}),
+            ...(card ? { card } : {})
         });
 
         if (!isError && !resultCache.has(cacheKey)) {
@@ -299,7 +324,8 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
             isError,
             cached,
             durationMs,
-            ...(unavailable ? { unavailable: true } : {})
+            ...(unavailable ? { unavailable: true } : {}),
+            ...(card ? { card } : {})
         });
 
         messagesForModel.push({
@@ -600,6 +626,7 @@ module.exports = {
     TOOL_HISTORY_BUDGET_CHARS,
     PRIOR_RESULT_CHARS,
     PRIOR_BLOCK_CHARS,
+    STEP_CARD_CHARS,
     runAgentLoop,
     compactToolHistory,
     buildTranscriptDigest,

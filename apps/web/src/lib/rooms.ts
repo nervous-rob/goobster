@@ -22,7 +22,7 @@ export type ActivityViewId = 'inbox' | 'attention' | 'scheduled';
 export type PeopleViewId = 'friends' | 'messages';
 export type KnowledgeViewId = 'notes' | 'map' | 'research';
 export type ProjectViewId =
-    | 'overview' | 'plan' | 'conversation' | 'knowledge' | 'files' | 'apps' | 'runs' | 'people' | 'automations';
+    | 'overview' | 'plan' | 'conversation' | 'knowledge' | 'files' | 'code' | 'apps' | 'runs' | 'people' | 'automations';
 export type RoomViewId = ActivityViewId | PeopleViewId | KnowledgeViewId | ProjectViewId;
 
 /**

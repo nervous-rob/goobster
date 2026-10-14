@@ -81,6 +81,7 @@ const NOT_SEEDED = {
     project_mission_steps: 'projects: erased with the mission rows (privacyService.test.js)',
     project_missions: 'projects: erased by userId (privacyService.test.js)',
     project_repos: 'projects: project data that cascades with the project; createdBy is nulled by the collaborator\'s erasure (projectRepoService.test.js)',
+    project_ci_watches: 'projects: one person\'s CI watch on a clone; cascades with the clone and the project, deleted by their erasure (projectRepoService.test.js)',
     project_trigger_deliveries: 'projects: no user column, keyed by trigger',
     project_triggers: 'projects: erased by userId (privacyService.test.js)',
     spitball_expedition_cycles: 'expeditions: no user column, keyed by expedition (cascades)',

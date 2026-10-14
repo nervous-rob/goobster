@@ -2,7 +2,7 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
-import type { AccountExportJob, TurnStep } from './types';
+import type { AccountExportJob, CapabilityGap, TurnStep } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 
 export class ApiError extends Error {
@@ -144,6 +144,12 @@ export const api = {
         request<{ request: AccessRequest }>(`/api/app/admin/access-requests/${id}/${outcome}`, { method: 'POST', body: { via } }),
     adminAccountSupport: (principalId: string, days = 30) =>
         request<AccountSupportView>(`/api/app/admin/accounts/${encodeURIComponent(principalId)}/support?days=${days}`),
+    adminCapabilityGaps: (status: 'open' | 'planned' | 'dismissed' | 'all' = 'open') =>
+        request<{ gaps: CapabilityGap[]; counts: Record<string, number> }>(`/api/app/admin/capability-gaps?status=${status}`),
+    adminSetCapabilityGap: (id: number, status: 'open' | 'planned' | 'dismissed') =>
+        request(`/api/app/admin/capability-gaps/${id}`, { method: 'PATCH', body: { status } }),
+    adminDeleteCapabilityGap: (id: number) =>
+        request(`/api/app/admin/capability-gaps/${id}`, { method: 'DELETE' }),
     adminAudit: (params: { before?: string | null; limit?: number; target?: string | null } = {}) => {
         const qs = new URLSearchParams();
         if (params.before) qs.set('before', params.before);
@@ -664,6 +670,14 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`, { method: 'POST', body }),
     projectRepoAction: (project: string, name: string, action: 'pull' | 'commit' | 'push' | 'branch' | 'merge' | 'rebase' | 'continue' | 'abort' | 'reset', body: Record<string, unknown> = {}, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
+    projectRepoSummary: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/summary${ownerQs(owner)}`),
+    projectRepoWatches: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner)}`),
+    watchProjectRepo: (project: string, name: string, body: { branch?: string | null; mode: 'notify' | 'fix' }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner)}`, { method: 'POST', body }),
+    unwatchProjectRepo: (project: string, name: string, branch: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner, { branch })}`, { method: 'DELETE' }),
     projectRepoBranches: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/branches${ownerQs(owner)}`),
     projectRepoCompare: (project: string, name: string, base: string, head: string, owner?: string | null) =>

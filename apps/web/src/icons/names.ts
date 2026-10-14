@@ -38,7 +38,7 @@ export const ROOM_GLYPH: Record<string, GlyphName> = {
 /** Room view id → glyph. Views that reuse a room's icon reuse its glyph. */
 export const VIEW_GLYPH: Record<string, GlyphName> = {
     notes: 'notes', map: 'map', research: 'compass',
-    overview: 'projects', plan: 'target', conversation: 'chat', knowledge: 'knowledge', files: 'folder', apps: 'puzzle',
+    overview: 'projects', plan: 'target', conversation: 'chat', knowledge: 'knowledge', files: 'folder', code: 'code', apps: 'puzzle',
     runs: 'play', people: 'people', automations: 'timer',
     friends: 'heart', messages: 'mail',
     inbox: 'activity', attention: 'compass', scheduled: 'calendar'

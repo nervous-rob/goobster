@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Markdown } from './Markdown';
 import { Icon } from '../icons/Icon';
 import { ToolChip } from './ToolChip';
+import { ToolCards } from './ToolCards';
 import { describeToolChip } from '../lib/toolChipLabel';
 import type { TurnStep } from '../lib/types';
 
@@ -33,8 +34,11 @@ export function ThinkingSteps({ steps, live = false, defaultOpen }: { steps: Tur
     // messages; the reader can toggle either way at any time.
     const [open, setOpen] = useState(defaultOpen ?? live);
     if (steps.length === 0) return null;
+    // Cards are the results the person acts on: always shown, outside the fold.
+    const cards = steps.flatMap((step) => (step.card ? [step.card] : []));
 
     return (
+        <>
         <div className={`thinking${live ? ' live' : ''}`}>
             <button
                 type="button"
@@ -71,5 +75,7 @@ export function ThinkingSteps({ steps, live = false, defaultOpen }: { steps: Tur
                 </div>
             )}
         </div>
+        <ToolCards cards={cards} />
+        </>
     );
 }

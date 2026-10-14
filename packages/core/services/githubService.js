@@ -142,9 +142,9 @@ class GitHubService {
     }
 
     /** Pull requests (state: open|closed|all). */
-    async listPullRequests(rawRepo, { state = 'open', limit = 10 } = {}) {
+    async listPullRequests(rawRepo, { state = 'open', limit = 10, head = null } = {}) {
         const repo = this.parseRepo(rawRepo);
-        return await this._request(`/repos/${repo}/pulls`, { params: { state, per_page: limit } });
+        return await this._request(`/repos/${repo}/pulls`, { params: { state, per_page: limit, head } });
     }
 
     /** One pull request with stats (additions, deletions, changed_files). */
@@ -163,6 +163,12 @@ class GitHubService {
     async listBranches(rawRepo, { limit = 100 } = {}) {
         const repo = this.parseRepo(rawRepo);
         return await this._request(`/repos/${repo}/branches`, { params: { per_page: Math.min(limit, 100) } });
+    }
+
+    /** One branch (name, protected, head commit sha). */
+    async getBranch(rawRepo, branch) {
+        const repo = this.parseRepo(rawRepo);
+        return await this._request(`/repos/${repo}/branches/${encodeURIComponent(String(branch))}`);
     }
 
     /**

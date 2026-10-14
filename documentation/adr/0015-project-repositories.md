@@ -110,6 +110,11 @@ same rules (host-side sealed git, the person's own token, never forced):
   (branch list, pull requests, check runs and statuses). All of it degrades
   to the local branches when GitHub is unreachable. Pull requests are opened
   only for branches already on GitHub (or with an explicit push first).
+- The portal gives clones their own **Code** view; repository tool results
+  carry structured cards the chat renders with actions; `repo_watch` keeps
+  a per-person CI watch (Inbox on each settled commit, optional bounded fix
+  turns), polled from the automation loop because GitHub cannot push to a
+  self-hosted bot.
 - New routes `.../repos/:name/{merge,rebase,continue,abort}` (POST) and
   `.../repos/:name/{branches,compare,ci,pulls}` (GET), `POST .../pulls`; the
   portal gains a per-clone detail view.

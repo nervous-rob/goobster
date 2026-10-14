@@ -17,8 +17,9 @@ describe('toolsRegistry catalog', () => {
         expect(TOOL_ORDER).toContain('setSpeechAccent');
         expect(TOOL_ORDER[TOOL_ORDER.length - 1]).toBe('executePlan');
         expect(TOOL_ORDER).toContain('consultDocs');
-        expect(TOOL_ORDER).toHaveLength(53);
-        expect(new Set(TOOL_ORDER).size).toBe(53);
+        expect(TOOL_ORDER).toContain('noteCapabilityGap');
+        expect(TOOL_ORDER).toHaveLength(54);
+        expect(new Set(TOOL_ORDER).size).toBe(54);
     });
 
     test('getDefinitions preserves that order after gating', async () => {

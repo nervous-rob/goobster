@@ -625,6 +625,7 @@ function mountProjects(app, ctx, h) {
     app.post('/api/app/projects/:slug/repos/:name/branch', requireAuth, chatRoute(async (req) =>
         repos().checkout({ ...repoArgs(req), branch: req.body?.branch })
     ));
+    app.get('/api/app/projects/:slug/repos/:name/summary', requireAuth, chatRoute(async (req) => repos().summary(repoArgs(req))));
     app.get('/api/app/projects/:slug/repos/:name/branches', requireAuth, chatRoute(async (req) => repos().branches(repoArgs(req))));
     app.get('/api/app/projects/:slug/repos/:name/compare', requireAuth, chatRoute(async (req) =>
         repos().compare({ ...repoArgs(req), base: req.query?.base || null, head: req.query?.head || null })
@@ -642,6 +643,15 @@ function mountProjects(app, ctx, h) {
             base: req.body?.base ?? null, head: req.body?.head ?? null,
             draft: req.body?.draft === true, push: req.body?.push === true
         })
+    ));
+    // CI watches (the viewer's own; polled with their GitHub connection).
+    const ciWatches = () => require('../../services/projectCiWatchService');
+    app.get('/api/app/projects/:slug/repos/:name/watches', requireAuth, chatRoute(async (req) => ciWatches().list(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/watches', requireAuth, chatRoute(async (req) =>
+        ciWatches().watch({ ...repoArgs(req), branch: req.body?.branch ?? null, mode: req.body?.mode || 'notify', maxFixes: req.body?.maxFixes ?? 2 })
+    ));
+    app.delete('/api/app/projects/:slug/repos/:name/watches', requireAuth, chatRoute(async (req) =>
+        ciWatches().unwatch({ ...repoArgs(req), branch: req.query?.branch || null })
     ));
     app.post('/api/app/projects/:slug/repos/:name/merge', requireAuth, chatRoute(async (req) =>
         repos().merge({ ...repoArgs(req), branch: req.body?.branch ?? null })

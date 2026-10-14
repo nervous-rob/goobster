@@ -13,6 +13,7 @@ import type { Attachment, Grounding, ParlorMessage, Persona } from '../parlor/ty
 import { personaColor, personaGlyph } from '../parlor/persona';
 import { applyParlorDelta, applyParlorMessage, applyParlorTool, settleParlorStream } from '../parlor/stream';
 import type { ToolEvent } from '../lib/types';
+import { useComposeListener } from '../hooks/useCompose';
 
 /**
  * The project parlor dock (§14): a slim view of the project's shared
@@ -43,6 +44,7 @@ export function ProjectChatDock({
     const confirm = useConfirm();
     const queryClient = useQueryClient();
     const [composer, setComposer] = useState('');
+    useComposeListener(setComposer, open);
     const [sending, setSending] = useState(false);
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
     // "Open in project" after moving a chat lands on that conversation.
