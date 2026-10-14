@@ -165,6 +165,12 @@ class GitHubService {
         return await this._request(`/repos/${repo}/branches`, { params: { per_page: Math.min(limit, 100) } });
     }
 
+    /** One branch (name, protected, head commit sha). */
+    async getBranch(rawRepo, branch) {
+        const repo = this.parseRepo(rawRepo);
+        return await this._request(`/repos/${repo}/branches/${encodeURIComponent(String(branch))}`);
+    }
+
     /**
      * Open a pull request. Write operation: requires a token with
      * "Pull requests: Read and write" on the repo.

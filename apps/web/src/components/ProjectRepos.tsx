@@ -183,6 +183,7 @@ export function RepoPanel({ slug, ownerId, onChanged, codeView = false }: {
                         <div><span>📦</span> <a href={entry.url} target="_blank" rel="noreferrer">{entry.repo}</a></div>
                         <div className="hint">{entry.path} · {sync}</div>
                         {codeView && <RepoStrip slug={slug} ownerId={ownerId} entry={entry} />}
+                        {codeView && <CiWatchControl slug={slug} ownerId={ownerId} entry={entry} />}
                         <div className="obs-explorer-crumb" style={{ gap: 4, marginTop: 4 }}>
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void pull(entry)}>Pull</button>
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void commit(entry)}>Commit</button>
@@ -422,6 +423,49 @@ type RepoSummary = {
     pr: { number: number; title: string; url: string; draft: boolean; base: string | null } | null;
     remoteError: string | null;
 };
+
+type CiWatch = { id: number; branch: string; mode: 'notify' | 'fix'; maxFixes: number; fixesUsed: number; lastState: string | null; lastOutcome: string | null };
+
+/** The viewer's CI watch on the clone's current branch: off, notify, or notify and try to fix. */
+function CiWatchControl({ slug, ownerId, entry }: { slug: string; ownerId?: string | null; entry: RepoEntry }) {
+    const toast = useToast();
+    const queryClient = useQueryClient();
+    const branch = entry.status?.branch || '';
+    const key = keys.projectRepoDetail(slug, entry.name, 'watches', ownerId);
+    const watches = useQuery({
+        queryKey: key,
+        queryFn: () => api.projectRepoWatches(slug, entry.name, ownerId) as Promise<{ watches: CiWatch[] }>,
+        retry: false,
+        enabled: Boolean(branch)
+    });
+    if (!branch || watches.isError) return null;
+    const current = watches.data?.watches.find((watch) => watch.branch === branch) || null;
+
+    async function change(mode: 'off' | 'notify' | 'fix') {
+        try {
+            if (mode === 'off') await api.unwatchProjectRepo(slug, entry.name, branch, ownerId);
+            else await api.watchProjectRepo(slug, entry.name, { branch, mode }, ownerId);
+            await queryClient.invalidateQueries({ queryKey: key });
+            toast(mode === 'off' ? `Stopped watching CI on ${branch}.`
+                : mode === 'fix' ? `Watching CI on ${branch}; Goobster will try to fix a red build.` : `Watching CI on ${branch}; results go to your Inbox.`);
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
+
+    return (
+        <label className="hint repo-watch" data-testid="repo-watch">
+            👀 Watch CI on {branch}:{' '}
+            <select className="input" value={current ? current.mode : 'off'} onChange={(e) => void change(e.target.value as 'off' | 'notify' | 'fix')}
+                aria-label={`CI watch on ${branch}`}>
+                <option value="off">off</option>
+                <option value="notify">notify me</option>
+                <option value="fix">notify and try to fix</option>
+            </select>
+            {current?.lastOutcome ? <> · {current.lastOutcome}</> : null}
+        </label>
+    );
+}
 
 /** One clone's GitHub state at a glance: CI on the current branch and its open pull request. */
 function RepoStrip({ slug, ownerId, entry }: { slug: string; ownerId?: string | null; entry: RepoEntry }) {

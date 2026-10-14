@@ -112,6 +112,13 @@ class AutomationService {
         } catch (error) {
             console.error('[Automation] Project trigger poll failed:', error);
         }
+        try {
+            // CI watches on project clones: a few due ones per tick, never throws.
+            const ciWatches = requireOptional('./projectCiWatchService', { feature: 'projects' });
+            if (ciWatches) await ciWatches.sweep({ client: this.client });
+        } catch (error) {
+            console.error('[Automation] CI watch poll failed:', error);
+        }
     }
 
     /**

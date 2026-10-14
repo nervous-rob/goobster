@@ -644,6 +644,15 @@ function mountProjects(app, ctx, h) {
             draft: req.body?.draft === true, push: req.body?.push === true
         })
     ));
+    // CI watches (the viewer's own; polled with their GitHub connection).
+    const ciWatches = () => require('../../services/projectCiWatchService');
+    app.get('/api/app/projects/:slug/repos/:name/watches', requireAuth, chatRoute(async (req) => ciWatches().list(repoArgs(req))));
+    app.post('/api/app/projects/:slug/repos/:name/watches', requireAuth, chatRoute(async (req) =>
+        ciWatches().watch({ ...repoArgs(req), branch: req.body?.branch ?? null, mode: req.body?.mode || 'notify', maxFixes: req.body?.maxFixes ?? 2 })
+    ));
+    app.delete('/api/app/projects/:slug/repos/:name/watches', requireAuth, chatRoute(async (req) =>
+        ciWatches().unwatch({ ...repoArgs(req), branch: req.query?.branch || null })
+    ));
     app.post('/api/app/projects/:slug/repos/:name/merge', requireAuth, chatRoute(async (req) =>
         repos().merge({ ...repoArgs(req), branch: req.body?.branch ?? null })
     ));

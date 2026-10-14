@@ -15,7 +15,7 @@ module.exports = {
         payload: {
             files: [
                 'packages/core/services/{projectService,projectAssetService,projectMissionService,projectTriggerService}.js',
-                'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService,projectHistoryService,projectRepoService}.js',
+                'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService,projectHistoryService,projectRepoService,projectCiWatchService}.js',
                 'packages/core/utils/sealedGit.js',
                 'packages/core/utils/{projectSetupContract,outputContract}.js',
                 'packages/core/web/routes/projects.js',

@@ -203,7 +203,17 @@ module.exports = {
                 + '(stage everything in the clone and commit with note= as the message, authored as the user\'s GitHub '
                 + 'identity), "repo_push" (push the current branch, or HEAD to branch=<name>; never forced; a rejected '
                 + 'push says to pull first; pushing a new branch returns the compare URL for a pull request), '
-                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), "repo_merge" (merge origin/<branch> - '
+                + '"repo_branch" (switch to branch=, creating it if it exists nowhere), '
+                + '"repo_branches" (local and GitHub branches of a clone, which is active, ahead/behind the base), '
+                + '"repo_compare" (what branch= - default the current one - has that base= - default the branch the clone started '
+                + 'from - lacks: commits, files, counts and a capped diff), "repo_prs" (the repository\'s open pull requests with CI '
+                + 'verdicts), "repo_pr" (open a pull request from branch= into base= with note= as the title and content= as the '
+                + 'body; the branch must be pushed, or pass background=true to push it first; enabled=false for a draft), '
+                + '"repo_ci" (check runs and statuses for branch= or the current branch: what passed, is pending or failed, with links), '
+                + '"repo_watch" (watch CI on branch= - default the current branch - with the user\'s own GitHub connection: '
+                + 'each new commit\'s settled result goes to their Inbox; mode="fix" also starts up to 2 unattended fix turns '
+                + 'when it goes red), "repo_unwatch" (stop; branch= for one branch, else all), '
+                + '"repo_merge" (merge origin/<branch> - '
                 + 'default the branch the clone started from - into the current branch), "repo_rebase" (replay the current '
                 + 'branch\'s local commits on origin/<branch>; refused once they are already on origin, since pushes are never '
                 + 'forced - merge instead), "repo_continue" / "repo_abort" (a merge or rebase that hits conflicts is left '
@@ -252,7 +262,7 @@ module.exports = {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
                             'files', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
-                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
+                            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_watch', 'repo_unwatch', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
                             'list_deliveries', 'delete_trigger', 'invite_user', 'list_members', 'remove_member',
@@ -267,6 +277,7 @@ module.exports = {
                     to: { type: 'string', description: 'diff: the second snapshot to compare rev against, or "workspace" for the current files' },
                     repo: { type: 'string', description: 'repo_clone: the GitHub repository, owner/name or a github.com URL' },
                     branch: { type: 'string', description: 'repo_clone: branch to clone (default: the repository\'s default branch); repo_push: push HEAD to this branch on origin; repo_branch: the branch to switch to or create; repo_merge / repo_rebase: the branch to bring in (default: the branch the clone started from); repo_compare / repo_pr / repo_ci: the head branch or ref (default: the current branch)' },
+                    mode: { type: 'string', enum: ['notify', 'fix'], description: 'repo_watch: notify only (default), or also try to fix a red build' },
                     base: { type: 'string', description: 'repo_compare / repo_pr / repo_merge-style comparisons: the base branch (default: the branch the clone started from)' },
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
@@ -354,7 +365,7 @@ module.exports = {
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, missionAction, title, objective,
+            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
             choices, selectedId,
@@ -755,6 +766,22 @@ module.exports = {
                                 + (ci.pending.length ? `\n  … still running: ${ci.pending.join(', ')}` : ''),
                             _card: repoCards.ci(ci, owner)
                         };
+                    }
+                    case 'repo_watch': {
+                        if (!name) return '❌ repo_watch needs name (the clone, from repo_list).';
+                        const watched = await require('../../services/projectCiWatchService').watch({
+                            userId, project, owner, name, branch, mode: mode === 'fix' ? 'fix' : 'notify'
+                        });
+                        return `👀 Watching CI on ${watched.repo} ${watched.branch} for you: each new commit's result goes to your Inbox`
+                            + (watched.mode === 'fix' ? `, and a red build starts up to ${watched.maxFixes} fix attempt(s) until it is green again.` : '.')
+                            + ' Stop with repo_unwatch.';
+                    }
+                    case 'repo_unwatch': {
+                        if (!name) return '❌ repo_unwatch needs name (the clone, from repo_list).';
+                        const unwatched = await require('../../services/projectCiWatchService').unwatch({ userId, project, owner, name, branch });
+                        return unwatched.removed
+                            ? `👀 Stopped ${unwatched.removed} CI watch(es) on ${unwatched.repo}.`
+                            : `👀 You had no CI watch on ${unwatched.repo}${branch ? ` ${branch}` : ''}.`;
                     }
                     case 'repo_merge':
                     case 'repo_rebase': {

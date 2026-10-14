@@ -977,6 +977,9 @@ class PrivacyService {
             // broken FK cannot leave rows behind after /forget-me.
             const forgottenTriggers = await dormantData.forgetProjectTriggers(userId);
             counts.projectTriggers = forgottenTriggers.triggers;
+            counts.projectCiWatches = (await db.run(
+                'DELETE FROM project_ci_watches WHERE userId = @userId', { userId }
+            )).changes;
             const forgottenAssets = await dormantData.forgetProjectAssets(userId);
             counts.projectAssets = forgottenAssets.assets;
             counts.projectAssetVersions = forgottenAssets.versions;
@@ -1550,6 +1553,9 @@ class PrivacyService {
             )).c,
             project_triggers: (await db.get(
                 'SELECT COUNT(*) AS c FROM project_triggers WHERE userId = @userId', { userId }
+            )).c,
+            project_ci_watches: (await db.get(
+                'SELECT COUNT(*) AS c FROM project_ci_watches WHERE userId = @userId', { userId }
             )).c,
             project_members: (await db.get(
                 'SELECT COUNT(*) AS c FROM project_members WHERE userId = @userId', { userId }

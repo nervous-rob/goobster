@@ -1153,8 +1153,13 @@ class ProjectRepoService {
         return out;
     }
 
-    /** Collapse check runs and legacy statuses into one verdict plus what failed. */
+    /**
+     * Collapse check runs and legacy statuses into one verdict plus what
+     * failed. Links are kept only when they are https: a status target_url
+     * is whatever the app that posted it chose, and it becomes a link.
+     */
     static summarizeChecks({ runs = [], statuses = [] } = {}) {
+        const safeUrl = (url) => (typeof url === 'string' && /^https:\/\//i.test(url) ? url.slice(0, 500) : null);
         const failing = [];
         const pending = [];
         let passed = 0;
@@ -1162,7 +1167,7 @@ class ProjectRepoService {
             if (run.status && run.status !== 'completed') pending.push(run.name);
             else if (FAILING_CONCLUSIONS.has(run.conclusion)) {
                 failing.push({
-                    name: run.name, conclusion: run.conclusion, url: run.html_url || null,
+                    name: run.name, conclusion: run.conclusion, url: safeUrl(run.html_url),
                     summary: String(run.output?.title || run.output?.summary || '').replace(/\s+/g, ' ').trim().slice(0, 300)
                 });
             } else passed++;
@@ -1170,7 +1175,7 @@ class ProjectRepoService {
         for (const entry of statuses) {
             if (entry.state === 'pending') pending.push(entry.context);
             else if (entry.state === 'failure' || entry.state === 'error') {
-                failing.push({ name: entry.context, conclusion: entry.state, url: entry.target_url || null, summary: String(entry.description || '').slice(0, 300) });
+                failing.push({ name: entry.context, conclusion: entry.state, url: safeUrl(entry.target_url), summary: String(entry.description || '').slice(0, 300) });
             } else passed++;
         }
         const total = runs.length + statuses.length;

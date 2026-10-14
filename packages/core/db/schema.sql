@@ -1969,6 +1969,33 @@ CREATE TABLE IF NOT EXISTS project_repos (
 
 CREATE INDEX IF NOT EXISTS idx_project_repos_user ON project_repos(userId);
 
+-- CI watches on a project clone's branch (documentation/projects.md, "CI
+-- watches"): one person's watch, polled with THEIR GitHub connection. Each
+-- new head commit's settled CI verdict goes to their Inbox; mode 'fix' also
+-- starts up to maxFixes agent turns to fix a red build (fixesUsed resets
+-- when it goes green). Deleted by /forget-me and with the clone.
+CREATE TABLE IF NOT EXISTS project_ci_watches (
+    id INTEGER PRIMARY KEY,
+    repoId INTEGER NOT NULL REFERENCES project_repos(id) ON DELETE CASCADE,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'notify' CHECK (mode IN ('notify', 'fix')),
+    maxFixes INTEGER NOT NULL DEFAULT 2,
+    fixesUsed INTEGER NOT NULL DEFAULT 0,
+    -- The last head commit seen and its CI state (pending/success/failure/none)
+    lastSha TEXT,
+    lastState TEXT,
+    -- Short operator-readable outcome of the last check, for the portal
+    lastOutcome TEXT,
+    nextCheckAt TEXT NOT NULL DEFAULT (datetime('now')),
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (repoId, userId, branch)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_ci_watches_due ON project_ci_watches(nextCheckAt);
+CREATE INDEX IF NOT EXISTS idx_project_ci_watches_user ON project_ci_watches(userId);
+
 -- Only the owner invites; invitee accepts/declines from a Discord DM
 -- button or the portal invitation list. Mirrors parlor_invites exactly
 -- (status lifecycle, name snapshots, /forget-me deletes rows addressed

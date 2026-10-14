@@ -1611,7 +1611,19 @@ class ProjectTriggerService {
     }
 
     async _executeAgentPrompt(trigger, projectRow, params, client) {
-        const prompt = String(params.prompt || '').trim();
+        return this.runAgentPrompt({
+            userId: trigger.userId, name: trigger.name, kindLabel: 'a scheduled project trigger',
+            projectRow, prompt: params.prompt, client, trigger
+        });
+    }
+
+    /**
+     * Run an unattended agent turn on a project as `userId`, in their
+     * "🔭 <project>" conversation: trigger agent_prompt actions and CI
+     * watches (projectCiWatchService) both come through here.
+     */
+    async runAgentPrompt({ userId, name, kindLabel = 'an automation', projectRow, prompt: rawPrompt, client = null, trigger = null }) {
+        const prompt = String(rawPrompt || '').trim();
         const message = `[Observatory command for project "${projectRow.name}" (slug: ${projectRow.slug})] `
             + 'Use the observatory tool on this project to carry out the instructions below. '
             + 'Start with action "inspect" if you need current project state. '
@@ -1619,27 +1631,27 @@ class ProjectTriggerService {
             + 'report back what you started, changed, or found.\n\n'
             + prompt;
         const sourceDescription =
-            `You are executing "${trigger.name}", a scheduled project trigger ${trigger.userId} set up `
+            `You are executing "${name}", ${kindLabel} ${userId} set up `
             + `for Observatory project "${projectRow.name}". Carry out the instructions now.`;
 
         if (typeof this._agentPromptFn === 'function') {
             await this._agentPromptFn({
-                trigger, project: projectRow, message, prompt, client, sourceDescription
+                trigger: trigger || { userId, name }, project: projectRow, message, prompt, client, sourceDescription
             });
             return;
         }
 
         const chat = this._chatService();
         const title = `🔭 ${projectRow.name}`;
-        const existing = (await chat.listConversations(trigger.userId))
+        const existing = (await chat.listConversations(userId))
             .find(c => c.title === title);
         let conversationId;
         if (existing) {
             conversationId = existing.id;
         } else {
-            const created = await chat.createConversation(trigger.userId);
+            const created = await chat.createConversation(userId);
             await chat.renameConversation({
-                userId: trigger.userId,
+                userId,
                 conversationId: created.id,
                 title
             });
@@ -1648,7 +1660,7 @@ class ProjectTriggerService {
 
         await chat.runTurn({
             client,
-            userId: trigger.userId,
+            userId,
             userName: 'owner',
             message,
             conversationId,

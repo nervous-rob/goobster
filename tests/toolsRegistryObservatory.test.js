@@ -128,11 +128,15 @@ describe('getDefinitions gating', () => {
             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers', 'list_deliveries',
             'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read', 'mission',
             'history', 'diff', 'restore', 'commit',
-            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove'
+            'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_watch', 'repo_unwatch', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove'
         ]));
         expect(def.parameters.properties.repo).toBeTruthy();
         expect(def.parameters.properties.branch).toBeTruthy();
         expect(def.description).toMatch(/repo_clone/);
+        for (const action of ['repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_watch', 'repo_merge', 'repo_continue']) {
+            expect(def.description).toContain(`"${action}"`);
+        }
+        expect(def.parameters.properties.mode.enum).toEqual(['notify', 'fix']);
         expect(def.parameters.properties.rev).toBeTruthy();
         expect(def.description).toMatch(/"history"/);
         expect(def.description).toMatch(/awaiting settlement/);

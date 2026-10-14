@@ -18,6 +18,7 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 const db = require('@goobster/core/db');
 const { ObservatoryService, PROJECTS_ROOT } = require('@goobster/core/services/projectService');
 const { ProjectRepoService, cleanBranch } = require('@goobster/core/services/projectRepoService');
+const { ProjectCiWatchService } = require('@goobster/core/services/projectCiWatchService');
 const { SandboxService } = require('@goobster/core/services/sandboxService');
 const privacyService = require('@goobster/core/services/privacyService');
 
@@ -359,6 +360,12 @@ describe('branches, comparison, pull requests and CI', () => {
         const ci = await service.repos.ci({ ...args, ref: 'feature' });
         expect(ci).toMatchObject({ state: 'failure', total: 3, pending: ['e2e'] });
         expect(ci.failing[0]).toMatchObject({ name: 'test', summary: '3 tests failed' });
+        // A status link that is not https never becomes a link.
+        const summarized = ProjectRepoService.summarizeChecks({ runs: [], statuses: [
+            { context: 'evil', state: 'failure', target_url: 'javascript:alert(1)' },
+            { context: 'ok', state: 'error', target_url: 'https://ci.example/1' }
+        ] });
+        expect(summarized.failing.map(f => f.url)).toEqual([null, 'https://ci.example/1']);
         expect(await service.repos.ci(args)).toMatchObject({ state: 'none', notOnGitHub: true });
     }, 60_000);
 
@@ -372,6 +379,118 @@ describe('branches, comparison, pull requests and CI', () => {
         expect(listing.branches.map(b => b.name)).toEqual(['main']);
         expect(listing.remoteError).toMatch(/could not be reached/);
     }, 30_000);
+});
+
+describe('CI watches', () => {
+    test('notify on each settled commit, fix a red build a bounded number of times, reset on green', async () => {
+        const remote = makeRemote('acme/watched', { files: { 'a.txt': 'one\n' } });
+        const states = new Map();
+        const github = () => ({
+            getBranch: async (repo, branch) => {
+                try {
+                    return { name: branch, commit: { sha: git(['--git-dir', remote.bare, 'rev-parse', `refs/heads/${branch}`]).trim() } };
+                } catch {
+                    const error = new Error('nf'); error.code = 'NOT_FOUND'; throw error;
+                }
+            },
+            getChecks: async (repo, sha) => {
+                const state = states.get(sha) || 'pending';
+                const run = state === 'pending' ? { name: 'test', status: 'in_progress' }
+                    : { name: 'test', status: 'completed', conclusion: state === 'success' ? 'success' : 'failure', output: { title: '2 tests failed' }, html_url: 'https://github.com/acme/watched/runs/9' };
+                return { runs: [run, { name: 'lint', status: 'completed', conclusion: 'success' }], statuses: [] };
+            }
+        });
+        const service = makeService({}, { github });
+        const delivered = [];
+        const agentRuns = [];
+        const watches = new ProjectCiWatchService({
+            repos: service.repos,
+            deliver: async (item) => { delivered.push(item); },
+            runAgent: async (params) => { agentRuns.push(params); }
+        });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Watch Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/watched' });
+        const args = { userId, project: slug, name: 'watched' };
+        const file = (rel) => path.join(workspace(userId, slug), 'repos', 'watched', rel);
+        await service.repos.checkout({ ...args, branch: 'feature' });
+        fs.writeFileSync(file('a.txt'), 'two\n');
+        await service.repos.commit({ ...args, message: 'feature work' });
+        await service.repos.push(args);
+
+        const watch = await watches.watch({ ...args, mode: 'fix', maxFixes: 1 });
+        expect(watch).toMatchObject({ branch: 'feature', mode: 'fix', maxFixes: 1, fixesUsed: 0 });
+        await expectThrow(() => watches.watch({ ...args, mode: 'loud' }), { status: 400, code: 'BAD_MODE' });
+        const row = async () => db.get('SELECT * FROM project_ci_watches WHERE id = @id', { id: watch.id });
+        const sha1 = git(['--git-dir', remote.bare, 'rev-parse', 'refs/heads/feature']).trim();
+
+        // Pending: nothing to say yet.
+        expect(await watches.check(await row())).toMatchObject({ state: 'pending', notified: false });
+        expect(delivered).toHaveLength(0);
+
+        // Red: one Inbox item and one fix turn with the failure in the prompt.
+        states.set(sha1, 'failure');
+        expect(await watches.check(await row())).toMatchObject({ state: 'failure', notified: true, fixing: true });
+        expect(delivered[0]).toMatchObject({ userId, kind: 'project', title: expect.stringMatching(/^❌ CI failed on acme\/watched feature/) });
+        expect(delivered[0].link).toBe(`/projects/${userId}/${slug}/code`);
+        expect(agentRuns).toHaveLength(1);
+        expect(agentRuns[0]).toMatchObject({ userId, kindLabel: 'a CI watch' });
+        expect(agentRuns[0].prompt).toContain('repos/watched');
+        expect(agentRuns[0].prompt).toContain('test (failure): 2 tests failed');
+        expect((await row()).fixesUsed).toBe(1);
+        // The same verdict on the same commit is not news.
+        expect(await watches.check(await row())).toMatchObject({ notified: false });
+        expect(delivered).toHaveLength(1);
+
+        // A new red commit after the fix budget is spent: told, but no more turns.
+        fs.writeFileSync(file('a.txt'), 'three\n');
+        await service.repos.commit({ ...args, message: 'attempt' });
+        await service.repos.push(args);
+        const sha2 = git(['--git-dir', remote.bare, 'rev-parse', 'refs/heads/feature']).trim();
+        states.set(sha2, 'failure');
+        expect(await watches.check(await row())).toMatchObject({ notified: true, fixing: false });
+        expect(delivered[1].body).toMatch(/stopped after 1 fix attempt/);
+        expect(agentRuns).toHaveLength(1);
+
+        // Green: told, and the fix budget is back.
+        states.set(sha2, 'success');
+        expect(await watches.check(await row())).toMatchObject({ state: 'success', notified: true });
+        expect(delivered[2].title).toMatch(/^✅ CI passed/);
+        expect((await row()).fixesUsed).toBe(0);
+
+        // The minute loop picks due watches; listing and stopping are per person.
+        await db.run("UPDATE project_ci_watches SET nextCheckAt = '2000-01-01 00:00:00' WHERE id = @id", { id: watch.id });
+        expect(await watches.sweep()).toBeGreaterThanOrEqual(1);
+        expect((await watches.list(args)).watches.map(w => w.branch)).toEqual(['feature']);
+        expect(await watches.countUser(userId)).toBe(1);
+        expect((await watches.unwatch(args)).removed).toBe(1);
+        expect(await watches.countUser(userId)).toBe(0);
+
+        // A watch goes with its clone, and erasure removes the rest.
+        await watches.watch({ ...args, branch: 'feature' });
+        await service.repos.remove(args);
+        expect(await watches.countUser(userId)).toBe(0);
+    }, 90_000);
+
+    test('needs the person\'s own GitHub connection; a branch not on GitHub waits', async () => {
+        makeRemote('acme/unwatched');
+        const github = () => ({ getBranch: async () => { const e = new Error('nf'); e.code = 'NOT_FOUND'; throw e; }, getChecks: async () => ({ runs: [], statuses: [] }) });
+        const service = makeService({}, { github });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Unwatched Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/unwatched' });
+        const watches = new ProjectCiWatchService({ repos: service.repos, deliver: async () => {}, runAgent: async () => {} });
+        const watch = await watches.watch({ userId, project: slug, name: 'unwatched', branch: 'local-only' });
+        const result = await watches.check(await db.get('SELECT * FROM project_ci_watches WHERE id = @id', { id: watch.id }));
+        expect(result).toEqual({ state: 'none' });
+        expect((await db.get('SELECT lastOutcome FROM project_ci_watches WHERE id = @id', { id: watch.id })).lastOutcome).toMatch(/not on GitHub yet/);
+
+        const offline = makeService({}, { token: async () => null });
+        await expectThrow(() => new ProjectCiWatchService({ repos: offline.repos }).watch({ userId, project: slug, name: 'unwatched' }),
+            { status: 403, code: 'NO_GITHUB' });
+        await privacyService.forgetUser({ userId });
+        expect(await watches.countUser(userId)).toBe(0);
+    }, 60_000);
 });
 
 describe('the clone lifecycle', () => {

@@ -264,9 +264,10 @@ Connections), never the server's token and never from the sandbox.
   `content=` body, `enabled=false` for a draft, `background=true` to push
   the branch first), `repo_ci` (check runs and statuses for `branch=` or the
   current branch: passed, pending, and each failure with its summary and
-  link). Combining branches: `repo_merge` and `repo_rebase` (`branch=`, the
+  link), `repo_watch` / `repo_unwatch` (see [CI watches](#ci-watches)).
+  Combining branches: `repo_merge` and `repo_rebase` (`branch=`, the
   default is the branch the clone started from), `repo_continue` and
-  `repo_abort`. Portal: the `repos/` panel in the Files view with the same
+  `repo_abort`. Portal: the Code view (`/projects/:owner/:slug/code`) with the same
   buttons, a clone form and a "Branches · PRs · CI" detail view per clone
   (switch branch, compare two branches with a diff, open a pull request,
   see CI failures). API: `GET`/`POST /api/app/projects/:slug/repos`,
@@ -307,6 +308,48 @@ Connections), never the server's token and never from the sandbox.
 - **Erasure.** Deleting the project removes its clones; owner `/forget-me`
   removes the whole owner tree. A collaborator's erasure nulls
   `project_repos.createdBy`; the clone is project data and stays.
+- **The Code view.** `/projects/:owner/:slug/code` lists the clones, each
+  with a GitHub strip read from `GET .../repos/:name/summary` (local status
+  plus, best effort, CI on the current branch and that branch's open pull
+  request), the CI watch control, and the Branches · PRs · CI detail.
+- **Result cards in chat.** `repo_ci`, `repo_compare`, `repo_pr` and
+  `repo_merge` / `repo_rebase` / `repo_continue` return a card beside their
+  text (the orchestrator's `{ _display, _card }`: the model reads only the
+  text; the card rides the step and the live `tool` event, at most 16,000
+  JSON characters). Study, Parlor and the project chat render it under the
+  reply: a CI verdict with each failure and "Ask Goobster to fix", a merge
+  or rebase stopped on conflicts with the files, Continue, Abort and "Ask
+  Goobster to resolve", a comparison with its diff, an opened pull request.
+  The "Ask Goobster to ..." buttons only put a request in the composer
+  (`hooks/useCompose.ts`); nothing is sent for the person.
+
+#### CI watches
+
+`repo_watch` (or the Code view's *Watch CI* control) watches a branch of a
+clone for **one person**, with **their** GitHub connection and allowlist
+(`project_ci_watches`, `services/projectCiWatchService.js`). The automation
+minute loop checks a few due watches per tick: the branch's head commit
+from GitHub, then its check runs and statuses. When a commit's CI settles
+(green or red) and that is news (a new commit, or a new verdict), the
+person gets an Inbox item linking to the Code view; pending is rechecked
+after two minutes, everything else after five.
+
+- **`notify`** (default): the Inbox item only.
+- **`fix`**: a red build also starts an unattended agent turn on the
+  project as that person (the same runner as a trigger's `agent_prompt`,
+  in their "🔭 <project>" conversation) with the failing checks and the
+  steps: get the clone onto the branch and up to date, read the failure,
+  fix it, run what it can, `repo_commit` and `repo_push`, never forcing,
+  and say so plainly when it cannot. At most `maxFixes` (default 2, at
+  most 5) attempts until the branch goes green, which resets the count; the
+  Inbox item says when it has stopped trying.
+- **Limits and lifecycle.** Ten watches per person per project. A watch is
+  deleted with its clone or project, and on its next check when the person
+  has lost access to the project; a missing GitHub connection pauses it for
+  an hour. `/forget-me` deletes the person's watches. Stop one with
+  `repo_unwatch` (`branch=` for one branch, else all) or the control.
+- **API.** `GET`/`POST`/`DELETE /api/app/projects/:slug/repos/:name/watches`
+  (`POST` body `{ branch, mode, maxFixes }`, `DELETE ?branch=`).
 
 ### Assets
 

@@ -2157,3 +2157,5 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .tool-card-row { overflow-wrap: anywhere; }
 .tool-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .repo-strip { margin-top: 2px; }
+.repo-watch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.repo-watch select { width: auto; padding: 2px 6px; }

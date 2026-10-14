@@ -672,6 +672,12 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
     projectRepoSummary: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/summary${ownerQs(owner)}`),
+    projectRepoWatches: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner)}`),
+    watchProjectRepo: (project: string, name: string, body: { branch?: string | null; mode: 'notify' | 'fix' }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner)}`, { method: 'POST', body }),
+    unwatchProjectRepo: (project: string, name: string, branch: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner, { branch })}`, { method: 'DELETE' }),
     projectRepoBranches: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/branches${ownerQs(owner)}`),
     projectRepoCompare: (project: string, name: string, base: string, head: string, owner?: string | null) =>
