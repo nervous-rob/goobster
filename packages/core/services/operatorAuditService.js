@@ -27,6 +27,7 @@ const ACTIONS = new Set([
     'signup.mail_test',
     'instance.resume', 'instance.restore', 'instance.pause',
     'limits.change',
+    'capability-gap.status', 'capability-gap.delete',
     // Written by the manager's audit reconciliation (documentation/manager.md);
     // `target` is the manager operation id.
     'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock',

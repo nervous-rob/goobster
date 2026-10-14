@@ -625,6 +625,7 @@ function mountProjects(app, ctx, h) {
     app.post('/api/app/projects/:slug/repos/:name/branch', requireAuth, chatRoute(async (req) =>
         repos().checkout({ ...repoArgs(req), branch: req.body?.branch })
     ));
+    app.get('/api/app/projects/:slug/repos/:name/summary', requireAuth, chatRoute(async (req) => repos().summary(repoArgs(req))));
     app.get('/api/app/projects/:slug/repos/:name/branches', requireAuth, chatRoute(async (req) => repos().branches(repoArgs(req))));
     app.get('/api/app/projects/:slug/repos/:name/compare', requireAuth, chatRoute(async (req) =>
         repos().compare({ ...repoArgs(req), base: req.query?.base || null, head: req.query?.head || null })

@@ -100,6 +100,7 @@ const ROOMS = [
             { id: 'conversation', name: 'Conversation', icon: '💬', segment: 'conversation' },
             { id: 'knowledge', name: 'Knowledge', icon: '🧠', segment: 'knowledge' },
             { id: 'files', name: 'Files', secondaryName: 'Explorer', icon: '📁', segment: 'files', legacyIds: ['explorer'] },
+            { id: 'code', name: 'Code', secondaryName: 'Repositories', icon: '🐙', segment: 'code', legacyIds: ['repos'] },
             { id: 'apps', name: 'Apps', icon: '🧩', segment: 'apps' },
             { id: 'runs', name: 'Runs', secondaryName: 'Jobs', icon: '▶️', segment: 'runs', legacyIds: ['jobs'] },
             { id: 'people', name: 'People', icon: '👥', segment: 'people' },

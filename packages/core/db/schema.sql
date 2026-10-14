@@ -3128,6 +3128,24 @@ CREATE TABLE IF NOT EXISTS instance_state (
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Capabilities Goobster found he was missing (the noteCapabilityGap tool):
+-- an anonymous, aggregated backlog for the operator. One row per distinct
+-- capability (gapKey is its normalized phrasing), counted every time it is
+-- hit again. No actor and no conversation text: `capability` is a short
+-- generic phrase ("rebase a project clone onto another branch"), never what
+-- the person asked. See documentation/capability_gaps.md.
+CREATE TABLE IF NOT EXISTS capability_gaps (
+    id INTEGER PRIMARY KEY,
+    gapKey TEXT NOT NULL UNIQUE,
+    capability TEXT NOT NULL,
+    area TEXT,
+    hits INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'open',
+    firstSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastSeenAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_capability_gaps_status ON capability_gaps(status, hits);
+
 -- One row per failed piece of work (roadmap #256): chat turns, research
 -- runs, code runs, automations, deliveries. workId is the join key shared
 -- with usage_reservations and resource_events. Never a prompt or a message

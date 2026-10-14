@@ -1123,6 +1123,36 @@ class ProjectRepoService {
         });
     }
 
+    /**
+     * One clone at a glance: local status, plus (best effort, from GitHub)
+     * CI for the current branch and that branch's open pull request. The
+     * Code view's strip and the project overview read this.
+     */
+    async summary({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const status = await this._status(projectRow, repoRow.name);
+        const out = { ...await this._serialize(projectRow, repoRow, { withStatus: false }), status, ci: null, pr: null, remoteError: null };
+        if (!status.branch) return out;
+        try {
+            const { api } = await this._api(userId, repoRow);
+            const owner_ = repoRow.repo.split('/')[0];
+            const [checks, pulls] = await Promise.all([
+                api.getChecks(repoRow.repo, status.branch).catch(error => (error?.code === 'NOT_FOUND' ? { runs: [], statuses: [] } : Promise.reject(error))),
+                status.branch === repoRow.branch
+                    ? Promise.resolve([])
+                    : api.listPullRequests(repoRow.repo, { state: 'open', limit: 1, head: `${owner_}:${status.branch}` })
+            ]);
+            out.ci = ProjectRepoService.summarizeChecks(checks);
+            const pr = pulls?.[0];
+            if (pr) out.pr = { number: pr.number, title: pr.title, url: pr.html_url, draft: Boolean(pr.draft), base: pr.base?.ref || null };
+        } catch (error) {
+            out.remoteError = this._apiError(error, repoRow.repo).message;
+        }
+        return out;
+    }
+
     /** Collapse check runs and legacy statuses into one verdict plus what failed. */
     static summarizeChecks({ runs = [], statuses = [] } = {}) {
         const failing = [];

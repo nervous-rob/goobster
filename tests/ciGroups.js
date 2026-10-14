@@ -100,6 +100,7 @@ const GROUPS = [
             'tableManager',
             'userIntegrationService',
             'workLedger',
+            'capabilityGaps',
             'usageBudgets',
             'workshopPinMigration',
             'wrappedService'

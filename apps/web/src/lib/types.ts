@@ -211,6 +211,17 @@ export type AccountSupportView = {
     };
 };
 
+/** GET /api/app/admin/capability-gaps - one missing capability Goobster reported (anonymous, counted). */
+export type CapabilityGap = {
+    id: number;
+    capability: string;
+    area: string | null;
+    hits: number;
+    status: 'open' | 'planned' | 'dismissed';
+    firstSeenAt: string;
+    lastSeenAt: string;
+};
+
 /** GET /api/app/admin/audit - one operator action. */
 export type OperatorAuditEntry = {
     id: number;

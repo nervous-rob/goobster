@@ -45,6 +45,11 @@ function selfDocsGuidance() {
     return `${SELF_DOCS_GUIDANCE}\n\n`;
 }
 
+// When the model finds it has no tool for what it was asked, it says so
+// and records the gap for the operator (documentation/capability_gaps.md).
+const CAPABILITY_GAP_GUIDANCE = `**WHEN YOU CANNOT DO SOMETHING:**
+If you are asked to do something and, after checking your tools (and consultDocs), none of them can do it, call noteCapabilityGap once with a short generic description of the missing capability (no names, content or links), then tell the person plainly what you cannot do and offer the closest thing you can. Never pretend to have done it, and never write a long plan of steps you cannot take in place of saying so.`;
+
 // Guidance shared by every provider about routing scheduling requests.
 // Recurring work must land on durable automations (restart-safe, repeat
 // until cancelled) - a chain of one-time follow-ups is never a schedule.
@@ -112,7 +117,9 @@ function buildNativeToolGuidance() {
 
 ${NOTES_GUIDANCE}
 
-${selfDocsGuidance()}${SCHEDULING_GUIDANCE}
+${selfDocsGuidance()}${CAPABILITY_GAP_GUIDANCE}
+
+${SCHEDULING_GUIDANCE}
 
 ${EXECUTE_PLAN_GUIDANCE}`;
 }

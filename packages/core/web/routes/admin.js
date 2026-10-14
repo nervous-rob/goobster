@@ -238,6 +238,23 @@ function mountAdmin(app, ctx, h) {
 
     // --- Operator audit ------------------------------------------------------
 
+    // --- Capability gaps (documentation/capability_gaps.md) -----------------
+    // What Goobster was asked to do and had no tool for: anonymous counts.
+    const gaps = () => require('../../services/capabilityGapService');
+    app.get('/api/app/admin/capability-gaps', ...guard, authRoute(async (req) =>
+        gaps().list({ status: req.query.status || 'open', limit: req.query.limit })
+    ));
+    app.patch('/api/app/admin/capability-gaps/:id', ...guard, authRoute(async (req) => {
+        const row = await gaps().setStatus(req.params.id, req.body?.status);
+        await audit(req, 'capability-gap.status', null, { id: row.id, status: row.status });
+        return row;
+    }));
+    app.delete('/api/app/admin/capability-gaps/:id', ...guard, authRoute(async (req) => {
+        const row = await gaps().remove(req.params.id);
+        await audit(req, 'capability-gap.delete', null, { id: row.id });
+        return { deleted: true, id: row.id };
+    }));
+
     // Newest first, keyset-paged; optional filters by target and action.
     app.get('/api/app/admin/audit', ...guard, authRoute(async (req) => operatorAudit.list({
         limit: req.query.limit ? Number(req.query.limit) : 50,

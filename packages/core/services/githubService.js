@@ -142,9 +142,9 @@ class GitHubService {
     }
 
     /** Pull requests (state: open|closed|all). */
-    async listPullRequests(rawRepo, { state = 'open', limit = 10 } = {}) {
+    async listPullRequests(rawRepo, { state = 'open', limit = 10, head = null } = {}) {
         const repo = this.parseRepo(rawRepo);
-        return await this._request(`/repos/${repo}/pulls`, { params: { state, per_page: limit } });
+        return await this._request(`/repos/${repo}/pulls`, { params: { state, per_page: limit, head } });
     }
 
     /** One pull request with stats (additions, deletions, changed_files). */
