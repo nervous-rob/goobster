@@ -5,6 +5,7 @@ import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { whenLabel } from './format';
+import { StepCode, useStepCode, type StepCodeLink } from './StepCode';
 
 type Criterion = { id: string; text: string };
 type Choice = { id: string; label: string };
@@ -21,6 +22,7 @@ type Step = {
         allowOther?: boolean;
         selectedId?: string;
     };
+    code?: StepCodeLink | null;
 };
 type Evidence = {
     id: number;
@@ -211,8 +213,8 @@ function DraftForm({
 }
 
 function MissionView({
-    slug: _slug,
-    ownerId: _ownerId,
+    slug,
+    ownerId,
     mission,
     busy,
     onApprove,
@@ -245,6 +247,7 @@ function MissionView({
     onReview: (notes: string, verdict: string) => void;
     onComplete: (notes: string, verdict: string) => void;
 }) {
+    const stepCode = useStepCode(slug, ownerId, mission.id, mission.steps.some((step) => step.code));
     const [stepKind, setStepKind] = useState<Step['kind']>('human');
     const [stepTitle, setStepTitle] = useState('');
     const [stepParam, setStepParam] = useState('');
@@ -307,6 +310,7 @@ function MissionView({
                 : (
                     <div className="list-card">
                         {mission.steps.map((step) => {
+                            const codeState = stepCode.data?.steps.find((entry) => entry.stepId === step.id);
                             const choices = step.actionParams?.choices || [];
                             const humanOpen = mission.status === 'ACTIVE'
                                 && step.kind === 'human'
@@ -342,6 +346,16 @@ function MissionView({
                                     {step.actionParams?.selectedId ? (
                                         <p className="row-meta">Answered: {step.actionParams.selectedId}</p>
                                     ) : null}
+                                    <StepCode
+                                        slug={slug}
+                                        ownerId={ownerId}
+                                        missionId={mission.id}
+                                        stepId={step.id}
+                                        link={step.code}
+                                        state={codeState}
+                                        editable={['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED'].includes(mission.status)
+                                            && step.status !== 'DONE' && step.status !== 'SKIPPED'}
+                                    />
                                 </div>
                                 {mission.status === 'ACTIVE' && (step.status === 'READY' || step.status === 'PENDING') && step.kind !== 'human' && (
                                     <button type="button" className="btn" disabled={busy} onClick={() => onStartStep(step.id)}>Start</button>

@@ -103,6 +103,7 @@ const ROOMS = [
             { id: 'code', name: 'Code', secondaryName: 'Repositories', icon: '🐙', segment: 'code', legacyIds: ['repos'] },
             { id: 'apps', name: 'Apps', icon: '🧩', segment: 'apps' },
             { id: 'runs', name: 'Runs', secondaryName: 'Jobs', icon: '▶️', segment: 'runs', legacyIds: ['jobs'] },
+            { id: 'timeline', name: 'Timeline', secondaryName: 'Activity', icon: '🕰️', segment: 'timeline', legacyIds: ['activity'] },
             { id: 'people', name: 'People', icon: '👥', segment: 'people' },
             { id: 'automations', name: 'Automations', icon: '⏱️', segment: 'automations' }
         ]

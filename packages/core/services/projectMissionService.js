@@ -436,6 +436,9 @@ class ProjectMissionService {
             sortOrder: row.sortOrder,
             startedAt: row.startedAt || null,
             finishedAt: row.finishedAt || null,
+            code: row.branch
+                ? { repo: row.repoName || null, branch: row.branch, requireGreenCi: Boolean(row.requireGreenCi) }
+                : null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt
         };
@@ -1689,6 +1692,9 @@ class ProjectMissionService {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
                 `Step “${step.title}” cannot be marked done from ${step.status}.`);
         }
+        if (step.requireGreenCi && step.branch && step.repoName) {
+            await this._requireGreenCi({ userId, projectRow, step });
+        }
         const params = parseJson(step.actionParamsJson, {}) || {};
         const choices = Array.isArray(params.choices) ? params.choices : [];
         let chosen = selectedId == null || selectedId === '' ? null : String(selectedId).trim();
@@ -1877,6 +1883,108 @@ class ProjectMissionService {
             payload: { stepId: step.id, expeditionId, jobId, watchId }
         });
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
+    }
+
+    // --- Plan steps linked to code -----------------------------------------------------
+
+    /** The project repositories service (tests set `reposOverride`). */
+    _repos() {
+        return this.reposOverride || require('./projectService').repos;
+    }
+
+    /**
+     * Point a step at a clone and branch (or clear it with branch=null).
+     * The clone must exist in the project; the branch name is legalized
+     * but need not exist yet (work on it may start later).
+     */
+    async linkStepCode({
+        userId, project, owner = null, missionId = null, stepId, repoName = null, branch = null, requireGreenCi = false
+    } = {}) {
+        const { project: projectRow, row } = await this._requireOpen(
+            userId, project, owner, missionId, ['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED']
+        );
+        const step = await this._getStep(row.id, stepId);
+        const { cleanBranch } = require('./projectRepoService');
+        let cleanName = null;
+        let cleanRef = null;
+        if (branch != null && String(branch).trim() !== '') {
+            try {
+                cleanRef = cleanBranch(branch);
+            } catch (error) {
+                throw new ProjectMissionError(400, 'BAD_BRANCH', error.message);
+            }
+            const repos = await db.all('SELECT name, repo FROM project_repos WHERE projectId = @projectId ORDER BY name', { projectId: projectRow.id });
+            // The clone's name (repos/<name>) or its owner/name on GitHub.
+            const wanted = String(repoName ?? '').trim().toLowerCase();
+            const match = wanted
+                ? repos.find(repo => repo.name === wanted || String(repo.repo).toLowerCase() === wanted)
+                : (repos.length === 1 ? repos[0] : null);
+            if (!match) {
+                throw new ProjectMissionError(400, 'BAD_REPO', repos.length === 0
+                    ? 'This project has no cloned repositories to link a step to.'
+                    : `Name the clone (repoName): ${repos.map(repo => repo.name).join(', ')}.`);
+            }
+            cleanName = match.name;
+        }
+        await db.run(
+            `UPDATE project_mission_steps
+             SET repoName = @repoName, branch = @branch, requireGreenCi = @requireGreenCi, updatedAt = datetime('now')
+             WHERE id = @id`,
+            { id: step.id, repoName: cleanName, branch: cleanRef, requireGreenCi: cleanRef && requireGreenCi ? 1 : 0 }
+        );
+        await this._appendEvent(db, {
+            missionId: row.id, userId, kind: 'step_code_linked',
+            payload: { stepId: step.id, repoName: cleanName, branch: cleanRef, requireGreenCi: Boolean(cleanRef && requireGreenCi) }
+        });
+        try {
+            // Portal refetch only: linking is not a step transition, so no domain event.
+            require('./eventBusService').publishProjectChange({ userId, slug: projectRow.slug, reason: 'mission', projectId: projectRow.id });
+        } catch { /* best effort */ }
+        return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
+    }
+
+    /** Refuse a step's completion unless its branch's CI is green right now. */
+    async _requireGreenCi({ userId, projectRow, step }) {
+        let state;
+        try {
+            const summary = await this._repos().branchSummary({ row: projectRow, userId, name: step.repoName, branch: step.branch });
+            if (summary.remoteError) throw new Error(summary.remoteError);
+            state = summary.ci;
+        } catch (error) {
+            throw new ProjectMissionError(409, 'CI_UNKNOWN',
+                `Step “${step.title}” needs green CI on ${step.branch}, and it could not be checked: ${error.message}`);
+        }
+        if (state?.state !== 'success') {
+            const why = state?.state === 'failure' ? `failing: ${state.failing.map(f => f.name).join(', ')}`
+                : state?.state === 'pending' ? 'still running' : 'no CI result yet';
+            throw new ProjectMissionError(409, 'CI_NOT_GREEN',
+                `Step “${step.title}” needs green CI on ${step.branch} first (${why}).`);
+        }
+    }
+
+    /**
+     * The code state of every linked step of a mission: the branch on
+     * GitHub, its pull request and CI. Best effort per step; a step whose
+     * clone is gone says so instead of failing the read.
+     */
+    async stepCode({ userId, project, owner = null, missionId = null } = {}) {
+        const { project: projectRow, row } = await this._requireMissionRow(userId, project, owner, missionId);
+        const steps = await db.all(
+            `SELECT id, title, repoName, branch, requireGreenCi FROM project_mission_steps
+             WHERE missionId = @missionId AND branch IS NOT NULL ORDER BY sortOrder ASC, id ASC`,
+            { missionId: row.id }
+        );
+        const repos = this._repos();
+        const out = [];
+        for (const step of steps) {
+            try {
+                const summary = await repos.branchSummary({ row: projectRow, userId, name: step.repoName, branch: step.branch });
+                out.push({ stepId: step.id, requireGreenCi: Boolean(step.requireGreenCi), ...summary });
+            } catch (error) {
+                out.push({ stepId: step.id, name: step.repoName, branch: step.branch, requireGreenCi: Boolean(step.requireGreenCi), error: error.message });
+            }
+        }
+        return { missionId: row.id, steps: out };
     }
 
     async addEvidence({

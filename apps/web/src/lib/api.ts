@@ -670,6 +670,12 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`, { method: 'POST', body }),
     projectRepoAction: (project: string, name: string, action: 'pull' | 'commit' | 'push' | 'branch' | 'merge' | 'rebase' | 'continue' | 'abort' | 'reset', body: Record<string, unknown> = {}, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
+    projectMissionCode: (project: string, missionId: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/mission/code${ownerQs(owner, { missionId })}`),
+    linkProjectMissionStepCode: (project: string, stepId: number, body: { missionId: number; repoName: string | null; branch: string | null; requireGreenCi: boolean }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/mission/steps/${stepId}/code${ownerQs(owner)}`, { method: 'POST', body }),
+    projectTimeline: (project: string, params: { before?: string | null; limit?: number; kinds?: string[] } = {}, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/timeline${ownerQs(owner, { before: params.before || undefined, limit: params.limit, kinds: params.kinds?.length ? params.kinds.join(',') : undefined })}`),
     projectNow: (project: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/now${ownerQs(owner)}`),
     projectInstructions: (project: string, owner?: string | null) =>
