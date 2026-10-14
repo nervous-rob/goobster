@@ -863,7 +863,7 @@ class ProjectRepoService {
             await this.history.commitQuietly(projectRow, { userId, message: `before ${kind} of ${REPOS_DIR}/${repoRow.name} with ${base}` });
             const ref = await this._fetchBase(projectRow, repoRow, base, token);
             const repoName = repoRow.name;
-            const base_ = { repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
+            const base_ = { project: projectRow.slug, repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
 
             const contained = await this._git(projectRow, repoName, ['merge-base', '--is-ancestor', ref, 'HEAD'], { allowFail: true });
             if (contained.status === 0) {
@@ -951,7 +951,7 @@ class ProjectRepoService {
             const base = status.operation === 'rebase' ? 'its base' : 'the other branch';
             return this._finishIntegration({
                 projectRow, repoRow, userId, kind: status.operation, base, run, from: status.head,
-                extra: { repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
+                extra: { project: projectRow.slug, repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
             });
         });
     }
@@ -972,7 +972,7 @@ class ProjectRepoService {
             await this._touch(projectRow, repoRow);
             await this.history.commitQuietly(projectRow, { userId, message: `aborted ${status.operation} of ${REPOS_DIR}/${repoRow.name}` });
             this._publish(projectRow, userId);
-            return { aborted: status.operation, name: repoRow.name, repo: repoRow.repo, status: await this._status(projectRow, repoRow.name) };
+            return { aborted: status.operation, project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, status: await this._status(projectRow, repoRow.name) };
         });
     }
 
@@ -1112,7 +1112,7 @@ class ProjectRepoService {
                 truncated = true;
             }
             return {
-                name: repoRow.name, repo: repoRow.repo, base: wantedBase, head: headName,
+                project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, base: wantedBase, head: headName,
                 ahead, behind, sharedHistory: threeDot,
                 identical: files.length === 0 && commits.length === 0,
                 commits, files: files.slice(0, COMPARE_MAX_FILES), fileCount: files.length,
@@ -1188,9 +1188,9 @@ class ProjectRepoService {
         const { api } = await this._api(userId, repoRow);
         try {
             const checks = await api.getChecks(repoRow.repo, target);
-            return { name: repoRow.name, repo: repoRow.repo, ref: target, ...ProjectRepoService.summarizeChecks(checks) };
+            return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, ...ProjectRepoService.summarizeChecks(checks) };
         } catch (error) {
-            if (error?.code === 'NOT_FOUND') return { name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], notOnGitHub: true };
+            if (error?.code === 'NOT_FOUND') return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], notOnGitHub: true };
             throw this._apiError(error, repoRow.repo);
         }
     }
@@ -1258,7 +1258,7 @@ class ProjectRepoService {
         }
         await this._audit(userId, 'project-repo-pr', { project: projectRow.slug, repo: repoRow.repo, number: created.number, head: headName, base: wantedBase });
         return {
-            name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
+            project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
             title: created.title || cleanTitle, draft: Boolean(created.draft), head: headName, base: wantedBase
         };
     }

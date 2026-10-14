@@ -24,6 +24,7 @@ import type { Grounding, ParlorMessage, Persona } from '../parlor/types';
 import type { Friend, ToolEvent } from '../lib/types';
 import { PERSONA_PALETTE, personaColor, personaGlyph, timeLabel } from '../parlor/persona';
 import { Icon } from '../icons/Icon';
+import { useComposeListener } from '../hooks/useCompose';
 
 type Member = { userId: string; userName?: string | null };
 type Conversation = {
@@ -66,6 +67,7 @@ export function ParlorRoom() {
     const [activeId, setActiveId] = useState<number | null>(Number.isFinite(paramId) ? paramId : null);
     const [workspacePersonaId, setWorkspacePersonaId] = useState<number | null>(null);
     const [composer, setComposer] = useState('');
+    useComposeListener(setComposer);
     const [sending, setSending] = useState(false);
     const [personaModal, setPersonaModal] = useState<Persona | 'new' | null>(null);
     const [peopleOpen, setPeopleOpen] = useState(false);

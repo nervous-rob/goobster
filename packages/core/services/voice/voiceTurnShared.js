@@ -248,7 +248,7 @@ function createVoiceToolRunner(session, toolContext) {
             try {
                 let result = await toolsRegistry.execute(name, args);
 
-                if (result && typeof result === 'object' && result._display && result._data) {
+                if (result && typeof result === 'object' && result._display && (result._data || '_card' in result)) {
                     result = result._display;
                 }
                 // Wrapped commands report their real outcome via reply();

@@ -64,6 +64,7 @@ function settleTool(steps: TurnStep[], event: ToolEvent): TurnStep[] {
         argsPreview: steps[index]?.argsPreview ?? event.argsPreview,
         resultPreview: event.resultPreview,
         durationMs: event.durationMs,
+        ...(event.card ? { card: event.card } : {}),
         running: false
     };
     const next = [...steps];

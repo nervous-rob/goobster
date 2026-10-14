@@ -34,7 +34,8 @@ const {
     MAX_TOOL_ROUNDS,
     PROJECT_MAX_TOOL_ROUNDS,
     MAX_STALLED_ROUNDS,
-    TOOL_HISTORY_BUDGET_CHARS
+    TOOL_HISTORY_BUDGET_CHARS,
+    STEP_CARD_CHARS
 } = require('@goobster/core/utils/chat/agentOrchestrator');
 
 const FUNCTION_DEFS = [{ name: 'searchGithubCode', description: 'search', parameters: { type: 'object', properties: {} } }];
@@ -234,6 +235,36 @@ describe('runAgentLoop', () => {
         }));
         // The final answer is the reply itself, never a timeline step.
         expect(result.steps.some(s => s.type === 'text' && s.content === 'It routes chat replies.')).toBe(false);
+    });
+
+    test('a tool card rides the step and the result event; the model reads only the text; a bad card is dropped', async () => {
+        aiService.chat
+            .mockResolvedValueOnce({ content: '', toolCalls: [
+                toolCall('c1', 'observatory', { action: 'repo_ci' }),
+                toolCall('c2', 'observatory', { action: 'repo_compare' }),
+                toolCall('c3', 'observatory', { action: 'repo_status' })
+            ] })
+            .mockResolvedValueOnce({ content: 'CI is red.', toolCalls: [] });
+        const card = { kind: 'repo-ci', project: 'lab', name: 'x', state: 'failure', failing: [{ name: 'test' }] };
+        const executeTool = jest.fn()
+            .mockResolvedValueOnce({ _display: 'CI FAILING (1 of 2)', _card: card })
+            .mockResolvedValueOnce({ _display: 'big diff', _card: { kind: 'repo-compare', patch: 'x'.repeat(STEP_CARD_CHARS + 10) } })
+            .mockResolvedValueOnce({ _display: 'no kind', _card: { nope: true } });
+
+        const events = [];
+        const result = await runAgentLoop({ messages: baseMessages(), functionDefs: FUNCTION_DEFS, executeTool, onToolEvent: (event) => events.push(event) });
+
+        expect(result.content).toBe('CI is red.');
+        const tools = result.steps.filter(step => step.type === 'tool');
+        expect(tools[0]).toMatchObject({ resultPreview: 'CI FAILING (1 of 2)', card });
+        expect(tools[1].card).toBeUndefined();
+        expect(tools[1].resultPreview).toBe('big diff');
+        expect(tools[2].card).toBeUndefined();
+        expect(events.find(event => event.phase === 'result' && event.id === 0).card).toEqual(card);
+        // What the model saw on the next round is the display text, never the card.
+        const secondRound = aiService.chat.mock.calls[1][0];
+        const toolMessages = secondRound.filter(message => message.role === 'tool').map(message => message.content);
+        expect(toolMessages).toEqual(['CI FAILING (1 of 2)', 'big diff', 'no kind']);
     });
 
     test('empty finalization falls back to the interstitial round text, not the raw digest', async () => {

@@ -2146,3 +2146,14 @@ html[data-page-width="full"] :is(.chat-log, .composer-wrap) { max-width: 1120px;
    width they take 1040px so the two-column fields breathe. The Documentation
    article keeps its 880px reading column. */
 html[data-page-width="full"] .settings-section { max-width: 1040px; }
+
+/* Tool result cards under a reply (components/ToolCards.tsx). */
+.tool-cards { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.tool-card { border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius); padding: 8px 10px; background: var(--bg-raise); font-size: 0.875rem; min-width: 0; }
+.tool-card.is-failure { border-left-color: var(--danger); }
+.tool-card.is-success { border-left-color: rgba(80, 200, 120, 0.8); }
+.tool-card.is-pending { border-left-color: rgba(230, 190, 60, 0.8); }
+.tool-card-head { margin-bottom: 4px; overflow-wrap: anywhere; }
+.tool-card-row { overflow-wrap: anywhere; }
+.tool-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.repo-strip { margin-top: 2px; }

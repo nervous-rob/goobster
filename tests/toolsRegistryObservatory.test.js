@@ -552,6 +552,33 @@ describe('execute happy path (through the registry)', () => {
         expect(run).toContain(payload);
         expect(run).not.toMatch(/\[truncated/);
 
+        // Repository results that the portal can act on come back as a card
+        // beside the text (agentOrchestrator `_card`); the text is unchanged.
+        const repos = require('@goobster/core/services/observatoryService').repos;
+        const ciSpy = jest.spyOn(repos, 'ci').mockResolvedValue({
+            project: 'read-tool-lab', name: 'x', repo: 'acme/x', ref: 'feature', state: 'failure', total: 2, passed: 1,
+            failing: [{ name: 'test', conclusion: 'failure', url: 'https://github.com/acme/x/runs/1', summary: '3 failed' }], pending: []
+        });
+        const mergeSpy = jest.spyOn(repos, 'merge').mockResolvedValue({
+            project: 'read-tool-lab', name: 'x', repo: 'acme/x', kind: 'merge', base: 'main', branch: 'feature',
+            result: 'conflicted', conflicts: ['a.txt'], from: 'abc1234', to: 'abc1234', status: {}
+        });
+        try {
+            const ci = await toolsRegistry.execute('observatory', {
+                action: 'repo_ci', project: 'read-tool-lab', name: 'x', interactionContext: webContext()
+            });
+            expect(ci._display).toMatch(/CI FAILING \(1 of 2\)/);
+            expect(ci._card).toMatchObject({ kind: 'repo-ci', project: 'read-tool-lab', name: 'x', state: 'failure', failing: [{ name: 'test' }] });
+            const merged = await toolsRegistry.execute('observatory', {
+                action: 'repo_merge', project: 'read-tool-lab', name: 'x', interactionContext: webContext()
+            });
+            expect(merged._display).toMatch(/stopped on conflicts in: a\.txt/);
+            expect(merged._card).toMatchObject({ kind: 'repo-integration', operation: 'merge', result: 'conflicted', conflicts: ['a.txt'] });
+        } finally {
+            ciSpy.mockRestore();
+            mergeSpy.mockRestore();
+        }
+
         await toolsRegistry.execute('observatory', {
             action: 'delete-project', project: 'read-tool-lab',
             interactionContext: webContext()

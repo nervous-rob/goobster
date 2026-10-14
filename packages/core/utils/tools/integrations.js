@@ -786,10 +786,14 @@ module.exports = {
                         
                         console.log(`Step ${stepNum} resolved args:`, JSON.stringify(resolvedArgs, null, 2));
                         
-                        const result = await require('../toolsRegistry').execute(name, {
+                        let result = await require('../toolsRegistry').execute(name, {
                             ...resolvedArgs,
                             interactionContext
                         });
+                        // A card is for the portal, not for plan steps: keep the text.
+                        if (result && typeof result === 'object' && typeof result._display === 'string' && '_card' in result) {
+                            result = result._display;
+                        }
                         
                         // A switched-off tool is a failed step, never "completed".
                         if (result && typeof result === 'object' && result.code === require('../../features/gate').FEATURE_UNAVAILABLE) {

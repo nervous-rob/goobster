@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
+import { ciBadge, DiffView, type CiPayload } from './repoParts';
 
 /**
  * Project repositories (ADR 0015) in the portal: the Code view's clone list
@@ -34,8 +35,6 @@ export type ComparePayload = {
     files: { path: string; additions: number; deletions: number; binary: boolean }[];
     fileCount: number; additions: number; deletions: number; patch: string; truncated: boolean;
 };
-type CiFailure = { name: string; conclusion: string; url: string | null; summary: string };
-export type CiPayload = { ref: string; state: 'success' | 'failure' | 'pending' | 'none'; total: number; passed: number; failing: CiFailure[]; pending: string[]; notOnGitHub?: boolean };
 type PullEntry = { number: number; title: string; url: string; state: string; draft: boolean; author: string | null; head: string; base: string; ci: CiPayload | null };
 export type IntegrationResult = { kind: string; base: string; result: string; conflicts: string[]; to?: string };
 export type RepoEntry = {
@@ -231,12 +230,6 @@ export function RepoPanel({ slug, ownerId, onChanged, codeView = false }: {
     );
 }
 
-export function ciBadge(ci: Pick<CiPayload, 'state' | 'failing' | 'pending' | 'passed' | 'total'> | null | undefined) {
-    if (!ci || ci.state === 'none') return <span className="hint">no CI</span>;
-    if (ci.state === 'success') return <span title={`${ci.passed} checks passed`}>✅ passing</span>;
-    if (ci.state === 'pending') return <span title={ci.pending.join(', ')}>🟡 running</span>;
-    return <span title={ci.failing.map((f) => f.name).join(', ')}>❌ {ci.failing.length} failing</span>;
-}
 
 /**
  * One clone's repository management: pick the active branch, compare any two
@@ -457,18 +450,4 @@ function RepoStrip({ slug, ownerId, entry }: { slug: string; ownerId?: string | 
     );
 }
 
-/** A unified diff from the server, coloured by line. */
-export function DiffView({ text }: { text: string }) {
-    return (
-        <pre className="obs-diff">
-            {text.split('\n').map((line, index) => (
-                <span
-                    key={index}
-                    className={line.startsWith('+') && !line.startsWith('+++') ? 'add'
-                        : line.startsWith('-') && !line.startsWith('---') ? 'del' : ''}
-                >{line}{'\n'}</span>
-            ))}
-        </pre>
-    );
-}
 

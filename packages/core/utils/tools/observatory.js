@@ -95,6 +95,46 @@ function describeCompare(cmp) {
     return lines.join('\n');
 }
 
+const CARD_PATCH_CHARS = 8000;
+
+/**
+ * Structured cards for the portal (the orchestrator's `_card`): the text
+ * stays the model's answer, the card is what the person can act on.
+ * `owner` is passed through so a card's buttons reach the same project.
+ */
+const repoCards = {
+    compare(cmp, owner) {
+        return {
+            kind: 'repo-compare', project: cmp.project, owner: owner || null, name: cmp.name, repo: cmp.repo,
+            base: cmp.base, head: cmp.head, ahead: cmp.ahead, behind: cmp.behind, identical: cmp.identical,
+            fileCount: cmp.fileCount, additions: cmp.additions, deletions: cmp.deletions,
+            files: cmp.files.slice(0, 30), commits: cmp.commits.slice(0, 10),
+            patch: (cmp.patch || '').slice(0, CARD_PATCH_CHARS),
+            truncated: Boolean(cmp.truncated || (cmp.patch || '').length > CARD_PATCH_CHARS)
+        };
+    },
+    ci(ci, owner) {
+        return {
+            kind: 'repo-ci', project: ci.project, owner: owner || null, name: ci.name, repo: ci.repo, ref: ci.ref,
+            state: ci.state, total: ci.total, passed: ci.passed, notOnGitHub: Boolean(ci.notOnGitHub),
+            failing: ci.failing.slice(0, 10), pending: ci.pending.slice(0, 10)
+        };
+    },
+    integration(done, owner) {
+        return {
+            kind: 'repo-integration', project: done.project, owner: owner || null, name: done.name, repo: done.repo,
+            operation: done.kind, base: done.base, branch: done.branch, result: done.result,
+            conflicts: (done.conflicts || []).slice(0, 20), from: done.from || null, to: done.to || null
+        };
+    },
+    pr(pr, owner) {
+        return {
+            kind: 'repo-pr', project: pr.project, owner: owner || null, name: pr.name, repo: pr.repo,
+            number: pr.number, url: pr.url, title: pr.title, head: pr.head, base: pr.base, draft: pr.draft
+        };
+    }
+};
+
 /** One answer for repo_merge / repo_rebase / repo_continue. */
 function describeIntegration(done) {
     const what = `${done.kind} of ${done.base} into ${done.repo} ${done.branch}`;
@@ -686,7 +726,7 @@ module.exports = {
                     case 'repo_compare': {
                         if (!name) return '❌ repo_compare needs name (the clone, from repo_list).';
                         const cmp = await observatoryService.repos.compare({ userId, project, owner, name, base, head: branch });
-                        return describeCompare(cmp);
+                        return { _display: describeCompare(cmp), _card: repoCards.compare(cmp, owner) };
                     }
                     case 'repo_prs': {
                         if (!name) return '❌ repo_prs needs name (the clone, from repo_list).';
@@ -701,24 +741,32 @@ module.exports = {
                             userId, project, owner, name, title: note || title, body: content || '',
                             head: branch, base, draft: enabled === false, push: background === true
                         });
-                        return `📦 Opened pull request #${pr.number} on ${pr.repo} (${pr.head} → ${pr.base}${pr.draft ? ', draft' : ''}): ${pr.url}`;
+                        return {
+                            _display: `📦 Opened pull request #${pr.number} on ${pr.repo} (${pr.head} → ${pr.base}${pr.draft ? ', draft' : ''}): ${pr.url}`,
+                            _card: repoCards.pr(pr, owner)
+                        };
                     }
                     case 'repo_ci': {
                         if (!name) return '❌ repo_ci needs name (the clone, from repo_list).';
                         const ci = await observatoryService.repos.ci({ userId, project, owner, name, ref: branch });
-                        return `📦 CI for ${ci.repo} ${ci.ref}: ${describeCi(ci)}`
-                            + (ci.failing.length ? '\n' + ci.failing.map(f => `  ✗ ${f.name} (${f.conclusion})${f.summary ? `: ${f.summary}` : ''}${f.url ? ` ${f.url}` : ''}`).join('\n') : '')
-                            + (ci.pending.length ? `\n  … still running: ${ci.pending.join(', ')}` : '');
+                        return {
+                            _display: `📦 CI for ${ci.repo} ${ci.ref}: ${describeCi(ci)}`
+                                + (ci.failing.length ? '\n' + ci.failing.map(f => `  ✗ ${f.name} (${f.conclusion})${f.summary ? `: ${f.summary}` : ''}${f.url ? ` ${f.url}` : ''}`).join('\n') : '')
+                                + (ci.pending.length ? `\n  … still running: ${ci.pending.join(', ')}` : ''),
+                            _card: repoCards.ci(ci, owner)
+                        };
                     }
                     case 'repo_merge':
                     case 'repo_rebase': {
                         if (!name) return `❌ ${action} needs name (the clone, from repo_list).`;
                         const verb = action === 'repo_merge' ? 'merge' : 'rebase';
-                        return describeIntegration(await observatoryService.repos[verb]({ userId, project, owner, name, branch }));
+                        const done = await observatoryService.repos[verb]({ userId, project, owner, name, branch });
+                        return { _display: describeIntegration(done), _card: repoCards.integration(done, owner) };
                     }
                     case 'repo_continue': {
                         if (!name) return '❌ repo_continue needs name (the clone, from repo_list).';
-                        return describeIntegration(await observatoryService.repos.continue({ userId, project, owner, name }));
+                        const done = await observatoryService.repos.continue({ userId, project, owner, name });
+                        return { _display: describeIntegration(done), _card: repoCards.integration(done, owner) };
                     }
                     case 'repo_abort': {
                         if (!name) return '❌ repo_abort needs name (the clone, from repo_list).';

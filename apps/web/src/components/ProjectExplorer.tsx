@@ -8,7 +8,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { CodeEditor, languageFromPath } from './CodeEditor';
-import { DiffView } from './ProjectRepos';
+import { DiffView } from './repoParts';
 
 type AssetRow = {
     slug: string;
