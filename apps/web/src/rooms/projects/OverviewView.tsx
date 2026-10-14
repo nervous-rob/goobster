@@ -9,6 +9,7 @@ import { ArtifactGallery } from '../observatory/ArtifactGallery';
 import { whenLabel } from '../observatory/format';
 import { EXECUTION_OFF } from './Command';
 import { RunsList } from './RunsList';
+import { NowPanel } from './NowPanel';
 import type { Detail } from './types';
 import { featureActive } from '../../lib/rooms';
 
@@ -21,13 +22,14 @@ const LATEST_RUNS = 3;
  * ones (render) sit here too.
  */
 export function OverviewView({
-    detail, ownerId, onChanged, onDeleted, onOpen
+    detail, ownerId, onChanged, onDeleted, onOpen, askGoobster
 }: {
     detail: Detail;
     ownerId: string;
     onChanged: () => void;
     onDeleted: () => void;
     onOpen: (view: ProjectViewId) => void;
+    askGoobster: (text: string) => void;
 }) {
     const me = useMe();
     const toast = useToast();
@@ -125,6 +127,7 @@ export function OverviewView({
                 </div>
             </div>
 
+            <NowPanel slug={p.slug} ownerId={ownerId} onOpen={onOpen} askGoobster={askGoobster} canRun={executionOn} />
             <div className="obs-overview">
                 <OverviewPlan slug={p.slug} ownerId={ownerId} onOpen={() => onOpen('plan')} />
                 <section className="obs-overview-jobs" data-tour="project-latest-runs">
@@ -135,7 +138,7 @@ export function OverviewView({
                             <button type="button" className="btn small" onClick={() => onOpen('runs')}>All runs →</button>
                         )}
                     </div>
-                    <RunsList slug={p.slug} ownerId={ownerId} jobs={detail.jobs} limit={LATEST_RUNS} onChanged={onChanged} />
+                    <RunsList slug={p.slug} ownerId={ownerId} jobs={detail.jobs} limit={LATEST_RUNS} onChanged={onChanged} askGoobster={askGoobster} />
                 </section>
                 <ArtifactGallery
                     files={detail.files}

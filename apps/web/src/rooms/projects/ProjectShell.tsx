@@ -19,6 +19,7 @@ import { AutomationsTab } from './AutomationsTab';
 import { CommandButton, CommandModal, CommandStrip, useProjectCommand } from './Command';
 import { OverviewView } from './OverviewView';
 import { RunsList } from './RunsList';
+import { requestCompose } from '../../hooks/useCompose';
 import type { Detail } from './types';
 
 /**
@@ -68,6 +69,12 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
     };
     const go = (next: ProjectViewId) => navigate({ to: projectPath({ owner: ownerId, slug }, next) as never });
     const showDock = dockOpen && view !== 'conversation';
+    // "Ask Goobster ..." from a view: open the chat beside it and pre-fill
+    // the composer (never sends). The dock listens once it has mounted.
+    const askGoobster = (text: string) => {
+        if (view !== 'conversation') setDockOpen(true);
+        window.setTimeout(() => requestCompose(text), 120);
+    };
 
     return (
         <main className="pane next-pane is-in" id="pane-observatory">
@@ -141,6 +148,7 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                         onChanged={() => void refresh()}
                                         onDeleted={() => { void refresh(); void navigate({ to: '/projects' }); }}
                                         onOpen={go}
+                                        askGoobster={askGoobster}
                                     />
                                 )}
                                 {view === 'plan' && <MissionTab slug={slug} ownerId={ownerId} />}
@@ -170,7 +178,7 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                             <h3>Runs</h3>
                                             <span className="hint">{detail.data.jobs.length || 'none yet'}</span>
                                         </div>
-                                        <RunsList slug={slug} ownerId={ownerId} jobs={detail.data.jobs} onChanged={() => void refresh()} />
+                                        <RunsList slug={slug} ownerId={ownerId} jobs={detail.data.jobs} onChanged={() => void refresh()} askGoobster={askGoobster} />
                                     </section>
                                 )}
                                 {view === 'people' && (

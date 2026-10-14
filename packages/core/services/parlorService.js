@@ -42,7 +42,8 @@ const knowledgeGraphService = require('./knowledgeGraphService');
 const kgConfig = require('../config/knowledgeGraphConfig');
 const { withTagLinks } = require('../utils/graphFilter');
 const { richRenderingContract, spokenReplyContract } = require('../utils/chat/promptFragments');
-const { discord } = require('../utils/optionalModule');
+const { discord, forModule } = require('../utils/optionalModule');
+const requireOptional = forModule(module);
 
 const MAX_PERSONAS_PER_USER = 12;
 const MAX_PERSONA_NAME_LENGTH = 48;
@@ -2728,9 +2729,15 @@ class ParlorService {
                 { isWeb: true }
             );
             const collector = { files: [] };
+            // The project's GOOBSTER.md (projects feature; absent payload = none).
+            const projectService = projectSeat ? requireOptional('./projectService', { feature: 'projects' }) : null;
+            const projectInstructions = projectService
+                ? await projectService.instructionsPromptForProjectId(linkedProjectId)
+                : '';
             const messages = this._buildPersonaMessages({
                 persona, ownerName, history, retrieved,
-                hasTools: functionDefs.length > 0, projectSeat, spoken, userInstructions: turnState.inboxInstructions
+                hasTools: functionDefs.length > 0, projectSeat, spoken, userInstructions: turnState.inboxInstructions,
+                projectInstructions
             });
             const chatOptions = {
                 workflow: 'parlor',
@@ -2857,7 +2864,7 @@ class ParlorService {
      * context as the system prompt, the discussion window as user/assistant
      * turns (other speakers arrive as labeled user messages).
      */
-    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false, spoken = false, userInstructions = null }) {
+    _buildPersonaMessages({ persona, ownerName, history, retrieved, hasTools = false, projectSeat = false, spoken = false, userInstructions = null, projectInstructions = '' }) {
         const workspaceBlock = retrieved.length > 0
             ? retrieved.map(note =>
                 `[note #${note.id}] ${note.title}` +
@@ -2899,7 +2906,7 @@ class ParlorService {
             ] : [])
         ].join('\n');
 
-        const messages = [{ role: 'system', content: [system, userInstructions].filter(Boolean).join('\n\n') }];
+        const messages = [{ role: 'system', content: [system, projectSeat ? projectInstructions : '', userInstructions].filter(Boolean).join('\n\n') }];
         for (const entry of history) {
             if (entry.role === 'persona' && entry.personaId === persona.id) {
                 messages.push({ role: 'assistant', content: entry.content });

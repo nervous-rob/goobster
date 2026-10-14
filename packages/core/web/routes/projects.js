@@ -269,6 +269,13 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    app.post('/api/app/observatory/jobs/:jobId/rerun', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.rerunJob({ userId: req.webUser.userId, jobId: req.params.jobId, client: ctx.gateway })
+    ));
+    app.get('/api/app/observatory/jobs/:jobId/changes', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.jobChanges({ userId: req.webUser.userId, jobId: req.params.jobId })
+    ));
+
     app.post('/api/app/observatory/jobs/:jobId/resume', requireAuth, chatRoute(async (req) =>
         ctx.observatory.resume({
             userId: req.webUser.userId,
@@ -586,6 +593,20 @@ function mountProjects(app, ctx, h) {
             owner: projectOwner(req),
             rev: req.params.rev,
             path: req.body?.path ?? null
+        })
+    ));
+
+    // --- Now, instructions, search -------------------------------------------------
+    app.get('/api/app/projects/:slug/now', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.now({ userId: req.webUser.userId, project: req.params.slug, owner: projectOwner(req) })
+    ));
+    app.get('/api/app/projects/:slug/instructions', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.getInstructions({ userId: req.webUser.userId, project: req.params.slug, owner: projectOwner(req) })
+    ));
+    app.get('/api/app/projects/:slug/search', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.searchWorkspace({
+            userId: req.webUser.userId, project: req.params.slug, owner: projectOwner(req),
+            query: req.query.q, path: req.query.path || ''
         })
     ));
 

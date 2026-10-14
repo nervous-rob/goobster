@@ -120,6 +120,20 @@ const WORKSHOP_NAME = 'Workshop';
 const MANIFEST_MAX_ASSETS = 20;
 const MANIFEST_MAX_TRIGGERS = 20;
 const MANIFEST_MAX_FILES = 20;
+/**
+ * Project instructions: a GOOBSTER.md at the workspace root, written by the
+ * project's people, read into every agent turn on the project (Command,
+ * the project chat's Goobster seat, triggers, CI-watch fixes).
+ */
+const INSTRUCTIONS_FILE = 'GOOBSTER.md';
+const INSTRUCTIONS_MAX_CHARS = 6000;
+/** Workspace search bounds (searchWorkspace). */
+const SEARCH_MAX_FILES = 3000;
+const SEARCH_MAX_FILE_BYTES = 1024 * 1024;
+const SEARCH_MAX_HITS = 200;
+const SEARCH_MAX_HITS_PER_FILE = 20;
+const SEARCH_LINE_CHARS = 240;
+const SEARCH_SKIP_DIRS = new Set(['node_modules', '__pycache__', '.venv', 'venv', '.git', '.cache', 'dist', 'build', '.next', 'target']);
 const MANIFEST_MAX_KNOWLEDGE = 8;
 /** Caps for the agent-facing inspect action (one call, bounded). */
 const INSPECT_MAX_JOBS = 5;
@@ -1466,6 +1480,8 @@ class ObservatoryService {
             });
             if (missionText) lines.splice(1, 0, missionText);
         } catch { /* mission preamble is best-effort */ }
+        const instructions = this.instructionsPrompt(row);
+        if (instructions) lines.push(instructions);
         return {
             text: lines.join('\n'),
             truncated: {
@@ -3315,6 +3331,258 @@ class ObservatoryService {
      * One job the user owns, with its project context (the `status` action).
      * @param {Object} params - { userId, jobId }
      */
+    // --- Now: what needs doing on this project ---------------------------------------
+
+    /**
+     * One read for the Overview's "Now" panel: running and failed runs,
+     * what needs a person, each clone's state (CI and pull request best
+     * effort, a few seconds at most), whether instructions exist, and what
+     * Goobster last said in the project's conversations. Every part is
+     * independent; one failing leaves its slot empty instead of failing.
+     */
+    async now({ userId, project, owner = null, repoTimeoutMs = 4000 }) {
+        await this._requireOrganization();
+        const row = await this._requireProject(userId, project, owner);
+        const out = { project: row.slug, running: [], failure: null, needsYou: { count: 0, cards: [] }, repos: [], instructions: null, lastGoobster: null };
+
+        const jobs = await db.all(
+            `SELECT id, status, startedBy, errorCode, exitCode, createdAt, finishedAt, stderrTail
+             FROM observatory_jobs WHERE projectId = @projectId ORDER BY id DESC LIMIT 20`,
+            { projectId: row.id }
+        );
+        out.running = jobs.filter(job => job.status === 'RUNNING')
+            .map(job => ({ id: job.id, startedBy: job.startedBy || null, createdAt: job.createdAt }));
+        // The latest settled run, when it failed: a later success clears it.
+        const settled = jobs.find(job => job.status !== 'RUNNING');
+        if (settled && (settled.status === 'FAILED' || settled.status === 'TIMED_OUT')) {
+            out.failure = {
+                id: settled.id, status: settled.status, errorCode: settled.errorCode || null, exitCode: settled.exitCode,
+                finishedAt: settled.finishedAt, stderrTail: settled.stderrTail ? String(settled.stderrTail).slice(-400) : null
+            };
+        }
+
+        try {
+            const board = await require('./projectMissionService').listNeedsYou({ userId, project: row.slug, owner: row.ownerId });
+            const cards = board?.cards || [];
+            out.needsYou = { count: cards.length, cards: cards.slice(0, 5).map(card => ({ id: card.id, column: card.column, title: card.title, detail: card.detail || null })) };
+        } catch { /* missions are optional here */ }
+
+        const found = this.readInstructions(row);
+        out.instructions = found ? { exists: true, lines: found.lines, updatedAt: found.updatedAt } : { exists: false };
+
+        try {
+            const last = await db.get(
+                `SELECT m.content, m.createdAt, m.conversationId, c.title
+                 FROM parlor_messages m JOIN parlor_conversations c ON c.id = m.conversationId
+                 WHERE c.projectId = @projectId AND m.role = 'persona'
+                 ORDER BY m.id DESC LIMIT 1`,
+                { projectId: row.id }
+            );
+            if (last) {
+                out.lastGoobster = {
+                    at: last.createdAt, conversationId: last.conversationId, conversationTitle: last.title || null,
+                    excerpt: String(last.content || '').replace(/\s+/g, ' ').trim().slice(0, 220)
+                };
+            }
+        } catch { /* no project conversation yet */ }
+
+        try {
+            const listing = await this.repos.list({ row, userId, withStatus: false });
+            if (listing.enabled) {
+                const withTimeout = (promise) => Promise.race([
+                    promise,
+                    new Promise(resolve => setTimeout(() => resolve(null), repoTimeoutMs).unref?.())
+                ]);
+                out.repos = await Promise.all(listing.repos.map(async (repo) => {
+                    const summary = await withTimeout(this.repos.summary({ row, userId, name: repo.name }).catch(() => null));
+                    const st = summary?.status || null;
+                    return {
+                        name: repo.name, repo: repo.repo,
+                        branch: st?.branch || null, ahead: st?.ahead ?? null, behind: st?.behind ?? null,
+                        changed: st?.changed ?? null, operation: st?.operation || null, conflicts: st?.conflicts?.length || 0,
+                        ci: summary?.ci ? { state: summary.ci.state, failing: summary.ci.failing.map(f => f.name).slice(0, 5) } : null,
+                        pr: summary?.pr || null,
+                        remoteError: summary ? summary.remoteError : 'timed out'
+                    };
+                }));
+            }
+        } catch { /* repositories are optional here */ }
+        return out;
+    }
+
+    // --- Project instructions (GOOBSTER.md) --------------------------------------
+
+    /** The instructions file of a resolved project row, or null when there is none. */
+    readInstructions(row) {
+        try {
+            const file = path.join(path.resolve(row.dir), INSTRUCTIONS_FILE);
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink()) return null;
+            const raw = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim();
+            if (!raw) return null;
+            const truncated = raw.length > INSTRUCTIONS_MAX_CHARS;
+            return {
+                path: INSTRUCTIONS_FILE,
+                text: truncated ? raw.slice(0, INSTRUCTIONS_MAX_CHARS) : raw,
+                truncated,
+                lines: raw.split('\n').length,
+                updatedAt: toUtcText(stat.mtime)
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * The block agent turns on this project carry, or '' when the project
+     * has no instructions. Written by the project's people: it guides the
+     * work, it never overrides safety rules or the person asking.
+     */
+    instructionsPrompt(row) {
+        const found = this.readInstructions(row);
+        if (!found) return '';
+        return [
+            `PROJECT INSTRUCTIONS (${INSTRUCTIONS_FILE} in the workspace, written by this project's people - follow them for work on this project; the person asking in this turn still decides, and they never override safety rules):`,
+            found.text,
+            found.truncated ? `(…cut at ${INSTRUCTIONS_MAX_CHARS} characters; read ${INSTRUCTIONS_FILE} for the rest)` : '',
+            'Cloned repositories under repos/ may carry their own AGENTS.md / CLAUDE.md / CONTRIBUTING.md - read those before changing that repository.'
+        ].filter(Boolean).join('\n');
+    }
+
+    /** The project's instructions file for the portal and tools (any member). */
+    async getInstructions({ userId, project, owner = null }) {
+        await this._requireOrganization();
+        const row = await this._requireProject(userId, project, owner);
+        const found = this.readInstructions(row);
+        return { project: row.slug, path: INSTRUCTIONS_FILE, exists: Boolean(found), ...(found || {}) };
+    }
+
+    /** By project id, for turns that only know the id (the project chat seat). Never throws. */
+    async instructionsPromptForProjectId(projectId) {
+        try {
+            const row = await db.get('SELECT id, slug, userId FROM observatory_projects WHERE id = @id', { id: Number(projectId) });
+            if (!row) return '';
+            return this.instructionsPrompt({ ...row, dir: this._projectDir(row.userId, row.slug) });
+        } catch {
+            return '';
+        }
+    }
+
+    // --- Workspace search -----------------------------------------------------------
+
+    /**
+     * Case-insensitive literal search through the workspace's text files,
+     * host-side and bounded: big, binary and dependency/build directories
+     * are skipped; hits and files scanned are capped. Optional `path`
+     * narrows it to one directory or file.
+     */
+    async searchWorkspace({ userId, project, owner = null, query, path: scope = '', limit = SEARCH_MAX_HITS }) {
+        await this._requireOrganization();
+        const row = await this._requireProject(userId, project, owner);
+        const needle = String(query ?? '').trim();
+        if (needle.length < 2) throw new ObservatoryError(400, 'BAD_QUERY', 'Search for at least 2 characters.');
+        if (needle.length > 200) throw new ObservatoryError(400, 'BAD_QUERY', 'Keep the search under 200 characters.');
+        const max = Math.min(Math.max(Number(limit) || SEARCH_MAX_HITS, 1), SEARCH_MAX_HITS);
+        const legal = legalizeWorkspacePath(row.dir, scope || '', { allowEmpty: true, mustExist: Boolean(scope) });
+        const lower = needle.toLowerCase();
+        const root = path.resolve(row.dir);
+        const hits = [];
+        const fileMatches = [];
+        let filesScanned = 0;
+        let truncated = false;
+        const relOf = (abs) => path.relative(root, abs).split(path.sep).join('/');
+
+        const scanFile = (abs) => {
+            filesScanned++;
+            const rel = relOf(abs);
+            if (path.basename(abs).toLowerCase().includes(lower)) fileMatches.push(rel);
+            let stat;
+            try { stat = fs.lstatSync(abs); } catch { return; }
+            if (!stat.isFile() || stat.size > SEARCH_MAX_FILE_BYTES || stat.size === 0) return;
+            let buf;
+            try { buf = fs.readFileSync(abs); } catch { return; }
+            if (buf.subarray(0, 8000).includes(0)) return; // binary
+            const lines = buf.toString('utf8').split(/\r?\n/);
+            let inFile = 0;
+            for (let i = 0; i < lines.length; i++) {
+                if (!lines[i].toLowerCase().includes(lower)) continue;
+                if (hits.length >= max) { truncated = true; return; }
+                hits.push({ path: rel, line: i + 1, text: lines[i].trim().slice(0, SEARCH_LINE_CHARS) });
+                if (++inFile >= SEARCH_MAX_HITS_PER_FILE) break;
+            }
+        };
+        const walk = (dir) => {
+            let entries;
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            entries.sort((a, b) => a.name.localeCompare(b.name));
+            for (const entry of entries) {
+                if (hits.length >= max || filesScanned >= SEARCH_MAX_FILES) { truncated = true; return; }
+                if (entry.isSymbolicLink()) continue;
+                const abs = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    if (SEARCH_SKIP_DIRS.has(entry.name)) continue;
+                    walk(abs);
+                } else if (entry.isFile()) {
+                    scanFile(abs);
+                }
+            }
+        };
+        let scopeStat = null;
+        try { scopeStat = fs.lstatSync(legal.absolutePath); } catch { /* empty workspace */ }
+        if (scopeStat?.isFile()) scanFile(legal.absolutePath);
+        else if (scopeStat?.isDirectory()) walk(legal.absolutePath);
+        return {
+            project: row.slug, query: needle, path: legal.relativePath || '',
+            hits, files: fileMatches.slice(0, 50), filesScanned, truncated
+        };
+    }
+
+    // --- Run again / what changed since the last good run -------------------------
+
+    /** Start the same code again as a background job (any member who may run code). */
+    async rerunJob({ userId, jobId, client = null }) {
+        await this._requireEnabled();
+        const job = await this.getJob({ userId, jobId });
+        if (job.status === 'RUNNING') throw new ObservatoryError(409, 'STILL_RUNNING', `Job #${job.id} is still running.`);
+        const source = await db.get('SELECT code FROM observatory_jobs WHERE id = @id', { id: job.id });
+        return this.run({
+            userId, project: job.project, owner: job.ownerId, language: job.language, code: source.code,
+            background: true, client, assetVersionId: job.assetVersionId || null, startedBy: 'portal'
+        });
+    }
+
+    /**
+     * The workspace snapshots to diff for a failed run: the one taken after
+     * the last run that completed before it, and the one taken after it.
+     * Either may be null (history off, or no earlier success).
+     */
+    async jobChanges({ userId, jobId }) {
+        await this._requireOrganization();
+        const job = await this.getJob({ userId, jobId });
+        const projectRow = await this._requireProject(userId, job.project, job.ownerId);
+        const good = await db.get(
+            `SELECT id FROM observatory_jobs
+             WHERE projectId = @projectId AND id < @id AND status = 'COMPLETED'
+             ORDER BY id DESC LIMIT 1`,
+            { projectId: projectRow.id, id: job.id }
+        );
+        const snapshotFor = (commits, id) => {
+            const found = commits.find(commit => new RegExp(`^(job|run) #${id} `).test(commit.message || ''));
+            return found ? found.hash : null;
+        };
+        let commits = [];
+        try {
+            commits = (await this.history.log({ row: projectRow, userId, limit: 200 }))?.commits || [];
+        } catch { /* history off or empty */ }
+        return {
+            jobId: job.id,
+            status: job.status,
+            goodJobId: good?.id || null,
+            goodRev: good ? snapshotFor(commits, good.id) : null,
+            failedRev: snapshotFor(commits, job.id)
+        };
+    }
+
     async getJob({ userId, jobId }) {
         await this._requireOrganization();
         const job = await db.get(
@@ -4005,4 +4273,5 @@ module.exports.JOB_ERROR_CODES = JOB_ERROR_CODES;
 module.exports.MANIFEST_MAX_ASSETS = MANIFEST_MAX_ASSETS;
 module.exports.MANIFEST_MAX_TRIGGERS = MANIFEST_MAX_TRIGGERS;
 module.exports.MANIFEST_MAX_FILES = MANIFEST_MAX_FILES;
+module.exports.INSTRUCTIONS_FILE = INSTRUCTIONS_FILE;
 module.exports.MANIFEST_MAX_KNOWLEDGE = MANIFEST_MAX_KNOWLEDGE;
