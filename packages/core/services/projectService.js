@@ -61,6 +61,7 @@ const { dmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 const dormantData = require('./dormantDataService');
 const { windowLines } = require('../utils/toolResultWindow');
+const { JobLiveOutput } = require('../utils/liveOutput');
 const { makeRunnerId, makeLeaseToken, staleCutoffUtc, HEARTBEAT_MS } = require('../utils/executionLease');
 const {
     CHECKPOINT_FILE,
@@ -2547,11 +2548,18 @@ class ObservatoryService {
                     if (signal.aborted) handle.controller.abort();
                     else signal.addEventListener('abort', () => handle.controller.abort(), { once: true });
                 }
-                const result = await this.sandbox.run({
-                    language, code, stdin, userId, projectDir: row.dir,
-                    scratchDir: this._scratchDir(row.dir),
-                    signal: handle.controller.signal
-                });
+                const live = this._liveOutput(job.id);
+                let result;
+                try {
+                    result = await this.sandbox.run({
+                        language, code, stdin, userId, projectDir: row.dir,
+                        scratchDir: this._scratchDir(row.dir),
+                        signal: handle.controller.signal,
+                        onOutput: live.onOutput
+                    });
+                } finally {
+                    await this._endLiveOutput(job.id, live);
+                }
                 if (!(await this._ownsLease(job.id, leaseToken))) {
                     return { mode: 'foreground', project: row.slug, result: { ...result, aborted: true } };
                 }
@@ -2855,6 +2863,7 @@ class ObservatoryService {
     async _runSegment(job, projectDir, signal) {
         for (let attempt = 0; ; attempt++) {
             if (signal.aborted) return { aborted: true, ok: false, timedOut: false, files: [], stdout: '', stderr: '', exitCode: null };
+            const live = this._liveOutput(job.id);
             try {
                 return await this.sandbox.run({
                     language: job.language,
@@ -2863,7 +2872,8 @@ class ObservatoryService {
                     projectDir,
                     runDir: this._runDir(projectDir, job.id),
                     scratchDir: this._scratchDir(projectDir),
-                    signal
+                    signal,
+                    onOutput: live.onOutput
                 });
             } catch (error) {
                 if (error?.code === 'BUSY' && attempt < MAX_BUSY_RETRIES) {
@@ -2871,8 +2881,62 @@ class ObservatoryService {
                     continue;
                 }
                 throw error;
+            } finally {
+                await this._endLiveOutput(job.id, live);
             }
         }
+    }
+
+    // --- Live run output (utils/liveOutput.js) -----------------------------------------
+
+    /** A live-output writer for one running segment of a job. */
+    _liveOutput(jobId) {
+        return new JobLiveOutput({
+            flushMs: this._liveFlushMs ?? undefined,
+            write: ({ stdout, stderr, bytes }) => db.run(
+                `UPDATE observatory_jobs
+                 SET liveStdout = @stdout, liveStderr = @stderr, liveBytes = @bytes, liveAt = datetime('now')
+                 WHERE id = @jobId AND status = 'RUNNING'`,
+                { jobId, stdout, stderr, bytes }
+            )
+        });
+    }
+
+    /** The segment ended: stop writing and clear the live columns (the settled tails take over). */
+    async _endLiveOutput(jobId, live) {
+        await live.close();
+        try {
+            await db.run(
+                'UPDATE observatory_jobs SET liveStdout = NULL, liveStderr = NULL, liveBytes = NULL, liveAt = NULL WHERE id = @jobId',
+                { jobId }
+            );
+        } catch { /* best effort */ }
+    }
+
+    /**
+     * What a run is printing now (any member). While it runs: the live
+     * tails, rewritten every few seconds (`since` = the last `at` seen
+     * answers { unchanged: true } when nothing new arrived). Between
+     * segments or once settled: the recorded tails.
+     */
+    async jobLive({ userId, jobId, since = null }) {
+        const job = await this.getJob({ userId, jobId });
+        const row = await db.get(
+            'SELECT liveStdout, liveStderr, liveBytes, liveAt FROM observatory_jobs WHERE id = @id',
+            { id: job.id }
+        );
+        const running = job.status === 'RUNNING';
+        const streaming = Boolean(running && row?.liveAt);
+        const at = streaming ? row.liveAt : (job.finishedAt || job.lastHeartbeatAt || null);
+        const base = {
+            jobId: job.id, status: job.status, running, streaming, at,
+            segments: job.segments || 0,
+            liveSupported: this.sandbox.liveOutputSupported ? this.sandbox.liveOutputSupported() : false
+        };
+        if (since && at && String(since) === String(at)) return { ...base, unchanged: true };
+        return streaming
+            ? { ...base, stdout: row.liveStdout || '', stderr: row.liveStderr || '', bytes: row.liveBytes || 0 }
+            : { ...base, stdout: job.stdoutTail || '', stderr: job.stderrTail || '', bytes: null };
     }
 
     /**
@@ -2891,7 +2955,8 @@ class ObservatoryService {
             `UPDATE observatory_jobs
              SET status = @status, exitCode = @exitCode, error = @error, errorCode = @errorCode,
                  outputContractResultJson = @contractResultJson,
-                 finishedAt = datetime('now'), lastHeartbeatAt = datetime('now')
+                 finishedAt = datetime('now'), lastHeartbeatAt = datetime('now'),
+                 liveStdout = NULL, liveStderr = NULL, liveBytes = NULL, liveAt = NULL
              WHERE id = @jobId AND status = 'RUNNING' AND leaseToken = @leaseToken`,
             {
                 jobId,

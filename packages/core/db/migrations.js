@@ -177,6 +177,10 @@ const COLUMN_MIGRATIONS = [
     // source filters on triggers. Existing rows stay NULL (legacy behaviour).
     ['observatory_jobs', 'parentJobId', 'parentJobId INTEGER'],
     ['observatory_jobs', 'outputContractJson', 'outputContractJson TEXT'],
+    ['observatory_jobs', 'liveStdout', 'liveStdout TEXT'],
+    ['observatory_jobs', 'liveStderr', 'liveStderr TEXT'],
+    ['observatory_jobs', 'liveBytes', 'liveBytes INTEGER'],
+    ['observatory_jobs', 'liveAt', 'liveAt TEXT'],
     ['observatory_jobs', 'outputContractResultJson', 'outputContractResultJson TEXT'],
     ['observatory_jobs', 'errorCode', 'errorCode TEXT'],
     ['project_triggers', 'sourceAssetId', 'sourceAssetId INTEGER'],

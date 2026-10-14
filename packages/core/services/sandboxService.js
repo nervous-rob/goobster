@@ -934,7 +934,22 @@ class SandboxService {
         }
     }
 
-    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, sessionKey = null, scratchDir = null, signal = null } = {}) {
+    /**
+     * Whether runs here can report output while they run (`onOutput`). A
+     * remote runner (GOOBSTER_SANDBOX_URL) answers once, at the end.
+     */
+    liveOutputSupported() {
+        const runnerUrl = String(process.env.GOOBSTER_SANDBOX_URL || '').trim();
+        return !runnerUrl || Boolean(this.config.forceLocal);
+    }
+
+    /**
+     * @param {Object} params
+     * @param {(stream: 'stdout'|'stderr', chunk: Buffer) => void} [params.onOutput]
+     *   called with each chunk as the program writes it (local runs only;
+     *   bounded by maxOutputBytes, never throws into the run)
+     */
+    async _run({ language, code, stdin = '', userId = null, projectDir = null, runDir = null, sessionKey = null, scratchDir = null, signal = null, onOutput = null } = {}) {
         if (features.enforcedOff('sandbox')) throw this._featureUnavailable();
         if (!this.enabled) {
             throw new SandboxError(403, 'DISABLED', 'The code sandbox is disabled on this server.');
@@ -1052,7 +1067,7 @@ class SandboxService {
             this._active += 1;
             const startedAt = Date.now();
             try {
-                const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal });
+                const result = await this._spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir, runDir, signal, onOutput });
                 let files = this._collectOutputs(workdir, sourceFile, before);
                 if (persistentDir) {
                     try { fs.rmSync(path.join(workdir, sourceFile), { force: true }); } catch { /* best effort */ }
@@ -1158,7 +1173,7 @@ class SandboxService {
     }
 
     /** Spawn the child and gather bounded output, enforcing a Node-side hard timeout. */
-    _spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir = null, runDir = null, signal = null }) {
+    _spawn({ command, args, workdir, tmpdir, viaTimeout, stdin, projectDir = null, runDir = null, signal = null, onOutput = null }) {
         return new Promise((resolve, reject) => {
             let child;
             try {
@@ -1206,13 +1221,19 @@ class SandboxService {
                 else signal.addEventListener('abort', onAbort, { once: true });
             }
 
-            const collect = (bucket) => (data) => {
+            const collect = (bucket, stream) => (data) => {
                 bucket.bytes += data.length;
                 // Keep only up to the cap (+ a little slack) in memory.
-                if (bucket.bytes <= cap + data.length) bucket.chunks.push(data);
+                if (bucket.bytes <= cap + data.length) {
+                    bucket.chunks.push(data);
+                    // Live output (Observatory jobs): the same bytes, as they come.
+                    if (onOutput) {
+                        try { onOutput(stream, data); } catch { /* a viewer never breaks the run */ }
+                    }
+                }
             };
-            child.stdout.on('data', collect(out));
-            child.stderr.on('data', collect(err));
+            child.stdout.on('data', collect(out, 'stdout'));
+            child.stderr.on('data', collect(err, 'stderr'));
 
             // Node-side backstop: covers the no-`timeout`-binary case and any
             // child that outlives the coreutils timeout (e.g. escaped subtree).

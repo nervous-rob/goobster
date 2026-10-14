@@ -1724,6 +1724,14 @@ CREATE TABLE IF NOT EXISTS observatory_jobs (
     -- Owner-acknowledged cancel. The RUNNING claim stays until the
     -- owning loop (or a stale-lease reap) settles the row.
     cancelRequested INTEGER NOT NULL DEFAULT 0 CHECK (cancelRequested IN (0, 1)),
+    -- Live output of the running segment (utils/liveOutput.js): bounded,
+    -- display-ready tails written every few seconds while it runs, so any
+    -- process serving the portal can show them; NULL once the segment ends
+    -- (stdoutTail / stderrTail are the record after that).
+    liveStdout TEXT,
+    liveStderr TEXT,
+    liveBytes INTEGER,
+    liveAt TEXT,
     -- Only jobs that existed before per-run dirs may read project-root
     -- checkpoint.json / frames/. New inserts always store 0.
     legacyWorkspace INTEGER NOT NULL DEFAULT 0 CHECK (legacyWorkspace IN (0, 1)),

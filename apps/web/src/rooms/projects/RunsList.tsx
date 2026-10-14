@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DiffView } from '../../components/repoParts';
 import { api } from '../../lib/api';
@@ -10,6 +10,84 @@ import { whenLabel } from '../observatory/format';
 import { STATUS_ICONS, type Job } from './types';
 import type { Trigger } from './AutomationsTab';
 import { featureActive } from '../../lib/rooms';
+
+type LivePayload = {
+    status: string;
+    running: boolean;
+    streaming: boolean;
+    liveSupported: boolean;
+    at: string | null;
+    unchanged?: boolean;
+    stdout?: string;
+    stderr?: string;
+    bytes?: number | null;
+};
+
+/**
+ * What a running run is printing, refreshed every two seconds from the job
+ * row (written by the job loop every few seconds, so this works whichever
+ * process serves the portal). Follows the end unless the reader scrolled up.
+ */
+function LiveLog({ jobId }: { jobId: number }) {
+    const [data, setData] = useState<LivePayload | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const preRef = useRef<HTMLPreElement | null>(null);
+    const follow = useRef(true);
+    const since = useRef<string | null>(null);
+
+    useEffect(() => {
+        let stopped = false;
+        let timer: number | undefined;
+        const tick = async () => {
+            try {
+                const next = await api.observatoryJobLive(jobId, since.current) as LivePayload;
+                if (stopped) return;
+                setError(null);
+                if (!next.unchanged) {
+                    since.current = next.at;
+                    setData(next);
+                }
+                if (next.running) timer = window.setTimeout(() => void tick(), 2000);
+            } catch (failure) {
+                if (stopped) return;
+                setError((failure as Error).message);
+                timer = window.setTimeout(() => void tick(), 5000);
+            }
+        };
+        void tick();
+        return () => { stopped = true; if (timer) window.clearTimeout(timer); };
+    }, [jobId]);
+
+    useEffect(() => {
+        const node = preRef.current;
+        if (node && follow.current) node.scrollTop = node.scrollHeight;
+    }, [data]);
+
+    const text = [data?.stdout || '', data?.stderr ? `--- stderr ---\n${data.stderr}` : ''].filter(Boolean).join('\n');
+    return (
+        <div className="obs-live-log" data-testid={`live-log-${jobId}`}>
+            <div className="hint">
+                {data?.streaming ? <><span className="tool-spinner" aria-hidden="true" /> Live output</> : 'Output'}
+                {data?.at ? ` · updated ${new Date(`${data.at.replace(' ', 'T')}Z`).toLocaleTimeString()}` : ''}
+                {data?.bytes ? ` · ${(data.bytes / 1024).toFixed(1)} KB so far` : ''}
+                {data && data.running && !data.streaming && !data.liveSupported
+                    ? ' · live output is not available with a remote sandbox runner; it appears when the segment ends' : ''}
+                {data && data.running && !data.streaming && data.liveSupported ? ' · waiting for output…' : ''}
+                {error ? ` · ${error}` : ''}
+            </div>
+            {text && (
+                <pre
+                    ref={preRef}
+                    className="obs-live-pre"
+                    onScroll={(event) => {
+                        const node = event.currentTarget;
+                        follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+                    }}
+                >{text}</pre>
+            )}
+        </div>
+    );
+}
 
 type JobChanges = { goodJobId: number | null; goodRev: string | null; failedRev: string | null };
 type HistoryDiff = { label: string; empty: boolean; content: string; truncated?: boolean };
@@ -149,6 +227,7 @@ export function RunsList({
                         </div>
                         {job.error ? <div className="row-meta obs-error">{job.error}</div> : null}
                         <RunProvenance job={job} triggers={triggerNames} />
+                        {job.status === 'RUNNING' && <LiveLog jobId={job.id} />}
                         {job.stdoutTail?.trim() ? (
                             <details className="obs-tail"><summary>stdout tail</summary><pre>{job.stdoutTail}</pre></details>
                         ) : null}

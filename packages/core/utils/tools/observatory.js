@@ -669,6 +669,18 @@ module.exports = {
                             if (job.checkpointAt) parts.push(`Latest checkpoint: ${job.checkpointAt}.`);
                             const contractLine = describeContractResult(job.outputContractResult);
                             if (contractLine) parts.push(contractLine);
+                            if (job.status === 'RUNNING') {
+                                // What it is printing right now (live tails, updated every few seconds).
+                                const live = await observatoryService.jobLive({ userId, jobId: job.id });
+                                if (live.streaming) {
+                                    const lastLines = (text) => text.split('\n').slice(-30).join('\n').trim();
+                                    if (live.stdout.trim()) parts.push(`live stdout (last 30 lines, as of ${live.at} UTC):\n\`\`\`\n${lastLines(live.stdout)}\n\`\`\``);
+                                    if (live.stderr.trim()) parts.push(`live stderr (last 30 lines):\n\`\`\`\n${lastLines(live.stderr)}\n\`\`\``);
+                                    if (!live.stdout.trim() && !live.stderr.trim()) parts.push('No output yet from the running segment.');
+                                } else if (!live.liveSupported) {
+                                    parts.push('Live output is not available with a remote sandbox runner; tails arrive when the segment ends.');
+                                }
+                            }
                             if (job.stdoutTail?.trim()) parts.push(`stdout tail:\n\`\`\`\n${job.stdoutTail}\n\`\`\``);
                             if (job.stderrTail?.trim() && job.status !== 'COMPLETED') {
                                 parts.push(`stderr tail:\n\`\`\`\n${job.stderrTail}\n\`\`\``);
