@@ -657,7 +657,7 @@ class ProjectRepoService {
             );
             try { await this.projects._touchProject(projectRow.id); } catch { /* best effort */ }
             await this.history.commitQuietly(projectRow, { userId, message: `cloned ${cleanRepo} into ${REPOS_DIR}/${cleanName}` });
-            await this._audit(userId, 'project-repo-clone', { project: projectRow.slug, repo: cleanRepo, branch: branchName, name: cleanName });
+            await this._audit(userId, 'project-repo-clone', { project: projectRow.slug, projectId: projectRow.id, repo: cleanRepo, branch: branchName, name: cleanName });
             this._publish(projectRow, userId);
             const repoRow = await db.get('SELECT * FROM project_repos WHERE id = @id', { id });
             return this._serialize(projectRow, repoRow);
@@ -759,7 +759,7 @@ class ProjectRepoService {
             }
             const when = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
             await this._touch(projectRow, repoRow, { lastPushAt: when });
-            await this._audit(userId, 'project-repo-push', { project: projectRow.slug, repo: repoRow.repo, branch: branchName, head: status.head });
+            await this._audit(userId, 'project-repo-push', { project: projectRow.slug, projectId: projectRow.id, repo: repoRow.repo, branch: branchName, head: status.head });
             const compareUrl = branchName !== repoRow.branch
                 ? `https://github.com/${repoRow.repo}/compare/${encodeURIComponent(repoRow.branch)}...${encodeURIComponent(branchName)}?expand=1`
                 : null;
@@ -863,7 +863,7 @@ class ProjectRepoService {
             await this.history.commitQuietly(projectRow, { userId, message: `before ${kind} of ${REPOS_DIR}/${repoRow.name} with ${base}` });
             const ref = await this._fetchBase(projectRow, repoRow, base, token);
             const repoName = repoRow.name;
-            const base_ = { project: projectRow.slug, repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
+            const base_ = { project: projectRow.slug, projectId: projectRow.id, repo: repoRow.repo, name: repoName, kind, base, branch: status.branch };
 
             const contained = await this._git(projectRow, repoName, ['merge-base', '--is-ancestor', ref, 'HEAD'], { allowFail: true });
             if (contained.status === 0) {
@@ -905,7 +905,7 @@ class ProjectRepoService {
         }
         await this._touch(projectRow, repoRow);
         await this.history.commitQuietly(projectRow, { userId, message: `${kind}d ${REPOS_DIR}/${repoRow.name} with ${base} (${from || '?'}..${after.head})` });
-        await this._audit(userId, `project-repo-${kind}`, { project: projectRow.slug, repo: repoRow.repo, base, branch: after.branch, head: after.head });
+        await this._audit(userId, `project-repo-${kind}`, { project: projectRow.slug, projectId: projectRow.id, repo: repoRow.repo, base, branch: after.branch, head: after.head });
         return {
             ...extra,
             result: kind === 'rebase' ? 'rebased' : (fastForward ? 'fast-forwarded' : 'merged'),
@@ -951,7 +951,7 @@ class ProjectRepoService {
             const base = status.operation === 'rebase' ? 'its base' : 'the other branch';
             return this._finishIntegration({
                 projectRow, repoRow, userId, kind: status.operation, base, run, from: status.head,
-                extra: { project: projectRow.slug, repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
+                extra: { project: projectRow.slug, projectId: projectRow.id, repo: repoRow.repo, name: repoRow.name, kind: status.operation, base, branch: status.branch }
             });
         });
     }
@@ -1135,15 +1135,32 @@ class ProjectRepoService {
         const status = await this._status(projectRow, repoRow.name);
         const out = { ...await this._serialize(projectRow, repoRow, { withStatus: false }), status, ci: null, pr: null, remoteError: null };
         if (!status.branch) return out;
+        const remote = await this._remoteBranchState(userId, repoRow, status.branch);
+        return { ...out, ci: remote.ci, pr: remote.pr, remoteError: remote.remoteError };
+    }
+
+    /**
+     * CI and the open pull request of one branch as GitHub knows it, with
+     * the person's own connection. Never throws: remoteError says why a
+     * part is missing; onGitHub is false when GitHub has no such branch.
+     */
+    async _remoteBranchState(userId, repoRow, branch) {
+        const out = { ci: null, pr: null, onGitHub: null, remoteError: null };
         try {
             const { api } = await this._api(userId, repoRow);
             const owner_ = repoRow.repo.split('/')[0];
+            let onGitHub = true;
             const [checks, pulls] = await Promise.all([
-                api.getChecks(repoRow.repo, status.branch).catch(error => (error?.code === 'NOT_FOUND' ? { runs: [], statuses: [] } : Promise.reject(error))),
-                status.branch === repoRow.branch
+                api.getChecks(repoRow.repo, branch).catch(error => {
+                    if (error?.code !== 'NOT_FOUND') return Promise.reject(error);
+                    onGitHub = false;
+                    return { runs: [], statuses: [] };
+                }),
+                branch === repoRow.branch
                     ? Promise.resolve([])
-                    : api.listPullRequests(repoRow.repo, { state: 'open', limit: 1, head: `${owner_}:${status.branch}` })
+                    : api.listPullRequests(repoRow.repo, { state: 'open', limit: 1, head: `${owner_}:${branch}` })
             ]);
+            out.onGitHub = onGitHub;
             out.ci = ProjectRepoService.summarizeChecks(checks);
             const pr = pulls?.[0];
             if (pr) out.pr = { number: pr.number, title: pr.title, url: pr.html_url, draft: Boolean(pr.draft), base: pr.base?.ref || null };
@@ -1151,6 +1168,23 @@ class ProjectRepoService {
             out.remoteError = this._apiError(error, repoRow.repo).message;
         }
         return out;
+    }
+
+    /** One named branch of a clone at a glance (plan steps linked to code). */
+    async branchSummary({ row = null, userId, project = null, owner = null, name, branch }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(branch);
+        if (!target) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
+        const local = (await this._git(projectRow, repoRow.name, ['rev-parse', '--verify', '--quiet', `refs/heads/${target}`], { allowFail: true })).status === 0;
+        const current = (await this._status(projectRow, repoRow.name)).branch;
+        return {
+            project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, branch: target,
+            local, current: current === target,
+            url: `https://github.com/${repoRow.repo}/tree/${encodeURIComponent(target)}`,
+            ...await this._remoteBranchState(userId, repoRow, target)
+        };
     }
 
     /**
@@ -1261,7 +1295,7 @@ class ProjectRepoService {
         } catch (error) {
             throw this._apiError(error, repoRow.repo);
         }
-        await this._audit(userId, 'project-repo-pr', { project: projectRow.slug, repo: repoRow.repo, number: created.number, head: headName, base: wantedBase });
+        await this._audit(userId, 'project-repo-pr', { project: projectRow.slug, projectId: projectRow.id, repo: repoRow.repo, number: created.number, head: headName, base: wantedBase });
         return {
             project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
             title: created.title || cleanTitle, draft: Boolean(created.draft), head: headName, base: wantedBase

@@ -156,6 +156,7 @@ The registered views, in tab order:
 | Apps | `apps` | Rendered generated apps with the version picker. |
 | Runs | `runs` (was `jobs`) | Every run, its status and provenance, cancel / resume. |
 | People | `people` | Owner, collaborators, invitations (also a modal from the header). |
+| Timeline | `timeline` (also `activity`) | One feed of what happened on the project and who did it: snapshots, runs, repository actions, plan changes. |
 | Automations | `automations` | Triggers and their deliveries. |
 
 `/projects/:slug` with one segment is a **resolver**, never a guess. It

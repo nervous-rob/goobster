@@ -191,6 +191,8 @@ module.exports = {
                 + 'something is before reading files one by one), "read" (one workspace text file by path; optional '
                 + '1-based offset + line limit — prefer this over cat/head/sed via run; pass rev=<snapshot> '
                 + 'to read the file as it was in an earlier snapshot), '
+                + '"timeline" (what happened on the project and who did it, newest first: snapshots, runs, clones/pushes/merges/'
+                + 'pull requests, plan changes; optional limit=) - use it to answer "what changed / what happened since", '
                 + '"history" (workspace snapshots, newest first — one is taken automatically after every run, '
                 + 'job, portal write, fetch-data and restore; optional path= to see only snapshots touching a file), '
                 + '"diff" (no rev: what changed in the workspace since the latest snapshot; rev: what that '
@@ -250,7 +252,7 @@ module.exports = {
                 + '"note_knowledge" (store a distilled note with optional tags/edges in the '
                 + 'project knowledge graph), "recall_knowledge" (retrieve from that graph), '
                 + '"mission" (draft / get / update / add_step / start_step / '
-                + 'complete_step / add_evidence / review / cancel a Project Mission — '
+                + 'complete_step / add_evidence / review / cancel / link_code a Project Mission — '
                 + 'one open outcome per project; propose a plan, a human approves, starts, and completes it '
                 + 'in the portal, then steps can run), and '
                 + '"delete-project". Pass owner=<userId> when a slug is ambiguous (you own one '
@@ -263,7 +265,7 @@ module.exports = {
                     action: {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'search', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'files', 'search', 'read', 'history', 'timeline', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_watch', 'repo_unwatch', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
@@ -329,9 +331,10 @@ module.exports = {
                         type: 'string',
                         enum: ['propose', 'get', 'update', 'add_step',
                             'start_step', 'complete_step', 'skip_step', 'add_evidence',
-                            'review', 'cancel', 'resume'],
-                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). Approval, start, and complete are human-only (portal). complete_step is for human steps. review records a proposed verdict.'
+                            'review', 'cancel', 'resume', 'link_code'],
+                        description: 'mission: what to do. propose drafts a plan (needs objective + successCriteria). Approval, start, and complete are human-only (portal). complete_step is for human steps. review records a proposed verdict. link_code ties stepId to a clone (repo=, the clone name or owner/name) and branch= so the step shows its pull request and CI; requireGreenCi=true makes completing the step wait for green CI; branch empty clears it.'
                     },
+                    requireGreenCi: { type: 'boolean', description: 'mission link_code: the step cannot be marked done until the branch\'s CI is green' },
                     title: { type: 'string', description: 'mission propose/update: short title' },
                     objective: { type: 'string', description: 'mission propose/update: the outcome we are pursuing' },
                     successCriteria: { type: 'string', description: 'mission: measurable criteria, one per line or semicolon-separated' },
@@ -367,7 +370,7 @@ module.exports = {
             slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
-            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, missionAction, title, objective,
+            relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, requireGreenCi, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
             choices, selectedId,
@@ -507,6 +510,15 @@ module.exports = {
                         return `🔭 ${listing.project} workspace (${listing.sizeMb}/${listing.quotaMb} MB, `
                             + `${listing.totalFiles} file(s)${listing.totalFiles > listing.files.length ? ', newest shown' : ''}):\n`
                             + lines.join('\n');
+                    }
+                    case 'timeline': {
+                        const feed = await require('../../services/projectTimelineService').timeline({
+                            userId, project, owner, limit: Math.min(Number(limit) || 30, 100)
+                        });
+                        if (feed.entries.length === 0) return `🕰️ Nothing has happened on "${feed.project}" yet.`;
+                        return `🕰️ Timeline of "${feed.project}", newest first (UTC):\n`
+                            + feed.entries.map(entry => `- ${entry.at} ${entry.kind} · ${entry.actor.name}: ${entry.title}${entry.detail ? ` (${entry.detail})` : ''}`).join('\n')
+                            + (feed.nextBefore ? '\n… older entries exist.' : '');
                     }
                     case 'search': {
                         if (!query) return '❌ search needs query (the text to find) and optionally path (a folder or file).';
@@ -1064,7 +1076,10 @@ module.exports = {
                                     const choiceHint = Array.isArray(s.actionParams?.choices) && s.actionParams.choices.length
                                         ? ` · choices: ${s.actionParams.choices.map(c => c.id).join('|')}`
                                         : '';
-                                    return `  - #${s.id} [${s.status}] ${s.kind}: ${s.title}${choiceHint}`;
+                                    const codeHint = s.code
+                                        ? ` · code ${s.code.repo}:${s.code.branch}${s.code.requireGreenCi ? ' (needs green CI)' : ''}`
+                                        : '';
+                                    return `  - #${s.id} [${s.status}] ${s.kind}: ${s.title}${choiceHint}${codeHint}`;
                                 }).join('\n')
                                 : '  (none yet)';
                             const evalLine = mission.evaluation
@@ -1198,8 +1213,16 @@ module.exports = {
                                 const updated = await projectMissionService.resume({ userId, project, owner });
                                 return `Resumed the mission.\n\n${fmt(updated)}`;
                             }
+                            case 'link_code': {
+                                if (!stepId) return '❌ link_code needs stepId, branch= and (with several clones) repo=.';
+                                const updated = await projectMissionService.linkStepCode({
+                                    userId, project, owner, stepId, repoName: repo || null, branch: branch || null,
+                                    requireGreenCi: requireGreenCi === true
+                                });
+                                return `${branch ? `Linked step #${stepId} to ${branch}` : `Cleared step #${stepId}'s code link`}.\n\n${fmt(updated)}`;
+                            }
                             default:
-                                return `❌ Unknown missionAction "${verb}". Use propose, get, update, add_step, start_step, complete_step, add_evidence, review, or cancel.`;
+                                return `❌ Unknown missionAction "${verb}". Use propose, get, update, add_step, start_step, complete_step, add_evidence, review, cancel, resume, or link_code.`;
                         }
                     }
                     default:

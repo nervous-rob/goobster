@@ -19,6 +19,7 @@ import { AutomationsTab } from './AutomationsTab';
 import { CommandButton, CommandModal, CommandStrip, useProjectCommand } from './Command';
 import { OverviewView } from './OverviewView';
 import { RunsList } from './RunsList';
+import { TimelineView } from './TimelineView';
 import { requestCompose } from '../../hooks/useCompose';
 import type { Detail } from './types';
 
@@ -181,6 +182,7 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                         <RunsList slug={slug} ownerId={ownerId} jobs={detail.data.jobs} onChanged={() => void refresh()} askGoobster={askGoobster} />
                                     </section>
                                 )}
+                                {view === 'timeline' && <TimelineView slug={slug} ownerId={ownerId} onOpen={go} />}
                                 {view === 'people' && (
                                     <section className="obs-people-view">
                                         <div className="obs-section-head"><h3>People on this project</h3></div>

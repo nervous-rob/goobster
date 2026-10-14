@@ -39,7 +39,7 @@ export const ROOM_GLYPH: Record<string, GlyphName> = {
 export const VIEW_GLYPH: Record<string, GlyphName> = {
     notes: 'notes', map: 'map', research: 'compass',
     overview: 'projects', plan: 'target', conversation: 'chat', knowledge: 'knowledge', files: 'folder', code: 'code', apps: 'puzzle',
-    runs: 'play', people: 'people', automations: 'timer',
+    runs: 'play', timeline: 'calendar', people: 'people', automations: 'timer',
     friends: 'heart', messages: 'mail',
     inbox: 'activity', attention: 'compass', scheduled: 'calendar'
 };

@@ -28,7 +28,7 @@ routes are unchanged; `projectService.js` is the service-layer name
   history lives on disk beside the workspace, not in a table
 - Portal: the **Projects** room (`/projects`, secondary name "the
   Observatory"; `apps/web/src/rooms/projects/*`) - the list with a direct
-  create form, one project per owner-qualified address, ten registered
+  create form, one project per owner-qualified address, eleven registered
   views, and **Unfiled apps** for leftover Workshop pins and Study discoveries
 
 The older [`observatory.md`](observatory.md) is a pointer here.
@@ -469,6 +469,45 @@ spend:
 The guild/channel `automations` table is left alone — it still serves
 scheduled conversational prompts in Discord scopes.
 
+### Timeline
+
+`/projects/:owner/:slug/timeline` (and the observatory `timeline` action)
+is one feed of what happened on the project and who did it, newest first,
+grouped by day. Nothing new is stored; `services/projectTimelineService.js`
+merges, at read time:
+
+| Kind | From | Actor |
+|---|---|---|
+| `snapshot` | workspace history commits, minus the `before ...` safety snapshots and the per-run ones | the member who caused it, or Goobster |
+| `run` | `observatory_jobs`, one entry at settle (or start while running) | the person; "Goobster (for <person>)" when started from chat; the trigger's name when a trigger started it |
+| `repo` | `integration_audit` rows of the project's clones: clone, push, merge, rebase, pull request | the person |
+| `plan` | `project_mission_events` (drafted, approved, step added / started / finished / linked to code, ...) | the person, or Goobster |
+
+`GET /api/app/projects/:slug/timeline?before=&limit=&kinds=snapshot,run,repo,plan`
+returns `{ entries, nextBefore }`; `before` is the oldest `at` of the last
+page. Each source reads at most `limit + 1` entries and finishes the second
+it stopped in, and a page never reaches past the newest second a source
+stopped at, so paging never skips or repeats an entry. Repository rows
+carry the project id since this change; older rows are matched by slug and
+the project's members. CI-watch verdicts are not stored and do not appear.
+
+### Plan steps linked to code
+
+A plan step can name a clone and a branch (`project_mission_steps.repoName`,
+`branch`, `requireGreenCi`): the Plan view's *Link code* on a step, the
+mission tool's `link_code` (`stepId=`, `branch=`, `repo=` - the clone name
+or owner/name, optional with a single clone - and `requireGreenCi=true`),
+or `POST /api/app/projects/:slug/mission/steps/:stepId/code`
+(`{ missionId, repoName, branch, requireGreenCi }`; an empty branch clears
+it). The branch need not exist yet. The step then shows its branch (linked
+to GitHub), the open pull request and the CI verdict, read with the viewer's
+own GitHub connection (`GET /api/app/projects/:slug/mission/code`, best
+effort per step). With `requireGreenCi`, marking the step done is refused
+until that branch's CI is green right now (`CI_NOT_GREEN`, naming what
+fails), and also when CI cannot be checked (`CI_UNKNOWN`), so "needs green
+CI" never passes by default. Linking is recorded on the plan's timeline
+(`step_code_linked`).
+
 ## Multi-stage pipelines
 
 A pipeline is a chain of `run_script` stages where each stage consumes
@@ -728,7 +767,7 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   execution-gated.
 - **The project shell** (`ProjectShell`) — the header (title, ← Projects,
   Chat dock toggle, ✨ Command, People, Refresh) and a tab strip of the
-  ten registered views: **Overview** (goal, status line, the **Now** panel,
+  eleven registered views: **Overview** (goal, status line, the **Now** panel,
   open plan and its next action, latest runs, outputs, owner actions:
   render, snapshot, share, delete), **Plan** (one open outcome, criteria, steps, evidence,
   timeline, earlier plans), **Conversation** (the project parlor as a full
@@ -736,7 +775,8 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   **Files** (repo-style tree with workspace search), **Code** (GitHub
   clones; see [Repositories](#repositories)), **Apps** (rendered applet with version
   picker + rollback; own-project reads implicit), **Runs** (every run,
-  status, provenance, output verdict, cancel / resume), **People** (owner,
+  status, provenance, output verdict, cancel / resume), **Timeline** (see
+  [Timeline](#timeline)), **People** (owner,
   collaborators, invitations), **Automations** (trigger list:
   schedule/event, action, last outcome, enable/disable). The chat dock and
   the People modal remain as secondary presentations of the Conversation

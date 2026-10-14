@@ -1108,6 +1108,40 @@ function mountProjects(app, ctx, h) {
         })
     ));
 
+    // Plan steps linked to code: a clone and branch, shown with PR and CI.
+    app.post('/api/app/projects/:slug/mission/steps/:stepId/code', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.linkStepCode({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.body?.missionId,
+            stepId: req.params.stepId,
+            repoName: req.body?.repoName ?? null,
+            branch: req.body?.branch ?? null,
+            requireGreenCi: req.body?.requireGreenCi === true
+        })
+    ));
+    app.get('/api/app/projects/:slug/mission/code', requireAuth, chatRoute(async (req) =>
+        ctx.projectMissions.stepCode({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            missionId: req.query.missionId || null
+        })
+    ));
+
+    // One per-project activity feed (documentation/projects.md, "Timeline").
+    app.get('/api/app/projects/:slug/timeline', requireAuth, chatRoute(async (req) =>
+        require('../../services/projectTimelineService').timeline({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            before: req.query.before || null,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            kinds: req.query.kinds ? String(req.query.kinds).split(',') : null
+        })
+    ));
+
     app.get('/api/app/projects/:slug/setup-audit', requireAuth, chatRoute(async (req) =>
         ctx.observatory.auditSetup({
             userId: req.webUser.userId,

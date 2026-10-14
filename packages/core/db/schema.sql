@@ -2692,7 +2692,14 @@ CREATE TABLE IF NOT EXISTS project_mission_steps (
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     startedAt TEXT,
-    finishedAt TEXT
+    finishedAt TEXT,
+    -- The code this step is about (documentation/projects.md, "Plan steps
+    -- linked to code"): a clone (project_repos.name) and a branch, shown
+    -- with its pull request and CI. requireGreenCi=1 refuses to mark the
+    -- step done until that branch's CI is green.
+    repoName TEXT,
+    branch TEXT,
+    requireGreenCi INTEGER NOT NULL DEFAULT 0 CHECK (requireGreenCi IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_mission_steps_mission

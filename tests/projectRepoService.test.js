@@ -19,6 +19,8 @@ const db = require('@goobster/core/db');
 const { ObservatoryService, PROJECTS_ROOT } = require('@goobster/core/services/projectService');
 const { ProjectRepoService, cleanBranch } = require('@goobster/core/services/projectRepoService');
 const { ProjectCiWatchService } = require('@goobster/core/services/projectCiWatchService');
+const projectMissions = require('@goobster/core/services/projectMissionService');
+const { ProjectTimelineService } = require('@goobster/core/services/projectTimelineService');
 const { SandboxService } = require('@goobster/core/services/sandboxService');
 const privacyService = require('@goobster/core/services/privacyService');
 
@@ -491,6 +493,123 @@ describe('CI watches', () => {
         await privacyService.forgetUser({ userId });
         expect(await watches.countUser(userId)).toBe(0);
     }, 60_000);
+});
+
+describe('plan steps linked to code, and the project timeline', () => {
+    test('a step names a clone and branch, shows its PR and CI, and can wait for green CI', async () => {
+        const remote = makeRemote('acme/linked', { files: { 'a.txt': 'one\n' } });
+        const ci = { feature: 'failure' };
+        let offline = false;
+        const unavailable = () => { const e = new Error('down'); e.code = 'UNAVAILABLE'; throw e; };
+        const github = () => ({
+            getChecks: async (repo, ref) => {
+                if (offline) unavailable();
+                if (!ci[ref]) { const e = new Error('nf'); e.code = 'NOT_FOUND'; throw e; }
+                return { runs: [{ name: 'test', status: 'completed', conclusion: ci[ref] }], statuses: [] };
+            },
+            listPullRequests: async (repo, { head }) => {
+                if (offline) unavailable();
+                return head === 'acme:feature' ? [{ number: 5, title: 'Feature', html_url: 'https://github.com/acme/linked/pull/5', draft: false, base: { ref: 'main' } }] : [];
+            }
+        });
+        const service = makeService({}, { github });
+        projectMissions.reposOverride = service.repos;
+        try {
+            const userId = nextUser();
+            const { slug } = await service.createProject({ userId, name: 'Linked Lab' });
+            const args = { userId, project: slug };
+            await service.repos.clone({ ...args, repo: 'acme/linked' });
+            await service.repos.checkout({ ...args, name: 'linked', branch: 'feature' });
+            fs.writeFileSync(path.join(workspace(userId, slug), 'repos/linked/a.txt'), 'two\n');
+            await service.repos.commit({ ...args, name: 'linked', message: 'feature work' });
+            await service.repos.push({ ...args, name: 'linked' });
+            expect(remote.log('feature')).toContain('feature work');
+
+            const mission = await projectMissions.create({
+                ...args, title: 'Ship the feature', objective: 'Get the feature merged with green CI.',
+                successCriteria: ['Feature merged'],
+                steps: [{ kind: 'human', title: 'Build the thing' }, { kind: 'human', title: 'Write docs' }]
+            });
+            const [build, docs] = mission.steps;
+
+            await expect(projectMissions.linkStepCode({ ...args, stepId: build.id, repoName: 'nope', branch: 'feature' }))
+                .rejects.toMatchObject({ code: 'BAD_REPO' });
+            await expect(projectMissions.linkStepCode({ ...args, stepId: build.id, branch: 'bad..name' }))
+                .rejects.toMatchObject({ code: 'BAD_BRANCH' });
+            // The only clone is picked when none is named; owner/name works as well as the clone name.
+            const linked = await projectMissions.linkStepCode({ ...args, stepId: build.id, branch: 'feature', requireGreenCi: true });
+            expect(linked.steps[0].code).toEqual({ repo: 'linked', branch: 'feature', requireGreenCi: true });
+            await projectMissions.linkStepCode({ ...args, stepId: docs.id, repoName: 'acme/linked', branch: 'docs-branch' });
+
+            const code = await projectMissions.stepCode(args);
+            expect(code.steps).toHaveLength(2);
+            expect(code.steps[0]).toMatchObject({
+                stepId: build.id, branch: 'feature', local: true, current: true, onGitHub: true, requireGreenCi: true,
+                ci: { state: 'failure' }, pr: { number: 5, url: 'https://github.com/acme/linked/pull/5' }
+            });
+            expect(code.steps[1]).toMatchObject({ stepId: docs.id, branch: 'docs-branch', local: false, onGitHub: false, pr: null });
+
+            // Approve and start (human-only verbs), then the gate.
+            const receipt = await projectMissions.mintApprovalReceipt({ ...args, origin: 'portal' });
+            await projectMissions.approve({ ...args, receiptId: receipt.id, nonce: receipt.nonce });
+            await projectMissions.start(args);
+            await expect(projectMissions.completeStep({ ...args, stepId: build.id }))
+                .rejects.toMatchObject({ status: 409, code: 'CI_NOT_GREEN', message: expect.stringMatching(/failing: test/) });
+            offline = true;
+            await expect(projectMissions.completeStep({ ...args, stepId: build.id }))
+                .rejects.toMatchObject({ status: 409, code: 'CI_UNKNOWN' });
+            offline = false;
+            ci.feature = 'success';
+            const done = await projectMissions.completeStep({ ...args, stepId: build.id });
+            expect(done.steps.find(step => step.id === build.id).status).toBe('DONE');
+            // A step without requireGreenCi is not gated; clearing a link removes it.
+            const cleared = await projectMissions.linkStepCode({ ...args, stepId: docs.id, branch: null });
+            expect(cleared.steps.find(step => step.id === docs.id).code).toBeNull();
+
+            // The timeline merges clones and pushes, snapshots, runs and plan events.
+            await db.insert(
+                `INSERT INTO observatory_jobs (projectId, userId, language, code, status, exitCode, finishedAt, startedBy)
+                 VALUES (@projectId, @userId, 'python', 'x', 'FAILED', 3, datetime('now'), 'chat')`,
+                { projectId: (await db.get('SELECT id FROM observatory_projects WHERE userId = @userId AND slug = @slug', { userId, slug })).id, userId }
+            );
+            const timeline = new ProjectTimelineService({ projects: service });
+            const feed = await timeline.timeline(args);
+            const titles = feed.entries.map(entry => `${entry.kind}:${entry.title}`);
+            expect(titles).toEqual(expect.arrayContaining([
+                'repo:Cloned acme/linked (main)',
+                'repo:Pushed feature to acme/linked',
+                'snapshot:cloned acme/linked into repos/linked',
+                'plan:drafted the plan',
+                'plan:linked code to step “Build the thing”',
+                'plan:finished step “Build the thing”',
+                expect.stringMatching(/^run:Run #\d+ failed$/)
+            ]));
+            expect(titles.some(title => title.startsWith('snapshot:before '))).toBe(false);
+            const run = feed.entries.find(entry => entry.kind === 'run');
+            expect(run).toMatchObject({ detail: 'exit 3', actor: { type: 'goobster' } });
+            expect(run.actor.name).toMatch(/^Goobster \(for /);
+            const linkedEntry = feed.entries.find(entry => entry.title === 'linked code to step “Build the thing”');
+            expect(linkedEntry.detail).toBe('linked:feature (needs green CI)');
+            for (let i = 1; i < feed.entries.length; i++) expect(feed.entries[i - 1].at >= feed.entries[i].at).toBe(true);
+
+            // Paging by time never repeats or drops an entry; kinds filter.
+            const seen = [];
+            let before = null;
+            for (let guard = 0; guard < 20; guard++) {
+                const page = await timeline.timeline({ ...args, limit: 2, before });
+                seen.push(...page.entries.map(entry => entry.id));
+                if (!page.nextBefore) break;
+                before = page.nextBefore;
+            }
+            expect(new Set(seen).size).toBe(seen.length);
+            expect(new Set(seen)).toEqual(new Set(feed.entries.map(entry => entry.id)));
+            const plansOnly = await timeline.timeline({ ...args, kinds: ['plan'] });
+            expect(plansOnly.entries.every(entry => entry.kind === 'plan')).toBe(true);
+            await expect(timeline.timeline({ userId: nextUser(), project: slug })).rejects.toMatchObject({ status: 404 });
+        } finally {
+            projectMissions.reposOverride = null;
+        }
+    }, 90_000);
 });
 
 describe('the clone lifecycle', () => {

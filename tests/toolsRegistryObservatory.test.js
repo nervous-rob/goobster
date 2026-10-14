@@ -123,7 +123,7 @@ describe('getDefinitions gating', () => {
         expect(def.parameters.required).toEqual(['action']);
         expect(def.parameters.properties.action.enum).toEqual(expect.arrayContaining([
             'inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
-            'files', 'search', 'render', 'delete-project',
+            'files', 'search', 'timeline', 'render', 'delete-project',
             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers', 'list_deliveries',
             'delete_trigger', 'note_knowledge', 'recall_knowledge', 'read', 'mission',
