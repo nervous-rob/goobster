@@ -1629,7 +1629,8 @@ class ProjectTriggerService {
             + 'Start with action "inspect" if you need current project state. '
             + `${backgroundJobHint()}, and `
             + 'report back what you started, changed, or found.\n\n'
-            + prompt;
+            + prompt
+            + await this._projectInstructions(projectRow);
         const sourceDescription =
             `You are executing "${name}", ${kindLabel} ${userId} set up `
             + `for Observatory project "${projectRow.name}". Carry out the instructions now.`;
@@ -1667,6 +1668,20 @@ class ProjectTriggerService {
             isAutomation: true,
             sourceDescription
         });
+    }
+
+    /** The project's GOOBSTER.md block for an unattended turn ('' when none). */
+    async _projectInstructions(projectRow) {
+        try {
+            const projects = require('./projectService');
+            const text = projects.instructionsPrompt({
+                ...projectRow,
+                dir: projectRow.dir || projects._projectDir(projectRow.ownerId ?? projectRow.userId, projectRow.slug)
+            });
+            return text ? `\n\n${text}` : '';
+        } catch {
+            return '';
+        }
     }
 
     /** /forget-me: every trigger belonging to the user (deliveries cascade; made explicit). */

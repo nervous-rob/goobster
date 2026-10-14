@@ -28,7 +28,7 @@ routes are unchanged; `projectService.js` is the service-layer name
   history lives on disk beside the workspace, not in a table
 - Portal: the **Projects** room (`/projects`, secondary name "the
   Observatory"; `apps/web/src/rooms/projects/*`) - the list with a direct
-  create form, one project per owner-qualified address, nine registered
+  create form, one project per owner-qualified address, ten registered
   views, and **Unfiled apps** for leftover Workshop pins and Study discoveries
 
 The older [`observatory.md`](observatory.md) is a pointer here.
@@ -81,6 +81,33 @@ pseudo-interaction, and without this rule its runs could never touch the
 very project they were created for.
 
 ## What a project owns
+
+### Project instructions (GOOBSTER.md)
+
+A `GOOBSTER.md` at the workspace root is the project's standing
+instructions for Goobster: how to run and test it, conventions, what not
+to touch. It is an ordinary workspace file (edited in Files, versioned by
+workspace history, visible to every member) and is read into **every
+agent turn on the project**: the ✨ Command preamble (`buildChatManifest`),
+the built-in Goobster seat in the project's conversations, trigger
+`agent_prompt` turns and CI-watch fix turns (`projectTriggerService.runAgentPrompt`).
+At most 6,000 characters are carried (the rest is noted as cut). The block
+says that the person asking still decides and that the file never
+overrides safety rules, and it points the model at a clone's own
+`AGENTS.md` / `CLAUDE.md` / `CONTRIBUTING.md`. The Overview offers *Add
+GOOBSTER.md* (a short template) when there is none.
+`GET /api/app/projects/:slug/instructions` returns it for any member.
+
+### Workspace search
+
+The Files view has a search box, and the observatory tool a `search` action
+(`query=`, optional `path=` for a folder or file):
+`GET /api/app/projects/:slug/search?q=&path=`. Case-insensitive literal
+text, host-side, bounded: at most 3,000 files scanned, 200 hits (20 per
+file), files over 1 MB and binary files skipped, `node_modules`,
+`__pycache__`, virtualenvs, `.git`, `dist`, `build`, `target` and caches
+not entered, symlinks never followed. It also lists files whose names
+match. Queries are 2-200 characters.
 
 ### Workspace
 
@@ -399,6 +426,22 @@ Three more columns make a settled job explain itself:
 `GET /api/app/observatory/projects/:slug`); the public dashboard renders
 only status, exit code, and tails.
 
+**A failed run** (`FAILED` or `TIMED_OUT`) offers three things in Runs and
+on the Overview:
+
+- **Run again**: `POST /api/app/observatory/jobs/:jobId/rerun` starts the
+  same language and code (and asset version) as a new background job
+  (`startedBy: portal`); refused while the original is still running, and
+  needs code execution like any run.
+- **Ask Goobster why**: opens the project chat with a request naming the run
+  pre-filled in the composer (it is not sent for you).
+- **Changes since the last good run**: `GET /api/app/observatory/jobs/:jobId/changes`
+  finds the latest earlier run of the project that completed and the
+  workspace snapshots taken after it and after the failed run (their
+  messages are `job #N completed` / `run #N failed (exit 1)`), and the view
+  shows the snapshot diff between them. Nothing to compare when no earlier
+  run completed or history is off.
+
 ### Triggers
 
 Project-scoped automations with first-class actions, so "run my ingest
@@ -685,18 +728,29 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   execution-gated.
 - **The project shell** (`ProjectShell`) — the header (title, ← Projects,
   Chat dock toggle, ✨ Command, People, Refresh) and a tab strip of the
-  nine registered views: **Overview** (goal, status line, open plan and its
-  next action, latest runs, outputs, owner actions: render, snapshot,
-  share, delete), **Plan** (one open outcome, criteria, steps, evidence,
+  ten registered views: **Overview** (goal, status line, the **Now** panel,
+  open plan and its next action, latest runs, outputs, owner actions:
+  render, snapshot, share, delete), **Plan** (one open outcome, criteria, steps, evidence,
   timeline, earlier plans), **Conversation** (the project parlor as a full
   view), **Knowledge** (project Spitball map + notes + expedition launch),
-  **Files** (repo-style tree), **Apps** (rendered applet with version
+  **Files** (repo-style tree with workspace search), **Code** (GitHub
+  clones; see [Repositories](#repositories)), **Apps** (rendered applet with version
   picker + rollback; own-project reads implicit), **Runs** (every run,
   status, provenance, output verdict, cancel / resume), **People** (owner,
   collaborators, invitations), **Automations** (trigger list:
   schedule/event, action, last outcome, enable/disable). The chat dock and
   the People modal remain as secondary presentations of the Conversation
   and People views.
+- **Now** (Overview, `GET /api/app/projects/:slug/now`) gathers what is
+  happening and what needs a person in one read: running runs, the latest
+  settled run when it failed (with its stderr tail, Ask Goobster why and
+  Run again), needs-you items for this project, each clone's branch, sync,
+  any merge or rebase stopped on conflicts, CI and open pull request (a few
+  seconds at most per clone, best effort), whether `GOOBSTER.md` exists,
+  and the last thing Goobster said in the project's conversations. Each
+  part is independent; one that fails leaves its line out. It refreshes
+  every 15 s while a run is going, else every minute. "Ask Goobster ..."
+  buttons open the chat dock with the request pre-filled.
 - **Files** has two honest roots. `assets/` is the DB-backed, versioned
   source (apps / scripts / notes) with a version-history rail, client-side
   diffs (`diff`), rollback, and CodeMirror 6 editing. Save goes through

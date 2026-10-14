@@ -66,6 +66,13 @@ type HistoryPayload = {
 };
 type HistoryDiff = { label: string; empty: boolean; content: string; truncated?: boolean };
 
+type SearchResult = {
+    hits: { path: string; line: number; text: string }[];
+    files: string[];
+    filesScanned: number;
+    truncated: boolean;
+};
+
 type Selection =
     | { root: 'assets'; slug: string }
     | { root: 'workspace'; path: string; kind: 'file' | 'directory' };
@@ -95,6 +102,14 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
     const queryClient = useQueryClient();
     const [selected, setSelected] = useState<Selection | null>(null);
     const [wsOpen, setWsOpen] = useState<Record<string, boolean>>({ '': true });
+    const [searchText, setSearchText] = useState('');
+    const [searchFor, setSearchFor] = useState('');
+    const search = useQuery({
+        queryKey: keys.projectSearch(slug, searchFor, ownerId),
+        queryFn: () => api.projectSearch(slug, searchFor, null, ownerId) as Promise<SearchResult>,
+        enabled: searchFor.length >= 2,
+        retry: false
+    });
     const [editNote, setEditNote] = useState('');
     const [draft, setDraft] = useState<string | null>(null);
     const [draftRevision, setDraftRevision] = useState<number | undefined>();
@@ -376,6 +391,39 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                         )}
                     </button>
                 ))}
+                <form
+                    className="obs-search"
+                    role="search"
+                    onSubmit={(event) => { event.preventDefault(); setSearchFor(searchText.trim()); }}
+                >
+                    <input
+                        className="input"
+                        type="search"
+                        value={searchText}
+                        onChange={(event) => { setSearchText(event.target.value); if (!event.target.value) setSearchFor(''); }}
+                        placeholder="Search the workspace… (Enter)"
+                        aria-label="Search the workspace"
+                    />
+                    {searchFor.length >= 2 && search.isPending && <span className="hint">Searching…</span>}
+                    {search.isError && <span className="hint">{(search.error as Error).message}</span>}
+                    {searchFor.length >= 2 && search.data && (
+                        <div data-testid="workspace-search-results">
+                            <span className="hint">
+                                {search.data.hits.length} line(s){search.data.truncated ? ' (capped)' : ''} in {search.data.filesScanned} file(s)
+                            </span>
+                            {search.data.files.map((file) => (
+                                <button key={`f:${file}`} type="button" className="obs-search-hit"
+                                    onClick={() => setSelected({ root: 'workspace', path: file, kind: 'file' })}>📄 {file}</button>
+                            ))}
+                            {search.data.hits.map((hit) => (
+                                <button key={`${hit.path}:${hit.line}`} type="button" className="obs-search-hit"
+                                    onClick={() => setSelected({ root: 'workspace', path: hit.path, kind: 'file' })}>
+                                    <code>{hit.path}:{hit.line}</code> {hit.text}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </form>
                 <div className="obs-tree-root">workspace/</div>
                 {renderWorkspaceNodes('', 1)}
                 <div className="obs-tree-root">repos/</div>

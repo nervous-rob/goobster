@@ -2159,3 +2159,17 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .repo-strip { margin-top: 2px; }
 .repo-watch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .repo-watch select { width: auto; padding: 2px 6px; }
+
+/* Project Overview "Now" (rooms/projects/NowPanel.tsx) and failed-run actions. */
+.obs-now { margin: 12px 0 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raise); }
+.obs-now-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.obs-now-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; overflow-wrap: anywhere; min-width: 0; }
+.obs-now-item .btn { margin-left: auto; }
+.obs-now-item.is-failure { border-left: 3px solid var(--danger); padding-left: 8px; }
+.obs-now-item .tool-card-actions .btn { margin-left: 0; }
+.obs-now-tail { width: 100%; max-height: 120px; overflow: auto; font-size: 0.75rem; margin: 4px 0 0; white-space: pre-wrap; }
+.obs-now-last { margin-top: 8px; overflow-wrap: anywhere; }
+.obs-run-changes { width: 100%; margin-top: 4px; }
+.obs-search { padding: 6px 12px; display: flex; flex-direction: column; gap: 4px; }
+.obs-search-hit { text-align: left; background: none; border: 0; padding: 2px 0; color: inherit; cursor: pointer; font-size: 0.8125rem; overflow-wrap: anywhere; }
+.obs-search-hit:hover { text-decoration: underline; }

@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { DiffView } from '../../components/repoParts';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useMe } from '../../hooks/useSession';
@@ -8,6 +10,77 @@ import { whenLabel } from '../observatory/format';
 import { STATUS_ICONS, type Job } from './types';
 import type { Trigger } from './AutomationsTab';
 import { featureActive } from '../../lib/rooms';
+
+type JobChanges = { goodJobId: number | null; goodRev: string | null; failedRev: string | null };
+type HistoryDiff = { label: string; empty: boolean; content: string; truncated?: boolean };
+
+/**
+ * What to do about a failed run: run the same code again, ask Goobster why
+ * (pre-filled in the project chat), or see what changed in the workspace
+ * between the last run that completed and this one (workspace snapshots).
+ */
+function FailedRunActions({ slug, ownerId, job, canRun, onChanged, askGoobster }: {
+    slug: string;
+    ownerId?: string | null;
+    job: Job;
+    canRun: boolean;
+    onChanged: () => void;
+    askGoobster?: (text: string) => void;
+}) {
+    const toast = useToast();
+    const [showChanges, setShowChanges] = useState(false);
+    const changes = useQuery({
+        queryKey: ['job-changes', job.id],
+        queryFn: () => api.observatoryJobChanges(job.id) as Promise<JobChanges>,
+        enabled: showChanges,
+        retry: false
+    });
+    const range = changes.data;
+    const diff = useQuery({
+        queryKey: ['job-changes-diff', job.id, range?.goodRev || '', range?.failedRev || ''],
+        queryFn: () => api.projectHistoryDiff(slug, { rev: range?.goodRev, to: range?.failedRev || 'workspace' }, ownerId) as Promise<HistoryDiff>,
+        enabled: Boolean(showChanges && range?.goodRev),
+        retry: false
+    });
+
+    return (
+        <div className="tool-card-actions" data-testid={`run-actions-${job.id}`}>
+            {canRun && (
+                <button type="button" className="btn small" onClick={async () => {
+                    try {
+                        const started = await api.observatoryRerunJob(job.id) as { id: number };
+                        toast(`Started run #${started.id} with the same code.`);
+                        onChanged();
+                    } catch (error) { toast((error as Error).message, true); }
+                }}>Run again</button>
+            )}
+            {askGoobster && (
+                <button type="button" className="btn small" onClick={() => askGoobster(
+                    `Run #${job.id} in this project ${job.status === 'TIMED_OUT' ? 'timed out' : 'failed'}`
+                    + `${job.exitCode != null ? ` with exit ${job.exitCode}` : ''}. Read its output and what changed since the last good run, `
+                    + 'find the cause, fix it, and run it again.'
+                )}>Ask Goobster why</button>
+            )}
+            <button type="button" className="btn small subtle" onClick={() => setShowChanges((value) => !value)}>
+                {showChanges ? 'Hide changes' : 'Changes since last good run'}
+            </button>
+            {showChanges && (
+                <div className="obs-run-changes">
+                    {changes.isPending && <div className="hint">Looking for the last good run…</div>}
+                    {changes.isError && <div className="hint">{(changes.error as Error).message}</div>}
+                    {range && !range.goodJobId && <div className="hint">No earlier run completed, so there is nothing to compare with.</div>}
+                    {range && range.goodJobId && !range.goodRev && <div className="hint">Run #{range.goodJobId} completed, but no workspace snapshot was kept for it.</div>}
+                    {range?.goodRev && (
+                        <div className="hint">From run #{range.goodJobId} (completed) to {range.failedRev ? `run #${job.id}` : 'the workspace now'}:</div>
+                    )}
+                    {diff.isPending && range?.goodRev && <div className="hint">Loading the diff…</div>}
+                    {diff.data && (diff.data.empty ? <div className="hint">No file changed between them.</div> : <DiffView text={diff.data.content} />)}
+                    {diff.data?.truncated && <div className="hint">Diff truncated: Files → history has the rest.</div>}
+                </div>
+            )}
+        </div>
+    );
+}
 
 const CONTRACT_REASONS: Record<string, string> = {
     missing: 'missing',
@@ -24,7 +97,7 @@ const CONTRACT_REASONS: Record<string, string> = {
  * the Runs view shows them all.
  */
 export function RunsList({
-    slug, ownerId, jobs, limit, onChanged, emptyHint
+    slug, ownerId, jobs, limit, onChanged, emptyHint, askGoobster
 }: {
     slug: string;
     ownerId?: string | null;
@@ -32,6 +105,8 @@ export function RunsList({
     limit?: number;
     onChanged: () => void;
     emptyHint?: string;
+    /** Open the project chat with a request pre-filled (never sends). */
+    askGoobster?: (text: string) => void;
 }) {
     const me = useMe();
     const toast = useToast();
@@ -80,6 +155,9 @@ export function RunsList({
                         {job.stderrTail?.trim() ? (
                             <details className="obs-tail"><summary>stderr tail</summary><pre>{job.stderrTail}</pre></details>
                         ) : null}
+                        {(job.status === 'FAILED' || job.status === 'TIMED_OUT') && (
+                            <FailedRunActions slug={slug} ownerId={ownerId} job={job} canRun={executionOn} onChanged={onChanged} askGoobster={askGoobster} />
+                        )}
                     </div>
                     {job.status === 'RUNNING' && (
                         <button type="button" className="btn danger" onClick={async () => {

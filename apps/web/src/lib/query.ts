@@ -30,6 +30,8 @@ export const keys = {
     projectFiles: (slug: string, dir = '', owner?: string | null) => ['project-files', slug, dir, owner || ''] as const,
     projectHistory: (slug: string, filePath = '', owner?: string | null) => ['project-history', slug, filePath, owner || ''] as const,
     projectRepos: (slug: string, owner?: string | null) => ['project-repos', slug, owner || ''] as const,
+    projectNow: (slug: string, owner?: string | null) => ['project-now', slug, owner || ''] as const,
+    projectSearch: (slug: string, q: string, owner?: string | null) => ['project-search', slug, owner || '', q] as const,
     projectRepoDetail: (slug: string, name: string, part: string, owner?: string | null, extra = '') =>
         ['project-repos', slug, owner || '', name, part, extra] as const,
     projectTriggers: (slug: string, owner?: string | null) => ['project-triggers', slug, owner || ''] as const,

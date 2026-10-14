@@ -670,6 +670,16 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/repos${ownerQs(owner)}`, { method: 'POST', body }),
     projectRepoAction: (project: string, name: string, action: 'pull' | 'commit' | 'push' | 'branch' | 'merge' | 'rebase' | 'continue' | 'abort' | 'reset', body: Record<string, unknown> = {}, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/${action}${ownerQs(owner)}`, { method: 'POST', body }),
+    projectNow: (project: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/now${ownerQs(owner)}`),
+    projectInstructions: (project: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/instructions${ownerQs(owner)}`),
+    projectSearch: (project: string, q: string, dirPath?: string | null, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/search${ownerQs(owner, { q, path: dirPath || undefined })}`),
+    observatoryRerunJob: (jobId: number) =>
+        request(`/api/app/observatory/jobs/${jobId}/rerun`, { method: 'POST', body: {} }),
+    observatoryJobChanges: (jobId: number) =>
+        request(`/api/app/observatory/jobs/${jobId}/changes`),
     projectRepoSummary: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/summary${ownerQs(owner)}`),
     projectRepoWatches: (project: string, name: string, owner?: string | null) =>

@@ -186,7 +186,9 @@ module.exports = {
                 + '"create-project" (name), "list" (your projects), "run" (language+code inside a project; '
                 + 'set background=true to detach a long job), "status" (one job by jobId, or recent jobs), '
                 + '"resume" (an interrupted/timed-out job, from its checkpoint), "cancel" (a running job), '
-                + '"files" (workspace listing), "read" (one workspace text file by path; optional '
+                + '"files" (workspace listing), "search" (find text in the workspace\'s files: query=, optional path= to narrow '
+                + 'it to a folder or file; case-insensitive, returns path:line hits and matching file names - use it to find where '
+                + 'something is before reading files one by one), "read" (one workspace text file by path; optional '
                 + '1-based offset + line limit — prefer this over cat/head/sed via run; pass rev=<snapshot> '
                 + 'to read the file as it was in an earlier snapshot), '
                 + '"history" (workspace snapshots, newest first — one is taken automatically after every run, '
@@ -261,7 +263,7 @@ module.exports = {
                     action: {
                         type: 'string',
                         enum: ['inspect', 'audit', 'needs-you', 'create-project', 'list', 'run', 'status', 'resume', 'cancel',
-                            'files', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
+                            'files', 'search', 'read', 'history', 'diff', 'restore', 'commit', 'render', 'dashboard', 'fetch-data', 'delete-project',
                             'repo_clone', 'repo_list', 'repo_status', 'repo_pull', 'repo_commit', 'repo_push', 'repo_branch', 'repo_branches', 'repo_compare', 'repo_prs', 'repo_pr', 'repo_ci', 'repo_watch', 'repo_unwatch', 'repo_merge', 'repo_rebase', 'repo_continue', 'repo_abort', 'repo_reset', 'repo_remove',
                             'save_app', 'save_script', 'save_note', 'list_assets', 'get_asset',
                             'rollback_asset', 'run_script', 'set_trigger', 'list_triggers',
@@ -282,7 +284,7 @@ module.exports = {
                     label: { type: 'string', description: 'note_knowledge: title of the distilled note' },
                     content: { type: 'string', description: 'note_knowledge: body of the distilled note' },
                     tags: { type: 'string', description: 'note_knowledge: comma-separated tags' },
-                    query: { type: 'string', description: 'recall_knowledge: what to look up in the project graph' },
+                    query: { type: 'string', description: 'recall_knowledge: what to look up in the project graph; search: the text to find in the workspace' },
                     related: { type: 'string', description: 'note_knowledge: optional related node label to link' },
                     relation: { type: 'string', description: 'note_knowledge: relation to the related node (default relates_to)' },
                     owner: { type: 'string', description: 'Owner user id qualifier when two accessible projects share a slug' },
@@ -505,6 +507,17 @@ module.exports = {
                         return `🔭 ${listing.project} workspace (${listing.sizeMb}/${listing.quotaMb} MB, `
                             + `${listing.totalFiles} file(s)${listing.totalFiles > listing.files.length ? ', newest shown' : ''}):\n`
                             + lines.join('\n');
+                    }
+                    case 'search': {
+                        if (!query) return '❌ search needs query (the text to find) and optionally path (a folder or file).';
+                        const found = await observatoryService.searchWorkspace({ userId, project, owner, query, path: workspacePath || '' });
+                        if (found.hits.length === 0 && found.files.length === 0) {
+                            return `🔎 Nothing in "${found.project}"${found.path ? ` under ${found.path}` : ''} matches "${found.query}" (${found.filesScanned} file(s) searched).`;
+                        }
+                        return `🔎 "${found.query}" in "${found.project}"${found.path ? ` under ${found.path}` : ''}: ${found.hits.length} line(s)`
+                            + `${found.truncated ? ' (capped - narrow with path=)' : ''}, ${found.filesScanned} file(s) searched.\n`
+                            + (found.files.length ? `Matching file names: ${found.files.join(', ')}\n` : '')
+                            + found.hits.map(hit => `${hit.path}:${hit.line}: ${hit.text}`).join('\n');
                     }
                     case 'read': {
                         const rel = workspacePath || name || slug;
