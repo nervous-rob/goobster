@@ -684,6 +684,8 @@ export const api = {
         request(`/api/app/projects/${encodeURIComponent(project)}/search${ownerQs(owner, { q, path: dirPath || undefined })}`),
     observatoryRerunJob: (jobId: number) =>
         request(`/api/app/observatory/jobs/${jobId}/rerun`, { method: 'POST', body: {} }),
+    observatoryJobLive: (jobId: number, since?: string | null) =>
+        request(`/api/app/observatory/jobs/${jobId}/live${since ? `?since=${encodeURIComponent(since)}` : ''}`),
     observatoryJobChanges: (jobId: number) =>
         request(`/api/app/observatory/jobs/${jobId}/changes`),
     projectRepoSummary: (project: string, name: string, owner?: string | null) =>

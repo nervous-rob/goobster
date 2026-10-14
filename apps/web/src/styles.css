@@ -2186,3 +2186,7 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .obs-step-code-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .obs-step-code-form .input { width: auto; min-width: 0; flex: 1 1 140px; }
 .obs-step-code-add { margin-top: 4px; }
+
+/* Live run output (rooms/projects/RunsList.tsx LiveLog). */
+.obs-live-log { margin-top: 6px; width: 100%; min-width: 0; }
+.obs-live-pre { max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.25); font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }

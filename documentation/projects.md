@@ -469,6 +469,32 @@ spend:
 The guild/channel `automations` table is left alone — it still serves
 scheduled conversational prompts in Discord scopes.
 
+### Live run output
+
+A running run shows what it is printing. While a segment runs, the sandbox
+hands each chunk of stdout/stderr to `utils/liveOutput.js`, which keeps a
+display-ready tail per stream (UTF-8 decoded across chunk boundaries, ANSI
+escape codes removed, a carriage-return progress line collapsed to its last
+state, at most 16 KB each) and writes it to the job row
+(`observatory_jobs.liveStdout` / `liveStderr` / `liveBytes` / `liveAt`) at
+most every two seconds. Writing it to the database rather than over the
+event bus (which carries ids only, never content) makes it readable by
+whichever process serves the portal, in every deployment. The columns are
+cleared when the segment ends; the settled `stdoutTail` / `stderrTail` are
+the record after that.
+
+- **Portal:** Runs (and the Overview's latest runs) show a *Live output*
+  panel under a running run, refreshed every two seconds, that follows the
+  end unless you scroll up. `GET /api/app/observatory/jobs/:jobId/live?since=`
+  (any member) answers the live tails while it streams, `{ unchanged: true }`
+  when nothing new arrived since `since` (the last `at`), and the recorded
+  tails between segments and once settled.
+- **Goobster:** the observatory `status` action for a running job includes
+  the last 30 lines of the live output.
+- **Remote runner:** with `GOOBSTER_SANDBOX_URL` the runner answers once, at
+  the end of a segment, so there is no live output (the panel and `status`
+  say so); the tails still arrive when each segment ends.
+
 ### Timeline
 
 `/projects/:owner/:slug/timeline` (and the observatory `timeline` action)
