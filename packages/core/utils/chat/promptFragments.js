@@ -24,7 +24,7 @@ const MINI_APP_BRIDGE =
     + 'The user is prompted the first time for a cross-project read. '
     + 'An app saved with save_app and opened in its project\'s Apps tab also gets window.goobster (no project argument): '
     + 'await goobster.list(dir), read(path, responseType), write(path, content, { encoding: \'utf8\'|\'json\'|\'base64\'|\'dataurl\' }), '
-    + 'remove(path), run(path, { args, stdin, background }) for .py/.js/.sh workspace files (job(jobId) polls a background run), '
+    + 'remove(path), run(path, { args, stdin, background }) for .py/.js/.sh workspace files (watch(jobId, onUpdate) streams a background run\'s output), '
     + 'and goobster.assets.list/read/write/remove/run for notes and scripts (never apps). '
     + 'write, remove and run must be declared, only those the app needs: <meta name="goobster-project-access" content="write delete run">; '
     + 'the viewer approves each the first time, so handle a rejected promise (err.code ACCESS_DENIED). Never ask for allow-same-origin.';

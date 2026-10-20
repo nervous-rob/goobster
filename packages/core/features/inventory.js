@@ -356,6 +356,7 @@ const routeRules = [
     { method: 'POST', pattern: /^\/api\/app\/observatory\/jobs\/[^/]+\/resume$/, owner: 'observatory' },
     { method: 'POST', pattern: /^\/api\/app\/observatory\/projects\/[^/]+\/render$/, owner: 'observatory' },
     { method: 'POST', pattern: /^\/api\/app\/projects\/[^/]+\/assets\/[^/]+\/run$/, owner: 'observatory' },
+    { method: 'POST', pattern: /^\/api\/app\/projects\/[^/]+\/run-file$/, owner: 'observatory' },
     { pattern: /^\/api\/app\/(?:projects|observatory)(?:\/|$)/, owner: 'projects' },
     { method: 'GET', pattern: /^\/app\/observatory\/share\//, owner: 'projects' },
 

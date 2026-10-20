@@ -229,7 +229,7 @@ Feature id: `observatory`. Code execution inside projects: runs, background jobs
 - **Kind:** feature
 - **Fresh install default:** on
 - **Depends on:** Projects (`projects`), Sandbox (`sandbox`)
-- **Owns:** 1 chat tool (`observatory`); 7 portal route groups
+- **Owns:** 1 chat tool (`observatory`); 8 portal route groups
 - **Switch today:** `observatory.enabled` or `GOOBSTER_OBSERVATORY_ENABLED`, default off.
 - **Host override:** `GOOBSTER_FEATURE_OBSERVATORY=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
 - **Config keys:** `observatory.enabled`, `observatory.ffmpegCommand`

@@ -19,6 +19,8 @@ const { legalizeObservatoryGrants } = require('../utils/appletCapabilities');
 const MAX_SOURCE = 200_000;
 const MAX_NAME = 80;
 const MAX_NOTE = 240;
+/** Apps pinned to one project's Overview. */
+const PIN_LIMIT = 4;
 const SLUG_MAX_LENGTH = 48;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const KINDS = new Set(['app', 'script', 'note']);
@@ -101,7 +103,7 @@ class ProjectAssetService {
         }
         const row = await db.get(
             `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                    grantsJson, revision, createdAt, updatedAt
+                    grantsJson, revision, pinnedAt, createdAt, updatedAt
              FROM project_assets
              WHERE projectId = @projectId
                AND (slug = @slugRef OR name = @ref COLLATE NOCASE)`,
@@ -185,6 +187,8 @@ class ProjectAssetService {
             conversationId: versionRow.conversationId ?? null,
             messageId: versionRow.messageId ?? null,
             grants,
+            pinned: Boolean(assetRow.pinnedAt),
+            pinnedAt: assetRow.pinnedAt || null,
             createdAt: assetRow.createdAt,
             updatedAt: assetRow.updatedAt,
             versionCreatedAt: versionRow.createdAt,
@@ -249,7 +253,7 @@ class ProjectAssetService {
             await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
             const existing = await tx.get(
                 `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                        grantsJson, revision, createdAt, updatedAt
+                        grantsJson, revision, pinnedAt, createdAt, updatedAt
                  FROM project_assets
                  WHERE projectId = @projectId AND slug = @slug`,
                 { projectId: projectRow.id, slug: assetSlug }
@@ -324,7 +328,7 @@ class ProjectAssetService {
                 await this._pruneVersions(tx, existing.id, versionId);
                 const updated = await tx.get(
                     `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                            grantsJson, revision, createdAt, updatedAt
+                            grantsJson, revision, pinnedAt, createdAt, updatedAt
                      FROM project_assets WHERE id = @id`,
                     { id: existing.id }
                 );
@@ -388,7 +392,7 @@ class ProjectAssetService {
             );
             const created = await tx.get(
                 `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                        grantsJson, revision, createdAt, updatedAt
+                        grantsJson, revision, pinnedAt, createdAt, updatedAt
                  FROM project_assets WHERE id = @id`,
                 { id: assetId }
             );
@@ -452,7 +456,7 @@ class ProjectAssetService {
         if (cleanKind) params.kind = cleanKind;
         const rows = await db.all(
             `SELECT a.id, a.slug, a.name, a.kind, a.currentVersionId, a.grantsJson, a.revision,
-                    a.createdAt, a.updatedAt,
+                    a.pinnedAt, a.createdAt, a.updatedAt,
                     v.version, v.language, v.contentHash, v.note, v.origin, v.createdAt AS versionCreatedAt
              FROM project_assets a
              LEFT JOIN project_asset_versions v ON v.id = a.currentVersionId
@@ -475,6 +479,8 @@ class ProjectAssetService {
             note: row.note || null,
             origin: row.origin || null,
             grants: parseGrantsJson(row.grantsJson),
+            pinned: Boolean(row.pinnedAt),
+            pinnedAt: row.pinnedAt || null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             versionCreatedAt: row.versionCreatedAt || null
@@ -557,9 +563,11 @@ class ProjectAssetService {
     }
 
     /**
-     * Rename or replace grants. Source is immutable (save a new version).
+     * Rename, replace grants, or pin / unpin an app on the project's
+     * Overview (any member; at most PIN_LIMIT per project). Source is
+     * immutable (save a new version).
      */
-    async update({ userId, project, asset, name = undefined, grants = undefined, owner = null, expectedRevision = null }) {
+    async update({ userId, project, asset, name = undefined, grants = undefined, pinned = undefined, owner = null, expectedRevision = null }) {
         return db.transaction(async tx => {
             const projectRow = await this._requireProject(userId, project, owner);
             await require('../utils/editConflict').lockProjectWrite(tx, projectRow.id, userId);
@@ -583,6 +591,24 @@ class ProjectAssetService {
                 params.grantsJson = JSON.stringify(
                     legalizeObservatoryGrants(head?.source || '', grants)
                 );
+            }
+            if (pinned !== undefined && Boolean(pinned) !== Boolean(existing.pinnedAt)) {
+                if (pinned) {
+                    if (existing.kind !== 'app') {
+                        throw new ProjectAssetError(400, 'NOT_AN_APP', 'Only apps can be pinned to the Overview.');
+                    }
+                    const count = await db.get(
+                        'SELECT COUNT(*) AS n FROM project_assets WHERE projectId = @projectId AND pinnedAt IS NOT NULL',
+                        { projectId: projectRow.id }
+                    );
+                    if (Number(count?.n || 0) >= PIN_LIMIT) {
+                        throw new ProjectAssetError(409, 'PIN_LIMIT',
+                            `At most ${PIN_LIMIT} apps can be pinned to a project's Overview. Unpin one first.`);
+                    }
+                    fields.push("pinnedAt = datetime('now')");
+                } else {
+                    fields.push('pinnedAt = NULL');
+                }
             }
             if (fields.length === 0) {
                 return await this.get({
@@ -664,7 +690,7 @@ class ProjectAssetService {
             );
             const updated = await db.get(
                 `SELECT id, projectId, userId, slug, name, kind, currentVersionId,
-                        grantsJson, revision, createdAt, updatedAt
+                        grantsJson, revision, pinnedAt, createdAt, updatedAt
                  FROM project_assets WHERE id = @id`,
                 { id: assetRow.id }
             );
@@ -706,3 +732,4 @@ module.exports.ProjectAssetError = ProjectAssetError;
 module.exports.contentHash = contentHash;
 module.exports.slugify = slugify;
 module.exports.MAX_SOURCE = MAX_SOURCE;
+module.exports.PIN_LIMIT = PIN_LIMIT;

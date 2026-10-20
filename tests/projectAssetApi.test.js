@@ -260,6 +260,34 @@ describe('project asset API auth', () => {
         expect(fakeObservatory.run).toHaveBeenLastCalledWith(expect.objectContaining({ startedBy: 'portal' }));
     });
 
+    test('an app from a template is saved as an ordinary html app; bad templates are refused', async () => {
+        fakeAssets.save.mockResolvedValue({ slug: 'ledger', name: 'Ledger', kind: 'app', version: 1 });
+        const cookie = await login();
+        const catalog = await request({ method: 'GET', reqPath: '/api/app/projects/app-templates', headers: { Cookie: cookie } });
+        expect(catalog.status).toBe(200);
+        expect(catalog.json.templates.map(t => t.id)).toEqual(['data-table', 'run-console', 'chart']);
+
+        const res = await request({
+            method: 'POST',
+            reqPath: '/api/app/projects/lab/apps/from-template',
+            headers: { Cookie: cookie },
+            body: { template: 'data-table', title: 'Ledger', path: 'data/ledger.csv' }
+        });
+        expect(res.status).toBe(200);
+        expect(fakeAssets.save).toHaveBeenLastCalledWith(expect.objectContaining({
+            userId: USER, project: 'lab', slug: 'Ledger', name: 'Ledger', kind: 'app', language: 'html',
+            origin: 'portal', note: 'From the data-table template',
+            source: expect.stringContaining('"path":"data/ledger.csv"')
+        }));
+
+        const bad = await request({
+            method: 'POST', reqPath: '/api/app/projects/lab/apps/from-template', headers: { Cookie: cookie },
+            body: { template: 'chart', path: '../x.csv' }
+        });
+        expect(bad.status).toBe(400);
+        expect(bad.json.error.code).toBe('BAD_PATH');
+    });
+
     test('run-file runs one workspace file as the signed-in person', async () => {
         fakeObservatory.runFile.mockResolvedValue({ mode: 'foreground', jobId: 11, result: { ok: true, stdout: 'hi' } });
         const cookie = await login();

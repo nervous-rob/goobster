@@ -29,6 +29,11 @@ const CAPABILITY_TEXT = {
 const ACCESS_STORAGE = 'goobster:applet-access:';
 const MAX_WRITE_CHARS = 20 * 1024 * 1024;
 const ASSET_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** How often a watch polls a run's live output, and how many one app may hold. */
+const WATCH_INTERVAL_MS = 1200;
+const MAX_WATCHES = 4;
+/** A watch that sees no change for this long stops (the run went quiet or the job vanished). */
+const WATCH_IDLE_LIMIT_MS = 30 * 60 * 1000;
 
 /** Capabilities the source declares in its goobster-project-access meta tag. */
 export function extractProjectAccess(source) {
@@ -204,6 +209,8 @@ export function createProjectAccess({ project, owner = null, source, title, requ
         try { denied = readSet(sessionStorage, key); } catch { /* blocked */ }
     }
     const inflight = new Map();
+    /** watchId -> { stopped } for this frame's live-output watches. */
+    const watches = new Map();
     const ask = typeof requestGrant === 'function' ? requestGrant : async () => false;
 
     async function ensure(capability) {
@@ -294,6 +301,56 @@ export function createProjectAccess({ project, owner = null, source, title, requ
             if (refused) return refused;
             return { ok: true, content: await api.observatoryJobLive(jobId, req.since || null) };
         },
+        'project.watch': async (req, post) => {
+            const jobId = Number(req.jobId);
+            const watchId = String(req.watchId || '');
+            if (!Number.isInteger(jobId) || jobId <= 0 || !watchId) return fail('BAD_REQUEST', 'Need a jobId and a watchId.');
+            const refused = await ensure('run');
+            if (refused) return refused;
+            if (typeof post !== 'function') return fail('BAD_REQUEST', 'Watching needs a live connection.');
+            if (watches.size >= MAX_WATCHES) return fail('TOO_MANY_WATCHES', `An app can watch at most ${MAX_WATCHES} runs at once.`);
+            // Fail fast on a job the viewer cannot see, before promising updates.
+            const first = await api.observatoryJobLive(jobId, null);
+            const watch = { stopped: false };
+            watches.set(watchId, watch);
+            const send = (update, done = false) => {
+                if (watch.stopped) return;
+                const { status, running, streaming, stdout, stderr, at } = update;
+                post({ type: 'project.watch.update', watchId, jobId, status, running, streaming, stdout, stderr, at, done });
+            };
+            (async () => {
+                let last = first;
+                let since = first.at || null;
+                let quietSince = Date.now();
+                send(first, !first.running);
+                while (!watch.stopped && last.running) {
+                    await new Promise((resolve) => setTimeout(resolve, WATCH_INTERVAL_MS));
+                    if (watch.stopped) break;
+                    let next;
+                    try {
+                        next = await api.observatoryJobLive(jobId, since);
+                    } catch (error) {
+                        post({ type: 'project.watch.update', watchId, jobId, done: true, error: { code: error?.code || 'WATCH_FAILED', message: error?.message || 'Lost the run.' } });
+                        break;
+                    }
+                    if (next.unchanged) {
+                        if (Date.now() - quietSince > WATCH_IDLE_LIMIT_MS) break;
+                        continue;
+                    }
+                    quietSince = Date.now();
+                    since = next.at || since;
+                    last = next;
+                    send(next, !next.running);
+                }
+            })().finally(() => watches.delete(watchId));
+            return { ok: true, content: { watchId, jobId } };
+        },
+        'project.unwatch': async (req) => {
+            const watch = watches.get(String(req.watchId || ''));
+            if (watch) watch.stopped = true;
+            watches.delete(String(req.watchId || ''));
+            return { ok: true, content: { stopped: Boolean(watch) } };
+        },
         'assets.list': async (req) => {
             const kind = ['app', 'script', 'note'].includes(req.kind) ? req.kind : undefined;
             const listing = await api.projectAssets(project, kind, owner);
@@ -347,8 +404,11 @@ export function createProjectAccess({ project, owner = null, source, title, requ
         }
     };
 
-    /** Answer one request; never throws. */
-    async function handle(request) {
+    /**
+     * Answer one request; never throws. `post` sends an unsolicited message
+     * to the app on the current connection (live-output watches).
+     */
+    async function handle(request, post) {
         const type = String(request?.type || '');
         const run = handlers[type];
         let result;
@@ -358,7 +418,7 @@ export function createProjectAccess({ project, owner = null, source, title, requ
             result = fail('UNKNOWN_REQUEST', `Unknown request type "${type}".`);
         } else {
             try {
-                result = await run(request);
+                result = await run(request, post);
             } catch (error) {
                 result = failFrom(error, 'REQUEST_FAILED');
             }
@@ -375,8 +435,15 @@ export function createProjectAccess({ project, owner = null, source, title, requ
         return result;
     }
 
+    /** Stop every watch (the app reloaded or was torn down). */
+    function stopWatches() {
+        for (const watch of watches.values()) watch.stopped = true;
+        watches.clear();
+    }
+
     return {
         handle,
+        stopWatches,
         context: project ? { project, owner, access: [...declared] } : null
     };
 }

@@ -371,6 +371,51 @@ describe('branches, comparison, pull requests and CI', () => {
         expect(await service.repos.ci(args)).toMatchObject({ state: 'none', notOnGitHub: true });
     }, 60_000);
 
+    test('a pull request opens for review: files with patches, inline comments by line, reviews, and whether the clone is on its branch', async () => {
+        makeRemote('acme/r', { files: { 'a.txt': 'one\n' } });
+        const github = () => ({
+            getPullRequest: async (repo, n) => ({
+                number: n, title: 'Tidy', html_url: `https://github.com/acme/r/pull/${n}`, state: 'open', draft: false,
+                user: { login: 'dana' }, body: 'x'.repeat(5000), changed_files: 3,
+                head: { ref: 'feature', sha: 'sha9', repo: { full_name: 'acme/r' } }, base: { ref: 'main', repo: { full_name: 'acme/r' } }
+            }),
+            listPullRequestFiles: async () => [
+                { filename: 'a.txt', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1 +1,2 @@\n one\n+two' },
+                { filename: 'b.txt', status: 'added', additions: 1, deletions: 0, patch: '@@ -0,0 +1 @@\n+bee' }
+            ],
+            listPullRequestReviewComments: async () => [
+                { id: 1, path: 'a.txt', line: 2, original_line: 2, side: 'RIGHT', body: 'Why two?', user: { login: 'rev' }, html_url: 'https://github.com/acme/r/pull/9#c1' },
+                { id: 2, path: 'a.txt', line: 2, side: 'RIGHT', body: 'Because.', user: { login: 'dana' }, in_reply_to_id: 1 },
+                { id: 3, path: 'b.txt', line: null, original_line: 4, body: 'Old note', user: { login: 'rev' } }
+            ],
+            listPullRequestReviews: async () => [
+                { id: 10, state: 'CHANGES_REQUESTED', body: 'Please fix a.txt', user: { login: 'rev' } },
+                { id: 11, state: 'PENDING', body: 'draft', user: { login: 'rev' } }
+            ]
+        });
+        const service = makeService({}, { github });
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'Review Lab' });
+        await service.repos.clone({ userId, project: slug, repo: 'acme/r' });
+        const args = { userId, project: slug, name: 'r' };
+
+        const review = await service.repos.pullRequestReview({ ...args, number: '9' });
+        expect(review).toMatchObject({ number: 9, title: 'Tidy', head: 'feature', base: 'main', branch: 'main', onHead: false, fromFork: false, filesTruncated: true, patchesCut: false });
+        expect(review.body.length).toBeLessThan(4100);
+        expect(review.files.map(f => [f.path, f.status])).toEqual([['a.txt', 'modified'], ['b.txt', 'added']]);
+        expect(review.files[0].patch).toContain('+two');
+        expect(review.comments).toEqual([
+            expect.objectContaining({ id: 1, path: 'a.txt', line: 2, outdated: false, author: 'rev', inReplyTo: null }),
+            expect.objectContaining({ id: 2, inReplyTo: 1 }),
+            expect.objectContaining({ id: 3, line: null, originalLine: 4, outdated: true })
+        ]);
+        expect(review.reviews).toEqual([expect.objectContaining({ id: 10, state: 'CHANGES_REQUESTED', body: 'Please fix a.txt' })]);
+
+        await service.repos.checkout({ ...args, branch: 'feature' });
+        expect(await service.repos.pullRequestReview({ ...args, number: 9 })).toMatchObject({ branch: 'feature', onHead: true });
+        await expectThrow(() => service.repos.pullRequestReview({ ...args, number: 'x' }), { code: 'BAD_NUMBER' });
+    }, 30_000);
+
     test('GitHub being unreachable degrades the branch list instead of failing it', async () => {
         makeRemote('acme/y');
         const service = makeService({}, { github: () => ({ listBranches: async () => { const e = new Error('x'); e.code = 'UNAVAILABLE'; throw e; } }) });

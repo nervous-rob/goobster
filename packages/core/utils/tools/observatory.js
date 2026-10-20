@@ -24,6 +24,7 @@ const {
     backgroundJobHint
 } = require('../projectSetupContract');
 const { OUTPUT_CONTRACT_FAILED } = require('../outputContract');
+const { renderTemplate } = require('../../services/appTemplates');
 
 /** " (from asset #3, trigger #7)" for an event trigger's source filters. */
 function describeTriggerFilters(trigger) {
@@ -235,7 +236,8 @@ module.exports = {
                 + '"save_note" (store versioned source on the project: html/svg apps, python/javascript '
                 + 'scripts, or markdown notes — identical source is a no-op; an app opened in the Apps tab can list/read/'
                 + 'write/delete/run the project\'s files and notes/scripts through window.goobster, declaring write/delete/run '
-                + 'in <meta name="goobster-project-access">), "list_assets", "get_asset" '
+                + 'in <meta name="goobster-project-access">; template= data-table / run-console / chart with path= builds a '
+                + 'ready app instead of code), "list_assets", "get_asset" '
                 + '(head, or version n; same line window as read), "rollback_asset" (move the head pointer back), "run_script" '
                 + '(run a stored script asset, foreground or background, recording which version ran), '
                 + '"set_trigger" / "list_triggers" / "delete_trigger" (project automations: cron or '
@@ -297,6 +299,8 @@ module.exports = {
                     slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
                     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
                     code: { type: 'string', description: 'Source code for run or save_*' },
+                    template: { type: 'string', enum: ['data-table', 'run-console', 'chart'], description: 'save_app: build the app from a ready template instead of code (name = its title, path = the file it works on): data-table edits a JSON/CSV file, run-console runs a .py/.js/.sh with live output (template_args = default arguments), chart plots a JSON/CSV file' },
+                    template_args: { type: 'string', description: 'save_app template=run-console: the default arguments, e.g. "--days 30"' },
                     version: { type: 'integer', description: 'Asset version number (get_asset / rollback_asset)' },
                     note: { type: 'string', description: 'One-line note for save_* versions and commit snapshots; the commit message for repo_commit' },
                     kind: { type: 'string', enum: ['app', 'script', 'note', 'cron', 'event'], description: 'list_assets: optional kind filter; set_trigger: cron or event' },
@@ -375,7 +379,7 @@ module.exports = {
             relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, requireGreenCi, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
-            choices, selectedId,
+            choices, selectedId, template, template_args: templateArgs,
             interactionContext
         }) => {
             if (!observatoryService.enabled) {
@@ -872,16 +876,21 @@ module.exports = {
                     case 'save_note': {
                         const saveKind = action === 'save_app' ? 'app'
                             : action === 'save_script' ? 'script' : 'note';
+                        const built = action === 'save_app' && template
+                            ? renderTemplate(template, {
+                                title: name || slug, path: workspacePath, args: templateArgs
+                            })
+                            : null;
                         const saved = await projectAssetService.save({
                             userId,
                             project,
                             owner,
-                            slug: slug || name,
-                            name: name || slug,
+                            slug: slug || name || built?.name,
+                            name: name || slug || built?.name,
                             kind: saveKind,
-                            language,
-                            source: code,
-                            note,
+                            language: built ? 'html' : language,
+                            source: built ? built.source : code,
+                            note: note || (built ? `From the ${template} template` : note),
                             origin: 'agent'
                         });
                         if (saved.deduped) {

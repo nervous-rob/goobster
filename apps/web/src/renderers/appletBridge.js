@@ -246,6 +246,49 @@ export const APPLET_BRIDGE_SCRIPT = `<script>
         remove: function (path) { return call('project.delete', { path: path }); },
         run: function (path, options) { return call('project.run', extend({ path: path }, options)); },
         job: function (jobId, since) { return call('project.job', { jobId: jobId, since: since }); },
+        // Live output of a run: onUpdate({ status, running, stdout, stderr, done }) until it ends.
+        // Returns { stop(), done } where done resolves with the last update.
+        watch: function (jobId, onUpdate) {
+            var watchId = 'w' + String(Date.now()) + Math.random().toString(36).slice(2);
+            var stopped = false;
+            var listener = null;
+            var portRef = null;
+            var finish;
+            var fail;
+            var done = new Promise(function (resolve, reject) { finish = resolve; fail = reject; });
+            function cleanup() {
+                if (portRef && listener) portRef.removeEventListener('message', listener);
+                listener = null;
+            }
+            window.connectToGoobster().then(function (port) {
+                portRef = port;
+                listener = function (event) {
+                    var data = event.data;
+                    if (!data || data.type !== 'project.watch.update' || data.watchId !== watchId) return;
+                    if (data.error) {
+                        cleanup();
+                        var err = new Error(data.error.message || 'Watch failed');
+                        err.code = data.error.code;
+                        fail(err);
+                        return;
+                    }
+                    try { if (typeof onUpdate === 'function') onUpdate(data); } catch (e) { setTimeout(function () { throw e; }); }
+                    if (data.done) { cleanup(); finish(data); }
+                };
+                port.addEventListener('message', listener);
+                return call('project.watch', { jobId: jobId, watchId: watchId });
+            }).catch(function (err) { cleanup(); fail(err); });
+            return {
+                done: done,
+                stop: function () {
+                    if (stopped) return;
+                    stopped = true;
+                    cleanup();
+                    call('project.unwatch', { watchId: watchId }).catch(function () {});
+                    finish(null);
+                }
+            };
+        },
         assets: {
             list: function (kind) { return call('assets.list', { kind: kind }); },
             read: function (asset, version) { return call('assets.read', { asset: asset, version: version }); },
@@ -368,11 +411,16 @@ export function attachAppletBridge(frame, {
     }
 
     const onLoad = () => {
+        // A reload is a new app instance: its predecessor's watches end.
+        projectAccess.stopWatches();
         const channel = new MessageChannel();
         channel.port1.onmessage = async (event) => {
             const request = event.data;
             if (request && isProjectAccessType(request.type)) {
-                const result = await projectAccess.handle(request);
+                const post = (message) => {
+                    try { channel.port1.postMessage(message); } catch { /* frame gone */ }
+                };
+                const result = await projectAccess.handle(request, post);
                 try {
                     channel.port1.postMessage({ type: `${request.type}.result`, id: request.id, ...result });
                 } catch { /* frame gone */ }
@@ -398,7 +446,10 @@ export function attachAppletBridge(frame, {
 
     frame.addEventListener('load', onLoad);
     return {
-        detach: () => frame.removeEventListener('load', onLoad),
+        detach: () => {
+            frame.removeEventListener('load', onLoad);
+            projectAccess.stopWatches();
+        },
         getGranted: () => [...granted]
     };
 }

@@ -6,6 +6,7 @@ import { accountFetch } from '../lib/browserAccount';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { CodeEditor, languageFromPath, type EditorSelection } from './CodeEditor';
+import { fileContextItems, usePublishViewContext } from '../hooks/useViewContext';
 import { DiffView } from './repoParts';
 import type { RepoEntry } from './ProjectRepos';
 
@@ -16,6 +17,38 @@ type ChangesPayload = {
     operation: string | null; head: string | null; files: Change[]; truncated: boolean;
 };
 type WsEntry = { path: string; name: string; kind: 'file' | 'directory'; size: number };
+type PullRow = { number: number; title: string; head: string | null; base: string | null; author: string | null; draft: boolean; ci?: { state: string } | null };
+type ReviewComment = {
+    id: number; path: string; line: number | null; originalLine: number | null; outdated: boolean;
+    body: string; author: string | null; createdAt: string | null; url: string | null; inReplyTo: number | null;
+};
+type ReviewPayload = {
+    number: number; title: string; url: string; state: string; draft: boolean; author: string | null; body: string;
+    head: string | null; base: string | null; fromFork: boolean; branch: string | null; onHead: boolean;
+    files: { path: string; previousPath: string | null; status: string; additions: number; deletions: number; patch: string | null }[];
+    patchesCut: boolean; filesTruncated: boolean;
+    comments: ReviewComment[];
+    reviews: { id: number; author: string | null; state: string; body: string; url: string | null }[];
+};
+type Thread = { root: ReviewComment; replies: ReviewComment[] };
+
+/** Review comments grouped into threads (a root and its replies), by file. */
+function threadsByFile(comments: ReviewComment[]): Map<string, Thread[]> {
+    const roots = new Map<number, Thread>();
+    const out = new Map<string, Thread[]>();
+    for (const comment of comments) {
+        if (comment.inReplyTo != null && roots.has(comment.inReplyTo)) {
+            roots.get(comment.inReplyTo)!.replies.push(comment);
+            continue;
+        }
+        const thread = { root: comment, replies: [] };
+        roots.set(comment.id, thread);
+        out.set(comment.path, [...(out.get(comment.path) || []), thread]);
+    }
+    return out;
+}
+
+const REVIEW_STATE: Record<string, string> = { APPROVED: '✅ approved', CHANGES_REQUESTED: '✋ changes requested', COMMENTED: '💬 commented', DISMISSED: 'dismissed' };
 type Tab = {
     rel: string;
     content: string;
@@ -49,7 +82,10 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
     const confirm = useConfirm();
     const queryClient = useQueryClient();
     const root = `repos/${entry.name}`;
-    const [pane, setPane] = useState<'files' | 'changes'>('files');
+    const [pane, setPane] = useState<'files' | 'changes' | 'review'>('files');
+    const [reviewing, setReviewing] = useState<number | null>(null);
+    const [reviewFile, setReviewFile] = useState<string | null>(null);
+    const [showPrDiff, setShowPrDiff] = useState(false);
     const [open, setOpen] = useState<Record<string, boolean>>({ '': true });
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [active, setActive] = useState<string | null>(null);
@@ -115,6 +151,11 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
     }
 
     const current = tabs.find((tab) => tab.rel === active) || null;
+    const viewContext = current
+        ? fileContextItems(`${root}/${current.rel}`, selection, `${changes.data?.branch ? ` on branch ${changes.data.branch}` : ''}${current.content !== current.saved ? ' (unsaved edit)' : ''}`)
+        : null;
+    usePublishViewContext('repo:file', viewContext?.file ?? null);
+    usePublishViewContext('repo:selection', viewContext?.selection ?? null);
     const dirty = current ? current.content !== current.saved : false;
 
     async function save(rel = active) {
@@ -199,6 +240,57 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
         retry: false
     });
 
+    const pulls = useQuery({
+        queryKey: keys.projectRepoDetail(slug, entry.name, 'pulls', ownerId),
+        queryFn: () => api.projectRepoPulls(slug, entry.name, ownerId) as Promise<{ pulls: PullRow[] }>,
+        enabled: pane === 'review',
+        retry: false
+    });
+    const review = useQuery({
+        queryKey: [...keys.projectRepoDetail(slug, entry.name, 'review', ownerId), reviewing || 0],
+        queryFn: () => api.projectRepoReview(slug, entry.name, reviewing as number, ownerId) as Promise<ReviewPayload>,
+        enabled: reviewing != null,
+        retry: false
+    });
+    const threads = useMemo(() => threadsByFile(review.data?.comments || []), [review.data]);
+    // The open file's review comments, in the gutter (only lines still on the PR's side).
+    const reviewPath = reviewing != null && current ? current.rel : null;
+    const gutterComments = reviewPath && review.data?.onHead
+        ? (threads.get(reviewPath) || []).filter((t) => t.root.line != null).map((t) => ({
+            line: t.root.line as number,
+            text: [t.root, ...t.replies].map((c) => `${c.author || 'someone'}: ${c.body}`).join('\n\n')
+        }))
+        : null;
+    const reviewFileRow = review.data?.files.find((file) => file.path === reviewFile) || null;
+    const fileThreads = reviewFile ? threads.get(reviewFile) || [] : [];
+
+    function openReviewFile(path: string) {
+        setReviewFile(path);
+        const row = review.data?.files.find((file) => file.path === path);
+        if (review.data?.onHead && row?.status !== 'removed') {
+            setShowPrDiff(false);
+            void openFile(path);
+        } else {
+            setShowPrDiff(true);
+        }
+    }
+
+    function askToAddress(thread: Thread) {
+        if (!askGoobster || !review.data) return;
+        const pr = review.data;
+        const where = `${root}/${thread.root.path}${thread.root.line ? ` line ${thread.root.line}` : thread.root.originalLine ? ` (was line ${thread.root.originalLine})` : ''}`;
+        const quoted = [thread.root, ...thread.replies]
+            .map((c) => `${c.author || 'someone'}:\n${c.body.split('\n').map((l) => `> ${l}`).join('\n')}`)
+            .join('\n');
+        askGoobster(`On pull request #${pr.number} "${pr.title}" (${pr.head} → ${pr.base}), a review comment on ${where}:\n${quoted}\n\n`
+            + `Please address it in ${root}/${thread.root.path} on branch ${pr.head}, then commit and push (never force).`);
+    }
+
+    function scrollToThread(line: number) {
+        const thread = (reviewPath ? threads.get(reviewPath) || [] : []).find((t) => t.root.line === line);
+        if (thread) document.getElementById(`review-thread-${thread.root.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     const data = changes.data;
     return (
         <div className="repo-ide" data-testid="repo-ide">
@@ -228,6 +320,9 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
                         <button type="button" role="tab" aria-selected={pane === 'files'} className={`btn small${pane === 'files' ? ' primary' : ' subtle'}`} onClick={() => setPane('files')}>Files</button>
                         <button type="button" role="tab" aria-selected={pane === 'changes'} className={`btn small${pane === 'changes' ? ' primary' : ' subtle'}`} onClick={() => setPane('changes')}>
                             Changes{files.length ? ` (${files.length})` : ''}
+                        </button>
+                        <button type="button" role="tab" aria-selected={pane === 'review'} className={`btn small${pane === 'review' ? ' primary' : ' subtle'}`} onClick={() => setPane('review')}>
+                            Review{reviewing ? ` #${reviewing}` : ''}
                         </button>
                     </div>
                     {pane === 'files' && (
@@ -268,6 +363,75 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
                             )}
                         </div>
                     )}
+                    {pane === 'review' && reviewing == null && (
+                        <div className="repo-ide-review" data-testid="repo-ide-pulls">
+                            {pulls.isPending && <div className="hint">Loading pull requests…</div>}
+                            {pulls.isError && <div className="hint">{(pulls.error as Error).message}</div>}
+                            {pulls.data && pulls.data.pulls.length === 0 && <div className="hint">No open pull requests.</div>}
+                            {(pulls.data?.pulls || []).map((pr) => (
+                                <button key={pr.number} type="button" className="repo-ide-pr" onClick={() => { setReviewing(pr.number); setReviewFile(null); }}>
+                                    <strong>#{pr.number} {pr.title}</strong>
+                                    <span className="hint">
+                                        {pr.head} → {pr.base}{pr.author ? ` · ${pr.author}` : ''}{pr.draft ? ' · draft' : ''}
+                                        {pr.ci ? ` · CI ${pr.ci.state}` : ''}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    {pane === 'review' && reviewing != null && (
+                        <div className="repo-ide-review" data-testid="repo-ide-review">
+                            <button type="button" className="btn small subtle" onClick={() => { setReviewing(null); setReviewFile(null); setShowPrDiff(false); }}>← Pull requests</button>
+                            {review.isPending && <div className="hint">Loading #{reviewing}…</div>}
+                            {review.isError && <div className="hint">{(review.error as Error).message}</div>}
+                            {review.data && (
+                                <>
+                                    <a className="repo-ide-pr-title" href={review.data.url} target="_blank" rel="noreferrer">
+                                        #{review.data.number} {review.data.title}
+                                    </a>
+                                    <span className="hint">{review.data.head} → {review.data.base} · {review.data.state}{review.data.author ? ` · ${review.data.author}` : ''}</span>
+                                    {!review.data.onHead && (
+                                        <div className="repo-ide-review-banner">
+                                            {review.data.fromFork
+                                                ? <span className="hint">This pull request comes from a fork: read its diff and comments here.</span>
+                                                : (
+                                                    <>
+                                                        <span className="hint">The clone is on <code>{review.data.branch || 'no branch'}</code>; switch to <code>{review.data.head}</code> to edit its files with the comments beside them.</span>
+                                                        <button type="button" className="btn small primary" disabled={busy != null || unsaved.length > 0}
+                                                            title={unsaved.length ? 'Save or close your edited files first' : undefined}
+                                                            onClick={() => void run('branch', () => api.projectRepoAction(slug, entry.name, 'branch', { branch: review.data!.head }, ownerId),
+                                                                () => { setTabs([]); setActive(null); void review.refetch(); return `Switched to ${review.data!.head}.`; })}>
+                                                            Switch to {review.data.head}
+                                                        </button>
+                                                    </>
+                                                )}
+                                        </div>
+                                    )}
+                                    {review.data.reviews.filter((r) => r.body || r.state !== 'COMMENTED').map((r) => (
+                                        <div key={r.id} className={`repo-ide-review-summary is-${r.state.toLowerCase()}`}>
+                                            <span><strong>{r.author || 'someone'}</strong> {REVIEW_STATE[r.state] || r.state.toLowerCase()}</span>
+                                            {r.body && <p>{r.body}</p>}
+                                        </div>
+                                    ))}
+                                    <div className="repo-ide-review-files">
+                                        {review.data.files.map((file) => {
+                                            const count = (threads.get(file.path) || []).length;
+                                            return (
+                                                <button key={file.path} type="button"
+                                                    className={`repo-ide-review-file${reviewFile === file.path ? ' active' : ''}`}
+                                                    onClick={() => openReviewFile(file.path)}>
+                                                    <span className="repo-ide-node-name" title={file.path}>{file.path}</span>
+                                                    <span className="hint">+{file.additions} −{file.deletions}</span>
+                                                    {count > 0 && <span className="repo-ide-review-count" title={`${count} comment thread(s)`}>💬{count}</span>}
+                                                </button>
+                                            );
+                                        })}
+                                        {review.data.filesTruncated && <div className="hint">Only the first 100 files are listed.</div>}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
                 </aside>
                 <section className="repo-ide-editor">
                     <div className="repo-ide-tabs" role="tablist">
@@ -296,7 +460,20 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
                             </span>
                         </div>
                     )}
-                    {diffFor && (!current || diffFor === current.rel) ? (
+                    {reviewFile && showPrDiff && reviewFileRow ? (
+                        <div className="repo-ide-diff">
+                            <div className="repo-ide-toolbar">
+                                <code className="repo-ide-path">{reviewFile}</code>
+                                <span className="hint">the pull request's diff</span>
+                                {review.data?.onHead && reviewFileRow.status !== 'removed' && (
+                                    <span className="repo-ide-toolbar-actions">
+                                        <button type="button" className="btn small" onClick={() => { setShowPrDiff(false); void openFile(reviewFile); }}>Edit file</button>
+                                    </span>
+                                )}
+                            </div>
+                            {reviewFileRow.patch ? <DiffView text={reviewFileRow.patch} /> : <div className="hint">GitHub sent no diff for this file (binary, or too large).</div>}
+                        </div>
+                    ) : diffFor && (!current || diffFor === current.rel) ? (
                         <div className="repo-ide-diff">
                             {diff.isPending && <div className="hint">Loading the diff…</div>}
                             {diff.isError && <div className="hint">{(diff.error as Error).message}</div>}
@@ -313,6 +490,8 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
                                             value={current.content}
                                             language={languageFromPath(current.rel)}
                                             gitBase={current.base}
+                                            comments={gutterComments}
+                                            onCommentClick={scrollToThread}
                                             onChange={(value) => setTabs((prev) => prev.map((tab) => (tab.rel === current.rel ? { ...tab, content: value } : tab)))}
                                             onSelectionChange={setSelection}
                                             onSave={() => void save(current.rel)}
@@ -321,6 +500,31 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
                                 )
                     ) : (
                         <div className="empty">Open a file from the tree, or a change to see its diff.</div>
+                    )}
+                    {reviewFile && fileThreads.length > 0 && (
+                        <div className="repo-ide-threads" data-testid="repo-ide-threads">
+                            <div className="repo-ide-threads-head">
+                                <strong>Review comments on {reviewFile}</strong>
+                                {!showPrDiff && reviewFileRow && <button type="button" className="btn small subtle" onClick={() => setShowPrDiff(true)}>Show PR diff</button>}
+                            </div>
+                            {fileThreads.map((thread) => (
+                                <div key={thread.root.id} id={`review-thread-${thread.root.id}`} className={`repo-ide-thread${thread.root.outdated ? ' is-outdated' : ''}`}>
+                                    <div className="repo-ide-thread-where">
+                                        {thread.root.line != null ? `line ${thread.root.line}` : thread.root.originalLine != null ? `outdated (was line ${thread.root.originalLine})` : 'file comment'}
+                                        {thread.root.url && <a href={thread.root.url} target="_blank" rel="noreferrer">on GitHub</a>}
+                                    </div>
+                                    {[thread.root, ...thread.replies].map((comment) => (
+                                        <div key={comment.id} className="repo-ide-comment">
+                                            <strong>{comment.author || 'someone'}</strong>
+                                            <p>{comment.body}</p>
+                                        </div>
+                                    ))}
+                                    {askGoobster && (
+                                        <button type="button" className="btn small" onClick={() => askToAddress(thread)}>Ask Goobster to address this</button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
                     )}
                 </section>
             </div>

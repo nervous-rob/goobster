@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
@@ -7,6 +8,8 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../../renderers/codeblocks.js';
 import { readAppletAccess, resetAppletAccess } from '../../renderers/appletProjectAccess.js';
 import { whenLabel } from './format';
+import { Modal } from '../../components/Modal';
+import { usePublishViewContext } from '../../hooks/useViewContext';
 
 type AppAsset = {
     slug: string;
@@ -14,6 +17,8 @@ type AppAsset = {
     kind: string;
     currentVersion?: number | null;
     language?: string | null;
+    pinned?: boolean;
+    pinnedAt?: string | null;
 };
 type AppVersion = {
     version: number;
@@ -32,6 +37,7 @@ type AppDetail = {
     version: number;
     currentVersion: number | null;
     grants?: { observatoryRead?: string[] };
+    pinned?: boolean;
 };
 
 /** One request an app made through the bridge (newest first in the log). */
@@ -75,15 +81,80 @@ function renderApplet(
     fn(container, opts);
 }
 
+/**
+ * Render one project app into `stageRef` with the project bridge wired:
+ * its writes refresh the views that show what it changed. Re-renders only
+ * when the app's source (or language / grants) changes, so a rename or a
+ * pin does not restart a running app.
+ */
+export function useAppStage(stageRef: RefObject<HTMLDivElement | null>, {
+    slug, ownerId, detail, onActivity
+}: {
+    slug: string;
+    ownerId?: string | null;
+    detail?: AppDetail;
+    onActivity?: (entry: AppActivity) => void;
+}) {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+    const activityRef = useRef(onActivity);
+    activityRef.current = onActivity;
+    const source = detail?.source;
+    const language = detail?.language;
+    const grantsKey = JSON.stringify(detail?.grants || null);
+
+    useEffect(() => {
+        const stage = stageRef.current;
+        if (!stage || !source) return;
+        stage.replaceChildren();
+        renderApplet(stage, {
+            source,
+            language,
+            notify: toast,
+            requestGrant: confirm,
+            grants: JSON.parse(grantsKey) || undefined,
+            ownProject: slug,
+            ownOwner: ownerId,
+            onActivity: (entry) => activityRef.current?.(entry),
+            onProjectChanged: (what) => {
+                if (what === 'files') void queryClient.invalidateQueries({ queryKey: ['project-files', slug] });
+                if (what === 'assets') void queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
+                if (what === 'runs') {
+                    void queryClient.invalidateQueries({ queryKey: keys.observatory });
+                    void queryClient.invalidateQueries({ queryKey: keys.projectNow(slug, ownerId) });
+                }
+            }
+        });
+        return () => { stage.replaceChildren(); };
+    }, [stageRef, source, language, grantsKey, toast, confirm, slug, ownerId, queryClient]);
+}
+
+/** The Apps view's address: `?app=<slug>` selects one, `&full=1` shows it alone. */
+type AppsSearch = { app?: string; full?: string | number | boolean };
+
 export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | null }) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
-    const [selected, setSelected] = useState<string | null>(null);
+    const navigate = useNavigate();
+    const search = useSearch({ strict: false }) as AppsSearch;
+    const selected = typeof search.app === 'string' && search.app ? search.app : null;
+    const full = search.full === true || search.full === 1 || search.full === '1' || search.full === 'true';
+    const setSearch = (patch: Partial<AppsSearch>) => void navigate({
+        search: ((prev: Record<string, unknown>) => {
+            const next: Record<string, unknown> = { ...prev, ...patch };
+            for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
+            return next;
+        }) as never,
+        replace: true
+    } as never);
+    const setSelected = (app: string) => setSearch({ app });
     const [viewVersion, setViewVersion] = useState<number | ''>('');
     const stageRef = useRef<HTMLDivElement>(null);
     const [activity, setActivity] = useState<AppActivity[]>([]);
     const [accessTick, setAccessTick] = useState(0);
+    const [creating, setCreating] = useState(false);
 
     const list = useQuery({
         queryKey: keys.projectAssets(slug, ownerId),
@@ -91,8 +162,8 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         retry: false
     });
     const apps = [...(list.data?.assets || [])].sort((a, b) => a.name.localeCompare(b.name));
-    const currentSlug = selected || apps[0]?.slug || null;
-    const currentApp = apps.find((app) => app.slug === currentSlug) || apps[0] || null;
+    const currentApp = apps.find((app) => app.slug === selected) || apps[0] || null;
+    const currentSlug = currentApp?.slug || null;
 
     const versions = useQuery({
         queryKey: [...keys.projectAssets(slug, ownerId), currentSlug, 'versions'],
@@ -119,33 +190,34 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         [detail.data?.source, slug, ownerId, accessTick]
     );
 
-    useEffect(() => {
-        const stage = stageRef.current;
-        if (!stage || !detail.data?.source) return;
-        stage.replaceChildren();
-        renderApplet(stage, {
-            source: detail.data.source,
-            language: detail.data.language,
-            notify: toast,
-            requestGrant: confirm,
-            grants: detail.data.grants,
-            ownProject: slug,
-            ownOwner: ownerId,
-            onActivity: (entry) => {
-                setActivity((prev) => [entry, ...prev].slice(0, 50));
-                setAccessTick((n) => n + 1);
-            },
-            onProjectChanged: (what) => {
-                if (what === 'files') void queryClient.invalidateQueries({ queryKey: ['project-files', slug] });
-                if (what === 'assets') void queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
-                if (what === 'runs') {
-                    void queryClient.invalidateQueries({ queryKey: keys.observatory });
-                    void queryClient.invalidateQueries({ queryKey: keys.projectNow(slug, ownerId) });
-                }
-            }
-        });
-        return () => { stage.replaceChildren(); };
-    }, [detail.data, toast, confirm, slug, ownerId, queryClient]);
+    usePublishViewContext('app', detail.data ? {
+        id: `app:${detail.data.slug}:${detail.data.version}`,
+        kind: 'app',
+        label: detail.data.name,
+        text: `Open app: ${detail.data.name} (assets/${detail.data.slug}, v${detail.data.version})`
+    } : null);
+
+    useAppStage(stageRef, {
+        slug,
+        ownerId,
+        detail: detail.data,
+        onActivity: (entry) => {
+            setActivity((prev) => [entry, ...prev].slice(0, 50));
+            setAccessTick((n) => n + 1);
+        }
+    });
+
+    async function togglePin() {
+        if (!currentApp) return;
+        const pinned = !currentApp.pinned;
+        try {
+            await api.updateProjectAsset(slug, currentApp.slug, { pinned }, ownerId);
+            toast(pinned ? `Pinned "${currentApp.name}" to the Overview.` : `Unpinned "${currentApp.name}".`);
+            await queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
+        } catch (error) {
+            toast((error as Error).message, true);
+        }
+    }
 
     function resetAccess() {
         if (!detail.data?.source) return;
@@ -167,6 +239,19 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         }
     }
 
+    const templateDialog = creating && (
+        <NewAppFromTemplate
+            slug={slug}
+            ownerId={ownerId}
+            onClose={() => setCreating(false)}
+            onCreated={(app) => {
+                setCreating(false);
+                void queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
+                setSelected(app);
+            }}
+        />
+    );
+
     if (list.isPending) return <div className="empty">Loading apps…</div>;
     if (list.isError) return <div className="empty">{(list.error as Error).message}</div>;
     if (apps.length === 0) {
@@ -174,9 +259,13 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
             <div className="empty-state" style={{ marginTop: '4vh' }}>
                 <div className="empty-title">No apps yet</div>
                 <div className="hint">
-                    Save an html or svg fence from the Study with “Save to project…”,
-                    or ask Goobster to save_app.
+                    Start from a template, save an html or svg fence from the Study with “Save to project…”,
+                    or ask Goobster to build one (save_app).
                 </div>
+                <button type="button" className="btn primary" style={{ marginTop: 12 }} onClick={() => setCreating(true)}>
+                    + New app from template
+                </button>
+                {templateDialog}
             </div>
         );
     }
@@ -187,8 +276,14 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
     const history = versions.data?.versions || [];
 
     return (
-        <div className="obs-apps">
-            {apps.length > 1 && (
+        <div className={`obs-apps${full ? ' is-full' : ''}`}>
+            {templateDialog}
+            {!full && (
+                <div className="obs-apps-toolbar">
+                    <button type="button" className="btn small" onClick={() => setCreating(true)}>+ New app from template</button>
+                </div>
+            )}
+            {apps.length > 1 && !full && (
                 <div className="obs-app-picker" role="listbox" aria-label="Apps in this project">
                     {apps.map((app) => (
                         <button
@@ -199,7 +294,7 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
                             className={`obs-app-chip${app.slug === currentSlug ? ' active' : ''}`}
                             onClick={() => setSelected(app.slug)}
                         >
-                            <strong>{app.name}</strong>
+                            <strong>{app.pinned ? '📌 ' : ''}{app.name}</strong>
                             <span className="obs-app-chip-meta">
                                 {app.currentVersion ? `v${app.currentVersion}` : 'no versions'}
                                 {app.language ? ` · ${app.language}` : ''}
@@ -220,10 +315,31 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
                                 {currentApp?.slug ? ` · ${currentApp.slug}` : ''}
                             </p>
                         </div>
-                        <span className={`obs-version-badge${showingOld ? ' is-old' : ''}`}>
-                            {showingVersion != null ? `v${showingVersion}` : '—'}
-                            {showingOld ? ' · older snapshot' : ' · current'}
-                        </span>
+                        <div className="obs-apps-identity-actions">
+                            <span className={`obs-version-badge${showingOld ? ' is-old' : ''}`}>
+                                {showingVersion != null ? `v${showingVersion}` : '—'}
+                                {showingOld ? ' · older snapshot' : ' · current'}
+                            </span>
+                            <button
+                                type="button"
+                                className={`btn small${currentApp?.pinned ? ' primary' : ''}`}
+                                aria-pressed={Boolean(currentApp?.pinned)}
+                                title={currentApp?.pinned ? 'Remove from the project Overview' : 'Show this app on the project Overview, for everyone on the project'}
+                                onClick={() => void togglePin()}
+                            >{currentApp?.pinned ? '📌 Pinned' : '📌 Pin to Overview'}</button>
+                            {full ? (
+                                <button type="button" className="btn small" onClick={() => setSearch({ app: currentSlug || undefined, full: undefined })}>
+                                    ⤡ Exit full page
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="btn small"
+                                    title="Show only this app, at an address you can bookmark"
+                                    onClick={() => setSearch({ app: currentSlug || undefined, full: 1 })}
+                                >⤢ Full page</button>
+                            )}
+                        </div>
                     </div>
 
                     {showingOld && (
@@ -291,7 +407,7 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
                     )}
                 </div>
 
-                <aside className="obs-apps-history">
+                {!full && <aside className="obs-apps-history">
                     <div className="obs-section-head">
                         <h3>Versions</h3>
                         <span className="hint">{history.length || '—'}</span>
@@ -327,8 +443,181 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
                             );
                         })}
                     </ol>
-                </aside>
+                </aside>}
             </div>
         </div>
+    );
+}
+
+/**
+ * The Overview's pinned apps: each one live (same bridge and approvals as
+ * the Apps view), with Open and Full page into the Apps view.
+ */
+export function PinnedApps({ slug, ownerId, onOpenApp }: {
+    slug: string;
+    ownerId?: string | null;
+    onOpenApp: (app: string, full?: boolean) => void;
+}) {
+    const list = useQuery({
+        queryKey: keys.projectAssets(slug, ownerId),
+        queryFn: () => api.projectAssets(slug, 'app', ownerId) as Promise<{ assets: AppAsset[] }>,
+        retry: false
+    });
+    const pinned = (list.data?.assets || [])
+        .filter((app) => app.kind === 'app' && app.pinned)
+        .sort((a, b) => String(a.pinnedAt || '').localeCompare(String(b.pinnedAt || '')));
+    if (!pinned.length) return null;
+    return (
+        <section className="obs-pinned-apps" data-testid="pinned-apps">
+            <div className="obs-section-head">
+                <h3>Pinned apps</h3>
+                <span className="hint">{pinned.length}</span>
+            </div>
+            <div className="obs-pinned-grid">
+                {pinned.map((app) => (
+                    <PinnedAppCard key={app.slug} slug={slug} ownerId={ownerId} app={app} onOpenApp={onOpenApp} />
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function PinnedAppCard({ slug, ownerId, app, onOpenApp }: {
+    slug: string;
+    ownerId?: string | null;
+    app: AppAsset;
+    onOpenApp: (app: string, full?: boolean) => void;
+}) {
+    const stageRef = useRef<HTMLDivElement>(null);
+    const detail = useQuery({
+        queryKey: [...keys.projectAssets(slug, ownerId), app.slug, 'head'],
+        queryFn: () => api.projectAsset(slug, app.slug, undefined, ownerId) as Promise<AppDetail>,
+        retry: false
+    });
+    useAppStage(stageRef, { slug, ownerId, detail: detail.data });
+    return (
+        <article className="obs-pinned-app" data-testid={`pinned-app-${app.slug}`}>
+            <header>
+                <strong title={app.name}>{app.name}</strong>
+                <div className="obs-pinned-app-actions">
+                    <button type="button" className="btn small" onClick={() => onOpenApp(app.slug)}>Open</button>
+                    <button type="button" className="btn small" title="Show only this app" onClick={() => onOpenApp(app.slug, true)}>⤢</button>
+                </div>
+            </header>
+            {detail.isError && <div className="hint">{(detail.error as Error).message}</div>}
+            <div ref={stageRef} className="obs-pinned-stage" />
+        </article>
+    );
+}
+
+type AppTemplate = {
+    id: string;
+    name: string;
+    description: string;
+    access: string[];
+    params: { key: string; label: string; placeholder?: string; required?: boolean; hint?: string }[];
+    defaults: Record<string, string>;
+};
+
+/** Pick a ready-made app, name it and point it at a file; saved as an ordinary app. */
+function NewAppFromTemplate({ slug, ownerId, onClose, onCreated }: {
+    slug: string;
+    ownerId?: string | null;
+    onClose: () => void;
+    onCreated: (appSlug: string) => void;
+}) {
+    const toast = useToast();
+    const templates = useQuery({
+        queryKey: ['app-templates'],
+        queryFn: () => api.appTemplates() as Promise<{ templates: AppTemplate[] }>,
+        staleTime: Infinity,
+        retry: false
+    });
+    const [picked, setPicked] = useState<string | null>(null);
+    const [title, setTitle] = useState('');
+    const [values, setValues] = useState<Record<string, string>>({});
+    const [busy, setBusy] = useState(false);
+    const list = templates.data?.templates || [];
+    const template = list.find((t) => t.id === picked) || null;
+
+    function pick(next: AppTemplate) {
+        setPicked(next.id);
+        setTitle(next.name);
+        setValues({ ...next.defaults });
+    }
+
+    async function create() {
+        if (!template) return;
+        setBusy(true);
+        try {
+            const saved = await api.createAppFromTemplate(slug, { template: template.id, title, ...values }, ownerId) as { slug: string; name: string };
+            toast(`Created "${saved.name}".`);
+            onCreated(saved.slug);
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Modal onClose={onClose} labelledBy="new-app-title" wide>
+            <h3 id="new-app-title">New app from a template</h3>
+            {templates.isPending && <p className="hint">Loading templates…</p>}
+            {templates.isError && <p className="hint">{(templates.error as Error).message}</p>}
+            <div className="obs-template-grid" role="radiogroup" aria-label="Templates">
+                {list.map((t) => (
+                    <button
+                        key={t.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={picked === t.id}
+                        className={`obs-template-card${picked === t.id ? ' active' : ''}`}
+                        onClick={() => pick(t)}
+                    >
+                        <strong>{t.name}</strong>
+                        <span className="hint">{t.description}</span>
+                        <span className="obs-template-access">
+                            {t.access.length ? `Asks to ${t.access.join(' and ')}` : 'Read only'}
+                        </span>
+                    </button>
+                ))}
+            </div>
+            {template && (
+                <form
+                    className="obs-template-form"
+                    onSubmit={(event) => { event.preventDefault(); void create(); }}
+                >
+                    <label>
+                        <span>Name</span>
+                        <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={120} />
+                    </label>
+                    {template.params.map((param) => (
+                        <label key={param.key}>
+                            <span>{param.label}</span>
+                            <input
+                                className="input"
+                                value={values[param.key] ?? ''}
+                                placeholder={param.placeholder}
+                                required={param.required}
+                                onChange={(e) => setValues((prev) => ({ ...prev, [param.key]: e.target.value }))}
+                            />
+                            {param.hint && <small className="hint">{param.hint}</small>}
+                        </label>
+                    ))}
+                    <div className="modal-actions">
+                        <button type="button" className="btn" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn primary" disabled={busy || !title.trim()}>
+                            {busy ? 'Creating…' : 'Create app'}
+                        </button>
+                    </div>
+                </form>
+            )}
+            {!template && (
+                <div className="modal-actions">
+                    <button type="button" className="btn" onClick={onClose}>Cancel</button>
+                </div>
+            )}
+        </Modal>
     );
 }

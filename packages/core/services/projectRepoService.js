@@ -81,6 +81,10 @@ const COMPARE_MAX_COMMITS = 30;
 const COMPARE_PATCH_BYTES = 2 * 1024 * 1024;
 const COMPARE_PATCH_CHARS = 200_000;
 const PR_LIST_MAX = 10;
+/** A pull request opened for review in the editor: files, comments and text caps. */
+const REVIEW_FILES_MAX = 100;
+const REVIEW_COMMENTS_MAX = 100;
+const REVIEW_BODY_MAX = 4000;
 const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale']);
 const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 const DIRTY_PATTERN = /local changes|unstaged changes|uncommitted changes|would be overwritten|commit or stash/i;
@@ -1270,6 +1274,106 @@ class ProjectRepoService {
             };
         }));
         return { name: repoRow.name, repo: repoRow.repo, pulls };
+    }
+
+    /**
+     * One pull request for review in the editor, as the person: its files with
+     * their patches (capped in total like a comparison), the inline review
+     * comments by file and line (`line` on the PR's side, null once outdated),
+     * the submitted reviews with a summary, and whether the clone is on the
+     * PR's branch (so the editor can offer to switch).
+     */
+    async pullRequestReview({ row = null, userId, project = null, owner = null, name, number }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const prNumber = Number(number);
+        if (!Number.isInteger(prNumber) || prNumber <= 0) {
+            throw new ProjectRepoError(400, 'BAD_NUMBER', 'Name the pull request by its number.');
+        }
+        const { api } = await this._api(userId, repoRow);
+        let pr;
+        let files;
+        let comments;
+        let reviews;
+        try {
+            [pr, files, comments, reviews] = await Promise.all([
+                api.getPullRequest(repoRow.repo, prNumber),
+                api.listPullRequestFiles(repoRow.repo, prNumber, { limit: REVIEW_FILES_MAX }),
+                api.listPullRequestReviewComments(repoRow.repo, prNumber, { limit: REVIEW_COMMENTS_MAX }),
+                api.listPullRequestReviews(repoRow.repo, prNumber, { limit: REVIEW_COMMENTS_MAX })
+            ]);
+        } catch (error) {
+            throw this._apiError(error, repoRow.repo);
+        }
+        const clip = (text, max) => {
+            const value = String(text || '');
+            return value.length > max ? `${value.slice(0, max)}\n… (cut)` : value;
+        };
+        let budget = DIFF_MAX_CHARS;
+        let patchesCut = false;
+        const fileRows = (Array.isArray(files) ? files : []).slice(0, REVIEW_FILES_MAX).map((file) => {
+            let patch = typeof file.patch === 'string' ? file.patch : null;
+            if (patch && patch.length > budget) { patch = null; patchesCut = true; }
+            if (patch) budget -= patch.length;
+            return {
+                path: file.filename,
+                previousPath: file.previous_filename || null,
+                status: file.status || 'modified',
+                additions: Number(file.additions) || 0,
+                deletions: Number(file.deletions) || 0,
+                patch
+            };
+        });
+        const commentRows = (Array.isArray(comments) ? comments : []).slice(0, REVIEW_COMMENTS_MAX).map((comment) => ({
+            id: comment.id,
+            path: comment.path,
+            line: comment.line ?? null,
+            originalLine: comment.original_line ?? null,
+            side: comment.side || 'RIGHT',
+            outdated: comment.line == null,
+            body: clip(comment.body, REVIEW_BODY_MAX),
+            author: comment.user?.login || null,
+            createdAt: comment.created_at || null,
+            url: comment.html_url || null,
+            inReplyTo: comment.in_reply_to_id ?? null
+        }));
+        const reviewRows = (Array.isArray(reviews) ? reviews : [])
+            .filter((review) => review.state && review.state !== 'PENDING')
+            .map((review) => ({
+                id: review.id,
+                author: review.user?.login || null,
+                state: review.state,
+                body: clip(review.body, REVIEW_BODY_MAX),
+                submittedAt: review.submitted_at || null,
+                url: review.html_url || null
+            }));
+        const status = await this._status(projectRow, repoRow.name);
+        const head = pr.head?.ref || null;
+        const fromFork = Boolean(pr.head?.repo?.full_name && pr.base?.repo?.full_name
+            && pr.head.repo.full_name !== pr.base.repo.full_name);
+        return {
+            name: repoRow.name,
+            repo: repoRow.repo,
+            number: pr.number,
+            title: pr.title,
+            url: pr.html_url,
+            state: pr.merged_at ? 'merged' : pr.state,
+            draft: Boolean(pr.draft),
+            author: pr.user?.login || null,
+            body: clip(pr.body, REVIEW_BODY_MAX),
+            head,
+            base: pr.base?.ref || null,
+            headSha: pr.head?.sha || null,
+            fromFork,
+            branch: status.branch,
+            onHead: Boolean(head && !fromFork && status.branch === head),
+            files: fileRows,
+            patchesCut,
+            filesTruncated: Number(pr.changed_files) > fileRows.length,
+            comments: commentRows,
+            reviews: reviewRows
+        };
     }
 
     /**
