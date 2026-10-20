@@ -250,6 +250,7 @@ const GROUPS = [
             'observatoryService',
             'outputContract',
             'projectAssetApi',
+            'appTemplates',
             'projectAssetService',
             'projectChat',
             'projectCollaboration',

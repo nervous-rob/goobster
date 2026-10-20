@@ -2,6 +2,7 @@ import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
 import { accountFetch } from '../lib/browserAccount';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
+import { useSearch } from '@tanstack/react-router';
 import { diffLines } from 'diff';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -9,6 +10,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { CodeEditor, languageFromPath, type EditorSelection } from './CodeEditor';
 import { DiffView } from './repoParts';
+import { fileContextItems, usePublishViewContext } from '../hooks/useViewContext';
 
 type AssetRow = {
     slug: string;
@@ -163,6 +165,19 @@ export function ProjectExplorer({ slug, ownerId, onChanged, askGoobster }: {
     const queryClient = useQueryClient();
     const [selected, setSelected] = useState<Selection | null>(null);
     const [wsOpen, setWsOpen] = useState<Record<string, boolean>>({ '': true });
+    // `?file=<path>` (the command palette, links): open that workspace file
+    // with its folders unfolded.
+    const linkedFile = (useSearch({ strict: false }) as { file?: unknown }).file;
+    useEffect(() => {
+        if (typeof linkedFile !== 'string' || !linkedFile) return;
+        const parts = linkedFile.split('/').filter(Boolean);
+        setWsOpen((prev) => {
+            const next = { ...prev };
+            for (let i = 1; i < parts.length; i++) next[parts.slice(0, i).join('/')] = true;
+            return next;
+        });
+        setSelected({ root: 'workspace', path: parts.join('/'), kind: 'file' });
+    }, [linkedFile]);
     const [searchText, setSearchText] = useState('');
     const [prefs, setPrefsState] = useState<ExplorerPrefs>(() => readPrefs());
     const setPrefs = (patch: ExplorerPrefs) => setPrefsState((prev) => {
@@ -800,6 +815,9 @@ function WorkspaceFileView({
     const [text, setText] = useState<string | null>(null);
     const [kind, setKind] = useState<'text' | 'image' | 'video' | 'binary'>('text');
     const [selection, setSelection] = useState<EditorSelection | null>(null);
+    const viewContext = fileContextItems(`workspace/${filePath}`, kind === 'text' ? selection : null, draft != null ? ' (unsaved edit)' : '');
+    usePublishViewContext('files:file', viewContext.file);
+    usePublishViewContext('files:selection', viewContext.selection);
     const url = api.projectContentUrl(slug, filePath, false, ownerId);
     const ext = filePath.split('.').pop()?.toLowerCase() || '';
     const image = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext);

@@ -159,6 +159,18 @@ class GitHubService {
         return await this._request(`/repos/${repo}/pulls/${Number(number)}/files`, { params: { per_page: limit } });
     }
 
+    /** Inline review comments on a pull request (path, line, body, thread), oldest first. */
+    async listPullRequestReviewComments(rawRepo, number, { limit = 100 } = {}) {
+        const repo = this.parseRepo(rawRepo);
+        return await this._request(`/repos/${repo}/pulls/${Number(number)}/comments`, { params: { per_page: Math.min(limit, 100) } });
+    }
+
+    /** Submitted reviews on a pull request (state, summary body), oldest first. */
+    async listPullRequestReviews(rawRepo, number, { limit = 100 } = {}) {
+        const repo = this.parseRepo(rawRepo);
+        return await this._request(`/repos/${repo}/pulls/${Number(number)}/reviews`, { params: { per_page: Math.min(limit, 100) } });
+    }
+
     /** Branches of a repository (name, protected, head sha), up to 100. */
     async listBranches(rawRepo, { limit = 100 } = {}) {
         const repo = this.parseRepo(rawRepo);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ViewIcon } from '../../icons/Icon';
 import { Link, Navigate, useNavigate, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,6 +20,7 @@ import { CommandButton, CommandModal, CommandStrip, useProjectCommand } from './
 import { OverviewView } from './OverviewView';
 import { RunsList } from './RunsList';
 import { TimelineView } from './TimelineView';
+import { CommandPalette } from './CommandPalette';
 import { requestCompose } from '../../hooks/useCompose';
 import type { Detail } from './types';
 
@@ -54,6 +55,18 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
     const [dockOpen, setDockOpen] = useState(false);
     const [peopleOpen, setPeopleOpen] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    // Ctrl/Cmd+K anywhere on the project: the palette.
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+                event.preventDefault();
+                setPaletteOpen((open) => !open);
+            }
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, []);
     const { command, run, dismiss } = useProjectCommand();
 
     const detail = useQuery({
@@ -69,6 +82,23 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
         void navigate({ to: '/projects' });
     };
     const go = (next: ProjectViewId) => navigate({ to: projectPath({ owner: ownerId, slug }, next) as never });
+    const openFile = (file: string) => navigate({
+        to: projectPath({ owner: ownerId, slug }, 'files') as never,
+        search: { file } as never
+    });
+    const openRun = (jobId: number) => {
+        void navigate({ to: projectPath({ owner: ownerId, slug }, 'runs') as never });
+        window.setTimeout(() => {
+            const row = document.querySelector<HTMLElement>(`[data-testid="run-${jobId}"]`);
+            row?.scrollIntoView({ block: 'center' });
+            row?.classList.add('is-flash');
+            window.setTimeout(() => row?.classList.remove('is-flash'), 1600);
+        }, 250);
+    };
+    const openApp = (app: string, full = false) => navigate({
+        to: projectPath({ owner: ownerId, slug }, 'apps') as never,
+        search: (full ? { app, full: 1 } : { app }) as never
+    });
     const showDock = dockOpen && view !== 'conversation';
     // "Ask Goobster ..." from a view: open the chat beside it and pre-fill
     // the composer (never sends). The dock listens once it has mounted.
@@ -98,6 +128,13 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                             {dockOpen ? 'Hide chat' : 'Chat'}
                         </button>
                     )}
+                    <button
+                        type="button"
+                        className="btn"
+                        title="Go to a view, app, file, run or plan step (Ctrl/Cmd+K)"
+                        aria-keyshortcuts="Control+K Meta+K"
+                        onClick={() => setPaletteOpen(true)}
+                    >🔎 Go to <kbd className="kbd-hint">Ctrl K</kbd></button>
                     <CommandButton onOpen={() => setCommandOpen(true)} />
                     <HeaderOverflow>
                         <button type="button" className="btn" onClick={() => setPeopleOpen(true)}>People</button>
@@ -149,6 +186,7 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                         onChanged={() => void refresh()}
                                         onDeleted={() => { void refresh(); void navigate({ to: '/projects' }); }}
                                         onOpen={go}
+                                        onOpenApp={openApp}
                                         askGoobster={askGoobster}
                                     />
                                 )}
@@ -201,6 +239,19 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                 />
                             )}
                         </div>
+                    )}
+                    {paletteOpen && (
+                        <CommandPalette
+                            slug={slug}
+                            ownerId={ownerId}
+                            jobs={detail.data?.jobs || []}
+                            onClose={() => setPaletteOpen(false)}
+                            onView={(next) => void go(next)}
+                            onApp={(app) => void openApp(app)}
+                            onFile={(file) => void openFile(file)}
+                            onRun={openRun}
+                            askGoobster={askGoobster}
+                        />
                     )}
                     {peopleOpen && (
                         <ProjectPeopleModal

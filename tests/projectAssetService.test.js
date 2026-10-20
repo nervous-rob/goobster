@@ -142,6 +142,37 @@ describe('asset CRUD', () => {
         expect(updated.grants.observatoryRead).toEqual(['grant-lab']);
     });
 
+    test('apps pin to the Overview, at most four per project; notes do not pin', async () => {
+        const svc = makeService();
+        const USER = nextUser();
+        await seedProject(USER, 'pin-lab', 'Pins');
+        for (const name of ['One', 'Two', 'Three', 'Four', 'Five']) {
+            await svc.save({ userId: USER, project: 'pin-lab', name, kind: 'app', language: 'html', source: `<p>${name}</p>` });
+        }
+        await svc.save({ userId: USER, project: 'pin-lab', name: 'Readme', kind: 'note', language: 'markdown', source: 'x' });
+
+        const pinned = await svc.update({ userId: USER, project: 'pin-lab', asset: 'one', pinned: true });
+        expect(pinned.pinned).toBe(true);
+        expect(pinned.pinnedAt).toEqual(expect.any(String));
+        for (const asset of ['two', 'three', 'four']) {
+            await svc.update({ userId: USER, project: 'pin-lab', asset, pinned: true });
+        }
+        await expectThrow(() => svc.update({ userId: USER, project: 'pin-lab', asset: 'five', pinned: true }),
+            { code: 'PIN_LIMIT', status: 409 });
+        await expectThrow(() => svc.update({ userId: USER, project: 'pin-lab', asset: 'readme', pinned: true }),
+            { code: 'NOT_AN_APP', status: 400 });
+        // Pinning again is a no-op, not a limit hit.
+        const again = await svc.update({ userId: USER, project: 'pin-lab', asset: 'four', pinned: true });
+        expect(again.pinned).toBe(true);
+
+        await svc.update({ userId: USER, project: 'pin-lab', asset: 'two', pinned: false });
+        const listed = await svc.list({ userId: USER, project: 'pin-lab', kind: 'app' });
+        expect(listed.filter(a => a.pinned).map(a => a.slug).sort()).toEqual(['four', 'one', 'three']);
+        // A new version keeps the pin.
+        const saved = await svc.save({ userId: USER, project: 'pin-lab', name: 'One', kind: 'app', language: 'html', source: '<p>One v2</p>' });
+        expect(saved.pinned).toBe(true);
+    });
+
     test('delete removes the asset and its versions', async () => {
         const svc = makeService();
         const USER = nextUser();

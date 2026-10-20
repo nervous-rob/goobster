@@ -7,6 +7,7 @@ const { OBSERVATORY_COMMAND_MAX_LENGTH } = require('../appHelpers');
 const { streamWebChatTurn } = require('../appStream');
 const { backgroundJobHint } = require('../../utils/projectSetupContract');
 const { portalMimeFor } = require('../../services/projectService');
+const appTemplates = require('../../services/appTemplates');
 
 function mountProjects(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, projectOwner } = h;
@@ -671,6 +672,9 @@ function mountProjects(app, ctx, h) {
     app.get('/api/app/projects/:slug/repos/:name/pulls', requireAuth, chatRoute(async (req) =>
         repos().pullRequests({ ...repoArgs(req), state: req.query?.state || 'open' })
     ));
+    app.get('/api/app/projects/:slug/repos/:name/pulls/:number/review', requireAuth, chatRoute(async (req) =>
+        repos().pullRequestReview({ ...repoArgs(req), number: req.params.number })
+    ));
     app.post('/api/app/projects/:slug/repos/:name/pulls', requireAuth, chatRoute(async (req) =>
         repos().createPullRequest({
             ...repoArgs(req),
@@ -749,7 +753,8 @@ function mountProjects(app, ctx, h) {
             owner: projectOwner(req),
             asset: req.params.asset,
             name: req.body?.name,
-            grants: req.body?.grants
+            grants: req.body?.grants,
+            pinned: typeof req.body?.pinned === 'boolean' ? req.body.pinned : undefined
         })
     ));
 
@@ -834,6 +839,29 @@ function mountProjects(app, ctx, h) {
             startedBy: req.body?.startedBy === 'app' ? 'app' : 'portal'
         })
     ));
+
+    // Ready-made apps (services/appTemplates.js): the catalog, and one saved
+    // into a project as an ordinary, versioned app asset.
+    app.get('/api/app/projects/app-templates', requireAuth, chatRoute(async () => ({
+        templates: appTemplates.listTemplates()
+    })));
+    app.post('/api/app/projects/:slug/apps/from-template', requireAuth, chatRoute(async (req) => {
+        const built = appTemplates.renderTemplate(req.body?.template, {
+            title: req.body?.title, path: req.body?.path, args: req.body?.args
+        });
+        return ctx.projectAssets.save({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            slug: req.body?.slug || built.name,
+            name: built.name,
+            kind: 'app',
+            language: 'html',
+            source: built.source,
+            note: `From the ${built.id} template`,
+            origin: 'portal'
+        });
+    }));
 
     // --- Project triggers (cron / event automations) ------------------------
     app.get('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => ({

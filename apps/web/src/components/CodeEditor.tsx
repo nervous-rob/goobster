@@ -69,6 +69,45 @@ const gitGutter = [
     gutter({ class: 'cm-git-gutter', markers: (view) => view.state.field(gitMarksField) })
 ];
 
+// --- Review comments: a 💬 per line a pull-request review commented on -------------
+
+/** A line with review comments (1-based) and the tooltip summarising them. */
+export type LineComment = { line: number; text: string };
+
+class CommentMark extends GutterMarker {
+    constructor(readonly line: number, readonly text: string) { super(); }
+    eq(other: CommentMark) { return other.line === this.line && other.text === this.text; }
+    toDOM() {
+        const el = document.createElement('div');
+        el.className = 'cm-comment-mark';
+        el.textContent = '💬';
+        el.title = this.text;
+        return el;
+    }
+}
+const setCommentMarks = StateEffect.define<RangeSet<GutterMarker>>();
+const commentMarksField = StateField.define<RangeSet<GutterMarker>>({
+    create: () => RangeSet.empty,
+    update(value, tr) {
+        let next = value.map(tr.changes);
+        for (const effect of tr.effects) if (effect.is(setCommentMarks)) next = effect.value;
+        return next;
+    }
+});
+
+function commentMarks(doc: Text, comments: LineComment[]): RangeSet<GutterMarker> {
+    const builder = new RangeSetBuilder<GutterMarker>();
+    const byLine = new Map<number, string[]>();
+    for (const comment of comments) {
+        if (!Number.isInteger(comment.line) || comment.line < 1 || comment.line > doc.lines) continue;
+        byLine.set(comment.line, [...(byLine.get(comment.line) || []), comment.text]);
+    }
+    for (const line of [...byLine.keys()].sort((a, b) => a - b)) {
+        builder.add(doc.line(line).from, doc.line(line).from, new CommentMark(line, byLine.get(line)!.join('\n\n')));
+    }
+    return builder.finish();
+}
+
 /** Marks for `doc` against `base`, one per line, in document order. */
 export function gitMarks(doc: Text, base: string): RangeSet<GutterMarker> {
     const builder = new RangeSetBuilder<GutterMarker>();
@@ -110,6 +149,8 @@ export function CodeEditor({
     readOnly = false,
     onChange,
     gitBase = null,
+    comments = null,
+    onCommentClick,
     onSelectionChange,
     onSave
 }: {
@@ -119,6 +160,9 @@ export function CodeEditor({
     onChange?: (value: string) => void;
     /** The text at HEAD: shows a gutter of added / changed / removed lines. */
     gitBase?: string | null;
+    /** Review comments to mark in a gutter (a pull request under review). */
+    comments?: LineComment[] | null;
+    onCommentClick?: (line: number) => void;
     onSelectionChange?: (selection: EditorSelection) => void;
     /** Ctrl/Cmd+S. */
     onSave?: () => void;
@@ -133,6 +177,14 @@ export function CodeEditor({
     onSaveRef.current = onSave;
     const baseRef = useRef<string | null>(gitBase);
     baseRef.current = gitBase;
+    const commentsRef = useRef<LineComment[] | null>(comments);
+    commentsRef.current = comments;
+    const onCommentRef = useRef(onCommentClick);
+    onCommentRef.current = onCommentClick;
+    const applyComments = (view: EditorView) => {
+        const list = commentsRef.current;
+        view.dispatch({ effects: setCommentMarks.of(list?.length ? commentMarks(view.state.doc, list) : RangeSet.empty) });
+    };
     const marksTimer = useRef<number | undefined>(undefined);
 
     const refreshMarks = (view: EditorView) => {
@@ -149,6 +201,20 @@ export function CodeEditor({
         if (!host) return;
         const extensions = [
             lineNumbers(),
+            commentMarksField,
+            gutter({
+                class: 'cm-comment-gutter',
+                markers: (v) => v.state.field(commentMarksField),
+                domEventHandlers: {
+                    click: (v, block) => {
+                        const line = v.state.doc.lineAt(block.from).number;
+                        let hit = false;
+                        v.state.field(commentMarksField).between(block.from, block.from, () => { hit = true; });
+                        if (hit) onCommentRef.current?.(line);
+                        return hit;
+                    }
+                }
+            }),
             gitGutter,
             highlightActiveLine(),
             history(),
@@ -182,6 +248,8 @@ export function CodeEditor({
                 '&': { height: '100%', fontSize: '13px' },
                 '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
                 '.cm-git-gutter': { width: '4px', marginRight: '2px' },
+                '.cm-comment-gutter': { minWidth: '0' },
+                '.cm-comment-mark': { cursor: 'pointer', fontSize: '11px', lineHeight: 'inherit', padding: '0 2px' },
                 '.cm-git-mark': { width: '3px', height: '100%' },
                 '.cm-git-mark.is-added': { background: '#3fb950' },
                 '.cm-git-mark.is-modified': { background: '#d29922' },
@@ -194,6 +262,7 @@ export function CodeEditor({
         });
         viewRef.current = view;
         refreshMarks(view);
+        applyComments(view);
         return () => {
             window.clearTimeout(marksTimer.current);
             view.destroy();
@@ -210,6 +279,8 @@ export function CodeEditor({
         view.dispatch({
             changes: { from: 0, to: view.state.doc.length, insert: value }
         });
+        applyComments(view);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value]);
 
     useEffect(() => {
@@ -217,6 +288,13 @@ export function CodeEditor({
         if (view) refreshMarks(view);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [gitBase]);
+
+    const commentsKey = JSON.stringify(comments || []);
+    useEffect(() => {
+        const view = viewRef.current;
+        if (view) applyComments(view);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [commentsKey]);
 
     return <div ref={hostRef} className="cm-host" />;
 }

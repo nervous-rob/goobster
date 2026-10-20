@@ -1807,6 +1807,8 @@ CREATE TABLE IF NOT EXISTS project_assets (
     -- Approved cross-project Observatory reads (JSON): { observatoryRead: ["slug"] }.
     -- Empty/null means no extra grants. Own-project reads are Phase 4.
     grantsJson TEXT,
+    -- Apps pinned to the project's Overview (shared by every member); NULL = not pinned
+    pinnedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (projectId, slug)

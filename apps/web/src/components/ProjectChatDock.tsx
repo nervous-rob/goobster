@@ -14,6 +14,7 @@ import { personaColor, personaGlyph } from '../parlor/persona';
 import { applyParlorDelta, applyParlorMessage, applyParlorTool, settleParlorStream } from '../parlor/stream';
 import type { ToolEvent } from '../lib/types';
 import { useComposeListener } from '../hooks/useCompose';
+import { useViewContext, viewContextBlock } from '../hooks/useViewContext';
 
 /**
  * The project parlor dock (§14): a slim view of the project's shared
@@ -44,6 +45,11 @@ export function ProjectChatDock({
     const confirm = useConfirm();
     const queryClient = useQueryClient();
     const [composer, setComposer] = useState('');
+    // What the person has open beside the chat; a chip removed with ✕ stays
+    // out until that thing changes (a new id).
+    const viewContext = useViewContext();
+    const [excludedContext, setExcludedContext] = useState<Set<string>>(() => new Set());
+    const keptContext = viewContext.filter((item) => !excludedContext.has(item.id));
     useComposeListener(setComposer, open);
     const [sending, setSending] = useState(false);
     const [streamMessages, setStreamMessages] = useState<ParlorMessage[]>([]);
@@ -216,8 +222,10 @@ export function ProjectChatDock({
     };
 
     async function sendMessage() {
-        const text = composer.trim();
-        if (!text || sending || conversationId == null) return;
+        const typed = composer.trim();
+        if (!typed || sending || conversationId == null) return;
+        const block = viewContextBlock(keptContext, typed);
+        const text = block ? `${block}\n\n${typed}` : typed;
         setComposer('');
         setSending(true);
         beginStream({ role: 'user', content: text, userId: me.user.id });
@@ -342,6 +350,31 @@ export function ProjectChatDock({
                         )}
                     </div>
                     <InboxContextChips kind="project" conversationId={conversationId} disabled={sending} />
+                    {viewContext.length > 0 && (
+                        <div className="view-context" aria-label="What Goobster will see" data-testid="view-context">
+                            {viewContext.map((item) => {
+                                const off = excludedContext.has(item.id);
+                                return (
+                                    <span key={item.id} className={`view-context-chip is-${item.kind}${off ? ' is-off' : ''}`} title={item.text}>
+                                        <span aria-hidden="true">{item.kind === 'file' ? '📄' : item.kind === 'selection' ? '✂' : '🧩'}</span>
+                                        <span className="view-context-label">{item.label}</span>
+                                        <button
+                                            type="button"
+                                            className="view-context-toggle"
+                                            aria-label={off ? `Include ${item.label}` : `Leave out ${item.label}`}
+                                            aria-pressed={!off}
+                                            onClick={() => setExcludedContext((prev) => {
+                                                const next = new Set(prev);
+                                                if (off) next.delete(item.id); else next.add(item.id);
+                                                return next;
+                                            })}
+                                        >{off ? '+' : '✕'}</button>
+                                    </span>
+                                );
+                            })}
+                            <span className="hint">{keptContext.length ? 'Sent with your message; visible to the project.' : 'Nothing from this page is sent.'}</span>
+                        </div>
+                    )}
                     <form
                         className="obs-chat-dock-composer"
                         onSubmit={(event: FormEvent) => { event.preventDefault(); void sendMessage(); }}

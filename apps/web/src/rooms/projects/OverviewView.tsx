@@ -10,6 +10,7 @@ import { whenLabel } from '../observatory/format';
 import { EXECUTION_OFF } from './Command';
 import { RunsList } from './RunsList';
 import { NowPanel } from './NowPanel';
+import { PinnedApps } from '../observatory/AppsTab';
 import type { Detail } from './types';
 import { featureActive } from '../../lib/rooms';
 
@@ -22,13 +23,15 @@ const LATEST_RUNS = 3;
  * ones (render) sit here too.
  */
 export function OverviewView({
-    detail, ownerId, onChanged, onDeleted, onOpen, askGoobster
+    detail, ownerId, onChanged, onDeleted, onOpen, onOpenApp, askGoobster
 }: {
     detail: Detail;
     ownerId: string;
     onChanged: () => void;
     onDeleted: () => void;
     onOpen: (view: ProjectViewId) => void;
+    /** Open one app in the Apps view (alone, with `full`). */
+    onOpenApp: (app: string, full?: boolean) => void;
     askGoobster: (text: string) => void;
 }) {
     const me = useMe();
@@ -128,6 +131,7 @@ export function OverviewView({
             </div>
 
             <NowPanel slug={p.slug} ownerId={ownerId} onOpen={onOpen} askGoobster={askGoobster} canRun={executionOn} />
+            <PinnedApps slug={p.slug} ownerId={ownerId} onOpenApp={onOpenApp} />
             <div className="obs-overview">
                 <OverviewPlan slug={p.slug} ownerId={ownerId} onOpen={() => onOpen('plan')} />
                 <section className="obs-overview-jobs" data-tour="project-latest-runs">

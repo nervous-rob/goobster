@@ -589,6 +589,10 @@ export const api = {
     runProjectAsset: (project: string, asset: string, background = false, owner?: string | null, startedBy?: 'app') =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run${ownerQs(owner)}`,
             { method: 'POST', body: { background, owner: owner || undefined, startedBy } }),
+    appTemplates: () => request('/api/app/projects/app-templates'),
+    createAppFromTemplate: (project: string, body: { template: string; title?: string; path?: string; args?: string; slug?: string }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/apps/from-template${ownerQs(owner)}`,
+            { method: 'POST', body: { ...body, owner: owner || undefined } }),
     runProjectFile: (project: string, body: { path: string; args?: string[]; stdin?: string; background?: boolean; startedBy?: 'app' }, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/run-file${ownerQs(owner)}`,
             { method: 'POST', body: { ...body, owner: owner || undefined } }),
@@ -693,6 +697,8 @@ export const api = {
         request(`/api/app/observatory/jobs/${jobId}/changes`),
     projectRepoSummary: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/summary${ownerQs(owner)}`),
+    projectRepoReview: (project: string, name: string, number: number, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/pulls/${number}/review${ownerQs(owner)}`),
     projectRepoChanges: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/changes${ownerQs(owner)}`),
     projectRepoFile: (project: string, name: string, filePath: string, owner?: string | null) =>

@@ -411,6 +411,23 @@ editor for that clone (`RepoIde`), git-aware throughout:
   takes an optional `paths` array to commit only those files. Paths are
   relative to the clone; absolute paths, `..` and `.git` are refused
   (`BAD_PATH`).
+- **Review a pull request.** The **Review** pane lists the repository's
+  open pull requests (with their CI); pick one to see its reviews
+  (approved, changes requested, with their summaries) and its files with
+  `+/−` counts and a 💬 count per file. When the clone is on the pull
+  request's branch, a file opens in the editor with every review comment
+  thread marked by a 💬 in the gutter (hover for the comments, click to
+  jump to the thread); otherwise the pane offers **Switch to `<branch>`**
+  (refused while tabs have unsaved edits) and shows the pull request's own
+  diff. A pull request from a fork can be read but not switched to. Under
+  the editor the file's threads are listed (outdated ones say which line
+  they were on) with **Ask Goobster to address this**, which fills the
+  chat with the pull request, the place, the quoted thread and the ask to
+  fix it on the branch and push (never forced). API:
+  `GET .../repos/:name/pulls/:number/review` (`projectRepoService.pullRequestReview`,
+  the viewer's GitHub token: files with patches capped like a comparison,
+  up to 100 files and 100 inline comments, review and description texts
+  capped at 4,000 characters).
 
 ### Assets
 
@@ -432,6 +449,11 @@ pattern): source ≤ 200 KB/version, `maxAssetsPerProject` (default 20),
 `maxVersionsPerAsset` (default 50 — oldest non-head versions pruned).
 Identical-source saves are a no-op (content-hash vs head). Origins:
 `chat`, `portal`, `agent`, `migration`.
+
+Any member can **pin** an app to the project's Overview
+(`PATCH .../assets/:asset { pinned: true|false }`, `project_assets.pinnedAt`;
+apps only, `NOT_AN_APP` otherwise; at most four per project, `PIN_LIMIT`);
+the pin is shared by everyone on the project and survives new versions.
 
 ### Jobs
 
@@ -789,6 +811,7 @@ notebook that keeps its pages as project notes.
 | `goobster.remove(path)` | delete a file or folder | `delete` |
 | `goobster.run(path, { args, stdin, background })` | run a `.py`, `.js` / `.cjs` / `.mjs` or `.sh` workspace file from its own folder with `args` as argv; foreground returns `{ jobId, result: { ok, stdout, stderr, exitCode } }`, background returns `{ jobId }` | `run` |
 | `goobster.job(jobId, since)` | a run's live output and status (poll a background run) | `run` |
+| `goobster.watch(jobId, onUpdate)` | live output pushed to the app: `onUpdate({ status, running, stdout, stderr, done })` about every second until the run ends; returns `{ stop(), done }` (`done` resolves with the last update). At most 4 at once; a reload of the app ends them | `run` |
 | `goobster.assets.list(kind)` / `.read(slug, version)` | the project's assets and their source | — |
 | `goobster.assets.write(slug, source, { kind, name, language, note })` | save a new version of a **note** (default) or **script** | `write` |
 | `goobster.assets.remove(slug)` / `.run(slug, { background })` | delete a note or script; run a script asset | `delete` / `run` |
@@ -836,6 +859,43 @@ paths and sibling imports work; the job's code is
 that launcher, headed `# goobster: run workspace/<path>`. Paths and args
 are passed as JSON or shell-quoted, never spliced in raw; at most 64 args
 of 4,096 characters.
+
+### App templates
+
+**+ New app from template** in the Apps view (and `save_app template=` for
+Goobster, with `name`, `path` and, for the console, `template_args`)
+builds a ready app and saves it as an ordinary, versioned html app that can
+be edited like any other (`services/appTemplates.js`). Each declares only
+the access it uses and keeps its settings in a
+`<script id="goobster-app-config" type="application/json">` block:
+
+- **Data table editor** (`data-table`, declares `write`): edit a `.json`
+  array of objects or a `.csv` file as a table (add, rename and delete
+  columns; add and delete rows), then Save writes it back (numbers and
+  booleans keep their type in JSON). A missing file starts empty and is
+  created on the first save.
+- **Run console** (`run-console`, declares `run`): run a `.py`, `.js` or
+  `.sh` workspace file with arguments (shell-style quoting) in the
+  background and watch its output live; keeps the session's runs, and a
+  click puts a past run's arguments back.
+- **Chart** (`chart`, read only): plot a `.json` or `.csv` file as lines;
+  pick the x column and the series; reload, or refresh every 10 seconds
+  while runs update it.
+
+API: `GET /api/app/projects/app-templates` (the catalog: name,
+description, access, parameters) and
+`POST /api/app/projects/:slug/apps/from-template { template, title, path, args, slug? }`.
+Paths must stay inside the workspace (`BAD_PATH`); an unknown template is
+`NO_SUCH_TEMPLATE`. Templates use no form element (app frames have no
+`allow-forms`).
+
+### Pinned apps and app addresses
+
+The Apps view's address names the app: `/projects/:owner/:slug/apps?app=<slug>`,
+and `&full=1` shows it alone at full height (**⤢ Full page** / **⤡ Exit
+full page**), so an app can be bookmarked and linked. **📌 Pin to
+Overview** puts it on the project's Overview, live (same bridge,
+approvals and activity as in the Apps view), with **Open** and **⤢**.
 
 ## Unfiled apps (the former Workshop inbox)
 
@@ -961,6 +1021,21 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   trigger change, workspace write, job start/settle) publish
   `project-changed` on `eventBusService` so the open explorer and version
   rails refetch.
+- **What Goobster will see.** Above the dock's composer, chips show what
+  is open beside the chat: the file in the Files or repository editor
+  (with its branch, and whether it has unsaved edits), the selected lines,
+  and the app open in the Apps view. ✕ leaves one out (it comes back when
+  you open something else); what is kept goes at the top of your message,
+  as `(Context: Open file: …)` and the selected lines quoted (at most 4,000
+  characters), so everyone on the project sees it in the transcript. A
+  selection your message already quotes ("Ask Goobster about lines") is
+  not repeated. Nothing is stored (`hooks/useViewContext.ts`).
+- **Go to (Ctrl/Cmd+K).** The palette jumps to a view, an app, a workspace
+  file by name (through the workspace search; the Files view opens
+  `?file=<path>` with its folders unfolded), a recent run, or a plan step;
+  or puts the typed text in the chat as a request for Goobster (never
+  sent). Arrow keys and Enter, Esc to close; the header's **🔎 Go to**
+  opens it too.
 
 ### Dashboard artifact and share links
 
