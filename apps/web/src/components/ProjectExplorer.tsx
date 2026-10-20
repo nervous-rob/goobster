@@ -1,6 +1,6 @@
 import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
 import { accountFetch } from '../lib/browserAccount';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { diffLines } from 'diff';
 import { api } from '../lib/api';
@@ -92,8 +92,63 @@ function sizeLabel(bytes: number): string {
 
 function assetIcon(kind: string): string {
     if (kind === 'app') return '✨';
-    if (kind === 'script') return '▶';
-    return '✎';
+    if (kind === 'script') return '📜';
+    return '📝';
+}
+
+const ASSET_GROUPS: { kind: string; label: string }[] = [
+    { kind: 'app', label: 'Apps' },
+    { kind: 'script', label: 'Scripts' },
+    { kind: 'note', label: 'Notes' }
+];
+
+/** Per-viewer explorer layout, remembered in this browser only. */
+type ExplorerPrefs = {
+    width?: number;
+    workspaceOpen?: boolean;
+    assetsOpen?: boolean;
+    closedGroups?: string[];
+    showHidden?: boolean;
+};
+const PREFS_KEY = 'goobster.projectExplorer';
+const TREE_MIN = 200;
+const TREE_MAX = 560;
+const TREE_DEFAULT = 300;
+/** Above this many assets the section starts collapsed (until the viewer opens it). */
+const ASSETS_COLLAPSE_AT = 12;
+
+function readPrefs(): ExplorerPrefs {
+    try {
+        const raw = localStorage.getItem(PREFS_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' ? parsed as ExplorerPrefs : {};
+    } catch {
+        return {};
+    }
+}
+
+function writePrefs(prefs: ExplorerPrefs) {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* private mode */ }
+}
+
+/**
+ * A long name truncates in the middle, keeping its end (dates, versions and
+ * the extension usually tell siblings apart). Plain text, so the button's
+ * accessible name is still the whole name.
+ */
+function TreeName({ name }: { name: string }) {
+    if (name.length <= 22) return <span className="obs-tree-name">{name}</span>;
+    const keep = Math.min(12, Math.floor(name.length / 3));
+    return (
+        <span className="obs-tree-name is-split">
+            <span className="obs-tree-name-head">{name.slice(0, -keep)}</span>
+            <span className="obs-tree-name-tail">{name.slice(-keep)}</span>
+        </span>
+    );
+}
+
+function clampWidth(width: number): number {
+    return Math.min(TREE_MAX, Math.max(TREE_MIN, Math.round(width)));
 }
 
 export function ProjectExplorer({ slug, ownerId, onChanged, askGoobster }: {
@@ -109,6 +164,14 @@ export function ProjectExplorer({ slug, ownerId, onChanged, askGoobster }: {
     const [selected, setSelected] = useState<Selection | null>(null);
     const [wsOpen, setWsOpen] = useState<Record<string, boolean>>({ '': true });
     const [searchText, setSearchText] = useState('');
+    const [prefs, setPrefsState] = useState<ExplorerPrefs>(() => readPrefs());
+    const setPrefs = (patch: ExplorerPrefs) => setPrefsState((prev) => {
+        const next = { ...prev, ...patch };
+        writePrefs(next);
+        return next;
+    });
+    const treeWidth = clampWidth(prefs.width ?? TREE_DEFAULT);
+    const filter = searchText.trim().toLowerCase();
     const [searchFor, setSearchFor] = useState('');
     const search = useQuery({
         queryKey: keys.projectSearch(slug, searchFor, ownerId),
@@ -340,103 +403,150 @@ export function ProjectExplorer({ slug, ownerId, onChanged, askGoobster }: {
         return diffLines(diffDetail.data.source, headSource);
     }, [diffDetail.data, assetDetail.data, headSource]);
 
+    /** True when the entry's name matches the filter, or a loaded descendant's does. */
+    function matchesFilter(entry: WsEntry): boolean {
+        if (!filter) return true;
+        if (entry.name.toLowerCase().includes(filter)) return true;
+        if (entry.kind !== 'directory') return false;
+        return (wsChildren[entry.path] || []).some(matchesFilter);
+    }
+
     function renderWorkspaceNodes(dirPath: string, depth: number) {
-        const entries = wsChildren[dirPath] || [];
-        return entries.map((entry) => {
-            const open = Boolean(wsOpen[entry.path]);
+        const all = wsChildren[dirPath] || [];
+        const hidden = all.filter((entry) => entry.name.startsWith('.'));
+        const visible = all.filter((entry) => (prefs.showHidden || !entry.name.startsWith('.')) && matchesFilter(entry));
+        const nodes = visible.map((entry) => {
+            // A filter shows the matches inside loaded folders without opening them for good.
+            const open = Boolean(wsOpen[entry.path]) || Boolean(filter && entry.kind === 'directory'
+                && !entry.name.toLowerCase().includes(filter) && (wsChildren[entry.path] || []).some(matchesFilter));
             const active = selected?.root === 'workspace' && selected.path === entry.path;
+            const icon = entry.kind === 'directory' ? (open ? '📂' : '📁') : (entry.isImage ? '🖼' : entry.isVideo ? '🎬' : '📄');
             return (
                 <div key={entry.path}>
                     <button
                         type="button"
-                        className={`obs-tree-item${active ? ' active' : ''}`}
-                        style={{ paddingLeft: 12 + depth * 14 }}
+                        className={`obs-tree-item${active ? ' active' : ''}${entry.name.startsWith('.') ? ' is-hidden' : ''}`}
+                        style={{ paddingLeft: 8 + depth * 14 }}
+                        title={`workspace/${entry.path}${entry.kind === 'file' ? ` · ${sizeLabel(entry.size)}${entry.modifiedAt ? ` · ${whenLabel(entry.modifiedAt)}` : ''}` : ''}`}
                         onClick={() => {
                             setSelected({ root: 'workspace', path: entry.path, kind: entry.kind });
                             if (entry.kind === 'directory') void toggleWorkspace(entry.path);
                         }}
                     >
-                        <span>{entry.kind === 'directory' ? (open ? '📂' : '📁') : (entry.isImage ? '🖼' : entry.isVideo ? '🎬' : '📄')}</span>
-                        <span>{entry.name}</span>
-                        {entry.kind === 'file' && <span className="hint">{sizeLabel(entry.size)}</span>}
+                        <span className="obs-tree-icon">{icon}</span>
+                        <TreeName name={entry.name} />
+                        {entry.kind === 'file' && <span className="obs-tree-meta">{sizeLabel(entry.size)}</span>}
                     </button>
                     {entry.kind === 'directory' && open && renderWorkspaceNodes(entry.path, depth + 1)}
                 </div>
             );
         });
+        if (hidden.length && !filter) {
+            nodes.push(
+                <button
+                    key={`${dirPath}:hidden`}
+                    type="button"
+                    className="obs-tree-more"
+                    style={{ paddingLeft: 8 + depth * 14 }}
+                    onClick={() => setPrefs({ showHidden: !prefs.showHidden })}
+                >
+                    {prefs.showHidden ? 'Hide dotfiles' : `+ ${hidden.length} hidden`}
+                </button>
+            );
+        }
+        return nodes;
+    }
+
+    function startResize(event: ReactPointerEvent<HTMLDivElement>) {
+        event.preventDefault();
+        const startX = event.clientX;
+        const startWidth = treeWidth;
+        const handle = event.currentTarget;
+        handle.setPointerCapture(event.pointerId);
+        document.body.classList.add('convs-resizing');
+        const move = (e: PointerEvent) => setPrefsState((prev) => ({ ...prev, width: clampWidth(startWidth + e.clientX - startX) }));
+        const up = () => {
+            document.body.classList.remove('convs-resizing');
+            handle.removeEventListener('pointermove', move);
+            handle.removeEventListener('pointerup', up);
+            setPrefsState((prev) => { writePrefs(prev); return prev; });
+        };
+        handle.addEventListener('pointermove', move);
+        handle.addEventListener('pointerup', up);
+    }
+
+    const filteredAssets = filter
+        ? assetList.filter((asset) => `${asset.slug} ${asset.name}`.toLowerCase().includes(filter))
+        : assetList;
+    const assetsOpen = filter ? true : (prefs.assetsOpen ?? assetList.length <= ASSETS_COLLAPSE_AT);
+    const workspaceOpen = filter ? true : (prefs.workspaceOpen ?? true);
+    const closedGroups = new Set(prefs.closedGroups || []);
+    const groupedAssets = [
+        ...ASSET_GROUPS.map((group) => ({ ...group, rows: filteredAssets.filter((asset) => asset.kind === group.kind) })),
+        { kind: 'other', label: 'Other', rows: filteredAssets.filter((asset) => !ASSET_GROUPS.some((group) => group.kind === asset.kind)) }
+    ].filter((group) => group.rows.length);
+    const rootCount = (wsChildren[''] || []).filter((entry) => prefs.showHidden || !entry.name.startsWith('.')).length;
+
+    function renderAsset(asset: AssetRow) {
+        const active = selected?.root === 'assets' && selected.slug === asset.slug;
+        return (
+            <button
+                key={asset.slug}
+                type="button"
+                className={`obs-tree-item${active ? ' active' : ''}`}
+                style={{ paddingLeft: 22 }}
+                title={`assets/${asset.slug}${asset.name && asset.name !== asset.slug ? ` · ${asset.name}` : ''}`}
+                onClick={() => setSelected({ root: 'assets', slug: asset.slug })}
+            >
+                <span className="obs-tree-icon">{assetIcon(asset.kind)}</span>
+                <TreeName name={asset.slug} />
+                {asset.currentVersion ? <span className="obs-tree-meta">v{asset.currentVersion}</span> : null}
+                {asset.kind === 'script' && (
+                    <span
+                        className="obs-tree-run"
+                        title="Run in the background"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            setSelected({ root: 'assets', slug: asset.slug });
+                            void api.runProjectAsset(slug, asset.slug, true, ownerId)
+                                .then(() => { toast(`Started ${asset.slug}.`); onChanged(); })
+                                .catch((error) => toast((error as Error).message, true));
+                        }}
+                    >▶</span>
+                )}
+            </button>
+        );
     }
 
     return (
         <div className="obs-explorer attachment-drop-zone" {...drop.dropProps}>
             {drop.indicator}
-            <aside className="obs-tree">
-                <div className="obs-tree-root">assets/</div>
-                {assets.isPending && <div className="hint">Loading assets…</div>}
-                {assetList.map((asset) => (
-                    <button
-                        key={asset.slug}
-                        type="button"
-                        className={`obs-tree-item${selected?.root === 'assets' && selected.slug === asset.slug ? ' active' : ''}`}
-                        style={{ paddingLeft: 26 }}
-                        onClick={() => setSelected({ root: 'assets', slug: asset.slug })}
+            <aside className="obs-tree" style={{ width: treeWidth }}>
+                <div className="obs-tree-toolbar">
+                    <form
+                        className="obs-search"
+                        role="search"
+                        onSubmit={(event) => { event.preventDefault(); setSearchFor(searchText.trim()); }}
                     >
-                        <span>{assetIcon(asset.kind)}</span>
-                        <span>{asset.slug}{asset.currentVersion ? ` · v${asset.currentVersion}` : ''}</span>
-                        {asset.kind === 'script' && (
-                            <span
-                                className="obs-tree-run"
-                                title="Run"
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    setSelected({ root: 'assets', slug: asset.slug });
-                                    void api.runProjectAsset(slug, asset.slug, true, ownerId)
-                                        .then(() => { toast(`Started ${asset.slug}.`); onChanged(); })
-                                        .catch((error) => toast((error as Error).message, true));
-                                }}
-                            >▶</span>
-                        )}
-                    </button>
-                ))}
-                <form
-                    className="obs-search"
-                    role="search"
-                    onSubmit={(event) => { event.preventDefault(); setSearchFor(searchText.trim()); }}
-                >
-                    <input
-                        className="input"
-                        type="search"
-                        value={searchText}
-                        onChange={(event) => { setSearchText(event.target.value); if (!event.target.value) setSearchFor(''); }}
-                        placeholder="Search the workspace… (Enter)"
-                        aria-label="Search the workspace"
-                    />
-                    {searchFor.length >= 2 && search.isPending && <span className="hint">Searching…</span>}
-                    {search.isError && <span className="hint">{(search.error as Error).message}</span>}
-                    {searchFor.length >= 2 && search.data && (
-                        <div data-testid="workspace-search-results">
-                            <span className="hint">
-                                {search.data.hits.length} line(s){search.data.truncated ? ' (capped)' : ''} in {search.data.filesScanned} file(s)
-                            </span>
-                            {search.data.files.map((file) => (
-                                <button key={`f:${file}`} type="button" className="obs-search-hit"
-                                    onClick={() => setSelected({ root: 'workspace', path: file, kind: 'file' })}>📄 {file}</button>
-                            ))}
-                            {search.data.hits.map((hit) => (
-                                <button key={`${hit.path}:${hit.line}`} type="button" className="obs-search-hit"
-                                    onClick={() => setSelected({ root: 'workspace', path: hit.path, kind: 'file' })}>
-                                    <code>{hit.path}:{hit.line}</code> {hit.text}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </form>
-                <div className="obs-tree-root">workspace/</div>
-                {renderWorkspaceNodes('', 1)}
-                <div className="obs-tree-root">repos/</div>
-                <p className="hint" style={{ padding: '0 12px' }}>Clones live in workspace/repos/: branches, merges, pull requests and CI are in the Code view.</p>
-                <div className="obs-tree-actions">
-                    <p className="hint">Drop files here to upload into workspace/{uploadDir}. Web links become .url shortcut files.</p>
-                    <button type="button" className="btn" disabled={uploading || drop.busy} onClick={() => fileInputRef.current?.click()}>⬆ Upload</button>
+                        <input
+                            className="input"
+                            type="search"
+                            value={searchText}
+                            onChange={(event) => { setSearchText(event.target.value); if (!event.target.value) setSearchFor(''); }}
+                            onKeyDown={(event) => { if (event.key === 'Escape') { setSearchText(''); setSearchFor(''); } }}
+                            placeholder="Filter… (Enter searches inside)"
+                            title="Type to filter file and asset names; press Enter to search inside workspace files; Esc clears."
+                            aria-label="Search the workspace"
+                        />
+                    </form>
+                    <button
+                        type="button"
+                        className="btn small"
+                        title={`Upload into workspace/${uploadDir}`}
+                        aria-label="Upload"
+                        disabled={uploading || drop.busy}
+                        onClick={() => fileInputRef.current?.click()}
+                    >⬆</button>
                     <input
                         ref={fileInputRef}
                         type="file"
@@ -445,9 +555,118 @@ export function ProjectExplorer({ slug, ownerId, onChanged, askGoobster }: {
                         onChange={(e) => { void uploadFiles(e.target.files); e.target.value = ''; }}
                     />
                 </div>
+                <div className="obs-tree-scroll">
+                    {searchFor.length >= 2 && (
+                        <div className="obs-search-results" data-testid="workspace-search-results">
+                            <div className="obs-tree-section-head is-static">
+                                <span>Contents matching “{searchFor}”</span>
+                                <button type="button" className="obs-tree-clear" aria-label="Clear search"
+                                    onClick={() => { setSearchText(''); setSearchFor(''); }}>✕</button>
+                            </div>
+                            {search.isPending && <span className="hint">Searching…</span>}
+                            {search.isError && <span className="hint">{(search.error as Error).message}</span>}
+                            {search.data && (
+                                <>
+                                    <span className="hint">
+                                        {search.data.hits.length} line(s){search.data.truncated ? ' (capped)' : ''} in {search.data.filesScanned} file(s)
+                                    </span>
+                                    {search.data.files.map((file) => (
+                                        <button key={`f:${file}`} type="button" className="obs-search-hit"
+                                            onClick={() => setSelected({ root: 'workspace', path: file, kind: 'file' })}>📄 {file}</button>
+                                    ))}
+                                    {search.data.hits.map((hit) => (
+                                        <button key={`${hit.path}:${hit.line}`} type="button" className="obs-search-hit"
+                                            onClick={() => setSelected({ root: 'workspace', path: hit.path, kind: 'file' })}>
+                                            <code>{hit.path}:{hit.line}</code> {hit.text}
+                                        </button>
+                                    ))}
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    <button
+                        type="button"
+                        className="obs-tree-section-head"
+                        aria-expanded={workspaceOpen}
+                        onClick={() => setPrefs({ workspaceOpen: !workspaceOpen })}
+                    >
+                        <span className="obs-tree-caret">{workspaceOpen ? '▾' : '▸'}</span>
+                        <span>workspace/</span>
+                        <span className="obs-tree-count">{rootCount}</span>
+                    </button>
+                    {workspaceOpen && renderWorkspaceNodes('', 1)}
+
+                    <button
+                        type="button"
+                        className="obs-tree-section-head"
+                        aria-expanded={assetsOpen}
+                        onClick={() => setPrefs({ assetsOpen: !assetsOpen })}
+                    >
+                        <span className="obs-tree-caret">{assetsOpen ? '▾' : '▸'}</span>
+                        <span>assets/</span>
+                        <span className="obs-tree-count">{filter ? `${filteredAssets.length}/${assetList.length}` : assetList.length}</span>
+                    </button>
+                    {assetsOpen && assets.isPending && <div className="hint obs-tree-note">Loading assets…</div>}
+                    {assetsOpen && groupedAssets.map((group) => {
+                        const groupOpen = Boolean(filter) || !closedGroups.has(group.kind);
+                        return (
+                            <div key={group.kind} role="group" aria-label={group.label}>
+                                {groupedAssets.length > 1 && (
+                                    <button
+                                        type="button"
+                                        className="obs-tree-group-head"
+                                        aria-expanded={groupOpen}
+                                        onClick={() => {
+                                            const next = new Set(closedGroups);
+                                            if (groupOpen) next.add(group.kind); else next.delete(group.kind);
+                                            setPrefs({ closedGroups: [...next] });
+                                        }}
+                                    >
+                                        <span className="obs-tree-caret">{groupOpen ? '▾' : '▸'}</span>
+                                        <span>{group.label}</span>
+                                        <span className="obs-tree-count">{group.rows.length}</span>
+                                    </button>
+                                )}
+                                {groupOpen && group.rows.map(renderAsset)}
+                            </div>
+                        );
+                    })}
+                    {assetsOpen && filter && !filteredAssets.length && assetList.length > 0 && (
+                        <div className="hint obs-tree-note">No asset names match.</div>
+                    )}
+                </div>
+                <div className="obs-tree-footer hint">
+                    Drop files to upload into workspace/{uploadDir}. Clones in repos/ open in the Code view's editor.
+                </div>
             </aside>
+            <div
+                className="obs-tree-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize the file tree"
+                aria-valuemin={TREE_MIN}
+                aria-valuemax={TREE_MAX}
+                aria-valuenow={treeWidth}
+                tabIndex={0}
+                onPointerDown={startResize}
+                onDoubleClick={() => setPrefs({ width: TREE_DEFAULT })}
+                onKeyDown={(event) => {
+                    if (event.key === 'ArrowLeft') setPrefs({ width: clampWidth(treeWidth - 24) });
+                    if (event.key === 'ArrowRight') setPrefs({ width: clampWidth(treeWidth + 24) });
+                }}
+            />
             <section className="obs-explorer-main">
-                {!selected && <div className="empty">Pick a file from assets/ or workspace/.</div>}
+                {!selected && (
+                    <div className="empty obs-explorer-empty">
+                        <p>Pick a file from workspace/ or assets/.</p>
+                        <p className="hint">
+                            {rootCount} item(s) at the workspace root · {assetList.length} asset(s).
+                            Type in the box to filter names; press Enter to search inside files.
+                            Drag the tree's edge to resize it.
+                        </p>
+                    </div>
+                )}
 
                 {selected?.root === 'assets' && assetDetail.isPending && <div className="empty">Loading…</div>}
                 {selected?.root === 'assets' && assetDetail.isError && (

@@ -861,12 +861,26 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   content route. Every workspace file and directory carries a
   **Snapshots** rail ([Workspace history](#workspace-history)): pick a
   snapshot to see what changed since it, download the file as it was, or
-  restore it; the workspace root adds **Snapshot now**. A `repos/` panel
-  lists the project's GitHub clones ([Repositories](#repositories)) with
-  pull, commit, push, branch, reset and remove, and a clone form. PUT/DELETE `/api/app/projects/:slug/content/*` write
+  restore it; the workspace root adds **Snapshot now**. Clones under
+  `repos/` are managed (and edited with git status) in the Code view
+  ([The repository editor](#the-repository-editor)). PUT/DELETE `/api/app/projects/:slug/content/*` write
   that same quota'd sandbox (multipart for binaries). A ▶ Run button on
   script assets calls `POST .../assets/:asset/run` with the head version
   and `startedBy='portal'`.
+
+  The tree is laid out for busy projects. A toolbar holds one box: typing
+  **filters names** in both roots at once (folders already opened show
+  their matching files; Esc clears) and Enter runs the full-text
+  [workspace search](#workspace-search) for what is inside files. Both
+  roots fold, with counts (`workspace/` first; `assets/` starts folded
+  above 12 assets) and assets are grouped into Apps, Scripts and Notes,
+  each foldable. Every row is one line: long names are shortened in the
+  middle so their endings (dates, versions, extensions) still show, the
+  full path is the tooltip, sizes and versions sit right-aligned, and a
+  script's ▶ appears on hover. Dotfiles are folded into a "+ N hidden"
+  row. Drag the tree's edge (or focus it and use ← / →; double-click
+  resets) to resize it. Width, folded sections and hidden-file choice are
+  remembered in this browser only.
 - **Project chat dock** is the Command seat grown up: a collapsible
   right-hand panel (bottom-sheet on narrow viewports) bound to the
   dedicated `🔭 <project>` conversation. Turns post to
