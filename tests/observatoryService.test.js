@@ -296,6 +296,62 @@ describe('foreground runs (the persistent workspace)', () => {
     });
 });
 
+describe('running a workspace file (runFile)', () => {
+    test('python, node and bash files run from their own folder with their args', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'run-file' });
+        const dir = path.join(PROJECTS_ROOT, userId, slug, 'tools', 'my sim');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'helper.py'), 'GREETING = "hi"\n');
+        fs.writeFileSync(path.join(dir, 'main.py'), [
+            'import os, sys',
+            'from helper import GREETING',
+            'print(GREETING, os.path.basename(os.getcwd()), sys.argv[1:], __name__)',
+            'open("out.txt", "w").write("done")'
+        ].join('\n'));
+        fs.writeFileSync(path.join(dir, 'main.js'), 'console.log(require("node:path").basename(process.cwd()), JSON.stringify(process.argv.slice(2)));');
+        fs.writeFileSync(path.join(dir, 'main.sh'), 'echo "$(basename "$PWD")" "$@"');
+
+        const py = await svc.runFile({ userId, project: slug, path: 'tools/my sim/main.py', args: ["it's", 'a "b"'] });
+        expect(py.result.ok).toBe(true);
+        expect(py.result.stdout.trim()).toBe(`hi my sim ["it's", 'a "b"'] __main__`);
+        expect(fs.readFileSync(path.join(dir, 'out.txt'), 'utf8')).toBe('done');
+
+        const js = await svc.runFile({ userId, project: slug, path: 'tools/my sim/main.js', args: ['x y'] });
+        expect(js.result.stdout.trim()).toBe('my sim ["x y"]');
+
+        const sh = await svc.runFile({ userId, project: slug, path: 'tools/my sim/main.sh', args: ["$(echo no)", "it's"] });
+        expect(sh.result.stdout.trim()).toBe("my sim $(echo no) it's");
+
+        // The run record names the file it ran.
+        const job = await db.get('SELECT code FROM observatory_jobs WHERE id = @id', { id: py.jobId });
+        expect(job.code).toContain('# goobster: run workspace/tools/my sim/main.py');
+    });
+
+    test('refuses what is not a runnable file inside the workspace', async () => {
+        const svc = makeService();
+        const userId = nextUser();
+        const { slug } = await svc.createProject({ userId, name: 'run-file-refusals' });
+        const root = path.join(PROJECTS_ROOT, userId, slug);
+        fs.writeFileSync(path.join(root, 'notes.md'), '# not a program');
+        fs.mkdirSync(path.join(root, 'folder.py'));
+        await expect(svc.runFile({ userId, project: slug, path: 'notes.md' }))
+            .rejects.toMatchObject({ code: 'NOT_RUNNABLE', status: 400 });
+        await expect(svc.runFile({ userId, project: slug, path: 'missing.py' }))
+            .rejects.toMatchObject({ code: 'NOT_FOUND' });
+        await expect(svc.runFile({ userId, project: slug, path: 'folder.py' }))
+            .rejects.toMatchObject({ code: 'NOT_A_FILE' });
+        await expect(svc.runFile({ userId, project: slug, path: '../escape.py' }))
+            .rejects.toMatchObject({ status: 400 });
+        fs.writeFileSync(path.join(root, 'ok.sh'), 'echo ok');
+        await expect(svc.runFile({ userId, project: slug, path: 'ok.sh', args: [1] }))
+            .rejects.toMatchObject({ code: 'BAD_ARGS' });
+        await expect(svc.runFile({ userId: nextUser(), project: slug, path: 'ok.sh' }))
+            .rejects.toMatchObject({ code: 'NO_SUCH_PROJECT' });
+    });
+});
+
 describe('workspace files', () => {
     test('listFiles walks subdirectories, newest first, bounded', async () => {
         const svc = makeService({ observatory: { maxWorkspaceFiles: 2 } });

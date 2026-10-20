@@ -815,9 +815,25 @@ function mountProjects(app, ctx, h) {
             background: req.body?.background === true,
             client: ctx.gateway,
             assetVersionId: asset.versionId,
-            startedBy: 'portal'
+            startedBy: req.body?.startedBy === 'app' ? 'app' : 'portal'
         });
     }));
+
+    // Run one workspace file (.py / .js / .sh) from its own folder; the
+    // Apps bridge's project.run and anything else that names a file.
+    app.post('/api/app/projects/:slug/run-file', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.runFile({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            path: req.body?.path,
+            args: req.body?.args ?? [],
+            stdin: typeof req.body?.stdin === 'string' ? req.body.stdin : '',
+            background: req.body?.background === true,
+            client: ctx.gateway,
+            startedBy: req.body?.startedBy === 'app' ? 'app' : 'portal'
+        })
+    ));
 
     // --- Project triggers (cron / event automations) ------------------------
     app.get('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => ({

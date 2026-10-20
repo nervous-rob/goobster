@@ -769,6 +769,73 @@ Mini-apps still cannot fetch `/api/app` themselves: they call
 `connectToGoobster()` / `request(port, { type: 'observatory.read', ... })`
 and the trusted parent fetches with the signed-in session.
 
+## Apps with project access
+
+An app opened from its own project's **Apps** tab can do more than read:
+it can list, read, write and delete the project's workspace files and its
+notes and scripts, and run workspace files and script assets. That makes
+real tools possible: a data editor that saves back to `data/*.json`, a
+control panel that runs `sim/run.py --days 30` and shows the output, a
+notebook that keeps its pages as project notes.
+
+**The API.** The bridge script in every app defines `window.goobster`
+(no project argument; it is always the project the app was opened from):
+
+| Call | Does | Needs |
+|---|---|---|
+| `goobster.list(dir)` | entries `{ path, name, kind, size, modifiedAt }` of one folder (`''` is the root) | — |
+| `goobster.read(path, responseType)` | a workspace file as `json`, `text`, `dataurl` or `bytes` (base64); any type | — |
+| `goobster.write(path, content, { encoding })` | create or replace a file; `encoding` is `utf8` (default for strings), `json` (default for objects, pretty-printed), `base64` or `dataurl` | `write` |
+| `goobster.remove(path)` | delete a file or folder | `delete` |
+| `goobster.run(path, { args, stdin, background })` | run a `.py`, `.js` / `.cjs` / `.mjs` or `.sh` workspace file from its own folder with `args` as argv; foreground returns `{ jobId, result: { ok, stdout, stderr, exitCode } }`, background returns `{ jobId }` | `run` |
+| `goobster.job(jobId, since)` | a run's live output and status (poll a background run) | `run` |
+| `goobster.assets.list(kind)` / `.read(slug, version)` | the project's assets and their source | — |
+| `goobster.assets.write(slug, source, { kind, name, language, note })` | save a new version of a **note** (default) or **script** | `write` |
+| `goobster.assets.remove(slug)` / `.run(slug, { background })` | delete a note or script; run a script asset | `delete` / `run` |
+| `goobster.context` / `await goobster.ready()` | `{ project, owner, access }` once connected | — |
+
+Every call returns a promise; a refusal rejects with an `Error` whose
+`code` says why (`ACCESS_DENIED`, `UNDECLARED_CAPABILITY`,
+`APP_PROTECTED`, `NO_PROJECT`, or the server's own code such as
+`NOT_FOUND`, `QUOTA_EXCEEDED`, `NOT_RUNNABLE`).
+
+**Declared, then approved.** Reading needs nothing. `write`, `delete` and
+`run` must be declared in the app's source, only the ones it needs:
+
+```html
+<meta name="goobster-project-access" content="write run">
+```
+
+The first time the app uses one, the viewer is asked ("“Ledger” wants to
+create and change files and notes in project lab, as you. Allow it for
+this version of the app?"). An approval is remembered in that browser for
+that exact source, so a new version of the app asks again; a refusal lasts
+for the session. Above the app, the Apps tab shows what it can do (read,
+plus each declared capability: allowed ✓, refused ✕ or asks first) with
+**Reset approvals**, and under it an **App activity** log of every call it
+made, refused ones in red.
+
+**As the viewer, never more.** The portal makes each call with the
+signed-in person's own session, through the same routes and checks as the
+Files view and Runs (membership, quota, the project lock, history
+snapshots, job records), so an app can never do more than the person
+looking at it. Runs it starts are recorded with `startedBy = 'app'`.
+Apps may not write or delete app assets, themselves included
+(`APP_PROTECTED`): changing an app stays with `save_app` and the portal.
+An html fence in chat or a Workshop pin has no project, so every
+`goobster.*` call there fails with `NO_PROJECT`; only the
+[read bridge](#own-project-reads-the-applet-bridge) applies.
+
+**Running a file** is also an API of its own:
+`POST /api/app/projects/:slug/run-file { path, args, stdin, background }`
+(`projectService.runFile`). It runs a launcher that changes to the file's
+folder, sets argv and hands over to the file (Python through `runpy` with
+the folder on `sys.path`, Node through `require` or `import`, bash with
+`exec`), so relative paths and sibling imports work; the job's code is
+that launcher, headed `# goobster: run workspace/<path>`. Paths and args
+are passed as JSON or shell-quoted, never spliced in raw; at most 64 args
+of 4,096 characters.
+
 ## Unfiled apps (the former Workshop inbox)
 
 The Projects list has an **Unfiled apps** section: unpinned html/svg fences

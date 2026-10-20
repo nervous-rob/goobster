@@ -42,7 +42,8 @@ function appletButton(label, title, onClick) {
 
 /** Turn an html/svg <pre> into a runnable mini-app card. */
 function buildApplet(pre, notify, {
-    onPin, pinned, onSaveToProject, requestGrant, approvedGrants, grants, onGrantsChange, ownProject, ownOwner
+    onPin, pinned, onSaveToProject, requestGrant, approvedGrants, grants, onGrantsChange, ownProject, ownOwner,
+    onActivity, onProjectChanged
 } = {}) {
     const source = pre.textContent;
     const wrap = document.createElement('div');
@@ -76,7 +77,9 @@ function buildApplet(pre, notify, {
         ownOwner,
         requestGrant,
         approvedGrants: approvedGrants || grants?.observatoryRead || [],
-        onGrantsChange
+        onGrantsChange,
+        onActivity,
+        onProjectChanged
     });
     frame.srcdoc = framedSource;
     // Take pre's spot in the bubble first, THEN move pre inside the card -
@@ -187,11 +190,13 @@ export function renderApplet(container, {
     grants,
     onGrantsChange,
     ownProject,
-    ownOwner
+    ownOwner,
+    onActivity,
+    onProjectChanged
 } = {}) {
     const pre = document.createElement('pre');
     pre.dataset.lang = language;
     pre.textContent = source;
     container.replaceChildren(pre);
-    buildApplet(pre, notify, { requestGrant, approvedGrants, grants, onGrantsChange, ownProject, ownOwner });
+    buildApplet(pre, notify, { requestGrant, approvedGrants, grants, onGrantsChange, ownProject, ownOwner, onActivity, onProjectChanged });
 }

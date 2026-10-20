@@ -586,9 +586,12 @@ export const api = {
     rollbackProjectAsset: (project: string, asset: string, version: number, owner?: string | null, expectedRevision?: number) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback${ownerQs(owner)}`,
             { method: 'POST', body: { version, expectedRevision, owner: owner || undefined } }),
-    runProjectAsset: (project: string, asset: string, background = false, owner?: string | null) =>
+    runProjectAsset: (project: string, asset: string, background = false, owner?: string | null, startedBy?: 'app') =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run${ownerQs(owner)}`,
-            { method: 'POST', body: { background, owner: owner || undefined } }),
+            { method: 'POST', body: { background, owner: owner || undefined, startedBy } }),
+    runProjectFile: (project: string, body: { path: string; args?: string[]; stdin?: string; background?: boolean; startedBy?: 'app' }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/run-file${ownerQs(owner)}`,
+            { method: 'POST', body: { ...body, owner: owner || undefined } }),
     projectFiles: (project: string, dirPath?: string, owner?: string | null) => {
         // Empty path must stay on the query string: the explorer lists one
         // directory at a time, and omitting `path` walks the whole tree

@@ -70,7 +70,11 @@ Brief: "Pull this CSV of monthly temperatures and build a little explorer."
    outputs; `run_script` foreground for small data.
 3. `save_app` (language `html`) for the explorer - it renders in the portal's
    applet sandbox and may read the project's own files through the applet
-   bridge (*Projects → Own-project reads*).
+   bridge (*Projects → Own-project reads*). An app that should also save,
+   delete or run things uses `window.goobster` (`write`, `remove`, `run`,
+   `assets.write`) and declares what it needs with
+   `<meta name="goobster-project-access" content="write run">`; the viewer
+   approves each the first time (*Projects → Apps with project access*).
 4. `dashboard` regenerates the results page; the owner can mint a read-only
    share link in the portal.
 

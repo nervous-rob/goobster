@@ -459,6 +459,27 @@ a.nav-btn {
 .obs-apps-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
 .obs-app-stage { min-height: 200px; }
 .obs-app-stage .applet { margin: 0; }
+.obs-app-access {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin: 0 0 8px; font-size: 0.75rem;
+}
+.obs-app-access-label { opacity: 0.7; margin-right: 2px; }
+.obs-app-cap {
+    padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border, #333);
+    white-space: nowrap;
+}
+.obs-app-cap.is-allowed { border-color: rgba(63, 185, 80, 0.55); }
+.obs-app-cap.is-denied { border-color: rgba(248, 81, 73, 0.55); opacity: 0.8; }
+.obs-app-cap.is-ask { border-style: dashed; }
+.obs-app-activity { margin-top: 8px; font-size: 0.75rem; }
+.obs-app-activity summary { cursor: pointer; opacity: 0.8; }
+.obs-app-activity ol { list-style: none; margin: 6px 0 0; padding: 0; max-height: 200px; overflow: auto; }
+.obs-app-activity li {
+    display: grid; grid-template-columns: auto auto 1fr auto; gap: 8px; align-items: baseline;
+    padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.obs-app-activity li.is-failed { color: #f85149; }
+.obs-app-activity-target { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .obs-app-stage .applet-frame { height: min(64vh, 620px); }
 .obs-apps-history {
     width: 240px;
