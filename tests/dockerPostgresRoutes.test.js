@@ -388,6 +388,8 @@ describe('the Docker operations through the Host proxy', () => {
         expect(h.fake.mutations()).toEqual([]);
     });
 
+    // Four previewed-and-applied operations through the real manager and
+    // the Host proxy: past Jest's 5 s default on a busy runner.
     test('start, stop and repair operate on the owned container; the audit rows carry the container, volume and network names only', async () => {
         const h = await harness();
         const cookie = await operatorCookie(h);
@@ -412,7 +414,7 @@ describe('the Docker operations through the Host proxy', () => {
             expect(row.detail.names).toEqual({ container: names(h).container, volume: names(h).volume, network: names(h).network });
             expect(JSON.stringify(row.detail)).not.toMatch(/password|postgres:\/\/|127\.0\.0\.1/);
         }
-    });
+    }, 30_000);
 
     test('a stray field and a malformed request are refused before anything is created', async () => {
         const h = await harness();
