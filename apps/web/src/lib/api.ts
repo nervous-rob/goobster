@@ -690,6 +690,14 @@ export const api = {
         request(`/api/app/observatory/jobs/${jobId}/changes`),
     projectRepoSummary: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/summary${ownerQs(owner)}`),
+    projectRepoChanges: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/changes${ownerQs(owner)}`),
+    projectRepoFile: (project: string, name: string, filePath: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/file${ownerQs(owner, { path: filePath })}`),
+    projectRepoDiff: (project: string, name: string, filePath?: string | null, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/diff${ownerQs(owner, { path: filePath || undefined })}`),
+    projectRepoDiscard: (project: string, name: string, filePath: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/discard${ownerQs(owner)}`, { method: 'POST', body: { path: filePath } }),
     projectRepoWatches: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner)}`),
     watchProjectRepo: (project: string, name: string, body: { branch?: string | null; mode: 'notify' | 'fix' }, owner?: string | null) =>

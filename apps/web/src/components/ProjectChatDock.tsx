@@ -259,14 +259,19 @@ export function ProjectChatDock({
         <aside className={`obs-chat-dock open${variant === 'inline' ? ' is-inline' : ''}`} aria-label={`Chat about ${projectName}`} data-tour="project-conversation">
             <div className="obs-chat-dock-body">
                     <div className="obs-chat-dock-head">
-                        <div className="obs-chat-dock-title">
-                            <strong>Project chat</strong>
-                            <span className="hint">Everyone on {projectName}, including Goobster</span>
+                        <div className="obs-chat-dock-titlebar">
+                            <div className="obs-chat-dock-title">
+                                <strong>Project chat</strong>
+                                <span className="hint">Everyone on {projectName}, including Goobster</span>
+                            </div>
+                            {variant === 'dock' && (
+                                <button type="button" className="btn small subtle obs-chat-dock-close" aria-label="Close project chat" title="Close" onClick={onToggle}>✕</button>
+                            )}
                         </div>
                         <div className="obs-chat-dock-head-actions">
                             {projectConversations.length > 0 && (
                                 <select
-                                    className="input"
+                                    className="input obs-chat-dock-picker"
                                     aria-label="Project conversation"
                                     value={conversationId ?? ''}
                                     disabled={sending}
@@ -281,19 +286,19 @@ export function ProjectChatDock({
                             )}
                             <button
                                 type="button"
-                                className="btn"
+                                className="btn small"
+                                title="Start another conversation on this project"
                                 disabled={sending || creating || conversationsQ.isPending}
                                 onClick={() => void newConversation()}
-                            >New</button>
+                            >+ New</button>
                             {isOwner && selected && !selected.primary && (
-                                <button type="button" className="btn danger" disabled={sending} onClick={() => void deleteSelected()}>
+                                <button type="button" className="btn small danger" disabled={sending} onClick={() => void deleteSelected()}>
                                     Delete
                                 </button>
                             )}
                             {sending && (
-                                <button type="button" className="btn danger" onClick={() => void stop()}>Stop</button>
+                                <button type="button" className="btn small danger" onClick={() => void stop()}>Stop</button>
                             )}
-                            {variant === 'dock' && <button type="button" className="btn" onClick={onToggle}>Close</button>}
                         </div>
                     </div>
                     {participants.length > 1 && (

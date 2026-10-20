@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
-import { CodeEditor, languageFromPath } from './CodeEditor';
+import { CodeEditor, languageFromPath, type EditorSelection } from './CodeEditor';
 import { DiffView } from './repoParts';
 
 type AssetRow = {
@@ -96,7 +96,13 @@ function assetIcon(kind: string): string {
     return '✎';
 }
 
-export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ownerId?: string | null; onChanged: () => void }) {
+export function ProjectExplorer({ slug, ownerId, onChanged, askGoobster }: {
+    slug: string;
+    ownerId?: string | null;
+    onChanged: () => void;
+    /** Open the project chat with a request pre-filled (the editor's "Ask Goobster"). */
+    askGoobster?: (text: string) => void;
+}) {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
@@ -548,6 +554,7 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
                         onDelete={() => void deleteWorkspaceFile()}
                         refreshToken={wsRefresh}
                         onRestored={refreshWorkspace}
+                        askGoobster={askGoobster}
                     />
                 )}
             </section>
@@ -556,8 +563,9 @@ export function ProjectExplorer({ slug, ownerId, onChanged }: { slug: string; ow
 }
 
 function WorkspaceFileView({
-    slug, ownerId, filePath, entry, draft, onDraft, onSave, onDelete, refreshToken = 0, onRestored
+    slug, ownerId, filePath, entry, draft, onDraft, onSave, onDelete, refreshToken = 0, onRestored, askGoobster
 }: {
+    askGoobster?: (text: string) => void;
     slug: string;
     ownerId?: string | null;
     filePath: string;
@@ -572,6 +580,7 @@ function WorkspaceFileView({
     const toast = useToast();
     const [text, setText] = useState<string | null>(null);
     const [kind, setKind] = useState<'text' | 'image' | 'video' | 'binary'>('text');
+    const [selection, setSelection] = useState<EditorSelection | null>(null);
     const url = api.projectContentUrl(slug, filePath, false, ownerId);
     const ext = filePath.split('.').pop()?.toLowerCase() || '';
     const image = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext);
@@ -605,6 +614,14 @@ function WorkspaceFileView({
                     </span>
                 )}
                 <a className="btn" href={api.projectContentUrl(slug, filePath, true, ownerId)}>⬇ Download</a>
+                {kind === 'text' && askGoobster && selection && !selection.empty && (
+                    <button type="button" className="btn" onClick={() => {
+                        const lang = languageFromPath(filePath);
+                        const lines = selection.fromLine === selection.toLine ? `line ${selection.fromLine}` : `lines ${selection.fromLine}-${selection.toLine}`;
+                        const text = selection.text.length > 6000 ? `${selection.text.slice(0, 6000)}\n… (cut)` : selection.text;
+                        askGoobster(`About workspace/${filePath}, ${lines}:\n\`\`\`${lang === 'text' ? '' : lang}\n${text}\n\`\`\`\n`);
+                    }}>Ask Goobster about {selection.fromLine === selection.toLine ? `line ${selection.fromLine}` : `lines ${selection.fromLine}–${selection.toLine}`}</button>
+                )}
                 {kind === 'text' && <button type="button" className="btn primary" disabled={draft == null} onClick={onSave}>Save</button>}
                 <button type="button" className="btn danger" onClick={onDelete}>Delete</button>
             </div>
@@ -623,6 +640,8 @@ function WorkspaceFileView({
                                 value={draft ?? text}
                                 language={languageFromPath(filePath)}
                                 onChange={onDraft}
+                                onSelectionChange={setSelection}
+                                onSave={onSave}
                             />
                         </div>
                     )}

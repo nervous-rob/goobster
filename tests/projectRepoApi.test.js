@@ -166,7 +166,10 @@ describe('project repository routes', () => {
         expect(fakeRepos.pull).toHaveBeenCalledWith(base);
 
         await request({ method: 'POST', reqPath: '/api/app/projects/lab/repos/widgets/commit', headers: { Cookie: cookie }, body: { message: 'add notes' } });
-        expect(fakeRepos.commit).toHaveBeenCalledWith({ ...base, message: 'add notes' });
+        expect(fakeRepos.commit).toHaveBeenCalledWith({ ...base, message: 'add notes', paths: null });
+
+        await request({ method: 'POST', reqPath: '/api/app/projects/lab/repos/widgets/commit', headers: { Cookie: cookie }, body: { message: 'only one', paths: ['a.txt'] } });
+        expect(fakeRepos.commit).toHaveBeenLastCalledWith({ ...base, message: 'only one', paths: ['a.txt'] });
 
         await request({ method: 'POST', reqPath: '/api/app/projects/lab/repos/widgets/push', headers: { Cookie: cookie }, body: { branch: 'feature/x' } });
         expect(fakeRepos.push).toHaveBeenCalledWith({ ...base, branch: 'feature/x' });

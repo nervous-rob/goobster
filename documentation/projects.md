@@ -378,6 +378,40 @@ after two minutes, everything else after five.
 - **API.** `GET`/`POST`/`DELETE /api/app/projects/:slug/repos/:name/watches`
   (`POST` body `{ branch, mode, maxFixes }`, `DELETE ?branch=`).
 
+#### The repository editor
+
+**Open editor** on a clone in the Code view replaces the panel with an
+editor for that clone (`RepoIde`), git-aware throughout:
+
+- **Files** is the clone's tree, loaded a folder at a time, with a status
+  letter on each changed file (M modified, A added, D deleted, U untracked,
+  R renamed, ! conflicted) and changed folders tinted.
+- **Tabs** open files (up to 1 MB of text; binary files are refused), mark
+  unsaved ones with ●, and save with Ctrl/Cmd+S into the workspace (the
+  same write the Files editor uses). Leaving the page or the editor with
+  unsaved tabs asks first.
+- **A gutter against HEAD** marks added (green), modified (amber) and
+  deleted (red) lines as you type; **Diff vs HEAD** shows the file's diff.
+- **Changes** lists every uncommitted file. Clicking one opens it with its
+  diff; ↺ discards it (back to HEAD, or deleted when it is new), after a
+  workspace snapshot so the discard is one `restore` away. Untick files to
+  commit only some of them ("Commit k file(s)"); the toolbar has Pull and
+  Push and the branch with ahead/behind.
+- **Ask about a selection.** Select lines and press *Ask Goobster about
+  lines a–b*: the chat dock opens with a request naming the file and lines
+  and quoting the selection (at most 6,000 characters, noting an unsaved
+  edit). Nothing is sent until you send it. The Files editor has the same
+  button for workspace files.
+- **API.** `GET .../repos/:name/changes` (every changed path with its kind,
+  plus branch, upstream, ahead/behind and any operation in progress),
+  `GET .../repos/:name/file?path=&ref=` (a file at a revision, HEAD by
+  default), `GET .../repos/:name/diff?path=` (the diff against HEAD,
+  untracked files included; no path for the whole clone) and
+  `POST .../repos/:name/discard { path }`. `POST .../repos/:name/commit`
+  takes an optional `paths` array to commit only those files. Paths are
+  relative to the clone; absolute paths, `..` and `.git` are refused
+  (`BAD_PATH`).
+
 ### Assets
 
 Named, *versioned* source artifacts stored in the database (never the
@@ -965,7 +999,8 @@ linked to the project (`parlor_conversations.projectId`), rendered as
 the chat dock on the project page and equally usable from the Parlor
 room. The first one is the project's **main conversation**; any member
 starts more from the dock's **New** button and switches between them with
-its picker. Both surfaces render the transcript through the shared
+its picker (the dock header keeps the title and ✕ on one row and the
+picker, **+ New**, Delete and Stop on the next). Both surfaces render the transcript through the shared
 `ParlorConversationView` (`apps/web/src/components/ParlorConversationView.tsx`)
 so persona colors, glyphs, grounding chips, and attachments cannot
 drift. The rules (spec §14):
