@@ -830,8 +830,9 @@ An html fence in chat or a Workshop pin has no project, so every
 `POST /api/app/projects/:slug/run-file { path, args, stdin, background }`
 (`projectService.runFile`). It runs a launcher that changes to the file's
 folder, sets argv and hands over to the file (Python through `runpy` with
-the folder on `sys.path`, Node through `require` or `import`, bash with
-`exec`), so relative paths and sibling imports work; the job's code is
+the folder on `sys.path`; `.js` / `.cjs` / `.mjs` with `exec node` and
+`.sh` with `exec bash`, so the file is its own main module), so relative
+paths and sibling imports work; the job's code is
 that launcher, headed `# goobster: run workspace/<path>`. Paths and args
 are passed as JSON or shell-quoted, never spliced in raw; at most 64 args
 of 4,096 characters.

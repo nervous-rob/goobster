@@ -301,31 +301,18 @@ function runFileLauncher(rel, args) {
             ].join('\n')
         };
     }
-    if (ext === '.js' || ext === '.cjs' || ext === '.mjs') {
-        return {
-            language: 'javascript',
-            code: [
-                `// goobster: run ${header}`,
-                "const path = require('node:path');",
-                `const spec = JSON.parse(${spec});`,
-                'const file = path.join(process.env.GOOBSTER_PROJECT_DIR, spec.path);',
-                'process.chdir(path.dirname(file));',
-                'process.argv = [process.argv[0], file, ...spec.args];',
-                ext === '.mjs'
-                    ? "import(require('node:url').pathToFileURL(file).href).catch((e) => { console.error(e); process.exit(1); });"
-                    : 'require(file);',
-                ''
-            ].join('\n')
-        };
-    }
-    if (ext === '.sh') {
-        const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
+    // Node and bash start the file themselves, as its own main module
+    // (require.main === module holds), from its folder.
+    const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
+    const program = (ext === '.js' || ext === '.cjs' || ext === '.mjs') ? 'node'
+        : ext === '.sh' ? 'bash' : null;
+    if (program) {
         return {
             language: 'bash',
             code: [
                 `# goobster: run ${header}`,
                 `cd "$GOOBSTER_PROJECT_DIR"/${quote(path.posix.dirname(rel))} || exit 1`,
-                `exec bash ./${quote(path.posix.basename(rel))}${args.map((arg) => ` ${quote(arg)}`).join('')}`,
+                `exec ${program} ./${quote(path.posix.basename(rel))}${args.map((arg) => ` ${quote(arg)}`).join('')}`,
                 ''
             ].join('\n')
         };

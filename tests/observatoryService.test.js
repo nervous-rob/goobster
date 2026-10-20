@@ -310,7 +310,7 @@ describe('running a workspace file (runFile)', () => {
             'print(GREETING, os.path.basename(os.getcwd()), sys.argv[1:], __name__)',
             'open("out.txt", "w").write("done")'
         ].join('\n'));
-        fs.writeFileSync(path.join(dir, 'main.js'), 'console.log(require("node:path").basename(process.cwd()), JSON.stringify(process.argv.slice(2)));');
+        fs.writeFileSync(path.join(dir, 'main.js'), 'console.log(require("node:path").basename(process.cwd()), JSON.stringify(process.argv.slice(2)), require.main === module);');
         fs.writeFileSync(path.join(dir, 'main.sh'), 'echo "$(basename "$PWD")" "$@"');
 
         const py = await svc.runFile({ userId, project: slug, path: 'tools/my sim/main.py', args: ["it's", 'a "b"'] });
@@ -319,7 +319,8 @@ describe('running a workspace file (runFile)', () => {
         expect(fs.readFileSync(path.join(dir, 'out.txt'), 'utf8')).toBe('done');
 
         const js = await svc.runFile({ userId, project: slug, path: 'tools/my sim/main.js', args: ['x y'] });
-        expect(js.result.stdout.trim()).toBe('my sim ["x y"]');
+        // Node runs the file as its own main module.
+        expect(js.result.stdout.trim()).toBe('my sim ["x y"] true');
 
         const sh = await svc.runFile({ userId, project: slug, path: 'tools/my sim/main.sh', args: ["$(echo no)", "it's"] });
         expect(sh.result.stdout.trim()).toBe("my sim $(echo no) it's");
