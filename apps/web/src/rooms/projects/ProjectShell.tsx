@@ -164,12 +164,12 @@ function ProjectShellBody({ ownerId, slug, view }: { ownerId: string; slug: stri
                                     />
                                 )}
                                 {view === 'knowledge' && <KnowledgeTab slug={slug} ownerId={ownerId} projectId={project.id} />}
-                                {view === 'files' && <ProjectExplorer slug={slug} ownerId={ownerId} onChanged={() => void refresh()} />}
+                                {view === 'files' && <ProjectExplorer slug={slug} ownerId={ownerId} onChanged={() => void refresh()} askGoobster={askGoobster} />}
                                 {view === 'code' && (
                                     <div className="obs-section obs-code-view">
                                         <div className="obs-section-head"><h3>Code</h3></div>
                                         <p className="hint">GitHub repositories cloned into this project with your own connected account: branches, diffs, merges, pull requests and CI.</p>
-                                        <RepoPanel slug={slug} ownerId={ownerId} codeView onChanged={() => void refresh()} />
+                                        <RepoPanel slug={slug} ownerId={ownerId} codeView askGoobster={askGoobster} onChanged={() => void refresh()} />
                                     </div>
                                 )}
                                 {view === 'apps' && <AppsTab slug={slug} ownerId={ownerId} />}

@@ -190,7 +190,7 @@ test('a project holds several conversations: start a new one, then switch back t
     const picker = conversation.getByLabel('Project conversation');
     await expect(picker.locator('option')).toHaveCount(1);
 
-    await conversation.getByRole('button', { name: 'New', exact: true }).click();
+    await conversation.getByRole('button', { name: '+ New', exact: true }).click();
     await expect(picker.locator('option')).toHaveCount(2);
     await expect(picker.locator('option:checked')).toHaveText('Untitled conversation');
     await expect(conversation.getByText(C.PARLOR_REPLY)).toHaveCount(0);

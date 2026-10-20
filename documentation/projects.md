@@ -378,6 +378,40 @@ after two minutes, everything else after five.
 - **API.** `GET`/`POST`/`DELETE /api/app/projects/:slug/repos/:name/watches`
   (`POST` body `{ branch, mode, maxFixes }`, `DELETE ?branch=`).
 
+#### The repository editor
+
+**Open editor** on a clone in the Code view replaces the panel with an
+editor for that clone (`RepoIde`), git-aware throughout:
+
+- **Files** is the clone's tree, loaded a folder at a time, with a status
+  letter on each changed file (M modified, A added, D deleted, U untracked,
+  R renamed, ! conflicted) and changed folders tinted.
+- **Tabs** open files (up to 1 MB of text; binary files are refused), mark
+  unsaved ones with ●, and save with Ctrl/Cmd+S into the workspace (the
+  same write the Files editor uses). Leaving the page or the editor with
+  unsaved tabs asks first.
+- **A gutter against HEAD** marks added (green), modified (amber) and
+  deleted (red) lines as you type; **Diff vs HEAD** shows the file's diff.
+- **Changes** lists every uncommitted file. Clicking one opens it with its
+  diff; ↺ discards it (back to HEAD, or deleted when it is new), after a
+  workspace snapshot so the discard is one `restore` away. Untick files to
+  commit only some of them ("Commit k file(s)"); the toolbar has Pull and
+  Push and the branch with ahead/behind.
+- **Ask about a selection.** Select lines and press *Ask Goobster about
+  lines a–b*: the chat dock opens with a request naming the file and lines
+  and quoting the selection (at most 6,000 characters, noting an unsaved
+  edit). Nothing is sent until you send it. The Files editor has the same
+  button for workspace files.
+- **API.** `GET .../repos/:name/changes` (every changed path with its kind,
+  plus branch, upstream, ahead/behind and any operation in progress),
+  `GET .../repos/:name/file?path=&ref=` (a file at a revision, HEAD by
+  default), `GET .../repos/:name/diff?path=` (the diff against HEAD,
+  untracked files included; no path for the whole clone) and
+  `POST .../repos/:name/discard { path }`. `POST .../repos/:name/commit`
+  takes an optional `paths` array to commit only those files. Paths are
+  relative to the clone; absolute paths, `..` and `.git` are refused
+  (`BAD_PATH`).
+
 ### Assets
 
 Named, *versioned* source artifacts stored in the database (never the
@@ -735,6 +769,74 @@ Mini-apps still cannot fetch `/api/app` themselves: they call
 `connectToGoobster()` / `request(port, { type: 'observatory.read', ... })`
 and the trusted parent fetches with the signed-in session.
 
+## Apps with project access
+
+An app opened from its own project's **Apps** tab can do more than read:
+it can list, read, write and delete the project's workspace files and its
+notes and scripts, and run workspace files and script assets. That makes
+real tools possible: a data editor that saves back to `data/*.json`, a
+control panel that runs `sim/run.py --days 30` and shows the output, a
+notebook that keeps its pages as project notes.
+
+**The API.** The bridge script in every app defines `window.goobster`
+(no project argument; it is always the project the app was opened from):
+
+| Call | Does | Needs |
+|---|---|---|
+| `goobster.list(dir)` | entries `{ path, name, kind, size, modifiedAt }` of one folder (`''` is the root) | — |
+| `goobster.read(path, responseType)` | a workspace file as `json`, `text`, `dataurl` or `bytes` (base64); any type | — |
+| `goobster.write(path, content, { encoding })` | create or replace a file; `encoding` is `utf8` (default for strings), `json` (default for objects, pretty-printed), `base64` or `dataurl` | `write` |
+| `goobster.remove(path)` | delete a file or folder | `delete` |
+| `goobster.run(path, { args, stdin, background })` | run a `.py`, `.js` / `.cjs` / `.mjs` or `.sh` workspace file from its own folder with `args` as argv; foreground returns `{ jobId, result: { ok, stdout, stderr, exitCode } }`, background returns `{ jobId }` | `run` |
+| `goobster.job(jobId, since)` | a run's live output and status (poll a background run) | `run` |
+| `goobster.assets.list(kind)` / `.read(slug, version)` | the project's assets and their source | — |
+| `goobster.assets.write(slug, source, { kind, name, language, note })` | save a new version of a **note** (default) or **script** | `write` |
+| `goobster.assets.remove(slug)` / `.run(slug, { background })` | delete a note or script; run a script asset | `delete` / `run` |
+| `goobster.context` / `await goobster.ready()` | `{ project, owner, access }` once connected | — |
+
+Every call returns a promise; a refusal rejects with an `Error` whose
+`code` says why (`ACCESS_DENIED`, `UNDECLARED_CAPABILITY`,
+`APP_PROTECTED`, `NO_PROJECT`, or the server's own code such as
+`NOT_FOUND`, `QUOTA_EXCEEDED`, `NOT_RUNNABLE`).
+
+**Declared, then approved.** Reading needs nothing. `write`, `delete` and
+`run` must be declared in the app's source, only the ones it needs:
+
+```html
+<meta name="goobster-project-access" content="write run">
+```
+
+The first time the app uses one, the viewer is asked ("“Ledger” wants to
+create and change files and notes in project lab, as you. Allow it for
+this version of the app?"). An approval is remembered in that browser for
+that exact source, so a new version of the app asks again; a refusal lasts
+for the session. Above the app, the Apps tab shows what it can do (read,
+plus each declared capability: allowed ✓, refused ✕ or asks first) with
+**Reset approvals**, and under it an **App activity** log of every call it
+made, refused ones in red.
+
+**As the viewer, never more.** The portal makes each call with the
+signed-in person's own session, through the same routes and checks as the
+Files view and Runs (membership, quota, the project lock, history
+snapshots, job records), so an app can never do more than the person
+looking at it. Runs it starts are recorded with `startedBy = 'app'`.
+Apps may not write or delete app assets, themselves included
+(`APP_PROTECTED`): changing an app stays with `save_app` and the portal.
+An html fence in chat or a Workshop pin has no project, so every
+`goobster.*` call there fails with `NO_PROJECT`; only the
+[read bridge](#own-project-reads-the-applet-bridge) applies.
+
+**Running a file** is also an API of its own:
+`POST /api/app/projects/:slug/run-file { path, args, stdin, background }`
+(`projectService.runFile`). It runs a launcher that changes to the file's
+folder, sets argv and hands over to the file (Python through `runpy` with
+the folder on `sys.path`; `.js` / `.cjs` / `.mjs` with `exec node` and
+`.sh` with `exec bash`, so the file is its own main module), so relative
+paths and sibling imports work; the job's code is
+that launcher, headed `# goobster: run workspace/<path>`. Paths and args
+are passed as JSON or shell-quoted, never spliced in raw; at most 64 args
+of 4,096 characters.
+
 ## Unfiled apps (the former Workshop inbox)
 
 The Projects list has an **Unfiled apps** section: unpinned html/svg fences
@@ -827,12 +929,26 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
   content route. Every workspace file and directory carries a
   **Snapshots** rail ([Workspace history](#workspace-history)): pick a
   snapshot to see what changed since it, download the file as it was, or
-  restore it; the workspace root adds **Snapshot now**. A `repos/` panel
-  lists the project's GitHub clones ([Repositories](#repositories)) with
-  pull, commit, push, branch, reset and remove, and a clone form. PUT/DELETE `/api/app/projects/:slug/content/*` write
+  restore it; the workspace root adds **Snapshot now**. Clones under
+  `repos/` are managed (and edited with git status) in the Code view
+  ([The repository editor](#the-repository-editor)). PUT/DELETE `/api/app/projects/:slug/content/*` write
   that same quota'd sandbox (multipart for binaries). A ▶ Run button on
   script assets calls `POST .../assets/:asset/run` with the head version
   and `startedBy='portal'`.
+
+  The tree is laid out for busy projects. A toolbar holds one box: typing
+  **filters names** in both roots at once (folders already opened show
+  their matching files; Esc clears) and Enter runs the full-text
+  [workspace search](#workspace-search) for what is inside files. Both
+  roots fold, with counts (`workspace/` first; `assets/` starts folded
+  above 12 assets) and assets are grouped into Apps, Scripts and Notes,
+  each foldable. Every row is one line: long names are shortened in the
+  middle so their endings (dates, versions, extensions) still show, the
+  full path is the tooltip, sizes and versions sit right-aligned, and a
+  script's ▶ appears on hover. Dotfiles are folded into a "+ N hidden"
+  row. Drag the tree's edge (or focus it and use ← / →; double-click
+  resets) to resize it. Width, folded sections and hidden-file choice are
+  remembered in this browser only.
 - **Project chat dock** is the Command seat grown up: a collapsible
   right-hand panel (bottom-sheet on narrow viewports) bound to the
   dedicated `🔭 <project>` conversation. Turns post to
@@ -965,7 +1081,8 @@ linked to the project (`parlor_conversations.projectId`), rendered as
 the chat dock on the project page and equally usable from the Parlor
 room. The first one is the project's **main conversation**; any member
 starts more from the dock's **New** button and switches between them with
-its picker. Both surfaces render the transcript through the shared
+its picker (the dock header keeps the title and ✕ on one row and the
+picker, **+ New**, Delete and Stop on the next). Both surfaces render the transcript through the shared
 `ParlorConversationView` (`apps/web/src/components/ParlorConversationView.tsx`)
 so persona colors, glyphs, grounding chips, and attachments cannot
 drift. The rules (spec §14):

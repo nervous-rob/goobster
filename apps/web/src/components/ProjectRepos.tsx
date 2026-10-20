@@ -5,6 +5,7 @@ import { keys } from '../lib/query';
 import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { ciBadge, DiffView, type CiPayload } from './repoParts';
+import { RepoIde } from './RepoIde';
 
 /**
  * Project repositories (ADR 0015) in the portal: the Code view's clone list
@@ -59,12 +60,14 @@ function describeIntegration(done: IntegrationResult): string {
  * pulled, committed and pushed by the server with the viewer's own connected
  * GitHub account. Files are edited through the workspace tree like any other.
  */
-export function RepoPanel({ slug, ownerId, onChanged, codeView = false }: {
+export function RepoPanel({ slug, ownerId, onChanged, codeView = false, askGoobster }: {
     slug: string;
     ownerId?: string | null;
     onChanged: () => void;
     /** The Code view: a GitHub status strip per clone and the first clone's detail open. */
     codeView?: boolean;
+    /** Open the project chat with a request pre-filled (the editor's "Ask Goobster"). */
+    askGoobster?: (text: string) => void;
 }) {
     const toast = useToast();
     const confirm = useConfirm();
@@ -80,6 +83,8 @@ export function RepoPanel({ slug, ownerId, onChanged, codeView = false }: {
     });
     const data = repos.data;
     const shown = expanded ?? (codeView ? data?.repos[0]?.name ?? null : null);
+    const [editing, setEditing] = useState<string | null>(null);
+    const editingEntry = editing ? data?.repos.find((entry) => entry.name === editing) : null;
 
     async function refresh() {
         await queryClient.invalidateQueries({ queryKey: keys.projectRepos(slug, ownerId) });
@@ -162,6 +167,10 @@ export function RepoPanel({ slug, ownerId, onChanged, codeView = false }: {
         await run(`${entry.name}:remove`, () => api.removeProjectRepo(slug, entry.name, ownerId), () => 'Removed.');
     }
 
+    if (codeView && editingEntry) {
+        return <RepoIde slug={slug} ownerId={ownerId} entry={editingEntry} askGoobster={askGoobster} onClose={() => { setEditing(null); void refresh(); }} />;
+    }
+
     return (
         <>
             <div className="obs-tree-root">repos/</div>
@@ -201,6 +210,9 @@ export function RepoPanel({ slug, ownerId, onChanged, codeView = false }: {
                                 </>
                             )}
                             <button type="button" className="btn" disabled={busy != null} onClick={() => void reset(entry)}>Reset</button>
+                            {codeView && (
+                                <button type="button" className="btn primary" onClick={() => setEditing(entry.name)}>Open editor</button>
+                            )}
                             <button type="button" className="btn" onClick={() => setExpanded(shown === entry.name ? '' : entry.name)}>
                                 {shown === entry.name ? 'Hide details' : 'Branches · PRs · CI'}
                             </button>

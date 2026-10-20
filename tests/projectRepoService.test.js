@@ -612,6 +612,62 @@ describe('plan steps linked to code, and the project timeline', () => {
     }, 90_000);
 });
 
+describe('the editor\'s git view of a clone', () => {
+    test('lists every change, serves HEAD and diffs, discards one file, and commits only chosen paths', async () => {
+        const remote = makeRemote('acme/ide', { files: { 'a.txt': 'one\ntwo\nthree\n', 'b.txt': 'bee\n' } });
+        const service = makeService();
+        const userId = nextUser();
+        const { slug } = await service.createProject({ userId, name: 'IDE Lab' });
+        const args = { userId, project: slug, name: 'ide' };
+        await service.repos.clone({ ...args, repo: 'acme/ide' });
+        const file = (rel) => path.join(workspace(userId, slug), 'repos/ide', rel);
+
+        fs.writeFileSync(file('a.txt'), 'one\nTWO\nthree\nfour\n');
+        fs.rmSync(file('b.txt'));
+        fs.mkdirSync(file('src'), { recursive: true });
+        fs.writeFileSync(file('src/new.py'), 'print(1)\n');
+
+        const changes = await service.repos.changes(args);
+        expect(changes).toMatchObject({ branch: 'main', path: 'repos/ide', truncated: false, operation: null });
+        expect(changes.files.map(f => [f.path, f.kind]).sort()).toEqual([
+            ['a.txt', 'modified'], ['b.txt', 'deleted'], ['src/new.py', 'untracked']
+        ]);
+
+        expect(await service.repos.fileAt({ ...args, path: 'a.txt' })).toMatchObject({ exists: true, binary: false, content: 'one\ntwo\nthree\n' });
+        expect(await service.repos.fileAt({ ...args, path: 'src/new.py' })).toMatchObject({ exists: false, content: '' });
+        await expectThrow(() => service.repos.fileAt({ ...args, path: '../../etc/passwd' }), { status: 400, code: 'BAD_PATH' });
+        await expectThrow(() => service.repos.fileAt({ ...args, path: '-x' }), { code: 'BAD_PATH' });
+
+        const diff = await service.repos.fileDiff({ ...args, path: 'a.txt' });
+        expect(diff.patch).toContain('-two');
+        expect(diff.patch).toContain('+TWO');
+        expect(diff.patch).toContain('+four');
+        const untracked = await service.repos.fileDiff({ ...args, path: 'src/new.py' });
+        expect(untracked.patch).toContain('+print(1)');
+        expect(untracked.patch).toContain('src/new.py');
+        expect(untracked.patch).not.toContain(workspace(userId, slug));
+        expect((await service.repos.fileDiff(args)).patch).toContain('b.txt');
+
+        // Discard: a tracked file goes back to HEAD; a new one goes away. A snapshot keeps both.
+        const discarded = await service.repos.discard({ ...args, path: 'b.txt' });
+        expect(discarded).toMatchObject({ discarded: true, restoredFromHead: true });
+        expect(discarded.snapshot).toEqual(expect.any(String));
+        expect(fs.readFileSync(file('b.txt'), 'utf8')).toBe('bee\n');
+        fs.writeFileSync(file('scratch.txt'), 'tmp\n');
+        expect(await service.repos.discard({ ...args, path: 'scratch.txt' })).toMatchObject({ restoredFromHead: false });
+        expect(fs.existsSync(file('scratch.txt'))).toBe(false);
+
+        // Commit only the chosen path; the other change stays uncommitted.
+        const committed = await service.repos.commit({ ...args, message: 'only a', paths: ['a.txt'] });
+        expect(committed.committed).toBe(true);
+        const after = await service.repos.changes(args);
+        expect(after.files.map(f => f.path)).toEqual(['src/new.py']);
+        await service.repos.push(args);
+        expect(remote.log()).toContain('only a');
+        await expectThrow(() => service.repos.commit({ ...args, message: 'x', paths: ['../outside'] }), { code: 'BAD_PATH' });
+    }, 60_000);
+});
+
 describe('the clone lifecycle', () => {
     test('clone, commit as the GitHub identity, push, pull, branch, reset, remove', async () => {
         const remote = makeRemote('acme/widgets');

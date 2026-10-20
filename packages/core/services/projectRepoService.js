@@ -73,6 +73,10 @@ const STATUS_MAX_PATHS = 20;
 const RECENT_COMMITS = 5;
 const DEEPEN_COMMITS = 500;
 const COMPARE_MAX_FILES = 200;
+const CHANGES_MAX = 1000;
+const FILE_AT_MAX_BYTES = 1024 * 1024;
+const DIFF_MAX_BYTES = 2 * 1024 * 1024;
+const DIFF_MAX_CHARS = 400_000;
 const COMPARE_MAX_COMMITS = 30;
 const COMPARE_PATCH_BYTES = 2 * 1024 * 1024;
 const COMPARE_PATCH_CHARS = 200_000;
@@ -703,16 +707,24 @@ class ProjectRepoService {
     }
 
     /** Stage everything in the clone and commit it as the person's GitHub identity. */
-    async commit({ row = null, userId, project = null, owner = null, name, message }) {
+    async commit({ row = null, userId, project = null, owner = null, name, message, paths = null }) {
         const projectRow = await this._resolve({ row, userId, project, owner });
         this._requireEnabled();
         const repoRow = await this._row(projectRow, name);
         const text = cleanMessage(message);
+        // Optional: commit only these clone-relative paths (the editor's Changes pane).
+        const only = Array.isArray(paths) && paths.length ? paths.map(p => this._cleanRelPath(p)) : null;
         const token = await this._token(userId);
         const identity = await this._identity(userId, token);
         return this._serial(projectRow, repoRow.name, async () => {
             this._requireIdle(await this._status(projectRow, repoRow.name));
-            await this._git(projectRow, repoRow.name, ['add', '-A', '--ignore-errors', '--', '.']);
+            if (only) {
+                // Unstage everything, then stage exactly the chosen paths.
+                await this._git(projectRow, repoRow.name, ['reset', '-q'], { allowFail: true });
+                await this._git(projectRow, repoRow.name, ['add', '-A', '--ignore-errors', '--', ...only]);
+            } else {
+                await this._git(projectRow, repoRow.name, ['add', '-A', '--ignore-errors', '--', '.']);
+            }
             const staged = await this._git(projectRow, repoRow.name, ['diff', '--cached', '--quiet'], { allowFail: true });
             if (staged.status === 0) return { committed: false, reason: 'NO_CHANGES', name: repoRow.name, repo: repoRow.repo };
             await this._git(projectRow, repoRow.name, ['commit', '-q', '--no-verify', '-m', text],
@@ -1300,6 +1312,135 @@ class ProjectRepoService {
             project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
             title: created.title || cleanTitle, draft: Boolean(created.draft), head: headName, base: wantedBase
         };
+    }
+
+    // --- The editor's git view (one clone's working tree against HEAD) -----------------------
+
+    /** A clone-relative path we will hand to git: no traversal, no absolute paths, no options. */
+    _cleanRelPath(input) {
+        const text = String(input ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
+        const parts = text.split('/').filter(Boolean);
+        const hasControl = Array.from(text).some(ch => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+        if (!text || text.startsWith('/') || text.startsWith('-') || hasControl || parts.some(part => part === '..' || part === '.git')) {
+            throw new ProjectRepoError(400, 'BAD_PATH', `"${text}" is not a path inside the clone.`);
+        }
+        return parts.join('/');
+    }
+
+    /**
+     * Every uncommitted change in the clone (the editor marks the tree with
+     * these), not just the first few that status lists. Capped.
+     */
+    async changes({ row = null, userId, project = null, owner = null, name }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const porcelain = await this._git(projectRow, repoRow.name, ['status', '--porcelain', '-z', '--untracked-files=all'], { allowFail: true });
+        const entries = porcelain.status === 0 ? String(porcelain.stdout).split('\0').filter(Boolean) : [];
+        const files = [];
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            const code = entry.slice(0, 2);
+            const file = entry.slice(3);
+            let from = null;
+            if (code[0] === 'R' || code[0] === 'C') from = entries[++i] || null;
+            const kind = CONFLICT_CODES.has(code) ? 'conflict'
+                : code === '??' ? 'untracked'
+                    : /D/.test(code) ? 'deleted'
+                        : /A/.test(code) ? 'added'
+                            : /R/.test(code) ? 'renamed' : 'modified';
+            files.push({ path: file, code: code.trim() || '??', kind, ...(from ? { from } : {}) });
+        }
+        const status = await this._status(projectRow, repoRow.name);
+        return {
+            name: repoRow.name, repo: repoRow.repo, path: `${REPOS_DIR}/${repoRow.name}`,
+            branch: status.branch, upstream: status.upstream, ahead: status.ahead, behind: status.behind,
+            operation: status.operation, head: status.head,
+            files: files.slice(0, CHANGES_MAX), truncated: files.length > CHANGES_MAX
+        };
+    }
+
+    /**
+     * A file as it is at HEAD (or another ref), for the editor's gutter and
+     * diff. exists=false for a file HEAD does not have (new). Text only.
+     */
+    async fileAt({ row = null, userId, project = null, owner = null, name, path: relPath, ref = 'HEAD' }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const file = this._cleanRelPath(relPath);
+        const target = ref === 'HEAD' ? 'HEAD' : cleanBranch(ref);
+        const res = await this._git(projectRow, repoRow.name, ['show', `${target}:${file}`],
+            { allowFail: true, binary: true, maxBuffer: FILE_AT_MAX_BYTES + 1 }).catch(error => {
+            if (error.code === 'TOO_LARGE') throw new ProjectRepoError(413, 'TOO_LARGE', `${file} is too large to compare here.`);
+            throw error;
+        });
+        if (res.status !== 0) return { name: repoRow.name, path: file, ref: target, exists: false, content: '' };
+        const buf = Buffer.from(res.stdout);
+        if (buf.subarray(0, 8000).includes(0)) return { name: repoRow.name, path: file, ref: target, exists: true, binary: true, content: '' };
+        return { name: repoRow.name, path: file, ref: target, exists: true, binary: false, content: buf.toString('utf8') };
+    }
+
+    /** Unified diff of the working tree against HEAD, for one path or the whole clone (capped). */
+    async fileDiff({ row = null, userId, project = null, owner = null, name, path: relPath = null }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const file = relPath ? this._cleanRelPath(relPath) : null;
+        const common = ['--no-color', '--no-ext-diff', '--no-textconv'];
+        let truncated = false;
+        const grab = async (args) => {
+            try {
+                const res = await this._git(projectRow, repoRow.name, args, { allowFail: true, maxBuffer: DIFF_MAX_BYTES });
+                return String(res.stdout || '');
+            } catch (error) {
+                if (error.code !== 'TOO_LARGE') throw error;
+                truncated = true;
+                return '';
+            }
+        };
+        let patch = await grab(['diff', ...common, 'HEAD', '--', ...(file ? [file] : ['.'])]);
+        // An untracked file has no diff against HEAD: show it as wholly added.
+        if (file && !patch) {
+            const tracked = await this._git(projectRow, repoRow.name, ['ls-files', '--error-unmatch', '--', file], { allowFail: true });
+            const abs = path.join(this.workTreeFor(projectRow, repoRow.name), file);
+            if (tracked.status !== 0 && fs.existsSync(abs)) {
+                patch = await grab(['diff', ...common, '--no-index', '--', '/dev/null', abs]);
+                patch = patch.split(abs).join(file);
+            }
+        }
+        if (patch.length > DIFF_MAX_CHARS) { patch = patch.slice(0, DIFF_MAX_CHARS); truncated = true; }
+        return { name: repoRow.name, path: file, patch, empty: !patch, truncated };
+    }
+
+    /**
+     * Throw away the uncommitted changes of one path: back to HEAD, or gone
+     * if HEAD does not have it. A workspace snapshot is taken first.
+     */
+    async discard({ row = null, userId, project = null, owner = null, name, path: relPath }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const file = this._cleanRelPath(relPath);
+        return this._serial(projectRow, repoRow.name, async () => {
+            this._requireIdle(await this._status(projectRow, repoRow.name));
+            const snapshot = await this.history.commitQuietly(projectRow, { userId, message: `before discarding ${REPOS_DIR}/${repoRow.name}/${file}` });
+            const inHead = (await this._git(projectRow, repoRow.name, ['cat-file', '-e', `HEAD:${file}`], { allowFail: true })).status === 0;
+            if (inHead) {
+                await this._git(projectRow, repoRow.name, ['reset', '-q', '--', file], { allowFail: true });
+                await this._git(projectRow, repoRow.name, ['checkout', '-q', 'HEAD', '--', file]);
+            } else {
+                await this._git(projectRow, repoRow.name, ['rm', '-q', '--cached', '--ignore-unmatch', '--', file], { allowFail: true });
+                const abs = path.join(this.workTreeFor(projectRow, repoRow.name), file);
+                const root = this.workTreeFor(projectRow, repoRow.name);
+                if (path.resolve(abs).startsWith(path.resolve(root) + path.sep)) {
+                    try { fs.rmSync(abs, { force: true }); } catch { /* already gone */ }
+                }
+            }
+            await this._touch(projectRow, repoRow);
+            this._publish(projectRow, userId);
+            return { discarded: true, name: repoRow.name, path: file, restoredFromHead: inHead, snapshot: snapshot?.hash || null };
+        });
     }
 
     /** Discard local commits and changes: back to origin/<branch>. A snapshot is taken first. */

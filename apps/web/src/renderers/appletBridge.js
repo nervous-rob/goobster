@@ -1,4 +1,5 @@
 import { accountFetch, accountStoragePrefix } from '../lib/browserAccount';
+import { createProjectAccess, isProjectAccessType } from './appletProjectAccess';
 /**
  * Capability bridge for sandboxed mini-apps.
  *
@@ -12,6 +13,10 @@ import { accountFetch, accountStoragePrefix } from '../lib/browserAccount';
  * may read X with no meta tag and no grant. Cross-project reads still
  * need goobster-observatory-read + an approved grant. Legacy Workshop
  * pins omit ownProject and keep today's declare+grant rule.
+ *
+ * In its own project an app may also list, write, delete and run files and
+ * notes/scripts (project.* and assets.* requests, appletProjectAccess.js):
+ * write / delete / run are declared in the source and approved by the viewer.
  *
  * Keep the grant parser and short-circuit in sync with
  * packages/core/utils/appletCapabilities.js.
@@ -161,23 +166,31 @@ export const APPLET_BRIDGE_SCRIPT = `<script>
     if (window.__goobsterBridge) return;
     window.__goobsterBridge = true;
     var portPromise = null;
+    var initPort = null;
+    var waiters = [];
+    // Listen from the start: the parent sends its port once, on load, which
+    // may come before the app's first connectToGoobster() call.
+    window.addEventListener('message', function onInit(event) {
+        if (!event.data || event.data.type !== 'goobster:init') return;
+        if (!event.ports || !event.ports[0]) return;
+        window.removeEventListener('message', onInit);
+        initPort = event.ports[0];
+        initPort.start();
+        if (window.goobster) window.goobster.context = event.data.context || null;
+        waiters.splice(0).forEach(function (wake) { wake(initPort); });
+    });
     window.connectToGoobster = function connectToGoobster() {
+        if (initPort) return Promise.resolve(initPort);
         if (portPromise) return portPromise;
         portPromise = new Promise(function (resolve, reject) {
             var timer = setTimeout(function () {
-                window.removeEventListener('message', onMessage);
+                portPromise = null;
                 reject(new Error('Goobster bridge timed out.'));
             }, 8000);
-            function onMessage(event) {
-                if (!event.data || event.data.type !== 'goobster:init') return;
-                if (!event.ports || !event.ports[0]) return;
-                window.removeEventListener('message', onMessage);
+            waiters.push(function (port) {
                 clearTimeout(timer);
-                var port = event.ports[0];
-                port.start();
                 resolve(port);
-            }
-            window.addEventListener('message', onMessage);
+            });
         });
         return portPromise;
     };
@@ -207,6 +220,40 @@ export const APPLET_BRIDGE_SCRIPT = `<script>
             port.postMessage(body);
         });
     };
+    function call(type, body) {
+        return window.connectToGoobster().then(function (port) {
+            var payload = { type: type };
+            for (var key in (body || {})) {
+                if (Object.prototype.hasOwnProperty.call(body, key) && body[key] !== undefined) payload[key] = body[key];
+            }
+            return window.request(port, payload);
+        });
+    }
+    function extend(base, more) {
+        var out = {};
+        var key;
+        for (key in (more || {})) if (Object.prototype.hasOwnProperty.call(more, key)) out[key] = more[key];
+        for (key in base) if (Object.prototype.hasOwnProperty.call(base, key)) out[key] = base[key];
+        return out;
+    }
+    // The project this app was opened from (null in chat): files and assets.
+    window.goobster = {
+        context: null,
+        ready: function () { return window.connectToGoobster().then(function () { return window.goobster.context; }); },
+        list: function (path) { return call('project.list', { path: path || '' }); },
+        read: function (path, responseType) { return call('project.read', { path: path, responseType: responseType }); },
+        write: function (path, content, options) { return call('project.write', extend({ path: path, content: content }, options)); },
+        remove: function (path) { return call('project.delete', { path: path }); },
+        run: function (path, options) { return call('project.run', extend({ path: path }, options)); },
+        job: function (jobId, since) { return call('project.job', { jobId: jobId, since: since }); },
+        assets: {
+            list: function (kind) { return call('assets.list', { kind: kind }); },
+            read: function (asset, version) { return call('assets.read', { asset: asset, version: version }); },
+            write: function (asset, source, options) { return call('assets.write', extend({ asset: asset, source: source }, options)); },
+            remove: function (asset) { return call('assets.delete', { asset: asset }); },
+            run: function (asset, options) { return call('assets.run', extend({ asset: asset }, options)); }
+        }
+    };
 })();
 </script>`;
 
@@ -235,7 +282,9 @@ export function attachAppletBridge(frame, {
     requestGrant,
     approvedGrants = [],
     onGrantsChange,
-    appletTitle
+    appletTitle,
+    onActivity,
+    onProjectChanged
 } = {}) {
     const declared = new Set(extractObservatoryReadProjects(source));
     const own = String(ownProject || '').trim().toLowerCase();
@@ -250,6 +299,15 @@ export function attachAppletBridge(frame, {
     ]);
     const denied = new Set(stored.denied.filter(slug => declared.has(slug)));
     const inflight = new Map();
+    const projectAccess = createProjectAccess({
+        project: implicitOwn,
+        owner: implicitOwner,
+        source,
+        title,
+        requestGrant,
+        onActivity,
+        onChanged: onProjectChanged
+    });
 
     const persist = (notifyParent = false) => {
         writeStoredGrants(storageKey, granted, denied);
@@ -313,6 +371,13 @@ export function attachAppletBridge(frame, {
         const channel = new MessageChannel();
         channel.port1.onmessage = async (event) => {
             const request = event.data;
+            if (request && isProjectAccessType(request.type)) {
+                const result = await projectAccess.handle(request);
+                try {
+                    channel.port1.postMessage({ type: `${request.type}.result`, id: request.id, ...result });
+                } catch { /* frame gone */ }
+                return;
+            }
             if (!request || request.type !== 'observatory.read') return;
             const id = request.id;
             let result;
@@ -327,7 +392,7 @@ export function attachAppletBridge(frame, {
         };
         channel.port1.start();
         try {
-            frame.contentWindow.postMessage({ type: 'goobster:init' }, '*', [channel.port2]);
+            frame.contentWindow.postMessage({ type: 'goobster:init', context: projectAccess.context }, '*', [channel.port2]);
         } catch { /* torn down */ }
     };
 

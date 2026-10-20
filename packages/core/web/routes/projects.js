@@ -641,7 +641,18 @@ function mountProjects(app, ctx, h) {
     app.delete('/api/app/projects/:slug/repos/:name', requireAuth, chatRoute(async (req) => repos().remove(repoArgs(req))));
     app.post('/api/app/projects/:slug/repos/:name/pull', requireAuth, chatRoute(async (req) => repos().pull(repoArgs(req))));
     app.post('/api/app/projects/:slug/repos/:name/commit', requireAuth, chatRoute(async (req) =>
-        repos().commit({ ...repoArgs(req), message: req.body?.message })
+        repos().commit({ ...repoArgs(req), message: req.body?.message, paths: Array.isArray(req.body?.paths) ? req.body.paths : null })
+    ));
+    // The editor's git view of one clone.
+    app.get('/api/app/projects/:slug/repos/:name/changes', requireAuth, chatRoute(async (req) => repos().changes(repoArgs(req))));
+    app.get('/api/app/projects/:slug/repos/:name/file', requireAuth, chatRoute(async (req) =>
+        repos().fileAt({ ...repoArgs(req), path: req.query.path, ref: req.query.ref || 'HEAD' })
+    ));
+    app.get('/api/app/projects/:slug/repos/:name/diff', requireAuth, chatRoute(async (req) =>
+        repos().fileDiff({ ...repoArgs(req), path: req.query.path || null })
+    ));
+    app.post('/api/app/projects/:slug/repos/:name/discard', requireAuth, chatRoute(async (req) =>
+        repos().discard({ ...repoArgs(req), path: req.body?.path })
     ));
     app.post('/api/app/projects/:slug/repos/:name/push', requireAuth, chatRoute(async (req) =>
         repos().push({ ...repoArgs(req), branch: req.body?.branch ?? null })
@@ -804,9 +815,25 @@ function mountProjects(app, ctx, h) {
             background: req.body?.background === true,
             client: ctx.gateway,
             assetVersionId: asset.versionId,
-            startedBy: 'portal'
+            startedBy: req.body?.startedBy === 'app' ? 'app' : 'portal'
         });
     }));
+
+    // Run one workspace file (.py / .js / .sh) from its own folder; the
+    // Apps bridge's project.run and anything else that names a file.
+    app.post('/api/app/projects/:slug/run-file', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.runFile({
+            userId: req.webUser.userId,
+            project: req.params.slug,
+            owner: projectOwner(req),
+            path: req.body?.path,
+            args: req.body?.args ?? [],
+            stdin: typeof req.body?.stdin === 'string' ? req.body.stdin : '',
+            background: req.body?.background === true,
+            client: ctx.gateway,
+            startedBy: req.body?.startedBy === 'app' ? 'app' : 'portal'
+        })
+    ));
 
     // --- Project triggers (cron / event automations) ------------------------
     app.get('/api/app/projects/:slug/triggers', requireAuth, chatRoute(async (req) => ({

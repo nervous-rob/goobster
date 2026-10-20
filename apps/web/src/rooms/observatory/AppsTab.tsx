@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { renderApplet as renderAppletJs } from '../../renderers/codeblocks.js';
+import { readAppletAccess, resetAppletAccess } from '../../renderers/appletProjectAccess.js';
 import { whenLabel } from './format';
 
 type AppAsset = {
@@ -33,6 +34,16 @@ type AppDetail = {
     grants?: { observatoryRead?: string[] };
 };
 
+/** One request an app made through the bridge (newest first in the log). */
+type AppActivity = { at: number; type: string; target: string; ok: boolean; code: string | null };
+type ProjectChange = 'files' | 'assets' | 'runs';
+
+const CAPABILITY_LABEL: Record<string, string> = {
+    write: 'write files & notes',
+    delete: 'delete files & notes',
+    run: 'run programs'
+};
+
 function renderApplet(
     container: HTMLElement,
     opts: {
@@ -43,6 +54,8 @@ function renderApplet(
         grants?: { observatoryRead?: string[] };
         ownProject?: string | null;
         ownOwner?: string | null;
+        onActivity?: (entry: AppActivity) => void;
+        onProjectChanged?: (what: ProjectChange) => void;
     }
 ): void {
     const fn = renderAppletJs as (
@@ -55,6 +68,8 @@ function renderApplet(
             grants?: { observatoryRead?: string[] };
             ownProject?: string | null;
             ownOwner?: string | null;
+            onActivity?: (entry: AppActivity) => void;
+            onProjectChanged?: (what: ProjectChange) => void;
         }
     ) => void;
     fn(container, opts);
@@ -67,6 +82,8 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
     const [selected, setSelected] = useState<string | null>(null);
     const [viewVersion, setViewVersion] = useState<number | ''>('');
     const stageRef = useRef<HTMLDivElement>(null);
+    const [activity, setActivity] = useState<AppActivity[]>([]);
+    const [accessTick, setAccessTick] = useState(0);
 
     const list = useQuery({
         queryKey: keys.projectAssets(slug, ownerId),
@@ -92,7 +109,15 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
 
     useEffect(() => {
         setViewVersion('');
+        setActivity([]);
     }, [currentSlug]);
+
+    const access = useMemo(
+        () => (detail.data?.source ? readAppletAccess({ project: slug, owner: ownerId || null, source: detail.data.source }) : null),
+        // accessTick re-reads after the app asks for (or is refused) a capability.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [detail.data?.source, slug, ownerId, accessTick]
+    );
 
     useEffect(() => {
         const stage = stageRef.current;
@@ -105,10 +130,29 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
             requestGrant: confirm,
             grants: detail.data.grants,
             ownProject: slug,
-            ownOwner: ownerId
+            ownOwner: ownerId,
+            onActivity: (entry) => {
+                setActivity((prev) => [entry, ...prev].slice(0, 50));
+                setAccessTick((n) => n + 1);
+            },
+            onProjectChanged: (what) => {
+                if (what === 'files') void queryClient.invalidateQueries({ queryKey: ['project-files', slug] });
+                if (what === 'assets') void queryClient.invalidateQueries({ queryKey: keys.projectAssets(slug, ownerId) });
+                if (what === 'runs') {
+                    void queryClient.invalidateQueries({ queryKey: keys.observatory });
+                    void queryClient.invalidateQueries({ queryKey: keys.projectNow(slug, ownerId) });
+                }
+            }
         });
         return () => { stage.replaceChildren(); };
-    }, [detail.data, toast, confirm, slug, ownerId]);
+    }, [detail.data, toast, confirm, slug, ownerId, queryClient]);
+
+    function resetAccess() {
+        if (!detail.data?.source) return;
+        resetAppletAccess({ project: slug, owner: ownerId || null, source: detail.data.source });
+        setAccessTick((n) => n + 1);
+        toast('Approvals reset: the app asks again next time.');
+    }
 
     async function rollback() {
         if (!currentSlug || viewVersion === '') return;
@@ -202,9 +246,49 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
                         </div>
                     )}
 
+                    {access && (
+                        <div className="obs-app-access" data-testid="app-access">
+                            <span className="obs-app-access-label">This app can</span>
+                            <span className="obs-app-cap is-allowed" title="Apps always read their own project">read this project</span>
+                            {access.declared.map((cap) => {
+                                const state = access.allowed.includes(cap) ? 'allowed' : access.denied.includes(cap) ? 'denied' : 'ask';
+                                return (
+                                    <span key={cap} className={`obs-app-cap is-${state}`}
+                                        title={state === 'allowed' ? 'You allowed this for this version'
+                                            : state === 'denied' ? 'You refused this for this session' : 'Asks you the first time'}>
+                                        {CAPABILITY_LABEL[cap] || cap}
+                                        {state === 'allowed' ? ' ✓' : state === 'denied' ? ' ✕' : ' · asks first'}
+                                    </span>
+                                );
+                            })}
+                            {(access.allowed.length > 0 || access.denied.length > 0) && (
+                                <button type="button" className="btn small" onClick={resetAccess}>Reset approvals</button>
+                            )}
+                        </div>
+                    )}
+
                     {detail.isPending && <div className="empty">Loading app…</div>}
                     {detail.isError && <div className="empty">{(detail.error as Error).message}</div>}
                     <div ref={stageRef} className="obs-app-stage" />
+
+                    {activity.length > 0 && (
+                        <details className="obs-app-activity" data-testid="app-activity">
+                            <summary>
+                                App activity · {activity.length}
+                                {activity.some((entry) => !entry.ok) ? ` · ${activity.filter((entry) => !entry.ok).length} refused or failed` : ''}
+                            </summary>
+                            <ol>
+                                {activity.map((entry, index) => (
+                                    <li key={`${entry.at}:${index}`} className={entry.ok ? '' : 'is-failed'}>
+                                        <span className="hint">{new Date(entry.at).toLocaleTimeString()}</span>
+                                        <code>{entry.type}</code>
+                                        <span className="obs-app-activity-target">{entry.target}</span>
+                                        <span>{entry.ok ? '✓' : entry.code || 'failed'}</span>
+                                    </li>
+                                ))}
+                            </ol>
+                        </details>
+                    )}
                 </div>
 
                 <aside className="obs-apps-history">

@@ -586,9 +586,12 @@ export const api = {
     rollbackProjectAsset: (project: string, asset: string, version: number, owner?: string | null, expectedRevision?: number) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/rollback${ownerQs(owner)}`,
             { method: 'POST', body: { version, expectedRevision, owner: owner || undefined } }),
-    runProjectAsset: (project: string, asset: string, background = false, owner?: string | null) =>
+    runProjectAsset: (project: string, asset: string, background = false, owner?: string | null, startedBy?: 'app') =>
         request(`/api/app/projects/${encodeURIComponent(project)}/assets/${encodeURIComponent(asset)}/run${ownerQs(owner)}`,
-            { method: 'POST', body: { background, owner: owner || undefined } }),
+            { method: 'POST', body: { background, owner: owner || undefined, startedBy } }),
+    runProjectFile: (project: string, body: { path: string; args?: string[]; stdin?: string; background?: boolean; startedBy?: 'app' }, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/run-file${ownerQs(owner)}`,
+            { method: 'POST', body: { ...body, owner: owner || undefined } }),
     projectFiles: (project: string, dirPath?: string, owner?: string | null) => {
         // Empty path must stay on the query string: the explorer lists one
         // directory at a time, and omitting `path` walks the whole tree
@@ -690,6 +693,14 @@ export const api = {
         request(`/api/app/observatory/jobs/${jobId}/changes`),
     projectRepoSummary: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/summary${ownerQs(owner)}`),
+    projectRepoChanges: (project: string, name: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/changes${ownerQs(owner)}`),
+    projectRepoFile: (project: string, name: string, filePath: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/file${ownerQs(owner, { path: filePath })}`),
+    projectRepoDiff: (project: string, name: string, filePath?: string | null, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/diff${ownerQs(owner, { path: filePath || undefined })}`),
+    projectRepoDiscard: (project: string, name: string, filePath: string, owner?: string | null) =>
+        request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/discard${ownerQs(owner)}`, { method: 'POST', body: { path: filePath } }),
     projectRepoWatches: (project: string, name: string, owner?: string | null) =>
         request(`/api/app/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(name)}/watches${ownerQs(owner)}`),
     watchProjectRepo: (project: string, name: string, body: { branch?: string | null; mode: 'notify' | 'fix' }, owner?: string | null) =>

@@ -43,7 +43,8 @@ const fakeAssets = {
 
 const fakeObservatory = {
     enabled: true,
-    run: jest.fn()
+    run: jest.fn(),
+    runFile: jest.fn()
 };
 
 function request({ method = 'GET', reqPath, headers = {}, body = null }) {
@@ -124,7 +125,8 @@ describe('project asset API auth', () => {
             { method: 'GET', reqPath: '/api/app/projects/lab/assets/dash/versions' },
             { method: 'GET', reqPath: '/api/app/projects/lab/assets/dash/versions/1' },
             { method: 'POST', reqPath: '/api/app/projects/lab/assets/dash/rollback', body: { version: 1 } },
-            { method: 'POST', reqPath: '/api/app/projects/lab/assets/ingest/run', body: { background: true } }
+            { method: 'POST', reqPath: '/api/app/projects/lab/assets/ingest/run', body: { background: true } },
+            { method: 'POST', reqPath: '/api/app/projects/lab/run-file', body: { path: 'sim.py' } }
         ];
         for (const call of paths) {
             const res = await request(call);
@@ -246,5 +248,42 @@ describe('project asset API auth', () => {
             assetVersionId: 42,
             startedBy: 'portal'
         }));
+    });
+
+    test('an app run says so; nothing else can claim another provenance', async () => {
+        fakeAssets.get.mockResolvedValue({ slug: 'ingest', kind: 'script', language: 'python', source: 'print(1)', versionId: 42 });
+        fakeObservatory.run.mockResolvedValue({ mode: 'foreground', jobId: 3 });
+        const cookie = await login();
+        await request({ method: 'POST', reqPath: '/api/app/projects/lab/assets/ingest/run', headers: { Cookie: cookie }, body: { startedBy: 'app' } });
+        expect(fakeObservatory.run).toHaveBeenLastCalledWith(expect.objectContaining({ startedBy: 'app' }));
+        await request({ method: 'POST', reqPath: '/api/app/projects/lab/assets/ingest/run', headers: { Cookie: cookie }, body: { startedBy: 'trigger' } });
+        expect(fakeObservatory.run).toHaveBeenLastCalledWith(expect.objectContaining({ startedBy: 'portal' }));
+    });
+
+    test('run-file runs one workspace file as the signed-in person', async () => {
+        fakeObservatory.runFile.mockResolvedValue({ mode: 'foreground', jobId: 11, result: { ok: true, stdout: 'hi' } });
+        const cookie = await login();
+        const res = await request({
+            method: 'POST',
+            reqPath: '/api/app/projects/lab/run-file?owner=200000000000000001',
+            headers: { Cookie: cookie },
+            body: { path: 'tools/sim.py', args: ['--days', '3'], stdin: 'x', background: false, startedBy: 'app' }
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.jobId).toBe(11);
+        expect(fakeObservatory.runFile).toHaveBeenCalledWith(expect.objectContaining({
+            userId: USER,
+            project: 'lab',
+            owner: '200000000000000001',
+            path: 'tools/sim.py',
+            args: ['--days', '3'],
+            stdin: 'x',
+            background: false,
+            startedBy: 'app'
+        }));
+        fakeObservatory.runFile.mockRejectedValueOnce(Object.assign(new Error('Only .py, .js, .cjs, .mjs and .sh files can be run.'), { status: 400, code: 'NOT_RUNNABLE' }));
+        const refused = await request({ method: 'POST', reqPath: '/api/app/projects/lab/run-file', headers: { Cookie: cookie }, body: { path: 'notes.md' } });
+        expect(refused.status).toBe(400);
+        expect(refused.json.error.code).toBe('NOT_RUNNABLE');
     });
 });

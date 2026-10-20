@@ -275,6 +275,51 @@ function legalizeWorkspacePath(workspaceDir, relativePath, {
     return { relativePath: rel, absolutePath: resolved };
 }
 
+/**
+ * The launcher `runFile` runs for one workspace file: chdir to its folder,
+ * argv set, then hand over to the file. The path and args travel as JSON,
+ * never spliced into code unquoted.
+ * @returns {{ language: string, code: string }|null}
+ */
+function runFileLauncher(rel, args) {
+    const ext = path.extname(rel).toLowerCase();
+    const spec = JSON.stringify(JSON.stringify({ path: rel, args }));
+    const header = `workspace/${rel}`.replace(/[\r\n]/g, ' ');
+    if (ext === '.py') {
+        return {
+            language: 'python',
+            code: [
+                `# goobster: run ${header}`,
+                'import json, os, runpy, sys',
+                `_spec = json.loads(${spec})`,
+                "_file = os.path.join(os.environ['GOOBSTER_PROJECT_DIR'], _spec['path'])",
+                'os.chdir(os.path.dirname(_file))',
+                "sys.argv = [_file] + _spec['args']",
+                'sys.path.insert(0, os.path.dirname(_file))',
+                "runpy.run_path(_file, run_name='__main__')",
+                ''
+            ].join('\n')
+        };
+    }
+    // Node and bash start the file themselves, as its own main module
+    // (require.main === module holds), from its folder.
+    const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
+    const program = (ext === '.js' || ext === '.cjs' || ext === '.mjs') ? 'node'
+        : ext === '.sh' ? 'bash' : null;
+    if (program) {
+        return {
+            language: 'bash',
+            code: [
+                `# goobster: run ${header}`,
+                `cd "$GOOBSTER_PROJECT_DIR"/${quote(path.posix.dirname(rel))} || exit 1`,
+                `exec ${program} ./${quote(path.posix.basename(rel))}${args.map((arg) => ` ${quote(arg)}`).join('')}`,
+                ''
+            ].join('\n')
+        };
+    }
+    return null;
+}
+
 /** Machine-readable observatory error (the PanelError contract: status + code). */
 class ObservatoryError extends Error {
     constructor(status, code, message) {
@@ -2675,6 +2720,36 @@ class ObservatoryService {
         };
     }
 
+    /**
+     * Run one workspace file as a program: `.py` with Python, `.js` / `.cjs` /
+     * `.mjs` with Node, `.sh` with bash, from the file's own directory, with
+     * `args` as its argv. The job's code is a short launcher naming the file,
+     * so the run record says what ran; the rest is `run` (quota, lock, job,
+     * snapshot, live output).
+     * @param {Object} params - run's params, with `path` (workspace-relative)
+     *   and `args` (strings) in place of `language` / `code`
+     */
+    async runFile({ userId, project, owner = null, path: filePath, args = [], ...rest }) {
+        await this._requireEnabled();
+        const row = await this._requireProject(userId, project, owner);
+        const { relativePath: rel, absolutePath } = legalizeWorkspacePath(row.dir, filePath, { mustExist: true });
+        let stat;
+        try { stat = fs.statSync(absolutePath); } catch {
+            throw new ObservatoryError(404, 'NOT_FOUND', 'No such file.');
+        }
+        if (!stat.isFile()) throw new ObservatoryError(400, 'NOT_A_FILE', 'That path is not a file.');
+        const argv = Array.isArray(args) ? args : [];
+        if (argv.length > 64 || argv.some((arg) => typeof arg !== 'string' || arg.length > 4096 || arg.includes('\0'))) {
+            throw new ObservatoryError(400, 'BAD_ARGS', 'args must be at most 64 strings of at most 4096 characters.');
+        }
+        const launcher = runFileLauncher(rel, argv);
+        if (!launcher) {
+            throw new ObservatoryError(400, 'NOT_RUNNABLE',
+                'Only .py, .js, .cjs, .mjs and .sh files can be run.');
+        }
+        return this.run({ ...rest, userId, project: row.slug, owner: row.ownerId, ...launcher });
+    }
+
     /** Accept a resolved contract for a new job, or refuse it with BAD_OUTPUT_CONTRACT. */
     _legalizeOutputContract(outputContract) {
         if (outputContract === null || outputContract === undefined) return null;
@@ -4340,3 +4415,4 @@ module.exports.MANIFEST_MAX_TRIGGERS = MANIFEST_MAX_TRIGGERS;
 module.exports.MANIFEST_MAX_FILES = MANIFEST_MAX_FILES;
 module.exports.INSTRUCTIONS_FILE = INSTRUCTIONS_FILE;
 module.exports.MANIFEST_MAX_KNOWLEDGE = MANIFEST_MAX_KNOWLEDGE;
+module.exports.runFileLauncher = runFileLauncher;

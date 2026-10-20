@@ -21,7 +21,13 @@ const MINI_APP_BRIDGE =
     + 'An app asset rendered inside its own project may read that project\'s workspace with no meta tag. '
     + 'Cross-project reads still declare <meta name="goobster-observatory-read" content="other-project-slug">. '
     + 'Then const port = await connectToGoobster(); request(port, { type: \'observatory.read\', project, path, responseType: \'json\'|\'text\'|\'dataurl\' }). '
-    + 'The user is prompted the first time for a cross-project read. Never ask for allow-same-origin.';
+    + 'The user is prompted the first time for a cross-project read. '
+    + 'An app saved with save_app and opened in its project\'s Apps tab also gets window.goobster (no project argument): '
+    + 'await goobster.list(dir), read(path, responseType), write(path, content, { encoding: \'utf8\'|\'json\'|\'base64\'|\'dataurl\' }), '
+    + 'remove(path), run(path, { args, stdin, background }) for .py/.js/.sh workspace files (job(jobId) polls a background run), '
+    + 'and goobster.assets.list/read/write/remove/run for notes and scripts (never apps). '
+    + 'write, remove and run must be declared, only those the app needs: <meta name="goobster-project-access" content="write delete run">; '
+    + 'the viewer approves each the first time, so handle a rejected promise (err.code ACCESS_DENIED). Never ask for allow-same-origin.';
 
 /**
  * How rich replies render on a web surface.
