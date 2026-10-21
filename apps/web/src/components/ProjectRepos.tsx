@@ -168,7 +168,9 @@ export function RepoPanel({ slug, ownerId, onChanged, codeView = false, askGoobs
     }
 
     if (codeView && editingEntry) {
-        return <RepoIde slug={slug} ownerId={ownerId} entry={editingEntry} askGoobster={askGoobster} onClose={() => { setEditing(null); void refresh(); }} />;
+        // Cached project queries can change scope without an intermediate loading
+        // render. Never carry loaded documents or selections into another repo.
+        return <RepoIde key={JSON.stringify([ownerId ?? null, slug, editingEntry.name])} slug={slug} ownerId={ownerId} entry={editingEntry} askGoobster={askGoobster} onClose={() => { setEditing(null); void refresh(); }} />;
     }
 
     return (

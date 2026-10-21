@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { api } from '../../lib/api';
@@ -60,6 +60,7 @@ function renderApplet(
         grants?: { observatoryRead?: string[] };
         ownProject?: string | null;
         ownOwner?: string | null;
+        ownAsset?: string | null;
         onActivity?: (entry: AppActivity) => void;
         onProjectChanged?: (what: ProjectChange) => void;
     }
@@ -74,6 +75,7 @@ function renderApplet(
             grants?: { observatoryRead?: string[] };
             ownProject?: string | null;
             ownOwner?: string | null;
+            ownAsset?: string | null;
             onActivity?: (entry: AppActivity) => void;
             onProjectChanged?: (what: ProjectChange) => void;
         }
@@ -100,6 +102,7 @@ export function useAppStage(stageRef: RefObject<HTMLDivElement | null>, {
     const queryClient = useQueryClient();
     const activityRef = useRef(onActivity);
     activityRef.current = onActivity;
+    const asset = detail?.slug;
     const source = detail?.source;
     const language = detail?.language;
     const grantsKey = JSON.stringify(detail?.grants || null);
@@ -116,6 +119,7 @@ export function useAppStage(stageRef: RefObject<HTMLDivElement | null>, {
             grants: JSON.parse(grantsKey) || undefined,
             ownProject: slug,
             ownOwner: ownerId,
+            ownAsset: asset,
             onActivity: (entry) => activityRef.current?.(entry),
             onProjectChanged: (what) => {
                 if (what === 'files') void queryClient.invalidateQueries({ queryKey: ['project-files', slug] });
@@ -127,7 +131,7 @@ export function useAppStage(stageRef: RefObject<HTMLDivElement | null>, {
             }
         });
         return () => { stage.replaceChildren(); };
-    }, [stageRef, source, language, grantsKey, toast, confirm, slug, ownerId, queryClient]);
+    }, [stageRef, asset, source, language, grantsKey, toast, confirm, slug, ownerId, queryClient]);
 }
 
 /** The Apps view's address: `?app=<slug>` selects one, `&full=1` shows it alone. */
@@ -183,12 +187,16 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         setActivity([]);
     }, [currentSlug]);
 
-    const access = useMemo(
-        () => (detail.data?.source ? readAppletAccess({ project: slug, owner: ownerId || null, source: detail.data.source }) : null),
-        // accessTick re-reads after the app asks for (or is refused) a capability.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [detail.data?.source, slug, ownerId, accessTick]
-    );
+    const [access, setAccess] = useState<Awaited<ReturnType<typeof readAppletAccess>> | null>(null);
+    useEffect(() => {
+        let active = true;
+        setAccess(null);
+        if (detail.data) {
+            void readAppletAccess({ project: slug, owner: ownerId || null, asset: detail.data.slug, source: detail.data.source })
+                .then(value => { if (active) setAccess(value); });
+        }
+        return () => { active = false; };
+    }, [detail.data?.source, detail.data?.slug, slug, ownerId, accessTick]);
 
     usePublishViewContext('app', detail.data ? {
         id: `app:${detail.data.slug}:${detail.data.version}`,
@@ -219,9 +227,9 @@ export function AppsTab({ slug, ownerId }: { slug: string; ownerId?: string | nu
         }
     }
 
-    function resetAccess() {
+    async function resetAccess() {
         if (!detail.data?.source) return;
-        resetAppletAccess({ project: slug, owner: ownerId || null, source: detail.data.source });
+        await resetAppletAccess({ project: slug, owner: ownerId || null, asset: detail.data.slug, source: detail.data.source });
         setAccessTick((n) => n + 1);
         toast('Approvals reset: the app asks again next time.');
     }

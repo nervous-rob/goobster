@@ -2988,14 +2988,23 @@ class ObservatoryService {
         } catch { /* best effort */ }
     }
 
+    /** Live output restricted to the app’s owner-qualified project. */
+    async projectJobLive({ userId, project, owner = null, jobId, since = null }) {
+        await this._requireOrganization();
+        // Resolve the app's owner-qualified project on every read/poll. Membership
+        // in some other project does not authorize an app to see its job output.
+        const row = await this._requireProject(userId, project, owner);
+        return this.jobLive({ userId, jobId, since, projectId: row.id });
+    }
+
     /**
      * What a run is printing now (any member). While it runs: the live
      * tails, rewritten every few seconds (`since` = the last `at` seen
      * answers { unchanged: true } when nothing new arrived). Between
      * segments or once settled: the recorded tails.
      */
-    async jobLive({ userId, jobId, since = null }) {
-        const job = await this.getJob({ userId, jobId });
+    async jobLive({ userId, jobId, since = null, projectId = null }) {
+        const job = await this.getJob({ userId, jobId, projectId });
         const row = await db.get(
             'SELECT liveStdout, liveStderr, liveBytes, liveAt FROM observatory_jobs WHERE id = @id',
             { id: job.id }
@@ -3723,7 +3732,7 @@ class ObservatoryService {
         };
     }
 
-    async getJob({ userId, jobId }) {
+    async getJob({ userId, jobId, projectId = null }) {
         await this._requireOrganization();
         const job = await db.get(
             `SELECT j.id, j.status, j.language, j.segments, j.resumeCount, j.exitCode,
@@ -3734,8 +3743,8 @@ class ObservatoryService {
                     j.outputContractJson, j.outputContractResultJson,
                     p.slug AS project, p.name AS projectName, p.userId AS ownerId
              FROM observatory_jobs j JOIN observatory_projects p ON p.id = j.projectId
-             WHERE j.id = @jobId`,
-            { jobId: Number(jobId) }
+             WHERE j.id = @jobId${projectId == null ? '' : ' AND j.projectId = @projectId'}`,
+            { jobId: Number(jobId), ...(projectId == null ? {} : { projectId }) }
         );
         if (!job) {
             throw new ObservatoryError(404, 'NO_SUCH_JOB', 'No such job.');

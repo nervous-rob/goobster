@@ -55,15 +55,22 @@ export function extractProjectAccess(source) {
     return [...declared];
 }
 
-function sourceHash(source) {
-    let hash = 5381;
-    const text = String(source || '');
-    for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
-    return (hash >>> 0).toString(36) + text.length.toString(36);
-}
-
-function accessKey(project, owner, source) {
-    return `${accountStoragePrefix()}${ACCESS_STORAGE}${owner || ''}:${project}:${sourceHash(source)}`;
+// Version the namespace so weak legacy approvals can never be reused. Hash
+// UTF-16 code units to preserve exact JS source, including lone surrogates.
+async function accessKey(project, owner, asset, source) {
+    if (!project || !asset || typeof source !== 'string') return null;
+    try {
+        const prefix = accountStoragePrefix();
+        const bytes = new Uint8Array(source.length * 2);
+        const view = new DataView(bytes.buffer);
+        for (let i = 0; i < source.length; i++) view.setUint16(i * 2, source.charCodeAt(i));
+        const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+        const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+        return `${prefix}${ACCESS_STORAGE}v2:${JSON.stringify([owner || '', project, asset, hex])}`;
+    } catch {
+        // No insecure fallback when crypto is unavailable or fails.
+        return null;
+    }
 }
 
 function readSet(storage, key) {
@@ -83,22 +90,23 @@ function writeSet(storage, key, set) {
 }
 
 /** What this viewer has approved for this app source (for the Apps tab's access strip).
- * @param {{ project: string, owner?: string|null, source: string }} params
+ * @param {{ project: string, owner?: string|null, asset: string, source: string }} params
  */
-export function readAppletAccess({ project, owner = null, source }) {
-    const key = accessKey(project, owner, source);
+export async function readAppletAccess({ project, owner = null, asset, source }) {
+    const key = await accessKey(project, owner, asset, source);
     let allowed = new Set();
     let denied = new Set();
-    try { allowed = readSet(localStorage, key); } catch { /* blocked */ }
-    try { denied = readSet(sessionStorage, key); } catch { /* blocked */ }
+    try { if (key) allowed = readSet(localStorage, key); } catch { /* blocked */ }
+    try { if (key) denied = readSet(sessionStorage, key); } catch { /* blocked */ }
     return { declared: extractProjectAccess(source), allowed: [...allowed], denied: [...denied] };
 }
 
 /** Forget every approval and refusal for this app source; it asks again next time.
- * @param {{ project: string, owner?: string|null, source: string }} params
+ * @param {{ project: string, owner?: string|null, asset: string, source: string }} params
  */
-export function resetAppletAccess({ project, owner = null, source }) {
-    const key = accessKey(project, owner, source);
+export async function resetAppletAccess({ project, owner = null, asset, source }) {
+    const key = await accessKey(project, owner, asset, source);
+    if (!key) return;
     try { localStorage.removeItem(key); } catch { /* blocked */ }
     try { sessionStorage.removeItem(key); } catch { /* blocked */ }
 }
@@ -194,20 +202,17 @@ export function isProjectAccessType(type) {
  * @param {string|null} options.project own project slug
  * @param {string|null} [options.owner] its owner (owner-qualified addresses)
  * @param {string} options.source the app's source (declarations, approval key)
+ * @param {string} options.asset trusted app asset identity
  * @param {string} options.title for the approval prompt
  * @param {(message: string) => Promise<boolean>} [options.requestGrant]
  * @param {(entry: object) => void} [options.onActivity] one entry per call
  * @param {(what: 'files'|'assets'|'runs') => void} [options.onChanged] after a write, delete or run
  */
-export function createProjectAccess({ project, owner = null, source, title, requestGrant, onActivity, onChanged }) {
+export function createProjectAccess({ project, owner = null, asset, source, title, requestGrant, onActivity, onChanged }) {
     const declared = new Set(extractProjectAccess(source));
-    const key = project ? accessKey(project, owner, source) : null;
+    const keyReady = accessKey(project, owner, asset, source);
     let allowed = new Set();
     let denied = new Set();
-    if (key) {
-        try { allowed = readSet(localStorage, key); } catch { /* blocked */ }
-        try { denied = readSet(sessionStorage, key); } catch { /* blocked */ }
-    }
     const inflight = new Map();
     /** watchId -> { stopped } for this frame's live-output watches. */
     const watches = new Map();
@@ -218,9 +223,11 @@ export function createProjectAccess({ project, owner = null, source, title, requ
             return fail('UNDECLARED_CAPABILITY',
                 `This app did not declare "${capability}". Add <meta name="${PROJECT_ACCESS_META}" content="${capability}"> to its <head>.`);
         }
+        const key = await keyReady;
+        if (!key) return fail('IDENTITY_UNAVAILABLE', 'Could not verify this app source for approval.');
         // Read the stores again: the Apps tab may have reset them meanwhile.
-        try { allowed = readSet(localStorage, key); } catch { /* blocked */ }
-        try { denied = readSet(sessionStorage, key); } catch { /* blocked */ }
+        try { if (key) allowed = readSet(localStorage, key); } catch { /* blocked */ }
+        try { if (key) denied = readSet(sessionStorage, key); } catch { /* blocked */ }
         if (allowed.has(capability)) return null;
         if (denied.has(capability)) return fail('ACCESS_DENIED', `You did not allow this app to ${CAPABILITY_TEXT[capability]}.`);
         if (!inflight.has(capability)) {
@@ -299,7 +306,7 @@ export function createProjectAccess({ project, owner = null, source, title, requ
             if (!Number.isInteger(jobId) || jobId <= 0) return fail('BAD_REQUEST', 'Need a jobId.');
             const refused = await ensure('run');
             if (refused) return refused;
-            return { ok: true, content: await api.observatoryJobLive(jobId, req.since || null) };
+            return { ok: true, content: await api.projectJobLive(project, jobId, req.since || null, owner) };
         },
         'project.watch': async (req, post) => {
             const jobId = Number(req.jobId);
@@ -310,7 +317,7 @@ export function createProjectAccess({ project, owner = null, source, title, requ
             if (typeof post !== 'function') return fail('BAD_REQUEST', 'Watching needs a live connection.');
             if (watches.size >= MAX_WATCHES) return fail('TOO_MANY_WATCHES', `An app can watch at most ${MAX_WATCHES} runs at once.`);
             // Fail fast on a job the viewer cannot see, before promising updates.
-            const first = await api.observatoryJobLive(jobId, null);
+            const first = await api.projectJobLive(project, jobId, null, owner);
             const watch = { stopped: false };
             watches.set(watchId, watch);
             const send = (update, done = false) => {
@@ -328,7 +335,7 @@ export function createProjectAccess({ project, owner = null, source, title, requ
                     if (watch.stopped) break;
                     let next;
                     try {
-                        next = await api.observatoryJobLive(jobId, since);
+                        next = await api.projectJobLive(project, jobId, since, owner);
                     } catch (error) {
                         post({ type: 'project.watch.update', watchId, jobId, done: true, error: { code: error?.code || 'WATCH_FAILED', message: error?.message || 'Lost the run.' } });
                         break;

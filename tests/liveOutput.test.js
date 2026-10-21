@@ -17,10 +17,12 @@ const { SandboxService } = require('@goobster/core/services/sandboxService');
 
 const SANDBOX_ROOT = path.join(os.tmpdir(), `goobster-live-output-runs-${process.pid}`);
 const USER = `${400_000_000_000_000_000n + BigInt(process.pid)}`;
+const OTHER_OWNER = `${500_000_000_000_000_000n + BigInt(process.pid)}`;
 
 afterAll(async () => {
     await db.closeConnection();
     try { fs.rmSync(path.join(PROJECTS_ROOT, USER), { recursive: true, force: true }); } catch { /* gone */ }
+    try { fs.rmSync(path.join(PROJECTS_ROOT, OTHER_OWNER), { recursive: true, force: true }); } catch { /* gone */ }
     try { fs.rmSync(SANDBOX_ROOT, { recursive: true, force: true }); } catch { /* gone */ }
     for (const suffix of ['', '-wal', '-shm']) {
         try { fs.unlinkSync(TEST_DB + suffix); } catch { /* gone */ }
@@ -145,5 +147,60 @@ describe('a running job', () => {
             if (previous === undefined) delete process.env.GOOBSTER_SANDBOX_URL;
             else process.env.GOOBSTER_SANDBOX_URL = previous;
         }
+    });
+});
+
+describe('app project-bound live output', () => {
+    test('binds every read to the owner-qualified project, including unchanged polls and revoked membership', async () => {
+        const service = new ObservatoryService({
+            config: {
+                enabled: true, projectsEnabled: true, scope: 'everywhere',
+                maxProjectsPerUser: 5, maxMembersPerProject: 5, historyEnabled: false
+            },
+            sandbox: { liveOutputSupported: () => true }
+        });
+        const viewer = `${USER}1`;
+        const a = await service.createProject({ userId: USER, name: 'Scope A' });
+        const b = await service.createProject({ userId: USER, name: 'Scope B' });
+        const sameSlug = await service.createProject({ userId: OTHER_OWNER, name: 'Scope A' });
+        const jobs = [];
+        for (const project of [a, b, sameSlug]) {
+            await db.run(
+                'INSERT INTO project_members (projectId, userId, invitedBy) VALUES (@projectId, @userId, @invitedBy)',
+                { projectId: project.id, userId: viewer, invitedBy: project.userId || USER }
+            );
+            jobs.push(await db.insert(
+                `INSERT INTO observatory_jobs (projectId, userId, language, code, status, stdoutTail, finishedAt)
+                 VALUES (@projectId, @userId, 'python', '', 'COMPLETED', @stdout, @at)`,
+                { projectId: project.id, userId: viewer, stdout: `synthetic output ${project.id}`, at: '2026-01-01 00:00:00' }
+            ));
+        }
+        await db.run(
+            `UPDATE observatory_jobs SET status = 'RUNNING', liveStdout = 'synthetic live B',
+             liveAt = @at WHERE id = @id`,
+            { id: jobs[1], at: '2026-01-01 00:00:00' }
+        );
+        const read = { userId: viewer, project: a.slug, owner: USER, jobId: jobs[0] };
+        const own = await service.projectJobLive(read);
+        expect(own).toMatchObject({ jobId: jobs[0], stdout: `synthetic output ${a.id}` });
+        expect(await service.projectJobLive({ ...read, since: own.at })).toMatchObject({ unchanged: true });
+        // The viewer can access all three jobs through the unrestricted portal API.
+        for (const jobId of jobs) expect((await service.jobLive({ userId: viewer, jobId })).jobId).toBe(jobId);
+        for (const jobId of jobs.slice(1)) {
+            for (const since of [null, own.at]) {
+                await expect(service.projectJobLive({ ...read, jobId, since }))
+                    .rejects.toMatchObject({ status: 404, code: 'NO_SUCH_JOB' });
+            }
+        }
+        expect(await service.projectJobLive({ ...read, owner: OTHER_OWNER, jobId: jobs[2] }))
+            .toMatchObject({ stdout: `synthetic output ${sameSlug.id}` });
+        await expect(service.projectJobLive({ ...read, userId: `${USER}9` }))
+            .rejects.toMatchObject({ status: 404 });
+        await expect(service.projectJobLive({ ...read, project: null }))
+            .rejects.toMatchObject({ code: 'BAD_PROJECT' });
+        // A watch's next poll must recheck membership even when output did not change.
+        await db.run('DELETE FROM project_members WHERE projectId = @id AND userId = @userId', { id: a.id, userId: viewer });
+        await expect(service.projectJobLive({ ...read, since: own.at })).rejects.toMatchObject({ status: 404 });
+        expect(await service.projectJobLive({ ...read, userId: USER })).toMatchObject({ jobId: jobs[0] });
     });
 });

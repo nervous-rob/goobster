@@ -261,6 +261,9 @@ export function CodeEditor({
             parent: host
         });
         viewRef.current = view;
+        // A fresh editor starts with a cursor, even when its file is already
+        // loaded. Withdraw the previous editor's selected-text context.
+        onSelectionRef.current?.({ text: '', fromLine: 1, toLine: 1, empty: true });
         refreshMarks(view);
         applyComments(view);
         return () => {

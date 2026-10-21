@@ -273,6 +273,13 @@ function mountProjects(app, ctx, h) {
     app.post('/api/app/observatory/jobs/:jobId/rerun', requireAuth, chatRoute(async (req) =>
         ctx.observatory.rerunJob({ userId: req.webUser.userId, jobId: req.params.jobId, client: ctx.gateway })
     ));
+    // Apps use this project-bound route for both initial reads and every watch poll.
+    app.get('/api/app/projects/:slug/jobs/:jobId/live', requireAuth, chatRoute(async (req) =>
+        ctx.observatory.projectJobLive({
+            userId: req.webUser.userId, project: req.params.slug, owner: projectOwner(req),
+            jobId: req.params.jobId, since: req.query.since || null
+        })
+    ));
     app.get('/api/app/observatory/jobs/:jobId/live', requireAuth, chatRoute(async (req) =>
         ctx.observatory.jobLive({ userId: req.webUser.userId, jobId: req.params.jobId, since: req.query.since || null })
     ));
