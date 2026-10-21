@@ -10,6 +10,18 @@ const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 const C = require('./constants');
 
+const createdProjects = new WeakMap();
+test.afterEach(async ({ page }) => {
+    for (const slug of createdProjects.get(page) || []) {
+        const removed = await page.request.delete(`/api/app/observatory/projects/${slug}?owner=${C.OWNER}`);
+        expect(removed.ok(), await removed.text()).toBe(true);
+    }
+});
+function trackProject(page, slug) {
+    createdProjects.set(page, [...(createdProjects.get(page) || []), slug]);
+}
+
+
 const APP = `<!doctype html><html><head>
 <meta name="goobster-project-access" content="write delete run">
 <title>Ledger</title></head><body>
@@ -46,8 +58,9 @@ test.beforeEach(async ({ page }) => {
 
 test('an app reads, writes, deletes and runs project files with the viewer\'s approval', async ({ page }) => {
     const created = await page.request.post('/api/app/projects', { data: { name: `App access ${Date.now()}` } });
-    expect(created.ok()).toBe(true);
+    expect(created.ok(), await created.text()).toBe(true);
     const { project: { slug } } = await created.json();
+    trackProject(page, slug);
     for (const [asset, name, source] of [['ledger', 'Ledger', APP], ['reader', 'Reader', READER]]) {
         const saved = await page.request.post(`/api/app/projects/${slug}/assets`, {
             data: { slug: asset, name, kind: 'app', language: 'html', source }
@@ -124,4 +137,80 @@ test('an app reads, writes, deletes and runs project files with the viewer\'s ap
     await expect(page.frameLocator('.applet-frame').locator('#out')).toHaveText('ERR UNDECLARED_CAPABILITY');
     await expect(dialog).toHaveCount(0);
     expect((await content('x.txt')).status()).toBe(404);
+});
+
+test('approval is exact-source and asset-bound, including the old equal-length hash collision', async ({ page }) => {
+    const created = await page.request.post('/api/app/projects', { data: { name: `Source identity ${Date.now()}` } });
+    expect(created.ok(), await created.text()).toBe(true);
+    const { project: { slug } } = await created.json();
+    trackProject(page, slug);
+    const original = APP.replace('<title>Ledger', '<!--Aa--><title>Ledger');
+    const collision = original.replace('<!--Aa-->', '<!--B@-->');
+    const save = async (asset, source) => {
+        const response = await page.request.post(`/api/app/projects/${slug}/assets`, {
+            data: { slug: asset, name: asset, kind: 'app', language: 'html', source }
+        });
+        expect(response.ok(), await response.text()).toBe(true);
+    };
+    await save('ledger', original);
+    await save('twin', original);
+    const open = async (asset) => {
+        await page.goto(`/app/projects/${C.OWNER}/${slug}/apps?app=${asset}`);
+        await expect(page.frameLocator('.applet-frame').locator('#out')).toHaveText('idle');
+        await page.frameLocator('.applet-frame').locator('#save').evaluate(async (button) => {
+            await globalThis.goobster.ready();
+            if (typeof button.onclick !== 'function') throw new Error('App script is not ready');
+        });
+    };
+    const clickSave = () => page.frameLocator('.applet-frame').locator('#save').click();
+    const dialog = page.getByRole('dialog');
+    await open('ledger');
+    await clickSave();
+    await expect(dialog).toContainText('create and change files');
+    await dialog.getByRole('button', { name: 'Confirm' }).click();
+    await expect(page.frameLocator('.applet-frame').locator('#out')).toContainText('saved 3');
+    // Unchanged bytes on the same asset survive a reload without a prompt.
+    await open('ledger');
+    await clickSave();
+    await expect(page.frameLocator('.applet-frame').locator('#out')).toContainText('saved 3');
+    await expect(dialog).toHaveCount(0);
+    // Identical code on another asset must ask, even within this project.
+    await page.getByRole('option', { name: /twin/ }).click();
+    await expect(page.frameLocator('.applet-frame').locator('#out')).toHaveText('idle');
+    await page.frameLocator('.applet-frame').locator('#save').evaluate(() => globalThis.goobster.ready());
+    await clickSave();
+    await expect(dialog).toContainText('create and change files');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.frameLocator('.applet-frame').locator('#out')).toHaveText('ERR ACCESS_DENIED');
+    // The old DJB2 collision used to inherit ledger's grant.
+    await save('ledger', collision);
+    await open('ledger');
+    await clickSave();
+    await expect(dialog).toContainText('create and change files');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.frameLocator('.applet-frame').locator('#out')).toHaveText('ERR ACCESS_DENIED');
+});
+
+test('unavailable cryptographic identity refuses capabilities without prompting or writing', async ({ page }) => {
+    const created = await page.request.post('/api/app/projects', { data: { name: `Identity failure ${Date.now()}` } });
+    expect(created.ok(), await created.text()).toBe(true);
+    const { project: { slug } } = await created.json();
+    trackProject(page, slug);
+    const saved = await page.request.post(`/api/app/projects/${slug}/assets`, {
+        data: { slug: 'ledger', name: 'Ledger', kind: 'app', language: 'html', source: APP }
+    });
+    expect(saved.ok()).toBe(true);
+    await page.addInitScript(() => {
+        crypto.subtle.digest = async () => { throw new Error('Synthetic identity failure'); };
+    });
+    let writes = 0;
+    page.on('request', req => { if (req.method() === 'PUT' && req.url().includes('/content/')) writes++; });
+    await page.goto(`/app/projects/${C.OWNER}/${slug}/apps`);
+    const frame = page.frameLocator('.applet-frame');
+    await frame.locator('#save').evaluate(() => globalThis.goobster.ready());
+    await frame.locator('#save').click();
+    await expect(frame.locator('#out')).toHaveText('ERR IDENTITY_UNAVAILABLE');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(writes).toBe(0);
+    expect((await page.request.get(`/api/app/projects/${slug}/content/data/ledger.json`)).status()).toBe(404);
 });

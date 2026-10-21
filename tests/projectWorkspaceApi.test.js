@@ -33,7 +33,8 @@ const fakeObservatory = {
     writeWorkspaceFile: jest.fn(),
     deleteWorkspaceFile: jest.fn(),
     listFiles: jest.fn(),
-    readWorkspaceFile: jest.fn()
+    readWorkspaceFile: jest.fn(),
+    projectJobLive: jest.fn()
 };
 
 function request({ method = 'GET', reqPath, headers = {}, body = null, raw = null }) {
@@ -173,5 +174,33 @@ describe('workspace write routes', () => {
         });
         expect(del.status).toBe(400);
         expect(del.json.error.code).toBe('BAD_PATH');
+    });
+});
+
+describe('project-scoped app job output route', () => {
+    test('requires a session before reading output', async () => {
+        const res = await request({ reqPath: '/api/app/projects/lab/jobs/17/live' });
+        expect(res.status).toBe(401);
+        expect(fakeObservatory.projectJobLive).not.toHaveBeenCalled();
+    });
+
+    test('forwards fixed project, owner, viewer and cursor on every poll and surfaces refusal', async () => {
+        const cookie = await login();
+        fakeObservatory.projectJobLive.mockResolvedValue({ jobId: 17, stdout: 'synthetic output' });
+        for (const since of [null, '2026-01-01 00:00:00']) {
+            const res = await request({
+                reqPath: `/api/app/projects/lab/jobs/17/live?owner=100000000000000002${since ? `&since=${encodeURIComponent(since)}` : ''}`,
+                headers: { Cookie: cookie }
+            });
+            expect(res.status).toBe(200);
+            expect(fakeObservatory.projectJobLive).toHaveBeenLastCalledWith({
+                userId: USER, project: 'lab', owner: '100000000000000002', jobId: '17', since
+            });
+        }
+        fakeObservatory.projectJobLive.mockRejectedValue(new ObservatoryError(404, 'NO_SUCH_JOB', 'No such job.'));
+        const refused = await request({ reqPath: '/api/app/projects/lab/jobs/18/live', headers: { Cookie: cookie } });
+        expect(refused.status).toBe(404);
+        expect(refused.json.error.code).toBe('NO_SUCH_JOB');
+        expect(JSON.stringify(refused.json)).not.toContain('synthetic output');
     });
 });

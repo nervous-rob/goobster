@@ -322,6 +322,7 @@ export function attachAppletBridge(frame, {
     source,
     ownProject = null,
     ownOwner = null,
+    ownAsset = null,
     requestGrant,
     approvedGrants = [],
     onGrantsChange,
@@ -345,6 +346,7 @@ export function attachAppletBridge(frame, {
     const projectAccess = createProjectAccess({
         project: implicitOwn,
         owner: implicitOwner,
+        asset: ownAsset,
         source,
         title,
         requestGrant,

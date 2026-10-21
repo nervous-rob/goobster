@@ -832,8 +832,10 @@ Every call returns a promise; a refusal rejects with an `Error` whose
 The first time the app uses one, the viewer is asked ("“Ledger” wants to
 create and change files and notes in project lab, as you. Allow it for
 this version of the app?"). An approval is remembered in that browser for
-that exact source, so a new version of the app asks again; a refusal lasts
-for the session. Above the app, the Apps tab shows what it can do (read,
+that asset and exact source (SHA-256), so changed source asks again while
+unchanged source on the same asset keeps its approvals; a refusal lasts
+for the session. Old weak-hash approvals are not reused. If source identity
+cannot be resolved, write, delete and run access is refused. Above the app, the Apps tab shows what it can do (read,
 plus each declared capability: allowed ✓, refused ✕ or asks first) with
 **Reset approvals**, and under it an **App activity** log of every call it
 made, refused ones in red.

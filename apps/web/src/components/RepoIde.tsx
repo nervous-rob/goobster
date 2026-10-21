@@ -90,7 +90,7 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [active, setActive] = useState<string | null>(null);
     const [diffFor, setDiffFor] = useState<string | null>(null);
-    const [selection, setSelection] = useState<EditorSelection | null>(null);
+    const [fileSelection, setFileSelection] = useState<{ source: string; value: EditorSelection } | null>(null);
     const [message, setMessage] = useState('');
     const [unticked, setUnticked] = useState<Record<string, boolean>>({});
     const [busy, setBusy] = useState<string | null>(null);
@@ -151,6 +151,10 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
     }
 
     const current = tabs.find((tab) => tab.rel === active) || null;
+    // A keyed editor remount can leave the previous callback's state behind.
+    // Bind it to its source before publishing context or offering Ask Goobster.
+    const selectionSource = JSON.stringify([ownerId ?? null, slug, root, current?.rel ?? null]);
+    const selection = current && fileSelection?.source === selectionSource ? fileSelection.value : null;
     const viewContext = current
         ? fileContextItems(`${root}/${current.rel}`, selection, `${changes.data?.branch ? ` on branch ${changes.data.branch}` : ''}${current.content !== current.saved ? ' (unsaved edit)' : ''}`)
         : null;
@@ -486,14 +490,14 @@ export function RepoIde({ slug, ownerId, entry, onClose, askGoobster }: {
                                 : (
                                     <div className="repo-ide-code">
                                         <CodeEditor
-                                            key={current.rel}
+                                            key={selectionSource}
                                             value={current.content}
                                             language={languageFromPath(current.rel)}
                                             gitBase={current.base}
                                             comments={gutterComments}
                                             onCommentClick={scrollToThread}
                                             onChange={(value) => setTabs((prev) => prev.map((tab) => (tab.rel === current.rel ? { ...tab, content: value } : tab)))}
-                                            onSelectionChange={setSelection}
+                                            onSelectionChange={(value) => setFileSelection({ source: selectionSource, value })}
                                             onSave={() => void save(current.rel)}
                                         />
                                     </div>
