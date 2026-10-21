@@ -10,12 +10,25 @@ const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 const C = require('./constants');
 
+const createdProjects = new WeakMap();
+test.afterEach(async ({ page }) => {
+    for (const slug of createdProjects.get(page) || []) {
+        const removed = await page.request.delete(`/api/app/observatory/projects/${slug}?owner=${C.OWNER}`);
+        expect(removed.ok(), await removed.text()).toBe(true);
+    }
+});
+function trackProject(page, slug) {
+    createdProjects.set(page, [...(createdProjects.get(page) || []), slug]);
+}
+
+
 const SIM = 'import sys\nfor day in range(int(sys.argv[2])):\n    print("day", day + 1)\n';
 
 async function freshProject(page, label) {
     const created = await page.request.post('/api/app/projects', { data: { name: `${label} ${Date.now()}` } });
-    expect(created.ok()).toBe(true);
+    expect(created.ok(), await created.text()).toBe(true);
     const { project } = await created.json();
+    trackProject(page, project.slug);
     const put = await page.request.put(`/api/app/projects/${project.slug}/content/tools/sim.py`, { data: { content: SIM } });
     expect(put.ok(), await put.text()).toBe(true);
     return { slug: project.slug, base: `/app/projects/${C.OWNER}/${project.slug}` };
@@ -33,7 +46,8 @@ test('a run console from a template runs a file live, pins to the Overview and o
         await route.fulfill({ json: { mode: 'background', jobId: 77, status: 'RUNNING' } });
     });
     let polls = 0;
-    await page.route('**/api/app/observatory/jobs/77/live*', async (route) => {
+    await page.route(`**/api/app/projects/${slug}/jobs/77/live*`, async (route) => {
+        expect(new URL(route.request().url()).searchParams.get('owner')).toBe(C.OWNER);
         polls += 1;
         await route.fulfill({
             json: polls < 2

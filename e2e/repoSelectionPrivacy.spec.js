@@ -3,11 +3,24 @@ const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 const C = require('./constants');
 
+const createdProjects = new WeakMap();
+test.afterEach(async ({ page }) => {
+    for (const slug of createdProjects.get(page) || []) {
+        const removed = await page.request.delete(`/api/app/observatory/projects/${slug}?owner=${C.OWNER}`);
+        expect(removed.ok(), await removed.text()).toBe(true);
+    }
+});
+function trackProject(page, slug) {
+    createdProjects.set(page, [...(createdProjects.get(page) || []), slug]);
+}
+
+
 test('excluded unsaved selections cannot move between already-loaded repository tabs', async ({ page }) => {
     await login(page);
     const created = await page.request.post('/api/app/projects', { data: { name: `Selection privacy ${Date.now()}` } });
-    expect(created.ok()).toBe(true);
+    expect(created.ok(), await created.text()).toBe(true);
     const { project } = await created.json();
+    trackProject(page, project.slug);
     const repo = {
         id: 1, name: 'privacy', repo: 'synthetic/privacy', path: 'repos/privacy',
         status: { branch: 'main', upstream: null, ahead: 0, behind: 0, changed: 0, changes: [], operation: null, conflicts: [] }

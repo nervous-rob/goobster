@@ -10,6 +10,18 @@ const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 const C = require('./constants');
 
+const createdProjects = new WeakMap();
+test.afterEach(async ({ page }) => {
+    for (const slug of createdProjects.get(page) || []) {
+        const removed = await page.request.delete(`/api/app/observatory/projects/${slug}?owner=${C.OWNER}`);
+        expect(removed.ok(), await removed.text()).toBe(true);
+    }
+});
+function trackProject(page, slug) {
+    createdProjects.set(page, [...(createdProjects.get(page) || []), slug]);
+}
+
+
 const APP = `<!doctype html><html><head>
 <meta name="goobster-project-access" content="write delete run">
 <title>Ledger</title></head><body>
@@ -46,8 +58,9 @@ test.beforeEach(async ({ page }) => {
 
 test('an app reads, writes, deletes and runs project files with the viewer\'s approval', async ({ page }) => {
     const created = await page.request.post('/api/app/projects', { data: { name: `App access ${Date.now()}` } });
-    expect(created.ok()).toBe(true);
+    expect(created.ok(), await created.text()).toBe(true);
     const { project: { slug } } = await created.json();
+    trackProject(page, slug);
     for (const [asset, name, source] of [['ledger', 'Ledger', APP], ['reader', 'Reader', READER]]) {
         const saved = await page.request.post(`/api/app/projects/${slug}/assets`, {
             data: { slug: asset, name, kind: 'app', language: 'html', source }
@@ -128,8 +141,9 @@ test('an app reads, writes, deletes and runs project files with the viewer\'s ap
 
 test('approval is exact-source and asset-bound, including the old equal-length hash collision', async ({ page }) => {
     const created = await page.request.post('/api/app/projects', { data: { name: `Source identity ${Date.now()}` } });
-    expect(created.ok()).toBe(true);
+    expect(created.ok(), await created.text()).toBe(true);
     const { project: { slug } } = await created.json();
+    trackProject(page, slug);
     const original = APP.replace('<title>Ledger', '<!--Aa--><title>Ledger');
     const collision = original.replace('<!--Aa-->', '<!--B@-->');
     const save = async (asset, source) => {
@@ -179,8 +193,9 @@ test('approval is exact-source and asset-bound, including the old equal-length h
 
 test('unavailable cryptographic identity refuses capabilities without prompting or writing', async ({ page }) => {
     const created = await page.request.post('/api/app/projects', { data: { name: `Identity failure ${Date.now()}` } });
-    expect(created.ok()).toBe(true);
+    expect(created.ok(), await created.text()).toBe(true);
     const { project: { slug } } = await created.json();
+    trackProject(page, slug);
     const saved = await page.request.post(`/api/app/projects/${slug}/assets`, {
         data: { slug: 'ledger', name: 'Ledger', kind: 'app', language: 'html', source: APP }
     });
