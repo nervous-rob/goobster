@@ -659,7 +659,6 @@ class PrivacyService {
                 'DELETE FROM facts WHERE guildId = @dmScope', { dmScope }
             )).changes;
 
-            const knowledgeGraphService = require('./knowledgeGraphService');
             const kgArtifactStorage = require('../utils/kgArtifactStorage');
             const artifactRows = await db.all(
                 'SELECT relativePath FROM kg_artifacts WHERE authorId = @userId',

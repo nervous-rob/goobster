@@ -698,12 +698,7 @@ export class GraphView {
             if (!placed && !forced) continue;
             const chosen = placed || {
                 slot: slots[0],
-                next: {
-                    x: item.x - width / 2 - 3,
-                    y: item.y + item.r + 3,
-                    w: width + 6,
-                    h: fontSize + 4
-                }
+                next: box
             };
             occupied.push(chosen.next);
             ctx.fillStyle = item.dimmed ? 'rgba(230,233,242,0.35)' : (item.isTag ? '#d4c6ff' : '#e6e9f2');

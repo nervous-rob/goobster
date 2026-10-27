@@ -115,7 +115,8 @@ function writeCampaignDir(quest) {
     const dir = path.join(questLoader.CUSTOM_DIR, quest.id);
     fs.mkdirSync(path.join(dir, 'scenes'), { recursive: true });
 
-    const { scenes, endings, source, ...meta } = quest;
+    // `source` is runtime metadata, not part of the authored YAML.
+    const { scenes, endings, source: _source, ...meta } = quest;
     fs.writeFileSync(path.join(dir, 'quest.yaml'), YAML.stringify(meta));
     fs.writeFileSync(path.join(dir, 'endings.yaml'), YAML.stringify(Object.values(endings)));
     for (const scene of Object.values(scenes)) {

@@ -1,19 +1,6 @@
-// TODO: Add proper handling for interaction state management
-// TODO: Add proper handling for interaction state persistence
-// TODO: Add proper handling for interaction button state
-// TODO: Add proper handling for interaction context loss
-// TODO: Add proper handling for interaction timeouts
-// TODO: Add proper handling for interaction response timeouts
-// TODO: Add proper handling for interaction cleanup
-// TODO: Add proper handling for interaction error recovery
-// TODO: Add proper handling for interaction deferral failures
-// TODO: Add proper handling for interaction followup failures
-
 const AISearchHandler = require('@goobster/core/utils/aiSearchHandler');
-const perplexityService = require('@goobster/core/services/perplexityService');
 const aiService = require('@goobster/core/services/aiService');
-const { chunkMessage } = require('@goobster/core/utils');
-const { getPrompt, getPromptWithGuildPersonality } = require('@goobster/core/utils/memeMode');
+const { getPromptWithGuildPersonality } = require('@goobster/core/utils/memeMode');
 const inventory = require('@goobster/core/features/inventory');
 const { features } = require('@goobster/core/features/featureState');
 const { requireSurface, unavailableResult } = require('@goobster/core/features/gate');

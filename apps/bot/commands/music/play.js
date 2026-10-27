@@ -77,7 +77,6 @@ module.exports = {
             await interaction.editReply(`🔗 ${sourceLabel} detected - fetching audio (cached tracks play instantly)...`);
 
             let firstTrack = null;
-            let queuedCount = 0;
             // Serialize queue insertions: addToQueue auto-plays when idle, and
             // two near-simultaneous resolutions could otherwise both start.
             let queueChain = Promise.resolve();
@@ -85,7 +84,6 @@ module.exports = {
             const onTrack = (track) => {
                 queueChain = queueChain.then(async () => {
                     await musicService.addToQueue(track);
-                    queuedCount++;
                     if (!firstTrack) {
                         firstTrack = track;
                         const { artist, title } = parseTrackName(track.name);

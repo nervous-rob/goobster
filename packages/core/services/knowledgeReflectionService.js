@@ -49,15 +49,6 @@ function extractMutations(parsed) {
     return knowledgeGraphService.hasMutationPayload(candidate) ? candidate : null;
 }
 
-function sumApplied(target, applied) {
-    for (const key of Object.keys(applied || {})) {
-        if (typeof applied[key] === 'number') {
-            target[key] = (target[key] || 0) + applied[key];
-        }
-    }
-    return target;
-}
-
 /* ------------------------------------------------------------------------ */
 /* Passes                                                                    */
 /* ------------------------------------------------------------------------ */
@@ -270,7 +261,7 @@ ${existingEdges}`;
  * precisely because guessing is cheap when the guess cannot interrupt anyone.
  */
 async function runAttendPass(ctx) {
-    const { guildId, scopeKey, subjectType, subjectId } = ctx;
+    const { guildId, subjectType, subjectId } = ctx;
     // Attention is per-person: a guild-wide scope has no one to attend to.
     if (subjectType !== 'USER' || !subjectId) {
         return { skipped: 'attend only runs on a personal scope' };

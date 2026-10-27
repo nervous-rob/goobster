@@ -8,7 +8,6 @@
  * Debug output is enabled with --debug or LOG_LEVEL=debug.
  */
 
-const path = require('node:path');
 const winston = require('winston');
 
 const DEBUG_MODE = process.argv.includes('--debug') || process.env.LOG_LEVEL === 'debug';

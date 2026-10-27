@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const fs = require('fs').promises;
-const path = require('path');
 
 // Discord embed hard limits (discord.js validates and throws past these)
 const FIELD_NAME_MAX = 256;

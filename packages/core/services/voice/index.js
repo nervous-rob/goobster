@@ -2,7 +2,6 @@ const { EventEmitter } = require('events');
 const ElevenLabsTTSService = require('./elevenLabsTTSService');
 const { features } = require('../../features/featureState');
 const requireOptional = require('../../utils/optionalModule').forModule(module);
-const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
 
 class VoiceService extends EventEmitter {
     constructor(config = {}) {

@@ -16,7 +16,6 @@ const gate = require('../features/gate');
 const { features } = require('../features/featureState');
 
 const {
-    TUTORIAL_BY_ID,
     ACTIONS,
     capabilityMet,
     isTutorialPermitted,

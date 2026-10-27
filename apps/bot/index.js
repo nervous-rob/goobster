@@ -279,7 +279,7 @@ async function updateGlobalPresence(client) {
 	let latestTime = null;
 
 	// Find the guild that started music most recently
-	for (const [guildId, data] of activeMusicGuilds.entries()) {
+	for (const data of activeMusicGuilds.values()) {
 		if (!latestTime || data.startedAt > latestTime) {
 			latestTime = data.startedAt;
 			latestGuild = data;
@@ -800,7 +800,6 @@ try {
 
 // TODO: Add retry mechanism for failed guild command deployments
 // TODO: Add proper error handling for button interactions outside of search
-// TODO: Add health check endpoint for Docker container
 // TODO: Add monitoring for WebSocket connection stability
 // TODO: Add proper handling for Discord API rate limits
 // TODO: Add proper handling for voice state updates

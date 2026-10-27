@@ -3,8 +3,6 @@ const { PermissionFlagsBits } = require('discord.js');
 const MusicService = require('@goobster/core/services/voice/musicService');
 const { ProgressTracker } = require('@goobster/core/utils');
 const config = require('@goobster/core/config/configJson').load();
-const path = require('path');
-const fs = require('fs').promises;
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -50,18 +48,6 @@ module.exports = {
             }
             
             const moods = Object.keys(musicService.getMoodMap());
-            
-            // Get mood emojis for better visual feedback
-            const moodEmojis = {
-                'battle': '⚔️',
-                'exploration': '🌄',
-                'mystery': '🔍',
-                'celebration': '🎉',
-                'danger': '⚠️',
-                'peaceful': '🌿',
-                'sad': '😢',
-                'dramatic': '🎭'
-            };
             
             // Initialize progress tracker
             const progress = new ProgressTracker({

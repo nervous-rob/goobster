@@ -17,7 +17,6 @@ const db = require('../db');
 const requireOptional = require('./optionalModule').forModule(module);
 const { getPersonalityDirective, getEffectiveAI, getMonologueMode, MONOLOGUE_MODE } = require('./guildSettings');
 const aiService = require('../services/aiService');
-const imageDetectionHandler = require('./imageDetectionHandler');
 const path = require('path');
 const { getPreferredUserName, getBotPreferredName } = require('./guildContext');
 const { getConversationScopeId } = require('./dmScope');
@@ -28,7 +27,6 @@ const memoryService = require('../services/memoryService');
 const { classifyDepth, buildConversationalPrompt } = require('./chat/promptContext');
 
 const { DEFAULT_PROMPT } = require('./chat/prompts');
-const { personalityDirectiveBlock } = require('./chat/promptFragments');
 const {
     logSystemEvent,
     getOrCreateUser,
@@ -48,7 +46,6 @@ const {
     PROJECT_MAX_TOOL_ROUNDS
 } = require('./chat/agentOrchestrator');
 const {
-    pendingImageGenerations,
     handleAIResponse,
     detectSearchNeed,
     handleSearchFlow
@@ -958,81 +955,10 @@ async function runChatInteraction(interaction, thread = null) {
     }
 }
 
-// Update the function that processes messages to incorporate guild personality directives
-async function processMessage(message, isThread = false) {
-    try {
-        // Get guild ID for guild-specific settings
-        const guildId = message.guild?.id;
-        
-        // Get base prompt
-        let systemPrompt = DEFAULT_PROMPT;
-        if (guildId) {
-            const personalityDirective = await getPersonalityDirective(guildId);
-            const block = personalityDirectiveBlock({ isGuild: true, directive: personalityDirective });
-            if (block) {
-                systemPrompt = `${systemPrompt}\n\n${block}`;
-            }
-        }
-
-        // Add image detection
-        const imageRequest = await imageDetectionHandler.detectImageGenerationRequest(message.content);
-        
-        if (imageRequest.needsImage) {
-            // Check if we're already generating an image for this channel
-            if (pendingImageGenerations.has(message.channelId)) {
-                await message.reply(`I'm already working on generating an image. Please wait for that to complete first.`);
-                return;
-            }
-
-            // Mark that we're generating an image
-            pendingImageGenerations.set(message.channelId, Date.now());
-
-            try {
-                // Extract image details
-                const { prompt, type, style } = imageRequest.imageDetails;
-                
-                // Send a message indicating we're generating an image
-                const processingMessage = await message.reply(`🎨 I'm generating an image of: ${prompt}\nThis might take a moment...`);
-                
-                // Generate the image
-                const imagePath = await imageDetectionHandler.generateImage(
-                    prompt, 
-                    type || 'SCENE', 
-                    style || 'fantasy',
-                    { usageContext: { guildId: message.guildId || `dm:${message.author.id}`, userId: message.author.id } }
-                );
-                
-                // Send the image
-                await processingMessage.edit(`✨ Here's your generated image of: ${prompt}`);
-                await message.channel.send({
-                    files: [{
-                        attachment: imagePath,
-                        name: path.basename(imagePath)
-                    }]
-                });
-                
-                // Clear the pending flag
-                pendingImageGenerations.delete(message.channelId);
-                return;
-            } catch (error) {
-                // Clear the pending flag on error
-                pendingImageGenerations.delete(message.channelId);
-                
-                console.error('Error generating image:', error);
-                await message.reply(`I apologize, but I encountered an error while trying to generate that image: ${error.message}`);
-                return;
-            }
-        }
-    } catch (error) {
-        console.error('Error processing message:', error);
-    }
-}
-
 module.exports = {
     handleChatInteraction,
     handleReactionAdd,
     handleReactionRemove,
-    processMessage,
     trackMessage,
     getThreadName,
     diagnoseDatabaseIssues,
