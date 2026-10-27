@@ -1,7 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const aiService = require('@goobster/core/services/aiService');
 const { getPromptWithGuildPersonality } = require('@goobster/core/utils/memeMode');
-const { chunkMessage } = require('@goobster/core/utils/index');
 
 module.exports = {
     // Registered globally with DM contexts (see deploy-commands.js)

@@ -2,8 +2,6 @@ const { SlashCommandBuilder } = require('discord.js');
 const { PermissionFlagsBits } = require('discord.js');
 const AmbientService = require('@goobster/core/services/voice/ambientService');
 const config = require('@goobster/core/config/configJson').load();
-const path = require('path');
-const fs = require('fs').promises;
 
 module.exports = {
     data: new SlashCommandBuilder()

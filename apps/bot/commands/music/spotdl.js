@@ -1,5 +1,4 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
-const { PermissionFlagsBits } = require('discord.js');
 const SpotDLService = require('@goobster/core/services/spotdl/spotdlService');
 const { filterTracks, createTrackListUI, truncateForDiscord } = require('@goobster/core/utils/musicUtils');
 const { voiceService } = require('@goobster/core/services/serviceManager');

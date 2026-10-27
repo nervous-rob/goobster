@@ -1,5 +1,4 @@
 const db = require('../db');
-const { isDmScopeId } = require('../utils/dmScope');
 const knowledgeGraphService = require('./knowledgeGraphService');
 
 const MAX_FACTS_PER_USER = 50;

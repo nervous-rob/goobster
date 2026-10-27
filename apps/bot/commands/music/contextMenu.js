@@ -1,19 +1,16 @@
 const { ContextMenuCommandBuilder } = require('@discordjs/builders');
 const { 
     ApplicationCommandType,
-    EmbedBuilder, 
     ActionRowBuilder, 
     ButtonBuilder, 
     ButtonStyle, 
     StringSelectMenuBuilder,
     ModalBuilder,
     TextInputBuilder,
-    TextInputStyle,
-    PermissionFlagsBits 
+    TextInputStyle
 } = require('discord.js');
-const { parseTrackName, formatTrackName, createTrackListUI } = require('@goobster/core/utils/musicUtils');
+const { parseTrackName, createTrackListUI } = require('@goobster/core/utils/musicUtils');
 const { voiceService } = require('@goobster/core/services/serviceManager');
-const config = require('@goobster/core/config/configJson').load();
 
 // Helper function to check if a user is in the same voice channel as the bot
 function isUserInBotVoiceChannel(interaction) {

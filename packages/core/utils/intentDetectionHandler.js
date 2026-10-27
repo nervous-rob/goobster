@@ -4,9 +4,6 @@
  * based on the context and content without needing explicit mentions
  */
 
-const fs = require('fs');
-const path = require('path');
-
 class IntentDetectionHandler {
     constructor() {
         // Initialize rule-based patterns

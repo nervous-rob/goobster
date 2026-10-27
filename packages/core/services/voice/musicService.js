@@ -1,14 +1,3 @@
-// TODO: Add proper handling for music stream errors
-// TODO: Add proper handling for playlist management
-// TODO: Add proper handling for track transitions
-// TODO: Add proper handling for volume normalization
-// TODO: Add proper handling for audio effects
-// TODO: Add proper handling for music caching
-// TODO: Add proper handling for stream buffering
-// TODO: Add proper handling for playback state
-// TODO: Add proper handling for music metadata
-// TODO: Add proper handling for resource cleanup
-
 const { 
     createAudioPlayer,
     createAudioResource,
@@ -23,7 +12,6 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs').promises;
 const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const config = require('../../config/configJson').load();
 const SpotDLService = require('../spotdl/spotdlService');
 const { parseTrackName } = require('../../utils/musicUtils');
 const { generateMusic, resolveApiKey } = require('./elevenLabsAudioService');

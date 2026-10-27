@@ -81,7 +81,6 @@ const FILE_TTL_MS = 6 * 60 * 60 * 1000;
 // written for an incognito exchange.
 const INCOGNITO_MAX_MESSAGES = 24;
 const INCOGNITO_TTL_MS = 2 * 60 * 60 * 1000;
-const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 // Read-only share links: bounded transcript, unguessable token
 const SHARE_MESSAGE_LIMIT = 500;
 const SHARE_TOKEN_PATTERN = /^[a-f0-9]{32,64}$/;

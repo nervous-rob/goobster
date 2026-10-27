@@ -591,7 +591,6 @@ module.exports = {
                 
                 // Replace ${stepN.field} with actual values
                 value = value.replace(/\$\{step(\d+)\.?([^}]*)\}/g, (match, stepNum, field) => {
-                    const stepIdx = parseInt(stepNum) - 1;
                     const stepResult = context[`step${stepNum}`];
                     
                     if (!stepResult) {
