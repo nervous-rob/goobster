@@ -69,6 +69,15 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   inventory step fails. Optional live provider tests (`npm run test:live`) run on trusted
   `main` pushes and `workflow_dispatch` only; they are not part of `both engines`.
 
+- **Claude Code cloud sessions: `scripts/cloud-setup.sh` is the environment setup script.**
+  Put `bash scripts/cloud-setup.sh` (or the file's contents) in the cloud environment's
+  *Setup script* so the cached container already has apt packages (ffmpeg, bubblewrap,
+  python venv), `node_modules`, `apps/web/dist`, Postgres + pgvector and the music CLIs.
+  Idempotent and best-effort (failed steps warn, exit stays 0; `GOOBSTER_SETUP_STRICT=1`
+  fails fast); `GOOBSTER_SETUP_SKIP_{PG,WEB,MUSIC}=1` skip steps, `GOOBSTER_SETUP_SANDBOX=1`
+  adds the sandbox Python toolkit. Server processes don't survive the snapshot: if Postgres
+  isn't accepting connections, run `scripts/ensure-local-postgres.sh start`.
+
 - **Local Postgres 17 + pgvector is available for the engine-parity suite.**
   `scripts/ensure-local-postgres.sh` is idempotent (install packages, start the
   cluster even when systemd is offline, create role/db `goobster`/`goobster`,
