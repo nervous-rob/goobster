@@ -26,7 +26,14 @@ PORT="${GOOBSTER_PG_PORT:-5432}"
 
 need_sudo() {
     if [[ "$(id -u)" -eq 0 ]]; then
-        "$@"
+        # Root without sudo: `-u <user>` still has to switch users.
+        if [[ "${1:-}" == "-u" ]]; then
+            local user="$2"
+            shift 2
+            runuser -u "$user" -- "$@"
+        else
+            "$@"
+        fi
     else
         sudo -n "$@"
     fi
@@ -55,7 +62,7 @@ install_packages() {
 
     echo "==> Installing Postgres + pgvector"
     need_sudo apt-get update -y
-    need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    need_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         postgresql-common ca-certificates
 
     if [[ ! -x /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh ]]; then
@@ -64,10 +71,10 @@ install_packages() {
     fi
     need_sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
 
-    if ! need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    if ! need_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         postgresql-17 postgresql-17-pgvector; then
         echo "==> Postgres 17 unavailable; falling back to Ubuntu postgresql-16-pgvector"
-        need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        need_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             postgresql-16 postgresql-16-pgvector
     fi
 

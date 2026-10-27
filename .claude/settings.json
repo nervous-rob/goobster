@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm test:*)",
+      "Bash(npx jest:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run lint:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npm run smoke)",
+      "Bash(npm run typecheck:web)",
+      "Bash(npm run build:web)",
+      "Bash(npm run test:group:*)",
+      "Bash(npm run test:groups:check)",
+      "Bash(npm run test:postgres:*)",
+      "Bash(npm run docs:check)",
+      "Bash(npm run test:e2e:*)",
+      "Bash(scripts/ensure-local-postgres.sh:*)",
+      "Bash(bash scripts/ensure-local-postgres.sh:*)"
+    ]
+  }
+}
