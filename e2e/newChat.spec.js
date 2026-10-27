@@ -18,7 +18,8 @@ test('one click on New chat leaves an open conversation for an empty chat', asyn
     await page.goto(`/app/chat/${chat.id}`);
     await expect(page.getByText(C.CHAT_ANSWER_BODY)).toBeVisible();
 
-    await page.getByRole('button', { name: /New chat/ }).click();
+    // The toolbar button, not an untitled chat in the list that is also called "New chat".
+    await page.locator('button.new-chat').click();
     await expect(page).toHaveURL(/\/app\/chat$/);
     await expect(page.getByText(C.CHAT_ANSWER_BODY)).toHaveCount(0);
 

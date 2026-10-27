@@ -19,11 +19,14 @@ test('choosing another discussion from a deep link opens it and the address foll
     const created = await page.request.post('/api/app/parlor/conversations', { data: { personaIds: [personas[0].id] } });
     expect(created.ok()).toBe(true);
     const other = await created.json();
+    // A title of its own: other specs leave untitled "New discussion" rows.
+    const title = `Switch target ${other.id}`;
+    expect((await page.request.patch(`/api/app/parlor/conversations/${other.id}`, { data: { title } })).ok()).toBe(true);
     try {
         await page.goto(`/app/discussions/${salon.id}`);
         await expect(page.getByText(C.PARLOR_REPLY)).toBeVisible();
 
-        await page.locator('.conv-item', { hasText: 'New discussion' }).click();
+        await page.locator('.conv-item', { hasText: title }).click();
         await expect(page).toHaveURL(new RegExp(`/app/discussions/${other.id}$`));
         await expect(page.getByText(C.PARLOR_REPLY)).toHaveCount(0);
 
