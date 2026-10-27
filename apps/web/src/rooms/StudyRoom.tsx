@@ -292,7 +292,14 @@ export function StudyRoom() {
     const settings = settingsQ.data?.sections.chat;
 
     const resetTurn = turn.reset;
+    // Follow the route only when the route itself changes. /chat and
+    // /chat/$conversationId share this instance, and New chat clears
+    // activeId a render before navigation lands: syncing on activeId too
+    // would put the old conversation straight back (it took two clicks).
+    const syncedRouteId = useRef(routeId);
     useEffect(() => {
+        if (routeId === syncedRouteId.current) return;
+        syncedRouteId.current = routeId;
         if (Number.isFinite(routeId) && routeId !== activeId && !incognito) {
             setActiveId(routeId);
             hydratedTurnId.current = null;
