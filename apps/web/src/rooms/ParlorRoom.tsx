@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { InboxContextChips } from '../components/InboxContextChips';
 import { useInboxDraft } from '../hooks/useInboxDraft';
 import { api, streamParlorChat, streamParlorNudge } from '../lib/api';
@@ -64,7 +64,15 @@ export function ParlorRoom() {
     const params = useParams({ strict: false }) as { conversationId?: string };
     const paramId = params.conversationId ? Number(params.conversationId) : null;
 
+    const navigate = useNavigate();
     const [activeId, setActiveId] = useState<number | null>(Number.isFinite(paramId) ? paramId : null);
+    // Opening a discussion moves the address with it, so the route never
+    // contradicts the room (and Back walks the discussions you opened).
+    const openConversation = useCallback((id: number | null) => {
+        setActiveId(id);
+        if (id) navigate({ to: '/discussions/$conversationId', params: { conversationId: String(id) } });
+        else navigate({ to: '/discussions' });
+    }, [navigate]);
     const [workspacePersonaId, setWorkspacePersonaId] = useState<number | null>(null);
     const [composer, setComposer] = useState('');
     useComposeListener(setComposer);
@@ -136,7 +144,14 @@ export function ParlorRoom() {
         if (activeId === null && conversations[0] && paramId == null) setActiveId(conversations[0].id);
     }, [conversations, activeId, paramId]);
 
+    // Follow the route only when the route itself changes: both routes share
+    // this instance, and openConversation sets activeId a render before the
+    // navigation lands - syncing on activeId too would put the old
+    // discussion straight back.
+    const syncedParamId = useRef(paramId);
     useEffect(() => {
+        if (paramId === syncedParamId.current) return;
+        syncedParamId.current = paramId;
         if (Number.isFinite(paramId) && paramId !== activeId) setActiveId(paramId);
     }, [paramId, activeId]);
 
@@ -449,7 +464,7 @@ export function ParlorRoom() {
                                         const result = await api.parlorRespondInvite(invite.id, true) as { conversationId: number };
                                         await queryClient.invalidateQueries({ queryKey: keys.parlorInvites });
                                         await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
-                                        setActiveId(result.conversationId);
+                                        openConversation(result.conversationId);
                                         toast('You joined the discussion. Say hello!');
                                     } catch (error) { toast((error as Error).message, true); }
                                 }}>✓</button>
@@ -469,10 +484,10 @@ export function ParlorRoom() {
                             key={item.id}
                             conversation={item}
                             active={item.id === activeId}
-                            onSelect={() => { setWorkspacePersonaId(null); setActiveId(item.id); if (live.active) live.leave(); chats.close(); }}
+                            onSelect={() => { setWorkspacePersonaId(null); openConversation(item.id); if (live.active) live.leave(); chats.close(); }}
                             onRenamed={() => queryClient.invalidateQueries({ queryKey: keys.parlorConversations })}
                             onDeleted={async () => {
-                                if (activeId === item.id) setActiveId(null);
+                                if (activeId === item.id) openConversation(null);
                                 await queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
                             }}
                         />
@@ -733,7 +748,7 @@ export function ParlorRoom() {
                     onClose={() => setPeopleOpen(false)}
                     onLeft={() => {
                         setPeopleOpen(false);
-                        setActiveId(null);
+                        openConversation(null);
                         queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
                     }}
                 />
@@ -744,7 +759,7 @@ export function ParlorRoom() {
                     onClose={() => setCreateConvOpen(false)}
                     onCreated={(id) => {
                         setCreateConvOpen(false);
-                        setActiveId(id);
+                        openConversation(id);
                         queryClient.invalidateQueries({ queryKey: keys.parlorConversations });
                     }}
                     onNeedPersona={() => { setCreateConvOpen(false); setPersonaModal('new'); }}
