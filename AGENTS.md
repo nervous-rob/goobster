@@ -75,8 +75,12 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   python venv), `node_modules`, `apps/web/dist`, Postgres + pgvector and the music CLIs.
   Idempotent and best-effort (failed steps warn, exit stays 0; `GOOBSTER_SETUP_STRICT=1`
   fails fast); `GOOBSTER_SETUP_SKIP_{PG,WEB,MUSIC}=1` skip steps, `GOOBSTER_SETUP_SANDBOX=1`
-  adds the sandbox Python toolkit. Server processes don't survive the snapshot: if Postgres
-  isn't accepting connections, run `scripts/ensure-local-postgres.sh start`.
+  adds the sandbox Python toolkit. Server processes don't survive the snapshot, so the
+  SessionStart hook (`.claude/hooks/session-start.sh`, registered in `.claude/settings.json`)
+  starts the local Postgres cluster on each cloud session and re-runs `npm ci` only when a
+  `package.json`/lockfile changed since the last install. If Postgres still isn't accepting
+  connections, run `scripts/ensure-local-postgres.sh start`. `.claude/settings.json` also
+  pre-approves the routine test/lint/build commands.
 
 - **Local Postgres 17 + pgvector is available for the engine-parity suite.**
   `scripts/ensure-local-postgres.sh` is idempotent (install packages, start the
