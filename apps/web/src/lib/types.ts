@@ -222,6 +222,37 @@ export type CapabilityGap = {
     lastSeenAt: string;
 };
 
+/** GET /api/app/admin/schedules - one guild-facing automation or reminder (never its prompt). */
+export type OperatorSchedule = {
+    key: string;
+    kind: 'automation' | 'followup';
+    id: number;
+    name: string | null;
+    label: 'prompt' | 'digest' | 'wrapped' | 'wheel' | 'reminder';
+    guildId: string;
+    guildName: string | null;
+    channelId: string;
+    ownerId: string | null;
+    ownerName: string | null;
+    cadence: string | null;
+    schedule: string | null;
+    recurrence: string | null;
+    recurring: boolean;
+    paused: boolean;
+    lastRunAt: string | null;
+    nextRunAt: string | null;
+    deliveryCount: number | null;
+    note: string | null;
+    createdAt: string;
+    actions: Array<'pause' | 'resume' | 'trigger' | 'delete'>;
+};
+
+export type OperatorSchedulesView = {
+    schedules: OperatorSchedule[];
+    guilds: Array<{ id: string; name: string | null; count: number }>;
+    botOnline: boolean;
+};
+
 /** GET /api/app/admin/audit - one operator action. */
 export type OperatorAuditEntry = {
     id: number;

@@ -12,6 +12,7 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import { FailureList, ResourceTotals, failureKindLabel } from '../components/WorkLedger';
 import { FeaturesPage } from './host/FeaturesPage';
+import { SchedulesPage } from './host/SchedulesPage';
 import { ConnectionsPage, DefaultsPage } from './host/ConfigPages';
 import { LifecyclePanel } from './host/LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './host/ManagerCard';
@@ -747,6 +748,7 @@ function ReportPanel() {
 
 const HOST_PAGES = [
     { id: 'overview', name: 'Overview' },
+    { id: 'schedules', name: 'Schedules' },
     { id: 'features', name: 'Features' },
     { id: 'connections', name: 'Connections' },
     { id: 'defaults', name: 'Instance Defaults' },
@@ -804,6 +806,7 @@ export function HostRoom() {
             <div className="pane-body host-body">
                 {!operator && <div className="empty">Only the host of this installation can open this room.</div>}
                 {operator && page === 'overview' && <OverviewPage />}
+                {operator && page === 'schedules' && <SchedulesPage />}
                 {operator && page === 'features' && <FeaturesPage />}
                 {operator && page === 'connections' && <ConnectionsPage />}
                 {operator && page === 'defaults' && <DefaultsPage />}

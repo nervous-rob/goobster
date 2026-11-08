@@ -27,7 +27,7 @@ type Automation = {
 };
 type Followup = {
     id: number; prompt: string; dueAt?: string; recurrence?: string;
-    deliveryCount?: number; scope?: string; scopeName?: string; delivery?: Delivery;
+    deliveryCount?: number; paused?: boolean; scope?: string; scopeName?: string; delivery?: Delivery;
 };
 type Delivery = 'inbox' | 'discord-dm' | 'channel';
 
@@ -119,7 +119,7 @@ export function TasksRoom() {
                                         <span>{task.prompt}</span>
                                         <div className="row-meta">
                                             {task.recurrence
-                                                ? `🔁 repeats ${task.recurrence} · next ${whenLabel(task.dueAt)}${task.deliveryCount ? ` · delivered ${task.deliveryCount}×` : ''}`
+                                                ? `🔁 repeats ${task.recurrence}${task.paused ? ' · paused by the host' : ` · next ${whenLabel(task.dueAt)}`}${task.deliveryCount ? ` · delivered ${task.deliveryCount}×` : ''}`
                                                 : `🔔 due ${whenLabel(task.dueAt)}`}
                                         </div>
                                     </div>

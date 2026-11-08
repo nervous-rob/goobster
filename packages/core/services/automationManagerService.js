@@ -171,6 +171,61 @@ class AutomationManagerService {
         return { id: row.id, name: row.name };
     }
 
+    /**
+     * Id-addressed variants for the operator panel (operatorScheduleService),
+     * which has already decided the caller may act on this row. They share
+     * the cron handling and SQL shape of the name-addressed methods above.
+     */
+    async _findById(id) {
+        const row = await db.get(
+            'SELECT id, name, schedule, isEnabled FROM automations WHERE id = @id',
+            { id: Number(id) }
+        );
+        if (!row) throw new AutomationError('NOT_FOUND', `No automation #${id}.`);
+        return row;
+    }
+
+    /** @returns {{id: number, name: string, enabled: boolean, nextRun: Date|null}} */
+    async setEnabledById({ id, enabled }) {
+        const row = await this._findById(id);
+        if (enabled) {
+            const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
+            await db.run(
+                `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+                { id: row.id, nextRun }
+            );
+            return { id: row.id, name: row.name, enabled: true, nextRun };
+        }
+        await db.run(
+            `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
+            { id: row.id }
+        );
+        return { id: row.id, name: row.name, enabled: false, nextRun: null };
+    }
+
+    /** @returns {{id: number, name: string}} */
+    async removeById({ id }) {
+        const row = await this._findById(id);
+        await db.run('DELETE FROM automations WHERE id = @id', { id: row.id });
+        return { id: row.id, name: row.name };
+    }
+
+    /**
+     * Make an enabled automation due now. The poll loop's atomic claim
+     * (automationService.claimDueRun) then runs it and advances nextRun to
+     * the next cron slot, so the schedule itself is unchanged.
+     * @returns {{id: number, name: string}}
+     */
+    async triggerNow({ id }) {
+        const row = await this._findById(id);
+        if (!row.isEnabled) throw new AutomationError('PAUSED', `Automation #${id} is paused - resume it first.`);
+        await db.run(
+            `UPDATE automations SET nextRun = @now, updatedAt = CURRENT_TIMESTAMP WHERE id = @id AND isEnabled = 1`,
+            { id: row.id, now: new Date() }
+        );
+        return { id: row.id, name: row.name };
+    }
+
     /** Case-insensitive lookup by name so a chatty caller need not match case. */
     async _findByName({ userId, scope, name }) {
         const cleanName = String(name ?? '').trim();

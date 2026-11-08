@@ -4,7 +4,8 @@
  *
  * Invitations, the account roster (status, role, migration grants),
  * audited recovery links, the sign-up policy and mail status, the
- * legacy-data migration report, the per-account support view and the
+ * legacy-data migration report, the guild-facing schedules (pause / resume /
+ * run now / delete any server's automation or reminder), the per-account support view and the
  * operator audit (documentation/work_ledger.md). Every route runs behind
  * requireAuth + requireOperator; the role is read from the actor context,
  * never from the request. Every route that changes something writes one
@@ -253,6 +254,38 @@ function mountAdmin(app, ctx, h) {
         const row = await gaps().remove(req.params.id);
         await audit(req, 'capability-gap.delete', null, { id: row.id });
         return { deleted: true, id: row.id };
+    }));
+
+    // --- Guild-facing schedules (documentation/operator_schedules.md) ---------
+    // Any automation or reminder that posts into a server, whoever owns it.
+    // Personal (DM / Inbox) tasks are never listed and every action refuses
+    // them. Audit detail is ids only - never a name, prompt or note.
+    const schedules = () => require('../../services/operatorScheduleService');
+    const SCHEDULE_ACTIONS = new Set(['pause', 'resume', 'trigger']);
+
+    app.get('/api/app/admin/schedules', ...guard, authRoute(async (req) => schedules().list({
+        gateway: ctx.gateway,
+        guildId: req.query.guildId ? String(req.query.guildId) : null,
+        kind: req.query.kind ? String(req.query.kind) : null,
+        status: req.query.status ? String(req.query.status) : null
+    })));
+
+    app.post('/api/app/admin/schedules/:kind/:id/:action', ...guard, authRoute(async (req) => {
+        const action = String(req.params.action);
+        if (!SCHEDULE_ACTIONS.has(action)) throw fail(400, 'BAD_ACTION', 'action must be pause, resume or trigger.');
+        const outcome = await schedules()[action](String(req.params.kind), req.params.id);
+        await audit(req, `schedule.${action}`, `${outcome.kind}:${outcome.id}`, { kind: outcome.kind, guildId: outcome.guildId });
+        return {
+            ...outcome,
+            schedule: await schedules().get(outcome.kind, outcome.id, { gateway: ctx.gateway }),
+            botOnline: await schedules().botOnline(ctx.gateway)
+        };
+    }));
+
+    app.delete('/api/app/admin/schedules/:kind/:id', ...guard, authRoute(async (req) => {
+        const outcome = await schedules().remove(String(req.params.kind), req.params.id);
+        await audit(req, 'schedule.delete', `${outcome.kind}:${outcome.id}`, { kind: outcome.kind, guildId: outcome.guildId });
+        return outcome;
     }));
 
     // Newest first, keyset-paged; optional filters by target and action.
