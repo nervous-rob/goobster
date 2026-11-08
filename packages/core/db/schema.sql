@@ -3441,3 +3441,65 @@ CREATE TABLE IF NOT EXISTS model_profile_guesses (
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (provider, modelId)
 );
+
+-- Delegated responsibilities (documentation/delegated_responsibilities.md,
+-- ADR 0016): a versioned grant of bounded authority that later delegated
+-- work is checked against operation by operation. Nothing activates by
+-- itself: DRAFT -> ACTIVE needs the owner's authenticated action and an
+-- enabled attention policy. `revision` is the compare-and-swap counter
+-- (every edit); `authorityRevision` moves only when authority or status
+-- changes, so a title edit never invalidates in-flight work. Principals are
+-- separate columns even though DA-1a fills all four with the owner. Per-person
+-- data: report, audit, export and erasure (services/dormantDataService.js).
+CREATE TABLE IF NOT EXISTS assistant_responsibilities (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    authorizedBy TEXT,
+    actingUserId TEXT,
+    payerUserId TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    authorityRevision INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT', 'ACTIVE', 'PAUSED', 'NEEDS_REVIEW', 'COMPLETED', 'REVOKED', 'EXPIRED', 'ARCHIVED')),
+    -- The terminal status an ARCHIVED record ended in
+    finalStatus TEXT,
+    title TEXT NOT NULL,
+    outcome TEXT,
+    -- Links to the existing goal/plan records; never a second goal list
+    attentionItemId INTEGER,
+    projectId INTEGER,
+    planId INTEGER,
+    -- JSON: { sources: [...], audience }
+    scopesJson TEXT NOT NULL DEFAULT '{}',
+    -- JSON: [{ operation, resource: { kind, ids, projectId, paths, branches } }]
+    operationsJson TEXT NOT NULL DEFAULT '[]',
+    -- JSON: { modelTokens, searches, computeSeconds, ... } (recorded, enforced from DA-3)
+    budgetsJson TEXT NOT NULL DEFAULT '{}',
+    -- JSON: { interruption, stopCondition }
+    rulesJson TEXT NOT NULL DEFAULT '{}',
+    idempotencyKey TEXT,
+    expiresAt TEXT,
+    activatedAt TEXT,
+    reviewedAt TEXT,
+    endedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_responsibilities_owner ON assistant_responsibilities(ownerUserId, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_responsibilities_idem ON assistant_responsibilities(ownerUserId, idempotencyKey);
+
+-- Append-only snapshot of every revision of a responsibility: the audit trail
+-- and the frozen grant a worker's revision is checked against.
+CREATE TABLE IF NOT EXISTS assistant_responsibility_revisions (
+    id INTEGER PRIMARY KEY,
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    authorityRevision INTEGER NOT NULL,
+    -- create | edit | activate | pause | resume | review | complete | revoke | expire | archive
+    changeKind TEXT NOT NULL,
+    changedBy TEXT,
+    snapshotJson TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (responsibilityId, revision)
+);
