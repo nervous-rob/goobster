@@ -1,5 +1,11 @@
 # The attention system
 
+**Planned extension:** [delegated responsibilities and assistant-first Home](delegated_assistant_spec.md)
+connect noticing to bounded research, knowledge maintenance, project progress,
+and process stewardship. The [architecture](delegated_assistant_architecture.md)
+separates work selection, action authority and interruption policy. This is a
+proposal, not behavior enabled by the current Attention settings.
+
 Goobster has three ways of doing things for you.
 
 ```text
