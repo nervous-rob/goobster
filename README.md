@@ -217,6 +217,17 @@ decisions from the hardening cycle live in `documentation/adr/`.
 
 ### Planned product work
 
+The [delegated assistant and assistant-first Home plan](documentation/delegated_assistant_spec.md)
+defines scoped responsibilities such as keeping a project moving, maintaining
+relevant knowledge, and repairing or retiring recurring processes. Home becomes
+the assistant overview, with meaningful updates highlighted on its components.
+Needs you is the unresolved-action view of Inbox, shared with Home and project
+boards, so reading an update and resolving its action remain distinct.
+The [architecture](documentation/delegated_assistant_architecture.md) and
+[implementation and acceptance plan](documentation/delegated_assistant_implementation.md)
+describe authority, recoverable runs, reversible changes, update acknowledgment,
+and the personal-first rollout. **This feature is planned, not implemented.**
+
 The [shared-instance product plan](documentation/shared_instance_product_spec.md)
 defines the next invitation-only multi-user release: clearer navigation,
 Discord-independent accounts, private data boundaries, and shared resource limits.

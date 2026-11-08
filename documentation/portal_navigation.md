@@ -15,6 +15,15 @@ and **Tools** (Music Lab, Trading game, Card decks), with **Home** as the
 front door. Usage & limits, Settings
 and the operator-only Host room form the account area in the sidebar footer.
 
+**Planned Home evolution:** the [delegated assistant specification](delegated_assistant_spec.md)
+defines an assistant-first Home with responsibilities, a prioritized briefing,
+Needs you, and component cards highlighted for meaningful updates. Its
+[implementation plan](delegated_assistant_implementation.md) is not shipped
+navigation behavior. Home stays at `/`, existing rooms remain the work surfaces,
+and visiting Home never grants authority or acknowledges an update by itself.
+Needs you is planned as an Inbox filter shared by Home and project boards,
+not a second notification queue or primary destination.
+
 Only the visible organisation changed. Internal ids (`observatory`,
 `spitball`, `parlor`, `mission`), API paths under `/api/app/*`, SSE topics,
 tool names, database tables and stored chat text are unchanged and must stay
