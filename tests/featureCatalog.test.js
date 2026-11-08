@@ -97,9 +97,9 @@ describe('catalog shape and the inventory', () => {
         }
     });
 
-    test('the #261 preset values are in the catalog: economy, exchange and gambling off, core always, the rest on', () => {
+    test('the #261 preset values are in the catalog: economy, exchange, gambling and assistant (ADR 0016) off, core always, the rest on', () => {
         const off = FEATURE_IDS.filter(id => FEATURES[id].freshDefault === 'off');
-        expect(off).toEqual(['economy', 'exchange', 'gambling']);
+        expect(off).toEqual(['economy', 'exchange', 'gambling', 'assistant']);
         expect(FEATURES.core.freshDefault).toBe('always');
         for (const id of FEATURE_IDS.filter(id => !off.includes(id) && id !== 'core')) {
             expect(FEATURES[id].freshDefault).toBe('on');

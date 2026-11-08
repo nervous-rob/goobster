@@ -56,6 +56,7 @@ camelCase; they are the keys of `features.json` from #317 onwards.
 | `cursor` | feature | `github` | `/agent`, `launchCursorAgent`, the agent tracker step and mission-control thread gate |
 | `screenVision` | feature | - | `/screenvision`, the companion page, `/api/screen/*` and its WebSocket |
 | `discordActivity` | feature | `discord` | The embedded Activity transport (`/activity/*`, `/api/activity/*`, its WebSocket) |
+| `assistant` | feature | - | Delegated responsibilities (`assistant_*` tables, `/api/app/assistant/*`); fresh-install default off ([ADR 0016](adr/0016-delegated-responsibilities.md)) |
 
 Soft requirements are recorded per surface as `alsoRequires` and never
 promoted to a feature dependency. Examples: the music playback commands
@@ -570,7 +571,7 @@ dependencies is (the enforcement rule in `feature_state.md`).
 | Profile | What it is | What it proves |
 |---|---|---|
 | `legacy-no-file` | No `features.json`, default config | Nothing is refused anywhere, even where a legacy switch reports a feature off. The loader set equals the unfiltered walk; every route is served. |
-| `fresh-install` | `features.freshPreset()` written to the state file | The preset turns off `economy`, `exchange` and `gambling` only, and every other surface follows. |
+| `fresh-install` | `features.freshPreset()` written to the state file | The preset turns off `economy`, `exchange`, `gambling` and `assistant` only, and every other surface follows. |
 | `core-only` | Every manageable feature `active: false` | Zero optional commands, steps, tools, MCP tools, routes and sockets; core chat, Inbox, privacy, export, settings, admin and MCP token revocation stay reachable. |
 | `one-feature-off` x 20 | One profile per manageable id | The same invariant, one feature at a time, including the dependents the graph takes down with it. |
 | Dependency combinations | `sandbox` off takes `observatory`; `knowledge` takes `expeditions`; `economy` takes `exchange` and `gambling`; `discord` takes `discordActivity` and every Discord-bound `alsoRequires` claim; `github` takes `cursor`; `economy` + `knowledge` together | Hard dependents and `alsoRequires` surfaces go off together. |
