@@ -92,6 +92,7 @@ const COLUMN_MIGRATIONS = [
     ['followups', 'recurrence', 'recurrence TEXT'],
     ['followups', 'deliveryCount', 'deliveryCount INTEGER NOT NULL DEFAULT 0'],
     ['followups', 'lastDeliveredAt', 'lastDeliveredAt TEXT'],
+    ['followups', 'pausedAt', 'pausedAt TEXT'],
     // MTGA deck library: content-hash dedupe key for Player.log re-imports
     ['mtga_decks', 'contentHash', 'contentHash TEXT'],
     // User knowledge graph extensions (documentation/user_knowledge_graph.md)

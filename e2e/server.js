@@ -681,6 +681,39 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Guild-facing schedules for the Host → Schedules journey: two daily
+    // automations and a recurring reminder in a server, plus a private task
+    // the panel must never show. Idempotent per call (clears the previous set).
+    app.post('/e2e/fixtures/schedules', express.json(), async (_req, res) => {
+        try {
+            const guildId = '700000000000000001';
+            const channelId = '700000000000000002';
+            const tomorrow = new Date(Date.now() + 86_400_000);
+            await db.run(`DELETE FROM automations WHERE userId = '700000000000000009'`);
+            await db.run(`DELETE FROM followups WHERE userId = '700000000000000009'`);
+            await db.run(`DELETE FROM inbox_items WHERE userId = '700000000000000009'`);
+            for (const name of ['Daily Gloat', 'Morning Taunt']) {
+                await db.run(
+                    `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+                     VALUES ('700000000000000009', @guildId, @channelId, @name, 'never shown', '0 9 * * *', @nextRun)`,
+                    { guildId, channelId, name, nextRun: tomorrow }
+                );
+            }
+            await db.run(
+                `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+                 VALUES ('700000000000000009', 'dm:700000000000000009', 'inbox:700000000000000009', 'Private digest', 'never shown', '0 9 * * *', @nextRun)`,
+                { nextRun: tomorrow }
+            );
+            await db.run(
+                `INSERT INTO followups (guildId, channelId, userId, note, dueAt, recurMinutes, recurrence)
+                 VALUES (@guildId, @channelId, '700000000000000009', 'Stand-up in five', @dueAt, 1440, 'every day')`,
+                { guildId, channelId, dueAt: tomorrow }
+            );
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
     // Bypasses the event API so empty-step catalog tours can still show
     // paused/completed rows. Never calls a provider.

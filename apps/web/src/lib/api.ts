@@ -1,5 +1,5 @@
 import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, PushStatus } from './types';
-import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
+import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, OperatorSchedule, OperatorSchedulesView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob, CapabilityGap, TurnStep } from './types';
@@ -158,6 +158,16 @@ export const api = {
         const suffix = qs.toString();
         return request<{ entries: OperatorAuditEntry[]; nextCursor: string | null }>(`/api/app/admin/audit${suffix ? `?${suffix}` : ''}`);
     },
+    adminSchedules: (params: { guildId?: string; kind?: string; status?: string } = {}) => {
+        const qs = new URLSearchParams();
+        for (const [key, value] of Object.entries(params)) if (value) qs.set(key, value);
+        const suffix = qs.toString();
+        return request<OperatorSchedulesView>(`/api/app/admin/schedules${suffix ? `?${suffix}` : ''}`);
+    },
+    adminScheduleAction: (kind: string, id: number, action: 'pause' | 'resume' | 'trigger') =>
+        request<{ schedule: OperatorSchedule; botOnline: boolean }>(`/api/app/admin/schedules/${kind}/${id}/${action}`, { method: 'POST' }),
+    adminDeleteSchedule: (kind: string, id: number) =>
+        request<{ deleted: true }>(`/api/app/admin/schedules/${kind}/${id}`, { method: 'DELETE' }),
     usageDiagnostics: (days = 30) => request<AccountSupportView>(`/api/app/usage/diagnostics?days=${days}`),
     adminGrantAccount: (principalId: string, role: 'member' | 'operator' = 'member') =>
         request<{ account: AdminAccount; created: boolean }>('/api/app/admin/accounts', { method: 'POST', body: { principalId, role } }),

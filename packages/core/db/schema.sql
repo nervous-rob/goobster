@@ -241,6 +241,9 @@ CREATE TABLE IF NOT EXISTS followups (
     recurrence TEXT,
     deliveryCount INTEGER NOT NULL DEFAULT 0,
     lastDeliveredAt TEXT,
+    -- Set by an operator pause (documentation/operator_schedules.md): a paused
+    -- row stays PENDING but is never delivered until resumed.
+    pausedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

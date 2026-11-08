@@ -159,7 +159,7 @@ Rules:
     async getDue() {
         return await db.all(
             `SELECT * FROM followups
-             WHERE status = 'PENDING' AND dueAt <= datetime('now')
+             WHERE status = 'PENDING' AND pausedAt IS NULL AND dueAt <= datetime('now')
              ORDER BY dueAt ASC LIMIT 20`
         );
     }

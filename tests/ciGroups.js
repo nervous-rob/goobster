@@ -16,6 +16,7 @@ const GROUPS = [
         files: files([
             'activityGatewayAccess',
             'accessRequests',
+            'operatorSchedules',
             'activityService',
             'autoUpdate',
             'backupRestore',

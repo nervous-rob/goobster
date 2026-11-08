@@ -111,7 +111,7 @@ class WebTaskService {
         });
 
         const followups = (await db.all(
-            `SELECT id, guildId, channelId, note, dueAt, createdAt, recurrence, recurMinutes, deliveryCount FROM followups
+            `SELECT id, guildId, channelId, note, dueAt, createdAt, recurrence, recurMinutes, deliveryCount, pausedAt FROM followups
              WHERE userId = @userId AND status = 'PENDING'
              ORDER BY dueAt ASC`,
             { userId }
@@ -124,6 +124,7 @@ class WebTaskService {
             recurrence: row.recurrence,
             recurMinutes: row.recurMinutes,
             deliveryCount: row.deliveryCount,
+            paused: Boolean(row.pausedAt),
             scope: isDmScopeId(row.guildId) ? 'dm' : 'guild',
             scopeName: scopeName(row.guildId),
             delivery: deliveryOf(row, 'followup')
