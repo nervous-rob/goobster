@@ -57,7 +57,9 @@ const TABLES = [
     { feature: 'observatory', table: 'observatory_jobs', column: 'userId' },
     { feature: 'expeditions', table: 'spitball_expeditions', column: 'userId' },
     { feature: 'expeditions', table: 'expedition_briefs', column: 'userId' },
-    { feature: 'expeditions', table: 'research_sources', column: 'userId' }
+    { feature: 'expeditions', table: 'research_sources', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_responsibilities', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_responsibility_revisions', column: 'changedBy' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
@@ -150,6 +152,17 @@ function createDormantSeed(db) {
         const expeditionId = await db.insert("INSERT INTO spitball_expeditions (userId, guildId, seed) VALUES (@u, @g, 'topic ' || @tag)", { u, g: GUILD, tag });
         await db.run("INSERT INTO expedition_briefs (expeditionId, userId, status) VALUES (@expeditionId, @u, 'READY')", { expeditionId, u });
         await db.run("INSERT INTO research_sources (expeditionId, userId, title) VALUES (@expeditionId, @u, 'Source ' || @tag)", { expeditionId, u, tag });
+
+        const responsibilityId = await db.insert(
+            `INSERT INTO assistant_responsibilities (ownerUserId, authorizedBy, actingUserId, payerUserId, title, operationsJson)
+             VALUES (@u, @u, @u, @u, 'Keep notes ' || @tag, '[{"operation":"read","resource":{"kind":"knowledge","ids":["personal"]}}]')`,
+            { u, tag }
+        );
+        await db.run(
+            `INSERT INTO assistant_responsibility_revisions (responsibilityId, revision, authorityRevision, changeKind, changedBy, snapshotJson)
+             VALUES (@responsibilityId, 1, 1, 'create', @u, '{}')`,
+            { responsibilityId, u }
+        );
 
         await db.run(`INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)
             VALUES (@g, @c, @u, @name, @content, @embedding, 4, 'test/mock')`,

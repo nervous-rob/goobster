@@ -290,6 +290,125 @@ async function countProjects(userId) {
     return { projects, jobs, shareLinks, memberships, invites, workspaceDirs: countWorkspaceDirs(userId), projectNodes, repoAttributions };
 }
 
+const RESPONSIBILITY_PRINCIPALS = ['authorizedBy', 'actingUserId', 'payerUserId'];
+const RESPONSIBILITY_INVOLVES = `(authorizedBy = @userId OR actingUserId = @userId OR payerUserId = @userId)`;
+
+/**
+ * /forget-me for delegated responsibilities (ADR 0016). The person's own
+ * grants go with their revision history. On someone else's grant the
+ * person's principal fields are nulled (in the row and in every stored
+ * snapshot) and a grant that could still run is revoked, because the
+ * authority it named is gone.
+ * @returns {Promise<{ responsibilities: number, revisions: number, anonymized: number }>}
+ */
+async function forgetAssistantResponsibilities(userId) {
+    const revisions = (await db.run(
+        `DELETE FROM assistant_responsibility_revisions
+         WHERE responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
+        { userId }
+    )).changes;
+    const responsibilities = (await db.run(
+        'DELETE FROM assistant_responsibilities WHERE ownerUserId = @userId', { userId }
+    )).changes;
+
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const others = await db.all(
+        `SELECT id, status FROM assistant_responsibilities WHERE ${RESPONSIBILITY_INVOLVES}`, { userId }
+    );
+    for (const row of others) {
+        const revoke = ['DRAFT', 'ACTIVE', 'PAUSED', 'NEEDS_REVIEW'].includes(row.status);
+        await db.run(
+            `UPDATE assistant_responsibilities SET
+                authorizedBy = CASE WHEN authorizedBy = @userId THEN NULL ELSE authorizedBy END,
+                actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                payerUserId = CASE WHEN payerUserId = @userId THEN NULL ELSE payerUserId END,
+                ${revoke ? "status = 'REVOKED', endedAt = @now," : ''}
+                revision = revision + 1, authorityRevision = revision + 1, updatedAt = @now
+             WHERE id = @id`,
+            { id: row.id, userId, now }
+        );
+        const updated = await db.get(
+            'SELECT id, revision, authorityRevision, status FROM assistant_responsibilities WHERE id = @id', { id: row.id }
+        );
+        await db.run(
+            `INSERT INTO assistant_responsibility_revisions
+                (responsibilityId, revision, authorityRevision, changeKind, changedBy, snapshotJson)
+             VALUES (@id, @revision, @authorityRevision, @changeKind, NULL, @snapshot)`,
+            {
+                id: updated.id,
+                revision: updated.revision,
+                authorityRevision: updated.authorityRevision,
+                changeKind: revoke ? 'revoke' : 'edit',
+                snapshot: JSON.stringify({ id: Number(updated.id), revision: Number(updated.revision), status: updated.status, reason: 'principal_erased' })
+            }
+        );
+    }
+
+    const snapshots = await db.all(
+        `SELECT id, snapshotJson FROM assistant_responsibility_revisions
+         WHERE changedBy = @userId OR snapshotJson LIKE @pattern`,
+        { userId, pattern: `%"${userId}"%` }
+    );
+    for (const snap of snapshots) {
+        let parsed;
+        try { parsed = JSON.parse(snap.snapshotJson); } catch { parsed = null; }
+        if (parsed && typeof parsed === 'object') {
+            for (const key of RESPONSIBILITY_PRINCIPALS) {
+                if (parsed[key] === userId) parsed[key] = null;
+            }
+        }
+        await db.run(
+            `UPDATE assistant_responsibility_revisions
+             SET changedBy = CASE WHEN changedBy = @userId THEN NULL ELSE changedBy END, snapshotJson = @snapshot
+             WHERE id = @id`,
+            { id: snap.id, userId, snapshot: parsed ? JSON.stringify(parsed) : '{}' }
+        );
+    }
+    return { responsibilities, revisions, anonymized: others.length };
+}
+
+/** Transparency report counts for the person's own responsibilities. */
+async function countAssistantResponsibilities(userId) {
+    const row = await db.get(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'DRAFT' THEN 1 ELSE 0 END) AS drafts,
+                SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = 'PAUSED' THEN 1 ELSE 0 END) AS paused,
+                SUM(CASE WHEN status = 'NEEDS_REVIEW' THEN 1 ELSE 0 END) AS needsReview
+         FROM assistant_responsibilities WHERE ownerUserId = @userId`,
+        { userId }
+    );
+    const involved = await db.get(
+        `SELECT COUNT(*) AS c FROM assistant_responsibilities
+         WHERE ownerUserId <> @userId AND ${RESPONSIBILITY_INVOLVES}`,
+        { userId }
+    );
+    return {
+        total: Number(row?.total || 0),
+        drafts: Number(row?.drafts || 0),
+        active: Number(row?.active || 0),
+        paused: Number(row?.paused || 0),
+        needsReview: Number(row?.needsReview || 0),
+        onOthersGrants: Number(involved?.c || 0)
+    };
+}
+
+/** Post-erasure audit counts (privacyService.auditUser). */
+async function auditAssistantResponsibilities(userId) {
+    const responsibilities = (await db.get(
+        `SELECT COUNT(*) AS c FROM assistant_responsibilities
+         WHERE ownerUserId = @userId OR ${RESPONSIBILITY_INVOLVES}`,
+        { userId }
+    )).c;
+    const revisions = (await db.get(
+        `SELECT COUNT(*) AS c FROM assistant_responsibility_revisions
+         WHERE changedBy = @userId OR snapshotJson LIKE @pattern
+            OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
+        { userId, pattern: `%"${userId}"%` }
+    )).c;
+    return { responsibilities: Number(responsibilities), revisions: Number(revisions) };
+}
+
 module.exports = {
     PROJECTS_ROOT,
     DASHBOARDS_ROOT,
@@ -303,5 +422,8 @@ module.exports = {
     forgetProjects,
     notifyProjectsGone,
     countWorkspaceDirs,
-    countProjects
+    countProjects,
+    forgetAssistantResponsibilities,
+    countAssistantResponsibilities,
+    auditAssistantResponsibilities
 };

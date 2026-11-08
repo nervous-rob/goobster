@@ -68,6 +68,8 @@ const INVENTORY = [
         'attention_policies', 'inbox_items', 'web_applets'].map(t => [t, 'userId = @userId']),
     ...['tutorial_progress', 'tutorial_preferences', 'tutorial_feedback'].map(t => [t, 'accountId = @userId']),
     ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
+    ['assistant_responsibilities', 'ownerUserId = @userId', '*', 'id'],
+    ['assistant_responsibility_revisions', 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)', '*', 'responsibilityId, revision'],
     // The secret hash stays out of the archive. The label and prefix are
     // enough to see which clients were connected (documentation/mcp.md).
     ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt'],

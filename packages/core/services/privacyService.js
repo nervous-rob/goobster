@@ -321,6 +321,9 @@ class PrivacyService {
              ORDER BY (importance * confidence) DESC LIMIT 25`,
             { userId }
         );
+        // Delegated responsibilities (ADR 0016): the authority this person
+        // has granted, reported even when the feature is off.
+        const responsibilities = await dormantData.countAssistantResponsibilities(userId);
 
         // The Parlor (web app): personas, their knowledge workspaces, and
         // discussions are bot-wide personal data, like conversations.
@@ -579,6 +582,7 @@ class PrivacyService {
                     deadlineAt: row.deadlineAt || null
                 }))
             },
+            responsibilities,
             parlor: {
                 personas: parlor?.personas || 0,
                 notes: parlor?.notes || 0,
@@ -735,6 +739,12 @@ class PrivacyService {
             counts.attentionState = (await db.run(
                 'DELETE FROM attention_state WHERE userId = @userId', { userId }
             )).changes;
+            // Delegated responsibilities: the person's grants and their
+            // history; their principal fields on anyone else's grant.
+            const forgottenResponsibilities = await dormantData.forgetAssistantResponsibilities(userId);
+            counts.responsibilities = forgottenResponsibilities.responsibilities;
+            counts.responsibilityRevisions = forgottenResponsibilities.revisions;
+            counts.responsibilitiesAnonymized = forgottenResponsibilities.anonymized;
 
             // Spitball Expeditions: research runs, their cycles, and the
             // evidence trail. Cycles/sources/claims cascade with the
@@ -1264,7 +1274,10 @@ class PrivacyService {
      */
     async auditUser({ userId }) {
         const dmScope = dmScopeId(userId);
+        const responsibilities = await dormantData.auditAssistantResponsibilities(userId);
         const byTable = {
+            assistant_responsibilities: responsibilities.responsibilities,
+            assistant_responsibility_revisions: responsibilities.revisions,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',
