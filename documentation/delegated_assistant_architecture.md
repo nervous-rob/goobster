@@ -74,7 +74,14 @@ References: [agent orchestration](agent_orchestration.md),
 
 ### 3.1 Responsibility grant
 
-Proposed `assistant_responsibilities` is a versioned grant containing:
+**Shipped in DA-1a:** the grant record, lifecycle, operation vocabulary and
+dispatch-time `authorize()` check described in this section are implemented.
+See [delegated_responsibilities.md](delegated_responsibilities.md) and
+[ADR 0016](adr/0016-delegated-responsibilities.md). Budgets are stored but not
+yet enforced, and nothing calls `authorize()` until later increments add
+delegated work. Every other section of this document is still planned.
+
+`assistant_responsibilities` is a versioned grant containing:
 
 - `id`, owning principal, authorizing principal, acting principal, payer,
   installation identity, revision, status, creation/review/expiry timestamps;
