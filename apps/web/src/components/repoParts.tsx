@@ -5,12 +5,15 @@
  */
 
 export type CiFailure = { name: string; conclusion: string; url: string | null; summary: string };
-export type CiPayload = { ref: string; state: 'success' | 'failure' | 'pending' | 'none'; total: number; passed: number; failing: CiFailure[]; pending: string[]; notOnGitHub?: boolean };
+export type CiState = 'success' | 'failure' | 'pending' | 'skipped' | 'incomplete' | 'none';
+export type CiPayload = { ref: string; state: CiState; total: number; passed: number; failing: CiFailure[]; pending: string[]; skipped?: string[]; truncated?: boolean; notOnGitHub?: boolean };
 
 export function ciBadge(ci: Pick<CiPayload, 'state' | 'failing' | 'pending' | 'passed' | 'total'> | null | undefined) {
     if (!ci || ci.state === 'none') return <span className="hint">no CI</span>;
     if (ci.state === 'success') return <span title={`${ci.passed} checks passed`}>✅ passing</span>;
     if (ci.state === 'pending') return <span title={ci.pending.join(', ')}>🟡 running</span>;
+    if (ci.state === 'skipped') return <span title="Every check was skipped or neutral: nothing shows it passes">⚪ skipped</span>;
+    if (ci.state === 'incomplete') return <span title="More checks than could be read: no verdict">🟡 incomplete</span>;
     return <span title={ci.failing.map((f) => f.name).join(', ')}>❌ {ci.failing.length} failing</span>;
 }
 

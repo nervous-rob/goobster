@@ -13,7 +13,7 @@ type NowPayload = {
     needsYou: { count: number; cards: { id: string; column: string; title: string; detail: string | null }[] };
     repos: {
         name: string; repo: string; branch: string | null; ahead: number | null; behind: number | null; changed: number | null;
-        operation: string | null; conflicts: number; ci: { state: 'success' | 'failure' | 'pending' | 'none'; failing: string[] } | null;
+        operation: string | null; conflicts: number; ci: { state: 'success' | 'failure' | 'pending' | 'skipped' | 'incomplete' | 'none'; failing: string[] } | null;
         pr: { number: number; title: string; url: string; draft: boolean } | null; remoteError: string | null;
     }[];
     instructions: { exists: boolean; lines?: number; updatedAt?: string };

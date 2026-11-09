@@ -290,8 +290,13 @@ Connections), never the server's token and never from the sandbox.
   `repo_pr` (open a pull request: `branch=` head, `base=`, `note=` title,
   `content=` body, `enabled=false` for a draft, `background=true` to push
   the branch first), `repo_ci` (check runs and statuses for `branch=` or the
-  current branch: passed, pending, and each failure with its summary and
-  link), `repo_watch` / `repo_unwatch` (see [CI watches](#ci-watches)).
+  current branch: passed, pending, skipped, and each failure with its
+  summary and link; every page of check runs and statuses is read, up to
+  1,000 each. Only a `success` conclusion counts as passed: when every
+  completed check was skipped or neutral the verdict is `skipped`, not
+  passing, an unknown conclusion is held as pending, and a ref with more
+  checks than can be read is `incomplete` unless a failure was already seen.
+  A CI watch notifies only on `success` or `failure`), `repo_watch` / `repo_unwatch` (see [CI watches](#ci-watches)).
   Combining branches: `repo_merge` and `repo_rebase` (`branch=`, the
   default is the branch the clone started from), `repo_continue` and
   `repo_abort`. Portal: the Code view (`/projects/:owner/:slug/code`) with the same
@@ -850,6 +855,31 @@ Apps may not write or delete app assets, themselves included
 An html fence in chat or a Workshop pin has no project, so every
 `goobster.*` call there fails with `NO_PROJECT`; only the
 [read bridge](#own-project-reads-the-applet-bridge) applies.
+
+**Sealed: what an app reads stays in the app.** Reading a project needs
+no approval, so an app that can read project data (any app shown in its own
+project, and any app that declares `goobster-observatory-read`) has no way
+to send it anywhere:
+
+- Its frame runs under a Content-Security-Policy that the portal puts ahead
+  of everything in the source (after any leading comments and doctype, so
+  no comment or attribute can hide it): no `fetch`, XHR, WebSocket or
+  EventSource (`connect-src 'none'`), images and media only from `data:`
+  and `blob:`, no frames, no form posts. Scripts, styles and fonts load
+  inline or from `cdn.jsdelivr.net`, `cdnjs.cloudflare.com` and
+  `unpkg.com` (plus Google Fonts for styles and fonts) only.
+- Its sandbox has no `allow-popups`, so `window.open` returns nothing.
+- The portal page itself declares `frame-src 'self' blob: data:`, so an app
+  cannot navigate its own frame to another host with data in the URL. A
+  side effect: an app cannot embed a frame from another site (a video
+  player, a map).
+
+An html fence in chat with no project and no read declaration has no data
+to leak and keeps network access and popups. The policy lives in
+`APPLET_SEALED_CSP` (`apps/web/src/renderers/appletBridge.js`);
+`e2e/projectApps.spec.js` reads a project file and tries every exit.
+Residual: the library CDNs see which package URLs an app requests; they
+serve published packages and do not give a package's author request logs.
 
 **Running a file** is also an API of its own:
 `POST /api/app/projects/:slug/run-file { path, args, stdin, background }`
