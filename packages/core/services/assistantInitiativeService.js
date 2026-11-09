@@ -217,13 +217,17 @@ class AssistantInitiativeService {
         );
         const scopes = (() => { try { return JSON.parse(responsibility.scopesJson || '{}'); } catch { return {}; } })();
         const audience = scopes.audience === 'project' && responsibility.projectId ? 'project' : 'private';
+        // Work starts when its owner says so - by pressing Start, or by
+        // having turned on "start automatically" in the grant itself.
+        const rules = (() => { try { return JSON.parse(responsibility.rulesJson || '{}') || {}; } catch { return {}; } })();
         const id = await db.insert(
             `INSERT INTO assistant_initiatives
                 (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, audience, projectId,
-                 sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason)
+                 sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status)
              VALUES (@rid, @rrev, @owner, @acting, @audience, @projectId,
-                 @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason)`,
+                 @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason, @status)`,
             {
+                status: rules.autoStart === true ? 'QUEUED' : 'CANDIDATE',
                 rid: responsibility.id,
                 rrev: responsibility.revision,
                 owner: responsibility.ownerUserId,

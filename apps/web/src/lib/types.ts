@@ -390,11 +390,11 @@ export type ResponsibilityOperation = { operation: string; resource: { kind: str
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
     projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
-    budgets: Record<string, number>; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
+    budgets: Record<string, number>; rules?: { autoStart?: boolean; interruption?: string; stopCondition?: string }; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
 };
 export type AssistantRun = {
     id: number; status: string; stopCode: string | null; outcome: string | null; rounds: number; tokensUsed: number;
-    searches: number; resultTitle: string | null; resultSummary: string | null; startedAt: string; endedAt: string | null;
+    searches: number; computeSeconds?: number; resultTitle: string | null; resultSummary: string | null; startedAt: string; endedAt: string | null;
 };
 export type AssistantInitiative = {
     id: number; responsibilityId: number; title: string; reason: string | null; status: string; waitReason: string | null;
@@ -694,6 +694,8 @@ export type UserNote = {
     confidence?: number;
     source?: string;
     curation?: Curation;
+    /** Written by a delegated run and not yet edited or saved by you. */
+    generated?: boolean;
     tags: string[];
     createdAt?: string;
     updatedAt?: string;

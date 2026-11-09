@@ -2,18 +2,16 @@
 
 ## Status
 
-Accepted for the first increment of DA-3 in the
-[delegated assistant plan](../delegated_assistant_implementation.md): runs
-that **read and research**. It builds on
-[ADR 0016](0016-delegated-responsibilities.md) (the grant) and
-[ADR 0017](0017-initiatives-updates-processes.md) (initiatives and updates).
-Behaviour is documented in [delegated_runs.md](../delegated_runs.md). The
-services are `assistantRunService.js` and `assistantRunnerService.js` under
+Accepted for DA-3 of the
+[delegated assistant plan](../delegated_assistant_implementation.md):
+recoverable runs that read and research, write generated notes, edit and
+run files in a linked project, and start a research expedition as child
+work. It builds on [ADR 0016](0016-delegated-responsibilities.md) (the
+grant) and [ADR 0017](0017-initiatives-updates-processes.md) (initiatives
+and updates). Behaviour is documented in
+[delegated_runs.md](../delegated_runs.md). The services are
+`assistantRunService.js` and `assistantRunnerService.js` under
 `packages/core/services/`.
-
-Knowledge writes, file edits, sandbox runs, repository operations and
-research expeditions are **not** enabled by this ADR. Each needs its own
-safety work first (section "What is deliberately not here").
 
 ## Context
 
@@ -57,10 +55,18 @@ Two observations shaped the design:
    sketch and it stores less private data; it gives the same guarantee for
    the effects, which is what recovery is for.
 
-3. **A write in flight is never retried.** A journal row left `DISPATCHED`
-   for a `write` tool becomes `UNCERTAIN` and the run settles as `REVIEW`
-   (`OPERATION_UNCERTAIN`). A read is safe to repeat and is repeated. No
-   tool in this increment writes; the rule is in place before one does.
+3. **A write in flight is never retried blindly.** A journal row left
+   `DISPATCHED` for a `write` tool is resolved by the tool's own identity:
+   - *atomic* tools (note writes) commit the change and the `SUCCEEDED`
+     journal row in one database transaction, so an in-flight row means the
+     change did not happen and it is done again;
+   - `writeProjectFile` reconciles by content (the file holding exactly the
+     intended bytes means done);
+   - `runProjectFile` and `startResearch` pass `assistant_run:<run>:<op>` as
+     the child's `executionAttemptId`; a job or expedition carrying it is
+     adopted, an absent one is started;
+   - anything else, or a reconciliation that cannot tell, becomes
+     `UNCERTAIN` and the run settles as `REVIEW` (`OPERATION_UNCERTAIN`).
 
 4. **The lease is the stop signal.** The run renews the initiative's lease
    before each tool call. Cancelling, pausing, revoking, expiring or erasing
@@ -74,17 +80,18 @@ Two observations shaped the design:
      `workContext.run({ kind: 'assistant_run', id })`. The existing
      reservation against the payer's account cap applies unchanged, and
      background admission yields to foreground chat.
-   - On top of that the responsibility's `modelTokens` and `searches` budgets
-     are per-UTC-day caps across its runs. Unset means the defaults
-     (200,000 tokens, 20 searches), never unlimited.
+   - On top of that the responsibility's `modelTokens`, `searches` and
+     `computeSeconds` budgets are per-UTC-day caps across its runs. Unset
+     means the defaults (200,000 tokens, 20 searches, 120 sandbox seconds),
+     never unlimited.
    - An exhausted budget settles the initiative as `WAITING` (`budget`) with
      `recheckAfter` at the next day; the steward requeues it then. Nothing
      polls a model to rediscover the refusal.
    - A run is at most 8 tool rounds and 10 minutes.
 
 6. **Only queued work runs.** The runner claims `QUEUED` initiatives. A
-   proposed one (`CANDIDATE`) waits for its owner to start it. One running
-   initiative per person, two across the installation.
+   proposed one (`CANDIDATE`) waits for its owner to start it (see 12). One
+   running initiative per person, two across the installation.
 
 7. **It never takes `web_live_turns`.** The run does not go through
    `webChatService`; chat stays usable while a run works.
@@ -96,16 +103,48 @@ Two observations shaped the design:
    (`assistant_run` failures: `PROVIDER_ERROR`, `UPDATE_FAILED`), never a
    provider's message.
 
+9. **Knowledge is hardened before it is written to.**
+   - Capacity pruning (`_pruneNodes`) and the low-confidence orphan prune
+     (`_pruneOrphans`) never delete a note with curation `saved`. A scope
+     full of saved notes stays over its cap; automated additions are refused
+     (`CAPACITY`) instead of evicting.
+   - `kg_nodes.generated` marks a note written by delegated work. It is a
+     column, not a new curation value: curation stays the person's intent
+     (ADR 0008) and a generated note is `unclassified` until they save it.
+     A human edit clears `generated` and sets `saved`.
+   - `addGeneratedNote` never upserts: an existing title is refused and no
+     semantic match is treated as the same note. `amendGeneratedNote` is a
+     compare-and-swap on the revision read and only matches a note that is
+     still generated.
+   - `applyMutations({ generatedOnly })` is the same rule for the research
+     pipeline, used when an expedition's `executionAttemptId` names a run:
+     new notes are generated, existing notes that are the person's are
+     skipped, and no merge, delete, contradiction demotion, tag or link
+     touches a note that is not generated.
+
+10. **A child expedition is waited for, not polled with a model.**
+    `startResearch` starts one focused expedition and halts the run
+    (`WAITING`, `dependency`, `CHILD_PENDING`). The steward and the
+    `research.expedition_*` events requeue it when the expedition ends; the
+    resumed run's replayed call returns the expedition's outcome. Cancelled
+    or failed work cancels its expedition. The expedition's reservations
+    are added to the run's token count, once.
+
+11. **What changed is read from the journal.** The update a run files lists
+    each successful write from `assistant_run_operations`, and a run that
+    wrote anything always files one, whatever the model reported.
+
+12. **Starting automatically is part of the grant.** `rules.autoStart`
+    makes proposed initiatives `QUEUED` instead of `CANDIDATE`. It is off by
+    default, shown at activation, and an authority change like any other
+    rule (pause to edit).
+
 ## What is deliberately not here
 
-- **Knowledge writes.** Capacity pruning can still evict saved notes and
-  graph upserts are not compare-and-swap (architecture section 2). Those are
-  fixed first.
-- **File edits, sandbox runs, repository operations.** They need workspace
-  snapshots and the write half of the journal exercised end to end.
-- **Research expeditions as child work.** A child that outlives the run
-  needs adoption and a wake-up; this increment's research is web search.
-- **Starting work automatically.** A per-responsibility opt-in comes later.
+- **Editing saved notes, edges and archiving** (`kg.saved.amend`, `kg.edge`,
+  `kg.archive`): edges have no evidence or retraction history yet.
+- **Repository operations** (`repo.commit`, `repo.push`, `pr.create`).
+- **Process actions** (DA-5) and **plan-driven project work** (DA-4).
 - **Project audiences.** A run's finding goes to the owner only.
 
 ## Consequences

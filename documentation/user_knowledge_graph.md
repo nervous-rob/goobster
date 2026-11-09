@@ -128,7 +128,7 @@ Privacy: `/forget-me` deletes the user's artifact rows (cascade with nodes) and 
 
 | Resource | Cap | Prune order |
 |----------|-----|-------------|
-| Nodes | 2500 (user), 1000 (guild-wide) | Lowest `salience × confidence`, then oldest `updatedAt` |
+| Nodes | 2500 (user), 1000 (guild-wide) | Lowest `salience × confidence`, then oldest `updatedAt`. **Never a note with curation `saved`**: a scope full of saved notes stays over its cap and automated additions are refused (ADR 0018) |
 | Edges | 8000 | Lowest `weight`, then oldest |
 | Tags | 200 | Least recently linked |
 

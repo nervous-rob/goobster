@@ -1329,7 +1329,7 @@ ${excerpt}`;
             const moved = await db.transaction(async (tx) => {
                 const savedFirst = await tx.run(
                     `UPDATE kg_nodes SET curation = 'saved'
-                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified'
+                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified' AND generated = 0
                        AND EXISTS (
                            SELECT 1 FROM kg_node_revisions r WHERE r.nodeId = kg_nodes.id AND r.changeKind = 'human_edit'
                        )`,
@@ -1337,13 +1337,13 @@ ${excerpt}`;
                 );
                 const memory = await tx.run(
                     `UPDATE kg_nodes SET curation = 'memory'
-                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified'
+                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified' AND generated = 0
                        AND ${this._memoryEvidenceSql('kg_nodes')}`,
                     { guildId, scopeKey }
                 );
                 const saved = await tx.run(
                     `UPDATE kg_nodes SET curation = 'saved'
-                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified'
+                     WHERE guildId = @guildId AND scopeKey = @scopeKey AND curation = 'unclassified' AND generated = 0
                        AND ${this._savedEvidenceSql('kg_nodes')}`,
                     { guildId, scopeKey }
                 );

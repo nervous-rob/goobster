@@ -150,6 +150,33 @@ describe('a run', () => {
     });
 });
 
+describe('starting automatically', () => {
+    test('is off by default, part of the grant, and queues proposed work when on', async () => {
+        await policies.enroll({ userId: A, initiative: 'assist' });
+        await expect(responsibilities.create({ userId: A, body: { title: 'x', operations: [READ_NOTES], rules: { autoStart: 'yes' } } }))
+            .rejects.toMatchObject({ code: 'INVALID_RESPONSIBILITY' });
+        const item = await db.insert(
+            `INSERT INTO attention_items (guildId, userId, kind, subject, goal, state)
+             VALUES (@g, @u, 'goal', 'auto', 'Plan', 'active')`, { g: `dm:${A}`, u: A }
+        );
+        const { responsibility } = await responsibilities.create({
+            userId: A, activate: true,
+            body: { title: 'Keep the plan moving', operations: [READ_NOTES], attentionItemId: item, rules: { autoStart: true } }
+        });
+        expect(responsibility.rules).toEqual({ autoStart: true });
+        await db.run("UPDATE attention_items SET goal = 'Plan, revised' WHERE id = @id", { id: item });
+        const [id] = (await initiatives.reconcileResponsibility(responsibility.id)).proposed;
+        expect((await initiativeRow(id)).status).toBe('QUEUED');
+        script([call('finish', { outcome: 'no_change', title: 'Nothing' })]);
+        expect(await runner.tick({ wait: true })).toMatchObject({ started: 1 });
+
+        // Turning it on later is a change of authority: pause first.
+        await expect(responsibilities.update({
+            userId: A, id: responsibility.id, expectedRevision: responsibility.revision, body: { rules: {} }
+        })).rejects.toMatchObject({ code: 'PAUSE_REQUIRED' });
+    });
+});
+
 describe('authority at every tool call', () => {
     test('a tool the grant does not cover is refused and not attempted', async () => {
         await queued({ operations: [READ_NOTES] });
@@ -421,6 +448,17 @@ describe('generated notes', () => {
         expect(result.status).toBe('COMPLETED');
         expect(await notes()).toHaveLength(1);
         expect((await operations()).filter(op => op.tool === 'addGeneratedNote')).toEqual([expect.objectContaining({ status: 'SUCCEEDED' })]);
+    });
+
+    test('the curation backfill leaves a generated note generated (it is not evidence of intent)', async () => {
+        const added = await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'Frost', content: 'v1', origin: 'assistant_run:1' });
+        await kg.addProvenance({ nodeId: added.id, sourceKind: 'expedition', sourceId: 5 });
+        await kg.backfillCuration({ guildId: scope, userId: `${A}-fresh` }).catch(() => {});
+        kg._curationBackfilled?.clear?.();
+        await kg.listUserNotes({ guildId: scope, userId: A });
+        expect(await db.get('SELECT curation, generated FROM kg_nodes WHERE id = @id', { id: added.id })).toEqual({ curation: 'unclassified', generated: 1 });
+        const [listed] = (await kg.listUserNotes({ guildId: scope, userId: A })).notes;
+        expect(listed).toMatchObject({ label: 'Frost', generated: true, curation: 'unclassified' });
     });
 
     test('pruning never deletes a note the person saved, however weak it scores', async () => {
