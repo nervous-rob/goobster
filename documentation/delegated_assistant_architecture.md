@@ -7,7 +7,9 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 # Planned: delegated assistant architecture
 
-**Status: design specification; not implemented.** Updated 2026-11-08.
+**Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
+are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
+section 13, is planned.** Updated 2026-11-09.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -724,6 +726,268 @@ and the relevant portal journeys:
     and human acceptance are represented separately.
 12. Account switch, membership loss, pause, and erasure clear/fence derived state
     and prevent subsequent private content delivery or resurrection.
+
+13. Conversation, voice, feedback and learned signals can propose, inform and
+    narrow; none of them can activate, resume, widen or spend beyond a grant.
+14. Every outbound contact about delegated work passes the Attention contact
+    budget, cooldown and quiet hours; delivery never implies review.
+15. A new delegated capability exists only as an explicit entry in the run's
+    tool table with a declared operation, resource, effect and reconciliation.
+
+## 13. Planned extensions beyond the first pilot
+
+**Status: planned; nothing in this section is implemented.** These are the
+contracts for increments DA-7 through DA-12 of the
+[implementation plan](delegated_assistant_implementation.md). They are
+written now so DA-3 through DA-6 do not close off the seams they need. Names
+below are proposals. Each subsection lists what already exists that it
+builds on, the new records, and the rules that must hold.
+
+### 13.1 Conversation and voice as the control surface (DA-7)
+
+Builds on: the tool registry (`utils/toolsRegistry.js`), incognito tool
+blocking (`utils/toolPrivacy.js`), `personalPolicyService.toolPolicy`,
+`assistantResponsibilityService` (create is already idempotent and drafts
+grant nothing), `assistantRunService.forInitiative`, the Home projection
+(`assistantHomeService.project`) and the voice turn loop
+(`services/voice/realtimeVoiceEngine.js`, `voiceSessionService`).
+
+Proposed chat tools, all in a new `utils/tools/assistant.js`:
+
+| Tool | Does | Authority |
+| --- | --- | --- |
+| `proposeResponsibility` | Creates a **draft** from structured arguments (title, outcome, operations, linked project, expiry, rules) and returns a confirmation card | None is granted. The draft carries `proposedBy: 'model'` and the conversation reference |
+| `describeDelegatedWork` | Reads responsibilities, open initiatives, run summaries and journals (tool, status, refusal code) | Read of the speaker's own records only |
+| `controlDelegatedWork` | `cancel` an initiative, `pause` a responsibility | Narrowing only. It cannot queue, resume, activate or edit |
+
+Rules:
+
+- **A model call is never a confirmation.** Activation, resume, queueing a
+  proposed item and any authority edit need a human confirmation receipt:
+  a single-use token minted when the portal or a chat confirmation card is
+  rendered to the authenticated person, bound to the responsibility id, its
+  revision and a hash of the grant shown, and consumed by the existing
+  action route. Tool arguments cannot contain or forge it. This is the same
+  rule missions follow for plan approval (section 7).
+- The draft a model proposes is normalized by the same validator as a human
+  draft; unknown operations and wildcard resources are rejected, and the
+  card shows the normalized grant, not the model's description of it.
+- All three tools are added to the incognito block list and are refused for
+  `isAutomation` turns: an unattended turn cannot draft or steer delegation.
+- `describeDelegatedWork` answers "why" from records: the initiative's
+  source and reason, the run's journal and its refusals. It returns no
+  retrieved text from another person's records.
+- Tools act only in the speaker's personal scope. In a guild channel they
+  answer that delegation is managed privately and link to the portal.
+
+**Deciding a request in place.** Each gate kind registers a descriptor once:
+
+```text
+gateDecisions[kind] = {
+  describe(gate, viewer)  -> { title, detail, options: [{ id, label, danger }] }
+  decide(gate, viewer, optionId, { occurrence, revision }) -> domain result
+}
+```
+
+`POST /api/app/assistant/gates/:updateId/decide { option, occurrence,
+revision }` resolves the update's gate reference, checks the viewer may act
+on it, and calls the owning domain service (mission approval, friend
+request, access request, repair proposal). It never writes the outcome
+itself; the update's gate resolves through `resolveGate` as it does today.
+A stale occurrence or revision answers 409 with the current card. Home,
+the Inbox and the chat card render the same descriptor.
+
+**Spoken briefing.** A voice intent reads `assistantHomeService.project`
+and speaks counts, the Needs-you titles and up to three findings. It calls
+no acknowledgment route. Speaking a private finding requires the voice
+session to be the person's own (never a shared guild voice channel).
+
+### 13.2 Opportunity sources (DA-8)
+
+Builds on: `assistant_source_cursors` and `SOURCES` in
+`assistantInitiativeService` (one cursor per source, proposals idempotent on
+`(responsibility, dedupeKey, sourceRevision, attempt)`), `domainEventBus`
+topics as hints only, `followed_sources`, `observatory_jobs`,
+`project_ci_watches` and the corrected `summarizeChecks` verdicts.
+
+New adapters, each `{ read(responsibility) -> [{ sourceId, revision, title,
+reason }] }`:
+
+| Adapter | Durable source | Material change | Requires in the grant |
+| --- | --- | --- | --- |
+| `conversation_request` | The person's own chat messages in conversations the responsibility names, or their personal scope | A new message classified as a request or commitment within the responsibility's outcome | `scopes.sources` includes `personal_chat`; `read` on what the work will need |
+| `followed_source` | `followed_sources` entries the person keeps | A kept entry newer than the cursor | The followed source named as a `process` resource |
+| `job_failure` | `observatory_jobs` of the linked project | A new failure cause (error code and file), not each retry | `read` on the project |
+| `ci_verdict` | `project_ci_watches.lastState` | A settled verdict change on a watched branch | `read` on the repository |
+
+Rules:
+
+- Classification of a conversation message is a bounded, cached decision
+  keyed by message id and responsibility revision. It runs on the steward's
+  pass under the responsibility's token budget, never on a Home read, and
+  its output is a label plus the message reference, never a new instruction.
+- **Text is evidence, not authority** (section 3.3) for every adapter: a
+  fetched page, a file or a message that says "also push this" changes the
+  opportunity's description at most. Authorization is unaffected.
+- Each adapter has `maxProposalsPerDay` per responsibility (proposed default
+  3). Excess changes coalesce into the newest revision; they are not queued.
+- Cursors record the highest source revision seen. A deleted conversation or
+  an unfollowed source removes its cursor and its open opportunities
+  (erasure and membership loss use the same path).
+- New kinds join `scheduledWorkRegistry` where they keep a next-time, and
+  the process catalog where they are recurring.
+
+### 13.3 Delivery and interruption (DA-9)
+
+Builds on: the portal SSE channel (`web/liveAuthorization.createSseChannel`),
+`inboxService.deliver` (Inbox first, Discord DM as a tracked echo),
+`pushService.notify`, and Attention's contact path
+(`attentionService._contact`, `attentionPolicyService` daily cap, cooldown
+and quiet hours), and `rules.interruption` already stored on the grant.
+
+- **Live overview.** `assistantUpdateService`, `assistantInitiativeService`
+  and `assistantRunService` publish `assistant.changed` on the domain bus
+  with `{ userId, kinds: ['update' | 'initiative' | 'run' | 'gate'] }`. The
+  portal stream forwards it as an `assistant` event to that person's
+  sessions only. The client refetches; the event carries no title or text.
+  A reconnect refetches. Progress within a run is coalesced to at most one
+  event per five seconds.
+- **Interruption rule.** Evaluated when an update's envelope is filed:
+
+  | `rules.interruption` | Finding | Open request |
+  | --- | --- | --- |
+  | `home` (default) | Inbox only | Inbox only |
+  | `digest` | Inbox, and the day's digest | Inbox, and the day's digest |
+  | `immediate` | Inbox, and the day's digest | Inbox, plus one contact per gate occurrence |
+
+  A finding never contacts by itself. `immediate` applies to requests that
+  block delegated work.
+- **One contact path.** A contact is requested through a new
+  `attentionService.requestContact({ userId, reason: 'assistant', updateId,
+  urgent })`, which applies the same daily cap, cooldown and quiet hours as
+  Attention's own contacts and records the contact in the same ledger. Push
+  and the Discord echo are its channels. Delegated work has no channel of
+  its own, so it cannot exceed the person's contact budget.
+- **Digest.** `assistant_digests (userId, day, updateIdsJson, sentAt)`,
+  unique per person and day. Built once per day at the person's digest time
+  from unseen updates filed since the last digest; an empty set sends
+  nothing. An update already contacted about is listed, not re-announced.
+- Receipts keep `deliveredRevision` separate from `acknowledgedRevision`
+  (ADR 0017): a push, a DM, a digest and a spoken briefing all record
+  delivery only.
+
+### 13.4 Feedback and learned signals (DA-10)
+
+New records:
+
+```text
+assistant_feedback (id, userId, updateId NULL, initiativeId NULL, kind, createdAt)
+  kind IN ('useful','already_knew','wrong','less_of_this','wrong_time',
+           'keep_wording','stop_responsibility')
+assistant_source_weights (responsibilityId, adapter, weight, dismissals,
+                          acceptances, updatedAt)   -- one row per adapter
+```
+
+Each kind has exactly one effect:
+
+| Kind | Effect | Where |
+| --- | --- | --- |
+| `useful` / `already_knew` | Adjusts the adapter's acceptance counters | `assistant_source_weights` |
+| `wrong` | Opens a correction on the generated note or claim the finding cites; the evidence stays | Knowledge (a revision, not a delete) |
+| `less_of_this` | Lowers the adapter's `weight` (which scales its daily proposal cap, floor 0) | `assistant_source_weights` |
+| `wrong_time` | Adds the hour to the person's digest/contact preferences | Attention policy |
+| `keep_wording` | Marks the note saved (it leaves `generated`) | Knowledge |
+| `stop_responsibility` | Opens the ordinary pause or revoke confirmation | Responsibility lifecycle |
+
+Rules:
+
+- Signals are numbers and enums. No feedback text and no history is fed to a
+  model as instructions.
+- A weight changes how often an adapter may **propose**. It never changes
+  authorization, budgets or which tools a run has.
+- Ignoring or dismissing lowers a weight slowly and cannot reach zero by
+  itself; only explicit `less_of_this` or removing the source can.
+- The current weights are shown on the responsibility with a reset. Both
+  tables are per-person data: export, report, erasure, 180-day retention for
+  feedback rows whose update is gone.
+
+### 13.5 Extended reach (DA-11)
+
+Every capability below is a new entry in `assistantRunService.TOOLS`
+(ADR 0018) with `needs`, `effect`, and either `atomic` or `reconcile`.
+
+**Repository work.** Through `projectRepoService` and `utils/sealedGit.js`
+only, with the acting person's own connected GitHub token.
+
+| Tool | Operation | Reconciliation after a crash |
+| --- | --- | --- |
+| `commitProjectRepo` | `repo.commit` | The clone's HEAD carries a trailer `Goobster-Operation: <run>:<op>`; present means done |
+| `pushProjectRepo` | `repo.push` | Compare the remote branch head with the local commit; equal means done. Never forced; a rejected push is a result, not a retry |
+| `openPullRequest` | `pr.create` | Look up an open pull request for the head branch; found means done |
+
+The grant must name branch patterns (already enforced when saved). A run
+additionally refuses the repository's default branch and any branch GitHub
+reports as protected, whatever the pattern says.
+
+**Knowledge beyond generated notes.** Preconditions, in order:
+`kg_edges` gains `revision`, an evidence reference and a retraction record;
+`mergeNodes` and archive become reversible (an archived note keeps its
+edges and is restorable); `kg.archive` is distinct from privacy deletion.
+Then: `proposeSavedNoteEdit` files a request (a gate with a diff) the person
+applies; `kg.saved.amend` granted explicitly allows a direct edit as a
+compare-and-swap on the revision read; `linkNotes` and `archiveNote` follow
+the same compare-and-swap rule.
+
+**Project audiences.** A run whose initiative has `audience = 'project'`
+publishes with `audience: { projectId }`. Visibility already follows current
+membership (`assistant_updates` visibility). Additional rules: the producer
+is shown; private sources are not quoted into a project finding unless the
+grant's `scopes.audience` is `project` and the source is the project's own;
+a member's receipt is deleted when they leave.
+
+**Outside connectors.** A connector is a typed adapter:
+
+```text
+connector = {
+  id, feature,                       // gated like any optional feature
+  reads:  [{ operation, describe }], // exactly what it can read
+  writes: [{ operation, describe, reconcile }],
+  credentials: per-person, in user_integrations, never the operator's
+}
+```
+
+A responsibility grants a connector resource by id and named sub-resource
+(one calendar, one mailbox label), never a provider wholesale. Reads are
+`read`; writes are `external.write`, count against `externalOperations`,
+and must provide `reconcile` or they stop for review after any uncertainty.
+Each connector ships with a recorded owner decision and a manifest shown at
+activation. Broad surveillance remains a product non-goal: there is no
+"watch everything" connector and no background ingestion outside a named
+responsibility.
+
+### 13.6 Operator controls and evaluation (DA-12)
+
+- **Host view.** `GET /api/app/admin/assistant` returns counts by state,
+  runs and tokens per day, failures by code and the oldest waiting age.
+  It returns no title, prompt, result or journal text, and names accounts by
+  id only (the host already sees account ids).
+- **Controls**, each writing one `operator_audit` row:
+  `assistant.pause_all` / `assistant.resume_all` (a flag in `instance_state`
+  the runner and `authorize()` both read, so running work halts at its next
+  call), `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
+  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`).
+- **Caps as configuration.** The numbers hard-coded today
+  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) move to a stored
+  policy with those values as defaults. A responsibility's own budget may be
+  lower than the default, never higher than a host-set ceiling.
+- **Evaluation set.** `tests/live/assistant.live.test.js` (skipped without
+  keys, never in required CI): fixed fictional responsibilities and seeded
+  sources, run against a real provider. It records, per model and prompt
+  version: refused calls, writes attempted outside the grant, injected
+  instructions followed (must be zero by authorization, measured anyway),
+  tokens per useful result, and runs ending with no result.
+- **Pilot record.** The DA-6 template gains the model and prompt version and
+  the caps in force, so a result can be compared across changes.
 
 See the [implementation plan](delegated_assistant_implementation.md) for the
 increment-specific acceptance matrix and rollout gates. CI establishes these
