@@ -306,4 +306,17 @@ describe('incognito execution boundary', () => {
         expect(sent).toEqual([]);
         expect(interaction.generatedFiles).toBeUndefined();
     });
+
+    test('noteCapabilityGap records nothing in incognito', async () => {
+        const capabilityGapService = require('@goobster/core/services/capabilityGapService');
+        const note = jest.spyOn(capabilityGapService, 'note');
+        const { interaction } = fakeInteraction();
+        interaction.skipHistory = true;
+        const result = await toolsRegistry.execute('noteCapabilityGap', {
+            capability: 'attach a PDF to a calendar event', area: 'integrations', interactionContext: interaction
+        });
+        expect(result).toMatch(/disabled in incognito/);
+        expect(note).not.toHaveBeenCalled();
+        note.mockRestore();
+    });
 });

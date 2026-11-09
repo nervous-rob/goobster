@@ -218,7 +218,7 @@ class ProjectCiWatchService {
             fields.fixesUsed = 0;
             await this._deliverItem({
                 userId: watch.userId, kind: 'project', title: `✅ CI passed on ${where}`.slice(0, 200),
-                body: `All ${ci.passed} check(s) passed in project "${projectRow.name}".`,
+                body: `${ci.skipped.length ? `${ci.passed} check(s) passed, ${ci.skipped.length} skipped` : `All ${ci.passed} check(s) passed`} in project "${projectRow.name}".`,
                 link, source: { type: 'ci_watch', id: watch.id }, dedupeKey: `ci-watch:${watch.id}:${sha}:success`
             });
         } else {

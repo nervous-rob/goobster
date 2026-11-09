@@ -27,7 +27,9 @@ const MINI_APP_BRIDGE =
     + 'remove(path), run(path, { args, stdin, background }) for .py/.js/.sh workspace files (watch(jobId, onUpdate) streams a background run\'s output), '
     + 'and goobster.assets.list/read/write/remove/run for notes and scripts (never apps). '
     + 'write, remove and run must be declared, only those the app needs: <meta name="goobster-project-access" content="write delete run">; '
-    + 'the viewer approves each the first time, so handle a rejected promise (err.code ACCESS_DENIED). Never ask for allow-same-origin.';
+    + 'the viewer approves each the first time, so handle a rejected promise (err.code ACCESS_DENIED). Never ask for allow-same-origin. '
+    + 'An app that reads project data runs sealed: no fetch or other network calls, no remote images or iframes, no popups; '
+    + 'load libraries only from cdn.jsdelivr.net, cdnjs.cloudflare.com or unpkg.com and use data: URLs for images.';
 
 /**
  * How rich replies render on a web surface.

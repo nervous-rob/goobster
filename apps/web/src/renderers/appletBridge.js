@@ -300,15 +300,58 @@ export const APPLET_BRIDGE_SCRIPT = `<script>
 })();
 </script>`;
 
-export function withBridgeScript(source) {
+/**
+ * Library hosts a sealed app may load scripts, styles and fonts from. They
+ * serve published packages only; nothing an app sends them is readable by
+ * the app's author.
+ */
+export const APPLET_LIBRARY_HOSTS = ['https://cdn.jsdelivr.net', 'https://cdnjs.cloudflare.com', 'https://unpkg.com'];
+
+/**
+ * The Content-Security-Policy every app that can reach project data runs
+ * under: no fetch/XHR/WebSocket/EventSource, no remote images, media or
+ * frames, no form posts. Together with the portal's own `frame-src` (which
+ * stops the frame navigating itself to another host) and a sandbox without
+ * allow-popups, data an app reads through the bridge has no way out.
+ */
+export const APPLET_SEALED_CSP = [
+    "default-src 'none'",
+    `script-src 'unsafe-inline' 'unsafe-eval' blob: ${APPLET_LIBRARY_HOSTS.join(' ')}`,
+    `style-src 'unsafe-inline' ${APPLET_LIBRARY_HOSTS.join(' ')} https://fonts.googleapis.com`,
+    `font-src data: ${APPLET_LIBRARY_HOSTS.join(' ')} https://fonts.gstatic.com`,
+    'img-src data: blob:',
+    'media-src data: blob:',
+    'worker-src blob:',
+    "connect-src 'none'",
+    "frame-src 'none'",
+    "form-action 'none'",
+    "base-uri 'none'"
+].join('; ');
+
+/**
+ * Can this app read project data through the bridge? True for an app shown
+ * in its own project and for any app that declares a cross-project read.
+ * Such an app is sealed (APPLET_SEALED_CSP, no popups).
+ */
+export function appletReachesData(source, ownProject = null) {
+    const own = String(ownProject || '').trim().toLowerCase();
+    return SLUG_RE.test(own) || extractObservatoryReadProjects(source).length > 0;
+}
+
+/**
+ * Frame an app's source: the bridge script (and, when sealed, the CSP
+ * <meta>) go ahead of every element the app wrote - after any leading
+ * comments and doctype, so the document keeps standards mode, and before
+ * the app's own <html>/<head>. Nothing in the source (a comment, an
+ * attribute, a script string mentioning <head>) can come before them, hide
+ * them or move them; the parser opens <head> for them and merges the app's
+ * own <html>/<head> tags after.
+ */
+export function withBridgeScript(source, { sealed = false } = {}) {
     const html = String(source || '');
-    if (/<head[\s>]/i.test(html)) {
-        return html.replace(/<head([^>]*)>/i, `<head$1>\n${APPLET_BRIDGE_SCRIPT}`);
-    }
-    if (/<html[\s>]/i.test(html)) {
-        return html.replace(/<html([^>]*)>/i, `<html$1><head>${APPLET_BRIDGE_SCRIPT}</head>`);
-    }
-    return `${APPLET_BRIDGE_SCRIPT}${html}`;
+    const lead = /^(?:\s|<!--[\s\S]*?-->)*(?:<!doctype[^>]*>)?/i.exec(html)[0];
+    const policy = sealed ? `<meta http-equiv="Content-Security-Policy" content="${APPLET_SEALED_CSP}">` : '';
+    return `${lead}${policy}${APPLET_BRIDGE_SCRIPT}${html.slice(lead.length)}`;
 }
 
 /**
