@@ -976,6 +976,12 @@ class SpitballResearchPipeline {
 
     // --- Stages 7-11: knowledge proposals through the legalizer ------------------
 
+    /** Started by a delegated run (its attempt id names the run and operation)? */
+    async _isDelegated(expedition) {
+        const row = await db.get('SELECT executionAttemptId FROM spitball_expeditions WHERE id = @id', { id: Number(expedition.id) });
+        return String(row?.executionAttemptId || '').startsWith('assistant_run:');
+    }
+
     async _generateAndLegalizeKnowledge({ expedition, lens, context, frontierInput, claims, accepted, usageContext, counters }) {
         const limits = kgConfig.LIMITS.research;
         // Evidence details for the deterministic confidence ceiling: each
@@ -1053,6 +1059,9 @@ class SpitballResearchPipeline {
                 source: 'research',
                 limits,
                 provenance: { sourceKind: 'expedition', sourceId: expedition.id },
+                // An expedition a delegated run started may only create or
+                // amend generated notes (ADR 0018).
+                generatedOnly: await this._isDelegated(expedition),
                 mutations: proposals
             });
         } catch (error) {

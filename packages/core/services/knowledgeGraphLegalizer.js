@@ -45,8 +45,24 @@ class KnowledgeGraphLegalizer {
         provenance = null,
         // Saved-knowledge intent for NEW nodes (ADR 0008); null lets
         // upsertNode derive it from `source`. Existing nodes keep theirs.
-        curation = null
+        curation = null,
+        // Delegated work (ADR 0018): only notes that are still generated may
+        // be created or changed. Notes the person saved or edited are left
+        // exactly as they are; nothing is merged, deleted, tagged or linked
+        // unless every note involved is generated.
+        generatedOnly = false
     } = {}) {
+        const untouchable = async (label) => {
+            const node = await db.get(
+                'SELECT generated, curation FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label',
+                { guildId, scopeKey, label: String(label || '').trim() }
+            );
+            return node ? !(node.generated && node.curation !== 'saved') : false;
+        };
+        const exists = async (label) => Boolean(await db.get(
+            'SELECT 1 AS ok FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label',
+            { guildId, scopeKey, label: String(label || '').trim() }
+        ));
         const applied = {
             nodesUpserted: 0,
             linksCreated: 0,
@@ -58,8 +74,9 @@ class KnowledgeGraphLegalizer {
 
         const maxUpserts = limits.maxMutationsUpsert ?? limits.maxNodeUpserts ?? 12;
         const maxLinks = limits.maxMutationsLink ?? limits.maxLinks ?? 15;
-        const maxDeletes = limits.maxMutationsDelete ?? limits.maxNodeDeletes ?? 6;
-        const maxMerges = limits.maxMutationsMerge ?? limits.maxNodeMerges ?? 4;
+        const maxDeletes = generatedOnly ? 0 : (limits.maxMutationsDelete ?? limits.maxNodeDeletes ?? 6);
+        const maxMerges = generatedOnly ? 0 : (limits.maxMutationsMerge ?? limits.maxNodeMerges ?? 4);
+        applied.skippedProtected = 0;
 
         const linkDefaults = { guildId, scopeKey, subjectType, subjectId, nodeSource: source };
 
@@ -74,13 +91,18 @@ class KnowledgeGraphLegalizer {
                     content: node.content
                 });
                 const targetLabel = merged?.label || node.label;
+                if (generatedOnly && (await untouchable(targetLabel) || await untouchable(node.label))) {
+                    applied.skippedProtected++;
+                    continue;
+                }
+                const isNew = generatedOnly && !(await exists(targetLabel));
                 const result = await this.kg.upsertNode({
                     guildId,
                     scopeKey,
                     subjectType,
                     subjectId,
                     source,
-                    curation,
+                    curation: generatedOnly ? 'unclassified' : curation,
                     type: node.type,
                     label: targetLabel,
                     content: merged ? this._mergeContent(merged.content, node.content) : node.content,
@@ -91,6 +113,9 @@ class KnowledgeGraphLegalizer {
                 });
                 if (result) {
                     applied.nodesUpserted++;
+                    if (isNew && result.created) {
+                        await db.run('UPDATE kg_nodes SET generated = 1 WHERE id = @id', { id: result.id });
+                    }
                     const base = this._baseProvenance(source, provenance);
                     await this.kg.addProvenance({
                         nodeId: result.id,
@@ -137,6 +162,7 @@ class KnowledgeGraphLegalizer {
         if (Array.isArray(mutations.tag)) {
             for (const entry of mutations.tag.slice(0, maxUpserts)) {
                 if (!entry?.label || !Array.isArray(entry.tags)) continue;
+                if (generatedOnly && (!(await exists(entry.label)) || await untouchable(entry.label))) continue;
                 applied.tagsApplied += await this.kg.addTagsToNode({
                     guildId,
                     scopeKey,
@@ -149,6 +175,13 @@ class KnowledgeGraphLegalizer {
         if (Array.isArray(mutations.link)) {
             for (const edge of mutations.link.slice(0, maxLinks)) {
                 try {
+                    // link() creates missing endpoints and reweights existing
+                    // edges: in generatedOnly mode both ends must already
+                    // exist and be generated.
+                    if (generatedOnly && edge && (
+                        !(await exists(edge.source)) || !(await exists(edge.target))
+                        || await untouchable(edge.source) || await untouchable(edge.target)
+                    )) continue;
                     if (edge && await this.kg.link({
                         ...linkDefaults,
                         source: edge.source,
@@ -168,6 +201,8 @@ class KnowledgeGraphLegalizer {
         if (Array.isArray(mutations.contradict)) {
             for (const pair of mutations.contradict.slice(0, maxLinks)) {
                 if (!pair?.source || !pair?.target) continue;
+                // A contradiction demotes the older note: never on delegated work.
+                if (generatedOnly) continue;
                 if (await this.kg.link({
                     ...linkDefaults,
                     source: pair.source,

@@ -59,6 +59,7 @@ async function sweep({ now = new Date(), retention = null } = {}) {
         const result = {
             expired: await responsibilities.expireDue({ now }),
             leasesReaped: await initiatives.reapExpiredLeases({ now }),
+            children: await require('./assistantRunService').reconcileChildren({ now }),
             requeued: await initiatives.requeueDue({ now }),
             reconcile: await initiatives.reconcile({ now }),
             gates: await require('./assistantGateService').adoptProjectGates({}),

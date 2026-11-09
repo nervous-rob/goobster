@@ -39,6 +39,8 @@ const RESULT_CHARS = 16_000;
 const SUMMARY_CHARS = 2000;
 const FILE_CHARS = 12_000;
 const WRITE_CHARS = 200_000;
+/** How soon a run waiting on its expedition looks again (events usually wake it sooner). */
+const CHILD_RECHECK_MS = 5 * 60 * 1000;
 
 const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
@@ -265,6 +267,67 @@ const TOOLS = {
             }
         }
     },
+    startResearch: {
+        effect: 'write',
+        component: 'research',
+        definition: {
+            name: 'startResearch',
+            description: 'Start one focused research expedition on a topic: it reads sources over several minutes and writes sourced, generated notes. Use it only when a few web searches are not enough. This task pauses until it finishes and then continues with its findings. At most one per task.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    topic: { type: 'string', description: 'What to research (under 200 characters).' },
+                    intent: { type: 'string', description: 'What the person needs to learn from it.' }
+                },
+                required: ['topic']
+            }
+        },
+        // It searches and it writes notes: both must be delegated.
+        needs: () => ({
+            operation: 'research', resource: { kind: 'web' },
+            also: [{ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }]
+        }),
+        _attempt: (ctx) => `assistant_run:${ctx.run.id}:${ctx.opId}`,
+        async _find(attempt) {
+            return db.get(
+                'SELECT id, status, summary, stopReason FROM spitball_expeditions WHERE executionAttemptId = @attempt', { attempt }
+            );
+        },
+        _describe(expedition) {
+            if (expedition.status === 'COMPLETED') {
+                return `Research expedition #${expedition.id} finished. ${clip(expedition.summary || 'It wrote its notes; use lookupNotes to read them.', 3000)}`;
+            }
+            if (expedition.status === 'FAILED' || expedition.status === 'CANCELLED') {
+                return `Research expedition #${expedition.id} ${expedition.status.toLowerCase()} without a result.`;
+            }
+            return `Started research expedition #${expedition.id}. This task pauses until it finishes.`;
+        },
+        /** After a crash: an expedition carrying this attempt id means it was started. */
+        async reconcile(_args, ctx) {
+            const expedition = await this._find(this._attempt(ctx));
+            if (!expedition) return { state: 'absent' };
+            ctx.child = expedition;
+            return { state: 'done', result: this._describe(expedition) };
+        },
+        /** On a resumed run: say how the expedition ended, not that it started. */
+        async replay(prior, ctx) {
+            const expedition = await this._find(`assistant_run:${ctx.run.id}:${prior.id}`);
+            if (!expedition) return prior.resultText || '';
+            ctx.child = expedition;
+            return this._describe(expedition);
+        },
+        async run({ topic, intent }, ctx) {
+            if (ctx.child) return 'Not started: this task already ran its one research expedition.';
+            const expeditions = requireOptional('./spitballExpeditionService', { feature: 'expeditions' });
+            if (!expeditions) return 'Not started: research expeditions are not available on this installation.';
+            const expedition = await expeditions.createExpedition({
+                userId: ctx.actor, seed: String(topic || ''), intent: intent ? String(intent) : null,
+                depth: 'focused', executionAttemptId: this._attempt(ctx)
+            });
+            ctx.child = { id: expedition.id, status: 'QUEUED' };
+            return this._describe(ctx.child);
+        }
+    },
     listGeneratedNotes: {
         effect: 'read',
         definition: {
@@ -463,7 +526,18 @@ class AssistantRunService {
              WHERE workKind = 'assistant_run' AND workId = @id AND status <> 'released'`,
             { id: String(runId) }
         );
-        return Number(row?.n || 0);
+        // A child expedition is this run's cost too: counted once, here.
+        const children = await this._children(runId);
+        let childTokens = 0;
+        for (const child of children) {
+            const used = await db.get(
+                `SELECT COALESCE(SUM(COALESCE(actualTokens, estimatedTokens)), 0) AS n FROM usage_reservations
+                 WHERE workKind = 'expedition' AND workId = @id AND status <> 'released'`,
+                { id: String(child.id) }
+            );
+            childTokens += Number(used?.n || 0);
+        }
+        return Number(row?.n || 0) + childTokens;
     }
 
     /** What the responsibility's other runs used today (UTC). */
@@ -570,6 +644,7 @@ class AssistantRunService {
             );
             if (prior?.status === 'SUCCEEDED') {
                 if (name === 'finish') await spec.run(args, ctx);
+                if (typeof spec.replay === 'function') return spec.replay(prior, ctx);
                 return prior.resultText || '';
             }
             if (prior?.status === 'REFUSED') return `Not allowed (${prior.refusalCode || 'REFUSED'}).`;
@@ -606,12 +681,12 @@ class AssistantRunService {
                 return `Not allowed (${code}).`;
             };
             if (need?.refuse) return refuse(need.refuse);
-            if (need) {
+            for (const required of need ? [need, ...(need.also || [])] : []) {
                 const verdict = await responsibilities.authorize({
                     responsibilityId: ctx.run.responsibilityId,
                     revision: ctx.run.responsibilityRevision,
-                    operation: need.operation,
-                    resource: need.resource,
+                    operation: required.operation,
+                    resource: required.resource,
                     actorUserId: ctx.actor
                 });
                 if (!verdict.ok) {
@@ -651,6 +726,7 @@ class AssistantRunService {
             }
             await mark(id, 'SUCCEEDED', result);
             await ctx.account();
+            ctx.childPending();
             return result;
         };
     }
@@ -678,6 +754,7 @@ class AssistantRunService {
             if (name.includes('Project') && !project) return false;
             if (name === 'runProjectFile' && features.enforcedOff('sandbox')) return false;
             if (name.includes('GeneratedNote') && features.enforcedOff('knowledge')) return false;
+            if (name === 'startResearch' && (features.enforcedOff('expeditions') || features.enforcedOff('knowledge'))) return false;
             return true;
         }));
 
@@ -687,6 +764,11 @@ class AssistantRunService {
             compute: Number(run.computeSeconds || 0),
             fileHashes: new Map(),
             opId: null,
+            // The one research expedition this run started, if any.
+            child: null,
+            childPending() {
+                if (this.child && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(this.child.status)) this.halt('CHILD_PENDING');
+            },
             tokens: Number(run.tokensUsed || 0),
             stop: null,
             result: null,
@@ -722,6 +804,10 @@ class AssistantRunService {
             await finishRun({ status: settled.ok ? 'WAITING' : 'CANCELLED', stopCode: settled.ok ? stopCode : 'LEASE_LOST' });
             return { status: settled.ok ? 'WAITING' : 'CANCELLED', stopCode, runId: run.id };
         };
+
+        // A child expedition still working: keep waiting, without a model call.
+        const pendingChild = await this._pendingChild(run.id);
+        if (pendingChild) return park('dependency', 'CHILD_PENDING', new Date(now.getTime() + CHILD_RECHECK_MS));
 
         // Nothing is spent when today's budget is already gone.
         if (used.tokens >= budgets.modelTokens) return park('budget', 'TOKEN_BUDGET', nextDay(now));
@@ -782,6 +868,7 @@ class AssistantRunService {
                 { id: run.id, rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute, now: utcText() });
             return { status: 'RUNNING', stopCode: 'RUNNER_STOPPING', runId: run.id };
         }
+        if (ctx.stop === 'CHILD_PENDING') return park('dependency', 'CHILD_PENDING', new Date(now.getTime() + CHILD_RECHECK_MS));
         if (ctx.stop === 'TOKEN_BUDGET' && !ctx.result) return park('budget', 'TOKEN_BUDGET', nextDay(now));
         if (ctx.stop && !ctx.result) {
             // The grant stopped covering the work (paused, revoked, expired, edited).
@@ -841,6 +928,60 @@ class AssistantRunService {
         }
         await finishRun({ status: 'COMPLETED', outcome: result.outcome, title: result.title || null, summary: result.summary || null, updateId });
         return { status: 'COMPLETED', outcome: result.outcome, runId: run.id, updateId };
+    }
+
+    /** Expeditions this run started, by the attempt id its journal row gives them. */
+    async _children(runId) {
+        return db.all(
+            `SELECT e.id, e.status, e.userId FROM assistant_run_operations o
+             JOIN spitball_expeditions e ON e.executionAttemptId = 'assistant_run:' || CAST(o.runId AS TEXT) || ':' || CAST(o.id AS TEXT)
+             WHERE o.runId = @runId AND o.tool = 'startResearch'`,
+            { runId }
+        );
+    }
+
+    async _pendingChild(runId) {
+        return (await this._children(runId)).find(child => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(child.status)) || null;
+    }
+
+    /**
+     * Wake runs waiting on an expedition that has ended, and cancel
+     * expeditions whose run was cancelled or failed. Called by the steward
+     * and on `research.expedition_*` hints.
+     */
+    async reconcileChildren({ now = new Date() } = {}) {
+        const out = { woken: 0, cancelled: 0 };
+        const waiting = await db.all(
+            `SELECT r.id AS runId, r.initiativeId FROM assistant_runs r
+             JOIN assistant_initiatives i ON i.id = r.initiativeId
+             WHERE i.status = 'WAITING' AND i.stopCode = 'CHILD_PENDING'`,
+            {}
+        );
+        for (const row of waiting) {
+            if (await this._pendingChild(row.runId)) continue;
+            out.woken += (await db.run(
+                `UPDATE assistant_initiatives SET recheckAfter = @now
+                 WHERE id = @id AND status = 'WAITING' AND stopCode = 'CHILD_PENDING'`,
+                { id: row.initiativeId, now: utcText(now) }
+            )).changes || 0;
+        }
+        const orphans = await db.all(
+            `SELECT e.id, e.userId FROM assistant_run_operations o
+             JOIN assistant_runs r ON r.id = o.runId
+             JOIN assistant_initiatives i ON i.id = r.initiativeId
+             JOIN spitball_expeditions e ON e.executionAttemptId = 'assistant_run:' || CAST(o.runId AS TEXT) || ':' || CAST(o.id AS TEXT)
+             WHERE o.tool = 'startResearch' AND i.status IN ('CANCELLED', 'FAILED', 'SUPERSEDED')
+               AND e.status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')`,
+            {}
+        );
+        const expeditions = orphans.length ? requireOptional('./spitballExpeditionService', { feature: 'expeditions' }) : null;
+        for (const orphan of orphans) {
+            try {
+                await expeditions?.cancelExpedition(orphan.id, { userId: orphan.userId });
+                out.cancelled += 1;
+            } catch { /* already finished */ }
+        }
+        return out;
     }
 
     /** Changes a run made, from its journal: one line per successful write. */

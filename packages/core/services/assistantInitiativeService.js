@@ -587,11 +587,24 @@ class AssistantInitiativeService {
         this._unsubscribe = bus.subscribe(['attention.*', 'mission.*'], (event) => {
             if (event?.payload?.userId) this.hint(event.payload.userId);
         });
+        // An expedition a run was waiting on has ended: wake the run now
+        // instead of at its recheck time.
+        this._unsubscribeResearch = bus.subscribe(
+            ['research.expedition_completed', 'research.expedition_failed', 'research.expedition_cancelled'],
+            () => {
+                (async () => {
+                    await require('./assistantRunService').reconcileChildren({});
+                    await this.requeueDue({});
+                })().catch(() => {});
+            }
+        );
     }
 
     stopListening() {
         if (this._unsubscribe) this._unsubscribe();
         this._unsubscribe = null;
+        if (this._unsubscribeResearch) this._unsubscribeResearch();
+        this._unsubscribeResearch = null;
         if (this._hintTimer) clearTimeout(this._hintTimer);
         this._hintTimer = null;
         this._hinted.clear();

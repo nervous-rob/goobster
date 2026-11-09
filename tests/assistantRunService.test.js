@@ -54,7 +54,7 @@ beforeEach(async () => {
         'assistant_run_operations', 'assistant_runs', 'assistant_initiatives', 'assistant_source_cursors',
         'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions', 'assistant_responsibilities',
         'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures',
-        'kg_nodes', 'observatory_jobs', 'project_members', 'observatory_projects'
+        'kg_nodes', 'observatory_jobs', 'project_members', 'observatory_projects', 'spitball_expeditions'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -578,6 +578,150 @@ describe('project files and sandbox runs', () => {
         const tool = runs.TOOLS.runProjectFile;
         expect(await tool.reconcile({}, { run: { id: op.runId }, opId: op.id })).toMatchObject({ state: 'done' });
         expect(await tool.reconcile({}, { run: { id: op.runId }, opId: 999999 })).toEqual({ state: 'absent' });
+    });
+});
+
+describe('research expeditions as child work', () => {
+    const expeditions = require('@goobster/core/services/spitballExpeditionService');
+    const RESEARCH = [
+        READ_WEB, READ_NOTES,
+        { operation: 'research', resource: { kind: 'web' } },
+        { operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } }
+    ];
+    let create;
+    beforeEach(() => {
+        create = jest.spyOn(expeditions, 'createExpedition').mockImplementation(async ({ userId, seed, executionAttemptId }) => {
+            const id = await db.insert(
+                `INSERT INTO spitball_expeditions (userId, guildId, scopeKey, seed, status, executionAttemptId)
+                 VALUES (@userId, @guildId, @scopeKey, @seed, 'QUEUED', @attempt)`,
+                { userId, guildId: `dm:${userId}`, scopeKey: `USER:${userId}`, seed, attempt: executionAttemptId }
+            );
+            return { id, status: 'QUEUED' };
+        });
+    });
+    const expedition = () => db.get('SELECT * FROM spitball_expeditions', {});
+
+    test('the run starts one expedition, waits without spending, and continues with its result', async () => {
+        const { initiative } = await queued({ operations: RESEARCH });
+        const chat = script(
+            [call('startResearch', { topic: 'first frost dates', intent: 'plan the beds' })],
+            'should not be reached before the expedition ends'
+        );
+        let { results } = await runner.tick({ wait: true });
+        expect(results[0]).toMatchObject({ status: 'WAITING', stopCode: 'CHILD_PENDING' });
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0][0]).toMatchObject({ userId: A, seed: 'first frost dates', depth: 'focused' });
+        expect(create.mock.calls[0][0].executionAttemptId).toMatch(/^assistant_run:\d+:\d+$/);
+        expect(await initiativeRow(initiative.id)).toMatchObject({ status: 'WAITING', waitReason: 'dependency', stopCode: 'CHILD_PENDING' });
+        const callsSoFar = chat.mock.calls.length;
+
+        // Still running: a recheck parks it again without a model call.
+        await db.run("UPDATE assistant_initiatives SET recheckAfter = '2000-01-01 00:00:00' WHERE id = @id", { id: initiative.id });
+        expect(await initiatives.requeueDue({})).toBe(1);
+        ({ results } = await runner.tick({ wait: true }));
+        expect(results[0]).toMatchObject({ status: 'WAITING', stopCode: 'CHILD_PENDING' });
+        expect(chat.mock.calls.length).toBe(callsSoFar);
+
+        // The expedition ends; the steward wakes the run; it resumes with the result.
+        await db.run("UPDATE spitball_expeditions SET status = 'COMPLETED', summary = 'Frost usually arrives mid-month.'", {});
+        expect(await runs.reconcileChildren({})).toMatchObject({ woken: 1 });
+        expect(await initiatives.requeueDue({})).toBe(1);
+        jest.spyOn(aiService, 'chat').mockImplementation(async (messages) => {
+            const seen = messages.filter(m => m.role === 'tool' || m.role === 'function').map(m => String(m.content)).join('\n');
+            if (!seen) return { content: '', toolCalls: [call('startResearch', { topic: 'first frost dates', intent: 'plan the beds' })] };
+            expect(seen).toContain('finished. Frost usually arrives mid-month.');
+            return { content: '', toolCalls: [call('finish', { outcome: 'finding', title: 'Frost arrives mid-month' })] };
+        });
+        ({ results } = await runner.tick({ wait: true }));
+        expect(results[0]).toMatchObject({ status: 'COMPLETED', outcome: 'DONE' });
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(await db.get('SELECT COUNT(*) AS n FROM spitball_expeditions', {})).toMatchObject({ n: 1 });
+    });
+
+    test('it needs both the research and the note-writing grants', async () => {
+        await queued({ operations: [READ_WEB, { operation: 'research', resource: { kind: 'web' } }] });
+        script([call('startResearch', { topic: 'frost' })], [call('finish', { outcome: 'no_change', title: 'x' })]);
+        await runner.tick({ wait: true });
+        expect(create).not.toHaveBeenCalled();
+        expect((await operations())[0]).toMatchObject({ tool: 'startResearch', status: 'REFUSED', refusalCode: 'OPERATION_OUT_OF_SCOPE' });
+    });
+
+    test('cancelling the work cancels its expedition; a crash after starting adopts it instead of starting another', async () => {
+        const { initiative } = await queued({ operations: RESEARCH });
+        script([call('startResearch', { topic: 'frost' })]);
+        await runner.tick({ wait: true });
+        const cancel = jest.spyOn(expeditions, 'cancelExpedition').mockImplementation(async (id) => {
+            await db.run("UPDATE spitball_expeditions SET status = 'CANCELLED' WHERE id = @id", { id });
+        });
+        // Adoption: the journal row says in flight, the expedition exists.
+        const op = await db.get("SELECT id, runId FROM assistant_run_operations WHERE tool = 'startResearch'", {});
+        const tool = runs.TOOLS.startResearch;
+        const ctx = { run: { id: op.runId }, opId: op.id, child: null };
+        expect(await tool.reconcile({}, ctx)).toMatchObject({ state: 'done' });
+        expect(ctx.child.id).toBe((await expedition()).id);
+
+        const row = await initiatives.get({ userId: A, id: initiative.id });
+        await initiatives.act({ userId: A, id: initiative.id, action: 'cancel', expectedRevision: row.revision });
+        expect(await runs.reconcileChildren({})).toMatchObject({ cancelled: 1 });
+        expect(cancel).toHaveBeenCalledWith((await expedition()).id, { userId: A });
+    });
+
+    test('a child expedition\'s tokens count once against the responsibility\'s budget', async () => {
+        await queued({ operations: RESEARCH });
+        script([call('startResearch', { topic: 'frost' })]);
+        await runner.tick({ wait: true });
+        const run = await runRow();
+        const child = await expedition();
+        await db.run(
+            `INSERT INTO usage_reservations (payer, workKind, workId, estimatedTokens, actualTokens, status)
+             VALUES (@u, 'expedition', @id, 0, 7000, 'settled')`, { u: A, id: String(child.id) }
+        );
+        expect(await runs.tokensFor(run.id)).toBe(7000);
+    });
+});
+
+describe('delegated knowledge writes through the research pipeline', () => {
+    const kg = require('@goobster/core/services/knowledgeGraphService');
+    const scope = `dm:${A}`;
+    const scopeKey = `USER:${A}`;
+
+    test('generatedOnly creates generated notes and leaves the person\'s notes untouched', async () => {
+        await kg.createUserNote({ guildId: scope, userId: A, label: 'Beans', content: 'My own words about beans.' });
+        await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'Frost', content: 'v1' });
+        const applied = await kg.applyMutations({
+            guildId: scope, scopeKey, subjectType: 'USER', subjectId: A, source: 'research', generatedOnly: true,
+            mutations: {
+                upsert: [
+                    { label: 'Beans', content: 'Overwritten by research, and much much longer than before.' },
+                    { label: 'Frost', content: 'v2 from research' },
+                    { label: 'Mulch', content: 'Mulch keeps soil warm.' }
+                ],
+                link: [{ source: 'Beans', target: 'Mulch', relation: 'helps' }, { source: 'Frost', target: 'Mulch', relation: 'relates' }],
+                tag: [{ label: 'Beans', tags: ['autotag'] }],
+                merge: [{ keep: 'Mulch', drop: 'Beans' }],
+                delete: ['Beans']
+            }
+        });
+        const rows = Object.fromEntries((await db.all(
+            'SELECT label, content, generated, curation FROM kg_nodes WHERE scopeKey = @s', { s: scopeKey }
+        )).map(row => [row.label, row]));
+        expect(rows.Beans).toMatchObject({ content: 'My own words about beans.', curation: 'saved', generated: 0 });
+        expect(rows.Frost).toMatchObject({ content: 'v2 from research', generated: 1 });
+        expect(rows.Mulch).toMatchObject({ generated: 1, curation: 'unclassified' });
+        expect(applied).toMatchObject({ nodesDeleted: 0, skippedProtected: 1 });
+        const edges = await db.all(
+            `SELECT s.label AS source, t.label AS target FROM kg_edges e
+             JOIN kg_nodes s ON s.id = e.sourceId JOIN kg_nodes t ON t.id = e.targetId WHERE e.scopeKey = @s`, { s: scopeKey }
+        );
+        expect(edges).toEqual([{ source: 'Frost', target: 'Mulch' }]);
+    });
+
+    test('the default (a person\'s own expedition) still writes saved notes as before', async () => {
+        await kg.applyMutations({
+            guildId: scope, scopeKey, subjectType: 'USER', subjectId: A, source: 'research',
+            mutations: { upsert: [{ label: 'Compost', content: 'Turn it weekly.' }] }
+        });
+        expect(await db.get("SELECT generated, curation FROM kg_nodes WHERE label = 'Compost'", {})).toEqual({ generated: 0, curation: 'saved' });
     });
 });
 
