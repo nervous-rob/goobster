@@ -16,6 +16,8 @@ const COLUMN_MIGRATIONS = [
     ['followups', 'jobId', 'jobId INTEGER'],
     ['usage_reservations', 'reconcile', 'reconcile INTEGER NOT NULL DEFAULT 0'],
     ['kg_nodes', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
+    // 1 = written by a delegated run and not yet touched by a person (ADR 0018).
+    ['kg_nodes', 'generated', 'generated INTEGER NOT NULL DEFAULT 0'],
     ['project_assets', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     ['project_assets', 'pinnedAt', 'pinnedAt TEXT'],
     ['knowledge_transfers', 'requestId', 'requestId TEXT'],

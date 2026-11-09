@@ -650,11 +650,18 @@ ${excerpt}`;
         await this._pruneOrphans(guildId, scopeKey);
     }
 
+    /**
+     * Capacity pruning: the weakest notes beyond the scope's cap go. A note
+     * the person saved deliberately (curation 'saved', ADR 0008) is never
+     * evicted to make room, so a scope full of saved notes stays over its
+     * cap and automated additions are refused instead (ADR 0018).
+     */
     async _pruneNodes(guildId, scopeKey = '') {
         const max = maxNodesForScope(scopeKey);
         await db.run(
             `DELETE FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey
+               AND curation <> 'saved'
                AND id NOT IN (
                    SELECT id FROM kg_nodes
                    WHERE guildId = @guildId AND scopeKey = @scopeKey
@@ -701,11 +708,13 @@ ${excerpt}`;
         );
     }
 
+    /** Low-confidence notes nothing points at. Never a note the person saved (ADR 0018). */
     async _pruneOrphans(guildId, scopeKey = '') {
         await db.run(
             `DELETE FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey
                AND confidence < @threshold
+               AND curation <> 'saved'
                AND id NOT IN (SELECT nodeId FROM kg_provenance)
                AND id NOT IN (
                    SELECT sourceId FROM kg_edges
@@ -1214,6 +1223,8 @@ ${excerpt}`;
             confidence: node.confidence,
             source: node.source,
             curation: node.curation || 'unclassified',
+            // Written by a delegated run and not yet edited or saved by the person.
+            generated: Boolean(node.generated),
             tags,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt
@@ -1552,7 +1563,7 @@ ${excerpt}`;
             const changed = await db.run(
                 `UPDATE kg_nodes SET
                      label = @label, type = @type, content = @content,
-                     source = 'user', curation = 'saved', revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                     source = 'user', curation = 'saved', generated = 0, revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = @id AND revision = @revision`,
                 { id: node.id, revision: expectedRevision ?? node.revision, label: nextLabel, type: nextType, content: nextContent }
             );
@@ -1659,6 +1670,70 @@ ${excerpt}`;
         const fresh = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: created.id });
         const tagMap = await this.getTagsForNodes([created.id]);
         return this._shapeUserNote(fresh, tagMap.get(created.id) || []);
+    }
+
+    // --- Generated notes (delegated runs, ADR 0018) ------------------------
+
+    /** The person's generated notes a run may still amend, newest first. */
+    async listGeneratedNotes({ guildId, userId, limit = 50 } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        return db.all(
+            `SELECT id, label, type, content, revision, updatedAt FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = @scopeKey AND generated = 1 AND curation <> 'saved'
+             ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
+            { guildId, scopeKey, limit: Math.max(1, Math.min(200, Number(limit) || 50)) }
+        );
+    }
+
+    /**
+     * Add a note on the person's behalf. It is marked generated and is not
+     * "saved": the person keeps it by editing or saving it. It never
+     * replaces an existing note (a title clash is refused, similarity is
+     * not identity) and never evicts anything: at capacity it is refused.
+     * Call inside the caller's transaction to bind it to an operation.
+     * @returns {Promise<{ ok: true, id: number, revision: number } | { ok: false, code: 'EXISTS'|'CAPACITY'|'BAD_REQUEST' }>}
+     */
+    async addGeneratedNote({ guildId, userId, label, content, type = null, origin = null } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const cleanLabel = normalizeLabel(label);
+        const cleanContent = content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null;
+        if (!guildId || !userId || !cleanLabel || !cleanContent) return { ok: false, code: 'BAD_REQUEST' };
+        if (await this.getNode(guildId, cleanLabel, scopeKey)) return { ok: false, code: 'EXISTS' };
+        const count = await db.get(
+            'SELECT COUNT(*) AS n FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey', { guildId, scopeKey }
+        );
+        if (Number(count?.n || 0) >= maxNodesForScope(scopeKey)) return { ok: false, code: 'CAPACITY' };
+        const id = Number(await db.insert(
+            `INSERT INTO kg_nodes (guildId, scopeKey, type, label, content, salience, confidence, source, curation, generated, subjectType, subjectId)
+             VALUES (@guildId, @scopeKey, @type, @label, @content, 0.5, 0.5, 'research', 'unclassified', 1, 'USER', @userId)`,
+            { guildId, scopeKey, type: type && NODE_TYPES.includes(type) ? type : 'concept', label: cleanLabel, content: cleanContent, userId: String(userId) }
+        ));
+        await this._recordRevision(id, 'research', 'created');
+        if (origin) await this.addProvenance({ nodeId: id, sourceKind: 'tool', sourceId: String(origin) });
+        return { ok: true, id, revision: 1 };
+    }
+
+    /**
+     * Replace the text of a note that is still generated, at the revision the
+     * caller read. A note the person edited or saved is theirs and is
+     * refused (NOT_GENERATED); a note that changed since is REVISION_CONFLICT.
+     * The previous text stays in the note's revision history.
+     */
+    async amendGeneratedNote({ guildId, userId, nodeId, content, expectedRevision } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const cleanContent = content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null;
+        if (!cleanContent || !Number.isSafeInteger(Number(expectedRevision))) return { ok: false, code: 'BAD_REQUEST' };
+        const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
+        if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return { ok: false, code: 'NOT_FOUND' };
+        if (!node.generated || node.curation === 'saved') return { ok: false, code: 'NOT_GENERATED' };
+        const changed = await db.run(
+            `UPDATE kg_nodes SET content = @content, revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id AND generated = 1 AND curation <> 'saved' AND revision = @revision`,
+            { id: node.id, content: cleanContent, revision: Number(expectedRevision) }
+        );
+        if (!changed.changes) return { ok: false, code: 'REVISION_CONFLICT', revision: Number(node.revision) };
+        await this._recordRevision(node.id, 'research');
+        return { ok: true, id: Number(node.id), revision: Number(node.revision) + 1 };
     }
 
     /**

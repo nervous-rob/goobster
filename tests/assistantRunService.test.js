@@ -53,7 +53,8 @@ beforeEach(async () => {
     for (const table of [
         'assistant_run_operations', 'assistant_runs', 'assistant_initiatives', 'assistant_source_cursors',
         'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions', 'assistant_responsibilities',
-        'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures'
+        'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures',
+        'kg_nodes', 'observatory_jobs', 'project_members', 'observatory_projects'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -280,8 +281,8 @@ describe('recovery', () => {
 
 describe('budgets', () => {
     test('the search budget is a hard cap, with a default when the grant sets none', async () => {
-        expect(runs.budgets({ budgetsJson: '{}' })).toEqual({ modelTokens: 200000, searches: 20 });
-        expect(runs.budgets({ budgetsJson: '{"searches":0,"modelTokens":5}' })).toEqual({ modelTokens: 5, searches: 0 });
+        expect(runs.budgets({ budgetsJson: '{}' })).toEqual({ modelTokens: 200000, searches: 20, computeSeconds: 120 });
+        expect(runs.budgets({ budgetsJson: '{"searches":0,"modelTokens":5}' })).toEqual({ modelTokens: 5, searches: 0, computeSeconds: 120 });
         await queued({ budgets: { searches: 1 } });
         script(
             [call('searchWeb', { query: 'one' }), call('searchWeb', { query: 'two' })],
@@ -336,6 +337,247 @@ describe('budgets', () => {
         expect(results[0]).toMatchObject({ status: 'WAITING', stopCode: 'TOKEN_BUDGET' });
         expect(lookup).toHaveBeenCalledTimes(1);
         expect(await runRow()).toMatchObject({ status: 'WAITING', tokensUsed: 600 });
+    });
+});
+
+describe('generated notes', () => {
+    const kg = require('@goobster/core/services/knowledgeGraphService');
+    const NOTES = [
+        READ_NOTES,
+        { operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } },
+        { operation: 'kg.generated.amend', resource: { kind: 'knowledge', ids: ['personal'] } }
+    ];
+    const scope = `dm:${A}`;
+    const notes = () => db.all("SELECT id, label, content, generated, curation, revision FROM kg_nodes WHERE scopeKey = @s ORDER BY id", { s: `USER:${A}` });
+
+    test('a run adds a generated note, the person is told, and the note is not "saved"', async () => {
+        await queued({ operations: NOTES });
+        script(
+            [call('addGeneratedNote', { title: 'First frost date', content: 'Around the 14th (two almanacs).' })],
+            [call('finish', { outcome: 'no_change', title: 'Nothing to report' })]
+        );
+        const { results } = await runner.tick({ wait: true });
+        // A change was made, so there is always an update, whatever the model reported.
+        expect(results[0]).toMatchObject({ status: 'COMPLETED', outcome: 'DONE' });
+        expect(await notes()).toEqual([expect.objectContaining({ label: 'First frost date', generated: 1, curation: 'unclassified', revision: 1 })]);
+        const [update] = (await updates.list({ userId: A })).updates;
+        expect(update.componentIds).toEqual(['knowledge', 'research']);
+        expect(update.summary).toContain('Changed: Added as note #');
+    });
+
+    test('without the grant the note is not written', async () => {
+        await queued({ operations: [READ_NOTES] });
+        script([call('addGeneratedNote', { title: 'T', content: 'c' })], [call('finish', { outcome: 'no_change', title: 'x' })]);
+        await runner.tick({ wait: true });
+        expect(await notes()).toEqual([]);
+        expect((await operations())[0]).toMatchObject({ tool: 'addGeneratedNote', status: 'REFUSED', refusalCode: 'OPERATION_OUT_OF_SCOPE' });
+    });
+
+    test('it never overwrites an existing note, and a note the person edited is theirs', async () => {
+        const saved = await kg.createUserNote({ guildId: scope, userId: A, label: 'Beans', content: 'My own words.' });
+        const generated = await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'Frost', content: 'v1' });
+        await queued({ operations: NOTES });
+        script(
+            [call('addGeneratedNote', { title: 'Beans', content: 'Replaced!' }),
+                call('amendGeneratedNote', { id: saved.id, revision: 1, content: 'Replaced!' }),
+                call('amendGeneratedNote', { id: generated.id, revision: 7, content: 'stale' }),
+                call('amendGeneratedNote', { id: generated.id, revision: 1, content: 'v2, corrected' })],
+            [call('finish', { outcome: 'finding', title: 'Updated the frost note' })]
+        );
+        await runner.tick({ wait: true });
+        const rows = await notes();
+        expect(rows.find(n => n.label === 'Beans')).toMatchObject({ content: 'My own words.', curation: 'saved' });
+        expect(rows.find(n => n.label === 'Frost')).toMatchObject({ content: 'v2, corrected', revision: 2, generated: 1 });
+        const results = (await operations()).map(op => op.resultText);
+        expect(results[0]).toMatch(/already exists/);
+        expect(results[1]).toMatch(/is theirs/);
+        expect(results[2]).toMatch(/changed since you read it/);
+        // The earlier wording is kept in the note's history.
+        expect((await kg.listNodeRevisions(generated.id)).map(r => r.content)).toEqual(expect.arrayContaining(['v1']));
+
+        // Once the person edits it, a later run cannot amend it.
+        await kg.updateUserNote({ guildId: scope, userId: A, nodeId: generated.id, content: 'my edit' });
+        expect(await kg.amendGeneratedNote({ guildId: scope, userId: A, nodeId: generated.id, content: 'x', expectedRevision: 3 }))
+            .toMatchObject({ ok: false, code: 'NOT_GENERATED' });
+    });
+
+    test('a note write that did not commit is retried safely; one that did is not repeated', async () => {
+        const { initiative } = await queued({ operations: NOTES });
+        const claimed = await initiatives.claim({ id: initiative.id });
+        const runId = await db.insert(
+            `INSERT INTO assistant_runs (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId)
+             VALUES (@i, @r, @rev, @u, @u, @u)`,
+            { i: initiative.id, r: initiative.responsibilityId, rev: claimed.initiative.responsibilityRevision, u: A }
+        );
+        const args = { title: 'Frost', content: 'the 14th' };
+        // The worker died after journaling the intent, before the transaction.
+        await db.run(
+            `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, seq, effect, status)
+             VALUES (@runId, @u, 'addGeneratedNote', @hash, 1, 'write', 'DISPATCHED')`,
+            { runId, u: A, hash: runs.argsHash(args) }
+        );
+        script([call('addGeneratedNote', args)], [call('finish', { outcome: 'finding', title: 'Noted' })]);
+        const result = await runs.execute({ initiative: claimed.initiative, leaseToken: claimed.leaseToken });
+        expect(result.status).toBe('COMPLETED');
+        expect(await notes()).toHaveLength(1);
+        expect((await operations()).filter(op => op.tool === 'addGeneratedNote')).toEqual([expect.objectContaining({ status: 'SUCCEEDED' })]);
+    });
+
+    test('pruning never deletes a note the person saved, however weak it scores', async () => {
+        const scopeKey = `USER:${A}`;
+        const config = require('@goobster/core/config/knowledgeGraphConfig');
+        await kg.createUserNote({ guildId: scope, userId: A, label: 'Saved and weak', content: 'mine' });
+        await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'Generated and weak', content: 'not mine' });
+        await db.run('UPDATE kg_nodes SET salience = 0.01, confidence = 0.01 WHERE scopeKey = @s', { s: scopeKey });
+        await db.run('DELETE FROM kg_provenance', {});
+        // Fill the scope past its cap with stronger unsaved notes.
+        for (let i = 0; i < config.MAX_NODES_USER + 5; i += 1) {
+            await db.run(
+                `INSERT INTO kg_nodes (guildId, scopeKey, label, content, salience, confidence, curation)
+                 VALUES (@g, @s, @label, 'filler', 0.9, 0.9, 'unclassified')`,
+                { g: scope, s: scopeKey, label: `filler ${i}` }
+            );
+        }
+        await kg.pruneScope(scope, scopeKey);
+        const left = await db.all('SELECT label FROM kg_nodes WHERE scopeKey = @s AND label LIKE @p', { s: scopeKey, p: '% and weak' });
+        expect(left.map(row => row.label)).toEqual(['Saved and weak']);
+
+        // At capacity an addition is refused; nothing is evicted to make room.
+        const before = (await db.get('SELECT COUNT(*) AS n FROM kg_nodes WHERE scopeKey = @s', { s: scopeKey })).n;
+        expect(await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'One more', content: 'x' })).toEqual({ ok: false, code: 'CAPACITY' });
+        expect((await db.get('SELECT COUNT(*) AS n FROM kg_nodes WHERE scopeKey = @s', { s: scopeKey })).n).toBe(before);
+    }, 60000);
+});
+
+describe('project files and sandbox runs', () => {
+    const projects = require('@goobster/core/services/projectService');
+    let files;
+    let pid;
+    const PROJECT_OPS = () => [
+        { operation: 'read', resource: { kind: 'project', ids: [String(pid)] } },
+        { operation: 'file.edit', resource: { kind: 'project', ids: [String(pid)], paths: ['docs'] } },
+        { operation: 'sandbox.run', resource: { kind: 'project', ids: [String(pid)] } }
+    ];
+
+    async function linked(extra = {}) {
+        pid = await db.insert("INSERT INTO observatory_projects (userId, slug, name) VALUES (@u, 'garden', 'Garden')", { u: A });
+        const made = await queued({ operations: PROJECT_OPS(), ...extra });
+        await db.run('UPDATE assistant_responsibilities SET projectId = @pid WHERE id = @id', { pid, id: made.grant.id });
+        return made;
+    }
+
+    beforeEach(() => {
+        files = new Map([['docs/plan.md', 'old plan']]);
+        const notFound = () => Object.assign(new Error('No such file.'), { code: 'NOT_FOUND', status: 404 });
+        jest.spyOn(projects, 'readWorkspaceFile').mockImplementation(async ({ relativePath }) => {
+            if (!files.has(relativePath)) throw notFound();
+            const bytes = Buffer.from(files.get(relativePath));
+            return { relativePath, name: relativePath, mime: 'text/markdown', bytes, size: bytes.length };
+        });
+        jest.spyOn(projects, 'writeWorkspaceFile').mockImplementation(async ({ relativePath, bytes }) => {
+            files.set(relativePath, bytes.toString('utf8'));
+            return { relativePath };
+        });
+    });
+
+    test('an existing file must be read first, and only granted folders can be written', async () => {
+        await linked();
+        script(
+            [call('writeProjectFile', { path: 'docs/plan.md', content: 'blind overwrite' }),
+                call('writeProjectFile', { path: 'src/app.js', content: 'outside the grant' })],
+            [call('readProjectFile', { path: 'docs/plan.md' })],
+            [call('writeProjectFile', { path: 'docs/plan.md', content: 'new plan' }),
+                call('writeProjectFile', { path: 'docs/new.md', content: 'a new file' })],
+            [call('finish', { outcome: 'finding', title: 'Updated the plan' })]
+        );
+        await runner.tick({ wait: true });
+        const ops = await operations();
+        expect(ops[0].resultText).toMatch(/Read it with readProjectFile first/);
+        expect(ops[1]).toMatchObject({ status: 'REFUSED', refusalCode: 'OPERATION_OUT_OF_SCOPE' });
+        expect(files.get('docs/plan.md')).toBe('new plan');
+        expect(files.get('docs/new.md')).toBe('a new file');
+        expect(files.has('src/app.js')).toBe(false);
+        const [update] = (await updates.list({ userId: A })).updates;
+        expect(update.componentIds).toEqual(['projects', 'research']);
+        expect(update.summary).toContain('Wrote docs/plan.md.');
+        // Written as the person, in their project.
+        expect(projects.writeWorkspaceFile.mock.calls[0][0]).toMatchObject({ userId: A, slug: 'garden', owner: A });
+    });
+
+    test('a file the person changed after it was read is not overwritten', async () => {
+        await linked();
+        script(
+            [call('readProjectFile', { path: 'docs/plan.md' })],
+            [call('writeProjectFile', { path: 'docs/plan.md', content: 'stale write' })],
+            [call('finish', { outcome: 'finding', title: 'Could not update' })]
+        );
+        projects.readWorkspaceFile.mockImplementationOnce(async ({ relativePath }) => {
+            const bytes = Buffer.from('old plan');
+            files.set('docs/plan.md', 'the person edited this meanwhile');
+            return { relativePath, name: relativePath, mime: 'text/markdown', bytes, size: bytes.length };
+        });
+        await runner.tick({ wait: true });
+        expect(files.get('docs/plan.md')).toBe('the person edited this meanwhile');
+        expect((await operations())[1].resultText).toMatch(/changed since you read it/);
+    });
+
+    test('after a crash a write is reconciled by content: done if it landed, review if unsure', async () => {
+        const { initiative } = await linked();
+        const claimed = await initiatives.claim({ id: initiative.id });
+        const runId = await db.insert(
+            `INSERT INTO assistant_runs (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId)
+             VALUES (@i, @r, @rev, @u, @u, @u)`,
+            { i: initiative.id, r: initiative.responsibilityId, rev: claimed.initiative.responsibilityRevision, u: A }
+        );
+        const landed = { path: 'docs/a.md', content: 'landed' };
+        const unsure = { path: 'docs/b.md', content: 'maybe' };
+        for (const args of [landed, unsure]) {
+            await db.run(
+                `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, seq, effect, status)
+                 VALUES (@runId, @u, 'writeProjectFile', @hash, 1, 'write', 'DISPATCHED')`,
+                { runId, u: A, hash: runs.argsHash(args) }
+            );
+        }
+        files.set('docs/a.md', 'landed');
+        files.set('docs/b.md', 'something else');
+        script([call('writeProjectFile', landed)], [call('writeProjectFile', unsure)], 'carried on');
+        const result = await runs.execute({ initiative: claimed.initiative, leaseToken: claimed.leaseToken });
+        expect(result).toMatchObject({ status: 'REVIEW', stopCode: 'OPERATION_UNCERTAIN' });
+        expect(projects.writeWorkspaceFile).not.toHaveBeenCalled();
+        expect((await operations()).map(op => op.status)).toEqual(['SUCCEEDED', 'UNCERTAIN']);
+        expect(files.get('docs/b.md')).toBe('something else');
+    });
+
+    test('a sandbox run is authorized, attributed, budgeted, and adopted after a crash instead of run twice', async () => {
+        const { initiative } = await linked({ budgets: { computeSeconds: 1 } });
+        const runFile = jest.spyOn(projects, 'runFile').mockImplementation(async () => ({ jobId: 41, result: { ok: true, exitCode: 0, stdout: 'ran', stderr: '' } }));
+        script(
+            [call('runProjectFile', { path: 'tools/sim.py', args: ['--days', '3'] })],
+            [call('runProjectFile', { path: 'tools/sim.py', args: ['--days', '9'] })],
+            [call('finish', { outcome: 'finding', title: 'Simulated' })]
+        );
+        await runner.tick({ wait: true });
+        expect(runFile).toHaveBeenCalledTimes(1);
+        const sent = runFile.mock.calls[0][0];
+        expect(sent).toMatchObject({ userId: A, project: 'garden', owner: A, path: 'tools/sim.py', args: ['--days', '3'], background: false, startedBy: 'assistant' });
+        expect(sent.executionAttemptId).toMatch(/^assistant_run:\d+:\d+$/);
+        const ops = await operations();
+        expect(ops[1]).toMatchObject({ tool: 'runProjectFile', status: 'REFUSED', refusalCode: 'COMPUTE_BUDGET' });
+        expect((await runRow()).computeSeconds).toBeGreaterThanOrEqual(1);
+
+        // A second attempt of the same initiative, crashed mid-run: the job row decides.
+        const retried = (await initiatives.act({ userId: A, id: initiative.id, action: 'retry' }).catch(() => null));
+        expect(retried).toBeNull();
+        const op = await db.get("SELECT id, runId FROM assistant_run_operations WHERE tool = 'runProjectFile' AND status = 'SUCCEEDED'", {});
+        await db.run("UPDATE assistant_run_operations SET status = 'DISPATCHED', resultText = NULL WHERE id = @id", { id: op.id });
+        await db.run(
+            `INSERT INTO observatory_jobs (projectId, userId, language, code, status, exitCode, executionAttemptId)
+             VALUES (@pid, @u, 'python', 'x', 'COMPLETED', 0, @attempt)`,
+            { pid, u: A, attempt: `assistant_run:${op.runId}:${op.id}` }
+        );
+        const tool = runs.TOOLS.runProjectFile;
+        expect(await tool.reconcile({}, { run: { id: op.runId }, opId: op.id })).toMatchObject({ state: 'done' });
+        expect(await tool.reconcile({}, { run: { id: op.runId }, opId: 999999 })).toEqual({ state: 'absent' });
     });
 });
 

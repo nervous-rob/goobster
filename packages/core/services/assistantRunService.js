@@ -6,7 +6,6 @@
  *  - The model is offered a fixed, explicit set of tools (TOOLS below). Each
  *    one names the operation and resource it needs, and `authorize()` is
  *    asked before every call. A tool that is not in the table does not run.
- *    This increment's tools only read; nothing here writes for the person.
  *  - Every call is journaled in `assistant_run_operations` before it is
  *    dispatched and after it returns. A resumed run replays finished calls
  *    from the journal instead of repeating them; a write left in flight by a
@@ -32,13 +31,16 @@ const workFailureService = require('./workFailureService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 
 /** Used when the responsibility sets no budget of its own (per UTC day). */
-const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20 };
+const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20, computeSeconds: 120 };
 const MAX_ROUNDS = 8;
 const RUN_DEADLINE_MS = 10 * 60 * 1000;
 const REPLY_TOKENS = 1200;
 const RESULT_CHARS = 16_000;
 const SUMMARY_CHARS = 2000;
 const FILE_CHARS = 12_000;
+const WRITE_CHARS = 200_000;
+
+const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 /** authorize() codes after which the run cannot continue at all. */
 const STOP_CODES = new Set([
@@ -79,7 +81,9 @@ function argsHash(args) {
  * The tools a run may be offered. `needs(args, ctx)` returns the operation
  * and resource `authorize()` must allow, or null for a tool that touches
  * nothing of the person's (public docs, the run's own report). `effect`
- * decides crash recovery: a read is safe to repeat, a write is not.
+ * decides crash recovery: a read is safe to repeat, a write is not - unless
+ * it is `atomic`: a write to our own database that commits in the same
+ * transaction as its journal row, so "in flight" means "did not happen".
  */
 const TOOLS = {
     searchWeb: {
@@ -148,8 +152,196 @@ const TOOLS = {
             const file = await projects.readWorkspaceFile({
                 userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), purpose: 'portal'
             });
+            ctx.fileHashes.set(String(path), sha(file.bytes));
             if (!/^text\/|json|xml|yaml|javascript|markdown/.test(file.mime)) return `That file is ${file.mime}, not text (${file.size} bytes).`;
             return clip(file.bytes.toString('utf8'), FILE_CHARS);
+        }
+    },
+    writeProjectFile: {
+        effect: 'write',
+        component: 'projects',
+        definition: {
+            name: 'writeProjectFile',
+            description: 'Create or replace one text file in the linked project\'s workspace. To change an existing file, read it with readProjectFile first in this same task; a file that changed since you read it is refused. The previous version stays in the project\'s history.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Workspace-relative file path.' },
+                    content: { type: 'string', description: 'The whole new file.' }
+                },
+                required: ['path', 'content']
+            }
+        },
+        needs: ({ path }, ctx) => (ctx.project
+            ? { operation: 'file.edit', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
+            : { refuse: 'NO_PROJECT' }),
+        async _current(path, ctx) {
+            const projects = requireOptional('./projectService', { feature: 'projects' });
+            if (!projects) return { missing: true };
+            try {
+                const file = await projects.readWorkspaceFile({
+                    userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), purpose: 'portal'
+                });
+                return { hash: sha(file.bytes) };
+            } catch (error) {
+                if (error?.code === 'NOT_FOUND') return { missing: true };
+                throw error;
+            }
+        },
+        /** After a crash: the file holding exactly this content means the write happened. */
+        async reconcile({ path, content }, ctx) {
+            const current = await this._current(path, ctx);
+            if (!current.missing && current.hash === sha(Buffer.from(String(content ?? '')))) {
+                return { state: 'done', result: `Wrote ${String(path)}.` };
+            }
+            return { state: 'unknown' };
+        },
+        async run({ path, content }, ctx) {
+            const projects = requireOptional('./projectService', { feature: 'projects' });
+            if (!projects) return 'Not written: projects are not available on this installation.';
+            const text = String(content ?? '');
+            if (text.length > WRITE_CHARS) return `Not written: the file is longer than ${WRITE_CHARS} characters.`;
+            const current = await this._current(path, ctx);
+            if (!current.missing) {
+                const seen = ctx.fileHashes.get(String(path));
+                if (!seen) return 'Not written: that file exists. Read it with readProjectFile first.';
+                if (seen !== current.hash) return 'Not written: the file changed since you read it. Read it again before deciding.';
+            }
+            await projects.writeWorkspaceFile({
+                userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), bytes: Buffer.from(text)
+            });
+            ctx.fileHashes.set(String(path), sha(Buffer.from(text)));
+            return `Wrote ${String(path)}.`;
+        }
+    },
+    runProjectFile: {
+        effect: 'write',
+        budget: 'computeSeconds',
+        component: 'projects',
+        definition: {
+            name: 'runProjectFile',
+            description: 'Run one .py, .js or .sh file from the linked project in the sandbox (no network) and return its output. Each run counts against a small daily compute budget.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Workspace-relative file to run.' },
+                    args: { type: 'array', items: { type: 'string' } }
+                },
+                required: ['path']
+            }
+        },
+        needs: ({ path }, ctx) => (ctx.project
+            ? { operation: 'sandbox.run', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
+            : { refuse: 'NO_PROJECT' }),
+        _attempt: (ctx) => `assistant_run:${ctx.run.id}:${ctx.opId}`,
+        /** After a crash: the job row with this attempt id says whether it ran. */
+        async reconcile(_args, ctx) {
+            const job = await db.get(
+                'SELECT id, status, exitCode FROM observatory_jobs WHERE executionAttemptId = @attempt', { attempt: this._attempt(ctx) }
+            );
+            if (!job) return { state: 'absent' };
+            if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status)) {
+                return { state: 'done', result: `Ran as job #${job.id}: ${String(job.status).toLowerCase()} (exit ${job.exitCode ?? '?'}). Its output is in the project's Runs.` };
+            }
+            return { state: 'unknown' };
+        },
+        async run({ path, args }, ctx) {
+            const projects = requireOptional('./projectService', { feature: 'projects' });
+            if (!projects) return 'Not run: projects are not available on this installation.';
+            const started = Date.now();
+            try {
+                const outcome = await projects.runFile({
+                    userId: ctx.actor, project: ctx.project.slug, owner: ctx.project.ownerId, path: String(path || ''),
+                    args: Array.isArray(args) ? args.map(String) : [], background: false,
+                    startedBy: 'assistant', executionAttemptId: this._attempt(ctx)
+                });
+                const result = outcome.result || {};
+                return clip(
+                    `Ran ${String(path)} as job #${outcome.jobId ?? '?'}: ${result.ok ? 'ok' : 'failed'} (exit ${result.exitCode ?? '?'}).\n`
+                    + `stdout:\n${result.stdout || ''}\nstderr:\n${result.stderr || ''}`, RESULT_CHARS
+                );
+            } finally {
+                ctx.compute += Math.max(1, Math.round((Date.now() - started) / 1000));
+            }
+        }
+    },
+    listGeneratedNotes: {
+        effect: 'read',
+        definition: {
+            name: 'listGeneratedNotes',
+            description: 'List the notes you (not the person) wrote earlier and may still amend, with their id and revision.',
+            parameters: { type: 'object', properties: {} }
+        },
+        needs: () => ({ operation: 'read', resource: { kind: 'knowledge', id: 'personal' } }),
+        async run(_args, ctx) {
+            const notes = await require('./knowledgeGraphService').listGeneratedNotes({ guildId: ctx.scope, userId: ctx.actor });
+            return notes.length
+                ? notes.map(note => `#${note.id} (revision ${note.revision}) ${note.label}: ${clip(note.content || '', 400)}`).join('\n')
+                : 'There are no generated notes yet.';
+        }
+    },
+    addGeneratedNote: {
+        effect: 'write',
+        atomic: true,
+        component: 'knowledge',
+        definition: {
+            name: 'addGeneratedNote',
+            description: 'Add one new note to the person\'s knowledge, marked as generated by you. Only for something sourced and worth keeping. It never replaces an existing note: a title that exists is refused.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string', description: 'A short, specific title.' },
+                    content: { type: 'string', description: 'The note, with where it came from.' }
+                },
+                required: ['title', 'content']
+            }
+        },
+        needs: () => ({ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }),
+        async run({ title, content }, ctx) {
+            const added = await require('./knowledgeGraphService').addGeneratedNote({
+                guildId: ctx.scope, userId: ctx.actor, label: title, content, origin: `assistant_run:${ctx.run.id}`
+            });
+            if (!added.ok) {
+                return {
+                    EXISTS: 'Not added: a note with that title already exists. Do not overwrite it.',
+                    CAPACITY: 'Not added: the person\'s knowledge is full. Report the finding instead.',
+                    BAD_REQUEST: 'Not added: a title and content are required.'
+                }[added.code];
+            }
+            return `Added as note #${added.id}.`;
+        }
+    },
+    amendGeneratedNote: {
+        effect: 'write',
+        atomic: true,
+        component: 'knowledge',
+        definition: {
+            name: 'amendGeneratedNote',
+            description: 'Replace the text of a note you generated earlier. Pass the id and revision from listGeneratedNotes. A note the person has edited or saved is theirs and cannot be amended.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: { type: 'integer' },
+                    revision: { type: 'integer', description: 'The revision you read.' },
+                    content: { type: 'string', description: 'The full new text.' }
+                },
+                required: ['id', 'revision', 'content']
+            }
+        },
+        needs: () => ({ operation: 'kg.generated.amend', resource: { kind: 'knowledge', id: 'personal' } }),
+        async run({ id, revision, content }, ctx) {
+            const amended = await require('./knowledgeGraphService').amendGeneratedNote({
+                guildId: ctx.scope, userId: ctx.actor, nodeId: id, content, expectedRevision: revision
+            });
+            if (!amended.ok) {
+                return {
+                    NOT_FOUND: 'Not amended: no such note.',
+                    NOT_GENERATED: 'Not amended: the person has edited or saved that note, so it is theirs. Report your suggestion instead.',
+                    REVISION_CONFLICT: 'Not amended: the note changed since you read it. Read it again before deciding.',
+                    BAD_REQUEST: 'Not amended: content and the revision you read are required.'
+                }[amended.code];
+            }
+            return `Amended; it is now revision ${amended.revision}.`;
         }
     },
     consultDocs: {
@@ -212,6 +404,7 @@ class AssistantRunService {
             rounds: Number(row.rounds || 0),
             tokensUsed: Number(row.tokensUsed || 0),
             searches: Number(row.searches || 0),
+            computeSeconds: Number(row.computeSeconds || 0),
             resultTitle: row.resultTitle || null,
             resultSummary: row.resultSummary || null,
             updateId: row.updateId == null ? null : Number(row.updateId),
@@ -260,7 +453,7 @@ class AssistantRunService {
         let stored = {};
         try { stored = JSON.parse(responsibility.budgetsJson || '{}') || {}; } catch { stored = {}; }
         const pick = (key) => (Number.isSafeInteger(stored[key]) ? stored[key] : DEFAULT_BUDGETS[key]);
-        return { modelTokens: pick('modelTokens'), searches: pick('searches') };
+        return { modelTokens: pick('modelTokens'), searches: pick('searches'), computeSeconds: pick('computeSeconds') };
     }
 
     /** Tokens this run has reserved or spent so far (the work ledger's own rows). */
@@ -276,11 +469,12 @@ class AssistantRunService {
     /** What the responsibility's other runs used today (UTC). */
     async _usedToday(responsibilityId, exceptRunId, now) {
         const row = await db.get(
-            `SELECT COALESCE(SUM(tokensUsed), 0) AS tokens, COALESCE(SUM(searches), 0) AS searches FROM assistant_runs
+            `SELECT COALESCE(SUM(tokensUsed), 0) AS tokens, COALESCE(SUM(searches), 0) AS searches,
+                    COALESCE(SUM(computeSeconds), 0) AS compute FROM assistant_runs
              WHERE responsibilityId = @rid AND id <> @run AND startedAt >= @day`,
             { rid: responsibilityId, run: exceptRunId, day: dayStart(now) }
         );
-        return { tokens: Number(row?.tokens || 0), searches: Number(row?.searches || 0) };
+        return { tokens: Number(row?.tokens || 0), searches: Number(row?.searches || 0), compute: Number(row?.compute || 0) };
     }
 
     /** Open, or resume, the run row of a claimed initiative. */
@@ -324,7 +518,8 @@ class AssistantRunService {
             'You are doing one bounded piece of delegated work for a person, unattended. They are not watching and cannot answer questions now.',
             `The responsibility they delegated: "${responsibility.title}".${responsibility.outcome ? ` What good looks like: ${responsibility.outcome}` : ''}`,
             project ? `It is linked to their project "${project.name}".` : '',
-            `You may only use these tools: ${tools.join(', ')}. You can read and research; you cannot change, save, send or run anything. If the work needs an action you cannot take, say so in your report instead of attempting it.`,
+            `You may only use these tools: ${tools.join(', ')}. Anything else - sending, scheduling, deleting, changing what the person wrote - is not yours to do. If the work needs an action you cannot take, say so in your report instead of attempting it.`,
+            'Changing something is the exception, not the goal: write or edit only when the responsibility clearly calls for it, and say exactly what you changed in your report.',
             'A refused tool call means that is outside what was delegated. Do not retry it or look for another way around it.',
             'Work in few steps. When you have what the person needs, or have confirmed nothing needs their attention, call finish once. Report only what you actually found, with where it came from. Never invent a source.'
         ].filter(Boolean).join('\n');
@@ -378,9 +573,21 @@ class AssistantRunService {
                 return prior.resultText || '';
             }
             if (prior?.status === 'REFUSED') return `Not allowed (${prior.refusalCode || 'REFUSED'}).`;
-            if (prior && spec.effect === 'write') {
-                // In flight when the worker died: it may or may not have
-                // happened. Never retried blindly.
+            let reconciledAbsent = false;
+            if (prior && spec.effect === 'write' && !spec.atomic && typeof spec.reconcile === 'function') {
+                // In flight when the worker died. Ask the world, by the
+                // operation's own identity, whether it happened.
+                ctx.opId = prior.id;
+                let verdict = { state: 'unknown' };
+                try { verdict = await spec.reconcile(args, ctx); } catch { /* unknown */ }
+                if (verdict.state === 'done') {
+                    await mark(prior.id, 'SUCCEEDED', verdict.result);
+                    return verdict.result;
+                }
+                reconciledAbsent = verdict.state === 'absent';
+            }
+            if (prior && spec.effect === 'write' && !spec.atomic && !reconciledAbsent) {
+                // It may or may not have happened. Never retried blindly.
                 await mark(prior.id, 'UNCERTAIN');
                 ctx.halt('OPERATION_UNCERTAIN');
                 return 'This task has been stopped for review.';
@@ -416,11 +623,25 @@ class AssistantRunService {
                 if (ctx.used.searches + ctx.searches >= ctx.budgets.searches) return refuse('SEARCH_BUDGET');
                 ctx.searches += 1;
             }
+            if (spec.budget === 'computeSeconds' && ctx.used.compute + ctx.compute >= ctx.budgets.computeSeconds) {
+                return refuse('COMPUTE_BUDGET');
+            }
 
             const id = prior ? prior.id : await journal({ ...base, status: 'PREPARED' });
+            ctx.opId = id;
             await mark(id, 'DISPATCHED');
             let result;
             try {
+                if (spec.atomic) {
+                    // The change and its journal row commit together or not at all.
+                    result = await db.transaction(async () => {
+                        const text = clip(await spec.run(args, ctx), RESULT_CHARS);
+                        await mark(id, 'SUCCEEDED', text);
+                        return text;
+                    });
+                    await ctx.account();
+                    return result;
+                }
                 result = clip(await spec.run(args, ctx), RESULT_CHARS);
             } catch (error) {
                 await mark(id, 'FAILED');
@@ -452,14 +673,24 @@ class AssistantRunService {
         const project = await this._project(responsibility);
         const budgets = this.budgets(responsibility);
         const used = await this._usedToday(responsibility.id, run.id, now);
-        const offered = new Set(Object.keys(TOOLS).filter(name => project || !name.includes('Project')));
+        const { features } = require('../features/featureState');
+        const offered = new Set(Object.keys(TOOLS).filter((name) => {
+            if (name.includes('Project') && !project) return false;
+            if (name === 'runProjectFile' && features.enforcedOff('sandbox')) return false;
+            if (name.includes('GeneratedNote') && features.enforcedOff('knowledge')) return false;
+            return true;
+        }));
 
         const ctx = {
             run, actor, project, budgets, used, offered,
             searches: Number(run.searches || 0),
+            compute: Number(run.computeSeconds || 0),
+            fileHashes: new Map(),
+            opId: null,
             tokens: Number(run.tokensUsed || 0),
             stop: null,
             result: null,
+            scope: require('../utils/dmScope').dmScopeId(actor),
             interactionContext: { user: { id: actor, username: 'you' }, guildId: null, isAutomation: true, skipHistory: false },
             halt(code) { if (!this.stop) this.stop = code; },
             heartbeat: async () => {
@@ -477,12 +708,12 @@ class AssistantRunService {
 
         const finishRun = async (fields) => db.run(
             `UPDATE assistant_runs SET status = @status, stopCode = @stopCode, outcome = @outcome, rounds = @rounds,
-                tokensUsed = @tokens, searches = @searches, resultTitle = @title, resultSummary = @summary,
+                tokensUsed = @tokens, searches = @searches, computeSeconds = @compute, resultTitle = @title, resultSummary = @summary,
                 updateId = @updateId, endedAt = @endedAt, updatedAt = @now
              WHERE id = @id`,
             {
                 id: run.id, stopCode: null, outcome: null, title: null, summary: null, updateId: null,
-                rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches,
+                rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute,
                 endedAt: ['RUNNING', 'WAITING'].includes(fields.status) ? null : utcText(), now: utcText(), ...fields
             }
         );
@@ -547,8 +778,8 @@ class AssistantRunService {
         }
         if (ctx.stop === 'RUNNER_STOPPING' || (shouldStop() && !ctx.result)) {
             // Shutdown: the lease lapses and the run resumes from its journal.
-            await db.run('UPDATE assistant_runs SET rounds = @rounds, tokensUsed = @tokens, searches = @searches, updatedAt = @now WHERE id = @id',
-                { id: run.id, rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, now: utcText() });
+            await db.run('UPDATE assistant_runs SET rounds = @rounds, tokensUsed = @tokens, searches = @searches, computeSeconds = @compute, updatedAt = @now WHERE id = @id',
+                { id: run.id, rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute, now: utcText() });
             return { status: 'RUNNING', stopCode: 'RUNNER_STOPPING', runId: run.id };
         }
         if (ctx.stop === 'TOKEN_BUDGET' && !ctx.result) return park('budget', 'TOKEN_BUDGET', nextDay(now));
@@ -557,6 +788,9 @@ class AssistantRunService {
             return park('responsibility', ctx.stop, null);
         }
 
+        // What the run actually changed, read from its journal (not from
+        // what the model says it did).
+        const applied = await this._applied(run.id);
         const result = ctx.result || {
             outcome: 'DONE',
             title: clip(initiative.title, 200),
@@ -568,6 +802,11 @@ class AssistantRunService {
             return { status: 'FAILED', stopCode: 'NO_RESULT', runId: run.id };
         }
 
+        if (applied.lines.length) {
+            // A change was made: the person is always told, whatever the model reported.
+            result.outcome = 'DONE';
+            result.summary = clip(`${result.summary ? `${result.summary}\n\n` : ''}Changed: ${applied.lines.join(' ')}`, SUMMARY_CHARS);
+        }
         // Settle first: a result is only published for work that still holds its lease.
         const settled = await initiatives.settle({
             id: initiative.id, leaseToken, status: 'COMPLETED', outcome: result.outcome,
@@ -586,7 +825,7 @@ class AssistantRunService {
                     kind: 'finding',
                     title: result.title || clip(initiative.title, 200),
                     summary: result.summary || null,
-                    components: project ? ['projects', 'research'] : ['research'],
+                    components: [...new Set([...(project ? ['projects'] : []), 'research', ...applied.components])],
                     source: { kind: 'initiative', id: initiative.id },
                     actions: [{ kind: 'open_initiative', id: String(initiative.id) }],
                     responsibilityId: responsibility.id,
@@ -602,6 +841,26 @@ class AssistantRunService {
         }
         await finishRun({ status: 'COMPLETED', outcome: result.outcome, title: result.title || null, summary: result.summary || null, updateId });
         return { status: 'COMPLETED', outcome: result.outcome, runId: run.id, updateId };
+    }
+
+    /** Changes a run made, from its journal: one line per successful write. */
+    async _applied(runId) {
+        const rows = await db.all(
+            `SELECT tool, resultText FROM assistant_run_operations
+             WHERE runId = @runId AND effect = 'write' AND status = 'SUCCEEDED' ORDER BY id`,
+            { runId }
+        );
+        const lines = [];
+        const components = new Set();
+        for (const row of rows) {
+            const text = String(row.resultText || '');
+            // A write tool that declined (title exists, note is the person's) changed nothing.
+            if (!text || /^Not /.test(text)) continue;
+            lines.push(text.split('\n')[0]);
+            const component = TOOLS[row.tool]?.component;
+            if (component) components.add(component);
+        }
+        return { lines, components: [...components] };
     }
 
     /** Retention: journals and runs of long-finished work (the initiative prune cascades too). */

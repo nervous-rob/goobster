@@ -3715,6 +3715,7 @@ CREATE TABLE IF NOT EXISTS assistant_runs (
     rounds INTEGER NOT NULL DEFAULT 0,
     tokensUsed INTEGER NOT NULL DEFAULT 0,
     searches INTEGER NOT NULL DEFAULT 0,
+    computeSeconds INTEGER NOT NULL DEFAULT 0,
     resultTitle TEXT,
     resultSummary TEXT,
     updateId INTEGER,
