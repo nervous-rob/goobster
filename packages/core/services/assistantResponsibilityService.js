@@ -634,8 +634,48 @@ class AssistantResponsibilityService {
             { id: row.id, revision: row.revision, now: nowText }
         );
         const updated = await this._row(row.id);
-        if (result.changes === 1) await this._snapshot(updated, 'expire', null);
+        if (result.changes === 1) {
+            await this._snapshot(updated, 'expire', null);
+            await this._afterStatusChange(updated, 'expire');
+        }
         return updated;
+    }
+
+    /**
+     * Effects of a status change, inside its transaction: open initiatives
+     * follow the grant, activation records the source baseline, and changes
+     * the owner did not make themselves (a review request, an expiry) become
+     * one canonical update with an Inbox envelope.
+     */
+    async _afterStatusChange(row, changeKind) {
+        const initiatives = require('./assistantInitiativeService');
+        const updates = require('./assistantUpdateService');
+        await initiatives.onResponsibilityChanged(row);
+        if (changeKind === 'activate') await initiatives.reconcileResponsibility(row.id);
+        const audience = { userId: row.ownerUserId };
+        const identityKey = `responsibility:${row.id}:status`;
+        if (changeKind === 'review' || changeKind === 'expire') {
+            await updates.publish({
+                audience,
+                identityKey,
+                kind: 'responsibility',
+                title: changeKind === 'review'
+                    ? `"${row.title}" needs your review`
+                    : `"${row.title}" expired`,
+                summary: changeKind === 'review'
+                    ? 'Delegated work under this responsibility stopped and asked for a human look. Resume or revoke it.'
+                    : 'Its authority ended at its expiry time. Create a new responsibility to delegate again.',
+                components: ['responsibilities'],
+                responsibilityId: row.id,
+                source: { kind: 'responsibility', id: row.id, revision: row.revision },
+                actions: [{ kind: 'open_responsibility', id: row.id }],
+                gate: changeKind === 'review' ? { kind: 'responsibility_review', id: row.id, occurrence: row.revision } : null,
+                deliver: true,
+                deliverNow: false
+            });
+        } else if (['resume', 'revoke', 'complete', 'archive'].includes(changeKind)) {
+            await updates.resolveGate({ audience, identityKey });
+        }
     }
 
     /**
@@ -757,12 +797,21 @@ class AssistantResponsibilityService {
     }
 
     async _act({ id, action, expectedRevision, owner, changedBy }) {
-        return db.transaction(async () => {
+        const result = await db.transaction(async () => {
             const row = await this._row(id);
             if (!row || (owner !== null && row.ownerUserId !== owner)) throw notFound();
             const updated = await this._transition(row, action, expectedRevision, changedBy);
             return { responsibility: this.present(updated) };
         });
+        await this._deliverOwed(result.responsibility.ownerUserId);
+        return result;
+    }
+
+    /** Inbox envelopes owed by status changes, filed after their transaction committed. */
+    async _deliverOwed(userId) {
+        try {
+            await require('./assistantUpdateService').deliverPending({ userId });
+        } catch { /* retried by the steward's next pass */ }
     }
 
     async _transition(row, action, expectedRevision, changedBy) {
@@ -786,7 +835,9 @@ class AssistantResponsibilityService {
         if (action === 'resume' && current.status === 'NEEDS_REVIEW') sets.reviewedAt = nowText;
         if (['COMPLETED', 'REVOKED'].includes(spec.to)) sets.endedAt = nowText;
         if (spec.to === 'ARCHIVED') sets.finalStatus = current.status;
-        return this._write(current, expected, sets, { changeKind: spec.changeKind, changedBy, authority: true });
+        const updated = await this._write(current, expected, sets, { changeKind: spec.changeKind, changedBy, authority: true });
+        await this._afterStatusChange(updated, spec.changeKind);
+        return updated;
     }
 
     /**
@@ -805,7 +856,10 @@ class AssistantResponsibilityService {
         let expired = 0;
         for (const row of rows) {
             const updated = await db.transaction(async () => this._persistExpiry(row, nowText));
-            if (updated?.status === 'EXPIRED') expired += 1;
+            if (updated?.status === 'EXPIRED') {
+                expired += 1;
+                await this._deliverOwed(updated.ownerUserId);
+            }
         }
         return expired;
     }

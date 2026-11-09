@@ -441,6 +441,17 @@ async function startCoreRuntime({
             stoppers.push(async () => ledgerRetention.stop?.());
             onPause(() => ledgerRetention.stop?.());
         });
+        await step('assistantSteward', () => {
+            // Delegated responsibilities: expiry, source reconciliation and
+            // retention (documentation/delegated_responsibilities.md).
+            const steward = load('assistantStewardService', () => requireOptional('../services/assistantStewardService', { feature: 'assistant' }));
+            if (!steward) return ABSENT;
+            steward.start();
+            stoppers.push(async () => steward.stop?.());
+            let stewardStopped = null;
+            onPause(() => { stewardStopped = Promise.resolve(steward.stop?.()).catch(() => {}); });
+            settleTasks.push({ name: 'assistantSteward', contract: 'runtimeStep', drain: () => stewardStopped });
+        }, { feature: 'assistant' });
 
         // --- Discord-bound workers (need the live client) ---------------------
         if (withDiscord && client) {

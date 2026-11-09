@@ -129,13 +129,13 @@ module.exports = {
     },
     assistant: {
         title: 'Delegated assistant',
-        summary: 'Responsibilities: versioned, human-activated grants of bounded authority that later delegated work is checked against, operation by operation. Inert until a person activates one.',
+        summary: 'Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations. Inert until a person activates one.',
         apiKeys: [],
         configKeys: [],
         docs: ['documentation/delegated_responsibilities.md'],
         payload: {
             files: [
-                'packages/core/services/assistantResponsibilityService.js',
+                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService}.js',
                 'packages/core/web/routes/assistant.js'
             ]
         }

@@ -184,6 +184,7 @@ const runtimeSteps = {
     memoryConsolidation: 'core',
     knowledgeReflection: 'core',
     ledgerRetention: 'core',
+    assistantSteward: 'assistant',
     heartbeat: 'core',
     agentTracker: 'cursor',
     monologue: 'core',
