@@ -26,6 +26,21 @@ afterAll(() => {
     for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/** Run `fn` with os.tmpdir() answering `dir` (TMPDIR on POSIX, TEMP/TMP on Windows), then put the environment back. */
+async function withTmpdir(dir, fn) {
+    const keys = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR'];
+    const saved = keys.map(key => [key, process.env[key]]);
+    for (const key of keys) process.env[key] = dir;
+    try {
+        return await fn();
+    } finally {
+        for (const [key, value] of saved) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    }
+}
+
 function sink() {
     const chunks = [];
     const stream = new Writable({ write(chunk, _enc, done) { chunks.push(chunk.toString()); done(); } });
@@ -197,11 +212,13 @@ describe('--headless --answers', () => {
     });
 
     test('the merged answers live in a private temporary directory that is gone afterwards, and the run prints no secret it was given', async () => {
-        const before = fs.readdirSync(require('node:os').tmpdir()).filter(name => name.startsWith('goobster-answers-'));
-        const result = await headless({ answers: { config: [{ id: 'ai.provider', value: 'ollama' }] } });
+        // The bootstrap takes the directory from os.tmpdir(), which other Jest workers
+        // (the darwin and win32 bootstrap suites) write to at the same time; a private
+        // TMPDIR makes "nothing left behind" this run's alone to answer for.
+        const tmp = scratch('tmp');
+        const result = await withTmpdir(tmp, () => headless({ answers: { config: [{ id: 'ai.provider', value: 'ollama' }] } }));
         expect(result.code).toBe(0);
-        const after = fs.readdirSync(require('node:os').tmpdir()).filter(name => name.startsWith('goobster-answers-'));
-        expect(after.sort()).toEqual(before.sort());
+        expect(fs.readdirSync(tmp)).toEqual([]);
     });
 
     test('an answers file other users can read is refused (exit 2) and nothing is installed', async () => {

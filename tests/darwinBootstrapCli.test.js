@@ -13,7 +13,6 @@
  * workflow (.github/workflows/macos-bootstrap.yml) proves those.
  */
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { Writable } = require('node:stream');
@@ -32,6 +31,21 @@ const scratch = (label) => tempDir(cleanup, label);
 afterAll(() => {
     for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/** Run `fn` with os.tmpdir() answering `dir` (TMPDIR on POSIX, TEMP/TMP on Windows), then put the environment back. */
+async function withTmpdir(dir, fn) {
+    const keys = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR'];
+    const saved = keys.map(key => [key, process.env[key]]);
+    for (const key of keys) process.env[key] = dir;
+    try {
+        return await fn();
+    } finally {
+        for (const [key, value] of saved) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    }
+}
 
 function sink() {
     const chunks = [];
@@ -205,12 +219,13 @@ describe('the answers a headless run hands the CLI', () => {
         const dir = scratch('answers-file');
         const file = writeAnswers(dir, given, mode);
         const cli = capturingCli();
-        const before = fs.readdirSync(os.tmpdir()).filter(name => name.startsWith('goobster-answers-'));
-        const code = await bootstrap.run(['--payload', payload(), '--payload-digest', DIGEST, '--headless', '--answers', file, '--dry-run'], {
-            env: await environment(base), euid, home: '/var/root', cli, stdout: sink(), stderr: sink()
-        });
-        const after = fs.readdirSync(os.tmpdir()).filter(name => name.startsWith('goobster-answers-'));
-        return { code, seen: cli.seen, file, dir, leftBehind: after.filter(name => !before.includes(name)) };
+        // a private TMPDIR: other Jest workers write goobster-answers-* to the shared one at the same time
+        const tmp = scratch('tmp');
+        const env = await environment(base);
+        const code = await withTmpdir(tmp, () => bootstrap.run(['--payload', payload(), '--payload-digest', DIGEST, '--headless', '--answers', file, '--dry-run'], {
+            env, euid, home: '/var/root', cli, stdout: sink(), stderr: sink()
+        }));
+        return { code, seen: cli.seen, file, dir, leftBehind: fs.readdirSync(tmp) };
     }
 
     test('as root the service account is _goobster and it is created; the operator\'s file is not rewritten and no copy is left behind', async () => {
