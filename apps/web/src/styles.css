@@ -2439,3 +2439,59 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .repo-ide-thread.is-outdated { opacity: 0.75; }
 .repo-ide-thread-where { display: flex; gap: 8px; font-size: 0.75rem; opacity: 0.75; }
 .repo-ide-comment p { margin: 2px 0 0; white-space: pre-wrap; font-size: 0.8125rem; }
+
+/* --- Assistant overview on Home and the Responsibilities page (DA-2) ------
+   State is always text plus a mark; colour and the outline only reinforce
+   it. No animation carries meaning. */
+.assistant-overview {
+  background: var(--bg-raise); border: 1px solid var(--border); border-radius: 16px;
+  padding: 18px 20px; margin: 18px 0; display: flex; flex-direction: column; gap: 16px;
+}
+.assistant-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.assistant-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.assistant-title { margin: 0; font-size: 1.15rem; }
+.assistant-status { margin: 4px 0 0; color: var(--text); }
+.assistant-section { display: flex; flex-direction: column; gap: 8px; }
+.assistant-section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.assistant-section-head h3 {
+  margin: 0; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim);
+}
+.assistant-more { font-size: 0.85rem; }
+.assistant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.assistant-row {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raise-2);
+}
+.assistant-row-main { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.assistant-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.assistant-components { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.assistant-component {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; text-decoration: none; color: inherit;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raise-2);
+}
+.assistant-component:hover, .assistant-component:focus-visible { border-color: var(--accent); }
+.assistant-component:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.assistant-component-name { font-weight: 600; }
+.assistant-component-state { font-size: 0.85rem; color: var(--text-dim); }
+.assistant-component.is-updates, .assistant-component.is-working { border-color: rgba(var(--accent-rgb), 0.55); }
+.assistant-component.is-updates .assistant-component-state,
+.assistant-component.is-working .assistant-component-state { color: var(--text); }
+.assistant-component.is-needs_you { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.assistant-component.is-needs_you .assistant-component-state { color: var(--text); font-weight: 600; }
+.assistant-component.is-blocked { border-color: var(--danger); box-shadow: inset 3px 0 0 var(--danger); }
+.assistant-component.is-blocked .assistant-component-state { color: var(--text); font-weight: 600; }
+.assistant-component.is-unavailable, .assistant-component.is-unknown { border-style: dashed; }
+.assistant-grants { margin: 6px 0; padding-left: 18px; font-size: 0.9rem; }
+.assistant-draft { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.assistant-draft h2 { margin: 0; font-size: 1rem; }
+.assistant-draft .field { display: flex; flex-direction: column; gap: 6px; border: 0; padding: 0; margin: 0; }
+.assistant-draft fieldset.field legend { padding: 0; font-weight: 600; margin-bottom: 4px; }
+.assistant-draft input[type="text"], .assistant-draft textarea, .assistant-draft select {
+  background: var(--bg-raise-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 10px; font: inherit; max-width: 560px;
+}
+.assistant-draft button[type="submit"] { align-self: flex-start; }
+.inbox-needs { border-color: var(--accent); color: var(--text); }
+.assistant-overview a:not(.btn):not(.assistant-component) { color: var(--accent); text-decoration: none; }
+.assistant-overview a:not(.btn):not(.assistant-component):hover,
+.assistant-overview a:not(.btn):not(.assistant-component):focus-visible { text-decoration: underline; }

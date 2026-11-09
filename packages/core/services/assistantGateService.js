@@ -19,6 +19,7 @@
 const db = require('../db');
 const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const IDENTITY_PREFIX = 'project_gate:';
 const OPEN_MISSION_STATUSES = ['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW'];
@@ -64,7 +65,8 @@ class AssistantGateService {
 
     async _adoptFor(owner) {
         const updates = require('./assistantUpdateService');
-        const missions = require('./projectMissionService');
+        const missions = requireOptional('./projectMissionService', { feature: 'projects' });
+        if (!missions) return { adopted: 0, resolved: 0 };
         const board = await missions.listNeedsYou({ userId: owner, setup: false });
         const audience = { userId: owner };
         const live = new Set();

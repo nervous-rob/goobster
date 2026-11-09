@@ -325,6 +325,14 @@ export type InboxItem = {
         actionable: boolean;
         respondedAt: string | null;
     } | null;
+    /**
+     * Set when this item is the envelope of a canonical assistant update:
+     * its components, its gate (owned by the domain) and this person's
+     * receipt. A snoozed gate is still open.
+     */
+    update?: InboxUpdateRef | null;
+    /** A typed, still-open request for this person. Independent of `read`. */
+    needsAction?: boolean;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -333,7 +341,62 @@ export type InboxItem = {
     createdAt: string;
 };
 
-export type InboxList = { items: InboxItem[]; unread: number; nextCursor: string | null };
+/** `needsYou` is its own count: never added to `unread`. */
+export type InboxList = { items: InboxItem[]; unread: number; needsYou?: number; view?: string; nextCursor: string | null };
+
+export type AssistantAction = { kind: string; id: string };
+export type AssistantGate = { kind: string; id: string; occurrence: number; resolved: boolean };
+export type InboxUpdateRef = {
+    id: number; revision: number; componentIds: string[]; actions: AssistantAction[];
+    responsibilityId: number | null; initiativeId: number | null; unseen: boolean;
+    gate: AssistantGate | null; gateOpen: boolean; snoozedUntil: string | null;
+};
+
+export type AssistantComponentState = 'needs_you' | 'blocked' | 'working' | 'updates' | 'quiet' | 'unknown' | 'unavailable';
+export type AssistantComponent = {
+    id: 'knowledge' | 'research' | 'projects' | 'processes' | 'conversations';
+    state: AssistantComponentState; unavailable: { feature: string } | null;
+    unseen: number | null; needsAction: number | null; running: number | null; blocked: number | null;
+    freshness: 'current' | 'stale' | 'unknown'; latestUpdateId: number | null;
+};
+export type AssistantInitiativeCounts = { proposed: number; queued: number; running: number; waiting: number; review: number };
+export type AssistantHomeResponsibility = {
+    id: number; revision: number; status: string; title: string; outcome: string | null; projectId: number | null;
+    expiresAt: string | null; updatedAt: string; initiatives: AssistantInitiativeCounts;
+};
+export type AssistantNeedsYouItem = {
+    inboxItemId: number; kind: InboxKind; title: string; body: string | null; link: string | null; read: boolean;
+    createdAt: string; update: InboxUpdateRef | null; request: string | null;
+};
+export type AssistantBriefItem = {
+    id: number; revision: number; kind: string; title: string; summary: string | null; componentIds: string[];
+    responsibilityId: number | null; initiativeId: number | null; actions: AssistantAction[];
+    inboxItemId: number | null; happenedAt: string;
+};
+/** The `assistant` block of GET /api/app/home. A null count is unknown, not zero. */
+export type AssistantHome = {
+    schemaVersion: number; asOf: string;
+    availability: 'ready' | 'paused' | 'none_delegated' | 'attention_off' | 'unavailable' | 'unknown';
+    freshness: { state: 'current' | 'stale' | 'unknown'; lastPassAt: string | null };
+    responsibilities: { counts: { active: number; paused: number; needsReview: number; draft: number } | null; items: AssistantHomeResponsibility[] };
+    counts: { unseen: number | null; needsAction: number | null; running: number | null };
+    components: AssistantComponent[];
+    needsYou: AssistantNeedsYouItem[];
+    brief: AssistantBriefItem[];
+    partial: string[];
+};
+
+export type ResponsibilityOperation = { operation: string; resource: { kind: string; ids?: string[]; paths?: string[]; projectId?: string; branches?: string[] } };
+export type Responsibility = {
+    id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
+    projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
+    budgets: Record<string, number>; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
+};
+export type ResponsibilityVocabulary = {
+    statuses: string[]; actions: string[];
+    operations: Array<{ id: string; resourceKinds: string[]; action: string }>;
+    resourceKinds: string[];
+};
 
 /** Someone the signed-in person can reach (GET /api/app/people, invite pickers). */
 export type Person = {

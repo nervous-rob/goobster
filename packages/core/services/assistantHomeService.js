@@ -26,6 +26,18 @@
 const db = require('../db');
 const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
+const requireOptional = require('../utils/optionalModule').forModule(module);
+
+/**
+ * Assistant services ship with the `assistant` feature and are absent in a
+ * reduced payload. Both arguments stay literal for scripts/lib/requireGraph.js.
+ */
+const loaded = (module_) => {
+    if (!module_) throw new Error('the assistant feature is not installed');
+    return module_;
+};
+const updatesService = () => loaded(requireOptional('./assistantUpdateService', { feature: 'assistant' }));
+const responsibilityService = () => loaded(requireOptional('./assistantResponsibilityService', { feature: 'assistant' }));
 
 const SCHEMA_VERSION = 1;
 const NEEDS_YOU_PREVIEW = 5;
@@ -34,6 +46,9 @@ const BRIEF_SCAN = 30;
 const RESPONSIBILITY_PREVIEW = 8;
 const BLOCKED_WINDOW_DAYS = 7;
 const OBSERVATION_SCAN = 500;
+/** Where the steward records its last pass, and how old that may be before Home calls its picture stale. */
+const HEARTBEAT_KEY = 'assistant_steward_pass';
+const STALE_AFTER_MS = 15 * 60 * 1000;
 
 /** Stable order; `feature` is what must be available for the component to work. */
 const COMPONENTS = [
@@ -98,7 +113,7 @@ class AssistantHomeService {
             const policy = await require('./attentionPolicyService').get(owner);
             return Boolean(policy && policy.enabled);
         }, null);
-        const summary = await section('updates', () => require('./assistantUpdateService').summary({ userId: owner, now }), null);
+        const summary = await section('updates', () => updatesService().summary({ userId: owner, now }), null);
         const running = await section('running', () => this._running(owner), null);
         const blocked = await section('processes', () => this._blockedProcesses(owner, now), null);
         const freshness = await section('freshness', () => this._freshness(now), { state: 'unknown', lastPassAt: null });
@@ -185,7 +200,7 @@ class AssistantHomeService {
     }
 
     async _responsibilities(owner, now) {
-        const service = require('./assistantResponsibilityService');
+        const service = responsibilityService();
         const { responsibilities } = await service.list({ userId: owner, now });
         const counts = { active: 0, paused: 0, needsReview: 0, draft: 0 };
         for (const item of responsibilities) {
@@ -265,19 +280,18 @@ class AssistantHomeService {
     }
 
     async _freshness(now) {
-        const steward = require('./assistantStewardService');
-        const beat = await require('./instanceStateService').get(steward.HEARTBEAT_KEY);
+        const beat = await require('./instanceStateService').get(HEARTBEAT_KEY);
         const at = beat?.at ? Date.parse(beat.at) : NaN;
         if (!Number.isFinite(at)) return { state: 'unknown', lastPassAt: null };
         return {
-            state: now.getTime() - at <= 3 * steward.INTERVAL_MS ? 'current' : 'stale',
+            state: now.getTime() - at <= STALE_AFTER_MS ? 'current' : 'stale',
             lastPassAt: new Date(at).toISOString()
         };
     }
 
     /** Unseen informational updates, newest first, minus what Needs you shows. */
     async _brief(owner, shown, now) {
-        const { updates } = await require('./assistantUpdateService').list({ userId: owner, limit: BRIEF_SCAN, now });
+        const { updates } = await updatesService().list({ userId: owner, limit: BRIEF_SCAN, now });
         return updates
             .filter(update => update.unseen && !update.needsAction && !update.gate && !shown.has(update.id))
             .slice(0, BRIEF_PREVIEW)
@@ -300,3 +314,5 @@ class AssistantHomeService {
 
 module.exports = new AssistantHomeService();
 module.exports.AssistantHomeService = AssistantHomeService;
+module.exports.HEARTBEAT_KEY = HEARTBEAT_KEY;
+module.exports.STALE_AFTER_MS = STALE_AFTER_MS;

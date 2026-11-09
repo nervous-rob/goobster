@@ -2,7 +2,7 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, OperatorSchedule, OperatorSchedulesView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
-import type { AccountExportJob, CapabilityGap, TurnStep } from './types';
+import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 
 export class ApiError extends Error {
@@ -402,8 +402,12 @@ export const api = {
     cancelFollowup: (id: number) => request(`/api/app/tasks/followups/${id}`, { method: 'DELETE' }),
     usage: (days = 30) => request(`/api/app/usage?days=${days}`),
 
-    inbox: ({ unread = false, archived = false, cursor }: { unread?: boolean; archived?: boolean; cursor?: string | null } = {}) => {
+    inbox: ({ view = 'all', unread = false, archived = false, cursor, limit }: {
+        view?: 'all' | 'needs_you' | 'updates' | 'snoozed'; unread?: boolean; archived?: boolean; cursor?: string | null; limit?: number;
+    } = {}) => {
         const params = new URLSearchParams();
+        if (view !== 'all') params.set('view', view);
+        if (limit) params.set('limit', String(limit));
         if (archived) params.set('archived', '1');
         if (unread) params.set('unread', '1');
         if (cursor) params.set('cursor', cursor);
@@ -417,6 +421,17 @@ export const api = {
     sourceKeep: (id: number, entryId: number, kept: boolean) => request(`/api/app/followed-sources/${id}/entries/${entryId}/keep`, { method: 'POST', body: { kept } }),
     sourceResearch: (id: number, entryId: number) => request<{ expeditionId: number }>(`/api/app/followed-sources/${id}/entries/${entryId}/research`, { method: 'POST' }),
     inboxItem: (id: number) => request<InboxItem>(`/api/app/inbox/${id}`),
+    // Delegated assistant (documentation/delegated_responsibilities.md). Every
+    // call acts as the signed-in person; edits and actions carry the revision.
+    responsibilities: () => request<{ responsibilities: Responsibility[]; vocabulary: ResponsibilityVocabulary }>('/api/app/assistant/responsibilities'),
+    createResponsibility: (body: Record<string, unknown>) =>
+        request<{ responsibility: Responsibility }>('/api/app/assistant/responsibilities', { method: 'POST', body }),
+    responsibilityAction: (id: number, action: string, expectedRevision: number) =>
+        request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
+    acknowledgeUpdates: (items: Array<{ id: number; revision: number }>) =>
+        request<{ acknowledged: number }>('/api/app/assistant/updates/acknowledge', { method: 'POST', body: { items } }),
+    snoozeUpdate: (id: number, until: string) =>
+        request<{ snoozed: unknown }>(`/api/app/assistant/updates/${id}/snooze`, { method: 'POST', body: { until } }),
     inboxAsk: (id: number, inProject = false) => request<{ kind: 'chat' | 'project'; conversationId: number; path: string; suggestedQuestion: string }>(
         `/api/app/inbox/${id}/ask`, { method: 'POST', body: { inProject } }),
     conversationContext: (kind: 'chat' | 'project', id: number) => request<{ contexts: Array<{ id: number; itemId: number; title: string; unavailable: boolean }> }>(

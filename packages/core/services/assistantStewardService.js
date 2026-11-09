@@ -29,7 +29,7 @@ const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
 
 const LOCK = 'assistant_steward';
-const HEARTBEAT_KEY = 'assistant_steward_pass';
+const { HEARTBEAT_KEY } = require('./assistantHomeService');
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
 const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180 };

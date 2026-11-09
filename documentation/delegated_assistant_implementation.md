@@ -8,8 +8,8 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 # Planned: delegated assistant implementation and acceptance plan
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
-canonical updates and process observations) are implemented; everything else
-in this document is still planned.** Updated 2026-11-08.
+canonical updates and process observations) and the read-only DA-2 Home are
+implemented; everything else in this document is still planned.** Updated 2026-11-09.
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -70,7 +70,7 @@ increment done because its proposal exists.
 | --- | --- | --- | --- |
 | DA-0: baseline and decisions | Done: [ADR 0016](adr/0016-delegated-responsibilities.md) (pilot numbers still to be recorded by the owner) | None | Revalidated source inventory; exact schema/API/feature choices and recorded pilot policy |
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
-| DA-2: assistant-first Home | Planned | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
+| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Still open: briefing feedback, deciding a request from Home itself, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
 | DA-3: durable research and knowledge | Planned | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
 | DA-4: project continuity | Planned | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |

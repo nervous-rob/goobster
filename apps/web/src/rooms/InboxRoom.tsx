@@ -20,7 +20,17 @@ import type { InboxItem, InboxKind } from '../lib/types';
  * The pane is the same with Discord connected, offline, or absent.
  */
 
-type View = 'open' | 'unread' | 'archived';
+/**
+ * Filters over the same items: Inbox (open), Needs you (requests still
+ * waiting on this person), Updates (informational), Unread, Snoozed and the
+ * Archive. Changing the filter never marks anything read or resolved.
+ */
+type View = 'open' | 'needs_you' | 'updates' | 'unread' | 'snoozed' | 'archived';
+const VIEWS: View[] = ['open', 'needs_you', 'updates', 'unread', 'snoozed', 'archived'];
+const VIEW_LABEL: Record<View, string> = {
+    open: 'All', needs_you: 'Needs you', updates: 'Updates', unread: 'Unread', snoozed: 'Snoozed', archived: 'Archive'
+};
+const SERVER_VIEW: Partial<Record<View, 'needs_you' | 'updates' | 'snoozed'>> = { needs_you: 'needs_you', updates: 'updates', snoozed: 'snoozed' };
 
 const KIND_MARK: Record<InboxKind, string> = {
     reminder: '⏰', task: '🗓️', watch: '🧭', notice: '🔔',
@@ -230,7 +240,10 @@ export function InboxRoom() {
     const whenLabel = useDateLabel();
     const toast = useToast();
     const queryClient = useQueryClient();
-    const [view, setView] = useState<View>('open');
+    const [view, setView] = useState<View>(hash.replace(/^#/, '') === 'needs-you' ? 'needs_you' : 'open');
+    useEffect(() => {
+        if (hash.replace(/^#/, '') === 'needs-you') setView('needs_you');
+    }, [hash]);
     const [selected, setSelected] = useState<InboxItem | null>(null);
 
     const selectedQ = useQuery({
@@ -243,7 +256,9 @@ export function InboxRoom() {
 
     const list = useInfiniteQuery({
         queryKey: keys.inbox(view),
-        queryFn: ({ pageParam }) => api.inbox({ unread: view === 'unread', archived: view === 'archived', cursor: pageParam }),
+        queryFn: ({ pageParam }) => api.inbox({
+            view: SERVER_VIEW[view] || 'all', unread: view === 'unread', archived: view === 'archived', cursor: pageParam
+        }),
         initialPageParam: null as string | null,
         getNextPageParam: (page) => page.nextCursor
     });
@@ -309,7 +324,18 @@ export function InboxRoom() {
         } catch (error) { toast((error as Error).message, true); }
     }
 
+    async function snooze(item: InboxItem, hours: number) {
+        if (!item.update) return;
+        try {
+            await api.snoozeUpdate(item.update.id, new Date(Date.now() + hours * 3600_000).toISOString());
+            toast('Snoozed. It is still open; find it under Snoozed.');
+            await invalidate();
+            await queryClient.invalidateQueries({ queryKey: keys.home });
+        } catch (error) { toast((error as Error).message, true); }
+    }
+
     const unread = list.data?.pages[0]?.unread ?? me.inbox?.unread ?? 0;
+    const needsYou = list.data?.pages[0]?.needsYou ?? 0;
     const byId = new Map(list.data?.pages.flatMap((page) => page.items).map((item) => [item.id, item]) || []);
     if (selected && !byId.has(selected.id)) byId.set(selected.id, selected);
     const items = [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id);
@@ -326,11 +352,15 @@ export function InboxRoom() {
             </header>
             <div className="pane-body">
                 <div className="segment" role="tablist" aria-label="Inbox view" style={{ marginBottom: 14 }}>
-                    {(['open', 'unread', 'archived'] as View[]).map((option) => (
+                    {VIEWS.map((option) => (
                         <button key={option} type="button" role="tab" aria-selected={view === option}
+                            data-testid={`inbox-view-${option}`}
                             className={`segment-btn${view === option ? ' active' : ''}`}
                             onClick={() => { setView(option); setSelected(null); void navigate({ to: '/activity/inbox', hash: '', replace: true }); }}>
-                            {option === 'open' ? 'Inbox' : option === 'unread' ? 'Unread' : 'Archive'}
+                            {VIEW_LABEL[option]}
+                            {option === 'needs_you' && needsYou > 0 && (
+                                <span className="badge inbox-needs-count" aria-label={`${needsYou} waiting on you`}> {needsYou}</span>
+                            )}
                         </button>
                     ))}
                 </div>
@@ -343,14 +373,20 @@ export function InboxRoom() {
                     <div className="empty-state" style={{ marginTop: '6vh' }}>
                         <div className="empty-logo">📥</div>
                         <div className="empty-title">
-                            {view === 'archived' ? 'Nothing archived' : view === 'unread' ? 'All caught up' : 'Nothing here yet'}
+                            {view === 'archived' ? 'Nothing archived' : view === 'unread' ? 'All caught up'
+                                : view === 'needs_you' ? 'Nothing is waiting on you'
+                                    : view === 'snoozed' ? 'Nothing snoozed'
+                                        : view === 'updates' ? 'No updates' : 'Nothing here yet'}
                         </div>
                         <div className="hint" style={{ maxWidth: 480, margin: '0 auto' }}>
                             {view === 'open'
                                 ? <>When {me.assistant.name} finishes something for you while you are away - a reminder comes due,
                                     a scheduled <Link to="/activity/scheduled">task</Link> runs, a watch fires, someone invites you - the result lands here
                                     {me.discord.enabled ? ', and in your Discord DMs when you have them.' : '.'}</>
-                                : 'Items you archive stay readable here.'}
+                                : view === 'needs_you' ? 'Requests that need your decision or answer appear here until they are resolved. Reading one does not resolve it.'
+                                    : view === 'snoozed' ? 'A snoozed request is still open. It returns to Needs you when the snooze ends.'
+                                        : view === 'updates' ? 'Results and notices that ask nothing of you.'
+                                            : view === 'unread' ? 'Nothing unread.' : 'Items you archive stay readable here.'}
                         </div>
                     </div>
                 )}
@@ -368,6 +404,9 @@ export function InboxRoom() {
                                             <span className="badge">{KIND_MARK[item.kind]} {KIND_LABEL[item.kind]}</span>
                                             <strong>{item.title}</strong>
                                             {!item.read && <span className="inbox-dot" aria-label="unread" />}
+                                            {item.needsAction && <span className="badge inbox-needs" data-testid="inbox-needs-you"> ◆ needs you</span>}
+                                            {item.update?.gate?.resolved && <span className="badge"> resolved</span>}
+                                            {item.update?.snoozedUntil && <span className="badge"> snoozed</span>}
                                             <div className="row-meta">
                                                 {whenLabel(item.createdAt)}
                                                 {echo ? ` · ${echo}` : ''}
@@ -407,6 +446,10 @@ export function InboxRoom() {
                                     <div className="inbox-actions">
                                         {item.link && (
                                             <Link to={item.link as never} className="btn subtle" title="Open where this came from">Open →</Link>
+                                        )}
+                                        {item.update?.gateOpen && !item.update.snoozedUntil && (
+                                            <button type="button" className="btn subtle" title="Hide from Needs you for a day. It stays open."
+                                                onClick={() => void snooze(item, 24)}>Snooze 1 day</button>
                                         )}
                                         {item.ask?.available && <button type="button" className="btn subtle inbox-ask-compact" aria-label={`Ask Goobster about ${item.title}`} disabled={asking}
                                             onClick={() => void ask(item)}>Ask Goobster</button>}
