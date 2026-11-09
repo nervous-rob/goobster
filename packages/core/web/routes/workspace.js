@@ -207,13 +207,22 @@ function mountWorkspace(app, ctx, h) {
     ));
 
     // Companion Home (facts, watching, pickup) — chat is a verb from here.
-    app.get('/api/app/home', requireAuth, dashboardRoute((req) =>
-        ctx.dashboard.getHome({
+    // `assistant` is the assistant-first overview (assistantHomeService): a
+    // read-only projection that never marks anything read or starts work.
+    app.get('/api/app/home', requireAuth, dashboardRoute(async (req) => {
+        const home = await ctx.dashboard.getHome({
             gateway: ctx.gateway,
             discordUserId: ctx.identity.discordSubjectFor(req.actor),
             userId: req.webUser.userId
-        })
-    ));
+        });
+        let assistant = null;
+        try {
+            assistant = await require('../../services/assistantHomeService').project({ userId: req.webUser.userId });
+        } catch (error) {
+            ctx.logger?.warn?.(`Assistant overview unavailable: ${error.message}`);
+        }
+        return { ...home, assistant };
+    }));
 
     // Personal constellation (you + notes) for the Knowledge map. `view`
     // is the same curation projection the Notes list uses (ADR 0008).

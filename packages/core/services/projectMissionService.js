@@ -2393,10 +2393,11 @@ class ProjectMissionService {
     /**
      * Cross-project "Needs you" queue for the Observatory board: approve,
      * answer (MC human steps), unblock, review. Optional project filter.
-     * @param {{ userId: string, project?: string|null, owner?: string|null }} params
+     * @param {{ userId: string, project?: string|null, owner?: string|null, setup?: boolean }} params
+     *   `setup: false` leaves out the recomputed setup-audit cards (gates only)
      * @returns {Promise<{ cards: object[], text: string }>}
      */
-    async listNeedsYou({ userId, project = null, owner = null } = {}) {
+    async listNeedsYou({ userId, project = null, owner = null, setup = true } = {}) {
         const obs = this._obs();
         const projects = project
             ? [await obs._requireProject(userId, project, owner)]
@@ -2484,7 +2485,7 @@ class ProjectMissionService {
         }
 
         // Setup-audit warnings as soft board cards (recomputed, capped).
-        if (!project) {
+        if (!project && setup) {
             try {
                 const audited = await obs.auditAllSetups({ userId });
                 for (const r of (audited.results || []).filter(x => !x.ok).slice(0, 15)) {
@@ -2501,7 +2502,7 @@ class ProjectMissionService {
                     });
                 }
             } catch { /* observatory may be disabled */ }
-        } else {
+        } else if (project) {
             try {
                 const one = await obs.auditSetup({ userId, project, owner });
                 if (!one.ok) {

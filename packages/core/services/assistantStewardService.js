@@ -10,7 +10,11 @@
  *  2. return RUNNING initiatives whose lease lapsed to QUEUED;
  *  3. reconcile linked sources against their durable cursors (this is what
  *     recovers a change whose event hint was missed, e.g. across a restart);
- *  4. file Inbox envelopes still owed by committed updates.
+ *  4. adopt open project gates into canonical updates and resolve adopted
+ *     ones whose gate closed (assistantGateService);
+ *  5. file Inbox envelopes still owed by committed updates.
+ * Each pass records its time in `instance_state` (`assistant_steward_pass`)
+ * so the Home projection can say when its picture was last refreshed.
  * Every six hours it also applies retention: process observations 90 days,
  * terminal initiatives and settled updates 180 days.
  *
@@ -25,6 +29,7 @@ const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
 
 const LOCK = 'assistant_steward';
+const HEARTBEAT_KEY = 'assistant_steward_pass';
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
 const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180 };
@@ -54,8 +59,11 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             expired: await responsibilities.expireDue({ now }),
             leasesReaped: await initiatives.reapExpiredLeases({ now }),
             reconcile: await initiatives.reconcile({ now }),
+            gates: await require('./assistantGateService').adoptProjectGates({}),
             envelopes: await updates.deliverPending({})
         };
+        // Home says how fresh its picture is from this, in any process.
+        await require('./instanceStateService').set(HEARTBEAT_KEY, { at: now.toISOString() });
         if (runRetention) {
             lastRetentionAt = now.getTime();
             result.retention = {
@@ -96,4 +104,4 @@ async function stop() {
     await pending;
 }
 
-module.exports = { start, stop, sweep, INTERVAL_MS, FIRST_PASS_DELAY_MS, LOCK, RETENTION_DAYS };
+module.exports = { start, stop, sweep, INTERVAL_MS, FIRST_PASS_DELAY_MS, LOCK, HEARTBEAT_KEY, RETENTION_DAYS };
