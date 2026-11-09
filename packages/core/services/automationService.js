@@ -325,11 +325,32 @@ class AutomationService {
     async _executeClaimedAutomation(automation) {
         // The run is one piece of work: a turn that fails inside it, and
         // every search or sandbox second it spends, is the automation's.
-        return workContext.run(
+        const result = await workContext.run(
             { kind: 'automation', id: automation.id, actor: automation.userId },
             () => this._runClaimedAutomation(automation),
             { replace: true }
         );
+        await this._observe(automation, result);
+        return result;
+    }
+
+    /**
+     * One typed outcome per scheduled fire for the process catalog
+     * (documentation/delegated_responsibilities.md, "Processes"). The fire
+     * time the claim consumed is the occurrence identity. Never throws.
+     */
+    async _observe(automation, result) {
+        const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
+        if (!processes || !result?.outcome) return;
+        await processes.record({
+            processKind: 'automation',
+            processId: automation.id,
+            ownerUserId: automation.userId,
+            occurrenceKey: `fire:${automation.nextRun || 'manual'}`,
+            phase: 'outcome',
+            outcome: result.outcome,
+            reasonCode: result.code || null
+        });
     }
 
     async _runClaimedAutomation(automation) {
@@ -342,11 +363,11 @@ class AutomationService {
             if (isInboxChannelId(automation.channelId)) {
                 await this.executeInboxAutomation(automation);
                 await this.markRan(automation.id);
-                return;
+                return { outcome: 'ok' };
             }
             if (!this.client) {
                 console.warn(`Automation "${automation.name}" delivers to Discord; this process has no client and leaves it to the bot.`);
-                return;
+                return { outcome: 'skipped', code: 'NO_DISCORD_CLIENT' };
             }
 
             // The Wheel is gambling's: a refused fire was claimed (so it waits
@@ -354,14 +375,14 @@ class AutomationService {
             // recorded as a run and publishes no event.
             if (automation.promptText === '__GOBLIN_WHEEL__' && !surfaceActive('command', 'economy/wheel.js')) {
                 console.info(`[Automation] Daily wheel "${automation.name}" skipped: feature not active`);
-                return;
+                return { outcome: 'skipped', code: 'FEATURE_UNAVAILABLE' };
             }
 
             // Get the channel
             const channel = await this.client.channels.fetch(automation.channelId);
             if (!channel) {
                 console.error(`Channel ${automation.channelId} not found for automation ${automation.name}`);
-                return;
+                return { outcome: 'failed', code: 'CHANNEL_NOT_FOUND' };
             }
 
             // Channel digests are handled directly (no chat pipeline, no
@@ -369,14 +390,14 @@ class AutomationService {
             if (automation.promptText === '__CHANNEL_DIGEST__') {
                 await this.executeDigest(automation, channel);
                 await this.markRan(automation.id);
-                return;
+                return { outcome: 'ok' };
             }
 
             // Monthly Server Wrapped, likewise handled directly
             if (automation.promptText === '__SERVER_WRAPPED__') {
                 await this.executeWrapped(automation, channel);
                 await this.markRan(automation.id);
-                return;
+                return { outcome: 'ok' };
             }
 
             // The Daily Ballistic Goblin Wheel Dedication (also direct - the
@@ -384,7 +405,7 @@ class AutomationService {
             if (automation.promptText === '__GOBLIN_WHEEL__') {
                 await this.executeWheel(automation, channel);
                 await this.markRan(automation.id);
-                return;
+                return { outcome: 'ok' };
             }
 
             // DM-scope automations (created from the web portal's Tasks
@@ -393,7 +414,7 @@ class AutomationService {
             if (isDmScopeId(automation.guildId)) {
                 await this.executeDmAutomation(automation, channel);
                 await this.markRan(automation.id);
-                return;
+                return { outcome: 'ok' };
             }
 
             // Resolve the owner so tools run with the same guild, member, and
@@ -447,6 +468,7 @@ class AutomationService {
             await handleChatInteraction(pseudoInteraction);
 
             await this.markRan(automation.id);
+            return { outcome: 'ok' };
 
         } catch (error) {
             console.error(`Error executing automation ${automation.name}:`, error);
@@ -455,6 +477,7 @@ class AutomationService {
             // owner hears about the first failure of a streak instead of
             // getting silence all night.
             await this._notifyRunFailure(automation, error);
+            return { outcome: 'failed', code: error?.code || 'RUN_FAILED' };
         }
     }
 
