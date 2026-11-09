@@ -59,7 +59,12 @@ const TABLES = [
     { feature: 'expeditions', table: 'expedition_briefs', column: 'userId' },
     { feature: 'expeditions', table: 'research_sources', column: 'userId' },
     { feature: 'assistant', table: 'assistant_responsibilities', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'assistant_responsibility_revisions', column: 'changedBy' }
+    { feature: 'assistant', table: 'assistant_responsibility_revisions', column: 'changedBy' },
+    { feature: 'assistant', table: 'assistant_initiatives', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_updates', column: 'audienceUserId' },
+    { feature: 'assistant', table: 'assistant_update_receipts', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_process_contracts', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
@@ -162,6 +167,43 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_responsibility_revisions (responsibilityId, revision, authorityRevision, changeKind, changedBy, snapshotJson)
              VALUES (@responsibilityId, 1, 1, 'create', @u, '{}')`,
             { responsibilityId, u }
+        );
+        await db.run(
+            `INSERT INTO assistant_source_cursors (responsibilityId, sourceKind, sourceId, sourceRevision, baselineRevision)
+             VALUES (@responsibilityId, 'attention_item', '1', 'r1', 1)`,
+            { responsibilityId }
+        );
+        await db.run(
+            `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,
+                sourceKind, sourceId, sourceRevision, dedupeKey, title)
+             VALUES (@responsibilityId, 1, @u, @u, 'attention_item', '1', 'r2', 'attention_item:1', 'Linked goal changed')`,
+            { responsibilityId, u }
+        );
+        const updateId = await db.insert(
+            `INSERT INTO assistant_updates (audienceKind, audienceKey, audienceUserId, producerUserId, identityKey, kind,
+                fingerprint, sequence, title, componentsJson, happenedAt)
+             VALUES ('user', @u, @u, @u, 'responsibility:' || @tag, 'responsibility', 'f',
+                (SELECT COALESCE(MAX(sequence), 0) + 1 FROM assistant_updates), 'Expired ' || @tag, '["responsibilities"]', @now)`,
+            { u, tag, now: utc() }
+        );
+        await db.run(
+            'INSERT INTO assistant_update_receipts (updateId, userId, acknowledgedRevision) VALUES (@updateId, @u, 1)',
+            { updateId, u }
+        );
+        const automationId = await db.insert(
+            `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule)
+             VALUES (@u, @g, @c, 'nightly ' || @tag, 'summarize', '0 3 * * *')`,
+            { u, g: GUILD, c: CHANNEL, tag }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_contracts (ownerUserId, processKind, processId, purpose)
+             VALUES (@u, 'automation', @automationId, 'nightly digest')`,
+            { u, automationId: String(automationId) }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_observations (ownerUserId, processKind, processId, occurrenceKey, phase, outcome, observedAt)
+             VALUES (@u, 'automation', @automationId, 'fire:2026-11-08 03:00:00', 'outcome', 'ok', @now)`,
+            { u, automationId: String(automationId), now: utc() }
         );
 
         await db.run(`INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)

@@ -302,6 +302,34 @@ const RESPONSIBILITY_INVOLVES = `(authorizedBy = @userId OR actingUserId = @user
  * @returns {Promise<{ responsibilities: number, revisions: number, anonymized: number }>}
  */
 async function forgetAssistantResponsibilities(userId) {
+    const owned = 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)';
+    const cursors = (await db.run(`DELETE FROM assistant_source_cursors WHERE ${owned}`, { userId })).changes;
+    const initiatives = (await db.run(
+        `DELETE FROM assistant_initiatives WHERE ownerUserId = @userId OR ${owned}`, { userId }
+    )).changes;
+    const personal = "audienceKind = 'user' AND audienceUserId = @userId";
+    const receipts = (await db.run(
+        `DELETE FROM assistant_update_receipts
+         WHERE userId = @userId OR updateId IN (SELECT id FROM assistant_updates WHERE ${personal})`,
+        { userId }
+    )).changes;
+    const updates = (await db.run(`DELETE FROM assistant_updates WHERE ${personal}`, { userId })).changes;
+    // A project's shared update stays with the project; it loses the person
+    // and any link to their (deleted) responsibility.
+    await db.run(
+        `UPDATE assistant_updates SET
+            producerUserId = CASE WHEN producerUserId = @userId THEN NULL ELSE producerUserId END,
+            responsibilityId = CASE WHEN responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)
+                THEN NULL ELSE responsibilityId END,
+            initiativeId = CASE WHEN initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)
+                THEN NULL ELSE initiativeId END
+         WHERE producerUserId = @userId
+            OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
+        { userId }
+    );
+    const processContracts = (await db.run('DELETE FROM assistant_process_contracts WHERE ownerUserId = @userId', { userId })).changes;
+    const processObservations = (await db.run('DELETE FROM assistant_process_observations WHERE ownerUserId = @userId', { userId })).changes;
+
     const revisions = (await db.run(
         `DELETE FROM assistant_responsibility_revisions
          WHERE responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
@@ -325,6 +353,16 @@ async function forgetAssistantResponsibilities(userId) {
                 ${revoke ? "status = 'REVOKED', endedAt = @now," : ''}
                 revision = revision + 1, authorityRevision = revision + 1, updatedAt = @now
              WHERE id = @id`,
+            { id: row.id, userId, now }
+        );
+        await db.run(
+            `UPDATE assistant_initiatives SET
+                actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                status = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'CANCELLED' ELSE status END,
+                stopCode = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'PRINCIPAL_ERASED' ELSE stopCode END,
+                endedAt = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN @now ELSE endedAt END,
+                leaseToken = NULL, leaseExpiresAt = NULL, revision = revision + 1, updatedAt = @now
+             WHERE responsibilityId = @id`,
             { id: row.id, userId, now }
         );
         const updated = await db.get(
@@ -364,7 +402,10 @@ async function forgetAssistantResponsibilities(userId) {
             { id: snap.id, userId, snapshot: parsed ? JSON.stringify(parsed) : '{}' }
         );
     }
-    return { responsibilities, revisions, anonymized: others.length };
+    return {
+        responsibilities, revisions, anonymized: others.length,
+        initiatives, cursors, updates, receipts, processContracts, processObservations
+    };
 }
 
 /** Transparency report counts for the person's own responsibilities. */
@@ -383,13 +424,23 @@ async function countAssistantResponsibilities(userId) {
          WHERE ownerUserId <> @userId AND ${RESPONSIBILITY_INVOLVES}`,
         { userId }
     );
+    const count = async (sql) => Number((await db.get(sql, { userId }))?.c || 0);
     return {
         total: Number(row?.total || 0),
         drafts: Number(row?.drafts || 0),
         active: Number(row?.active || 0),
         paused: Number(row?.paused || 0),
         needsReview: Number(row?.needsReview || 0),
-        onOthersGrants: Number(involved?.c || 0)
+        onOthersGrants: Number(involved?.c || 0),
+        initiatives: await count('SELECT COUNT(*) AS c FROM assistant_initiatives WHERE ownerUserId = @userId'),
+        openInitiatives: await count(
+            `SELECT COUNT(*) AS c FROM assistant_initiatives
+             WHERE ownerUserId = @userId AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW')`
+        ),
+        updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
+        updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
+        processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
+        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId')
     };
 }
 
@@ -406,7 +457,21 @@ async function auditAssistantResponsibilities(userId) {
             OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
         { userId, pattern: `%"${userId}"%` }
     )).c;
-    return { responsibilities: Number(responsibilities), revisions: Number(revisions) };
+    const count = async (sql) => Number((await db.get(sql, { userId }))?.c || 0);
+    return {
+        responsibilities: Number(responsibilities),
+        revisions: Number(revisions),
+        initiatives: await count('SELECT COUNT(*) AS c FROM assistant_initiatives WHERE ownerUserId = @userId OR actingUserId = @userId'),
+        cursors: await count(
+            'SELECT COUNT(*) AS c FROM assistant_source_cursors WHERE responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)'
+        ),
+        updates: await count(
+            "SELECT COUNT(*) AS c FROM assistant_updates WHERE (audienceKind = 'user' AND audienceUserId = @userId) OR producerUserId = @userId"
+        ),
+        receipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
+        processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
+        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId')
+    };
 }
 
 module.exports = {

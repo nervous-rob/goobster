@@ -70,6 +70,12 @@ const INVENTORY = [
     ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
     ['assistant_responsibilities', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_responsibility_revisions', 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)', '*', 'responsibilityId, revision'],
+    ['assistant_source_cursors', 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)', '*', 'id'],
+    ['assistant_initiatives', 'ownerUserId = @userId', '*', 'id'],
+    ['assistant_updates', "audienceKind = 'user' AND audienceUserId = @userId", '*', 'sequence'],
+    ['assistant_update_receipts', 'userId = @userId', '*', 'updateId'],
+    ['assistant_process_contracts', 'ownerUserId = @userId', '*', 'id'],
+    ['assistant_process_observations', 'ownerUserId = @userId', '*', 'id'],
     // The secret hash stays out of the archive. The label and prefix are
     // enough to see which clients were connected (documentation/mcp.md).
     ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt'],
