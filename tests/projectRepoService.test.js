@@ -368,6 +368,20 @@ describe('branches, comparison, pull requests and CI', () => {
             { context: 'ok', state: 'error', target_url: 'https://ci.example/1' }
         ] });
         expect(summarized.failing.map(f => f.url)).toEqual([null, 'https://ci.example/1']);
+        // Skipped and neutral checks prove nothing: they are never "passed".
+        const done = (name, conclusion) => ({ name, status: 'completed', conclusion });
+        expect(ProjectRepoService.summarizeChecks({ runs: [done('a', 'skipped'), done('b', 'neutral')] }))
+            .toMatchObject({ state: 'skipped', passed: 0, skipped: ['a', 'b'] });
+        expect(ProjectRepoService.summarizeChecks({ runs: [done('a', 'success'), done('b', 'skipped')] }))
+            .toMatchObject({ state: 'success', passed: 1, skipped: ['b'] });
+        // An unknown conclusion is held, not passed.
+        expect(ProjectRepoService.summarizeChecks({ runs: [done('a', 'success'), done('b', 'mystery')] }))
+            .toMatchObject({ state: 'pending', passed: 1, pending: ['b'] });
+        // A partial read never reads as success; a failure already seen still wins.
+        expect(ProjectRepoService.summarizeChecks({ runs: [done('a', 'success')], truncated: true }))
+            .toMatchObject({ state: 'incomplete', truncated: true });
+        expect(ProjectRepoService.summarizeChecks({ runs: [done('a', 'failure')], truncated: true }))
+            .toMatchObject({ state: 'failure' });
         expect(await service.repos.ci(args)).toMatchObject({ state: 'none', notOnGitHub: true });
     }, 60_000);
 

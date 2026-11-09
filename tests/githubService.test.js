@@ -137,4 +137,39 @@ describe('githubService', () => {
             await expect(githubService.getFileContent('o/r', 'dir')).rejects.toMatchObject({ code: 'IS_DIRECTORY' });
         });
     });
+
+    describe('getChecks', () => {
+        const run = (i, conclusion = 'success') => ({ name: `check-${i}`, status: 'completed', conclusion });
+        const route = ({ runs, statuses = [] }) => async (url) => {
+            const parsed = new URL(url);
+            const page = Number(parsed.searchParams.get('page'));
+            const size = Number(parsed.searchParams.get('per_page'));
+            const list = parsed.pathname.endsWith('/check-runs') ? runs : statuses;
+            const key = parsed.pathname.endsWith('/check-runs') ? 'check_runs' : 'statuses';
+            return jsonResponse({ total_count: list.length, [key]: list.slice((page - 1) * size, page * size) });
+        };
+
+        test('reads every page, not just the first 50', async () => {
+            const runs = Array.from({ length: 230 }, (_, i) => run(i));
+            runs[201] = run(201, 'failure');
+            global.fetch.mockImplementation(route({ runs, statuses: [{ context: 'legacy', state: 'success' }] }));
+            const checks = await githubService.getChecks('o/r', 'main');
+            expect(checks.runs).toHaveLength(230);
+            expect(checks.statuses).toHaveLength(1);
+            expect(checks.truncated).toBe(false);
+            expect(checks.runs[201].conclusion).toBe('failure');
+        });
+
+        test('says so when there are more checks than it will read', async () => {
+            global.fetch.mockImplementation(route({ runs: Array.from({ length: 1005 }, (_, i) => run(i)) }));
+            const checks = await githubService.getChecks('o/r', 'main');
+            expect(checks.runs).toHaveLength(1000);
+            expect(checks.truncated).toBe(true);
+        });
+
+        test('a ref GitHub does not know reads as no checks', async () => {
+            global.fetch.mockResolvedValue(jsonResponse({ message: 'Not Found' }, { status: 404 }));
+            expect(await githubService.getChecks('o/r', 'nope')).toEqual({ runs: [], statuses: [], truncated: false });
+        });
+    });
 });

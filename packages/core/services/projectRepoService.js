@@ -86,6 +86,8 @@ const REVIEW_FILES_MAX = 100;
 const REVIEW_COMMENTS_MAX = 100;
 const REVIEW_BODY_MAX = 4000;
 const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale']);
+/** Completed but proves nothing: never counted as passed. */
+const NO_EVIDENCE_CONCLUSIONS = new Set(['skipped', 'neutral']);
 const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 const DIRTY_PATTERN = /local changes|unstaged changes|uncommitted changes|would be overwritten|commit or stash/i;
 /** The credential helper: reads the token from the call's environment, never from argv or disk. */
@@ -1208,10 +1210,20 @@ class ProjectRepoService {
      * failed. Links are kept only when they are https: a status target_url
      * is whatever the app that posted it chose, and it becomes a link.
      */
-    static summarizeChecks({ runs = [], statuses = [] } = {}) {
+    /**
+     * One CI verdict from check runs and commit statuses. Only `success`
+     * counts as passed: a skipped or neutral check is evidence of nothing,
+     * so a ref whose completed checks were all skipped is `skipped`, never
+     * `success`. A conclusion this code does not know is held as pending.
+     * A read GitHub cut short (`truncated`) is `incomplete` unless a failure
+     * was already seen.
+     * @returns {{ state: 'success'|'failure'|'pending'|'skipped'|'incomplete'|'none', total, passed, failing, pending, skipped, truncated }}
+     */
+    static summarizeChecks({ runs = [], statuses = [], truncated = false } = {}) {
         const safeUrl = (url) => (typeof url === 'string' && /^https:\/\//i.test(url) ? url.slice(0, 500) : null);
         const failing = [];
         const pending = [];
+        const skipped = [];
         let passed = 0;
         for (const run of runs) {
             if (run.status && run.status !== 'completed') pending.push(run.name);
@@ -1220,17 +1232,23 @@ class ProjectRepoService {
                     name: run.name, conclusion: run.conclusion, url: safeUrl(run.html_url),
                     summary: String(run.output?.title || run.output?.summary || '').replace(/\s+/g, ' ').trim().slice(0, 300)
                 });
-            } else passed++;
+            } else if (run.conclusion === 'success') passed++;
+            else if (NO_EVIDENCE_CONCLUSIONS.has(run.conclusion)) skipped.push(run.name);
+            else pending.push(run.name);
         }
         for (const entry of statuses) {
-            if (entry.state === 'pending') pending.push(entry.context);
-            else if (entry.state === 'failure' || entry.state === 'error') {
+            if (entry.state === 'failure' || entry.state === 'error') {
                 failing.push({ name: entry.context, conclusion: entry.state, url: safeUrl(entry.target_url), summary: String(entry.description || '').slice(0, 300) });
-            } else passed++;
+            } else if (entry.state === 'success') passed++;
+            else pending.push(entry.context);
         }
         const total = runs.length + statuses.length;
-        const state = total === 0 ? 'none' : failing.length ? 'failure' : pending.length ? 'pending' : 'success';
-        return { state, total, passed, failing, pending };
+        const state = failing.length ? 'failure'
+            : pending.length ? 'pending'
+                : truncated ? 'incomplete'
+                    : total === 0 ? 'none'
+                        : passed === 0 ? 'skipped' : 'success';
+        return { state, total, passed, failing, pending, skipped, truncated: Boolean(truncated) };
     }
 
     /** CI for a ref (default: the current branch as GitHub knows it). A branch GitHub has never seen is `none`. */
@@ -1245,7 +1263,7 @@ class ProjectRepoService {
             const checks = await api.getChecks(repoRow.repo, target);
             return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, ...ProjectRepoService.summarizeChecks(checks) };
         } catch (error) {
-            if (error?.code === 'NOT_FOUND') return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], notOnGitHub: true };
+            if (error?.code === 'NOT_FOUND') return { project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, ref: target, state: 'none', total: 0, passed: 0, failing: [], pending: [], skipped: [], truncated: false, notOnGitHub: true };
             throw this._apiError(error, repoRow.repo);
         }
     }

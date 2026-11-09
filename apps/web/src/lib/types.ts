@@ -985,8 +985,9 @@ export type ToolCard =
         files: { path: string; additions: number; deletions: number; binary: boolean }[];
         commits: { short: string; author: string; message: string }[]; patch: string; truncated: boolean }
     | { kind: 'repo-ci'; project: string; owner: string | null; name: string; repo: string; ref: string;
-        state: 'success' | 'failure' | 'pending' | 'none'; total: number; passed: number; notOnGitHub: boolean;
-        failing: { name: string; conclusion: string; url: string | null; summary: string }[]; pending: string[] }
+        state: 'success' | 'failure' | 'pending' | 'skipped' | 'incomplete' | 'none'; total: number; passed: number; notOnGitHub: boolean;
+        failing: { name: string; conclusion: string; url: string | null; summary: string }[]; pending: string[];
+        skipped?: string[]; truncated?: boolean }
     | { kind: 'repo-integration'; project: string; owner: string | null; name: string; repo: string; operation: string;
         base: string; branch: string; result: string; conflicts: string[]; from: string | null; to: string | null }
     | { kind: 'repo-pr'; project: string; owner: string | null; name: string; repo: string; number: number; url: string;

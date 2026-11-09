@@ -12,7 +12,7 @@
  * app origin.
  */
 
-import { attachAppletBridge, withBridgeScript, appletTitleFromSource } from './appletBridge.js';
+import { attachAppletBridge, withBridgeScript, appletTitleFromSource, appletReachesData } from './appletBridge.js';
 import { renderAttachments } from './attachments.js';
 
 // Attachment rendering (images with captions, CSV tables, text previews,
@@ -67,10 +67,14 @@ function buildApplet(pre, notify, {
     const frame = document.createElement('iframe');
     frame.className = 'applet-frame';
     // No allow-same-origin: the app runs on an opaque origin and can never
-    // reach the session cookie, the API, or this page's DOM.
-    frame.setAttribute('sandbox', 'allow-scripts allow-modals allow-popups');
+    // reach the session cookie, the API, or this page's DOM. An app that can
+    // read project data is also sealed: a CSP with no network egress and no
+    // popups, so what it reads stays in the frame (appletBridge.js).
+    const sealed = appletReachesData(source, ownProject);
+    frame.setAttribute('sandbox', sealed ? 'allow-scripts allow-modals' : 'allow-scripts allow-modals allow-popups');
     frame.title = 'Goobster mini-app';
-    const framedSource = withBridgeScript(source);
+    if (sealed) frame.dataset.sealed = 'true';
+    const framedSource = withBridgeScript(source, { sealed });
     const bridge = attachAppletBridge(frame, {
         source,
         ownProject,

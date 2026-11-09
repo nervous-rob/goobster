@@ -48,5 +48,11 @@ the person's request, names, content, links or data in it. Because no row
 belongs to anyone, it is not on the erasure path; `/forget-me` has nothing
 to remove.
 
+An incognito chat records nothing, gaps included: `noteCapabilityGap` is
+on the incognito tool block list (`utils/toolPrivacy.js`) with
+`rememberFact`, `saveArtifact`, `findImages` and `fetchWebFile`, so it is
+not offered in an incognito turn and a stale call is refused before it
+writes.
+
 Service: `packages/core/services/capabilityGapService.js`. Tests:
 `tests/capabilityGaps.test.js` (both engines).

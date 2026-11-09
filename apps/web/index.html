@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!-- Mini-apps run in srcdoc iframes. This stops one navigating its own frame to another
+       host (the one way out a frame-internal CSP cannot close); see appletBridge.js. -->
+  <meta http-equiv="Content-Security-Policy" content="frame-src 'self' blob: data:">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="description" content="Goobster's house — chat, memory, parlor, and the tools he built you. Same brain as Discord.">
   <meta name="theme-color" content="#0f1117">

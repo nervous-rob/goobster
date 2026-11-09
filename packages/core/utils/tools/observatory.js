@@ -79,9 +79,12 @@ function describeRepo(entry) {
 /** Detail block for one clone's status. */
 function describeCi(ci) {
     if (!ci || ci.state === 'none') return 'no CI';
-    return ci.state === 'success' ? `CI passing (${ci.passed})`
+    const skipped = ci.skipped?.length ? `, ${ci.skipped.length} skipped` : '';
+    return ci.state === 'success' ? `CI passing (${ci.passed}${skipped})`
         : ci.state === 'pending' ? `CI running (${ci.pending.length} pending)`
-            : `CI FAILING (${ci.failing.length} of ${ci.total})`;
+            : ci.state === 'skipped' ? `CI skipped (all ${ci.total} checks skipped or neutral: no evidence it passes)`
+                : ci.state === 'incomplete' ? `CI incomplete (more checks than could be read; ${ci.passed} passed so far)`
+                    : `CI FAILING (${ci.failing.length} of ${ci.total})`;
 }
 
 function describeCompare(cmp) {
@@ -118,7 +121,8 @@ const repoCards = {
         return {
             kind: 'repo-ci', project: ci.project, owner: owner || null, name: ci.name, repo: ci.repo, ref: ci.ref,
             state: ci.state, total: ci.total, passed: ci.passed, notOnGitHub: Boolean(ci.notOnGitHub),
-            failing: ci.failing.slice(0, 10), pending: ci.pending.slice(0, 10)
+            failing: ci.failing.slice(0, 10), pending: ci.pending.slice(0, 10),
+            skipped: (ci.skipped || []).slice(0, 10), truncated: Boolean(ci.truncated)
         };
     },
     integration(done, owner) {

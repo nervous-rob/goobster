@@ -6,6 +6,10 @@ const HTTP_TIMEOUT_MS = 15_000;
 // can never blow up a prompt (or a Pi's memory).
 const MAX_FILE_BYTES = 100_000;
 
+/** Check runs / statuses are read 100 at a time, at most 10 pages (1,000) each. */
+const CHECK_PAGE_SIZE = 100;
+const MAX_CHECK_PAGES = 10;
+
 /** User-presentable GitHub errors (machine-readable code + friendly message). */
 class GitHubError extends Error {
     constructor(code, message, options) {
@@ -201,21 +205,40 @@ class GitHubService {
         });
     }
 
-    /** Check runs and the legacy combined status for one ref (branch, tag or sha). */
+    /**
+     * Check runs and the legacy combined status for one ref (branch, tag or
+     * sha), every page of each up to MAX_CHECK_PAGES x 100. `truncated` is
+     * true when GitHub reports more than that, so a caller never mistakes a
+     * partial read for the whole verdict.
+     */
     async getChecks(rawRepo, ref) {
         const repo = this.parseRepo(rawRepo);
         const encoded = encodeURIComponent(String(ref));
-        const [runs, status] = await Promise.all([
-            this._request(`/repos/${repo}/commits/${encoded}/check-runs`, { params: { per_page: 50 } }).catch(error => {
-                if (error.code === 'NOT_FOUND') return { check_runs: [] };
-                throw error;
-            }),
-            this._request(`/repos/${repo}/commits/${encoded}/status`).catch(error => {
-                if (error.code === 'NOT_FOUND') return { statuses: [] };
-                throw error;
-            })
+        const [runs, statuses] = await Promise.all([
+            this._allPages(`/repos/${repo}/commits/${encoded}/check-runs`, 'check_runs'),
+            this._allPages(`/repos/${repo}/commits/${encoded}/status`, 'statuses')
         ]);
-        return { runs: runs?.check_runs || [], statuses: status?.statuses || [] };
+        return { runs: runs.items, statuses: statuses.items, truncated: runs.truncated || statuses.truncated };
+    }
+
+    /** Page through a list endpoint that reports `total_count`; 404 reads as empty. */
+    async _allPages(apiPath, key) {
+        const items = [];
+        let total = 0;
+        for (let page = 1; page <= MAX_CHECK_PAGES; page++) {
+            let body;
+            try {
+                body = await this._request(apiPath, { params: { per_page: CHECK_PAGE_SIZE, page } });
+            } catch (error) {
+                if (error.code === 'NOT_FOUND') return { items, truncated: false };
+                throw error;
+            }
+            const batch = Array.isArray(body?.[key]) ? body[key] : [];
+            items.push(...batch);
+            total = Math.max(total, Number(body?.total_count) || 0);
+            if (batch.length < CHECK_PAGE_SIZE || items.length >= total) return { items, truncated: false };
+        }
+        return { items, truncated: items.length < total };
     }
 
     /** Issues (GitHub's endpoint also returns PRs; callers may filter on pull_request). */
