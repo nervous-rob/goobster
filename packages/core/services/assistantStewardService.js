@@ -3,8 +3,8 @@
  * runtime/coreRuntime.js as the `assistantSteward` step when the
  * `assistant` feature is active.
  *
- * Every few minutes, under one singleton lock so the bot and the api
- * service never both run it:
+ * A minute after start and then every five minutes, under one singleton
+ * lock so the bot and the api service never both run it:
  *  1. persist expiry of overdue responsibilities (their open initiatives
  *     are cancelled in the same transaction);
  *  2. return RUNNING initiatives whose lease lapsed to QUEUED;
@@ -28,8 +28,12 @@ const LOCK = 'assistant_steward';
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
 const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180 };
+// The first pass waits so it does not compete for pooled connections with
+// the other startup sweeps that each hold one for a singleton lock.
+const FIRST_PASS_DELAY_MS = 60 * 1000;
 
 let timer = null;
+let firstPass = null;
 let pending = null;
 let lastRetentionAt = 0;
 
@@ -79,14 +83,17 @@ function start() {
     require('./assistantInitiativeService').listen();
     timer = setInterval(tick, INTERVAL_MS);
     timer.unref?.();
-    void tick();
+    firstPass = setTimeout(() => { firstPass = null; void tick(); }, FIRST_PASS_DELAY_MS);
+    firstPass.unref?.();
 }
 
 async function stop() {
     if (timer) clearInterval(timer);
+    if (firstPass) clearTimeout(firstPass);
     timer = null;
+    firstPass = null;
     try { require('./assistantInitiativeService').stopListening(); } catch { /* never started */ }
     await pending;
 }
 
-module.exports = { start, stop, sweep, INTERVAL_MS, LOCK, RETENTION_DAYS };
+module.exports = { start, stop, sweep, INTERVAL_MS, FIRST_PASS_DELAY_MS, LOCK, RETENTION_DAYS };

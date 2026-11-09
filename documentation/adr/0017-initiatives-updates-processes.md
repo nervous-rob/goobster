@@ -53,9 +53,11 @@ work runs under a grant:
      candidate. A newer revision supersedes an open older attempt at the
      same opportunity.
    - `attention.*` and `mission.*` events only schedule an early reconcile
-     for the owner they name. A periodic steward pass, every 5 minutes
-     under `withSingletonLock('assistant_steward')`, recovers anything a
-     missed event would have delivered.
+     for the owner they name. A periodic steward pass recovers anything a
+     missed event would have delivered. It runs a minute after start and
+     then every 5 minutes, under `withSingletonLock('assistant_steward')`.
+     The first pass waits so it does not compete with the other startup
+     sweeps, each of which holds a pooled connection for its lock.
    - Derivation happens only for an ACTIVE, unexpired grant whose owner has
      Attention enabled.
 
