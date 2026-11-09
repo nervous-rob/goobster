@@ -218,8 +218,10 @@ watches both use it, so their behaviour cannot drift apart.
 
 ### The portal side
 
-- `GET /api/app/inbox` accepts `unread=1`, `archived=1`, `limit`, and `cursor`
-  query parameters. It returns `{ items, unread, nextCursor }`; pass a
+- `GET /api/app/inbox` accepts `view=all|needs_you|updates|snoozed`
+  ([assistant_home.md](assistant_home.md)), `unread=1`, `archived=1`, `limit`,
+  and `cursor` query parameters. It returns
+  `{ view, items, unread, needsYou, nextCursor }`; pass a
   non-null `nextCursor` as `cursor` to load the next page. Ordering is
   newest first, and the cursor is checked against the signed-in person's
   own items. Other routes: `GET /api/app/inbox/:id`,

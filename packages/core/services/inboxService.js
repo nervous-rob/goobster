@@ -29,6 +29,41 @@ const MAX_BODY = 16_000;
 const MAX_LIST = 100;
 /** sourceType of a canonical assistant update's envelope (services/assistantUpdateService.js). */
 const ASSISTANT_UPDATE_SOURCE = 'assistant_update';
+
+const VIEWS = ['all', 'needs_you', 'updates', 'snoozed'];
+
+function utcNow() {
+    return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/*
+ * Needs you is a filter over Inbox items, decided by the domain record each
+ * item references (never by read state or wording):
+ *  - an assistant update whose gate is open (and, for the default view, not
+ *    snoozed by this person);
+ *  - the host's copy of a pending access request;
+ *  - the addressee's copy of a pending friend request.
+ * Table and column names are literals; `i` is inbox_items, `@now` UTC text.
+ */
+const OPEN_UPDATE_GATE = (snoozed) => `(i.sourceType = 'assistant_update' AND EXISTS (
+    SELECT 1 FROM assistant_updates u
+    WHERE u.inboxItemId = i.id AND u.audienceKind = 'user' AND u.audienceUserId = i.userId
+      AND u.gateJson IS NOT NULL AND u.gateResolvedAt IS NULL
+      AND ${snoozed ? '' : 'NOT '}EXISTS (
+        SELECT 1 FROM assistant_update_receipts r
+        WHERE r.updateId = u.id AND r.userId = i.userId AND r.snoozedUntil IS NOT NULL AND r.snoozedUntil > @now)))`;
+const OPEN_ACCESS_GATE = `(i.sourceType = 'access_request' AND EXISTS (
+    SELECT 1 FROM access_requests a
+    WHERE CAST(a.id AS TEXT) = i.sourceId AND a.status = 'pending' AND a.principalId <> i.userId))`;
+const OPEN_FRIEND_GATE = `(i.sourceType = 'friend_request' AND EXISTS (
+    SELECT 1 FROM friendships f
+    WHERE CAST(f.id AS TEXT) = i.sourceId AND f.status = 'pending' AND f.addresseeId = i.userId))`;
+const NEEDS_YOU_SQL = `(${OPEN_UPDATE_GATE(false)} OR ${OPEN_ACCESS_GATE} OR ${OPEN_FRIEND_GATE})`;
+const SNOOZED_SQL = OPEN_UPDATE_GATE(true);
+/** Informational: not a request at all, open or resolved. */
+const INFORMATIONAL_SQL = `(i.sourceType IS NULL OR (i.sourceType NOT IN ('access_request', 'friend_request')
+    AND NOT (i.sourceType = 'assistant_update' AND EXISTS (
+        SELECT 1 FROM assistant_updates u WHERE u.inboxItemId = i.id AND u.gateJson IS NOT NULL))))`;
 // Discord's message cap; the inbox keeps the full body, the DM gets a head.
 const DM_BODY_LIMIT = 1800;
 
@@ -365,7 +400,51 @@ class InboxService {
         };
     }
 
-    async _publicItem(row, noticeById = null, failureById = null, accessById = null, friendById = null) {
+    /**
+     * The canonical assistant updates behind the items in a page, keyed by
+     * inbox item id, with this person's receipt (delegated_responsibilities.md,
+     * "Updates"). The update row owns the gate; the item is its envelope.
+     */
+    async _updatesByItemForRows(rows, userId) {
+        const ids = rows.filter(row => row.sourceType === ASSISTANT_UPDATE_SOURCE).map(row => Number(row.id));
+        const map = new Map();
+        if (!ids.length) return map;
+        const params = { userId: String(userId) };
+        const marks = ids.map((id, index) => { params[`i${index}`] = id; return `@i${index}`; });
+        const found = await db.all(
+            `SELECT u.id, u.inboxItemId, u.materialRevision, u.componentsJson, u.gateJson, u.gateResolvedAt,
+                    u.actionsJson, u.responsibilityId, u.initiativeId,
+                    r.acknowledgedRevision, r.snoozedUntil
+             FROM assistant_updates u
+             LEFT JOIN assistant_update_receipts r ON r.updateId = u.id AND r.userId = @userId
+             WHERE u.audienceKind = 'user' AND u.audienceUserId = @userId AND u.inboxItemId IN (${marks.join(', ')})`,
+            params
+        );
+        for (const row of found) map.set(Number(row.inboxItemId), row);
+        return map;
+    }
+
+    _presentUpdate(row, updateByItem, nowText) {
+        const update = updateByItem?.get(Number(row.id));
+        if (!update) return null;
+        const parse = (raw, fallback) => { try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } };
+        const gate = parse(update.gateJson, null);
+        const snoozed = Boolean(update.snoozedUntil && update.snoozedUntil > nowText);
+        return {
+            id: Number(update.id),
+            revision: Number(update.materialRevision),
+            componentIds: parse(update.componentsJson, []),
+            actions: parse(update.actionsJson, []),
+            responsibilityId: update.responsibilityId == null ? null : Number(update.responsibilityId),
+            initiativeId: update.initiativeId == null ? null : Number(update.initiativeId),
+            unseen: Number(update.acknowledgedRevision || 0) < Number(update.materialRevision),
+            gate: gate ? { ...gate, resolved: Boolean(update.gateResolvedAt) } : null,
+            gateOpen: Boolean(gate && !update.gateResolvedAt),
+            snoozedUntil: snoozed ? update.snoozedUntil : null
+        };
+    }
+
+    async _publicItem(row, noticeById = null, failureById = null, accessById = null, friendById = null, updateByItem = null) {
         let attention = null;
         if (row.sourceType === activityCorrelation.SOURCE_TYPE) {
             const map = noticeById || await activityCorrelation.noticesByIdForRows([row]);
@@ -374,6 +453,7 @@ class InboxService {
         const failure = this._presentFailure(row, failureById || await this._failuresByIdForRows([row]));
         const access = this._presentAccess(row, accessById || await this._accessByIdForRows([row]));
         const friend = this._presentFriend(row, friendById || await this._friendByIdForRows([row]));
+        const update = this._presentUpdate(row, updateByItem || await this._updatesByItemForRows([row], row.userId), utcNow());
         return {
             id: row.id,
             kind: row.kind,
@@ -395,6 +475,13 @@ class InboxService {
             // friends_and_messages.md): the addressee's copy is actionable
             // while pending.
             friend,
+            // The canonical assistant update this item is the envelope of
+            // (its gate, components and this person's receipt), or null.
+            update,
+            // Needs you: a typed, still-open request for THIS person. Derived
+            // from the domain record, never from read state. A snoozed gate
+            // is still open; it only leaves the default Needs-you view.
+            needsAction: Boolean((update?.gateOpen && !update.snoozedUntil) || access?.actionable || friend?.actionable),
             ask: await require('./conversationContextService').describeItem(row),
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),
@@ -407,14 +494,30 @@ class InboxService {
     // --- Reading ------------------------------------------------------------
 
     /**
-     * @param {Object} params - { userId, unread?, archived?, limit?, cursor? }
-     * @returns {Promise<{ items: Object[], unread: number, nextCursor: string|null }>}
+     * `view` selects one of the Inbox's filters over the same items:
+     *  - `all` (default): open items, or the archive with `archived`;
+     *  - `needs_you`: items whose typed gate is still open for this person
+     *    and not snoozed. Archived items stay here while their gate is open,
+     *    so archiving can never hide an unresolved request;
+     *  - `snoozed`: open gates this person snoozed;
+     *  - `updates`: informational items (no gate, open or resolved).
+     * A read: it never marks anything read, delivered or resolved.
+     * @param {Object} params - { userId, view?, unread?, archived?, limit?, cursor? }
+     * @returns {Promise<{ items: Object[], unread: number, needsYou: number, view: string, nextCursor: string|null }>}
      */
-    async list({ userId, unread = false, archived = false, limit = 50, cursor = null }) {
+    async list({ userId, view = 'all', unread = false, archived = false, limit = 50, cursor = null }) {
+        if (!VIEWS.includes(view)) throw new InboxError(400, 'BAD_VIEW', `view must be one of ${VIEWS.join(', ')}.`);
         const bounded = Math.max(1, Math.min(Math.trunc(Number(limit)) || 50, MAX_LIST));
-        const where = ['userId = @userId', archived ? 'archivedAt IS NOT NULL' : 'archivedAt IS NULL'];
         const params = { userId: String(userId) };
-        if (unread) where.push('readAt IS NULL');
+        const where = ['i.userId = @userId'];
+        if (view === 'needs_you' || view === 'snoozed') {
+            params.now = utcNow();
+            where.push(view === 'needs_you' ? NEEDS_YOU_SQL : SNOOZED_SQL);
+        } else {
+            where.push(archived ? 'i.archivedAt IS NOT NULL' : 'i.archivedAt IS NULL');
+            if (view === 'updates') where.push(INFORMATIONAL_SQL);
+        }
+        if (unread) where.push('i.readAt IS NULL');
         if (cursor != null && cursor !== '') {
             const id = Number(cursor);
             if (!/^\d+$/.test(String(cursor)) || !Number.isSafeInteger(id) || id < 1) {
@@ -429,11 +532,11 @@ class InboxService {
             if (!boundary) throw new InboxError(400, 'BAD_CURSOR', 'Invalid inbox page cursor.');
             params.beforeTime = boundary.createdAt;
             params.beforeId = boundary.id;
-            where.push('(createdAt < @beforeTime OR (createdAt = @beforeTime AND id < @beforeId))');
+            where.push('(i.createdAt < @beforeTime OR (i.createdAt = @beforeTime AND i.id < @beforeId))');
         }
         const rows = await db.all(
-            `SELECT * FROM inbox_items WHERE ${where.join(' AND ')}
-             ORDER BY createdAt DESC, id DESC LIMIT ${bounded + 1}`,
+            `SELECT i.* FROM inbox_items i WHERE ${where.join(' AND ')}
+             ORDER BY i.createdAt DESC, i.id DESC LIMIT ${bounded + 1}`,
             params
         );
         const page = rows.slice(0, bounded);
@@ -441,11 +544,24 @@ class InboxService {
         const failureById = await this._failuresByIdForRows(page);
         const accessById = await this._accessByIdForRows(page);
         const friendById = await this._friendByIdForRows(page);
+        const updateByItem = await this._updatesByItemForRows(page, userId);
         return {
-            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById, accessById, friendById))),
+            view,
+            items: await Promise.all(page.map(row => this._publicItem(row, noticeById, failureById, accessById, friendById, updateByItem))),
             unread: await this.unreadCount(userId),
+            // A separate, differently-labelled count: never added to `unread`.
+            needsYou: await this.needsYouCount(userId),
             nextCursor: rows.length > bounded ? String(page[page.length - 1].id) : null
         };
+    }
+
+    /** Open, unsnoozed requests for this person (the Needs-you view's size). */
+    async needsYouCount(userId) {
+        const row = await db.get(
+            `SELECT COUNT(*) AS c FROM inbox_items i WHERE i.userId = @userId AND ${NEEDS_YOU_SQL}`,
+            { userId: String(userId), now: utcNow() }
+        );
+        return Number(row?.c || 0);
     }
 
     async unreadCount(userId) {

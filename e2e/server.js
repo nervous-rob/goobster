@@ -714,6 +714,51 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // The assistant-first Home journey (assistantHome.spec.js): a dedicated
+    // person with Attention on, one informational finding, one open request
+    // and a fresh steward pass. `reset` clears that person's assistant rows
+    // so each test starts from "nothing delegated". No model, no network.
+    app.post('/e2e/fixtures/assistant-home', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const updates = require('@goobster/core/services/assistantUpdateService');
+            const steward = require('@goobster/core/services/assistantStewardService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Delegator' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            if (req.body?.attention !== false) await policies.enroll({ userId, initiative: 'assist' });
+            await require('@goobster/core/services/instanceStateService').set(steward.HEARTBEAT_KEY, { at: new Date().toISOString() });
+            const out = {};
+            if (req.body?.seed !== false) {
+                out.finding = (await updates.publish({
+                    audience: { userId }, identityKey: 'e2e:finding', kind: 'finding', title: 'The library now supports your platform',
+                    summary: 'Two generated notes were updated.', components: ['research', 'knowledge'], deliver: true
+                })).update.id;
+                out.gate = (await updates.publish({
+                    audience: { userId }, identityKey: 'e2e:gate', kind: 'question', title: 'Nightly import: review the proposed repair',
+                    summary: 'The repair would change its source address.', components: ['processes'],
+                    gate: { kind: 'process_repair', id: 'automation:5' }, deliver: true
+                })).update.id;
+            }
+            res.json({ ok: true, ...out });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The domain resolving a request (what a repair approval would do).
+    app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
+        try {
+            const updates = require('@goobster/core/services/assistantUpdateService');
+            res.json({ resolved: await updates.resolveGate({ audience: { userId: String(req.body?.userId) }, identityKey: 'e2e:gate' }) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
     // Bypasses the event API so empty-step catalog tours can still show
     // paused/completed rows. Never calls a provider.

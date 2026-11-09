@@ -11,6 +11,8 @@ import { useTutorials } from '../tutorials/TutorialProvider';
 import { useToast } from '../hooks/useToast';
 import { PRIMARY_ROOMS, isRoomAvailable, featureActive } from '../lib/rooms';
 import { BerryMark } from '../components/BerryMark';
+import { AssistantOverview } from './home/AssistantOverview';
+import type { AssistantHome } from '../lib/types';
 
 type HomePayload = {
     you?: { factCount?: number; memoryCount?: number; nickname?: string; facts?: string[] };
@@ -20,6 +22,8 @@ type HomePayload = {
     observatory?: { enabled?: boolean; projectCount?: number; runningJobs?: number; latest?: { name: string; updatedAt?: string } };
     servers?: Array<{ name: string }>;
     inbox?: { unread: number; recent: Array<{ id: number; kind: string; title: string; read: boolean; createdAt: string }> };
+    /** The assistant-first overview: a read-only projection (assistantHomeService). */
+    assistant?: AssistantHome | null;
 };
 
 function When({ iso }: { iso?: string }) {
@@ -119,6 +123,7 @@ export function HomeRoom() {
                                 else navigate({ to: '/chat' });
                             }}>Pick up the last chat</button>
                         </div>
+                        <AssistantOverview assistant={home.assistant} />
                         {showFirstTask && (
                             <section className="home-card home-card-static home-card-task" aria-labelledby="home-first-task-title">
                                 <div className="home-card-kicker" id="home-first-task-title">Your first research task</div>
@@ -143,10 +148,7 @@ export function HomeRoom() {
                                             <span><strong>{you.memoryCount || 0}</strong> memories</span>
                                             {you.nickname && <span>calls you <strong>{you.nickname}</strong></span>}
                                         </div>
-                                        <ul className="home-facts">
-                                            {(you.facts || []).slice(0, 5).map((f) => <li key={f}>{f}</li>)}
-                                            {!(you.facts || []).length && <li className="hint">Nothing distilled yet — talk in Chat. Saved notes live in Knowledge, separately.</li>}
-                                        </ul>
+                                        <p className="hint">What {me.assistant.name} has distilled about you is listed in Settings, where you can inspect and delete it.</p>
                                     </>
                                 )}
                             />
@@ -168,7 +170,7 @@ export function HomeRoom() {
                                 )}
                             />
                             <Card title="Scheduled" action="Open Activity → Scheduled →"
-                                extraClass={`home-card-watch${followups.length || automations.some((a) => a.enabled) ? ' is-live' : ''}`}
+                                extraClass="home-card-watch"
                                 onClick={() => navigate({ to: '/activity/scheduled' })}
                                 body={(
                                     (followups.length || automations.length)

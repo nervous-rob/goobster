@@ -536,7 +536,12 @@ class AssistantInitiativeService {
             const owners = [...this._hinted];
             this._hinted.clear();
             (async () => {
-                for (const owner of owners) await this.reconcile({ userId: owner });
+                for (const owner of owners) {
+                    await this.reconcile({ userId: owner });
+                    // The same hint moves a project gate (approve, answer,
+                    // review) into or out of Needs you without waiting a pass.
+                    await require('./assistantGateService').adoptProjectGates({ userId: owner });
+                }
             })().catch(() => {});
         }, 2000);
         this._hintTimer.unref?.();

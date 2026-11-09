@@ -33,6 +33,7 @@ import { TasksRoom } from './rooms/TasksRoom';
 import { NoticedRoom } from './rooms/NoticedRoom';
 import { InboxRoom } from './rooms/InboxRoom';
 import { UsageRoom } from './rooms/UsageRoom';
+import { AssistantRoom } from './rooms/AssistantRoom';
 import { DecksRoom } from './rooms/DecksRoom';
 import { ParlorRoom } from './rooms/ParlorRoom';
 import { ActivityRoom } from './rooms/ActivityRoom';
@@ -390,6 +391,13 @@ const usageRoute = createRoute({
     component: UsageRoom,
 });
 
+// Responsibilities: what the person has delegated (delegated_responsibilities.md).
+const assistantRoute = createRoute({
+    getParentRoute: () => appRoute,
+    path: '/assistant',
+    component: AssistantRoom,
+});
+
 const decksRoute = createRoute({
     getParentRoute: () => appRoute,
     path: '/decks',
@@ -550,6 +558,7 @@ const routeTree = rootRoute.addChildren([
         exchangeRoute,
         decksRoute,
         usageRoute,
+        assistantRoute,
         hostRoute,
         hostPageRoute,
         settingsRoute,

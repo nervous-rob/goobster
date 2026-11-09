@@ -78,7 +78,7 @@ test.describe('sidebar', () => {
         for (const name of PRIMARY) {
             await expect(nav.getByRole('link', { name: new RegExp(`^${name}\\b`) })).toBeVisible();
         }
-        await expect(page.getByRole('link', { name: /Goobster/ })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Goobster', exact: true })).toBeVisible();
         await expect(nav.getByRole('link', { name: /Usage & limits/ })).toBeVisible();
         await expect(nav.getByRole('link', { name: /Host/ })).toHaveCount(0);
         await expect(page.getByRole('link', { name: /Settings/ })).toBeVisible();

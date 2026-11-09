@@ -20,6 +20,8 @@ function mountInbox(app, ctx, h) {
     // so the sidebar badge and the pane agree.
     app.get('/api/app/inbox', requireAuth, inboxRoute(async (req) => ctx.inbox.list({
         userId: req.webUser.userId,
+        // all | needs_you | updates | snoozed: filters over the same items.
+        view: req.query.view ? String(req.query.view) : 'all',
         unread: flag(req.query.unread),
         archived: flag(req.query.archived),
         limit: req.query.limit,
@@ -27,7 +29,9 @@ function mountInbox(app, ctx, h) {
     })));
 
     app.get('/api/app/inbox/unread', requireAuth, inboxRoute(async (req) => ({
-        unread: await ctx.inbox.unreadCount(req.webUser.userId)
+        unread: await ctx.inbox.unreadCount(req.webUser.userId),
+        // Labelled separately in the portal; never summed with `unread`.
+        needsYou: await ctx.inbox.needsYouCount(req.webUser.userId)
     })));
 
     app.post('/api/app/inbox/read-all', requireAuth, inboxRoute(async (req) =>
