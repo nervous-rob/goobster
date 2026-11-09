@@ -392,6 +392,15 @@ export type Responsibility = {
     projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
     budgets: Record<string, number>; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
 };
+export type AssistantRun = {
+    id: number; status: string; stopCode: string | null; outcome: string | null; rounds: number; tokensUsed: number;
+    searches: number; resultTitle: string | null; resultSummary: string | null; startedAt: string; endedAt: string | null;
+};
+export type AssistantInitiative = {
+    id: number; responsibilityId: number; title: string; reason: string | null; status: string; waitReason: string | null;
+    outcome: string | null; stopCode: string | null; revision: number; attempt: number; recheckAfter: string | null;
+    createdAt: string; updatedAt: string; run: AssistantRun | null;
+};
 export type ResponsibilityVocabulary = {
     statuses: string[]; actions: string[];
     operations: Array<{ id: string; resourceKinds: string[]; action: string }>;

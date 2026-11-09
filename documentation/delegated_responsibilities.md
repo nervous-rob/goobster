@@ -326,6 +326,7 @@ The assistant's periodic pass applies these windows:
 | Process observations | 90 days, and removed at once when their process is deleted |
 | Process contracts | Until removed, or their process is deleted |
 | Finished initiatives (`COMPLETED`, `FAILED`, `CANCELLED`, `SUPERSEDED`) | 180 days after their last change |
+| Runs and their operation journals ([delegated_runs.md](delegated_runs.md)) | 180 days after the run finished, and with their initiative |
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
 | Source cursors | As long as their responsibility |
 

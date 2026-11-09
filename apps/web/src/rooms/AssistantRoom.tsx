@@ -9,7 +9,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
-import type { Responsibility, ResponsibilityOperation } from '../lib/types';
+import type { AssistantInitiative, Responsibility, ResponsibilityOperation } from '../lib/types';
 
 /**
  * Responsibilities (documentation/delegated_responsibilities.md): the
@@ -94,6 +94,71 @@ function describeGrants(operations: ResponsibilityOperation[], projects: Map<str
         byResource.set(where, [...(byResource.get(where) || []), OPERATION_TEXT[entry.operation] || entry.operation]);
     }
     return [...byResource.entries()].map(([where, verbs]) => `${verbs.join(', ')}: ${where}`);
+}
+
+const WORK_STATUS: Record<string, string> = {
+    CANDIDATE: 'proposed', QUEUED: 'queued', RUNNING: 'working', WAITING: 'waiting', REVIEW: 'needs review',
+    COMPLETED: 'done', FAILED: 'failed', CANCELLED: 'cancelled', SUPERSEDED: 'superseded'
+};
+
+/** Plain words for the machine codes a run can stop with. */
+const STOP_TEXT: Record<string, string> = {
+    TOKEN_BUDGET: 'Today\'s token budget for this responsibility is used up. It continues when the day resets.',
+    ACCOUNT_BUDGET: 'Your account\'s token limit is used up. It continues when the limit resets.',
+    NO_PROVIDER: 'No AI provider is available right now. It will try again.',
+    PROVIDER_ERROR: 'The AI provider failed. You can try again.',
+    NO_RESULT: 'It finished without a result. You can try again.',
+    OPERATION_UNCERTAIN: 'A step may or may not have happened. Check before trying again.',
+    REPLAN_REQUIRED: 'The responsibility changed since this was proposed.',
+    LEASE_EXPIRED: 'It was interrupted and will pick up where it left off.'
+};
+
+/** What a queued run may use, stated before the person starts it. */
+function Work({ items, busy, onAct }: { items: AssistantInitiative[]; busy: boolean; onAct: (item: AssistantInitiative, action: string) => void }) {
+    if (!items.length) return null;
+    return (
+        <ul className="assistant-work" data-testid="responsibility-work">
+            {items.map((item) => {
+                const run = item.run;
+                const note = item.status === 'WAITING' || item.status === 'FAILED' || item.status === 'REVIEW'
+                    ? (STOP_TEXT[item.stopCode || ''] || (item.waitReason === 'responsibility' ? 'Waiting for the responsibility to be active again.' : null))
+                    : null;
+                return (
+                    <li key={item.id} className="assistant-work-item" data-testid="initiative-row">
+                        <div className="assistant-row-main">
+                            <span className="badge" data-testid="initiative-status">{WORK_STATUS[item.status] || item.status.toLowerCase()}</span>{' '}
+                            {item.title}
+                            {run?.resultTitle && (
+                                <div className="assistant-result" data-testid="initiative-result">
+                                    <strong>{run.resultTitle}</strong>
+                                    {run.resultSummary && <div className="hint">{run.resultSummary}</div>}
+                                </div>
+                            )}
+                            {item.status === 'COMPLETED' && item.outcome === 'NO_CHANGE' && <div className="hint">Checked: nothing needs your attention.</div>}
+                            {note && <div className="hint">{note}</div>}
+                            {run && (run.tokensUsed > 0 || run.searches > 0) && (
+                                <div className="row-meta">Used {run.tokensUsed.toLocaleString()} tokens · {run.searches} web search{run.searches === 1 ? '' : 'es'}</div>
+                            )}
+                        </div>
+                        <div className="assistant-row-actions">
+                            {item.status === 'CANDIDATE' && (
+                                <>
+                                    <button type="button" className="btn primary" disabled={busy} onClick={() => onAct(item, 'queue')}>Start</button>
+                                    <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'cancel')}>Dismiss</button>
+                                </>
+                            )}
+                            {['QUEUED', 'RUNNING', 'WAITING'].includes(item.status) && (
+                                <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'cancel')}>Cancel</button>
+                            )}
+                            {['FAILED', 'CANCELLED'].includes(item.status) && (
+                                <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'retry')}>Try again</button>
+                            )}
+                        </div>
+                    </li>
+                );
+            })}
+        </ul>
+    );
 }
 
 function Draft({ projects, onCreated }: { projects: Project[]; onCreated: () => Promise<unknown> }) {
@@ -230,11 +295,21 @@ export function AssistantRoom() {
         queryKey: keys.observatory, queryFn: () => api.observatoryProjects() as Promise<{ projects: Project[] }>,
         enabled: enabled && featureActive(me, 'projects')
     });
+    // Work in progress changes without the person doing anything: poll gently.
+    const workQ = useQuery({ queryKey: keys.assistantInitiatives, queryFn: () => api.assistantInitiatives(), enabled, refetchInterval: 15_000 });
+    const workByResponsibility = new Map<number, AssistantInitiative[]>();
+    for (const item of workQ.data?.initiatives || []) {
+        if (item.status === 'SUPERSEDED') continue;
+        const list = workByResponsibility.get(item.responsibilityId) || [];
+        if (list.length < 5) list.push(item);
+        workByResponsibility.set(item.responsibilityId, list);
+    }
     const projects = projectsQ.data?.projects || [];
     const projectById = new Map(projects.map((project) => [String(project.id), project]));
 
     const refresh = () => Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.responsibilities }),
+        queryClient.invalidateQueries({ queryKey: keys.assistantInitiatives }),
         queryClient.invalidateQueries({ queryKey: keys.home }),
         queryClient.invalidateQueries({ queryKey: ['inbox'] })
     ]);
@@ -248,6 +323,22 @@ export function AssistantRoom() {
         setBusy(item.id);
         try {
             await api.responsibilityAction(item.id, action, item.revision);
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            await refresh();
+            setBusy(null);
+        }
+    }
+
+    async function actOnWork(item: AssistantInitiative, action: string) {
+        if (action === 'queue' && !await confirm(
+            `Start "${item.title}"? ${me.assistant.name} will read and research within this responsibility and report back. `
+            + 'It cannot change, send or run anything. It uses your token allowance, up to the responsibility\'s daily budget.'
+        )) return;
+        setBusy(item.responsibilityId);
+        try {
+            await api.initiativeAction(item.id, action, item.revision);
         } catch (error) {
             toast((error as Error).message, true);
         } finally {
@@ -298,6 +389,8 @@ export function AssistantRoom() {
                                                 {item.expiresAt ? `Ends ${whenLabel(item.expiresAt)}` : 'No end date'}
                                                 {' · '}revision {item.revision}
                                             </div>
+                                            <Work items={workByResponsibility.get(item.id) || []} busy={busy === item.id}
+                                                onAct={(work, action) => void actOnWork(work, action)} />
                                         </div>
                                         <div className="inbox-actions">
                                             {(ACTIONS[item.status] || []).map((option) => (

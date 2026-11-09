@@ -127,6 +127,10 @@ what a responsibility is and how each action is checked.
   each carries the revision you saw, so a stale page is refused rather than
   applied.
 
+Under each responsibility is its work: proposed items with *Start* and
+*Dismiss*, running and waiting items with *Cancel*, and finished items with
+their result. See [delegated_runs.md](delegated_runs.md).
+
 Grants the form cannot express yet (repositories, processes, budgets) can be
 created through the API.
 

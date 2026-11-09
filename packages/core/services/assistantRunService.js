@@ -241,6 +241,20 @@ class AssistantRunService {
         return this.present(row, { operations });
     }
 
+    /** Short run summaries for a list of the person's initiatives, keyed by initiative id. */
+    async summaries({ userId, initiativeIds }) {
+        const ids = [...new Set((initiativeIds || []).map(Number).filter(Number.isSafeInteger))];
+        const map = new Map();
+        if (!ids.length) return map;
+        const params = { userId: String(userId) };
+        const marks = ids.map((id, index) => { params[`i${index}`] = id; return `@i${index}`; });
+        const rows = await db.all(
+            `SELECT * FROM assistant_runs WHERE ownerUserId = @userId AND initiativeId IN (${marks.join(', ')})`, params
+        );
+        for (const row of rows) map.set(Number(row.initiativeId), this.present(row));
+        return map;
+    }
+
     /** The grant's daily caps: its own numbers, or the defaults when unset. */
     budgets(responsibility) {
         let stored = {};
