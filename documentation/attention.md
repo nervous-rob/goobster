@@ -4,7 +4,10 @@
 connect noticing to bounded research, knowledge maintenance, project progress,
 and process stewardship. The [architecture](delegated_assistant_architecture.md)
 separates work selection, action authority and interruption policy. This is a
-proposal, not behavior enabled by the current Attention settings.
+proposal, not behavior enabled by the current Attention settings. Its first
+piece has shipped: [delegated responsibilities](delegated_responsibilities.md),
+which are explicit grants that require an enabled Attention policy and are
+checked against its boundaries. Nothing runs under them yet.
 
 Goobster has three ways of doing things for you.
 

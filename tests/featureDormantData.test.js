@@ -172,7 +172,7 @@ describe('the seed and the inventory agree', () => {
         }
         const represented = new Set(TABLES.map(entry => entry.feature));
         for (const id of ['economy', 'exchange', 'gambling', 'tavern', 'music', 'push', 'sandbox', 'cursor',
-            'github', 'screenVision', 'mcp', 'projects', 'observatory', 'expeditions']) {
+            'github', 'screenVision', 'mcp', 'projects', 'observatory', 'expeditions', 'assistant']) {
             expect([id, represented.has(id)]).toEqual([id, true]);
         }
     });

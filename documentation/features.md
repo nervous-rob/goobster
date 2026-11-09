@@ -40,6 +40,7 @@ See [configuration.md](configuration.md) for every config key and environment va
 | Cursor agents | `cursor` | `github` | 1 | 1 | 0 | 0 |
 | Screen Vision | `screenVision` | - | 1 | 0 | 0 | 0 |
 | Discord Activity | `discordActivity` | `discord` | 0 | 0 | 0 | 0 |
+| Delegated assistant | `assistant` | - | 0 | 0 | 0 | 0 |
 
 ## Core
 
@@ -357,4 +358,16 @@ Feature id: `discordActivity`. The Discord Embedded Activity transport. Depends 
   - `DISCORD_CLIENT_SECRET` / `activity.clientSecret` (optional): Discord OAuth client secret, shared with portal sign-in.
 - **Config keys:** `activity.enabled`, `activity.devMode`
 - **Documentation:** [activity_setup.md](activity_setup.md)
+- **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.
+
+## Delegated assistant
+
+Feature id: `assistant`. Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations. Inert until a person activates one.
+
+- **Kind:** feature
+- **Fresh install default:** off
+- **Depends on:** nothing
+- **Owns:** 1 portal route group
+- **Host override:** `GOOBSTER_FEATURE_ASSISTANT=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
+- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.

@@ -20,11 +20,15 @@ const eventBus = require('./eventBusService');
 const activityCorrelation = require('./activityCorrelation');
 const { toGateway } = require('../gateway');
 const identityConfig = require('../config/identityConfig');
+const logger = require('../utils/logger');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const KINDS = ['reminder', 'task', 'watch', 'notice', 'invite', 'project', 'expedition', 'system'];
 const MAX_TITLE = 200;
 const MAX_BODY = 16_000;
 const MAX_LIST = 100;
+/** sourceType of a canonical assistant update's envelope (services/assistantUpdateService.js). */
+const ASSISTANT_UPDATE_SOURCE = 'assistant_update';
 // Discord's message cap; the inbox keeps the full body, the DM gets a head.
 const DM_BODY_LIMIT = 1800;
 
@@ -462,6 +466,7 @@ class InboxService {
     }
 
     async markRead({ userId, itemId, read = true }) {
+        if (read) await this._acknowledgeCanonical(userId, [itemId]);
         const result = read
             ? await db.run(
                 'UPDATE inbox_items SET readAt = @now WHERE id = @id AND userId = @userId',
@@ -477,12 +482,62 @@ class InboxService {
     }
 
     async markAllRead({ userId }) {
+        const canonical = await db.all(
+            `SELECT id FROM inbox_items
+             WHERE userId = @userId AND readAt IS NULL AND archivedAt IS NULL AND sourceType = @type`,
+            { userId: String(userId), type: ASSISTANT_UPDATE_SOURCE }
+        );
+        await this._acknowledgeCanonical(userId, canonical.map(row => row.id));
         const result = await db.run(
             'UPDATE inbox_items SET readAt = @now WHERE userId = @userId AND readAt IS NULL AND archivedAt IS NULL',
             { userId: String(userId), now: nowUtc() }
         );
         eventBus.publish('inbox', { userId: String(userId) });
         return { updated: result.changes || 0 };
+    }
+
+    /**
+     * Reading the envelope of a canonical assistant update acknowledges
+     * exactly the revision it rendered (its sourceId is `<id>:<revision>`),
+     * never a later one. Best effort: the read itself always proceeds.
+     */
+    async _acknowledgeCanonical(userId, itemIds) {
+        if (!itemIds.length) return;
+        const updates = requireOptional('./assistantUpdateService', { feature: 'assistant' });
+        if (!updates) return;
+        for (const itemId of itemIds) {
+            try {
+                const row = await db.get(
+                    'SELECT sourceType, sourceId FROM inbox_items WHERE id = @id AND userId = @userId',
+                    { id: Number(itemId), userId: String(userId) }
+                );
+                if (row?.sourceType === ASSISTANT_UPDATE_SOURCE) await updates.acknowledgeInboxRevision(String(userId), row.sourceId);
+            } catch (error) {
+                logger.warn?.(`[inbox] canonical acknowledgment failed: ${error.message}`);
+            }
+        }
+    }
+
+    /**
+     * Re-open one canonical update's envelope for its new revision instead of
+     * filing a second item. Returns false when the envelope is gone.
+     */
+    async refreshEnvelope({ userId, itemId, title, body = null, sourceId }) {
+        const result = await db.run(
+            `UPDATE inbox_items
+             SET title = @title, body = @body, sourceId = @sourceId, readAt = NULL, archivedAt = NULL
+             WHERE id = @id AND userId = @userId AND sourceType = @type`,
+            {
+                id: Number(itemId),
+                userId: String(userId),
+                title: String(title ?? '').trim().slice(0, MAX_TITLE),
+                body: body == null ? null : String(body).slice(0, MAX_BODY),
+                sourceId: String(sourceId),
+                type: ASSISTANT_UPDATE_SOURCE
+            }
+        );
+        if (result.changes) eventBus.publish('inbox', { userId: String(userId), itemId: Number(itemId) });
+        return result.changes > 0;
     }
 
     async archive({ userId, itemId }) {

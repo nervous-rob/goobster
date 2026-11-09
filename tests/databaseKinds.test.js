@@ -699,9 +699,15 @@ withAdmin('the whole journey against a real server', () => {
         return client;
     }
 
+    /**
+     * The server's databases and roles, in this suite's namespace only: the other
+     * Postgres suites (`mig336_*`, the isolated `GOOBSTER_PG_TEST_ISOLATE` schemas)
+     * run against the same server in other Jest workers and create their own as this
+     * test runs, so a whole-server before/after diff names their work as this test's.
+     */
     async function names(client) {
-        const databases = (await client.query('SELECT datname FROM pg_database')).rows.map(row => row.datname);
-        const roles = (await client.query('SELECT rolname FROM pg_roles')).rows.map(row => row.rolname);
+        const databases = (await client.query("SELECT datname FROM pg_database WHERE datname LIKE 'k338\\_%'")).rows.map(row => row.datname);
+        const roles = (await client.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'k338\\_%'")).rows.map(row => row.rolname);
         return { databases, roles };
     }
 

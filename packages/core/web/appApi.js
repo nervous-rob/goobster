@@ -55,7 +55,8 @@ const OPTIONAL_ROUTES = {
     spitball: () => requireOptional('./routes/spitball', { feature: 'knowledge' })?.mountSpitball,
     noteAttachments: () => requireOptional('./routes/noteAttachments', { feature: 'knowledge' })?.mountNoteAttachments,
     studio: () => requireOptional('./routes/studio', { feature: 'music' })?.mountStudio,
-    push: () => requireOptional('./routes/push', { feature: 'push' })?.mountPush
+    push: () => requireOptional('./routes/push', { feature: 'push' })?.mountPush,
+    assistant: () => requireOptional('./routes/assistant', { feature: 'assistant' })?.mountAssistant
 };
 
 function mountOptional(name, app, ctx, helpers) {
@@ -127,6 +128,7 @@ function createWebAppApp(ctx) {
     mountOptional('spitball', app, ctx, helpers);
     mountOptional('noteAttachments', app, ctx, helpers);
     mountWorkspace(app, ctx, helpers);
+    mountOptional('assistant', app, ctx, helpers);
     mountParlor(app, ctx, helpers);
     mountSettings(app, ctx, helpers);
     mountInbox(app, ctx, helpers);

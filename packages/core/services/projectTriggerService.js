@@ -860,6 +860,33 @@ class ProjectTriggerService {
         return { deleted: true, name: existing.name };
     }
 
+    /**
+     * One typed dispatch outcome per occurrence for the process catalog
+     * (documentation/delegated_responsibilities.md, "Processes"): an event
+     * trigger's occurrence is the settled source job, a cron trigger's the
+     * fire time it claimed. Codes only, never the detail text. Never throws.
+     */
+    async _observeDispatch(trigger, sourceJob, status, extra = {}) {
+        const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
+        if (!processes) return;
+        const outcome = {
+            [DISPATCH.DELIVERED]: 'ok',
+            [DISPATCH.RETRYABLE]: 'deferred',
+            [DISPATCH.FAILED]: 'failed',
+            [DISPATCH.SKIPPED]: 'skipped'
+        }[status] || 'unknown';
+        await processes.record({
+            processKind: 'project_trigger',
+            processId: trigger.id,
+            ownerUserId: trigger.userId,
+            occurrenceKey: sourceJob ? `job:${sourceJob.id}` : `fire:${trigger.nextRun || 'manual'}`,
+            phase: 'dispatch',
+            outcome,
+            reasonCode: extra.code || `DISPATCH_${String(status).toUpperCase()}`,
+            evidence: extra.childJobId ? { kind: 'observatory_job', id: extra.childJobId } : null
+        });
+    }
+
     async _recordOutcome(triggerId, text) {
         await db.run(
             `UPDATE project_triggers
@@ -1251,6 +1278,7 @@ class ProjectTriggerService {
             } catch (error) {
                 await this._markCronRan(trigger.id);
                 await this._recordOutcome(trigger.id, outcomeText('failed', error.message));
+                await this._observeDispatch(trigger, null, DISPATCH.FAILED, { code: error?.code || 'DISPATCH_ERROR' });
                 console.error(`Project trigger "${trigger.name}" failed:`, error);
             }
         }
@@ -1437,6 +1465,7 @@ class ProjectTriggerService {
             const label = extra.label
                 || (status === DISPATCH.DELIVERED ? 'ok' : status === DISPATCH.RETRYABLE ? 'deferred' : status);
             await this._recordOutcome(trigger.id, outcomeText(label, detail));
+            await this._observeDispatch(trigger, sourceJob, status, extra);
             return { status, detail, childJobId: extra.childJobId ?? null, code: extra.code ?? null };
         };
         // Reconcile before validating today's asset/config: an existing

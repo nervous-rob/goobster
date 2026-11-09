@@ -39,7 +39,8 @@ const FEATURE_IDS = [
     'github',
     'cursor',
     'screenVision',
-    'discordActivity'
+    'discordActivity',
+    'assistant'
 ];
 
 const FEATURES = {
@@ -74,7 +75,8 @@ const FEATURES = {
     github: { kind: 'feature', dependsOn: [], legacySwitch: 'github.token', freshDefault: 'on' },
     cursor: { kind: 'feature', dependsOn: ['github'], legacySwitch: 'cursor.apiKey', freshDefault: 'on' },
     screenVision: { kind: 'feature', dependsOn: [], legacySwitch: 'screenVision.enabled', freshDefault: 'on' },
-    discordActivity: { kind: 'feature', dependsOn: ['discord'], legacySwitch: 'activity.enabled', freshDefault: 'on' }
+    discordActivity: { kind: 'feature', dependsOn: ['discord'], legacySwitch: 'activity.enabled', freshDefault: 'on' },
+    assistant: { kind: 'feature', dependsOn: [], freshDefault: 'off' }
 };
 
 const PLAYBACK = { owner: 'music', alsoRequires: ['voice', 'discord'] };
@@ -182,6 +184,7 @@ const runtimeSteps = {
     memoryConsolidation: 'core',
     knowledgeReflection: 'core',
     ledgerRetention: 'core',
+    assistantSteward: 'assistant',
     heartbeat: 'core',
     agentTracker: 'cursor',
     monologue: 'core',
@@ -373,6 +376,7 @@ const routeRules = [
     { pattern: /^\/api\/app\/mcp(?:\/|$)/, owner: 'core' },
     { method: 'GET', pattern: /^\/api\/app\/auth\/(?:login|link\/discord|callback)$/, owner: 'discord' },
 
+    { pattern: /^\/api\/app\/assistant(?:\/|$)/, owner: 'assistant' },
     { pattern: /^\/api\/app\/(?:config|me|features|auth|account|admin|settings)(?:\/|$)/, owner: 'core' },
     { pattern: /^\/api\/app\/(?:chat|share|files|tasks)(?:\/|$)/, owner: 'core' },
     { pattern: /^\/api\/app\/(?:usage|integrations|memory|graph|home|privacy|attention|applets|mtga)(?:\/|$)/, owner: 'core' },
@@ -592,7 +596,8 @@ const tables = {
         { prefix: 'sandbox_', owner: 'sandbox' },
         { prefix: 'project_', owner: 'projects' },
         { prefix: 'spitball_', owner: 'expeditions' },
-        { prefix: 'studio_', owner: 'music' }
+        { prefix: 'studio_', owner: 'music' },
+        { prefix: 'assistant_', owner: 'assistant' }
     ]
 };
 

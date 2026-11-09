@@ -290,6 +290,191 @@ async function countProjects(userId) {
     return { projects, jobs, shareLinks, memberships, invites, workspaceDirs: countWorkspaceDirs(userId), projectNodes, repoAttributions };
 }
 
+const RESPONSIBILITY_PRINCIPALS = ['authorizedBy', 'actingUserId', 'payerUserId'];
+const RESPONSIBILITY_INVOLVES = `(authorizedBy = @userId OR actingUserId = @userId OR payerUserId = @userId)`;
+
+/**
+ * /forget-me for delegated responsibilities (ADR 0016). The person's own
+ * grants go with their revision history. On someone else's grant the
+ * person's principal fields are nulled (in the row and in every stored
+ * snapshot) and a grant that could still run is revoked, because the
+ * authority it named is gone.
+ * @returns {Promise<{ responsibilities: number, revisions: number, anonymized: number }>}
+ */
+async function forgetAssistantResponsibilities(userId) {
+    const owned = 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)';
+    // A project's shared update stays with the project; it loses the person
+    // and its links to their records, which are deleted next.
+    await db.run(
+        `UPDATE assistant_updates SET
+            producerUserId = CASE WHEN producerUserId = @userId THEN NULL ELSE producerUserId END,
+            responsibilityId = CASE WHEN responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)
+                THEN NULL ELSE responsibilityId END,
+            initiativeId = CASE WHEN initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)
+                THEN NULL ELSE initiativeId END
+         WHERE producerUserId = @userId
+            OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)
+            OR initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)`,
+        { userId }
+    );
+    const cursors = (await db.run(`DELETE FROM assistant_source_cursors WHERE ${owned}`, { userId })).changes;
+    const initiatives = (await db.run(
+        `DELETE FROM assistant_initiatives WHERE ownerUserId = @userId OR ${owned}`, { userId }
+    )).changes;
+    const personal = "audienceKind = 'user' AND audienceUserId = @userId";
+    const receipts = (await db.run(
+        `DELETE FROM assistant_update_receipts
+         WHERE userId = @userId OR updateId IN (SELECT id FROM assistant_updates WHERE ${personal})`,
+        { userId }
+    )).changes;
+    const updates = (await db.run(`DELETE FROM assistant_updates WHERE ${personal}`, { userId })).changes;
+    const processContracts = (await db.run('DELETE FROM assistant_process_contracts WHERE ownerUserId = @userId', { userId })).changes;
+    const processObservations = (await db.run('DELETE FROM assistant_process_observations WHERE ownerUserId = @userId', { userId })).changes;
+
+    const revisions = (await db.run(
+        `DELETE FROM assistant_responsibility_revisions
+         WHERE responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
+        { userId }
+    )).changes;
+    const responsibilities = (await db.run(
+        'DELETE FROM assistant_responsibilities WHERE ownerUserId = @userId', { userId }
+    )).changes;
+
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const others = await db.all(
+        `SELECT id, status FROM assistant_responsibilities WHERE ${RESPONSIBILITY_INVOLVES}`, { userId }
+    );
+    for (const row of others) {
+        const revoke = ['DRAFT', 'ACTIVE', 'PAUSED', 'NEEDS_REVIEW'].includes(row.status);
+        await db.run(
+            `UPDATE assistant_responsibilities SET
+                authorizedBy = CASE WHEN authorizedBy = @userId THEN NULL ELSE authorizedBy END,
+                actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                payerUserId = CASE WHEN payerUserId = @userId THEN NULL ELSE payerUserId END,
+                ${revoke ? "status = 'REVOKED', endedAt = @now," : ''}
+                revision = revision + 1, authorityRevision = revision + 1, updatedAt = @now
+             WHERE id = @id`,
+            { id: row.id, userId, now }
+        );
+        await db.run(
+            `UPDATE assistant_initiatives SET
+                actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                status = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'CANCELLED' ELSE status END,
+                stopCode = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'PRINCIPAL_ERASED' ELSE stopCode END,
+                endedAt = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN @now ELSE endedAt END,
+                leaseToken = NULL, leaseExpiresAt = NULL, revision = revision + 1, updatedAt = @now
+             WHERE responsibilityId = @id`,
+            { id: row.id, userId, now }
+        );
+        const updated = await db.get(
+            'SELECT id, revision, authorityRevision, status FROM assistant_responsibilities WHERE id = @id', { id: row.id }
+        );
+        await db.run(
+            `INSERT INTO assistant_responsibility_revisions
+                (responsibilityId, revision, authorityRevision, changeKind, changedBy, snapshotJson)
+             VALUES (@id, @revision, @authorityRevision, @changeKind, NULL, @snapshot)`,
+            {
+                id: updated.id,
+                revision: updated.revision,
+                authorityRevision: updated.authorityRevision,
+                changeKind: revoke ? 'revoke' : 'edit',
+                snapshot: JSON.stringify({ id: Number(updated.id), revision: Number(updated.revision), status: updated.status, reason: 'principal_erased' })
+            }
+        );
+    }
+
+    const snapshots = await db.all(
+        `SELECT id, snapshotJson FROM assistant_responsibility_revisions
+         WHERE changedBy = @userId OR snapshotJson LIKE @pattern`,
+        { userId, pattern: `%"${userId}"%` }
+    );
+    for (const snap of snapshots) {
+        let parsed;
+        try { parsed = JSON.parse(snap.snapshotJson); } catch { parsed = null; }
+        if (parsed && typeof parsed === 'object') {
+            for (const key of RESPONSIBILITY_PRINCIPALS) {
+                if (parsed[key] === userId) parsed[key] = null;
+            }
+        }
+        await db.run(
+            `UPDATE assistant_responsibility_revisions
+             SET changedBy = CASE WHEN changedBy = @userId THEN NULL ELSE changedBy END, snapshotJson = @snapshot
+             WHERE id = @id`,
+            { id: snap.id, userId, snapshot: parsed ? JSON.stringify(parsed) : '{}' }
+        );
+    }
+    return {
+        responsibilities, revisions, anonymized: others.length,
+        initiatives, cursors, updates, receipts, processContracts, processObservations
+    };
+}
+
+/** Transparency report counts for the person's own responsibilities. */
+async function countAssistantResponsibilities(userId) {
+    const row = await db.get(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'DRAFT' THEN 1 ELSE 0 END) AS drafts,
+                SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = 'PAUSED' THEN 1 ELSE 0 END) AS paused,
+                SUM(CASE WHEN status = 'NEEDS_REVIEW' THEN 1 ELSE 0 END) AS needsReview
+         FROM assistant_responsibilities WHERE ownerUserId = @userId`,
+        { userId }
+    );
+    const involved = await db.get(
+        `SELECT COUNT(*) AS c FROM assistant_responsibilities
+         WHERE ownerUserId <> @userId AND ${RESPONSIBILITY_INVOLVES}`,
+        { userId }
+    );
+    const count = async (sql) => Number((await db.get(sql, { userId }))?.c || 0);
+    return {
+        total: Number(row?.total || 0),
+        drafts: Number(row?.drafts || 0),
+        active: Number(row?.active || 0),
+        paused: Number(row?.paused || 0),
+        needsReview: Number(row?.needsReview || 0),
+        onOthersGrants: Number(involved?.c || 0),
+        initiatives: await count('SELECT COUNT(*) AS c FROM assistant_initiatives WHERE ownerUserId = @userId'),
+        openInitiatives: await count(
+            `SELECT COUNT(*) AS c FROM assistant_initiatives
+             WHERE ownerUserId = @userId AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW')`
+        ),
+        updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
+        updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
+        processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
+        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId')
+    };
+}
+
+/** Post-erasure audit counts (privacyService.auditUser). */
+async function auditAssistantResponsibilities(userId) {
+    const responsibilities = (await db.get(
+        `SELECT COUNT(*) AS c FROM assistant_responsibilities
+         WHERE ownerUserId = @userId OR ${RESPONSIBILITY_INVOLVES}`,
+        { userId }
+    )).c;
+    const revisions = (await db.get(
+        `SELECT COUNT(*) AS c FROM assistant_responsibility_revisions
+         WHERE changedBy = @userId OR snapshotJson LIKE @pattern
+            OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
+        { userId, pattern: `%"${userId}"%` }
+    )).c;
+    const count = async (sql) => Number((await db.get(sql, { userId }))?.c || 0);
+    return {
+        responsibilities: Number(responsibilities),
+        revisions: Number(revisions),
+        initiatives: await count('SELECT COUNT(*) AS c FROM assistant_initiatives WHERE ownerUserId = @userId OR actingUserId = @userId'),
+        cursors: await count(
+            'SELECT COUNT(*) AS c FROM assistant_source_cursors WHERE responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)'
+        ),
+        updates: await count(
+            "SELECT COUNT(*) AS c FROM assistant_updates WHERE (audienceKind = 'user' AND audienceUserId = @userId) OR producerUserId = @userId"
+        ),
+        receipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
+        processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
+        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId')
+    };
+}
+
 module.exports = {
     PROJECTS_ROOT,
     DASHBOARDS_ROOT,
@@ -303,5 +488,8 @@ module.exports = {
     forgetProjects,
     notifyProjectsGone,
     countWorkspaceDirs,
-    countProjects
+    countProjects,
+    forgetAssistantResponsibilities,
+    countAssistantResponsibilities,
+    auditAssistantResponsibilities
 };

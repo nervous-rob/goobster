@@ -187,7 +187,8 @@ Hard dependencies apply in legacy mode too: `observatory` enabled without
   dependencies, so the seed is always a valid document.
   The first explicit write of an existing installation uses it.
 - `freshPreset()` is the #261 new-install preset from each descriptor's
-  `freshDefault`: `economy`, `exchange` and `gambling` off, every other feature
+  `freshDefault`: `economy`, `exchange`, `gambling` and `assistant`
+  ([ADR 0016](adr/0016-delegated-responsibilities.md)) off, every other feature
   on. "On" is not "configured": `mcp`, `sandbox`, `observatory`,
   `screenVision`, `discordActivity`, `gba` and `cursor` still report
   `configured: false` with `NOT_CONFIGURED` warnings (or `DEPENDENCY_INACTIVE` reasons) until their keys exist. (Whether GBA
@@ -321,7 +322,7 @@ The file is untouched; unsetting the variable and restarting restores it.
 nothing but log the warning.
 
 **Fresh install.** The installer writes `freshPreset()`; `economy`,
-`exchange` and `gambling` are `DISABLED`, `gambling` would also report
+`exchange`, `gambling` and `assistant` are `DISABLED`, `gambling` would also report
 `DEPENDENCY_INACTIVE` for `economy` while that is off, and `cursor` stays
 active but reports `configured: false` and a `NOT_CONFIGURED` warning for
 `CURSOR_API_KEY` until a key is set.

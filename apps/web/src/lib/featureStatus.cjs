@@ -42,7 +42,8 @@ const FEATURE_META = {
     github: { title: 'GitHub', docSlug: null, docPath: 'documentation/github_cursor_integration.md' },
     cursor: { title: 'Cursor agents', docSlug: null, docPath: 'documentation/github_cursor_integration.md' },
     screenVision: { title: 'Screen Vision', docSlug: null, docPath: 'documentation/screen_vision_setup.md' },
-    discordActivity: { title: 'Discord Activity', docSlug: null, docPath: 'documentation/activity_setup.md' }
+    discordActivity: { title: 'Discord Activity', docSlug: null, docPath: 'documentation/activity_setup.md' },
+    assistant: { title: 'Delegated assistant', docSlug: null, docPath: 'documentation/delegated_responsibilities.md' }
 };
 
 /**

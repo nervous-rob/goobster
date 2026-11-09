@@ -548,13 +548,13 @@ describe('baseline: no state file equals the effective legacy value read from th
 });
 
 describe('seed and fresh preset documents', () => {
-    test('freshPreset follows the catalog: economy, exchange and gambling off, the rest on', () => {
+    test('freshPreset follows the catalog: economy, exchange, gambling and assistant off, the rest on', () => {
         const { state: s, fs: memory } = make();
         const doc = s.freshPreset();
         expect(doc).toMatchObject({ version: STATE_VERSION, revision: 0, origin: 'fresh-preset' });
         expect(Object.keys(doc.features)).toEqual(MANAGEABLE);
         const off = MANAGEABLE.filter(id => !doc.features[id].active);
-        expect(off).toEqual(['economy', 'exchange', 'gambling']);
+        expect(off).toEqual(['economy', 'exchange', 'gambling', 'assistant']);
         for (const id of MANAGEABLE) expect(doc.features[id].installed).toBe(true);
         expect(memory.mutatingCalls()).toEqual([]);
     });

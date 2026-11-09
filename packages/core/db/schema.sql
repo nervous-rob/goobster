@@ -3441,3 +3441,251 @@ CREATE TABLE IF NOT EXISTS model_profile_guesses (
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (provider, modelId)
 );
+
+-- Delegated responsibilities (documentation/delegated_responsibilities.md,
+-- ADR 0016): a versioned grant of bounded authority that later delegated
+-- work is checked against operation by operation. Nothing activates by
+-- itself: DRAFT -> ACTIVE needs the owner's authenticated action and an
+-- enabled attention policy. `revision` is the compare-and-swap counter
+-- (every edit); `authorityRevision` moves only when authority or status
+-- changes, so a title edit never invalidates in-flight work. Principals are
+-- separate columns even though DA-1a fills all four with the owner. Per-person
+-- data: report, audit, export and erasure (services/dormantDataService.js).
+CREATE TABLE IF NOT EXISTS assistant_responsibilities (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    authorizedBy TEXT,
+    actingUserId TEXT,
+    payerUserId TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    authorityRevision INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT', 'ACTIVE', 'PAUSED', 'NEEDS_REVIEW', 'COMPLETED', 'REVOKED', 'EXPIRED', 'ARCHIVED')),
+    -- The terminal status an ARCHIVED record ended in
+    finalStatus TEXT,
+    title TEXT NOT NULL,
+    outcome TEXT,
+    -- Links to the existing goal/plan records; never a second goal list
+    attentionItemId INTEGER,
+    projectId INTEGER,
+    planId INTEGER,
+    -- JSON: { sources: [...], audience }
+    scopesJson TEXT NOT NULL DEFAULT '{}',
+    -- JSON: [{ operation, resource: { kind, ids, projectId, paths, branches } }]
+    operationsJson TEXT NOT NULL DEFAULT '[]',
+    -- JSON: { modelTokens, searches, computeSeconds, ... } (recorded, enforced from DA-3)
+    budgetsJson TEXT NOT NULL DEFAULT '{}',
+    -- JSON: { interruption, stopCondition }
+    rulesJson TEXT NOT NULL DEFAULT '{}',
+    idempotencyKey TEXT,
+    expiresAt TEXT,
+    activatedAt TEXT,
+    reviewedAt TEXT,
+    endedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_responsibilities_owner ON assistant_responsibilities(ownerUserId, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_responsibilities_idem ON assistant_responsibilities(ownerUserId, idempotencyKey);
+
+-- Append-only snapshot of every revision of a responsibility: the audit trail
+-- and the frozen grant a worker's revision is checked against.
+CREATE TABLE IF NOT EXISTS assistant_responsibility_revisions (
+    id INTEGER PRIMARY KEY,
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    authorityRevision INTEGER NOT NULL,
+    -- create | edit | activate | pause | resume | review | complete | revoke | expire | archive
+    changeKind TEXT NOT NULL,
+    changedBy TEXT,
+    snapshotJson TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (responsibilityId, revision)
+);
+
+-- Durable reconciliation cursors (DA-1b): the last source revision a
+-- responsibility has turned into opportunities, per linked source. The
+-- event bus only hints; a restart rescans these against current state, so a
+-- missed hint is recovered and a replayed one finds nothing new. The first
+-- scan after activation records a baseline and proposes nothing: history
+-- before activation is evidence, not new orders.
+CREATE TABLE IF NOT EXISTS assistant_source_cursors (
+    id INTEGER PRIMARY KEY,
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    -- attention_item | project_plan
+    sourceKind TEXT NOT NULL,
+    sourceId TEXT NOT NULL,
+    -- Opaque fingerprint of the source's material state at the last scan
+    sourceRevision TEXT NOT NULL,
+    -- The responsibility authorityRevision the baseline was taken under
+    baselineRevision INTEGER NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (responsibilityId, sourceKind, sourceId)
+);
+
+-- One attempt at advancing a responsibility (DA-1b). An initiative is an
+-- attempt, not another goal list: it points at the source that prompted it
+-- and at the responsibility revision it was derived under.
+CREATE TABLE IF NOT EXISTS assistant_initiatives (
+    id INTEGER PRIMARY KEY,
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    responsibilityRevision INTEGER NOT NULL,
+    ownerUserId TEXT NOT NULL,
+    actingUserId TEXT,
+    -- private | project (the audience its results may reach)
+    audience TEXT NOT NULL DEFAULT 'private' CHECK (audience IN ('private', 'project')),
+    projectId INTEGER,
+    sourceKind TEXT NOT NULL,
+    sourceId TEXT NOT NULL,
+    sourceRevision TEXT NOT NULL,
+    -- Stable identity of "the same opportunity" across hints and rescans
+    dedupeKey TEXT NOT NULL,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'CANDIDATE'
+        CHECK (status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW',
+                          'COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED')),
+    -- WAITING only: dependency | budget | user_question | access | responsibility
+    waitReason TEXT,
+    -- COMPLETED: DONE | NO_ACTION | ALREADY_KNOWN | NO_CHANGE
+    outcome TEXT,
+    -- Machine code for FAILED / CANCELLED / SUPERSEDED / WAITING
+    stopCode TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    -- Fencing for a claimed attempt: a stale worker's token no longer matches
+    leaseToken TEXT,
+    leaseExpiresAt TEXT,
+    -- Lineage bounds: the run/initiative that produced this one, if any
+    parentInitiativeId INTEGER,
+    depth INTEGER NOT NULL DEFAULT 0,
+    recheckAfter TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    endedAt TEXT,
+    UNIQUE (responsibilityId, dedupeKey, sourceRevision, attempt)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_initiatives_owner ON assistant_initiatives(ownerUserId, status);
+CREATE INDEX IF NOT EXISTS idx_assistant_initiatives_resp ON assistant_initiatives(responsibilityId, status);
+
+-- Canonical material updates (DA-1c): one row per material outcome for one
+-- audience, however many components it touches. A repeated identical state
+-- keeps its materialRevision; a material change bumps it and takes a new
+-- sequence, which is what makes it unseen again.
+CREATE TABLE IF NOT EXISTS assistant_updates (
+    id INTEGER PRIMARY KEY,
+    -- user | project
+    audienceKind TEXT NOT NULL CHECK (audienceKind IN ('user', 'project')),
+    -- The recipient's user id, or 'project:<id>'
+    audienceKey TEXT NOT NULL,
+    audienceUserId TEXT,
+    projectId INTEGER,
+    -- Whose work produced it (NULL after their erasure)
+    producerUserId TEXT,
+    identityKey TEXT NOT NULL,
+    -- finding | progress | process | question | responsibility
+    kind TEXT NOT NULL,
+    materialRevision INTEGER NOT NULL DEFAULT 1,
+    fingerprint TEXT NOT NULL,
+    -- Monotonic across the installation; pages order by (sequence, id)
+    sequence INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT,
+    componentsJson TEXT NOT NULL DEFAULT '[]',
+    responsibilityId INTEGER,
+    initiativeId INTEGER,
+    sourceKind TEXT,
+    sourceId TEXT,
+    sourceRevision TEXT,
+    evidenceJson TEXT NOT NULL DEFAULT '[]',
+    actionsJson TEXT NOT NULL DEFAULT '[]',
+    -- Typed gate { kind, id, occurrence } when a human decision is required
+    gateJson TEXT,
+    gateResolvedAt TEXT,
+    -- The canonical Inbox envelope (user audience). envelopeRequested marks
+    -- an update whose producer asked for one; envelopeRevision is the
+    -- revision it last rendered. Filing happens after commit, so a pending
+    -- envelope (requested, envelopeRevision < materialRevision) is retried.
+    inboxItemId INTEGER,
+    envelopeRequested INTEGER NOT NULL DEFAULT 0 CHECK (envelopeRequested IN (0, 1)),
+    envelopeRevision INTEGER NOT NULL DEFAULT 0,
+    happenedAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (audienceKey, identityKey)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_updates_sequence ON assistant_updates(sequence);
+CREATE INDEX IF NOT EXISTS idx_assistant_updates_user ON assistant_updates(audienceUserId, sequence);
+CREATE INDEX IF NOT EXISTS idx_assistant_updates_project ON assistant_updates(projectId, sequence);
+
+-- Per-account read state for a canonical update: delivered and acknowledged
+-- material revisions are separate, so a mention never clears a highlight and
+-- an old acknowledgment never hides a newer revision.
+CREATE TABLE IF NOT EXISTS assistant_update_receipts (
+    updateId INTEGER NOT NULL REFERENCES assistant_updates(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    deliveredRevision INTEGER NOT NULL DEFAULT 0,
+    acknowledgedRevision INTEGER NOT NULL DEFAULT 0,
+    snoozedUntil TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (updateId, userId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_update_receipts_user ON assistant_update_receipts(userId);
+
+-- What a recurring process is for (DA-1d). A read model attached to an
+-- existing resource (`<kind>:<id>`); it never schedules anything.
+CREATE TABLE IF NOT EXISTS assistant_process_contracts (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    -- automation | project_trigger | attention_watch | followed_source
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    purpose TEXT,
+    attentionItemId INTEGER,
+    projectId INTEGER,
+    expectedCadenceSeconds INTEGER,
+    freshnessSeconds INTEGER,
+    -- 1 = an unchanged result is the expected success (a monitor)
+    quietResultOk INTEGER NOT NULL DEFAULT 0 CHECK (quietResultOk IN (0, 1)),
+    criticality TEXT NOT NULL DEFAULT 'normal' CHECK (criticality IN ('low', 'normal', 'high')),
+    reviewAt TEXT,
+    stopCondition TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (processKind, processId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_contracts_owner ON assistant_process_contracts(ownerUserId);
+
+-- Typed per-occurrence observations of a recurring process (DA-1d): one row
+-- per (process, occurrence, phase), updated in place when a retry changes
+-- the outcome. Machine codes only: never output, prompts, URLs or detail.
+CREATE TABLE IF NOT EXISTS assistant_process_observations (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    -- Stable occurrence identity, e.g. 'fire:2026-11-08 18:00:00' or 'job:12'
+    occurrenceKey TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK (phase IN ('schedule', 'dispatch', 'execution', 'output', 'delivery', 'outcome')),
+    outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'skipped', 'blocked', 'deferred', 'failed', 'unknown')),
+    reasonCode TEXT,
+    -- A reference into an authorized store (job id, inbox item id), never content
+    evidenceKind TEXT,
+    evidenceId TEXT,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    observedAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (processKind, processId, occurrenceKey, phase)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_observations_process
+    ON assistant_process_observations(processKind, processId, observedAt);
+CREATE INDEX IF NOT EXISTS idx_assistant_process_observations_owner
+    ON assistant_process_observations(ownerUserId, observedAt);

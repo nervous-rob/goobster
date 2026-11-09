@@ -29,6 +29,16 @@ class AutomationError extends Error {
     }
 }
 
+const changedError = (id) => new AutomationError('CHANGED',
+    `Automation #${id} changed while this was being applied; refresh and try again.`);
+
+/** Stored UTC text ('YYYY-MM-DD HH:MM:SS' or ISO) -> epoch ms. */
+function utcTextToMs(value) {
+    if (value instanceof Date) return value.getTime();
+    const text = String(value);
+    return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(text) ? text : `${text.replace(' ', 'T')}Z`);
+}
+
 /**
  * Validate a 5-part cron expression and its firing cadence. An unattended
  * agent turn every minute is a runaway cost, not a feature: the next few
@@ -140,21 +150,7 @@ class AutomationManagerService {
         if (!row) {
             throw new AutomationError('NOT_FOUND', `No automation named "${String(name ?? '').trim()}" here.`);
         }
-        if (enabled) {
-            const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
-            await db.run(
-                `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
-                 WHERE id = @id`,
-                { id: row.id, nextRun }
-            );
-            return { id: row.id, name: row.name, enabled: true, nextRun };
-        }
-        await db.run(
-            `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
-             WHERE id = @id`,
-            { id: row.id }
-        );
-        return { id: row.id, name: row.name, enabled: false, nextRun: null };
+        return await this._applyEnabled(row, enabled);
     }
 
     /**
@@ -178,7 +174,7 @@ class AutomationManagerService {
      */
     async _findById(id) {
         const row = await db.get(
-            'SELECT id, name, schedule, isEnabled FROM automations WHERE id = @id',
+            'SELECT id, name, schedule, isEnabled, nextRun FROM automations WHERE id = @id',
             { id: Number(id) }
         );
         if (!row) throw new AutomationError('NOT_FOUND', `No automation #${id}.`);
@@ -187,20 +183,7 @@ class AutomationManagerService {
 
     /** @returns {{id: number, name: string, enabled: boolean, nextRun: Date|null}} */
     async setEnabledById({ id, enabled }) {
-        const row = await this._findById(id);
-        if (enabled) {
-            const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
-            await db.run(
-                `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
-                { id: row.id, nextRun }
-            );
-            return { id: row.id, name: row.name, enabled: true, nextRun };
-        }
-        await db.run(
-            `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = @id`,
-            { id: row.id }
-        );
-        return { id: row.id, name: row.name, enabled: false, nextRun: null };
+        return await this._applyEnabled(await this._findById(id), enabled);
     }
 
     /** @returns {{id: number, name: string}} */
@@ -214,16 +197,53 @@ class AutomationManagerService {
      * Make an enabled automation due now. The poll loop's atomic claim
      * (automationService.claimDueRun) then runs it and advances nextRun to
      * the next cron slot, so the schedule itself is unchanged.
-     * @returns {{id: number, name: string}}
+     *
+     * Compare-and-swap on the nextRun this call read: if the scheduler
+     * claimed a due fire (advancing nextRun) between the read and the write,
+     * the write matches nothing and the caller gets CHANGED instead of
+     * queueing a second, immediate run. A row that is already due is left
+     * alone - the claim will run it exactly once.
+     * @returns {{id: number, name: string, alreadyDue?: boolean}}
      */
     async triggerNow({ id }) {
         const row = await this._findById(id);
         if (!row.isEnabled) throw new AutomationError('PAUSED', `Automation #${id} is paused - resume it first.`);
-        await db.run(
-            `UPDATE automations SET nextRun = @now, updatedAt = CURRENT_TIMESTAMP WHERE id = @id AND isEnabled = 1`,
-            { id: row.id, now: new Date() }
+        const now = new Date();
+        if (row.nextRun && utcTextToMs(row.nextRun) <= now.getTime()) {
+            return { id: row.id, name: row.name, alreadyDue: true };
+        }
+        const result = await db.run(
+            `UPDATE automations SET nextRun = @now, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id AND isEnabled = 1 AND ${row.nextRun == null ? 'nextRun IS NULL' : 'nextRun = @seenNextRun'}`,
+            row.nextRun == null ? { id: row.id, now } : { id: row.id, now, seenNextRun: row.nextRun }
         );
+        if (result.changes === 0) throw changedError(id);
         return { id: row.id, name: row.name };
+    }
+
+    /**
+     * Pause or resume a row already read. Compare-and-swap on the enabled
+     * flag and schedule this call saw, so a concurrent pause/resume/edit is
+     * reported (CHANGED) instead of silently overwritten.
+     */
+    async _applyEnabled(row, enabled) {
+        const seen = { id: row.id, seenEnabled: row.isEnabled ? 1 : 0, seenSchedule: row.schedule };
+        const guard = 'WHERE id = @id AND isEnabled = @seenEnabled AND schedule = @seenSchedule';
+        if (enabled) {
+            const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
+            const result = await db.run(
+                `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP ${guard}`,
+                { ...seen, nextRun }
+            );
+            if (result.changes === 0) throw changedError(row.id);
+            return { id: row.id, name: row.name, enabled: true, nextRun };
+        }
+        const result = await db.run(
+            `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP ${guard}`,
+            seen
+        );
+        if (result.changes === 0) throw changedError(row.id);
+        return { id: row.id, name: row.name, enabled: false, nextRun: null };
     }
 
     /** Case-insensitive lookup by name so a chatty caller need not match case. */

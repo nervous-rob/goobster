@@ -35,6 +35,8 @@
     ["manager-update", "Manager updates", "documentation/manager_update.md"],
     ["shared-instances", "Shared-instance safety", "documentation/shared_instance_safety.md"],
     ["host-operations", "Host operations", "documentation/host_operations.md"],
+    ["host-schedules", "Server schedules", "documentation/operator_schedules.md"],
+    ["capability-gaps", "Capability gaps", "documentation/capability_gaps.md"],
     ["manager", "The installation manager", "documentation/manager.md"],
     ["setup-wizard", "Setup and maintenance wizard", "documentation/setup_wizard.md"],
     ["packaging", "Selective payloads", "documentation/packaging.md"],

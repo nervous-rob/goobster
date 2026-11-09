@@ -331,7 +331,8 @@ describe('core runtime: stop new work, drain inside the bound', () => {
                 spitballExpeditionRunner: runner,
                 memoryConsolidationService: { ...worker('consolidation'), running: false },
                 knowledgeReflectionService: { start: () => log.push('start:reflection'), stop: async () => { log.push('stop:reflection'); } },
-                ledgerRetentionService: worker('ledger')
+                ledgerRetentionService: worker('ledger'),
+                assistantStewardService: { start: () => log.push('start:assistantSteward'), stop: async () => { log.push('stop:assistantSteward'); } }
             }
         };
     }
@@ -363,7 +364,7 @@ describe('core runtime: stop new work, drain inside the bound', () => {
         runner.live.resolve();
         const results = await runtime.settleInFlight(2000);
         expect(Object.fromEntries(results.map(item => [item.name, item.outcome]))).toEqual({
-            expedition: 'settled', knowledgeReflection: 'settled', runtimeSteps: 'settled'
+            assistantSteward: 'settled', expedition: 'settled', knowledgeReflection: 'settled', runtimeSteps: 'settled'
         });
         await runtime.stop();
 
@@ -396,7 +397,7 @@ describe('core runtime: stop new work, drain inside the bound', () => {
             expect(results).toBeNull();
             await jest.advanceTimersByTimeAsync(200);
             expect(Object.fromEntries(results.map(item => [item.name, item.outcome]))).toEqual({
-                expedition: 'interrupted', knowledgeReflection: 'settled', runtimeSteps: 'interrupted'
+                assistantSteward: 'settled', expedition: 'interrupted', knowledgeReflection: 'settled', runtimeSteps: 'interrupted'
             });
             expect(log).toContain('interrupt:expeditions');
 
@@ -408,7 +409,7 @@ describe('core runtime: stop new work, drain inside the bound', () => {
             third.settleInFlight(60_000).then((value) => { quickResults = value; });
             await jest.advanceTimersByTimeAsync(15_100);
             expect(Object.fromEntries(quickResults.map(item => [item.name, item.outcome]))).toEqual({
-                expedition: 'settled', knowledgeReflection: 'settled', runtimeSteps: 'interrupted'
+                assistantSteward: 'settled', expedition: 'settled', knowledgeReflection: 'settled', runtimeSteps: 'interrupted'
             });
             quick.FakePersonal.last.ticking = false;
             await third.stop();

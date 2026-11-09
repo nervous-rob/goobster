@@ -74,7 +74,14 @@ References: [agent orchestration](agent_orchestration.md),
 
 ### 3.1 Responsibility grant
 
-Proposed `assistant_responsibilities` is a versioned grant containing:
+**Shipped in DA-1a:** the grant record, lifecycle, operation vocabulary and
+dispatch-time `authorize()` check described in this section are implemented.
+See [delegated_responsibilities.md](delegated_responsibilities.md) and
+[ADR 0016](adr/0016-delegated-responsibilities.md). Budgets are stored but not
+yet enforced, and nothing calls `authorize()` until later increments add
+delegated work. Every other section of this document is still planned.
+
+`assistant_responsibilities` is a versioned grant containing:
 
 - `id`, owning principal, authorizing principal, acting principal, payer,
   installation identity, revision, status, creation/review/expiry timestamps;
@@ -169,6 +176,12 @@ reasoning can instead yield a private proposal asking to publish selected
 context. Ordinary persona scopes stay distinct from the project Goobster seat.
 
 ## 4. Opportunity selection and durable initiative state
+
+**Shipped in DA-1b:** source cursors, initiatives, their lifecycle, `claim`
+leases and periodic recovery. See
+[delegated_responsibilities.md](delegated_responsibilities.md#initiatives)
+and [ADR 0017](adr/0017-initiatives-updates-processes.md). Scoring and
+selection, and the runner that executes initiatives, are still planned.
 
 Proposed `assistant_initiatives` records responsibility id/revision, principal,
 audience/scope, source references, relevant existing goal/plan, question or next
@@ -377,6 +390,11 @@ cancel executable work. The reason and remaining external effects stay visible.
 
 ## 8. Process catalog, repair, and retirement
 
+**Shipped in DA-1d:** the catalog read model, contracts and typed
+observations for automations and project triggers. See
+[delegated_responsibilities.md](delegated_responsibilities.md#processes).
+Health, relevance, repair and retirement are still planned.
+
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,
 expected cadence/runtime/output freshness, quiet-result semantics, dependencies,
@@ -436,6 +454,10 @@ deleted evidence, files, credentials, or externally removed resources.
 ## 9. Home and component update projection
 
 ### 9.1 Canonical material updates
+
+**Shipped in DA-1c:** `assistant_updates`, per-revision receipts and the Inbox
+envelope. See [delegated_responsibilities.md](delegated_responsibilities.md#updates).
+The Home projection is still planned.
 
 Extend the existing authenticated Home read additively. Proposed
 `assistant_updates` represent material outcomes or decisions, not every tool
