@@ -1,8 +1,8 @@
 ---
 title: Delegated responsibilities
 kind: reference
-summary: What a responsibility is, how it is created, activated, paused and revoked, the operation vocabulary it grants, how authority is checked at dispatch, and the portal API. Nothing runs under a responsibility yet; this is the grant that later delegated work is checked against.
-tags: [assistant, responsibilities, delegation, attention, authority, privacy]
+summary: What a responsibility is, how it is created, activated, paused and revoked, the operation vocabulary it grants, how authority is checked at dispatch, the initiatives derived from its linked sources, canonical updates and their read receipts, the process catalog with typed observations, retention, and the portal API. Nothing runs under a responsibility yet.
+tags: [assistant, responsibilities, delegation, attention, authority, privacy, initiatives, updates, processes]
 feature: assistant
 ---
 
@@ -14,15 +14,20 @@ notes about the garden current: he may add and amend his own generated notes in
 my personal knowledge, and nothing else". It is a versioned grant, not a
 setting. It does nothing until its owner activates it.
 
-**Status.** This is increment DA-1a of the
+**Status.** This is increment DA-1 of the
 [delegated assistant plan](delegated_assistant_implementation.md). It ships the
-grant record, its lifecycle, and the authority check. **No background work runs
-under a responsibility yet.** Opportunities, durable runs, knowledge change
-sets, process repair and the assistant-first Home are still planned (see the
+grant record, its lifecycle and the authority check (DA-1a), the
+[initiatives](#initiatives) derived from a grant's linked sources (DA-1b),
+[canonical updates](#updates) with per-person read receipts (DA-1c), and the
+[process catalog](#processes) with typed observations (DA-1d). **No background
+work runs under a responsibility yet.** Initiatives wait to be queued and
+claimed by the runner that DA-3 adds. Durable runs, knowledge change sets,
+process repair and the assistant-first Home are still planned (see the
 [product spec](delegated_assistant_spec.md) and the
-[architecture](delegated_assistant_architecture.md)). Budgets are recorded but
-not yet enforced. The decisions behind the shape are in
-[ADR 0016](adr/0016-delegated-responsibilities.md).
+[architecture](delegated_assistant_architecture.md)). Budgets are recorded, and
+only `concurrentInitiatives` is enforced so far. The decisions behind the shape
+are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
+[ADR 0017](adr/0017-initiatives-updates-processes.md).
 
 ## What a responsibility holds
 
@@ -39,8 +44,9 @@ not yet enforced. The decisions behind the shape are in
   source the person could not otherwise reach.
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and
-  `externalOperations`. They are recorded now and enforced when delegated runs
-  arrive. The account's usage cap always remains the outer limit.
+  `externalOperations`. `concurrentInitiatives` caps how many initiatives can
+  be running at once. The rest are recorded now and enforced when delegated
+  runs arrive. The account's usage cap always remains the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`) and a free-text
   `stopCondition`.
 - **Expiry** (`expiresAt`, UTC), optional.
@@ -166,6 +172,161 @@ The model cannot create, activate or widen a responsibility. There is no AI
 tool or MCP tool for responsibilities; they change only through the
 authenticated portal routes.
 
+## Initiatives
+
+An **initiative** is one attempt at advancing an active responsibility. It is
+an attempt, not another goal list. It points at the change that prompted it.
+
+**Where they come from.** For each active responsibility, Goobster keeps a
+cursor per linked source: its Attention item (`attentionItemId`) and its
+project plan (`planId`, when Projects is available). The cursor holds the last
+material revision he saw.
+
+- The first look after activation records a baseline and proposes nothing.
+  What happened before you delegated is evidence, not a new instruction.
+- When a linked source changes materially, he proposes one `CANDIDATE`
+  initiative and moves the cursor forward in the same transaction. For an
+  Attention item, a material change is to its state, goal, unresolved threads
+  or deadline. For a plan, it is to its plan revision or status.
+- Noticing the same change again never proposes a second initiative. A newer
+  change supersedes an open older attempt (`SUPERSEDED`,
+  `NEWER_SOURCE_REVISION`).
+- Attention and plan events only make him look sooner. A periodic pass, every
+  5 minutes, finds any change an event missed, including across a restart.
+- Nothing is derived for a draft, paused, reviewed or ended grant, or when the
+  owner's Attention policy is off.
+- An initiative's title names the kind of change ("Linked goal changed"). It
+  never copies the goal's text.
+
+**Statuses.** `CANDIDATE`, `QUEUED`, `RUNNING`, `WAITING`, `REVIEW`, then one
+of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
+`WAITING` carries a `waitReason`: `dependency`, `budget`, `user_question`,
+`access` or `responsibility`.
+
+**What the owner can do:**
+
+- `queue` approves a candidate or waiting attempt under the grant as it is now.
+- `cancel` stops an open attempt.
+- `retry` opens a new attempt of a failed or cancelled one, unless another
+  attempt at it is already open (`ALREADY_OPEN`).
+- `accept` and `reject` close an attempt that is in `REVIEW`.
+
+Every action is a compare-and-swap on `revision`.
+
+**What the grant does to its initiatives:**
+
+- Revoking, completing, archiving or expiring the responsibility cancels its
+  open initiatives in the same change (`RESPONSIBILITY_REVOKED` and so on).
+- Pausing it, or moving it to review, parks queued and running initiatives as
+  `WAITING` with reason `responsibility`.
+- After a resume, a parked initiative stays parked until its owner queues it
+  again.
+
+**Claiming (for the runner).**
+`assistantInitiativeService.claim({ id })` takes a queued attempt. It refuses:
+
+- `RESPONSIBILITY_INACTIVE` when the grant is no longer live.
+- `REVISION_CONFLICT` when the attempt was queued under an older authority
+  revision. The attempt moves to `WAITING` with `REPLAN_REQUIRED`.
+- `BUDGET_LIMIT` when the grant's `concurrentInitiatives` are already running.
+
+On success it returns a lease token that lasts 10 minutes. `settle()` must
+present that token. Once a lease expires, the attempt returns to `QUEUED` and
+the old token no longer works (`LEASE_LOST`). A lease does not replace
+`authorize()`: every side effect is still checked against the grant.
+
+## Updates
+
+An **update** is one durable fact Goobster wants you to know: a finding,
+progress on an initiative, a process problem, a question, or a change to a
+responsibility. Each update has one identity per audience. The audience is
+you, or a project's current members.
+
+- **One identity, many components.** An update lists every component it
+  touches: `knowledge`, `research`, `projects`, `processes`, `conversations`
+  or `responsibilities`. The unseen count counts it once, and each component
+  it touches counts it once.
+- **Revisions.** Publishing the same fact again changes nothing. A material
+  change (title, summary, components, evidence, actions, gate) creates a new
+  revision that is unseen again.
+- **Seen is per person and per revision.** Acknowledging names an exact
+  revision. Acknowledging an older revision never clears a newer one, and
+  someone else's acknowledgment never affects yours. Delivering an update to
+  you (a mention in conversation, an Inbox envelope) is recorded separately
+  from acknowledging it.
+- **Needs you.** An update with an open gate, such as a question or a review,
+  needs action until whatever raised it is resolved. Acknowledging it does not
+  resolve it. Snoozing hides it until a time you choose, and the gate stays
+  open.
+- **Inbox.** A personal update can file one Inbox item. That item is the
+  update's envelope, not a second record.
+  - A new revision refreshes the same item and makes it unread again.
+  - Reading the item in the Inbox acknowledges exactly the revision it showed.
+  - Acknowledging the update in the portal marks the item read when the item
+    shows that revision.
+  - Project updates file no personal Inbox items.
+- **Responsibility updates.** Goobster publishes an update when a
+  responsibility expires, or moves to review. A review opens a gate, and
+  resuming, revoking, completing or archiving the responsibility resolves it.
+
+Listing updates is a read. It never acknowledges, delivers or resolves
+anything.
+
+## Processes
+
+The **process catalog** lists your recurring processes without copying them:
+
+- scheduled tasks (`automation`)
+- project triggers (`project_trigger`, when Projects is available)
+- Attention watches (`attention_watch`)
+- followed sources (`followed_source`)
+
+The references are the same `kind:id` pairs a `process` resource uses. A
+followed source shows its label, never its URL. Only a process's owner can see
+it.
+
+**Contracts.** You can record why a process exists. A contract holds:
+
+- `purpose`
+- `expectedCadenceSeconds` and `freshnessSeconds` (at least 60 each)
+- `quietResultOk`
+- `criticality` (`low`, `normal` or `high`)
+- an optional `attentionItemId` or `projectId`
+- `reviewAt`
+- `stopCondition`
+
+Replacing a contract needs its `expectedRevision`.
+
+**Observations.** Each run of a process records what happened as a typed
+observation with:
+
+- a stable occurrence key, such as the scheduled fire time an automation
+  claimed or the source job a trigger reacted to
+- a phase: `schedule`, `dispatch`, `execution`, `output`, `delivery` or
+  `outcome`
+- an outcome: `ok`, `skipped`, `blocked`, `deferred`, `failed` or `unknown`
+- a machine `reasonCode`, such as `NO_DISCORD_CLIENT`, `CHANNEL_NOT_FOUND` or
+  `DISPATCH_DELIVERED`. Anything that is not a short code is stored as
+  `UNCLASSIFIED`.
+
+Reporting the same occurrence again updates it and counts the attempt.
+Scheduled tasks record their outcome, and project triggers record their
+dispatch. A trigger's own delivery ledger (`project_trigger_deliveries`) is
+shown alongside as history. Whether a process is healthy or still relevant is
+reported as `unknown` until process stewardship arrives.
+
+## Retention
+
+The assistant's periodic pass applies these windows:
+
+| Records | Kept for |
+| --- | --- |
+| Process observations | 90 days, and removed at once when their process is deleted |
+| Process contracts | Until removed, or their process is deleted |
+| Finished initiatives (`COMPLETED`, `FAILED`, `CANCELLED`, `SUPERSEDED`) | 180 days after their last change |
+| Updates and their receipts | 180 days after their last change, unless they still have an open gate |
+| Source cursors | As long as their responsibility |
+
 ## Portal API
 
 All routes act as the signed-in person. Another person's responsibility answers
@@ -179,20 +340,37 @@ All routes act as the signed-in person. Another person's responsibility answers
 | `PATCH /api/app/assistant/responsibilities/:id` | Edit. Requires `expectedRevision`. |
 | `POST /api/app/assistant/responsibilities/:id/actions` | `{ action, expectedRevision }`, where `action` is `activate`, `pause`, `resume`, `complete`, `revoke` or `archive`. |
 
+| `GET /api/app/assistant/initiatives` | Your initiatives (`?responsibilityId=`, `?status=`, `?limit=` up to 100). |
+| `GET /api/app/assistant/initiatives/:id` | One initiative. |
+| `POST /api/app/assistant/initiatives/:id/actions` | `{ action, expectedRevision }`, where `action` is `queue`, `cancel`, `retry`, `accept` or `reject`. |
+| `GET /api/app/assistant/updates` | Updates you can see, newest first (`?component=`, `?responsibilityId=`, `?limit=` up to 50, `?cursor=`). The first page also returns `counts` (`unseen`, `needsAction`, `complete`) and per-component counts. A cursor belongs to the person it was issued to. |
+| `POST /api/app/assistant/updates/acknowledge` | `{ items: [{ id, revision }] }`, up to 100 items. Each result is `acknowledged`, `older_revision` or `not_found`. |
+| `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
+| `GET /api/app/assistant/processes` | Your recurring processes and whether each has a contract. |
+| `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations and existing delivery history. |
+| `PUT /api/app/assistant/processes/:kind/:id/contract` | Create or replace its contract (`expectedRevision` to replace). |
+| `DELETE /api/app/assistant/processes/:kind/:id/contract` | Remove its contract. |
+
 A stale `expectedRevision` answers 409 `REVISION_CONFLICT` with the current
 revision. An action that the current status does not allow answers 409
 `INVALID_TRANSITION`.
 
 ## Privacy
 
-Responsibilities and their revision history are personal data:
+Responsibilities, their revision history, source cursors, initiatives,
+personal updates, update receipts, process contracts and process observations
+are personal data:
 
 - The transparency report (`/what-do-you-know-about-me`, Settings → Privacy)
   counts them.
 - The account export includes them.
-- `/forget-me` deletes the person's own responsibilities with their history. If
-  the person is named on someone else's responsibility, `/forget-me` removes
-  them from it and revokes it if it could still run.
+- `/forget-me` deletes all of the person's own records of these kinds,
+  including their receipts on project updates.
+  - On a project's shared update, it removes the person as producer and drops
+    links to their deleted responsibilities and initiatives.
+  - If the person is named on someone else's responsibility, it removes them
+    from it, revokes it if it could still run, and cancels its open
+    initiatives (`PRINCIPAL_ERASED`).
 
 All of this works when the feature is off.
 
@@ -203,4 +381,5 @@ on the Host → Features page. Installations that existed before it, or that hav
 no `data/features.json`, see it as available. It is still inert there, because
 nothing happens until a person enables Attention and activates a
 responsibility. Turning the feature off refuses the routes and every
-`authorize()` call, and keeps the data.
+`authorize()` call, stops the periodic pass (the `assistantSteward` runtime
+step), stops recording process observations, and keeps the data.

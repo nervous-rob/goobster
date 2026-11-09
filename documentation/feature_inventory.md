@@ -56,7 +56,7 @@ camelCase; they are the keys of `features.json` from #317 onwards.
 | `cursor` | feature | `github` | `/agent`, `launchCursorAgent`, the agent tracker step and mission-control thread gate |
 | `screenVision` | feature | - | `/screenvision`, the companion page, `/api/screen/*` and its WebSocket |
 | `discordActivity` | feature | `discord` | The embedded Activity transport (`/activity/*`, `/api/activity/*`, its WebSocket) |
-| `assistant` | feature | - | Delegated responsibilities (`assistant_*` tables, `/api/app/assistant/*`); fresh-install default off ([ADR 0016](adr/0016-delegated-responsibilities.md)) |
+| `assistant` | feature | - | Delegated responsibilities, initiatives, canonical updates and the process catalog (`assistant_*` tables, `/api/app/assistant/*`, the `assistantSteward` runtime step); fresh-install default off ([ADR 0016](adr/0016-delegated-responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md)) |
 
 Soft requirements are recorded per surface as `alsoRequires` and never
 promoted to a feature dependency. Examples: the music playback commands
@@ -267,14 +267,15 @@ Discord OAuth routes, public Observatory share links
 
 ### S1 - runtime steps, startup side effects, events and interactions
 
-`packages/core/runtime/coreRuntime.js` has twenty `step()` calls. Thirteen
+`packages/core/runtime/coreRuntime.js` has twenty-one `step()` calls. Thirteen
 are core: `eventBus`, `chatHistoryRetention`, `accountExports`, `selfDocs`,
 `automation`, `followupDelivery`, `personalHeartbeat`, `memoryConsolidation`,
 `knowledgeReflection`, `ledgerRetention`, `heartbeat`, `monologue` and the
-`paused` handling. Seven are owned by one feature each: `workshopPinMigration`,
+`paused` handling. Eight are owned by one feature each: `workshopPinMigration`,
 `missionReconcile` and `projectTriggerCatchUp` (projects),
 `observatoryResume` (observatory), `spitballExpeditions` (expeditions),
-`agentTracker` (cursor), `exchangeRiskEngine` (exchange).
+`agentTracker` (cursor), `exchangeRiskEngine` (exchange), `assistantSteward`
+(assistant).
 
 The bundled core steps (`automation`, `heartbeat`, `personalHeartbeat`,
 `memoryConsolidation`) always start; the feature-specific branches inside

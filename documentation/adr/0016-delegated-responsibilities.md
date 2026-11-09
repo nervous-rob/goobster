@@ -69,7 +69,9 @@ The baseline (`80872bc6`, after #411) gives these seams:
      every revision, UNIQUE (`responsibilityId`, `revision`). It is the
      audit trail and the frozen revision a worker can be checked against.
 
-3. **Reserved names for later increments.** These are not created yet:
+3. **Reserved names for later increments.** These were not created by
+   DA-1a. The DA-1b, DA-1c and DA-1d tables now exist; see
+   [ADR 0017](0017-initiatives-updates-processes.md):
    `assistant_source_cursors` and `assistant_initiatives` (DA-1b),
    `assistant_updates` and `assistant_update_receipts` (DA-1c),
    `assistant_process_contracts` and `assistant_process_observations` (DA-1d;
