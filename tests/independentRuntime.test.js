@@ -542,7 +542,8 @@ describe('portal API with the Discord adapter off', () => {
         res = await request({ method: 'POST', reqPath: `/api/app/inbox/${a.id}/read`, headers: { Cookie: mine }, body: { read: false } });
         expect(res.json.read).toBe(false);
         res = await request({ reqPath: '/api/app/inbox/unread', headers: { Cookie: mine } });
-        expect(res.json).toEqual({ unread: 2 });
+        // needsYou is its own count (open requests), never added to unread.
+        expect(res.json).toEqual({ unread: 2, needsYou: 0 });
 
         res = await request({ method: 'POST', reqPath: '/api/app/inbox/read-all', headers: { Cookie: mine } });
         expect(res.json).toEqual({ updated: 2 });
