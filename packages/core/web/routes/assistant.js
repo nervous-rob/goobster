@@ -77,8 +77,11 @@ function mountAssistant(app, ctx, h) {
         limit: req.query.limit
     })));
 
+    // `run` is the execution record, when the runner has picked it up: what
+    // it spent, what it concluded and which tools it called (not their output).
     app.get(`${initiativeBase}/:id`, requireAuth, route(async (req) => ({
-        initiative: await initiatives.get({ userId: req.webUser.userId, id: req.params.id })
+        initiative: await initiatives.get({ userId: req.webUser.userId, id: req.params.id }),
+        run: await require('../../services/assistantRunService').forInitiative({ userId: req.webUser.userId, initiativeId: req.params.id })
     })));
 
     // { action: queue | cancel | retry | accept | reject, expectedRevision }

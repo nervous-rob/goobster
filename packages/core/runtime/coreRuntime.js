@@ -452,6 +452,17 @@ async function startCoreRuntime({
             onPause(() => { stewardStopped = Promise.resolve(steward.stop?.()).catch(() => {}); });
             settleTasks.push({ name: 'assistantSteward', contract: 'runtimeStep', drain: () => stewardStopped });
         }, { feature: 'assistant' });
+        await step('assistantRunner', () => {
+            // Delegated runs: executes initiatives a person queued, under
+            // their grant and budgets (documentation/delegated_runs.md).
+            const runner = load('assistantRunnerService', () => requireOptional('../services/assistantRunnerService', { feature: 'assistant' }));
+            if (!runner) return ABSENT;
+            runner.start();
+            stoppers.push(async () => runner.stop?.());
+            let runnerStopped = null;
+            onPause(() => { runnerStopped = Promise.resolve(runner.stop?.()).catch(() => {}); });
+            settleTasks.push({ name: 'assistantRunner', contract: 'runtimeStep', drain: () => runnerStopped });
+        }, { feature: 'assistant' });
 
         // --- Discord-bound workers (need the live client) ---------------------
         if (withDiscord && client) {

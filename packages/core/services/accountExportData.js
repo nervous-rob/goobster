@@ -72,6 +72,8 @@ const INVENTORY = [
     ['assistant_responsibility_revisions', 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)', '*', 'responsibilityId, revision'],
     ['assistant_source_cursors', 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)', '*', 'id'],
     ['assistant_initiatives', 'ownerUserId = @userId', '*', 'id'],
+    ['assistant_runs', 'ownerUserId = @userId', '*', 'id'],
+    ['assistant_run_operations', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_updates', "audienceKind = 'user' AND audienceUserId = @userId", '*', 'sequence'],
     ['assistant_update_receipts', 'userId = @userId', '*', 'updateId'],
     ['assistant_process_contracts', 'ownerUserId = @userId', '*', 'id'],

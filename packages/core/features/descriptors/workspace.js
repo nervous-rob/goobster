@@ -135,7 +135,7 @@ module.exports = {
         docs: ['documentation/delegated_responsibilities.md'],
         payload: {
             files: [
-                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService,assistantGateService}.js',
+                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService,assistantGateService,assistantRunService,assistantRunnerService}.js',
                 'packages/core/web/routes/assistant.js'
             ]
         }

@@ -3689,3 +3689,70 @@ CREATE INDEX IF NOT EXISTS idx_assistant_process_observations_process
     ON assistant_process_observations(processKind, processId, observedAt);
 CREATE INDEX IF NOT EXISTS idx_assistant_process_observations_owner
     ON assistant_process_observations(ownerUserId, observedAt);
+
+-- Delegated runs (DA-3, ADR 0018): one row per claimed initiative. The
+-- initiative row owns the lease and the lifecycle a person sees; this row is
+-- the execution record - which grant revision it ran under, as whom, what it
+-- spent, and what it concluded. A crashed worker's lease lapses, the
+-- initiative returns to QUEUED and the same run row is resumed (`attempt`
+-- counts resumes). resultTitle/resultSummary are private user data: they
+-- leave with /forget-me and are in the account export.
+CREATE TABLE IF NOT EXISTS assistant_runs (
+    id INTEGER PRIMARY KEY,
+    initiativeId INTEGER NOT NULL UNIQUE REFERENCES assistant_initiatives(id) ON DELETE CASCADE,
+    responsibilityId INTEGER NOT NULL,
+    responsibilityRevision INTEGER NOT NULL,
+    ownerUserId TEXT NOT NULL,
+    actingUserId TEXT,
+    payerUserId TEXT,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'RUNNING'
+        CHECK (status IN ('RUNNING', 'WAITING', 'REVIEW', 'COMPLETED', 'FAILED', 'CANCELLED')),
+    -- Machine code for WAITING / REVIEW / FAILED / CANCELLED
+    stopCode TEXT,
+    -- COMPLETED: DONE | NO_CHANGE
+    outcome TEXT,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    tokensUsed INTEGER NOT NULL DEFAULT 0,
+    searches INTEGER NOT NULL DEFAULT 0,
+    resultTitle TEXT,
+    resultSummary TEXT,
+    updateId INTEGER,
+    startedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    heartbeatAt TEXT,
+    endedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_runs_owner ON assistant_runs(ownerUserId, status);
+CREATE INDEX IF NOT EXISTS idx_assistant_runs_resp ON assistant_runs(responsibilityId, startedAt);
+
+-- The run's operation journal: every tool call is recorded before it is
+-- dispatched (PREPARED -> DISPATCHED) and after it returns (SUCCEEDED /
+-- FAILED), or REFUSED when the grant does not cover it. `seq` is the n-th
+-- call with this (tool, argsHash) in the run, so a resumed run replays a
+-- finished call from its recorded result instead of doing it again. A write
+-- left DISPATCHED by a crash is UNCERTAIN and stops the run for review; it
+-- is never blindly retried. resultText is private user data.
+CREATE TABLE IF NOT EXISTS assistant_run_operations (
+    id INTEGER PRIMARY KEY,
+    runId INTEGER NOT NULL REFERENCES assistant_runs(id) ON DELETE CASCADE,
+    ownerUserId TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    argsHash TEXT NOT NULL,
+    seq INTEGER NOT NULL DEFAULT 1,
+    operation TEXT,
+    resourceKind TEXT,
+    resourceId TEXT,
+    effect TEXT NOT NULL DEFAULT 'read' CHECK (effect IN ('read', 'write')),
+    status TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (status IN ('PREPARED', 'DISPATCHED', 'SUCCEEDED', 'FAILED', 'REFUSED', 'UNCERTAIN')),
+    refusalCode TEXT,
+    resultText TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (runId, tool, argsHash, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_run_operations_owner ON assistant_run_operations(ownerUserId, createdAt);

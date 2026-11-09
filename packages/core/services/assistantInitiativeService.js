@@ -514,6 +514,39 @@ class AssistantInitiativeService {
         });
     }
 
+    /**
+     * Extend a claimed attempt's lease (the runner calls this as it works).
+     * False means the lease is gone: the attempt was cancelled, parked or
+     * reaped, and the caller must stop without writing anything more.
+     */
+    async renewLease({ id, leaseToken, now = new Date() }) {
+        if (!leaseToken) return false;
+        const result = await db.run(
+            `UPDATE assistant_initiatives SET leaseExpiresAt = @expires, updatedAt = @now
+             WHERE id = @id AND status = 'RUNNING' AND leaseToken = @token`,
+            { id: Number(id), token: leaseToken, expires: utcText(new Date(now.getTime() + LEASE_MS)), now: utcText(now) }
+        );
+        return result.changes > 0;
+    }
+
+    /**
+     * WAITING attempts whose recheck time has come go back to QUEUED, when
+     * what they waited for can clear by itself (a budget window, a missing
+     * dependency). They were queued by their owner once already; a wait on
+     * the person, on access or on the responsibility needs a human action.
+     */
+    async requeueDue({ now = new Date() } = {}) {
+        const result = await db.run(
+            `UPDATE assistant_initiatives
+             SET status = 'QUEUED', waitReason = NULL, stopCode = NULL, recheckAfter = NULL,
+                 revision = revision + 1, updatedAt = @now
+             WHERE status = 'WAITING' AND waitReason IN ('budget', 'dependency')
+               AND recheckAfter IS NOT NULL AND recheckAfter <= @now`,
+            { now: utcText(now) }
+        );
+        return result.changes || 0;
+    }
+
     /** Return RUNNING attempts whose lease lapsed to QUEUED, without their token. */
     async reapExpiredLeases({ now = new Date() } = {}) {
         const result = await db.run(

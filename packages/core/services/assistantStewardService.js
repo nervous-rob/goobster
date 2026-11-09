@@ -7,7 +7,8 @@
  * lock so the bot and the api service never both run it:
  *  1. persist expiry of overdue responsibilities (their open initiatives
  *     are cancelled in the same transaction);
- *  2. return RUNNING initiatives whose lease lapsed to QUEUED;
+ *  2. return RUNNING initiatives whose lease lapsed to QUEUED, and WAITING
+ *     ones whose budget or dependency recheck time has come;
  *  3. reconcile linked sources against their durable cursors (this is what
  *     recovers a change whose event hint was missed, e.g. across a restart);
  *  4. adopt open project gates into canonical updates and resolve adopted
@@ -58,6 +59,7 @@ async function sweep({ now = new Date(), retention = null } = {}) {
         const result = {
             expired: await responsibilities.expireDue({ now }),
             leasesReaped: await initiatives.reapExpiredLeases({ now }),
+            requeued: await initiatives.requeueDue({ now }),
             reconcile: await initiatives.reconcile({ now }),
             gates: await require('./assistantGateService').adoptProjectGates({}),
             envelopes: await updates.deliverPending({})
@@ -68,6 +70,7 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             lastRetentionAt = now.getTime();
             result.retention = {
                 processes: await processes.prune({ days: RETENTION_DAYS.observations, now }),
+                runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
                 updates: await updates.prune({ days: RETENTION_DAYS.updates, now })
             };
