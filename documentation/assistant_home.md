@@ -117,15 +117,20 @@ features are on.
 ones. See [delegated_responsibilities.md](delegated_responsibilities.md) for
 what a responsibility is and how each action is checked.
 
-- **Draft** from plain choices: what to look after, what it may do (read and
-  research on the web, read your knowledge, add and amend generated notes,
-  and in one of your projects: read it, edit its files under folders you
-  name, run code in the sandbox), and when it ends. A draft grants nothing.
+- **Draft** from plain choices: what to look after, what it may do (search
+  and read the web, read your knowledge, add and amend generated notes, run
+  a research expedition, and in one of your projects: read it, edit its
+  files under folders you name, run code in the sandbox), when it ends, and
+  whether proposed work starts automatically. A draft grants nothing.
 - **Activate** shows exactly what will be granted, as you, and until when,
   and needs your confirmation. Activation requires Attention to be on.
 - **Pause / Resume / Mark complete / Revoke / Archive** follow the lifecycle;
   each carries the revision you saw, so a stale page is refused rather than
   applied.
+
+Under each responsibility is its work: proposed items with *Start* and
+*Dismiss*, running and waiting items with *Cancel*, and finished items with
+their result. See [delegated_runs.md](delegated_runs.md).
 
 Grants the form cannot express yet (repositories, processes, budgets) can be
 created through the API.

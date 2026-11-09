@@ -8,8 +8,9 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 # Planned: delegated assistant implementation and acceptance plan
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
-canonical updates and process observations) and the read-only DA-2 Home are
-implemented; everything else in this document is still planned.** Updated 2026-11-09.
+canonical updates and process observations), the read-only DA-2 Home and the
+DA-3 runner are implemented; everything else in this
+document is still planned.** Updated 2026-11-09 (DA-7 through DA-12 added as planned increments).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -71,10 +72,25 @@ increment done because its proposal exists.
 | DA-0: baseline and decisions | Done: [ADR 0016](adr/0016-delegated-responsibilities.md) (pilot numbers still to be recorded by the owner) | None | Revalidated source inventory; exact schema/API/feature choices and recorded pilot policy |
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
 | DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Still open: briefing feedback, deciding a request from Home itself, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
-| DA-3: durable research and knowledge | Planned | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
+| DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
 | DA-4: project continuity | Planned | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
+| DA-7: conversational delegation and control | Planned | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
+| DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
+| DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
+| DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
+| DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
+| DA-12: operator controls and model evaluation | Planned | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
+
+DA-7 through DA-12 extend the same loop after the first six increments.
+They were added on 2026-11-09 so the earlier increments are built with them
+in mind; none of them is implemented. Their contracts are in
+[architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
+and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
+DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4
+and DA-5. Nothing in DA-7 through DA-11 is enabled for anyone but the owner
+until the DA-6 pilot decision is recorded.
 
 DA-2 does not wait for every autonomous capability. It initially projects real
 existing state and explicit empty states. DA-5 observation adapters can be built
@@ -321,6 +337,151 @@ The owner must record thresholds before judging the pilot and an exit decision
 before broadening autonomy or enabling it for other users. Test account isolation
 from DA-1 onward even while rollout stays personal. Existing actual-host and
 second-account gates remain in force; this plan does not supersede them.
+
+### DA-7: conversational delegation and control
+
+Make conversation the main way to delegate and to check on delegated work.
+Add chat tools that **propose and report but never grant**: a draft
+responsibility from what the person said, the current state of their
+delegated work, and typed actions on one piece of work (queue, cancel,
+pause the responsibility). Activation, resume and any widening of authority
+stay a confirmed human action in the portal or an explicit confirmation
+card in chat; a model's own tool call can never be that confirmation.
+
+Let a request be decided where it is shown. Each gate kind declares its
+decision operations once; Home, the Inbox and chat render them and dispatch
+to the owning domain service with the gate's occurrence and revision. Add a
+spoken briefing that reads the same Home projection through the existing
+voice path and marks nothing read by speaking it.
+
+Exit scenarios:
+
+- "Keep an eye on X and update my plan" produces a draft with the narrowest
+  grant that covers it, shown for confirmation; nothing is active until the
+  person confirms, and declining leaves no draft behind unless they keep it.
+- A model cannot activate, resume or widen a responsibility by any sequence
+  of tool calls, in chat, in a run or through an automation.
+- "What are you working on?" and "why did you do that?" answer from run and
+  journal records, including refused calls, and never from invention.
+- "Stop that" cancels the named work and says what had already been changed.
+- A request approved from the Inbox card, from Home and from chat reaches the
+  same domain operation; a stale card is refused with the current state.
+- In incognito, none of these tools read or write delegated state.
+- A spoken briefing reports the same counts as Home and acknowledges nothing.
+
+### DA-8: wider opportunity sources
+
+Add source adapters to the existing cursor mechanism (ADR 0017): the
+person's own conversations, followed sources, failed project runs and CI
+verdicts. Each adapter reads durable state, has a cursor, and proposes at
+most one opportunity per material change. Conversation-derived opportunities
+require a stated commitment or request, not a mentioned idea, and carry the
+message reference as their source. Every adapter has a per-responsibility
+daily proposal cap, and proposals the person keeps dismissing lower that
+adapter's rate through DA-10.
+
+Exit scenarios:
+
+- A restart or missed event loses no opportunity; a replayed event adds none.
+- An idea mentioned in passing proposes nothing; "can you look into that for
+  me" inside a covered responsibility proposes one item citing that message.
+- A source the person can no longer read stops proposing immediately.
+- A failed run proposes one investigation per failure cause, not per retry.
+- CI evidence uses the corrected verdict semantics: skipped is not passing.
+- A flood of source changes cannot exceed the proposal cap or the budgets.
+- Deleting a conversation removes the opportunities derived from it.
+
+### DA-9: delivery and interruption
+
+Publish refetch hints for the overview on the existing portal event stream
+and apply the stored `interruption` rule when an update is filed: `home`
+files quietly, `digest` joins one daily digest, `immediate` may contact the
+person. Every outbound contact (push, Discord DM) goes through the Attention
+contact path and counts against its daily cap, cooldown and quiet hours. A
+request that blocks work may be `immediate` once per occurrence; a finding
+never escalates itself.
+
+Exit scenarios:
+
+- Home and the Responsibilities page update without a reload, and reconnect
+  by refetching rather than replaying events.
+- A stream event carries ids only and is rechecked against the session.
+- One consolidated non-urgent digest per day at most; an empty day sends none.
+- Quiet hours, the contact cap and the cooldown hold for delegated work.
+- A delivered push or DM records delivery, not review; Home stays highlighted.
+- The same update never arrives as both a digest entry and an immediate contact.
+- Turning Attention off stops outbound contact at once.
+
+### DA-10: feedback and learning
+
+Add typed feedback on a finding or proposal: useful, already knew, wrong,
+less of this, wrong time, keep this wording, stop this responsibility. Each
+kind writes to the one system it concerns and the effect is inspectable and
+reversible. Selection uses the person's own history (dismissed proposals,
+accepted findings, edits to generated notes) as bounded, per-responsibility
+signals, never as free text fed back to a model as instructions.
+
+Exit scenarios:
+
+- "Wrong time" changes delivery timing and nothing about topic selection.
+- "Wrong" on a finding opens a correction on the note or claim it came from
+  and does not delete the evidence.
+- "Less of this" lowers a named source adapter's proposal rate and shows the
+  current rate with a way to reset it.
+- "Stop this responsibility" is the ordinary pause or revoke, confirmed.
+- Ignoring an item is weak feedback and cannot by itself silence a source.
+- Feedback and derived signals are in the export, the report and erasure.
+- No learned signal can widen a grant, raise a budget or skip authorization.
+
+### DA-11: extended reach
+
+Each capability is its own sub-increment with its own safety gate, added as
+entries in the run's tool table (ADR 0018), never by exposing a chat tool:
+
+- **Repository work** (`repo.commit`, `repo.push`, `pr.create`) through
+  `projectRepoService` and sealed git, on the acting person's own GitHub
+  connection, on named branches only, never forced, never the default branch.
+- **Saved notes, connections and archiving** (`kg.saved.amend`, `kg.edge`,
+  `kg.archive`) after edges gain evidence and retraction history and merge
+  and archive are reversible. Saved-note edits are proposals a person
+  applies unless the grant explicitly names direct editing.
+- **Findings for a project's members** (`audience: project`) under the
+  project's membership at delivery time, with the producer shown.
+- **Outside connectors** (`external.write`, and read connectors such as a
+  calendar) as typed adapters with a manifest of exactly what each reads and
+  writes. The product non-goal of broad surveillance stands: a connector is
+  opt-in per responsibility, scoped to named resources, and a connector the
+  owner has not recorded a decision for does not ship.
+
+Exit scenarios:
+
+- A push after a crash is reconciled against the remote before any retry.
+- A run cannot push to a branch outside its patterns or to a protected one.
+- A saved-note proposal shows a diff; applying it is the person's action.
+- An archived note is restorable with its connections.
+- A member who leaves a project stops receiving its findings at once.
+- An outside write that may have happened stops for review, never retries.
+- Revoking a connector stops its use at the next call and removes its tokens.
+
+### DA-12: operator controls and model evaluation
+
+Give the host a view of delegated work across the installation (counts,
+states, spend, failures by code; never titles, prompts or results) with an
+installation cap, a per-account cap and a stop-all control, each audited.
+Record the pilot's numbers as configuration with stated defaults. Add an
+optional evaluation set that runs fixed, fictional responsibilities against
+a real provider and measures refusals, unwanted writes, cost per useful
+result and prompt-injection resistance; it is never part of required CI.
+
+Exit scenarios:
+
+- The host can stop all delegated work; running work halts at its next step.
+- The host view shows no private text, and every change writes one audit row.
+- Per-account and installation caps hold under concurrent claims.
+- An unset budget still means the conservative default.
+- A page or file that tells the run to exceed its grant changes nothing: the
+  call is refused by authorization, not by the prompt.
+- Evaluation results are recorded with the model and prompt version used.
 
 ## Validation and review requirements
 

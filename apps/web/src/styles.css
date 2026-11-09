@@ -2495,3 +2495,9 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .assistant-overview a:not(.btn):not(.assistant-component) { color: var(--accent); text-decoration: none; }
 .assistant-overview a:not(.btn):not(.assistant-component):hover,
 .assistant-overview a:not(.btn):not(.assistant-component):focus-visible { text-decoration: underline; }
+.assistant-work { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.assistant-work-item {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raise-2);
+}
+.assistant-result { margin-top: 6px; }

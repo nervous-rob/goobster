@@ -317,6 +317,14 @@ async function forgetAssistantResponsibilities(userId) {
             OR initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)`,
         { userId }
     );
+    // Run journals hold retrieved text: they go before the initiatives they
+    // belong to (explicitly, not only through the cascade).
+    const runsOwned = `ownerUserId = @userId OR initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId OR ${owned})`;
+    const runOperations = (await db.run(
+        `DELETE FROM assistant_run_operations WHERE ownerUserId = @userId OR runId IN (SELECT id FROM assistant_runs WHERE ${runsOwned})`,
+        { userId }
+    )).changes;
+    const runs = (await db.run(`DELETE FROM assistant_runs WHERE ${runsOwned}`, { userId })).changes;
     const cursors = (await db.run(`DELETE FROM assistant_source_cursors WHERE ${owned}`, { userId })).changes;
     const initiatives = (await db.run(
         `DELETE FROM assistant_initiatives WHERE ownerUserId = @userId OR ${owned}`, { userId }
@@ -355,6 +363,13 @@ async function forgetAssistantResponsibilities(userId) {
                 revision = revision + 1, authorityRevision = revision + 1, updatedAt = @now
              WHERE id = @id`,
             { id: row.id, userId, now }
+        );
+        await db.run(
+            `UPDATE assistant_runs SET
+                actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                payerUserId = CASE WHEN payerUserId = @userId THEN NULL ELSE payerUserId END
+             WHERE responsibilityId = @id AND (actingUserId = @userId OR payerUserId = @userId)`,
+            { id: row.id, userId }
         );
         await db.run(
             `UPDATE assistant_initiatives SET
@@ -405,7 +420,7 @@ async function forgetAssistantResponsibilities(userId) {
     }
     return {
         responsibilities, revisions, anonymized: others.length,
-        initiatives, cursors, updates, receipts, processContracts, processObservations
+        initiatives, cursors, updates, receipts, processContracts, processObservations, runs, runOperations
     };
 }
 
@@ -438,6 +453,8 @@ async function countAssistantResponsibilities(userId) {
             `SELECT COUNT(*) AS c FROM assistant_initiatives
              WHERE ownerUserId = @userId AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW')`
         ),
+        runs: await count('SELECT COUNT(*) AS c FROM assistant_runs WHERE ownerUserId = @userId'),
+        runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
         updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
         processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
@@ -471,7 +488,9 @@ async function auditAssistantResponsibilities(userId) {
         ),
         receipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
         processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
-        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId')
+        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId'),
+        runs: await count('SELECT COUNT(*) AS c FROM assistant_runs WHERE ownerUserId = @userId OR actingUserId = @userId OR payerUserId = @userId'),
+        runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId')
     };
 }
 

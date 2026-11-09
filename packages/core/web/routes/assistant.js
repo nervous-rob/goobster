@@ -70,15 +70,25 @@ function mountAssistant(app, ctx, h) {
 
     // --- Initiatives (attempts derived from linked sources) ----------------
     const initiativeBase = '/api/app/assistant/initiatives';
-    app.get(initiativeBase, requireAuth, route(async (req) => initiatives.list({
-        userId: req.webUser.userId,
-        responsibilityId: req.query.responsibilityId ? Number(req.query.responsibilityId) : null,
-        status: req.query.status ? String(req.query.status) : null,
-        limit: req.query.limit
-    })));
+    // Each initiative carries `run` (or null): its execution summary.
+    app.get(initiativeBase, requireAuth, route(async (req) => {
+        const listed = await initiatives.list({
+            userId: req.webUser.userId,
+            responsibilityId: req.query.responsibilityId ? Number(req.query.responsibilityId) : null,
+            status: req.query.status ? String(req.query.status) : null,
+            limit: req.query.limit
+        });
+        const runs = await require('../../services/assistantRunService').summaries({
+            userId: req.webUser.userId, initiativeIds: listed.initiatives.map(item => item.id)
+        });
+        return { initiatives: listed.initiatives.map(item => ({ ...item, run: runs.get(item.id) || null })) };
+    }));
 
+    // `run` is the execution record, when the runner has picked it up: what
+    // it spent, what it concluded and which tools it called (not their output).
     app.get(`${initiativeBase}/:id`, requireAuth, route(async (req) => ({
-        initiative: await initiatives.get({ userId: req.webUser.userId, id: req.params.id })
+        initiative: await initiatives.get({ userId: req.webUser.userId, id: req.params.id }),
+        run: await require('../../services/assistantRunService').forInitiative({ userId: req.webUser.userId, initiativeId: req.params.id })
     })));
 
     // { action: queue | cancel | retry | accept | reject, expectedRevision }

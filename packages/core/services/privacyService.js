@@ -753,6 +753,9 @@ class PrivacyService {
             counts.assistantUpdateReceipts = forgottenResponsibilities.receipts;
             counts.processContracts = forgottenResponsibilities.processContracts;
             counts.processObservations = forgottenResponsibilities.processObservations;
+            // Delegated runs and their operation journals (retrieved text).
+            counts.assistantRuns = forgottenResponsibilities.runs;
+            counts.assistantRunOperations = forgottenResponsibilities.runOperations;
 
             // Spitball Expeditions: research runs, their cycles, and the
             // evidence trail. Cycles/sources/claims cascade with the
@@ -1292,6 +1295,8 @@ class PrivacyService {
             assistant_update_receipts: responsibilities.receipts,
             assistant_process_contracts: responsibilities.processContracts,
             assistant_process_observations: responsibilities.processObservations,
+            assistant_runs: responsibilities.runs,
+            assistant_run_operations: responsibilities.runOperations,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',

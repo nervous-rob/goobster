@@ -98,6 +98,16 @@ button, `memory` is accepted for tools and a future *Treat as memory*
 action. It changes `curation` only: no source rebrand, no revision, no
 content touch.
 
+### Generated notes
+
+A note written by [delegated work](delegated_runs.md) carries
+`kg_nodes.generated = 1` and curation `unclassified`. It is listed in Notes
+with a *generated* badge. Editing or keeping it makes it yours (`saved`,
+`generated = 0`); from then on no run can change it. The backfill below
+skips generated rows: research provenance on a generated note is not
+evidence that you chose to keep it. Notes with curation `saved` are never
+removed by capacity pruning or the low-confidence clean-up.
+
 ### Legacy rows and the backfill
 
 Existing databases receive the column with `DEFAULT 'unclassified'`. On the

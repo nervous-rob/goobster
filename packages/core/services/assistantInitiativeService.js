@@ -217,13 +217,17 @@ class AssistantInitiativeService {
         );
         const scopes = (() => { try { return JSON.parse(responsibility.scopesJson || '{}'); } catch { return {}; } })();
         const audience = scopes.audience === 'project' && responsibility.projectId ? 'project' : 'private';
+        // Work starts when its owner says so - by pressing Start, or by
+        // having turned on "start automatically" in the grant itself.
+        const rules = (() => { try { return JSON.parse(responsibility.rulesJson || '{}') || {}; } catch { return {}; } })();
         const id = await db.insert(
             `INSERT INTO assistant_initiatives
                 (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, audience, projectId,
-                 sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason)
+                 sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status)
              VALUES (@rid, @rrev, @owner, @acting, @audience, @projectId,
-                 @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason)`,
+                 @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason, @status)`,
             {
+                status: rules.autoStart === true ? 'QUEUED' : 'CANDIDATE',
                 rid: responsibility.id,
                 rrev: responsibility.revision,
                 owner: responsibility.ownerUserId,
@@ -514,6 +518,39 @@ class AssistantInitiativeService {
         });
     }
 
+    /**
+     * Extend a claimed attempt's lease (the runner calls this as it works).
+     * False means the lease is gone: the attempt was cancelled, parked or
+     * reaped, and the caller must stop without writing anything more.
+     */
+    async renewLease({ id, leaseToken, now = new Date() }) {
+        if (!leaseToken) return false;
+        const result = await db.run(
+            `UPDATE assistant_initiatives SET leaseExpiresAt = @expires, updatedAt = @now
+             WHERE id = @id AND status = 'RUNNING' AND leaseToken = @token`,
+            { id: Number(id), token: leaseToken, expires: utcText(new Date(now.getTime() + LEASE_MS)), now: utcText(now) }
+        );
+        return result.changes > 0;
+    }
+
+    /**
+     * WAITING attempts whose recheck time has come go back to QUEUED, when
+     * what they waited for can clear by itself (a budget window, a missing
+     * dependency). They were queued by their owner once already; a wait on
+     * the person, on access or on the responsibility needs a human action.
+     */
+    async requeueDue({ now = new Date() } = {}) {
+        const result = await db.run(
+            `UPDATE assistant_initiatives
+             SET status = 'QUEUED', waitReason = NULL, stopCode = NULL, recheckAfter = NULL,
+                 revision = revision + 1, updatedAt = @now
+             WHERE status = 'WAITING' AND waitReason IN ('budget', 'dependency')
+               AND recheckAfter IS NOT NULL AND recheckAfter <= @now`,
+            { now: utcText(now) }
+        );
+        return result.changes || 0;
+    }
+
     /** Return RUNNING attempts whose lease lapsed to QUEUED, without their token. */
     async reapExpiredLeases({ now = new Date() } = {}) {
         const result = await db.run(
@@ -554,11 +591,24 @@ class AssistantInitiativeService {
         this._unsubscribe = bus.subscribe(['attention.*', 'mission.*'], (event) => {
             if (event?.payload?.userId) this.hint(event.payload.userId);
         });
+        // An expedition a run was waiting on has ended: wake the run now
+        // instead of at its recheck time.
+        this._unsubscribeResearch = bus.subscribe(
+            ['research.expedition_completed', 'research.expedition_failed', 'research.expedition_cancelled'],
+            () => {
+                (async () => {
+                    await require('./assistantRunService').reconcileChildren({});
+                    await this.requeueDue({});
+                })().catch(() => {});
+            }
+        );
     }
 
     stopListening() {
         if (this._unsubscribe) this._unsubscribe();
         this._unsubscribe = null;
+        if (this._unsubscribeResearch) this._unsubscribeResearch();
+        this._unsubscribeResearch = null;
         if (this._hintTimer) clearTimeout(this._hintTimer);
         this._hintTimer = null;
         this._hinted.clear();

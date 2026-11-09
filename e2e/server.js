@@ -750,6 +750,46 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // A proposed piece of work under an active responsibility (no model call).
+    app.post('/e2e/fixtures/assistant-home/initiative', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const responsibilities = require('@goobster/core/services/assistantResponsibilityService');
+            const { responsibility } = await responsibilities.create({
+                userId, activate: true,
+                body: { title: 'Keep my garden notes current', operations: [{ operation: 'read', resource: { kind: 'knowledge', ids: ['personal'] } }] }
+            });
+            const id = await db.insert(
+                `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,
+                    sourceKind, sourceId, sourceRevision, dedupeKey, title, reason)
+                 VALUES (@rid, @rev, @u, @u, 'attention_item', '1', 'r2', 'e2e', 'Your frost-date goal changed', 'The goal now names a deadline.')`,
+                { rid: responsibility.id, rev: responsibility.revision, u: userId }
+            );
+            res.json({ ok: true, id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One runner pass with a scripted model: it looks in the person's notes,
+    // tries a web search the grant does not cover, and reports. No provider.
+    app.post('/e2e/fixtures/assistant-home/run', express.json(), async (_req, res) => {
+        const aiService = require('@goobster/core/services/aiService');
+        const original = aiService.chat;
+        const rounds = [
+            [{ id: 'e1', name: 'lookupNotes', arguments: JSON.stringify({ query: 'frost' }) },
+                { id: 'e2', name: 'searchWeb', arguments: JSON.stringify({ query: 'frost date' }) }],
+            [{ id: 'e3', name: 'finish', arguments: JSON.stringify({ outcome: 'finding', title: 'Your notes put the first frost on the 14th', summary: 'Web search is not part of this responsibility, so this is from your notes only.' }) }]
+        ];
+        aiService.chat = async () => ({ content: '', toolCalls: rounds.shift() || [] });
+        try {
+            const runner = require('@goobster/core/services/assistantRunnerService');
+            res.json(await runner.tick({ wait: true }));
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        } finally {
+            aiService.chat = original;
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {

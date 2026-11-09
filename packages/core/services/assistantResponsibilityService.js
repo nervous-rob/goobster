@@ -298,8 +298,14 @@ function normalizeBudgets(value) {
 function normalizeRules(value) {
     if (value === undefined || value === null) return {};
     if (!isPlainObject(value)) throw bad('rules must be an object.');
-    rejectUnknownKeys(value, ['interruption', 'stopCondition'], 'rules');
+    rejectUnknownKeys(value, ['interruption', 'stopCondition', 'autoStart'], 'rules');
     const out = {};
+    // Proposed work is queued without waiting for the person (ADR 0018). Off
+    // unless the person turns it on; like every rule it is part of the grant.
+    if (value.autoStart !== undefined && value.autoStart !== null) {
+        if (typeof value.autoStart !== 'boolean') throw bad('rules.autoStart must be true or false.');
+        if (value.autoStart) out.autoStart = true;
+    }
     if (value.interruption !== undefined && value.interruption !== null) {
         if (!INTERRUPTIONS.includes(value.interruption)) throw bad(`rules.interruption must be one of ${INTERRUPTIONS.join(', ')}.`);
         out.interruption = value.interruption;

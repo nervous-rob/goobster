@@ -355,6 +355,7 @@ const GROUPS = [
             'assistantInitiativeService',
             'assistantProcessService',
             'assistantResponsibilityService',
+            'assistantRunService',
             'assistantStewardService',
             'assistantUpdateService',
             'dmPrivacy',

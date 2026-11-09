@@ -136,6 +136,38 @@ test.describe('assistant-first Home', () => {
         await expect(page.getByRole('button', { name: 'Pause assistant work' })).toHaveCount(0);
     });
 
+    test('proposed work waits for Start, then runs within the grant and reports on Home', async ({ page }) => {
+        await seed(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/initiative', { data: { userId: USER } });
+        expect(made.ok(), await made.text()).toBe(true);
+        await login(page, { userId: USER, name: NAME });
+        await expect(page.getByTestId('assistant-responsibility')).toContainText('1 proposed');
+
+        // Nothing runs until the person starts it.
+        expect(await (await page.request.post('/e2e/fixtures/assistant-home/run')).json()).toMatchObject({ started: 0 });
+        await page.goto('/app/assistant');
+        const work = page.getByTestId('initiative-row');
+        await expect(work.getByTestId('initiative-status')).toHaveText('proposed');
+        await work.getByRole('button', { name: 'Start' }).click();
+        const dialog = page.getByRole('dialog');
+        await expect(dialog).toContainText('It can only do what the responsibility lists above');
+        await dialog.getByRole('button', { name: 'Confirm' }).click();
+        await expect(work.getByTestId('initiative-status')).toHaveText('queued');
+
+        const ran = await (await page.request.post('/e2e/fixtures/assistant-home/run')).json();
+        expect(ran).toMatchObject({ started: 1 });
+        expect(ran.results[0]).toMatchObject({ status: 'COMPLETED', outcome: 'DONE' });
+        await page.reload();
+        await expect(page.getByTestId('initiative-status')).toHaveText('done');
+        await expect(page.getByTestId('initiative-result')).toContainText('Your notes put the first frost on the 14th');
+
+        // The result is one finding on Home.
+        await page.goto('/app/');
+        await expect(page.getByTestId('assistant-brief-item')).toHaveCount(1);
+        await expect(page.getByTestId('assistant-brief-item')).toContainText('Your notes put the first frost on the 14th');
+        await expect(page.getByTestId('assistant-component-research')).toContainText('1 new update');
+    });
+
     test('with Attention off the page says why nothing runs', async ({ page }) => {
         await seed(page, { seed: false, attention: false });
         await login(page, { userId: USER, name: NAME });

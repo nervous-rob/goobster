@@ -638,6 +638,70 @@ cannot weaken this document's authority, audience, acknowledgment, verification,
 or quiet-default contracts. Cosmetic changes do not reopen settled delegation
 boundaries.
 
+## 13. Planned: talking to it and hearing from it
+
+**Status: planned; none of this is available.** Increments DA-7 through
+DA-12. The technical contracts are in
+[architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
+
+### Delegating and steering by conversation
+
+- Saying what you want looked after, in chat or by voice, produces a
+  **draft** shown back to you: what it would look after, exactly what it
+  could do, until when, and whether it would start work by itself. Nothing
+  is active until you confirm that card.
+- The assistant asks for the narrowest authority that covers the request
+  and says what it left out ("I have not asked to edit files").
+- You can ask what it is working on, why it did something, what it changed,
+  and what it was refused. Answers come from its records.
+- You can stop a piece of work or pause a responsibility by saying so. The
+  assistant can never start, resume or widen one by itself.
+- A request can be answered where you see it: on Home, in the Inbox, in the
+  notification or in chat. The choice shown is the concrete decision, with
+  what it will change.
+- A spoken briefing tells you what needs you and what changed. Hearing it
+  does not mark anything reviewed.
+
+### Noticing more
+
+- Work can be proposed from a request you made in conversation, something
+  new in a source you follow, a run that failed, or a CI result, always
+  inside a responsibility that covers it.
+- An idea you merely mention is not a commitment and proposes nothing.
+- Each source has a small daily limit; many changes become one proposal.
+
+### Reaching you
+
+- The overview updates while you look at it.
+- Each responsibility has an interruption setting: quietly on Home, in one
+  daily digest, or immediately for requests that block its work.
+- Anything that reaches you outside the portal respects your Attention
+  contact limit, cooldown and quiet hours. Findings never interrupt.
+- At most one digest a day, and none on a day with nothing in it.
+
+### Learning from you
+
+- Each finding offers: useful, already knew this, wrong, less of this,
+  wrong time, keep this wording, stop this responsibility.
+- Each means one thing and changes one thing; "wrong time" never teaches
+  the assistant that the topic is unimportant.
+- What it has learned is shown per responsibility and can be reset. It
+  changes how often work is proposed, never what the assistant may do.
+
+### Doing more
+
+- Repository work on named branches, never the default branch, never forced.
+- Suggested edits to notes you saved, shown as a diff you apply; connecting
+  and archiving notes, both restorable.
+- Findings shared with a project's current members, with the author shown.
+- Outside services one named resource at a time, each with a plain list of
+  what it reads and writes. There is no "watch everything" option.
+
+### For the host
+
+- A view of delegated work across the installation without any private
+  text, with caps and a stop-all control.
+
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same
 increment; this planned spec alone must never make Goobster claim a capability

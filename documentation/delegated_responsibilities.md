@@ -45,10 +45,14 @@ are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and
   `externalOperations`. `concurrentInitiatives` caps how many initiatives can
-  be running at once. The rest are recorded now and enforced when delegated
-  runs arrive. The account's usage cap always remains the outer limit.
-- **Rules.** `interruption` (`immediate`, `digest` or `home`) and a free-text
-  `stopCondition`.
+  be running at once. `modelTokens`, `searches` and `computeSeconds` are
+  daily caps on the responsibility's [runs](delegated_runs.md), with
+  conservative defaults when unset. `repairAttempts` and `externalOperations`
+  are recorded for later increments. The account's usage cap always remains
+  the outer limit.
+- **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
+  `stopCondition`, and `autoStart` (`true` queues proposed work without
+  waiting for Start; off by default).
 - **Expiry** (`expiresAt`, UTC), optional.
 - **Principals**: owner, authorizer, acting person and payer. Today all four are
   the signed-in person who creates the responsibility, whatever the request
@@ -326,6 +330,7 @@ The assistant's periodic pass applies these windows:
 | Process observations | 90 days, and removed at once when their process is deleted |
 | Process contracts | Until removed, or their process is deleted |
 | Finished initiatives (`COMPLETED`, `FAILED`, `CANCELLED`, `SUPERSEDED`) | 180 days after their last change |
+| Runs and their operation journals ([delegated_runs.md](delegated_runs.md)) | 180 days after the run finished, and with their initiative |
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
 | Source cursors | As long as their responsibility |
 

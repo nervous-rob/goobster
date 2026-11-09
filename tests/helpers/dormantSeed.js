@@ -64,7 +64,9 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_updates', column: 'audienceUserId' },
     { feature: 'assistant', table: 'assistant_update_receipts', column: 'userId' },
     { feature: 'assistant', table: 'assistant_process_contracts', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' }
+    { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
@@ -173,11 +175,22 @@ function createDormantSeed(db) {
              VALUES (@responsibilityId, 'attention_item', '1', 'r1', 1)`,
             { responsibilityId }
         );
-        await db.run(
+        const initiativeId = await db.insert(
             `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,
                 sourceKind, sourceId, sourceRevision, dedupeKey, title)
              VALUES (@responsibilityId, 1, @u, @u, 'attention_item', '1', 'r2', 'attention_item:1', 'Linked goal changed')`,
             { responsibilityId, u }
+        );
+        const runId = await db.insert(
+            `INSERT INTO assistant_runs (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId,
+                status, resultTitle, resultSummary)
+             VALUES (@initiativeId, @responsibilityId, 1, @u, @u, @u, 'COMPLETED', 'Found ' || @tag, 'private result')`,
+            { initiativeId, responsibilityId, u, tag }
+        );
+        await db.run(
+            `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, status, resultText)
+             VALUES (@runId, @u, 'lookupNotes', 'h', 'SUCCEEDED', 'private retrieved text')`,
+            { runId, u }
         );
         const updateId = await db.insert(
             `INSERT INTO assistant_updates (audienceKind, audienceKey, audienceUserId, producerUserId, identityKey, kind,

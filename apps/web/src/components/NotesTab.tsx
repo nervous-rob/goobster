@@ -316,7 +316,9 @@ export function NotesTab({
                                     <span className="notes-row-copy">
                                         <span className="notes-row-title">
                                             {item.label}
-                                            {showBadge && <CurationBadge curation={state} />}
+                                            {item.generated
+                                                ? <span className="badge" data-testid="note-generated" title="Goobster wrote this under one of your responsibilities. Edit or keep it to make it yours.">generated</span>
+                                                : showBadge && <CurationBadge curation={state} />}
                                         </span>
                                         {excerpt(item.content) ? (
                                             <span className="notes-row-excerpt">{excerpt(item.content)}</span>
