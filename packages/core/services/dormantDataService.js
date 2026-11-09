@@ -303,6 +303,20 @@ const RESPONSIBILITY_INVOLVES = `(authorizedBy = @userId OR actingUserId = @user
  */
 async function forgetAssistantResponsibilities(userId) {
     const owned = 'responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)';
+    // A project's shared update stays with the project; it loses the person
+    // and its links to their records, which are deleted next.
+    await db.run(
+        `UPDATE assistant_updates SET
+            producerUserId = CASE WHEN producerUserId = @userId THEN NULL ELSE producerUserId END,
+            responsibilityId = CASE WHEN responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)
+                THEN NULL ELSE responsibilityId END,
+            initiativeId = CASE WHEN initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)
+                THEN NULL ELSE initiativeId END
+         WHERE producerUserId = @userId
+            OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)
+            OR initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)`,
+        { userId }
+    );
     const cursors = (await db.run(`DELETE FROM assistant_source_cursors WHERE ${owned}`, { userId })).changes;
     const initiatives = (await db.run(
         `DELETE FROM assistant_initiatives WHERE ownerUserId = @userId OR ${owned}`, { userId }
@@ -314,19 +328,6 @@ async function forgetAssistantResponsibilities(userId) {
         { userId }
     )).changes;
     const updates = (await db.run(`DELETE FROM assistant_updates WHERE ${personal}`, { userId })).changes;
-    // A project's shared update stays with the project; it loses the person
-    // and any link to their (deleted) responsibility.
-    await db.run(
-        `UPDATE assistant_updates SET
-            producerUserId = CASE WHEN producerUserId = @userId THEN NULL ELSE producerUserId END,
-            responsibilityId = CASE WHEN responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)
-                THEN NULL ELSE responsibilityId END,
-            initiativeId = CASE WHEN initiativeId IN (SELECT id FROM assistant_initiatives WHERE ownerUserId = @userId)
-                THEN NULL ELSE initiativeId END
-         WHERE producerUserId = @userId
-            OR responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
-        { userId }
-    );
     const processContracts = (await db.run('DELETE FROM assistant_process_contracts WHERE ownerUserId = @userId', { userId })).changes;
     const processObservations = (await db.run('DELETE FROM assistant_process_observations WHERE ownerUserId = @userId', { userId })).changes;
 

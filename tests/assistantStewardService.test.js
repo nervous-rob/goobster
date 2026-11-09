@@ -42,7 +42,8 @@ beforeEach(async () => {
     for (const table of [
         'assistant_initiatives', 'assistant_source_cursors', 'assistant_update_receipts', 'assistant_updates',
         'assistant_process_observations', 'assistant_process_contracts',
-        'assistant_responsibility_revisions', 'assistant_responsibilities', 'attention_policies', 'attention_items', 'inbox_items'
+        'assistant_responsibility_revisions', 'assistant_responsibilities', 'attention_policies', 'attention_items', 'inbox_items',
+        'observatory_projects'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -209,6 +210,12 @@ describe('erasure', () => {
         await db.run("UPDATE attention_items SET goal = 'v2' WHERE id = @item", { item });
         await initiatives.reconcileResponsibility(grant.id);
         await updates.publish({ audience: { userId: A }, identityKey: 'finding:1', kind: 'finding', title: 'Frost', components: ['research'], deliver: true });
+        const projectId = await db.insert("INSERT INTO observatory_projects (userId, slug, name) VALUES (@B, 'shared', 'Shared')", { B });
+        const [mine] = (await initiatives.list({ userId: A })).initiatives;
+        const { update: shared } = await updates.publish({
+            audience: { projectId }, identityKey: 'plan:shared', kind: 'progress', title: 'Plan moved', components: ['projects'],
+            producerUserId: A, responsibilityId: grant.id, initiativeId: mine.id
+        });
 
         const theirItem = await goal(B);
         const theirs = await activeGrant(B, { attentionItemId: theirItem });
@@ -227,6 +234,8 @@ describe('erasure', () => {
         for (const table of ['assistant_initiatives', 'assistant_source_cursors', 'assistant_updates', 'assistant_update_receipts']) {
             expect(after.byTable[table]).toBe(0);
         }
+        expect(await db.get('SELECT producerUserId, responsibilityId, initiativeId FROM assistant_updates WHERE id = @id', { id: shared.id }))
+            .toEqual({ producerUserId: null, responsibilityId: null, initiativeId: null });
         const kept = await db.get('SELECT * FROM assistant_initiatives WHERE responsibilityId = @id', { id: theirs.id });
         expect(kept).toMatchObject({ ownerUserId: B, actingUserId: null, status: 'CANCELLED', stopCode: 'PRINCIPAL_ERASED' });
         expect(await db.get('SELECT COUNT(*) AS n FROM assistant_source_cursors WHERE responsibilityId = @id', { id: theirs.id })).toMatchObject({ n: 1 });
