@@ -150,7 +150,7 @@ test.describe('assistant-first Home', () => {
         await expect(work.getByTestId('initiative-status')).toHaveText('proposed');
         await work.getByRole('button', { name: 'Start' }).click();
         const dialog = page.getByRole('dialog');
-        await expect(dialog).toContainText('It cannot change, send or run anything.');
+        await expect(dialog).toContainText('It can only do what the responsibility lists above');
         await dialog.getByRole('button', { name: 'Confirm' }).click();
         await expect(work.getByTestId('initiative-status')).toHaveText('queued');
 
