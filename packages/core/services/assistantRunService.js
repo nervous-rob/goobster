@@ -362,7 +362,7 @@ const TOOLS = {
         needs: () => ({ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }),
         async run({ title, content }, ctx) {
             const added = await require('./knowledgeGraphService').addGeneratedNote({
-                guildId: ctx.scope, userId: ctx.actor, label: title, content, origin: `assistant_run:${ctx.run.id}`
+                guildId: ctx.scope, userId: ctx.actor, label: title, content, originRunId: ctx.run.id
             });
             if (!added.ok) {
                 return {

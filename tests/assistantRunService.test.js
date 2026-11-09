@@ -451,7 +451,7 @@ describe('generated notes', () => {
     });
 
     test('the curation backfill leaves a generated note generated (it is not evidence of intent)', async () => {
-        const added = await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'Frost', content: 'v1', origin: 'assistant_run:1' });
+        const added = await kg.addGeneratedNote({ guildId: scope, userId: A, label: 'Frost', content: 'v1', originRunId: 1 });
         await kg.addProvenance({ nodeId: added.id, sourceKind: 'expedition', sourceId: 5 });
         await kg.backfillCuration({ guildId: scope, userId: `${A}-fresh` }).catch(() => {});
         kg._curationBackfilled?.clear?.();

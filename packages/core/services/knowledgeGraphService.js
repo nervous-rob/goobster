@@ -1693,7 +1693,7 @@ ${excerpt}`;
      * Call inside the caller's transaction to bind it to an operation.
      * @returns {Promise<{ ok: true, id: number, revision: number } | { ok: false, code: 'EXISTS'|'CAPACITY'|'BAD_REQUEST' }>}
      */
-    async addGeneratedNote({ guildId, userId, label, content, type = null, origin = null } = {}) {
+    async addGeneratedNote({ guildId, userId, label, content, type = null, originRunId = null } = {}) {
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
         const cleanLabel = normalizeLabel(label);
         const cleanContent = content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null;
@@ -1709,7 +1709,10 @@ ${excerpt}`;
             { guildId, scopeKey, type: type && NODE_TYPES.includes(type) ? type : 'concept', label: cleanLabel, content: cleanContent, userId: String(userId) }
         ));
         await this._recordRevision(id, 'research', 'created');
-        if (origin) await this.addProvenance({ nodeId: id, sourceKind: 'tool', sourceId: String(origin) });
+        // kg_provenance.sourceId is an integer: the run's id, under kind 'tool'.
+        if (Number.isSafeInteger(Number(originRunId)) && Number(originRunId) > 0) {
+            await this.addProvenance({ nodeId: id, sourceKind: 'tool', sourceId: Number(originRunId) });
+        }
         return { ok: true, id, revision: 1 };
     }
 
