@@ -109,6 +109,12 @@ describe('creating and validating', () => {
             .rejects.toMatchObject({ code: 'INVALID_RESOURCE' });
         await expect(draft({ operations: [{ operation: 'file.edit', resource: { kind: 'project', ids: ['1'], paths: ['../etc'] } }] }))
             .rejects.toMatchObject({ code: 'INVALID_RESOURCE' });
+        // A repository write that reaches GitHub must name its branches: no
+        // branches would match every branch, the default one included.
+        for (const operation of ['repo.push', 'pr.create']) {
+            await expect(draft({ operations: [{ operation, resource: { kind: 'repository', projectId: '1', ids: ['owner/site'] } }] }))
+                .rejects.toMatchObject({ code: 'INVALID_RESOURCE' });
+        }
         await expect(draft({ budgets: { dollars: 5 } })).rejects.toMatchObject({ code: 'INVALID_RESPONSIBILITY' });
         await expect(draft({ title: '  ' })).rejects.toMatchObject({ code: 'INVALID_RESPONSIBILITY' });
     });

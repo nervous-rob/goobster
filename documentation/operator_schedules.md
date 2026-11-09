@@ -1,7 +1,7 @@
 ---
 title: Server schedules (the operator's pause, resume, run-now and delete)
 kind: reference
-summary: Host → Schedules lists every automation and reminder that posts into a Discord server, whoever owns it, and lets an operator pause, resume, run now or delete it. Personal DM and Inbox tasks are never listed or changeable; every change writes an operator_audit row with ids only and tells the owner in their Inbox.
+summary: Host → Schedules lists every automation and reminder that posts into a Discord server, whoever owns it, and lets an operator pause, resume, run now or delete it. Personal DM and Inbox tasks are never listed or changeable; every change writes an operator_audit row with ids only; pausing or deleting also tells the owner in their Inbox (resume and run-now do not).
 when: A recurring automation or reminder keeps posting into a server and its owner will not or cannot stop it; finding out what is scheduled across the servers Goobster is in; checking what the operator can and cannot do to someone else's scheduled work.
 tags: [operations, automations, followups, schedules, operator, audit, privacy]
 ---
@@ -33,10 +33,10 @@ Not covered: project cron triggers (they belong to a user's private project) and
 
 - **Pause** an automation sets `isEnabled = 0` and clears `nextRun`, exactly what `/automation toggle` does. Pausing a recurring reminder sets `followups.pausedAt`; `followupService.getDue()` skips paused rows, so the delivery tick never sends them. The row stays `PENDING`.
 - **Resume** recomputes an automation's `nextRun` from its cron. A reminder's `pausedAt` is cleared and a `dueAt` that passed while paused moves to the next future occurrence, so **nothing fires late**; a `dueAt` still in the future is kept.
-- **Run now** makes the row due now. For an automation it sets `nextRun` to the current time; the poll loop's atomic claim (`automationService.claimDueRun`) then runs it within a minute and advances `nextRun` to the next cron slot, so its schedule is unchanged. A reminder's `dueAt` is set to now and delivery moves its cadence anchor from there. Guild runs and guild-channel reminders are delivered by the bot process; with the bot unreachable they wait (the panel says so).
+- **Run now** makes the row due now. For an automation it sets `nextRun` to the current time; the poll loop's atomic claim (`automationService.claimDueRun`) then runs it within a minute and advances `nextRun` to the next cron slot, so its schedule is unchanged. The write is a compare-and-swap on the `nextRun` the panel read: if the scheduler claimed a due fire in between, the request answers `409 CHANGED` instead of queueing a second immediate run, and a row that is already due is left for its single claim. A reminder's `dueAt` is set to now and delivery moves its cadence anchor from there. Guild runs and guild-channel reminders are delivered by the bot process; with the bot unreachable they wait (the panel says so).
 - **Delete** removes an automation row. A reminder is cancelled (`status = CANCELLED`), which ends the whole series and keeps the row's history.
 
-A paused row cannot be run (`409 PAUSED`); pausing a paused row is `409 ALREADY_PAUSED`; resuming one that is not paused is `409 NOT_PAUSED`; an automation whose stored cron no longer parses cannot resume (`409 BAD_SCHEDULE`).
+A paused row cannot be run (`409 PAUSED`); pausing a paused row is `409 ALREADY_PAUSED`; resuming one that is not paused is `409 NOT_PAUSED`; an automation whose stored cron no longer parses cannot resume (`409 BAD_SCHEDULE`). Automation pause, resume and run-now are compare-and-swap on the state the request read (as reminder changes already were): a concurrent change answers `409 CHANGED`; refresh and try again.
 
 ## Routes
 
@@ -57,3 +57,5 @@ Pausing or deleting also files a `system` Inbox item for the owner ("The host pa
 ## Adding a new kind of scheduled work
 
 A scheduler that keeps its own "next time" in the database must be reachable from `skipMissedSchedules()` (backup and restore) **and** from this panel's service, with the same guild-facing guard and an audit action.
+
+Every kind of scheduled work is listed once in `services/scheduledWorkRegistry.js`. For each kind it names the key each surface uses — missed-run recovery (`skipMissedSchedules()`), the delegated-assistant process catalog (`assistantProcessService.ADAPTERS`) and this panel (`operatorScheduleService.KINDS`) — or records why the kind is deliberately left out of that surface. `tests/scheduledWorkRegistry.test.js` fails when a surface and the registry disagree, or when `schema.sql` gains a table with a next-time column (`nextRun`, `dueAt`, `next…At`) that the registry does not account for. Adding a scheduler is therefore one recorded decision per surface.

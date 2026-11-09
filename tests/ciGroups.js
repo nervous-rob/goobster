@@ -17,6 +17,7 @@ const GROUPS = [
             'activityGatewayAccess',
             'accessRequests',
             'operatorSchedules',
+            'scheduledWorkRegistry',
             'activityService',
             'autoUpdate',
             'backupRestore',

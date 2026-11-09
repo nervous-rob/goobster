@@ -91,7 +91,9 @@ Resource shapes:
   `followed_source`.
 - `repository`: `{ "kind": "repository", "projectId": "12", "ids": ["owner/name"], "branches": ["goobster/*"] }`.
   The repository must be cloned in that project. A trailing `*` in `branches`
-  matches a prefix.
+  matches a prefix. `repo.push` and `pr.create` must name at least one branch
+  pattern: an empty list would match every branch, the default one included,
+  so it is rejected when the responsibility is saved.
 - `external`: `{ "kind": "external", "ids": ["…"] }`.
 
 Unknown operations, kinds or fields are rejected when the responsibility is

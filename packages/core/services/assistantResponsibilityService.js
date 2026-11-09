@@ -27,6 +27,7 @@ const { features } = require('../features/featureState');
 const { unavailableResult } = require('../features/gate');
 const attentionPolicyService = require('./attentionPolicyService');
 const workFailureService = require('./workFailureService');
+const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
 
 const FEATURE_ID = 'assistant';
 
@@ -88,10 +89,10 @@ const RESOURCE_KINDS = {
 const KNOWLEDGE_SCOPES = ['personal'];
 /** Process reference kinds `<kind>:<id>` and the table/owner column that proves access. */
 const PROCESS_KINDS = {
-    automation: { table: 'automations', owner: 'userId', feature: null },
-    project_trigger: { table: 'project_triggers', owner: 'userId', feature: 'projects' },
-    attention_watch: { table: 'attention_watches', owner: 'userId', feature: null },
-    followed_source: { table: 'followed_sources', owner: 'userId', feature: null }
+    automation: { table: SCHEDULED_WORK.automation.table, owner: 'userId', feature: null },
+    project_trigger: { table: SCHEDULED_WORK.project_trigger.table, owner: 'userId', feature: 'projects' },
+    attention_watch: { table: SCHEDULED_WORK.attention_watch.table, owner: 'userId', feature: null },
+    followed_source: { table: SCHEDULED_WORK.followed_source.table, owner: 'userId', feature: null }
 };
 
 const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project'];
@@ -192,6 +193,8 @@ const PATH_PREFIX = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\\0]+$/;
 /** A branch name, optionally ending in `*` for a prefix match. */
 const BRANCH_PATTERN = /^(?!.*\.\.)[A-Za-z0-9._/-]+\*?$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** Repository writes that reach GitHub must name their branches. */
+const BRANCH_REQUIRED = new Set(['repo.push', 'pr.create']);
 const PROCESS_REF = new RegExp(`^(${Object.keys(PROCESS_KINDS).join('|')}):(\\d+)$`);
 
 function normalizeResource(raw, operation, index) {
@@ -236,6 +239,12 @@ function normalizeResource(raw, operation, index) {
     if (spec.fields.includes('branches')) {
         const branches = stringList(raw.branches, `${field}.branches`, LIMITS.branches, { pattern: BRANCH_PATTERN, code: 'INVALID_RESOURCE' });
         if (branches.length) resource.branches = branches;
+        // A write that leaves this installation names the branches it may
+        // touch: an empty list would match every branch, the default one
+        // included, which is the wildcard ADR 0016 rules out.
+        if (BRANCH_REQUIRED.has(operation) && !branches.length) {
+            throw bad(`${field}.branches must name the branch(es) "${operation}" may write; there is no wildcard.`, 'INVALID_RESOURCE');
+        }
     }
     return resource;
 }

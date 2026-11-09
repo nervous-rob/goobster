@@ -147,3 +147,64 @@ describe('pause / resume / cancel / list', () => {
         expect(await automationManagerService.list({ userId: OTHER, scope: GUILD })).toHaveLength(0);
     });
 });
+
+describe('id-addressed mutations are compare-and-swap (operator panel)', () => {
+    /** Run `between` after the service reads the row and before it writes. */
+    const interleave = (between) => {
+        const original = automationManagerService._findById.bind(automationManagerService);
+        return jest.spyOn(automationManagerService, '_findById').mockImplementation(async (id) => {
+            const row = await original(id);
+            await between(row);
+            return row;
+        });
+    };
+
+    afterEach(() => jest.restoreAllMocks());
+
+    test('triggerNow makes a future row due now', async () => {
+        const created = await create();
+        const result = await automationManagerService.triggerNow({ id: created.id });
+        expect(result).toMatchObject({ id: created.id });
+        const row = await db.get(
+            'SELECT 1 AS due FROM automations WHERE id = @id AND nextRun <= CURRENT_TIMESTAMP', { id: created.id });
+        expect(row?.due).toBe(1);
+    });
+
+    test('triggerNow loses to a scheduler claim between its read and write (no extra run)', async () => {
+        const created = await create();
+        const claimedTo = new Date(Date.now() + 2 * 3600_000);
+        interleave(async () => {
+            // The poll loop claims the fire and advances nextRun.
+            await db.run('UPDATE automations SET nextRun = @next WHERE id = @id', { id: created.id, next: claimedTo });
+        });
+        await expect(automationManagerService.triggerNow({ id: created.id }))
+            .rejects.toThrow(expect.objectContaining({ code: 'CHANGED' }));
+        const row = await db.get(
+            'SELECT 1 AS due FROM automations WHERE id = @id AND nextRun <= CURRENT_TIMESTAMP', { id: created.id });
+        expect(row).toBeUndefined();
+    });
+
+    test('triggerNow leaves an already-due row alone for the single claim', async () => {
+        const created = await create();
+        await db.run(`UPDATE automations SET nextRun = '2000-01-01 00:00:00' WHERE id = @id`, { id: created.id });
+        const result = await automationManagerService.triggerNow({ id: created.id });
+        expect(result.alreadyDue).toBe(true);
+        const row = await db.get('SELECT nextRun FROM automations WHERE id = @id', { id: created.id });
+        expect(row.nextRun).toBe('2000-01-01 00:00:00');
+    });
+
+    test('a pause racing a resume is reported, not overwritten', async () => {
+        const created = await create();
+        interleave(async (row) => {
+            await db.run('UPDATE automations SET isEnabled = 0, nextRun = NULL WHERE id = @id', { id: row.id });
+        });
+        await expect(automationManagerService.setEnabledById({ id: created.id, enabled: false }))
+            .rejects.toThrow(expect.objectContaining({ code: 'CHANGED' }));
+        jest.restoreAllMocks();
+        interleave(async (row) => {
+            await db.run('UPDATE automations SET isEnabled = 1 WHERE id = @id', { id: row.id });
+        });
+        await expect(automationManagerService.setEnabledById({ id: created.id, enabled: true }))
+            .rejects.toThrow(expect.objectContaining({ code: 'CHANGED' }));
+    });
+});

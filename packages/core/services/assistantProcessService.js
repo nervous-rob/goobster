@@ -22,6 +22,7 @@
 const db = require('../db');
 const { features } = require('../features/featureState');
 const logger = require('../utils/logger');
+const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
 
 const PHASES = ['schedule', 'dispatch', 'execution', 'output', 'delivery', 'outcome'];
 const OUTCOMES = ['ok', 'skipped', 'blocked', 'deferred', 'failed', 'unknown'];
@@ -445,7 +446,7 @@ class AssistantProcessService {
         )).changes || 0;
         let contracts = 0;
         for (const [kind, adapter] of Object.entries(ADAPTERS)) {
-            const table = { automation: 'automations', project_trigger: 'project_triggers', attention_watch: 'attention_watches', followed_source: 'followed_sources' }[kind];
+            const table = SCHEDULED_WORK[kind].table;
             if (adapter.feature && features.enforcedOff(adapter.feature)) continue;
             const orphan = `processKind = @kind AND NOT EXISTS (SELECT 1 FROM ${table} t WHERE CAST(t.id AS TEXT) = processId)`;
             observations += (await db.run(`DELETE FROM assistant_process_observations WHERE ${orphan}`, { kind })).changes || 0;
