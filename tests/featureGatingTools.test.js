@@ -96,6 +96,8 @@ describe('no features.json: discovery equals the pre-gate baseline', () => {
     // Recorded from toolsRegistry.getDefinitions on the commit before #319:
     // the TOOL_ORDER names each configuration did NOT offer.
     const CONTEXTS = { plain: {}, web: { isWeb: true }, automation: { isAutomation: true } };
+    // Added after that baseline (DA-7b): never offered to an unattended turn.
+    const DELEGATION_TOOLS = ['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork'];
     const SCENARIOS = [
         ['default', () => {}, {
             plain: ['runCode', 'observatory', 'requestPythonPackages', 'setSpeechAccent'],
@@ -157,7 +159,8 @@ describe('no features.json: discovery equals the pre-gate baseline', () => {
         useLegacyState();
         for (const [context, args] of Object.entries(CONTEXTS)) {
             const offered = names(await toolsRegistry.getDefinitions(undefined, args));
-            const expected = toolsRegistry.TOOL_ORDER.filter(name => !expectedMissing[context].includes(name));
+            const missing = context === 'automation' ? [...expectedMissing[context], ...DELEGATION_TOOLS] : expectedMissing[context];
+            const expected = toolsRegistry.TOOL_ORDER.filter(name => !missing.includes(name));
             expect(offered).toEqual(expected);
         }
     });

@@ -17,7 +17,9 @@
  * Each pass records its time in `instance_state` (`assistant_steward_pass`)
  * so the Home projection can say when its picture was last refreshed.
  * Every six hours it also applies retention: process observations 90 days,
- * terminal initiatives and settled updates 180 days.
+ * terminal initiatives and settled updates 180 days, confirmation receipts
+ * 30 days, and a draft proposed in a conversation that its owner neither
+ * kept nor activated 7 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
  * reconcile for the owner they name. Nothing here runs a model, a search
@@ -33,7 +35,7 @@ const LOCK = 'assistant_steward';
 const { HEARTBEAT_KEY } = require('./assistantHomeService');
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
-const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180 };
+const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180, confirmations: 30, proposals: 7 };
 // The first pass waits so it does not compete for pooled connections with
 // the other startup sweeps that each hold one for a singleton lock.
 const FIRST_PASS_DELAY_MS = 60 * 1000;
@@ -73,7 +75,9 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 processes: await processes.prune({ days: RETENTION_DAYS.observations, now }),
                 runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
-                updates: await updates.prune({ days: RETENTION_DAYS.updates, now })
+                updates: await updates.prune({ days: RETENTION_DAYS.updates, now }),
+                proposals: await responsibilities.pruneProposals({ days: RETENTION_DAYS.proposals, now }),
+                confirmations: await require('./assistantConfirmationService').prune({ days: RETENTION_DAYS.confirmations, now })
             };
         }
         return result;

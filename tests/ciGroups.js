@@ -351,7 +351,7 @@ const GROUPS = [
         description: 'Erasure, permissions, approvals, sandbox',
         files: files([
             'approvalExecutor',
-            'assistantGateDecisions',
+            'assistantGateDecisions', 'assistantConversation',
             'assistantHomeService',
             'assistantInitiativeService',
             'assistantProcessService',

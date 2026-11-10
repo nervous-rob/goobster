@@ -135,9 +135,10 @@ module.exports = {
         docs: ['documentation/delegated_responsibilities.md', 'documentation/delegated_runs.md'],
         payload: {
             files: [
-                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService,assistantGateService,assistantGateDescriptors,assistantRunService,assistantRunnerService}.js',
+                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService,assistantGateService,assistantGateDescriptors,assistantConfirmationService,assistantRunService,assistantRunnerService}.js',
                 // Run tool modules (runTools/) and initiative source adapters (sources/).
                 'packages/core/services/assistant/**',
+                'packages/core/utils/tools/assistant.js',
                 'packages/core/web/routes/assistant.js'
             ]
         }

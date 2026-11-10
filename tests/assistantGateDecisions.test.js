@@ -23,6 +23,7 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 const db = require('@goobster/core/db');
 const gates = require('@goobster/core/services/assistantGateService');
 const { AssistantGateService } = require('@goobster/core/services/assistantGateService');
+const confirmations = require('@goobster/core/services/assistantConfirmationService');
 const home = require('@goobster/core/services/assistantHomeService');
 const updates = require('@goobster/core/services/assistantUpdateService');
 const inbox = require('@goobster/core/services/inboxService');
@@ -41,7 +42,7 @@ const B = '750000000000000002';
 const C = '750000000000000003';
 
 const TABLES = [
-    'assistant_update_receipts', 'assistant_updates', 'inbox_items', 'friendships', 'access_requests', 'operator_audit',
+    'assistant_confirmation_receipts', 'assistant_update_receipts', 'assistant_updates', 'inbox_items', 'friendships', 'access_requests', 'operator_audit',
     'project_mission_approval_receipts', 'project_mission_events', 'project_mission_steps', 'project_missions',
     'observatory_projects', 'web_sessions', 'web_rate_events', 'usage_reservations', 'auth_identities', 'app_accounts',
     'principals'
@@ -109,7 +110,15 @@ describe('one card on Home and in the Inbox', () => {
     test.each(['home', 'inbox', 'chat'])('a decision from %s reaches the same domain operation', async (surface) => {
         const respond = jest.spyOn(friends, 'respond');
         const { request, card } = await friendRequest();
-        const result = await decideCard(card, 'accept', { surface, userName: 'Ada' });
+        const extra = { surface, userName: 'Ada' };
+        if (surface === 'chat') {
+            // In chat the person's press is proved by a receipt for the card as shown (ADR 0019).
+            await identityService.grantAccount({ principalId: A, entitlement: 'bootstrap', role: 'operator' });
+            extra.receipt = (await confirmations.mint({
+                userId: A, subject: 'gate', id: card.ref, action: 'decide', occurrence: card.occurrence, revision: card.revision, surface: 'chat'
+            })).receipt;
+        }
+        const result = await decideCard(card, 'accept', extra);
         expect(respond).toHaveBeenCalledTimes(1);
         expect(respond).toHaveBeenCalledWith(expect.objectContaining({ userId: A, requestId: String(request.id), accept: true }));
         expect(result.decided).toEqual({ ref: card.ref, kind: 'friend_request', option: 'accept', message: 'You and Bo are friends now.' });
@@ -418,11 +427,11 @@ describe('the registry', () => {
             { id: 'apply', label: 'Apply repair', effect: 'Changes the source address.', danger: true },
             { id: 'dismiss', label: 'Dismiss', effect: null, danger: false }
         ]);
-        const result = await fresh.decide({ userId: A, ref: update.id, option: 'apply', occurrence: 1, revision: 'config:4', surface: 'chat' });
+        const result = await fresh.decide({ userId: A, ref: update.id, option: 'apply', occurrence: 1, revision: 'config:4', surface: 'home' });
         expect(result.decided).toEqual({ ref: String(update.id), kind: 'process_repair', option: 'apply', message: 'Applied.' });
         expect(calls).toEqual([{
             gate: 'automation:5', viewer: A, option: 'apply',
-            context: { occurrence: 1, revision: 'config:4', surface: 'chat', gateway: null }
+            context: { occurrence: 1, revision: 'config:4', surface: 'home', gateway: null }
         }]);
         // The owning domain resolves the gate; deciding does not.
         expect((await db.get('SELECT gateResolvedAt FROM assistant_updates WHERE id = @id', { id: update.id })).gateResolvedAt).toBeNull();

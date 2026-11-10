@@ -12,6 +12,8 @@
  * of this framing so that companion stays install-free.
  */
 
+const modelCallScope = require('../utils/modelCallScope');
+
 const JSONRPC = '2.0';
 const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
@@ -123,7 +125,9 @@ async function dispatch(method, params, { serverInfo, instructions, listTools, c
             if (!args || typeof args !== 'object' || Array.isArray(args)) {
                 throw invalidParams('Tool arguments must be a JSON object.');
             }
-            return await callTool(name, args);
+            // An MCP client is a model's hand too: nothing a person must
+            // confirm is reachable from a tool call (ADR 0019).
+            return await modelCallScope.run(`mcp:${name}`, () => callTool(name, args));
         }
         default:
             return UNSUPPORTED;

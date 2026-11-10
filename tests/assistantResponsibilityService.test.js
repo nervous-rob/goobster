@@ -403,7 +403,13 @@ describe('portal routes', () => {
         expect(stale.status).toBe(409);
         expect(await stale.json()).toMatchObject({ error: { code: 'REVISION_CONFLICT', details: { revision: 1 } } });
 
-        const activated = await send('POST', `${url}/actions`, own, { action: 'activate', expectedRevision: 1 });
+        // Turning it on is confirmed: the route takes the receipt minted for what the person was shown (ADR 0019).
+        const unconfirmed = await send('POST', `${url}/actions`, own, { action: 'activate', expectedRevision: 1 });
+        expect(unconfirmed.status).toBe(403);
+        expect(await unconfirmed.json()).toMatchObject({ error: { code: 'HUMAN_CONFIRMATION_REQUIRED' } });
+        const minted = await (await send('POST', '/api/app/assistant/confirmations', own,
+            { subject: 'responsibility', id: responsibility.id, action: 'activate', revision: 1, surface: 'portal' })).json();
+        const activated = await send('POST', `${url}/actions`, own, { action: 'activate', expectedRevision: 1, receipt: minted.receipt });
         expect(activated.status).toBe(200);
         expect((await activated.json()).responsibility.status).toBe('ACTIVE');
         const widen = await send('PATCH', url, own, { expectedRevision: 2, operations: [] });

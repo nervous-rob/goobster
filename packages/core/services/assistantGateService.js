@@ -21,13 +21,17 @@
  * Inbox and a chat card all go through `decide()`; it checks the card the
  * person acted on against the current one, calls the domain service, and
  * never writes an outcome itself. `decide()` is for a person's own click on
- * an authenticated surface. It must never be reachable from a model tool
- * call: a model call is not a confirmation.
+ * an authenticated surface. It is never reachable from a model tool call (a
+ * model call is not a confirmation): it refuses inside one
+ * (utils/modelCallScope.js), and a decision pressed on a chat card must
+ * also carry the human confirmation receipt minted when that card was
+ * rendered to the person (assistantConfirmationService, ADR 0019).
  */
 
 const db = require('../db');
 const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
+const modelCallScope = require('../utils/modelCallScope');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const IDENTITY_PREFIX = 'project_gate:';
@@ -235,6 +239,40 @@ class AssistantGateService {
         }
     }
 
+    /**
+     * A card in a conversation sits beside text a model wrote, so pressing
+     * it must prove a person saw this card: the receipt minted when it was
+     * rendered, bound to this request, occurrence, revision and content.
+     * Spent here, before the domain decides; a receipt is one press.
+     */
+    async _redeemChatReceipt(userId, shown, receipt) {
+        const confirmations = require('./assistantConfirmationService');
+        const pilot = require('./assistantAccessService');
+        if (!(await pilot.allows(userId, confirmations.CAPABILITY))) {
+            throw new AssistantGateError(403, pilot.REFUSAL_CODE,
+                'Deciding from a conversation is limited to the installation\'s owner until the pilot decision is recorded. Decide it from Home or the Inbox.',
+                { capability: confirmations.CAPABILITY });
+        }
+        if (!receipt) {
+            throw new AssistantGateError(403, 'HUMAN_CONFIRMATION_REQUIRED',
+                'A decision in a conversation needs the confirmation from its card. Press it on the card, or decide from Home or the Inbox.');
+        }
+        try {
+            await confirmations.redeem({
+                userId,
+                receipt,
+                subject: 'gate',
+                id: shown.ref,
+                action: 'decide',
+                revision: confirmations.gateRevision(shown),
+                hash: confirmations.cardHash(shown),
+                surface: 'chat'
+            });
+        } catch (error) {
+            throw new AssistantGateError(error.status || 403, error.code || 'CONFIRMATION_INVALID', error.message);
+        }
+    }
+
     _stale(current) {
         const message = !current
             ? 'This request is no longer available.'
@@ -263,9 +301,14 @@ class AssistantGateService {
      * @param {string|number} params.revision
      * @param {'home'|'inbox'|'chat'} params.surface - where the person pressed it
      * @param {Object} [params.gateway] - for the domain's own notices
+     * @param {string} [params.receipt] - required for `chat`: the receipt minted when the card was rendered
      * @returns {Promise<{ decided: { ref: string, kind: string, option: string, message: string }, current: Object|null }>}
      */
-    async decide({ userId, userName = null, ref, option, occurrence, revision, surface, gateway = null }) {
+    async decide({ userId, userName = null, ref, option, occurrence, revision, surface, gateway = null, receipt = null }) {
+        if (modelCallScope.active()) {
+            throw new AssistantGateError(403, modelCallScope.HUMAN_ONLY,
+                'Only the person can decide a request, by pressing it themselves. A tool call is not a decision.');
+        }
         if (!userId) throw new AssistantGateError(400, 'INVALID_DECISION', 'A user id is required.');
         // The route is gated with the rest of the feature; this covers a caller that is not a route.
         if (features.enforcedOff('assistant')) {
@@ -294,6 +337,7 @@ class AssistantGateService {
         if (!shown.options.some(entry => entry.id === option)) {
             throw new AssistantGateError(400, 'INVALID_DECISION', `option must be one of ${shown.options.map(entry => entry.id).join(', ')}.`);
         }
+        if (surface === 'chat') await this._redeemChatReceipt(viewer.userId, shown, receipt);
 
         let outcome;
         try {
