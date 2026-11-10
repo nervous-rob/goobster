@@ -733,7 +733,9 @@ DA-12. The technical contracts are in
   you that a push or a pull request cannot be undone
   ([delegated_runs.md](delegated_runs.md#repository-work)).
 - Suggested edits to notes you saved, shown as a diff you apply; connecting
-  and archiving notes, both restorable.
+  and archiving notes, both restorable. **Available (DA-11b)** to the
+  installation's owner while it is in the pilot
+  ([delegated_knowledge.md](delegated_knowledge.md)).
 - Findings shared with a project's current members, with the author shown.
   **Available (DA-11c)** to the installation's owner while it is in the
   pilot ([delegated_project_findings.md](delegated_project_findings.md)).

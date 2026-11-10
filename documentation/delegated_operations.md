@@ -148,16 +148,19 @@ records the pilot decision, only the owner has them.**
   that names `personal_chat`, `followed_source`, `job_failure` or
   `ci_verdict` is refused with `PILOT_ONLY`.
 
-  Of `reach`, repository work, shared findings and outside connectors have
-  shipped. Repository
+  Of `reach`, repository work, shared findings, knowledge work and outside
+  connectors have shipped. Delegated knowledge work (DA-11b) is gated as
+  `reach` like repository work. Repository
   work (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is
   gated as `reach`: committing, pushing and opening pull requests in a
   project's clone are offered to a run, and shown in the draft form, only
   for the owner, and each call checks the gate again before it reaches
   GitHub. The
   grant vocabulary contains all the `reach` operations (`repo.commit`,
-  `repo.push`, `pr.create`, and the not yet built `kg.saved.amend`,
-  `kg.edge`, `kg.archive`, `external.write`), so for anyone but the owner,
+  `repo.push`, `pr.create`, the saved-note operations `kg.saved.propose`,
+  `kg.saved.amend`, `kg.edge` and `kg.archive` of DA-11b
+  ([delegated_knowledge.md](delegated_knowledge.md)), and `external.write` of
+  DA-11d), so for anyone but the owner,
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.

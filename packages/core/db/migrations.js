@@ -22,6 +22,25 @@ const COLUMN_MIGRATIONS = [
     ['assistant_responsibilities', 'proposedBy', "proposedBy TEXT CHECK (proposedBy IS NULL OR proposedBy = 'model')"],
     ['assistant_responsibilities', 'proposedConversation', 'proposedConversation TEXT'],
     ['assistant_responsibilities', 'proposalKeptAt', 'proposalKeptAt TEXT'],
+    // Archiving and the claim's epistemic state (ADR 0027). An archived note
+    // stays in the table, out of retrieval; `archiveCode` is 'archived' or
+    // 'merged' (then `mergedIntoId` names the note that kept its meaning).
+    ['kg_nodes', 'archivedAt', 'archivedAt TEXT'],
+    ['kg_nodes', 'archivedBy', 'archivedBy TEXT'],
+    ['kg_nodes', 'archiveCode', 'archiveCode TEXT'],
+    ['kg_nodes', 'mergedIntoId', 'mergedIntoId INTEGER'],
+    ['kg_nodes', 'claimStatus',
+        "claimStatus TEXT NOT NULL DEFAULT 'current' CHECK (claimStatus IN ('current', 'disputed', 'superseded', 'retracted'))"],
+    // An edge carries its own revision, what it rests on, the run that made it,
+    // and a retraction record (ADR 0027). A retracted edge is kept, not live.
+    ['kg_edges', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
+    ['kg_edges', 'evidenceKind', 'evidenceKind TEXT'],
+    ['kg_edges', 'evidenceId', 'evidenceId INTEGER'],
+    ['kg_edges', 'originRunId', 'originRunId INTEGER'],
+    ['kg_edges', 'retractedAt', 'retractedAt TEXT'],
+    ['kg_edges', 'retractionCode', 'retractionCode TEXT'],
+    // A source that was withdrawn: the note keeps the row, the evidence stops counting.
+    ['kg_provenance', 'retractedAt', 'retractedAt TEXT'],
     ['project_assets', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     ['project_assets', 'pinnedAt', 'pinnedAt TEXT'],
     ['knowledge_transfers', 'requestId', 'requestId TEXT'],

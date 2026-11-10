@@ -28,7 +28,7 @@ class FollowedSourceService {
             return { name: project.name, path: `/projects/${project.ownerId}/${project.slug}/knowledge`, project };
         }
         const topic = await db.get(`SELECT id, label FROM kg_nodes WHERE id = @id AND guildId = @guildId
-            AND scopeKey = @scopeKey AND curation <> 'memory'`,
+            AND scopeKey = @scopeKey AND curation <> 'memory' AND archivedAt IS NULL`,
         { id: id(topicNodeId), guildId: dmScopeId(userId), scopeKey: `USER:${userId}` });
         if (!topic) throw missing();
         return { name: topic.label, path: '/knowledge/notes', topic };

@@ -13,6 +13,7 @@ import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
 import { describeGrants, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
 import { ConnectorList } from './assistant/ConnectorList';
+import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
@@ -174,6 +175,7 @@ export function AssistantRoom() {
                             <DraftForm projects={projects} onCreated={refresh} />
                         </div>
                         <ConnectorList enabled={enabled} />
+                        {featureActive(me, 'knowledge') && <KnowledgeChanges />}
                         <ProcessList data={processesQ.data} pending={processesQ.isPending} error={processesQ.isError ? processesQ.error as Error : null} />
                     </>
                 )}

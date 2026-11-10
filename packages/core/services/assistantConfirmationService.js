@@ -118,7 +118,9 @@ class AssistantConfirmationService {
             kind: c.kind || null,
             title: c.title || null,
             detail: c.detail || null,
-            options: (c.options || []).map(option => ({ id: option.id, label: option.label, effect: option.effect || null }))
+            options: (c.options || []).map(option => ({ id: option.id, label: option.label, effect: option.effect || null })),
+            // A card that proposes a text change shows it: the receipt is for those lines too.
+            ...(Array.isArray(c.diff) ? { diff: c.diff.map(entry => ({ op: entry.op, text: entry.text })) } : {})
         }));
     }
 

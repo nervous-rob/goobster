@@ -73,13 +73,14 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'assistant_message_labels', column: 'ownerUserId' }
+    { feature: 'assistant', table: 'assistant_message_labels', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'kg_change_sets', column: 'userId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
 const SECRETS = ['hash-secret', 'ghp-secret', 'mcp-hash', 'p256dh-secret', 'auth-secret'];
 /** The person's own content: in their export, never in the report. */
-const CONTENT = ['refactor the parser'];
+const CONTENT = ['refactor the parser', 'private note after'];
 
 function utc(offsetMs = 0) {
     return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ');
@@ -208,6 +209,12 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, status, resultText)
              VALUES (@runId, @u, 'lookupNotes', 'h', 'SUCCEEDED', 'private retrieved text')`,
             { runId, u }
+        );
+        await db.run(
+            `INSERT INTO kg_change_sets (userId, guildId, scopeKey, kind, status, runId, responsibilityId, operationsJson, beforeJson, afterJson, rationale)
+             VALUES (@u, @g, @scope, 'saved_note_edit', 'PROPOSED', @runId, @responsibilityId, '[]',
+                '{"content":"private note before"}', '{"content":"private note after"}', 'private rationale')`,
+            { u, g: `dm:${u}`, scope: `USER:${u}`, runId, responsibilityId }
         );
         const updateId = await db.insert(
             `INSERT INTO assistant_updates (audienceKind, audienceKey, audienceUserId, producerUserId, identityKey, kind,

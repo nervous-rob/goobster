@@ -39,6 +39,10 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const canKnowledge = featureActive(me, 'knowledge');
     const [repoName, setRepoName] = useState('');
     const [branches, setBranches] = useState('goobster/*');
+    const [proposeNotes, setProposeNotes] = useState(false);
+    const [amendSaved, setAmendSaved] = useState(false);
+    const [linkNotes, setLinkNotes] = useState(false);
+    const [archiveNotes, setArchiveNotes] = useState(false);
     const [commitRepo, setCommitRepo] = useState(false);
     const [pushRepo, setPushRepo] = useState(false);
     const [openPulls, setOpenPulls] = useState(false);
@@ -46,9 +50,10 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     // Repository work is still in the pilot: offered only to whoever the host's policy allows.
     const accessQ = useQuery({
         queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(),
-        enabled: canProjects && featureActive(me, 'github'), retry: false, staleTime: 60_000
+        enabled: (canProjects && featureActive(me, 'github')) || canKnowledge, retry: false, staleTime: 60_000
     });
-    const canRepos = accessQ.data?.capabilities?.reach === true;
+    const canReach = accessQ.data?.capabilities?.reach === true;
+    const canRepos = canReach && canProjects && featureActive(me, 'github');
     const project = projects.find((entry) => String(entry.id) === projectId) || null;
     const ownerId = project && project.ownerId !== me.user.id ? project.ownerId : null;
     const reposQ = useQuery({
@@ -78,6 +83,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         if (writeNotes && canKnowledge) {
             list.push({ operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } });
             list.push({ operation: 'kg.generated.amend', resource: { kind: 'knowledge', ids: ['personal'] } });
+        }
+        // Saved-note work is still in the pilot (capability `reach`), like repository work.
+        if (canReach && canKnowledge && readKnowledge) {
+            const notes = { kind: 'knowledge', ids: ['personal'] };
+            if (proposeNotes) list.push({ operation: 'kg.saved.propose', resource: notes });
+            if (amendSaved) list.push({ operation: 'kg.saved.amend', resource: notes });
+            if (linkNotes) list.push({ operation: 'kg.edge', resource: notes });
+            if (archiveNotes) list.push({ operation: 'kg.archive', resource: notes });
         }
         // A research expedition searches and writes generated notes: it is
         // offered only together with both of those choices.
@@ -170,6 +183,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 <label><input type="checkbox" checked={readKnowledge} onChange={(e) => setReadKnowledge(e.target.checked)} /> Read your knowledge</label>
                 {canKnowledge && (
                     <label><input type="checkbox" checked={writeNotes} onChange={(e) => setWriteNotes(e.target.checked)} /> Add and amend generated notes (never notes you saved)</label>
+                )}
+                {canReach && canKnowledge && readKnowledge && (
+                    <div className="field" data-testid="responsibility-note-work">
+                        <label><input type="checkbox" checked={proposeNotes} onChange={(e) => setProposeNotes(e.target.checked)} data-testid="responsibility-propose-notes" /> Suggest changes to notes you saved (you apply each one, shown as a diff)</label>
+                        <label><input type="checkbox" checked={amendSaved} onChange={(e) => setAmendSaved(e.target.checked)} data-testid="responsibility-amend-saved" /> Edit notes you saved directly (every edit can be undone)</label>
+                        <label><input type="checkbox" checked={linkNotes} onChange={(e) => setLinkNotes(e.target.checked)} data-testid="responsibility-link-notes" /> Connect notes, and retract connections it made</label>
+                        <label><input type="checkbox" checked={archiveNotes} onChange={(e) => setArchiveNotes(e.target.checked)} data-testid="responsibility-archive-notes" /> Archive notes it generated (restorable; never notes you saved)</label>
+                    </div>
                 )}
                 {canResearch && canKnowledge && web && writeNotes && (
                     <label><input type="checkbox" checked={deepResearch} onChange={(e) => setDeepResearch(e.target.checked)} /> Run a research expedition when a few searches are not enough (one per piece of work)</label>

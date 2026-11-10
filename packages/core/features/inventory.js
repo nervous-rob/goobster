@@ -581,7 +581,8 @@ const tables = {
         observatory_jobs: 'observatory',
         research_sources: 'expeditions',
         research_claims: 'expeditions',
-        expedition_briefs: 'expeditions'
+        expedition_briefs: 'expeditions',
+        kg_change_sets: 'assistant'
     },
     prefixes: [
         { prefix: 'memory_', owner: 'core' },

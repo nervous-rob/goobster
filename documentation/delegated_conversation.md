@@ -160,6 +160,12 @@ same route with `surface: 'chat'` and a receipt for that card. The owning
 service decides, and a card that changed is refused with `STALE_GATE` and
 the current card, exactly as elsewhere.
 
+The receipt is bound to the card as shown: its title, its detail, its
+options with what each does, and, for a card that proposes a change to a
+note ([delegated_knowledge.md](delegated_knowledge.md)), the lines of the
+change. That holds for every kind of request, the question whether a
+process is still needed and a suggested note change included.
+
 ## API
 
 | Route | Purpose |

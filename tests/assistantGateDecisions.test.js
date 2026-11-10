@@ -537,7 +537,7 @@ describe('a mission plan', () => {
 
 describe('the registry', () => {
     test('lists the kinds that can be decided in place and refuses a second descriptor for one', () => {
-        expect(gates.decisionKinds().sort()).toEqual(['access_request', 'friend_request', 'process_retirement', 'project_approve']);
+        expect(gates.decisionKinds().sort()).toEqual(['access_request', 'friend_request', 'note_proposal', 'process_retirement', 'project_approve', 'source_retraction']);
         const fresh = new AssistantGateService();
         const descriptor = { describe: async () => null, decide: async () => ({}) };
         fresh.registerDecision('process_repair', descriptor);

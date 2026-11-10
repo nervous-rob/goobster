@@ -313,6 +313,17 @@ alone and says why. See
 [delegated_project_findings.md](delegated_project_findings.md). The ledger
 code `SHARE_FAILED` records, with no text, that filing the shared copy failed.
 
+## Knowledge work
+
+A responsibility granted note operations can propose changes to notes you
+saved (a diff you apply yourself), edit one directly only when the grant names
+it, connect and archive notes, confirm a finding, and have what rests on a
+withdrawn source reviewed. Every one of these is reversible and owner-only
+during the pilot. Two optional flags on a tool spec support it: `proposes`
+(the write files a request for you and is reported as "Waiting for you", not
+as a change) and `quiet` (the effect is evidence only and is reported as no
+change). See [delegated_knowledge.md](delegated_knowledge.md).
+
 ## Measuring a model
 
 The instructions a run is given carry a version
@@ -333,12 +344,12 @@ a push. The framework is built and no connector is installed; see
 
 ## Not built yet
 
-Editing notes you saved, connecting or archiving notes (DA-11b), an actual outside
+An actual outside
 connector (the framework is DA-11d), acting on processes, and work recognized by a model from what was said in a
 conversation. Requests you address to Goobster in a conversation are built:
 see [delegated_conversation_requests.md](delegated_conversation_requests.md).
 Repository work is built and starts with the installation's owner only;
-saved-note edits will start the same way (outside connectors already do)
+saved-note edits and outside connectors start the same way
 ([the pilot gate](delegated_operations.md#the-pilot-gate)). For
 repositories, not built: pulling, merging or rebasing a work branch,
 watching a pull request's checks, a cap on pushes and pull requests set by

@@ -111,6 +111,16 @@ class KnowledgeGraphLegalizer {
                         ? this._mergeConfidence(merged.confidence, node.confidence)
                         : node.confidence
                 });
+                if (result?.archived) {
+                    // An archived note stays archived and as it is. A title that was
+                    // merged away still names a live note: it may take new evidence.
+                    applied.skippedArchived = (applied.skippedArchived || 0) + 1;
+                    if (result.alias) {
+                        const evidence = this._baseProvenance(source, provenance);
+                        await this.kg.addProvenance({ nodeId: result.id, sourceKind: evidence.sourceKind, sourceId: evidence.sourceId });
+                    }
+                    continue;
+                }
                 if (result) {
                     applied.nodesUpserted++;
                     if (isNew && result.created) {
@@ -315,7 +325,7 @@ class KnowledgeGraphLegalizer {
         if (trimmed) {
             const byContent = await db.get(
                 `SELECT * FROM kg_nodes
-                 WHERE guildId = @guildId AND scopeKey = @scopeKey AND content = @content`,
+                 WHERE guildId = @guildId AND scopeKey = @scopeKey AND content = @content AND archivedAt IS NULL`,
                 { guildId, scopeKey, content: trimmed.slice(0, kgConfig.MAX_CONTENT_LENGTH) }
             );
             if (byContent) return byContent;
@@ -327,7 +337,7 @@ class KnowledgeGraphLegalizer {
             const { vector, model } = await embeddingService.embed(text);
             const candidates = await db.all(
                 `SELECT * FROM kg_nodes
-                 WHERE guildId = @guildId AND scopeKey = @scopeKey
+                 WHERE guildId = @guildId AND scopeKey = @scopeKey AND archivedAt IS NULL
                  ORDER BY updatedAt DESC LIMIT 40`,
                 { guildId, scopeKey }
             );

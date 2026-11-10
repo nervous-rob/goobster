@@ -3999,3 +3999,51 @@ CREATE TABLE IF NOT EXISTS assistant_message_labels (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_message_labels_owner ON assistant_message_labels(ownerUserId, createdAt);
+
+-- Knowledge change sets (DA-11b, ADR 0027): what a delegated run proposed to
+-- do to a person's notes, or did under an explicit direct-edit grant, and the
+-- review of a withdrawn source. One row is one decision for one person.
+-- PROPOSED waits for them; APPLIED, REJECTED and STALE are decisions; APPLIED
+-- becomes REVERTED only through a revision-checked compensating change.
+-- operationsJson is a closed schema ({ op: 'amend' | 'dispute', nodeId, ... });
+-- beforeJson and afterJson hold the note text the diff is drawn from and a
+-- revert restores, so they are the person's private text: erasure, export and
+-- the retention pass cover this table (documentation/delegated_knowledge.md).
+CREATE TABLE IF NOT EXISTS kg_change_sets (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('saved_note_edit', 'direct_change', 'source_retraction')),
+    status TEXT NOT NULL DEFAULT 'PROPOSED'
+        CHECK (status IN ('PROPOSED', 'APPLIED', 'REJECTED', 'STALE', 'REVERTED')),
+    -- Initiating run, and the grant it ran under (NULL for a review opened by a person)
+    runId INTEGER,
+    responsibilityId INTEGER,
+    responsibilityRevision INTEGER,
+    -- The one note an edit concerns (NULL for a source review, which names several)
+    nodeId INTEGER,
+    -- The note revision the proposal was read at; applying checks it still holds
+    expectedRevision INTEGER,
+    operationsJson TEXT NOT NULL,
+    beforeJson TEXT,
+    afterJson TEXT,
+    rationale TEXT,
+    evidenceJson TEXT,
+    -- A source review: the source and the notes and assumptions that rested on it
+    impactJson TEXT,
+    -- PROPOSAL | DIRECT_GRANT | SOURCE_RETRACTED, then how it was decided:
+    -- APPLIED | REJECTED | REVISION_CONFLICT | NOTE_GONE | EXPIRED | REVERTED
+    policyCode TEXT,
+    decisionCode TEXT,
+    appliedRevision INTEGER,
+    updateId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    decidedAt TEXT,
+    revertedAt TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_change_sets_user ON kg_change_sets(userId, status, createdAt);
+CREATE INDEX IF NOT EXISTS idx_kg_change_sets_run ON kg_change_sets(runId);
+CREATE INDEX IF NOT EXISTS idx_kg_change_sets_node ON kg_change_sets(nodeId);

@@ -352,6 +352,8 @@ async function forgetAssistantResponsibilities(userId) {
         { userId }
     )).changes;
     const runs = (await db.run(`DELETE FROM assistant_runs WHERE ${runsOwned}`, { userId })).changes;
+    // Proposed and applied note changes hold the person's note text (before and after).
+    const knowledgeChanges = (await db.run('DELETE FROM kg_change_sets WHERE userId = @userId', { userId })).changes;
     const cursors = (await db.run(`DELETE FROM assistant_source_cursors WHERE ${owned}`, { userId })).changes;
     const proposalCounters = (await db.run(
         `DELETE FROM assistant_proposal_counters WHERE ownerUserId = @userId OR ${owned}`, { userId }
@@ -465,7 +467,7 @@ async function forgetAssistantResponsibilities(userId) {
         responsibilities, revisions, anonymized: others.length,
         initiatives, cursors, proposalCounters, messageLabels, updates, receipts, processContracts, processObservations, incidents, incidentMembers,
         processLifecycle, processCleanups,
-        runs, runOperations, confirmationReceipts
+        runs, runOperations, knowledgeChanges, confirmationReceipts
     };
 }
 
@@ -502,6 +504,7 @@ async function countAssistantResponsibilities(userId) {
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),
         messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId'),
+        knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId'),
         updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
         updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
         confirmationReceipts: await count('SELECT COUNT(*) AS c FROM assistant_confirmation_receipts WHERE userId = @userId'),
@@ -554,7 +557,8 @@ async function auditAssistantResponsibilities(userId) {
         runs: await count('SELECT COUNT(*) AS c FROM assistant_runs WHERE ownerUserId = @userId OR actingUserId = @userId OR payerUserId = @userId'),
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),
-        messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId')
+        messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId'),
+        knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId')
     };
 }
 
