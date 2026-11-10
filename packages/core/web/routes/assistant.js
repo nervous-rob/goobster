@@ -271,7 +271,7 @@ function mountAssistant(app, ctx, h) {
         return { card };
     }));
 
-    // { option, occurrence, revision, surface: home | inbox | chat, receipt? }
+    // { option, occurrence, revision, surface: home | inbox | chat | project | processes, receipt? }
     // `chat` needs `receipt`: the confirmation minted when the chat card was
     // rendered to this person, spent by the decision.
     // `:ref` is an update id, or `inbox-<item id>` for a request that lives

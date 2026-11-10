@@ -96,8 +96,10 @@ tools are chosen.
 `attention_item`, `project_plan`, `followed_source`, `job_failure`,
 `ci_verdict`, and `chat_request` for an implied request or a commitment.
 **Sources that never learn** are work you asked for: `conversation_request`,
-`project_plan_step` (a step you put on the plan) and a `chat_request` you
-made by name. Those are always taken, whatever you said about earlier ones.
+`project_plan_step` (a step you put on the plan), a `chat_request` you made
+by name, and `process_incident` (the repair of a process you named in the
+grant, [process_stewardship.md](process_stewardship.md)). Those are always
+taken, whatever you said about earlier ones.
 
 ### Less of this
 

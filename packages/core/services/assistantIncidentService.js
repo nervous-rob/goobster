@@ -27,8 +27,9 @@
  * Nothing is opened or announced for a person who has not turned Attention
  * on; an incident that is already open still runs to its end.
  *
- * Seam for DA-5c: a repair attempt refers to an incident by id and adds a
- * gate to its update.
+ * Repair (DA-5c) is assistantProcessRepairService's, called from this pass
+ * once incidents are up to date: a repair refers to its incident by id and
+ * reports on its own update (`process_repair:<ref>`), never on this one.
  *
  * Spec: documentation/process_stewardship.md.
  */
@@ -167,6 +168,9 @@ class AssistantIncidentService {
                  UNION ALL
                  SELECT i.ownerUserId AS userId, 0 AS announce FROM assistant_process_incidents i
                  WHERE i.status <> 'RESOLVED' AND i.ownerUserId > @after
+                 UNION ALL
+                 SELECT r.ownerUserId AS userId, 0 AS announce FROM assistant_process_repairs r
+                 WHERE r.status IN ('PROPOSED', 'VERIFYING', 'OBSERVING') AND r.ownerUserId > @after
              ) owners GROUP BY userId ORDER BY userId LIMIT ${OWNER_PAGE}`,
             { after, since: utcText(new Date(now.getTime() - WINDOW_DAYS * 86400000)) }
         );
@@ -184,11 +188,12 @@ class AssistantIncidentService {
      *   not the process's failure, so a stall opens an incident only once it
      *   has lasted `stalledIncidentSeconds` of that time. Omitted: no limit.
      * @returns {Promise<{ owners: number, opened: number, reopened: number, recovering: number, resolved: number,
-     *   relevance: number, paused: number, archived: number }>} `relevance` counts retirement requests filed or revised;
-     *   `paused` and `archived` what the assistant did under a grant
+     *   relevance: number, paused: number, archived: number, repairs: number }>} `relevance` counts retirement requests
+     *   filed or revised; `paused` and `archived` what the assistant did under a grant; `repairs` the repairs
+     *   offered, proved or failed this pass
      */
     async reconcile({ userId = null, now = new Date(), upSince = null } = {}) {
-        const result = { owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0 };
+        const result = { owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0, repairs: 0 };
         if (features.enforcedOff('assistant')) return result;
         let after = '';
         for (;;) {
@@ -203,7 +208,7 @@ class AssistantIncidentService {
                 try {
                     const outcome = await this._reconcileOwner(owner.userId, { now, announce: owner.announce, upSince });
                     result.owners += 1;
-                    for (const key of ['opened', 'reopened', 'recovering', 'resolved', 'relevance', 'paused', 'archived']) result[key] += outcome[key];
+                    for (const key of ['opened', 'reopened', 'recovering', 'resolved', 'relevance', 'paused', 'archived', 'repairs']) result[key] += outcome[key];
                 } catch (error) {
                     logger.warn?.(`[assistant incidents] pass failed for one person: ${error.message}`);
                 }
@@ -215,7 +220,7 @@ class AssistantIncidentService {
     }
 
     async _reconcileOwner(owner, { now, announce, upSince }) {
-        const result = { opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0 };
+        const result = { opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0, repairs: 0 };
         const { processes: entries } = await require('./assistantProcessService').assess({ userId: owner, now });
         const byRef = new Map(entries.map(entry => [entry.ref, entry]));
         const { incidents: open } = await this.list({ userId: owner });
@@ -326,6 +331,9 @@ class AssistantIncidentService {
             result.paused = retired.paused;
             result.archived = retired.archived;
         }
+        // Repairs (DA-5c): what was applied is checked whoever is looking; a new one is only offered with Attention on.
+        const repaired = await require('./assistantProcessRepairService').steward({ owner, now, offer: announce });
+        result.repairs = repaired.offered + repaired.verified + repaired.failed;
         return result;
     }
 

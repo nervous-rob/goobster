@@ -771,6 +771,8 @@ class PrivacyService {
             // What was paused, archived or cleaned up, and cleanup manifests.
             counts.processLifecycle = forgottenResponsibilities.processLifecycle;
             counts.processCleanups = forgottenResponsibilities.processCleanups;
+            // Repairs proposed or attempted, with the address a repair replaced.
+            counts.processRepairs = forgottenResponsibilities.processRepairs;
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.knowledgeChangeSets = forgottenResponsibilities.knowledgeChanges;
@@ -1325,6 +1327,7 @@ class PrivacyService {
             assistant_process_incident_members: responsibilities.incidentMembers,
             assistant_process_lifecycle: responsibilities.processLifecycle,
             assistant_process_cleanups: responsibilities.processCleanups,
+            assistant_process_repairs: responsibilities.processRepairs,
             assistant_runs: responsibilities.runs,
             assistant_run_operations: responsibilities.runOperations,
             assistant_digests: responsibilities.digests,

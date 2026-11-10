@@ -1,16 +1,19 @@
 /**
  * Which module handles the run side of an initiative, by the `origin.kind`
  * its adapter stored: conversationRequestRun (ADR 0021: a message in a
- * project conversation or a discussion) or opportunityRun (ADR 0026: the
- * DA-8 sources). Each exports `load`, `messages` and `origins`.
+ * project conversation or a discussion), opportunityRun (ADR 0026: the
+ * DA-8 sources) or processRepairRun (ADR 0029: a failing process the grant
+ * names for repair). Each exports `load`, `messages` and `origins`.
  */
 
 const conversation = require('./conversationRequestRun');
 const opportunity = require('./opportunityRun');
+const processRepair = require('./processRepairRun');
 
 const MODULES = [
     { kinds: ['parlor_message'], run: conversation },
-    { kinds: opportunity.KINDS, run: opportunity }
+    { kinds: opportunity.KINDS, run: opportunity },
+    { kinds: processRepair.KINDS, run: processRepair }
 ];
 
 /** The run module for an origin kind, or null (an initiative with no conversation or source origin). */

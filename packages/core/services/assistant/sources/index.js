@@ -44,6 +44,9 @@
  *  - `lookback(responsibility)`: what activation tells the owner about the
  *    history the adapter will not act on.
  *
+ * DA-5c (ADR 0029) adds `process_incident`: a failing process the grant
+ * names for repair. It uses `capability`, `standing`, `stale` and `locate`.
+ *
  * DA-10 (ADR 0031) adds one, described in documentation/delegated_feedback.md:
  *  - `learns`: `true`, or `(origin) => boolean`, on an adapter that notices
  *    things by itself. Feedback may lower how many proposals a day such an
@@ -62,7 +65,8 @@ const SOURCES = {
     chat_request: require('./chatRequest'),
     followed_source: require('./followedSource'),
     job_failure: require('./jobFailure'),
-    ci_verdict: require('./ciVerdict')
+    ci_verdict: require('./ciVerdict'),
+    process_incident: require('./processIncident')
 };
 
 module.exports = SOURCES;

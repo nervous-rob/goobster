@@ -71,6 +71,7 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_process_incident_members', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_lifecycle', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_cleanups', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_repairs', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
@@ -292,6 +293,12 @@ function createDormantSeed(db) {
                 (ownerUserId, processKind, processId, name, manifestJson, manifestHash, lifecycleRevision, expiresAt, updatedAt)
              VALUES (@u, 'automation', @automationId, 'nightly ' || @tag, '{"items":{"observations":[]}}', 'hash-' || @tag, 1, @now, @now)`,
             { u, automationId: String(automationId), tag, now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_repairs
+                (ownerUserId, processKind, processId, name, attempt, status, action, diagnosisCode, actorKind, rollback, appliedAt, endedAt, updatedAt)
+             VALUES (@u, 'automation', @automationId, 'nightly ' || @tag, 1, 'FAILED', 'rerun', 'RUN_FAILED', 'person', 'none', @now, @now, @now)`,
+            { u, automationId: String(automationId), now: utc(), tag }
         );
 
         await db.run(`INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)

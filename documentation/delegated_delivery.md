@@ -42,8 +42,9 @@ How it works:
    (`home`, `assistant-responsibilities`, `assistant-initiatives`, `inbox`
    when an update or a request changed, and `assistant-processes` when an
    update changed, since it may be a process incident; a process that is
-   paused, resumed, archived, restored or cleaned up is announced as an
-   `update` too, so the Processes report follows it; and
+   paused, resumed, archived, restored or cleaned up, and a repair that is
+   proposed, applied, checked or undone, is announced as an `update` too,
+   so the Processes report follows it; and
    `assistant-knowledge` when an update or a request changed, since it may
    be a change to the person's notes that was proposed, made or decided).
 3. The client reads those again through the ordinary routes, which check

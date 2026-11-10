@@ -51,7 +51,7 @@ const GATE_COLUMNS = new Set(['approve', 'review', 'unblock', 'answer']);
 const OWNERS_PER_PASS = 200;
 
 /** Where a person can press a decision. Each is a signed-in portal surface. */
-const SURFACES = ['home', 'inbox', 'chat', 'project'];
+const SURFACES = ['home', 'inbox', 'chat', 'project', 'processes'];
 /** Assistant plan steps listed on one board read. */
 const BOARD_STEP_LIMIT = 40;
 /** A request that lives on its own Inbox item is addressed as `inbox-<item id>`. */
@@ -325,7 +325,7 @@ class AssistantGateService {
      * @param {string} params.option - one of the card's option ids
      * @param {number} params.occurrence
      * @param {string|number} params.revision
-     * @param {'home'|'inbox'|'chat'|'project'} params.surface - where the person pressed it
+     * @param {'home'|'inbox'|'chat'|'project'|'processes'} params.surface - where the person pressed it
      * @param {Object} [params.gateway] - for the domain's own notices
      * @param {string} [params.receipt] - required for `chat`: the receipt minted when the card was rendered
      * @throws {AssistantGateError} 403 `PILOT_ONLY` for anyone the pilot gate does not include, on any surface

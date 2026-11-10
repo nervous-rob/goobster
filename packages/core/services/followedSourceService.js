@@ -15,6 +15,12 @@ class FollowedSourceError extends Error {
 }
 const missing = () => new FollowedSourceError(404, 'NOT_FOUND', 'Followed source or topic not found.');
 const id = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
+/**
+ * What a refusing status means, as the typed code the process catalog
+ * records. 410 says the address is gone for good: `TARGET_GONE` is one of the
+ * codes that tell stewardship what a process exists for has ended.
+ */
+const STATUS_CODES = { 401: 'SOURCE_FORBIDDEN', 403: 'SOURCE_FORBIDDEN', 404: 'SOURCE_NOT_FOUND', 410: 'TARGET_GONE' };
 const HEADER = value => typeof value === 'string' && value.length <= 1000 && !/[\r\n]/.test(value) ? value : null;
 class FollowedSourceService {
     constructor({ fetch = source => fetcher.fetch(source), now = Date.now } = {}) { this.fetch = fetch; this.now = now; }
@@ -134,6 +140,51 @@ class FollowedSourceService {
         const result = await db.run('UPDATE followed_sources SET archivedAt = NULL, enabled = 0 WHERE id = @id AND archivedAt IS NOT NULL', { id: id(sourceId) });
         return { changed: result.changes > 0 };
     }
+    /**
+     * Process repair (documentation/process_stewardship.md, "Repair"), called
+     * by assistantProcessRepairService once it has checked who may act.
+     *
+     * Where the source's address redirects to now, from one polite request
+     * that stores nothing. The answer is what the remote server said: the
+     * caller decides whether to use it.
+     * @returns {Promise<{ status: 'redirect', address: string, sameHost: boolean } | { status: 'none'|'waiting'|'unusable'|'failed', code?: string }>}
+     */
+    async redirectTarget({ userId, sourceId }) {
+        const source = await this.require(userId, sourceId);
+        if (!source.enabled || !await this.active(userId)) throw new FollowedSourceError(409, 'FOLLOW_PAUSED', 'Enable Attention for research and resume this source to check it.');
+        if (await require('./instanceStateService').isPaused()) throw new FollowedSourceError(409, 'INSTANCE_PAUSED', 'Source checks are paused on this installation.');
+        await require('./resourceEventService').record({ kind: 'source_check', work: { kind: 'followed_source', id: source.id }, actor: source.userId });
+        try {
+            await this.fetch({ ...source, etag: null, lastModified: null });
+            return { status: 'none' };
+        } catch (error) {
+            if (error.code === 'FETCH_DEFERRED') return { status: 'waiting' };
+            if (error.code !== 'REDIRECT_REFUSED' || !error.location) return { status: 'failed', code: /^[A-Z_]{1,64}$/.test(error.code || '') ? error.code : 'FETCH_OR_PARSE_FAILED' };
+            try {
+                const target = assessUrl(new URL(error.location, source.url).href).url; target.hash = '';
+                if (target.href.length > 2000 || target.href === source.url) return { status: 'unusable' };
+                return { status: 'redirect', address: target.href, sameHost: target.host === new URL(source.url).host };
+            } catch { return { status: 'unusable' }; }
+        }
+    }
+    /**
+     * Point a source at another address, only while it still has the one the
+     * caller read. What was fetched from the old address is not compared with
+     * the new one: the next check is a new baseline and raises nothing. A
+     * check that was under way stores nothing.
+     */
+    async stewardReaddress({ id: sourceId, from, to }) {
+        const target = assessUrl(to).url; target.hash = '';
+        try {
+            const result = await db.run(`UPDATE followed_sources SET url = @to, initialized = 0, etag = NULL, lastModified = NULL,
+                lastHash = NULL, lastText = NULL, lastCheckedAt = NULL, claimToken = NULL, claimUntil = NULL
+                WHERE id = @id AND url = @from AND archivedAt IS NULL`, { id: id(sourceId), from, to: target.href });
+            return { changed: result.changes > 0, address: target.href };
+        } catch (error) {
+            if (!/UNIQUE|duplicate key/i.test(String(error?.message || ''))) throw error;
+            throw new FollowedSourceError(409, 'DUPLICATE_SOURCE', 'You already follow that address for this topic.');
+        }
+    }
     async remove({ userId, sourceId }) {
         // Owners can remove inaccessible follows after membership loss.
         await db.run('DELETE FROM followed_sources WHERE id = @id AND userId = @userId', { id: id(sourceId), userId });
@@ -199,7 +250,11 @@ class FollowedSourceService {
             // Account erasure, pause or revocation during I/O must not write new data.
             const fresh = await this.require(source.userId, source.id);
             if (!fresh.enabled || fresh.claimToken !== token || !await this.active(source.userId) || await require('./instanceStateService').isPaused()) return { status: 'paused' };
-            if (![200, 304].includes(result.status)) throw new Error('Source is unavailable.');
+            if (![200, 304].includes(result.status)) {
+                const refused = new Error('Source is unavailable.');
+                refused.code = STATUS_CODES[result.status] || 'SOURCE_UNAVAILABLE';
+                throw refused;
+            }
             if (result.status === 304 && !source.initialized) throw new Error('Source returned no initial content.');
             let entries = [], page = null, saved = false, found = false;
             if (result.status === 200) {

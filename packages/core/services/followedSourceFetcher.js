@@ -40,7 +40,12 @@ async function requestText(raw, { headers = {}, maxBytes = 1024 * 1024, timeoutM
                 finish(null, { status, headers: res.headers, text: '' });
                 return;
             }
-            if (status !== 200) return finish(new SourceFetchError(status >= 300 && status < 400 ? 'REDIRECT_REFUSED' : 'HTTP_ERROR', `Source returned HTTP ${status}. Use its final URL.`));
+            if (status !== 200) {
+                const refused = new SourceFetchError(status >= 300 && status < 400 ? 'REDIRECT_REFUSED' : 'HTTP_ERROR', `Source returned HTTP ${status}. Use its final URL.`);
+                // Where it says it moved to. Never followed here: a person, or a repair they allowed, decides.
+                if (refused.code === 'REDIRECT_REFUSED' && typeof res.headers.location === 'string') refused.location = res.headers.location.slice(0, 2000);
+                return finish(refused);
+            }
             const type = String(res.headers['content-type'] || '').split(';')[0].trim();
             if (!/^(text\/(html|plain|xml)|application\/(rss\+xml|atom\+xml|xml|xhtml\+xml))$/.test(type)) return finish(new SourceFetchError('TYPE_REFUSED', 'Source is not HTML, XML or plain text.'));
             if (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity') return finish(new SourceFetchError('ENCODING_REFUSED', 'Source requires an unsupported content encoding.'));

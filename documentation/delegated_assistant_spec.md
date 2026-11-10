@@ -545,8 +545,20 @@ permanent cleanup has made unavailable to restore.
 by its owner; pause and archive by the assistant under a responsibility that
 names that process; and a request, answered on Home or in the Inbox, when
 there is none
-([process_stewardship.md](process_stewardship.md#retiring-a-process)). Repair
-and cleanup by the assistant are planned.
+([process_stewardship.md](process_stewardship.md#retiring-a-process)).
+Cleanup by the assistant is planned.
+
+**Available, for repair:** two typed repairs of a scheduled task or followed
+source that keeps failing (run it once more; follow a redirect), approved by
+its owner or applied by the assistant under a responsibility that names that
+process; verification from what the process records afterwards, including
+fresh output where its contract asks for it and the recovery of what depends
+on it; observation of the next normal occurrence; rollback where safe; and a
+request for direction at the attempt cap
+([process_stewardship.md](process_stewardship.md#repairing-a-process)).
+Patching a process's script, prompt or schedule, as journey C describes for
+an owned script, and repairing project triggers, watches, stalled processes
+and shared-cause incidents, are planned.
 
 ## 9. Further capabilities in the same loop
 
@@ -693,8 +705,8 @@ DA-12. The technical contracts are in
 - A request can be answered where you see it: on Home, in the Inbox, in the
   notification or in chat. The choice shown is the concrete decision, with
   what it will change. **Available on Home and in the Inbox** for a friend
-  request, a request to join, a mission plan to approve or start and a
-  process that may no longer be needed
+  request, a request to join, a mission plan to approve or start, a
+  process that may no longer be needed and a proposed repair of a process
   ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)),
   **and from a card in portal chat**; the notification is planned.
 - A spoken briefing tells you what needs you and what changed. Hearing it

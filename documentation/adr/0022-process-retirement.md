@@ -17,7 +17,8 @@ code is `packages/core/services/assistantProcessLifecycleService.js`, four
 the `process_retirement` descriptor in `assistantGateDescriptors.js`, and the
 `lifecycle.steward()` step inside `assistantIncidentService.reconcile()`.
 
-Repair through runs is DA-5c and is not part of this decision.
+Repair through runs is DA-5c and is not part of this decision; it is
+[ADR 0029](0029-process-repair.md).
 
 ## Context
 

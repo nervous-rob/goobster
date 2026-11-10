@@ -159,7 +159,7 @@ describe('opening an incident', () => {
         const job = await automation('nightly import');
         for (const hour of [1, 2, 3]) await ran(job, hour, 'failed');
         useState({ inactive: ['assistant'] });
-        expect(await pass(4)).toEqual({ owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0 });
+        expect(await pass(4)).toEqual({ owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0, repairs: 0 });
         expect(await incidents.healthCandidates({ userId: A })).toEqual([]);
         expect(await incidents.relevanceCandidates({ userId: A })).toEqual([]);
         useState();

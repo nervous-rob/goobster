@@ -2504,6 +2504,7 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .assistant-processes { margin-top: 28px; }
 .assistant-processes h2 { margin: 0 0 6px; font-size: 1rem; }
 .process-judgment { margin-top: 4px; font-size: 0.9rem; overflow-wrap: anywhere; }
+.process-repair { margin-top: 6px; font-size: 0.9rem; overflow-wrap: anywhere; }
 .process-axis { color: var(--text-dim); }
 .process-state { font-weight: 600; }
 .process-row.is-blocked, .process-row.is-stalled, .process-row.is-unreachable { box-shadow: inset 3px 0 0 var(--danger); }
