@@ -54,7 +54,7 @@ test.describe('delegating by conversation', () => {
         // The model drafts it, then tries to turn it on itself.
         await script(page, [
             [PROPOSE],
-            [{ name: 'controlDelegatedWork', arguments: { action: 'activate', id: 1, confirmed: true } }]
+            [{ name: 'controlDelegatedWork', arguments: { action: 'activate', id: '$draft', confirmed: true } }]
         ], 'I drafted that. It is not on: the card shows what it would allow.');
         await login(page, { userId: USER, name: NAME });
         await say(page, 'Keep my garden notes current from now on.', 'I drafted that. It is not on');

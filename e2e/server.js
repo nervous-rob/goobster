@@ -857,6 +857,7 @@ async function main() {
             const aiService = require('@goobster/core/services/aiService');
             if (conversationModel) {
                 aiService.chat = conversationModel.original;
+                aiService.generateText = conversationModel.generateText;
                 conversationModel = null;
             }
             if (req.body?.restore === true) return res.json({ ok: true });
@@ -873,10 +874,29 @@ async function main() {
             }
             await policies.enroll({ userId, initiative: 'assist' });
             const rounds = Array.isArray(req.body?.rounds) ? req.body.rounds.map((round) => round.map((call, index) => ({
-                id: `e2e-${Date.now()}-${index}`, name: String(call.name), arguments: JSON.stringify(call.arguments || {})
+                id: `e2e-${Date.now()}-${index}`, name: String(call.name), arguments: call.arguments || {}
             }))) : [];
+            // An argument of '$draft' is the person's newest responsibility when the
+            // call is made, so a scripted attempt names the real draft whatever ids
+            // an earlier spec or a retried journey left behind.
+            const play = async (round) => {
+                const newest = await db.get('SELECT MAX(id) AS id FROM assistant_responsibilities WHERE ownerUserId = @userId', { userId });
+                return round.map((call) => ({
+                    ...call,
+                    arguments: JSON.stringify(Object.fromEntries(Object.entries(call.arguments)
+                        .map(([key, value]) => [key, value === '$draft' ? Number(newest?.id) : value])))
+                }));
+            };
             const reply = String(req.body?.reply || 'Done.');
-            conversationModel = { original: aiService.chat, rounds };
+            conversationModel = { original: aiService.chat, generateText: aiService.generateText, rounds };
+            // The local provider has no web search of its own, so the turn first asks
+            // the model whether to search. With no model to ask, a keyword match
+            // ("current", "find") decides instead and the turn becomes a search
+            // approval. This model answers that one question: no.
+            const { generateText } = conversationModel;
+            aiService.generateText = async (prompt, ...rest) => (/requires a web search/.test(String(prompt))
+                ? 'false'
+                : generateText.call(aiService, prompt, ...rest));
             aiService.chat = async (_messages, options = {}) => {
                 // A model call is never instant. When this answered at once,
                 // a new chat's turn sometimes ended within milliseconds of the
@@ -887,7 +907,7 @@ async function main() {
                 const offered = (options.functions || []).map((definition) => definition.name);
                 const next = rounds[0];
                 // Only the agent loop is scripted, and only with tools it was really offered.
-                if (next && next.every((call) => offered.includes(call.name))) return { content: '', toolCalls: rounds.shift() };
+                if (next && next.every((call) => offered.includes(call.name))) return { content: '', toolCalls: await play(rounds.shift()) };
                 if (typeof options.onDelta === 'function') options.onDelta(reply);
                 return { content: reply, toolCalls: [] };
             };
