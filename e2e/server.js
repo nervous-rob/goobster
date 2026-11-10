@@ -615,9 +615,34 @@ async function main() {
     });
 
     const app = express();
+    // Express 4 does not catch a rejected async handler, and Node ends the
+    // process on an unhandled rejection. One fixture that threw (a retried
+    // journey seeding the same project twice) took this server down and every
+    // later journey failed with a refused connection. Hand the error to
+    // Express instead, so it is one failed request.
+    for (const method of ['get', 'post']) {
+        const register = app[method].bind(app);
+        app[method] = (route, ...handlers) => register(route, ...handlers.map((handler) =>
+            (handler.constructor.name === 'AsyncFunction'
+                ? (req, res, next) => handler(req, res, next).catch(next)
+                : handler)));
+    }
+    // A journey that is retried seeds again. Reuse the project the first attempt made.
+    const ensureProject = async ({ userId, name }) => {
+        try {
+            return await observatory.createProject({ userId, name });
+        } catch (err) {
+            if (err?.code !== 'DUPLICATE_PROJECT') throw err;
+            const existing = (await observatory.listProjects(userId)).find((project) => project.name === name);
+            if (!existing) throw err;
+            return existing;
+        }
+    };
+    // For e2e/harness.spec.js: proof that a rejecting fixture is one failed request.
+    app.post('/e2e/fixtures/rejects', async () => { throw new Error('This fixture rejects on purpose.'); });
     app.post('/e2e/fixtures/account-export', express.json(), async (req, res) => {
         const userId = String(req.body.userId);
-        const project = await observatory.createProject({ userId, name: 'Portable account fixture' });
+        const project = await ensureProject({ userId, name: 'Portable account fixture' });
         await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user',
             mutations: { upsert: [{ type: 'concept', label: 'Portable evidence fixture', content: 'This saved knowledge belongs in the account archive.' }] } });
         const directory = path.join(DATA_DIR, 'sandbox', 'projects', userId, project.slug);
@@ -630,7 +655,7 @@ async function main() {
         if (req.body.advance) { sourceNow += 3600_000; sourceVersion++; res.json({ ok: true }); return; }
         await db.run('DELETE FROM followed_sources WHERE userId = @userId', { userId });
         await policies.enroll({ userId, initiative: 'observe' });
-        const project = await observatory.createProject({ userId, name: 'Source following fixture' });
+        const project = await ensureProject({ userId, name: 'Source following fixture' });
         await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user', mutations: { upsert: [{ type: 'concept', label: 'Followed topic fixture', content: 'An explicitly kept research topic.' }] } });
         res.json({ project });
     });

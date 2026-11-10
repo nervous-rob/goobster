@@ -255,7 +255,10 @@ ci_status() {
     if [[ -n "${GITHUB_TOKEN}" ]]; then
         args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
     fi
-    if ! json="$(curl "${args[@]}" "https://api.github.com/repos/${slug}/commits/${sha}/check-runs")"; then
+    # per_page: CI reports one check run per shard, and the API's default page
+    # of 30 would hide the rest once a commit also triggers the installer
+    # proof workflows.
+    if ! json="$(curl "${args[@]}" "https://api.github.com/repos/${slug}/commits/${sha}/check-runs?per_page=100")"; then
         log "WARN: could not reach the GitHub checks API for ${slug}@$(short "${sha}")"
         return 2
     fi
