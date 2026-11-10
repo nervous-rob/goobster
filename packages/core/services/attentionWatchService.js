@@ -271,13 +271,35 @@ class AttentionWatchService {
             logger.debug?.(`[watches] Expired ${result.changes} stale watch(es)`);
         }
         const firingCutoff = toUtcText(new Date(Date.now() - 15 * 60 * 1000));
-        const interrupted = await db.run(
+        const interrupted = await db.all(
             `UPDATE attention_watches
              SET status = 'FAILED', lastError = 'Turn interrupted before completion'
-             WHERE status = 'FIRING' AND lastFiredAt IS NOT NULL AND lastFiredAt < @cutoff`,
+             WHERE status = 'FIRING' AND lastFiredAt IS NOT NULL AND lastFiredAt < @cutoff
+             RETURNING id, userId, fireCount`,
             { cutoff: firingCutoff }
         );
-        return result.changes + (interrupted.changes || 0);
+        for (const row of interrupted) await this._observe(row, 'execution', 'failed', 'TURN_INTERRUPTED');
+        return result.changes + interrupted.length;
+    }
+
+    /**
+     * One typed outcome per fire for the process catalog
+     * (documentation/process_stewardship.md). The occurrence is the fire
+     * being attempted, so an event dropped for capacity and the fire that
+     * later succeeds are one occurrence. Codes only. Never throws.
+     */
+    async _observe(watch, phase, outcome, reasonCode = null) {
+        const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
+        if (!processes || !watch?.userId) return;
+        await processes.record({
+            processKind: 'attention_watch',
+            processId: watch.id,
+            ownerUserId: watch.userId,
+            occurrenceKey: `fire:${Number(watch.fireCount || 0) + 1}`,
+            phase,
+            outcome,
+            reasonCode
+        });
     }
 
     /* ------------------------------------------------------------------ */
@@ -334,6 +356,7 @@ class AttentionWatchService {
     async _fire(watch, event) {
         if (this._running >= WATCHES.maxConcurrentTurns) {
             logger.warn?.(`[watches] #${watch.id} skipped: ${this._running} turns already running`);
+            await this._observe(watch, 'dispatch', 'skipped', 'TURN_CAPACITY');
             return;
         }
         const claimed = (await db.run(
@@ -363,6 +386,7 @@ class AttentionWatchService {
                 { id: watch.id }
             )).changes > 0;
             if (!completed) return;
+            await this._observe(watch, 'execution', 'ok');
             logger.info?.(`[watches] #${watch.id} "${watch.label}" fired on ${event.topic}`);
             const row = await db.get(
                 'SELECT status FROM attention_watches WHERE id = @id',
@@ -384,6 +408,7 @@ class AttentionWatchService {
                 { id: watch.id, error: String(error.message || error).slice(0, 500) }
             )).changes > 0;
             if (!failed) return;
+            await this._observe(watch, 'execution', 'failed', String(error?.code || 'FIRE_FAILED').slice(0, 64));
             await require('./workFailureService').note({
                 kind: 'watch',
                 workId: watch.id,

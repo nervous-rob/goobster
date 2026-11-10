@@ -66,6 +66,8 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_confirmation_receipts', column: 'userId' },
     { feature: 'assistant', table: 'assistant_process_contracts', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_incidents', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_incident_members', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' }
 ];
@@ -224,6 +226,16 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_process_observations (ownerUserId, processKind, processId, occurrenceKey, phase, outcome, observedAt)
              VALUES (@u, 'automation', @automationId, 'fire:2026-11-08 03:00:00', 'outcome', 'ok', @now)`,
             { u, automationId: String(automationId), now: utc() }
+        );
+        const incidentId = await db.insert(
+            `INSERT INTO assistant_process_incidents (ownerUserId, incidentKey, causeCode, openedAt)
+             VALUES (@u, 'process:automation:' || @automationId, 'RUN_FAILED', @now)`,
+            { u, automationId: String(automationId), now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_incident_members (incidentId, ownerUserId, processKind, processId, name, joinedAt)
+             VALUES (@incidentId, @u, 'automation', @automationId, 'nightly ' || @tag, @now)`,
+            { incidentId, u, automationId: String(automationId), tag, now: utc() }
         );
 
         await db.run(`INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)

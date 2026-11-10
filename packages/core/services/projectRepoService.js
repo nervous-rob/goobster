@@ -81,6 +81,10 @@ const COMPARE_MAX_COMMITS = 30;
 const COMPARE_PATCH_BYTES = 2 * 1024 * 1024;
 const COMPARE_PATCH_CHARS = 200_000;
 const PR_LIST_MAX = 10;
+const TRAILER_KEY = /^[A-Za-z][A-Za-z0-9-]{0,40}$/;
+const TRAILER_VALUE = /^[A-Za-z0-9][A-Za-z0-9:._/@+-]{0,120}$/;
+/** How far back a commit is looked for by its trailer. */
+const TRAILER_SEARCH_COMMITS = 50;
 /** A pull request opened for review in the editor: files, comments and text caps. */
 const REVIEW_FILES_MAX = 100;
 const REVIEW_COMMENTS_MAX = 100;
@@ -118,6 +122,21 @@ function cleanMessage(message) {
         .slice(0, MAX_MESSAGE_CHARS);
     if (!text) throw new ProjectRepoError(400, 'EMPTY_MESSAGE', 'A commit needs a message.');
     return text;
+}
+
+/**
+ * Git trailers for a commit message (`Key: value` lines after a blank line).
+ * Appended after the message is cut to length, so a trailer is never lost.
+ */
+function trailerBlock(trailers) {
+    const lines = [];
+    for (const [key, value] of Object.entries(trailers || {})) {
+        if (!TRAILER_KEY.test(key) || !TRAILER_VALUE.test(String(value))) {
+            throw new ProjectRepoError(400, 'BAD_TRAILER', 'A commit trailer is a short token and a short value.');
+        }
+        lines.push(`${key}: ${value}`);
+    }
+    return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
 
 class ProjectRepoService {
@@ -447,6 +466,13 @@ class ProjectRepoService {
             `A ${status.operation} is stopped on conflicts: fix the conflicted files and repo_continue, or repo_abort.`);
     }
 
+    /** For a caller that named the branch it means: the clone must still be on it. */
+    _requireBranch(status, expected) {
+        if (!expected || status.branch === expected) return;
+        throw new ProjectRepoError(409, 'BRANCH_CHANGED',
+            `The clone is on ${status.branch || 'no branch'}, not ${expected}.`);
+    }
+
     async _status(projectRow, name) {
         const branchRes = await this._git(projectRow, name, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true });
         const branch = branchRes.status === 0 ? String(branchRes.stdout).trim() : null;
@@ -712,18 +738,25 @@ class ProjectRepoService {
         });
     }
 
-    /** Stage everything in the clone and commit it as the person's GitHub identity. */
-    async commit({ row = null, userId, project = null, owner = null, name, message, paths = null }) {
+    /**
+     * Stage everything in the clone and commit it as the person's GitHub identity.
+     * `onBranch` refuses (`BRANCH_CHANGED`) unless the clone is on that branch
+     * when the commit is made; `trailers` are appended to the message.
+     */
+    async commit({ row = null, userId, project = null, owner = null, name, message, paths = null, onBranch = null, trailers = null }) {
         const projectRow = await this._resolve({ row, userId, project, owner });
         this._requireEnabled();
         const repoRow = await this._row(projectRow, name);
-        const text = cleanMessage(message);
+        const text = `${cleanMessage(message)}${trailerBlock(trailers)}`;
+        const expected = cleanBranch(onBranch);
         // Optional: commit only these clone-relative paths (the editor's Changes pane).
         const only = Array.isArray(paths) && paths.length ? paths.map(p => this._cleanRelPath(p)) : null;
         const token = await this._token(userId);
         const identity = await this._identity(userId, token);
         return this._serial(projectRow, repoRow.name, async () => {
-            this._requireIdle(await this._status(projectRow, repoRow.name));
+            const before = await this._status(projectRow, repoRow.name);
+            this._requireIdle(before);
+            this._requireBranch(before, expected);
             if (only) {
                 // Unstage everything, then stage exactly the chosen paths.
                 await this._git(projectRow, repoRow.name, ['reset', '-q'], { allowFail: true });
@@ -742,16 +775,21 @@ class ProjectRepoService {
         });
     }
 
-    /** Push the current branch (or HEAD to a named branch) to origin. Never forced. */
-    async push({ row = null, userId, project = null, owner = null, name, branch = null }) {
+    /**
+     * Push the current branch (or HEAD to a named branch) to origin. Never forced.
+     * `onBranch` refuses (`BRANCH_CHANGED`) unless the clone is on that branch.
+     */
+    async push({ row = null, userId, project = null, owner = null, name, branch = null, onBranch = null }) {
         const projectRow = await this._resolve({ row, userId, project, owner });
         this._requireEnabled();
         const repoRow = await this._row(projectRow, name);
         const target = cleanBranch(branch);
+        const expected = cleanBranch(onBranch);
         const token = await this._token(userId);
         await this._checkAllowlist(userId, repoRow.repo);
         return this._serial(projectRow, repoRow.name, async () => {
             const status = await this._status(projectRow, repoRow.name);
+            this._requireBranch(status, expected);
             if (!status.head) throw new ProjectRepoError(409, 'NOTHING_TO_PUSH', 'The clone has no commits yet.');
             const branchName = target || status.branch;
             if (!branchName) throw new ProjectRepoError(409, 'DETACHED', 'The clone is not on a branch; pass branch=<name> to push HEAD there.');
@@ -766,7 +804,7 @@ class ProjectRepoService {
                     throw new ProjectRepoError(409, 'REJECTED',
                         `origin/${branchName} has commits this clone does not: repo_pull first, then push again. Pushes are never forced.`);
                 }
-                if (/protected branch|GH006/i.test(text)) {
+                if (/protected branch|GH006|GH013|rule violations/i.test(text)) {
                     throw new ProjectRepoError(403, 'PROTECTED_BRANCH',
                         `${branchName} is protected on GitHub: push to another branch (branch=<name>) and open a pull request.`);
                 }
@@ -1433,6 +1471,131 @@ class ProjectRepoService {
         return {
             project: projectRow.slug, name: repoRow.name, repo: repoRow.repo, number: created.number, url: created.html_url,
             title: created.title || cleanTitle, draft: Boolean(created.draft), head: headName, base: wantedBase
+        };
+    }
+
+    // --- What unattended work asks before and after a write (delegated runs) -------------------
+
+    /**
+     * What GitHub says about one branch, with the person's own connection:
+     * whether it is the repository's default branch and whether it is
+     * protected. Throws when GitHub cannot say (`BRANCH_UNVERIFIED`), so a
+     * caller that must not write to such a branch can refuse.
+     * @returns {Promise<{ name, repo, branch, base, defaultBranch, isDefault, exists, protected }>}
+     */
+    async branchPolicy({ row = null, userId, project = null, owner = null, name, branch }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(branch);
+        if (!target) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
+        const { token, api } = await this._api(userId, repoRow);
+        let defaultBranch;
+        let remote;
+        try {
+            defaultBranch = this._repoInfoOf
+                ? (await this._repoInfoOf(token, repoRow.repo))?.defaultBranch
+                : (await api.getRepo(repoRow.repo))?.default_branch;
+            remote = await api.getBranch(repoRow.repo, target).catch((error) => {
+                if (error?.code === 'NOT_FOUND') return null;
+                throw error;
+            });
+        } catch (error) {
+            const explained = this._apiError(error, repoRow.repo);
+            if (explained instanceof ProjectRepoError && ['NO_GITHUB', 'NO_ACCESS', 'NOT_FOUND'].includes(explained.code)) throw explained;
+            throw new ProjectRepoError(502, 'BRANCH_UNVERIFIED', `GitHub could not say whether ${target} is protected.`);
+        }
+        if (!defaultBranch) {
+            throw new ProjectRepoError(502, 'BRANCH_UNVERIFIED', `GitHub did not name the default branch of ${repoRow.repo}.`);
+        }
+        return {
+            name: repoRow.name, repo: repoRow.repo, branch: target, base: repoRow.branch,
+            defaultBranch: String(defaultBranch),
+            isDefault: target === String(defaultBranch),
+            exists: Boolean(remote),
+            protected: Boolean(remote?.protected)
+        };
+    }
+
+    /**
+     * The commit a branch points at here and on origin (asked of the remote
+     * now, with the person's token; nothing is fetched). `remoteIsAncestor`
+     * is true when origin's commit is already part of the local branch.
+     * @returns {Promise<{ name, repo, branch, local: string|null, remote: string|null, remoteIsAncestor: boolean }>}
+     */
+    async remoteHead({ row = null, userId, project = null, owner = null, name, branch }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(branch);
+        if (!target) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
+        const token = await this._token(userId);
+        await this._checkAllowlist(userId, repoRow.repo);
+        const ref = `refs/heads/${target}`;
+        let listing;
+        try {
+            listing = await this._git(projectRow, repoRow.name, ['ls-remote', '--heads', 'origin', ref], { token });
+        } catch (error) {
+            throw this._explain(error, { repo: repoRow.repo, branch: target });
+        }
+        const line = String(listing.stdout || '').split('\n').map(entry => entry.split('\t')).find(([, name_]) => name_ === ref);
+        const remote = line && /^[0-9a-f]{40,64}$/.test(line[0]) ? line[0] : null;
+        const here = await this._git(projectRow, repoRow.name, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFail: true });
+        const local = here.status === 0 ? String(here.stdout).trim() : null;
+        let remoteIsAncestor = false;
+        if (remote && local && remote !== local) {
+            remoteIsAncestor = (await this._git(projectRow, repoRow.name, ['merge-base', '--is-ancestor', remote, local], { allowFail: true })).status === 0;
+        }
+        return { name: repoRow.name, repo: repoRow.repo, branch: target, local, remote, remoteIsAncestor };
+    }
+
+    /**
+     * The newest commit on a local branch whose message carries the trailer
+     * `key: value`, or null. Looks at the last few commits only.
+     * @returns {Promise<{ hash: string, short: string } | null>}
+     */
+    async findCommitByTrailer({ row = null, userId, project = null, owner = null, name, branch, key, value }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(branch);
+        if (!target) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
+        const wanted = trailerBlock({ [key]: value }).trim();
+        if (!await this._localBranchExists(projectRow, repoRow.name, target)) return null;
+        const log = await this._git(projectRow, repoRow.name,
+            ['log', `-n${TRAILER_SEARCH_COMMITS}`, '--format=%H%x1f%B%x1e', `refs/heads/${target}`]);
+        for (const entry of String(log.stdout || '').split('\x1e')) {
+            const [hash, body] = entry.trim().split('\x1f');
+            if (hash && String(body || '').split('\n').some(line => line.trim() === wanted)) {
+                return { hash, short: hash.slice(0, 7) };
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The open pull request whose head is this branch, as GitHub knows it
+     * now, or null. Throws when GitHub cannot be asked.
+     * @returns {Promise<{ number, url, title, body, draft, base } | null>}
+     */
+    async openPullRequestFor({ row = null, userId, project = null, owner = null, name, branch }) {
+        const projectRow = await this._resolve({ row, userId, project, owner });
+        this._requireEnabled();
+        const repoRow = await this._row(projectRow, name);
+        const target = cleanBranch(branch);
+        if (!target) throw new ProjectRepoError(400, 'BAD_BRANCH', 'Which branch?');
+        const { api } = await this._api(userId, repoRow);
+        let pulls;
+        try {
+            pulls = await api.listPullRequests(repoRow.repo, { state: 'open', limit: 1, head: `${repoRow.repo.split('/')[0]}:${target}` });
+        } catch (error) {
+            throw this._apiError(error, repoRow.repo);
+        }
+        const pr = Array.isArray(pulls) ? pulls.find(entry => !entry.head?.ref || entry.head.ref === target) : null;
+        if (!pr) return null;
+        return {
+            number: pr.number, url: pr.html_url, title: pr.title || '', body: String(pr.body || ''),
+            draft: Boolean(pr.draft), base: pr.base?.ref || null
         };
     }
 

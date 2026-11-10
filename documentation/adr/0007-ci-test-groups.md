@@ -4,7 +4,8 @@
 
 Accepted. Amended 2026-11-10: the engine jobs and the Playwright job run as
 parallel shards (see "Amendment: parallel shards" below). Decisions 1 and 3
-are updated in place; the rest stands.
+are updated in place; the rest stands. Amended again the same day: the
+Chromium system packages come from a cache (last section).
 
 ## Context
 
@@ -194,11 +195,55 @@ process.
   pull request waits for.
 - **Caching `node_modules`, the web build or the Playwright browser.**
   `npm ci` is 7 to 12 s with the lockfile cache and the build is 7 to 10 s.
-  Most of the 20 to 25 s Chromium step is `apt` installing fonts, which a
-  browser cache does not remove. Handing a build from one job to the others
-  would make them wait for it.
+  The browser download is about 10 s from Playwright's CDN and did not
+  stall in any measured job, so a browser cache would save little. Handing
+  a build from one job to the others would make them wait for it. (The
+  font packages of the Chromium step are cached; see the last section.)
 - **More Jest workers or more Playwright workers per job.** The journeys
   share one server and one database within a job, and the timing-sensitive
   manager suites are already slower on the runners than locally.
 - **Skipping jobs for documentation-only changes.** `documentation/**` is
   read by the self-knowledge, feature-inventory and wiki suites.
+
+## Amendment: the Chromium system packages come from a cache (2026-11-10)
+
+`npx playwright install --with-deps chromium` runs `apt-get update`,
+installs Chromium's libraries and fonts with `apt-get install`, and
+downloads the browser. On a GitHub runner the libraries are present and
+the install is nine font packages, 21 MB, from the runner's Ubuntu mirror.
+Over 52 jobs in 40 runs the step took 22 s at the median and 16 s at best.
+On 2026-11-10 the mirror served the packages at about 100 kB/s to four of
+those jobs and the step took 97, 122, 125 and 240 s. One of the four was
+the run for the #416 merge, where the job then ran out of its 20 minutes.
+With five shards a run has five chances of drawing a slow download.
+
+The step is now `scripts/ci-playwright-chromium.sh`, between a cache
+restore and a cache save keyed on the runner image version and the
+Playwright version:
+
+- **With the packages in the cache** it runs `apt-get update` with a
+  45-second limit (on a stalled mirror it carries on with the package lists
+  the runner already has), checks that each cached file has the SHA-256 the
+  signed package index gives for that package and version, and installs
+  them with `apt-get install --no-download`. Then it asks Playwright:
+  `npx playwright install --with-deps --dry-run chromium` exits 0 only when
+  the old command would install or upgrade nothing. Then
+  `npx playwright install chromium` downloads the browser as before.
+- **With no cache, or if any of that fails,** it runs the command the step
+  always ran, with no time limit, once more if it fails, and copies the
+  packages that command installed into the cache folder. Shard 1 saves the
+  cache.
+
+What the journeys render with does not change: the browser build comes
+from the same Playwright version, and the fonts are the same files apt
+would download, installed by apt. The script prints a SHA-256 over every
+font file on the machine, so two jobs on one runner image can be compared.
+
+A cache step may fail without failing the shard, and nothing in the script
+can fail a job that the old command would not. The cost is one full
+install per runner image version (about weekly) on `main`, and on a pull
+request whose first run comes before `main` has saved that image's cache.
+If a font package is republished within an image's lifetime, the cached
+file no longer matches the index and every run does the full install until
+the next image; that is the old behaviour, not a failure.
+

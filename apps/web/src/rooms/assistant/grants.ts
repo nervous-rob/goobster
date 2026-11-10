@@ -1,4 +1,4 @@
-import type { ResponsibilityOperation } from '../../lib/types';
+import type { Responsibility, ResponsibilityOperation } from '../../lib/types';
 
 /** Plain words for what a responsibility grants. */
 
@@ -14,6 +14,7 @@ const OPERATION_TEXT: Record<string, string> = {
     'kg.archive': 'archive notes',
     'file.edit': 'edit files',
     'sandbox.run': 'run code in the sandbox',
+    'plan.step.execute': 'carry out assistant steps of its approved plan',
     'process.repair': 'repair',
     'process.pause': 'pause',
     'process.archive': 'archive',
@@ -40,6 +41,21 @@ function describeResource(entry: ResponsibilityOperation, projects: Map<string, 
     }
 }
 
+/** Pushes and pull requests a day when a responsibility sets no `externalOperations` (delegated_runs.md). */
+export const DEFAULT_EXTERNAL_OPERATIONS = 2;
+export const MAX_EXTERNAL_OPERATIONS = 20;
+
+/** True when the grant lets work leave this installation (a push, a pull request). */
+export function reachesGitHub(operations: ResponsibilityOperation[]): boolean {
+    return operations.some((entry) => entry.operation === 'repo.push' || entry.operation === 'pr.create');
+}
+
+/** How many pushes and pull requests a day the responsibility allows. */
+export function externalOperationsPerDay(budgets: Record<string, number> | undefined): number {
+    const set = budgets?.externalOperations;
+    return Number.isInteger(set) ? Math.min(set as number, MAX_EXTERNAL_OPERATIONS) : DEFAULT_EXTERNAL_OPERATIONS;
+}
+
 /** "read, research the web · add generated notes in your knowledge" */
 export function describeGrants(operations: ResponsibilityOperation[], projects: Map<string, Project>): string[] {
     const byResource = new Map<string, string[]>();
@@ -48,4 +64,19 @@ export function describeGrants(operations: ResponsibilityOperation[], projects: 
         byResource.set(where, [...(byResource.get(where) || []), OPERATION_TEXT[entry.operation] || entry.operation]);
     }
     return [...byResource.entries()].map(([where, verbs]) => `${verbs.join(', ')}: ${where}`);
+}
+
+/** Where it takes requests addressed to the assistant, in plain words (delegated_conversation_requests.md). */
+export function describeListening(item: Pick<Responsibility, 'scopes'>, name: string): string | null {
+    const sources = item.scopes?.sources || [];
+    const places = [
+        sources.includes('project_chat') ? 'its project\'s conversations' : null,
+        sources.includes('parlor') ? 'your discussions' : null
+    ].filter(Boolean);
+    return places.length ? `Takes requests you address to ${name} in ${places.join(' and ')}` : null;
+}
+
+/** Whether its findings go to the project's members as well (delegated_project_findings.md). */
+export function describeSharing(item: Pick<Responsibility, 'scopes' | 'projectId'>): string | null {
+    return item.projectId && item.scopes?.audience === 'project' ? 'Shares what it finds with the project\'s members' : null;
 }

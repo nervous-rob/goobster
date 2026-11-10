@@ -314,6 +314,15 @@ describe('proposing a responsibility', () => {
         expect(await row(result._card.id)).toMatchObject({ rulesJson: '{}', budgetsJson: '{}' });
     });
 
+    test('where it takes requests from is the person\'s to say: a proposal cannot set it', async () => {
+        const plain = await row((await proposed({ title: 'Plain' })).id);
+        const result = await tool('proposeResponsibility', {
+            title: 'Listening', operations: [KG_ADD], scopes: { sources: ['parlor', 'project_chat'] }, sources: ['parlor']
+        });
+        expect((await row(result._card.id)).scopesJson).toBe(plain.scopesJson);
+        expect(plain.scopesJson).not.toMatch(/parlor|project_chat/);
+    });
+
     test('the same proposal in the same conversation is one draft; a pile of unanswered ones is refused', async () => {
         const first = await proposed();
         const again = await tool('proposeResponsibility', { title: 'Keep my garden notes current', operations: [KG_ADD] });
@@ -556,6 +565,12 @@ describe('the human confirmation receipt', () => {
             id: draft.id, ops: JSON.stringify([KG_ADD, READ_WEB, READ_NOTES])
         });
         expect(await activate(edited, fresh)).toMatchObject(refused);
+        // Where it takes requests from is part of the grant too.
+        const again = (await mint(edited)).receipt;
+        await db.run('UPDATE assistant_responsibilities SET scopesJson = @scopes WHERE id = @id', {
+            id: draft.id, scopes: JSON.stringify({ sources: ['parlor'] })
+        });
+        expect(await activate(edited, again)).toMatchObject(refused);
 
         expect((await allRows()).map(r => r.status)).toEqual(['DRAFT', 'DRAFT', 'DRAFT']);
         expect((await receiptRows()).filter(r => r.consumedAt)).toEqual([]);
@@ -963,16 +978,26 @@ describe('a decision pressed on a chat card', () => {
         expect(await receiptRows()).toEqual([]);
     });
 
-    test('deciding from a conversation is the owner\'s alone until the pilot decision is recorded', async () => {
+    test('deciding from a card is the owner\'s alone until the pilot decision is recorded, in a conversation as on Home and in the Inbox', async () => {
         const { request } = await friends.request({ userId: A, targetId: B });
+        // B is not the owner: the request waits on them with no card to press.
         const [item] = (await inbox.list({ userId: B, view: 'needs_you' })).items;
-        const shown = item.decision;
+        expect(item).toMatchObject({ needsAction: true, decision: null, friend: { actionable: true } });
         const asB = (extra) => caught(gates.decide({
+            userId: B, ref: `inbox-${item.id}`, option: 'accept', occurrence: 1, revision: request.createdAt, ...extra
+        }));
+        for (const extra of [{ surface: 'chat', receipt: 'x' }, { surface: 'home' }, { surface: 'inbox' }]) {
+            expect(await asB(extra)).toMatchObject({ code: 'PILOT_ONLY', status: 403 });
+        }
+        expect(await status(request)).toBe('pending');
+        // Once the host opens the pilot the card is theirs; a conversation still needs its receipt.
+        await access.recordDecision({ scope: 'everyone' });
+        const shown = (await inbox.list({ userId: B, view: 'needs_you' })).items[0].decision;
+        const decideAsB = (extra) => caught(gates.decide({
             userId: B, ref: shown.ref, option: 'accept', occurrence: shown.occurrence, revision: shown.revision, ...extra
         }));
-        expect(await asB({ surface: 'chat', receipt: 'x' })).toMatchObject({ code: 'PILOT_ONLY', status: 403 });
-        expect(await status(request)).toBe('pending');
-        expect(await asB({ surface: 'inbox' })).toBeNull();
+        expect(await decideAsB({ surface: 'chat' })).toMatchObject({ code: 'HUMAN_CONFIRMATION_REQUIRED' });
+        expect(await decideAsB({ surface: 'inbox' })).toBeNull();
         expect(await status(request)).toBe('accepted');
     });
 });

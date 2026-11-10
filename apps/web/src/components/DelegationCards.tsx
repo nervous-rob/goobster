@@ -7,7 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { useMe } from '../hooks/useSession';
-import { describeGrants, type Project } from '../rooms/assistant/grants';
+import { describeGrants, describeListening, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from '../rooms/assistant/grants';
 import { GateDecision } from './GateDecision';
 import type { Responsibility } from '../lib/types';
 
@@ -125,6 +125,9 @@ export function ProposalCard({ id }: { id: number }) {
     }
 
     const grants = describeGrants(item.operations, projects);
+    // Where it would take requests from is part of what is being turned on.
+    const listening = describeListening(item, me.assistant.name);
+    const sharing = describeSharing(item);
     return frame(
         <>
             {head}
@@ -132,9 +135,12 @@ export function ProposalCard({ id }: { id: number }) {
             <div className="tool-card-row">If you turn this on, {me.assistant.name} may, as you:</div>
             <ul className="assistant-grants" data-testid="proposal-grants">
                 {grants.map((line) => <li key={line}>{line}</li>)}
+                {listening && <li data-testid="proposal-listens">{listening}; only your own messages are read for this</li>}
+                {sharing && <li data-testid="proposal-shares">{sharing}</li>}
             </ul>
             <div className="hint">
                 {item.rules?.autoStart ? 'It would start proposed work by itself, within its daily budgets.' : 'Each piece of work waits for you to press Start.'}{' '}
+                {reachesGitHub(item.operations) && `Pushes and pull requests would go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day. `}
                 {item.expiresAt ? `It ends ${whenLabel(item.expiresAt)}.` : 'It has no end date.'}{' '}
                 Nothing is running, and it allows nothing until you turn it on. You can pause or revoke it at any time.
             </div>

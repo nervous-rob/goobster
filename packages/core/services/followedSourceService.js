@@ -165,7 +165,7 @@ class FollowedSourceService {
             if (!fresh.enabled || fresh.claimToken !== token || !await this.active(source.userId) || await require('./instanceStateService').isPaused()) return { status: 'paused' };
             if (![200, 304].includes(result.status)) throw new Error('Source is unavailable.');
             if (result.status === 304 && !source.initialized) throw new Error('Source returned no initial content.');
-            let entries = [], page = null;
+            let entries = [], page = null, saved = false, found = false;
             if (result.status === 200) {
                 if (source.kind === 'feed') entries = parseFeed(result.text, source.url);
                 else {
@@ -192,6 +192,8 @@ class FollowedSourceService {
                         text: source.initialized ? entry.text : null, isChange: source.initialized ? 1 : 0 });
                     if (source.initialized) latest = entryId;
                 }
+                saved = true;
+                found = latest !== null;
                 // Store all unseen GUIDs, but only the newest item is a notice candidate.
                 await db.run(`UPDATE followed_sources SET initialized = 1, lastCheckedAt = @now, nextCheckAt = @next,
                     lastError = NULL, etag = @etag, lastModified = @modified,
@@ -203,17 +205,37 @@ class FollowedSourceService {
                 await db.run(`UPDATE followed_source_entries SET extractedText = NULL WHERE sourceId = @id AND kept = 0
                     AND id NOT IN (SELECT id FROM followed_source_entries WHERE sourceId = @id ORDER BY id DESC LIMIT 100)`, { id: source.id });
             });
+            if (saved) {
+                await this._observe(source, now, 'execution', 'ok');
+                await this._observe(source, now, 'output', found ? 'ok' : 'skipped',
+                    found ? 'CONTENT_CHANGED' : source.initialized ? 'NO_CHANGE' : 'BASELINE');
+            }
             return { status: source.initialized ? 'checked' : 'baseline' };
         } catch (error) {
             const deferred = error.code === 'FETCH_DEFERRED';
             const reason = error.code === 'HISTORY_LIMIT' ? 'Source paused at 10,000 stored identifiers. Unfollow to remove its history before adding it again.' : deferred ? error.message : `Source check failed (${/^[A-Z_]+$/.test(error.code || '') ? error.code : 'FETCH_OR_PARSE_FAILED'}). Check the URL and source availability.`;
             const changed = await db.run(`UPDATE followed_sources SET nextCheckAt = @next, lastError = @error, enabled = CASE WHEN @full = 1 THEN 0 ELSE enabled END, lastCheckedAt = CASE WHEN @deferred = 1 THEN lastCheckedAt ELSE @now END
                 WHERE id = @id AND claimToken = @token`, { id: source.id, token, full: error.code === 'HISTORY_LIMIT' ? 1 : 0, deferred: deferred ? 1 : 0, now: utc(now), next: utc(deferred ? Math.max(now + 5000, error.retryAt || now) : now + INTERVAL), error: deferred ? null : reason });
-            if (!deferred && changed.changes) await require('./workFailureService').note({ kind: 'followed_source', workId: source.id, actor: source.userId, phase: 'fetch', code: 'SOURCE_CHECK_FAILED', reason });
+            if (!deferred && changed.changes) {
+                await require('./workFailureService').note({ kind: 'followed_source', workId: source.id, actor: source.userId, phase: 'fetch', code: 'SOURCE_CHECK_FAILED', reason });
+                await this._observe(source, now, 'execution', 'failed', /^[A-Z_]{1,64}$/.test(error.code || '') ? error.code : 'FETCH_OR_PARSE_FAILED');
+            }
             return { status: deferred ? 'waiting' : 'failed', message: reason };
         } finally {
             await db.run('UPDATE followed_sources SET claimToken = NULL, claimUntil = NULL WHERE id = @id AND claimToken = @token', { id: source.id, token });
         }
+    }
+    /**
+     * One typed outcome per source per UTC day for the process catalog
+     * (documentation/process_stewardship.md): the hourly checks of a day are
+     * one occurrence, so the last check decides whether the day worked and a
+     * change found earlier that day is kept. Codes only. Never throws.
+     */
+    async _observe(source, now, phase, outcome, reasonCode = null) {
+        const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
+        if (!processes) return;
+        await processes.record({ processKind: 'followed_source', processId: source.id, ownerUserId: source.userId,
+            occurrenceKey: `day:${utc(now).slice(0, 10)}`, phase, outcome, reasonCode, keepResult: phase === 'output', observedAt: new Date(now) });
     }
     async candidates(ctx) {
         if (!ctx.policy?.enabled || !require('./attentionPolicyService').boundariesFor(ctx.policy, 'research').proactiveRead

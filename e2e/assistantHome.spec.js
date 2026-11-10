@@ -7,7 +7,9 @@
  * view when the domain resolves it; snooze hides without resolving; a
  * request that can be decided in place is decided from Home or the Inbox by
  * the same card, and a card that changed is refused with the current state;
- * a draft responsibility grants nothing until the person activates it.
+ * until the host records the pilot decision that card is the owner's, and
+ * anyone else answers the request with the Inbox's own buttons; a draft
+ * responsibility grants nothing until the person activates it.
  */
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
@@ -15,18 +17,24 @@ const { login } = require('./helpers');
 const USER = '99000000000000412';
 const NAME = 'Delegator';
 
+// The installation's owner: the one person offered a decision card until
+// the host records the pilot decision (documentation/assistant_home.md).
+const OWNER = '99000000000000414';
+const OWNER_NAME = 'Owner';
+
 const seed = async (page, data = {}) => {
     const seeded = await page.request.post('/e2e/fixtures/assistant-home', { data: { userId: USER, name: NAME, ...data } });
     expect(seeded.ok(), await seeded.text()).toBe(true);
     return seeded.json();
 };
+const seedOwner = (page, data = {}) => seed(page, { userId: OWNER, name: OWNER_NAME, owner: true, ...data });
 
 const FRIEND = '99000000000000413';
 const FRIEND_NAME = 'Ada';
 
-const friendRequest = async (page, step = 'ask') => {
+const friendRequest = async (page, step = 'ask', userId = USER) => {
     const made = await page.request.post('/e2e/fixtures/assistant-home/friend-request', {
-        data: { userId: USER, fromId: FRIEND, fromName: FRIEND_NAME, step }
+        data: { userId, fromId: FRIEND, fromName: FRIEND_NAME, step }
     });
     expect(made.ok(), await made.text()).toBe(true);
 };
@@ -111,10 +119,37 @@ test.describe('assistant-first Home', () => {
         await expect(page.locator('.inbox-row')).toHaveCount(0);
     });
 
-    test('a request is decided on Home, and it is settled in the Inbox too', async ({ page }) => {
-        await seed(page);
+    test('someone who is not the owner is offered no card: Home points to the Inbox, whose own buttons answer it', async ({ page }) => {
+        await seed(page, { seed: false });
         await friendRequest(page);
         await login(page, { userId: USER, name: NAME });
+        const overview = page.getByTestId('assistant-overview');
+        await expect(overview.getByTestId('assistant-status')).toContainText('1 needs you');
+        const asked = overview.getByTestId('assistant-needs-you-item').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(asked).toBeVisible();
+        await expect(asked.getByTestId('gate-decision')).toHaveCount(0);
+        const listed = (await (await page.request.get('/api/app/inbox?view=needs_you')).json()).items.find((item) => item.friend);
+        expect(listed).toMatchObject({ needsAction: true, decision: null });
+        // Naming the card they were never shown decides nothing.
+        const refused = await page.request.post(`/api/app/assistant/gates/inbox-${listed.id}/decide`, {
+            data: { option: 'accept', occurrence: 1, revision: 'x', surface: 'home' }
+        });
+        expect(refused.status()).toBe(403);
+        expect((await refused.json()).error.code).toBe('PILOT_ONLY');
+
+        await asked.getByRole('link', { name: 'In Inbox' }).click();
+        const row = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(row.getByTestId('gate-decision')).toHaveCount(0);
+        await row.getByTestId('inbox-friend-decision').getByRole('button', { name: 'Accept' }).click();
+        await expect(row.getByTestId('inbox-friend-outcome')).toContainText('Accepted');
+        await page.goto('/app/');
+        await expect(page.getByTestId('assistant-needs-you-empty')).toBeVisible();
+    });
+
+    test('a request is decided on Home, and it is settled in the Inbox too', async ({ page }) => {
+        await seedOwner(page);
+        await friendRequest(page, 'ask', OWNER);
+        await login(page, { userId: OWNER, name: OWNER_NAME });
         const overview = page.getByTestId('assistant-overview');
         await expect(overview.getByTestId('assistant-status')).toContainText('2 need you');
         const asked = overview.getByTestId('assistant-needs-you-item').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
@@ -146,15 +181,15 @@ test.describe('assistant-first Home', () => {
     });
 
     test('a card that changed after it was shown is refused with what the request is now', async ({ page }) => {
-        await seed(page, { seed: false });
-        await friendRequest(page);
-        await login(page, { userId: USER, name: NAME });
+        await seedOwner(page, { seed: false });
+        await friendRequest(page, 'ask', OWNER);
+        await login(page, { userId: OWNER, name: OWNER_NAME });
         await page.goto('/app/activity/inbox');
         const row = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
         await expect(row.getByTestId('gate-decision').getByRole('button')).toHaveText(['Accept', 'Decline']);
 
         // They take it back while the card is still on screen.
-        await friendRequest(page, 'withdraw');
+        await friendRequest(page, 'withdraw', OWNER);
         await row.getByRole('button', { name: 'Accept' }).click();
         await expect(page.locator('#toast')).toHaveText('This request was already settled. They withdrew this request.');
         await expect(page.locator('#toast')).toHaveClass(/error/);
@@ -163,7 +198,7 @@ test.describe('assistant-first Home', () => {
         expect(friends.friends).toHaveLength(0);
 
         // They ask again: that is a new card, and the Inbox decides it too.
-        await friendRequest(page);
+        await friendRequest(page, 'ask', OWNER);
         await page.reload();
         await page.getByTestId('inbox-view-needs_you').click();
         // Only the new notice is the request: the earlier one is a record in
@@ -244,6 +279,82 @@ test.describe('assistant-first Home', () => {
         await expect(page.getByTestId('assistant-brief-item')).toHaveCount(1);
         await expect(page.getByTestId('assistant-brief-item')).toContainText('Your notes put the first frost on the 14th');
         await expect(page.getByTestId('assistant-component-research')).toContainText('1 new update');
+    });
+
+    test('a failing process is one incident, stays on its card after it is reviewed, and is judged twice', async ({ page }) => {
+        await seed(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
+        expect(made.ok(), await made.text()).toBe(true);
+        expect((await made.json()).pass).toMatchObject({ opened: 1, relevance: 1 });
+        await login(page, { userId: USER, name: NAME });
+
+        // Home: one incident and one relevance note, each said once; the card counts processes, not messages.
+        const overview = page.getByTestId('assistant-overview');
+        const card = overview.getByTestId('assistant-component-processes');
+        await expect(card).toContainText('1 not working');
+        await expect(card).toContainText('1 with a problem');
+        await expect(card).toContainText('2 new updates');
+        const brief = overview.getByTestId('assistant-brief-item');
+        await expect(brief).toHaveCount(2);
+        await expect(brief.filter({ hasText: '"Nightly import" keeps failing' })).toHaveCount(1);
+        await expect(brief.filter({ hasText: '"Release watch" may no longer be needed' })).toHaveCount(1);
+        // Neither asks for anything.
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
+
+        // Reviewing the updates does not make the process healthy.
+        for (const title of ['keeps failing', 'may no longer be needed']) {
+            await brief.filter({ hasText: title }).getByRole('button', { name: 'Mark reviewed' }).click();
+            await expect(brief.filter({ hasText: title })).toHaveCount(0);
+        }
+        await expect(overview.getByTestId('assistant-brief-empty')).toBeVisible();
+        await expect(card).toContainText('1 not working');
+        await expect(card).not.toContainText('new update');
+
+        // The card opens the report, where each process has both judgments in words.
+        await card.click();
+        const report = page.getByTestId('assistant-processes');
+        await expect(report.getByRole('heading', { name: 'Processes' })).toBeVisible();
+        await expect(report.getByTestId('processes-summary')).toHaveText(
+            '5 processes · 1 not working · 1 running with a problem · 1 may no longer be needed · 1 not enough to judge'
+        );
+        const incident = report.getByTestId('process-incident');
+        await expect(incident).toHaveCount(1);
+        await expect(incident).toContainText('"Nightly import" keeps failing');
+        await expect(incident.getByTestId('process-incident-status')).toHaveText('Open');
+
+        const rows = report.getByTestId('process-row');
+        await expect(rows).toHaveCount(4);
+        // Not working first.
+        await expect(rows.first()).toContainText('Nightly import');
+        await expect(rows.first().getByTestId('process-execution')).toContainText('Blocked');
+        await expect(rows.first().getByTestId('process-execution')).toContainText('It has failed 3 times in a row (RUN_FAILED).');
+        // No purpose recorded: its usefulness is not judged, and the page says so.
+        await expect(rows.first().getByTestId('process-relevance')).toContainText('Usefulness not judged');
+        await expect(rows.first()).toContainText('part of an open incident');
+
+        const flaky = rows.filter({ hasText: 'Price check' });
+        await expect(flaky.getByTestId('process-execution')).toContainText('Running with a problem');
+        const digest = rows.filter({ hasText: 'Morning digest' });
+        await expect(digest.getByTestId('process-execution')).toContainText('Working');
+        // Working and no longer needed are separate answers about the same process.
+        const watch = rows.filter({ hasText: 'Release watch' });
+        await expect(watch.getByTestId('process-execution')).toContainText('Working');
+        await expect(watch.getByTestId('process-relevance')).toContainText('May no longer be needed');
+        await expect(watch.getByTestId('process-relevance')).toContainText('The goal it was set up for is resolved. It is still switched on.');
+
+        // A report only: nothing on it changes a process.
+        await expect(rows.getByRole('button')).toHaveCount(0);
+        await expect(incident.getByRole('button')).toHaveCount(0);
+
+        // A switched-off process with nothing to report is folded away, not dropped.
+        await report.getByTestId('processes-show-idle').click();
+        await expect(rows).toHaveCount(5);
+        const off = rows.filter({ hasText: 'Old weekly report' });
+        await expect(off.getByTestId('process-execution')).toContainText('Not enough to judge');
+        await expect(off.getByTestId('process-execution')).toContainText('It is switched off.');
+        const after = await (await page.request.get('/api/app/assistant/processes')).json();
+        expect(after.processes.filter((entry) => entry.enabled).map((entry) => entry.name).sort())
+            .toEqual(['Morning digest', 'Nightly import', 'Price check', 'Release watch']);
     });
 
     test('with Attention off the page says why nothing runs', async ({ page }) => {

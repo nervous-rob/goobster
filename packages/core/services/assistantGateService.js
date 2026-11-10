@@ -15,6 +15,11 @@
  * review are the owner's decisions. Called from the steward pass and from
  * `mission.*` hints, never from a Home or Inbox read.
  *
+ * `projectBoard()` is the project's Needs-you board read over those same
+ * gates (DA-4b): the project says what is open, the canonical update says
+ * which request it is, and a decision made on the board goes through
+ * `decide()` like one made on Home.
+ *
  * It also holds the `gateDecisions` registry (DA-7a): one descriptor per
  * gate kind that says what a person can decide and dispatches the decision
  * to the service that owns the gate (assistantGateDescriptors.js). Home, the
@@ -26,6 +31,12 @@
  * (utils/modelCallScope.js), and a decision pressed on a chat card must
  * also carry the human confirmation receipt minted when that card was
  * rendered to the person (assistantConfirmationService, ADR 0023).
+ *
+ * Deciding in place is part of DA-7, so it is behind the pilot gate
+ * (assistantAccessService, capability `conversation`): until the host
+ * records the pilot decision only the owner is offered a card or can
+ * decide through one, on any surface. Everyone else has no card, so Home
+ * links to the request and the Inbox keeps its own buttons and routes.
  */
 
 const db = require('../db');
@@ -40,11 +51,15 @@ const GATE_COLUMNS = new Set(['approve', 'review', 'unblock', 'answer']);
 const OWNERS_PER_PASS = 200;
 
 /** Where a person can press a decision. Each is a signed-in portal surface. */
-const SURFACES = ['home', 'inbox', 'chat'];
+const SURFACES = ['home', 'inbox', 'chat', 'project'];
+/** Assistant plan steps listed on one board read. */
+const BOARD_STEP_LIMIT = 40;
 /** A request that lives on its own Inbox item is addressed as `inbox-<item id>`. */
 const INBOX_REF = /^inbox-(\d{1,15})$/;
 const UPDATE_REF = /^\d{1,15}$/;
 const LIMITS = { label: 60, text: 400, option: 40 };
+/** The pilot capability deciding in place belongs to (DA-7). */
+const PILOT_CAPABILITY = 'conversation';
 
 class AssistantGateError extends Error {
     constructor(status, code, message, details = null) {
@@ -190,6 +205,11 @@ class AssistantGateService {
         };
     }
 
+    /** May this person decide in place? The owner alone until the pilot decision is recorded. */
+    async _pilotAllows(userId) {
+        return require('./assistantAccessService').allows(String(userId), PILOT_CAPABILITY);
+    }
+
     /**
      * The current decision card for a gate reference, or null. A read: it
      * changes nothing. This is what a chat card renders (DA-7b).
@@ -197,20 +217,23 @@ class AssistantGateService {
      */
     async card({ userId, ref }) {
         if (!userId || features.enforcedOff('assistant')) return null;
+        if (!(await this._pilotAllows(userId))) return null;
         const gate = await this._locate(userId, ref);
         return gate ? this._card(gate, { userId: String(userId) }) : null;
     }
 
     /**
      * The open decision card behind one of this person's Inbox items, or
-     * null (no descriptor, already settled, or not theirs to decide). Called
-     * while listing the Inbox, so a failure is logged and never thrown.
+     * null (no descriptor, already settled, not theirs to decide, or the
+     * pilot gate does not include them). Called while listing the Inbox and
+     * Home, so a failure is logged and never thrown.
      * @param {{ userId: string, item: { id: number, sourceType: string|null, sourceId: string|null }, update?: Object|null }} params
      *   `update` is the item's canonical update as the Inbox presents it
      */
     async cardForInboxItem({ userId, item, update = null }) {
         try {
             if (!userId || !item || features.enforcedOff('assistant')) return null;
+            if (!(await this._pilotAllows(userId))) return null;
             let gate;
             if (update?.gate) {
                 if (!update.gateOpen || !this.gateDecisions.has(update.gate.kind)) return null;
@@ -247,12 +270,6 @@ class AssistantGateService {
      */
     async _redeemChatReceipt(userId, shown, receipt) {
         const confirmations = require('./assistantConfirmationService');
-        const pilot = require('./assistantAccessService');
-        if (!(await pilot.allows(userId, confirmations.CAPABILITY))) {
-            throw new AssistantGateError(403, pilot.REFUSAL_CODE,
-                'Deciding from a conversation is limited to the installation\'s owner until the pilot decision is recorded. Decide it from Home or the Inbox.',
-                { capability: confirmations.CAPABILITY });
-        }
         if (!receipt) {
             throw new AssistantGateError(403, 'HUMAN_CONFIRMATION_REQUIRED',
                 'A decision in a conversation needs the confirmation from its card. Press it on the card, or decide from Home or the Inbox.');
@@ -299,9 +316,10 @@ class AssistantGateService {
      * @param {string} params.option - one of the card's option ids
      * @param {number} params.occurrence
      * @param {string|number} params.revision
-     * @param {'home'|'inbox'|'chat'} params.surface - where the person pressed it
+     * @param {'home'|'inbox'|'chat'|'project'} params.surface - where the person pressed it
      * @param {Object} [params.gateway] - for the domain's own notices
      * @param {string} [params.receipt] - required for `chat`: the receipt minted when the card was rendered
+     * @throws {AssistantGateError} 403 `PILOT_ONLY` for anyone the pilot gate does not include, on any surface
      * @returns {Promise<{ decided: { ref: string, kind: string, option: string, message: string }, current: Object|null }>}
      */
     async decide({ userId, userName = null, ref, option, occurrence, revision, surface, gateway = null, receipt = null }) {
@@ -316,6 +334,12 @@ class AssistantGateService {
         }
         if (!SURFACES.includes(surface)) {
             throw new AssistantGateError(400, 'INVALID_DECISION', `surface must be one of ${SURFACES.join(', ')}.`);
+        }
+        // The pilot gate, for every surface: nobody but the owner was offered a card.
+        if (!(await this._pilotAllows(userId))) {
+            throw new AssistantGateError(403, require('./assistantAccessService').REFUSAL_CODE,
+                'Deciding a request from its card is limited to the installation\'s owner until the pilot decision is recorded. Open the request and answer it where it lives.',
+                { capability: PILOT_CAPABILITY });
         }
         if (typeof option !== 'string' || !option) throw new AssistantGateError(400, 'INVALID_DECISION', 'option is required.');
         if (!Number.isSafeInteger(Number(occurrence)) || revision === undefined || revision === null || revision === '') {
@@ -365,6 +389,166 @@ class AssistantGateService {
             decided: { ref: gate.ref, kind: gate.kind, option, message: clip(outcome?.message, LIMITS.text) || 'Done.' },
             current
         };
+    }
+
+    // --- The project board, on the canonical gates -----------------------------
+
+    /**
+     * The Needs-you board of one project, or of every project the person
+     * can reach (DA-4b; documentation/assistant_home.md, "Project boards").
+     *
+     * The project still says what is open: the cards come from
+     * projectMissionService.listNeedsYou, read now, so the board is never
+     * behind the plan. What this adds is the identity. Each gate card is
+     * matched to the canonical update Home and the Inbox show for it and
+     * carries:
+     *
+     *  - `mine`: whether the request is this person's to decide. A plan's
+     *    approval, start, review, unblocking and answers are filed for the
+     *    project's owner, exactly as adoption files them; for anyone else
+     *    the card says who it is waiting on (`waitingOn: 'owner'`).
+     *  - `gate`: `{ ref, inboxItemId, unseen, snoozedUntil }` once the gate
+     *    has been adopted, so the card links to the same Inbox item.
+     *  - `decision`: the same decision card Home and the Inbox render, when
+     *    the kind can be decided in place. The board posts it to
+     *    `decide()` with surface `project`.
+     *
+     * It also lists assistant plan steps that wait on a person: a step
+     * Goobster proposed to carry out and nobody has started, a step whose
+     * work is waiting on its responsibility, and, for the project's owner,
+     * a ready step that none of their responsibilities carries out. These
+     * are prompts, not gates: they have no canonical update.
+     *
+     * A read: it adopts nothing, files nothing and acknowledges nothing.
+     *
+     * @param {{ userId: string, project?: string|null, owner?: string|null, setup?: boolean }} params
+     * @returns {Promise<{ cards: Object[], text: string, canonical: boolean }>}
+     */
+    async projectBoard({ userId, project = null, owner = null, setup = true } = {}) {
+        const missions = features.enforcedOff('projects') ? null : requireOptional('./projectMissionService', { feature: 'projects' });
+        if (!missions) return { cards: [], text: '', canonical: false };
+        const viewer = String(userId);
+        const board = await missions.listNeedsYou({ userId: viewer, project, owner, setup });
+        if (features.enforcedOff('assistant')) return { ...board, canonical: false };
+        const gateCards = (board.cards || []).filter(card => GATE_COLUMNS.has(card.column));
+        const updates = await require('./assistantUpdateService').personalByIdentity({
+            userId: viewer,
+            identityKeys: gateCards.filter(card => String(card.ownerId) === viewer).map(card => `${IDENTITY_PREFIX}${card.id}`)
+        });
+        // Deciding from a card is a pilot capability on every surface: a
+        // person outside it still sees the request, linked to its plan and
+        // to the Inbox, and decides it there.
+        const mayDecideHere = gateCards.length > 0 && await this._pilotAllows(viewer);
+        const cards = [];
+        for (const card of board.cards || []) {
+            if (!GATE_COLUMNS.has(card.column)) {
+                cards.push({ ...card, mine: true, waitingOn: null, gate: null, decision: null });
+                continue;
+            }
+            const mine = String(card.ownerId) === viewer;
+            const update = mine ? updates.get(`${IDENTITY_PREFIX}${card.id}`) : null;
+            const open = Boolean(update?.gate && !update.gate.resolved);
+            let decision = null;
+            if (open && mayDecideHere && this.gateDecisions.has(update.gate.kind)) {
+                try {
+                    const described = await this._card({
+                        ref: String(update.id),
+                        source: 'update',
+                        kind: String(update.gate.kind),
+                        id: String(update.gate.id),
+                        occurrence: Number(update.gate.occurrence) || 1,
+                        open: true,
+                        updateId: Number(update.id),
+                        updateRevision: Number(update.revision),
+                        inboxItemId: update.inboxItemId,
+                        audienceUserId: viewer,
+                        actions: update.actions || []
+                    }, { userId: viewer });
+                    decision = described && described.state === 'open' ? described : null;
+                } catch (error) {
+                    logger.warn?.(`[assistant gates] decision card unavailable: ${error.message}`);
+                }
+            }
+            cards.push({
+                ...card,
+                mine,
+                waitingOn: mine ? null : 'owner',
+                gate: open
+                    ? { ref: String(update.id), inboxItemId: update.inboxItemId, unseen: update.unseen, snoozedUntil: update.snoozedUntil }
+                    : null,
+                decision
+            });
+        }
+        cards.push(...await this._assistantStepCards(viewer, missions, { project, owner }));
+        const order = { approve: 0, answer: 1, unblock: 2, review: 3, assistant: 4, setup: 5 };
+        cards.sort((a, b) => (order[a.column] ?? 9) - (order[b.column] ?? 9)
+            || String(a.projectName).localeCompare(String(b.projectName)));
+        const mineCount = cards.filter(card => card.mine).length;
+        const lines = [
+            `📋 Needs you (${mineCount})${cards.length > mineCount ? `, waiting on others (${cards.length - mineCount})` : ''}`,
+            ...cards.slice(0, 30).map(card => `- [${card.column}] ${card.projectSlug}: ${card.title}${card.mine ? '' : ' (waiting on the project owner)'}`)
+        ];
+        return { cards, text: lines.join('\n'), canonical: true };
+    }
+
+    /** Ready assistant steps of approved, running plans that wait on this person. */
+    async _assistantStepCards(viewer, missions, { project = null, owner = null }) {
+        const params = { viewer, limit: BOARD_STEP_LIMIT };
+        let only = '';
+        if (project) {
+            // listNeedsYou already refused a project this person cannot reach.
+            const row = await missions._requireProject(viewer, project, owner);
+            only = 'AND p.id = @projectId';
+            params.projectId = Number(row.id);
+        }
+        const steps = await db.all(
+            `SELECT s.id AS stepId, s.title, m.id AS missionId, m.title AS missionTitle, m.status AS missionStatus,
+                    p.slug, p.name, p.userId AS ownerId
+             FROM project_mission_steps s
+             JOIN project_missions m ON m.id = s.missionId
+             JOIN observatory_projects p ON p.id = m.projectId
+             WHERE s.kind = 'agent' AND s.status = 'READY' AND m.status = 'ACTIVE'
+               AND m.approvedAt IS NOT NULL AND m.approvedRevision = m.planRevision
+               AND (p.userId = @viewer OR EXISTS (
+                    SELECT 1 FROM project_members pm WHERE pm.projectId = p.id AND pm.userId = @viewer))
+               ${only}
+             ORDER BY p.id ASC, s.sortOrder ASC, s.id ASC LIMIT @limit`,
+            params
+        );
+        const cards = [];
+        for (const step of steps) {
+            const work = await db.get(
+                `SELECT id, status, waitReason FROM assistant_initiatives
+                 WHERE ownerUserId = @viewer AND planStepId = @stepId
+                   AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING')
+                 ORDER BY id DESC LIMIT 1`,
+                { viewer, stepId: step.stepId }
+            );
+            const base = {
+                column: 'assistant',
+                id: `agent:${Number(step.missionId)}:${Number(step.stepId)}`,
+                stepId: Number(step.stepId),
+                projectSlug: step.slug,
+                projectName: step.name,
+                ownerId: step.ownerId,
+                missionId: Number(step.missionId),
+                missionTitle: step.missionTitle,
+                missionStatus: step.missionStatus,
+                title: step.title,
+                mine: true,
+                waitingOn: null,
+                gate: null,
+                decision: null
+            };
+            if (work?.status === 'CANDIDATE') {
+                cards.push({ ...base, initiativeId: Number(work.id), state: 'proposed', detail: 'Goobster proposed to carry out this step. Start it from Assistant, or do the step yourself in the Plan.' });
+            } else if (work?.status === 'WAITING' && ['responsibility', 'access', 'user_question'].includes(work.waitReason)) {
+                cards.push({ ...base, initiativeId: Number(work.id), state: 'waiting', detail: 'The work on this step is waiting on you. Open Assistant to see why.' });
+            } else if (!work && String(step.ownerId) === viewer) {
+                cards.push({ ...base, initiativeId: null, state: 'undelegated', detail: 'This step is for Goobster, and none of your responsibilities carries out plan steps in this project. Delegate it from Assistant, or do the step yourself in the Plan.' });
+            }
+        }
+        return cards;
     }
 
     // --- Adopting project gates -----------------------------------------------
@@ -461,3 +645,4 @@ module.exports.AssistantGateService = AssistantGateService;
 module.exports.AssistantGateError = AssistantGateError;
 module.exports.IDENTITY_PREFIX = IDENTITY_PREFIX;
 module.exports.SURFACES = SURFACES;
+module.exports.PILOT_CAPABILITY = PILOT_CAPABILITY;

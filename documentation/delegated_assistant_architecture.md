@@ -8,8 +8,16 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 # Planned: delegated assistant architecture
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
-are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13 except 13.1 (ADR 0023), is planned.** Updated 2026-11-10.
+are implemented as recorded in ADR 0016, 0017 and 0018, the `agent` plan
+step of section 7 as recorded in ADR 0019, the rest of section 7 for
+explicit requests (requests addressed to Goobster in a conversation,
+supersession when a person changes direction) together with the project
+board of section 9.2 as recorded in ADR 0021, and the assessment and
+incidents of section 8 as recorded in ADR 0020; the rest, and all of section
+13 except 13.1 (ADR 0023), the explicit-request
+part of the `conversation_request` adapter (13.2), repository work (ADR 0025)
+and findings for a project's members (both 13.5) and 13.6 (the host's
+controls and the evaluation set), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -365,6 +373,17 @@ dependency graph over every stored sentence.
 
 ## 7. Project continuity and plan authorization
 
+**Shipped in DA-4a:** the `agent` step kind, its link to a durable run
+through the `READY -> STARTING -> RUNNING` protocol, the delegation's own
+authorization kind and grant revision on the step, dispatch-time
+invalidation when the approved plan revision moved, deterministic
+verification, and the rule that keeps private context out of a shared
+project. See [delegated_plan_steps.md](delegated_plan_steps.md) and
+[ADR 0019](adr/0019-delegated-plan-steps.md). Source references from
+conversations, matching existing work before drafting, and supersession when
+the user changes direction (the first and last paragraphs below) are still
+planned.
+
 Preserve source conversation/message references from Study, ordinary Parlor,
 and project discussions. Match existing work before drafting more. A private
 trigger conversation and a shared project discussion are distinct destinations;
@@ -390,12 +409,30 @@ queued work based on outdated plan versions, signal active runs to stop at safe
 boundaries, and reassess dependent assumptions. A new note alone does not
 cancel executable work. The reason and remaining external effects stay visible.
 
+*Implemented (DA-4b, ADR 0021):* a steering message a person addresses to
+Goobster in a conversation supersedes that person's unfinished initiatives
+from the same conversation (`SUPERSEDED`, `STEERED`, `supersededBy`), a
+running one by clearing its lease so the run stops at its next tool call;
+one update names what was stopped, the changes already applied and left in
+place, child research, and earlier results worth another look. Plan-step
+initiatives are superseded on every reconcile once their plan revision, plan
+status or step no longer match. See
+[delegated_conversation_requests.md](delegated_conversation_requests.md).
+
 ## 8. Process catalog, repair, and retirement
 
 **Shipped in DA-1d:** the catalog read model, contracts and typed
 observations for automations and project triggers. See
 [delegated_responsibilities.md](delegated_responsibilities.md#processes).
-Health, relevance, repair and retirement are still planned.
+
+**Shipped in DA-5a:** observations for watches and followed sources, the
+settled outcome of project-trigger jobs, the two-axis assessment, incident
+grouping with hysteresis and cooldown, the `process_health` and
+`process_relevance` generators and the Home Processes card reading the
+assessment. See [process_stewardship.md](process_stewardship.md) and
+[ADR 0020](adr/0020-process-assessment-and-incidents.md). It observes and
+reports only. Repair and retirement (pause, archive, restore, cleanup) are
+still planned.
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,
@@ -521,7 +558,9 @@ action-required filtered view of those same Inbox items**, not a second store,
 queue, route hierarchy, or unread lifecycle. Proposed Inbox filters are All,
 Needs you, and Updates on `/activity/inbox`; Home's Needs you uses the same
 query. Existing Project Needs-you shows the project-filtered view of the same
-source gates. The domain service owns whether an approval/question/review gate
+source gates (implemented in DA-4b as `assistantGateService.projectBoard`,
+a read that attaches the viewer's canonical gate and decision card to the
+project's own list; ADR 0021). The domain service owns whether an approval/question/review gate
 is open, resolved, cancelled, or superseded; projections do not copy that state
 into independently mutable booleans.
 
@@ -739,8 +778,10 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with 13.1 implemented (DA-7a, DA-7b, DA-7c). Nothing
-else in this section is implemented.** These are the
+**Status: planned, with four parts implemented: 13.1 (DA-7a, DA-7b and
+the spoken briefing, DA-7c), repository work (DA-11a) and findings for a
+project's members (DA-11c) in 13.5, and 13.6 (DA-12: the host's controls and the
+evaluation set). Nothing else in this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -803,7 +844,8 @@ As built:
 - Confirmation is in the portal only. A Discord DM gets the draft and is
   told to confirm it there.
 - The tools also call the pilot gate
-  (`assistantAccessService.allows(userId, 'conversation')`, 13.6).
+  (`assistantAccessService.allows(userId, 'conversation')`, 13.6), and so
+  does deciding in place, below.
 
 **Deciding a request in place.** *Implemented for Home, the Inbox (DA-7a)
 and the chat card (DA-7b); the repair-proposal descriptor is planned.* The
@@ -832,6 +874,15 @@ does today. A stale occurrence or revision, a settled request, or a domain
 "already settled" refusal answers 409 `STALE_GATE` with the current card in
 `error.details.current`, and nothing is decided. Home and the Inbox render
 the same card.
+
+Deciding in place is behind the pilot gate on every surface:
+`assistantGateService` asks `assistantAccessService.allows(userId,
+'conversation')` in `card()`, `cardForInboxItem()`, `projectBoard()` and
+`decide()`. An account the gate does not include is offered no card (Home
+and the project board link to the request, and the Inbox keeps its own
+buttons and routes, as with the feature off) and `decide` answers 403
+`PILOT_ONLY` before it looks the request up. The surface is the caller's
+word, so no surface is exempt.
 
 As built, three things differ from the proposal above them:
 
@@ -893,6 +944,16 @@ reason }] }`:
 | `followed_source` | `followed_sources` entries the person keeps | A kept entry newer than the cursor | The followed source named as a `process` resource |
 | `job_failure` | `observatory_jobs` of the linked project | A new failure cause (error code and file), not each retry | `read` on the project |
 | `ci_verdict` | `project_ci_watches.lastState` | A settled verdict change on a watched branch | `read` on the repository |
+
+*Implemented (DA-4b, ADR 0021):* `conversation_request` exists for explicit
+requests only. It reads the person's own messages in the linked project's
+conversations (`scopes.sources` includes `project_chat`) and in their own
+discussions (`parlor`), recognizes a request or a change of direction by
+fixed text rules with no model, keeps one stream cursor per responsibility,
+stores a reference to the message and never its text, and caps open
+conversation attempts at 10 per responsibility. DA-8 adds `personal_chat`,
+model classification, `maxProposalsPerDay` and the other adapters; the
+explicit rule stays the floor.
 
 Rules:
 
@@ -1004,6 +1065,32 @@ The grant must name branch patterns (already enforced when saved). A run
 additionally refuses the repository's default branch and any branch GitHub
 reports as protected, whatever the pattern says.
 
+**Shipped in DA-11a** as specified, in `runTools/projectRepos.js`
+([delegated_runs.md](delegated_runs.md#repository-work); ADR 0025 and the amendment to
+ADR 0015 hold the reasons). What the implementation settled:
+
+- The commit trailer is looked for in the last 50 commits of the work
+  branch, not only at HEAD. A push whose remote head is an ancestor of the
+  local commit, or absent, did not land; any other remote head stops for
+  review. An open pull request for the branch is adopted when its
+  description carries the operation's marker, and otherwise reported as
+  already open.
+- The branch the clone started from is refused too (`BASE_BRANCH`), beside
+  the default branch (`DEFAULT_BRANCH`) and protected branches
+  (`PROTECTED_BRANCH`). When GitHub cannot say, the call is refused
+  (`BRANCH_UNVERIFIED`).
+- These checks run in a new optional `guard(args, ctx)` on the tool spec,
+  after `authorize()` and before the call is journaled as dispatched. The
+  same guard asks the pilot gate (`reach`).
+- `externalOperations` is enforced for `pushProjectRepo` and
+  `openPullRequest`: per responsibility per UTC day, counted from the
+  journal, 2 when unset and never above 20 (`EXTERNAL_BUDGET`). DA-11d
+  should reuse `guard` and this budget for `external.write`.
+- `publishes: 'external'`: a push or pull request is refused with
+  `PRIVATE_CONTEXT` once the run has read private knowledge.
+- The tools are offered only when the grant names the operation on a
+  repository of the linked project (`available({ grants, capabilities })`).
+
 **Knowledge beyond generated notes.** Preconditions, in order:
 `kg_edges` gains `revision`, an evidence reference and a retraction record;
 `mergeNodes` and archive become reversible (an archived note keeps its
@@ -1019,6 +1106,21 @@ membership (`assistant_updates` visibility). Additional rules: the producer
 is shown; private sources are not quoted into a project finding unless the
 grant's `scopes.audience` is `project` and the source is the project's own;
 a member's receipt is deleted when they leave.
+
+*Implemented (DA-11c):* `services/assistant/projectAudience.js` decides, at
+publish time, whether a run's finding is shared: the grant asks
+(`scopes.audience: 'project'`), the pilot gate allows `reach`, the owner still
+reads the project, the initiative's source is the project's own
+(`project_plan`, `project_plan_step`, or a `conversation_request` whose origin
+is that project's conversation) and the run read no `source: 'private'` tool
+(which a sharing run is never offered). Otherwise the finding is private and
+the owner's notice says why. Visibility is the existing membership rule;
+`assistant_updates.producer_user_id` is shown through `present()` as
+`producer: { name, you }`, and `responsibilityId`/`initiativeId` are visible
+to the producer only. A receipt is deleted by `forgetMemberReceipts` when a
+member leaves or is removed, by `forgetProject` when the project is deleted,
+and by `sweepProjectReceipts` in the retention pass for anything missed.
+Behaviour: [delegated_project_findings.md](delegated_project_findings.md).
 
 **Outside connectors.** A connector is a typed adapter:
 
@@ -1042,27 +1144,62 @@ responsibility.
 
 ### 13.6 Operator controls and evaluation (DA-12)
 
-- **Host view.** `GET /api/app/admin/assistant` returns counts by state,
-  runs and tokens per day, failures by code and the oldest waiting age.
-  It returns no title, prompt, result or journal text, and names accounts by
-  id only (the host already sees account ids).
-- **Controls**, each writing one `operator_audit` row:
-  `assistant.pause_all` / `assistant.resume_all` (a flag in `instance_state`
-  the runner and `authorize()` both read, so running work halts at its next
-  call), `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
-  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`).
-- **Caps as configuration.** The numbers hard-coded today
-  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) move to a stored
-  policy with those values as defaults. A responsibility's own budget may be
-  lower than the default, never higher than a host-set ceiling.
-- **Evaluation set.** `tests/live/assistant.live.test.js` (skipped without
-  keys, never in required CI): fixed fictional responsibilities and seeded
-  sources, run against a real provider. It records, per model and prompt
-  version: refused calls, writes attempted outside the grant, injected
-  instructions followed (must be zero by authorization, measured anyway),
-  tokens per useful result, and runs ending with no result.
-- **Pilot record.** The DA-6 template gains the model and prompt version and
-  the caps in force, so a result can be compared across changes.
+**Status: implemented. The host view, the controls, caps as configuration,
+the pilot gate and the pilot record are DA-12a; the behaviour is in
+[delegated_operations.md](delegated_operations.md). The evaluation set is
+DA-12b; how to run and read it is in
+[delegated_evaluation.md](delegated_evaluation.md).**
+
+- **Host view (implemented).** `GET /api/app/admin/assistant` returns counts
+  by state, runs, tokens, searches and sandbox seconds per day, failures and
+  refusals by code and the oldest queued and waiting age. It returns no
+  title, prompt, result or journal text, and names accounts by id only (the
+  host already sees account ids).
+- **Controls (implemented)**, each writing one `operator_audit` row:
+  `assistant.pause_all` / `assistant.resume_all` (the flag
+  `instance_state.assistantPaused`, read by the runner, the claim, every
+  run's heartbeat and `authorize()`, so running work halts at its next
+  call and waits as `ASSISTANT_PAUSED` until the resume requeues it),
+  `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
+  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`) and
+  `assistant.pilot_decision`.
+- **Caps as configuration (implemented).** The numbers that were hard-coded
+  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) are a stored policy
+  (`instance_state.assistantCaps` over `config/assistantConfig.js`) with
+  those values as defaults. A responsibility's own budget may be lower than
+  the host's number, never higher: the host's default is also the ceiling.
+  Both run caps are enforced inside the claim transaction under one lock
+  (`assistantControlService.admit`), so they hold when claims race across
+  processes.
+- **Pilot gate (implemented).** `assistantAccessService.allows(userId,
+  capability)` is the per-account check every increment from DA-7 through
+  DA-11 makes (`conversation`, `sources`, `delivery`, `feedback`, `reach`).
+  Until `instance_state.assistantPilot` records `everyone`, only an active
+  operator account passes. The DA-11 grant operations already in the
+  vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
+  "Deciding a request in place" (13.1) shipped before the gate; it has
+  called it since DA-7b (`conversation`), on every surface.
+- **Evaluation set (implemented).** `tests/live/assistant.live.test.js`
+  (skipped unless `GOOBSTER_ASSISTANT_EVAL=1` and the chosen provider's key
+  are set, never in required CI) runs the fixed fictional responsibilities
+  in `tests/live/assistant-evaluation/cases.v1.json` through
+  `assistantRunService.execute` against a real provider, with the sources
+  seeded (`scripts/lib/assistantEvaluation.js`). It records, per model and
+  prompt version: refused calls, writes attempted outside the grant, injected
+  instructions followed (attempted, took effect, echoed in the report),
+  tokens per useful result, and runs ending with no result. Its live test
+  asserts only the mechanics: every case settled, the record names the model
+  and prompt version, and nothing outside a grant took effect. "Useful" is a
+  fixed five-check rubric, version 1, a default until the owner records
+  another.
+- **Prompt version (implemented).** `assistantRunService.promptVersion()`
+  returns `PROMPT_VERSION` and a fingerprint of the run instructions and
+  every tool definition, so a change to either is visible whether or not the
+  version was raised. It is recorded by the evaluation; it is not yet stored
+  on production runs.
+- **Pilot record (implemented).** The DA-6 template has the model and prompt
+  version and the caps in force, so a result can be compared across changes.
+  An evaluation's `manifest.json` carries all of them.
 
 See the [implementation plan](delegated_assistant_implementation.md) for the
 increment-specific acceptance matrix and rollout gates. CI establishes these

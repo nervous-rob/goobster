@@ -205,6 +205,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Updating an installation (the update policy, staged apply, the handoff, schema fingerprint, rollback and recovery, `goobster-manager update`) | `documentation/manager_update.md` |
 | Operator runbooks (install, first owner, features, service ownership, ports, backup and restore, migration and rollback, update, uninstall; the open owner decisions) | `documentation/operator_runbooks.md` |
 | Installing with the installers: Linux (`.run`, AppImage, systemd, adopting a Pi), Windows (NSIS `.exe`, the Windows service), macOS (`.pkg`, per-user archive, launchd) | `documentation/linux_install.md`, `documentation/windows_install.md`, `documentation/macos_install.md` |
+| Pinned bootstrap build tools (appimagetool, the AppImage runtime, WinSW): Goobster's mirror, taking a newer upstream build, rolling back | `documentation/bootstrap_tools.md` |
 | The manager (states, store, setup engine, recovery, adoption), install/adopt/repair/uninstall kinds and the headless CLI, the wizard and the Host room pages | `documentation/manager.md`, `documentation/manager_install.md`, `documentation/setup_wizard.md`, `documentation/host_operations.md` |
 | Feature catalog (every feature, its dependencies, keys and system tools), feature state (`data/features.json`), configuration reference | `documentation/features.md`, `documentation/feature_state.md`, `documentation/config_reference.md` |
 | Choosing SQLite or PostgreSQL, connecting an existing server, PostgreSQL in Docker or native on the host, both owned by the installer | `documentation/database_connection.md`, `documentation/docker_postgres.md`, `documentation/native_postgres.md` |
@@ -213,6 +214,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Shared-instance roadmap handoff (what shipped, where the next steps hook in) | `documentation/shared_instance_handoff.md` |
 | Private single-user pilot (task, measurements, cycle record and exit decision) | `documentation/pilot_plan.md` |
 | Owner-judged research evaluation (30 fixed-evidence questions, optional live runner and review artifacts) | `documentation/research_evaluation.md` |
+| Delegated-run evaluation (six fixed, fictional responsibilities against a real provider, optional, recorded with model and prompt version) | `documentation/delegated_evaluation.md` |
 | Research brief (write-once brief from an Expedition's evidence, edit overlay, owner review, acceptance and use, Markdown export, pilot measurement) | `documentation/research_brief.md` |
 
 ### Planned product work

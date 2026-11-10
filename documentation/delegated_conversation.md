@@ -150,7 +150,7 @@ chat ([above](#hearing-a-briefing)).
 | An unattended turn (an automation, a scheduled follow-up) | Not offered, and refused if called: an unattended turn cannot draft, read or steer delegated work |
 | Incognito | Not offered, and refused: none of the tools reads or writes delegated state |
 | The `assistant` feature is off | Not offered; `FEATURE_UNAVAILABLE` |
-| An account outside the pilot | Not offered; `PILOT_ONLY`. Until the host records the pilot decision, only the installation's owner (an operator account) can delegate by conversation. The Responsibilities page still works for everyone |
+| An account outside the pilot | Not offered; `PILOT_ONLY`. Until the host records the pilot decision, only the installation's owner (an operator account) can delegate by conversation. The Responsibilities page still works for everyone. The same gate covers deciding a request from its card on Home and in the Inbox ([assistant_home.md](assistant_home.md#who-is-offered-a-card-the-pilot-gate)) |
 
 ## What a model call can never do
 
@@ -216,7 +216,7 @@ the current card, exactly as elsewhere.
 | `POST /api/app/assistant/responsibilities/:id/proposal` | `{ action: 'keep' \| 'discard', expectedRevision }` for a draft proposed in a conversation |
 | `POST /api/app/assistant/responsibilities` | Always creates a draft. `activate: true` is refused with `HUMAN_CONFIRMATION_REQUIRED` |
 | `GET /api/app/assistant/gates/:ref` | One request's decision card, for the chat card |
-| `POST /api/app/assistant/gates/:ref/decide` | With `surface: 'chat'`, requires `receipt` |
+| `POST /api/app/assistant/gates/:ref/decide` | With `surface: 'chat'`, requires `receipt`. On any surface, 403 `PILOT_ONLY` for an account outside the pilot |
 
 A responsibility in API responses carries `proposedBy` (`'model'` or
 `null`) and, for a proposal, `proposal: { conversation, keptAt }`.

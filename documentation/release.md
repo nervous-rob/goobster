@@ -371,6 +371,14 @@ itself, the AppImage, the macOS `.pkg` and a signed installer are **not
 byte-identical across builds** (timestamps, `pkgbuild`, signature timestamps).
 This is provenance, not a reproducible-build proof, and nothing here claims one.
 
+The pinned build tools (`scripts/bootstrap-pins.json`) are downloaded from
+Goobster's own copies on the `bootstrap-tools` release, with the upstream URL
+as a fallback and the SHA-256 checked either way, so a release build does not
+depend on upstream keeping a file in place. That release holds build inputs,
+not something to install, and is never the "latest" release.
+`documentation/bootstrap_tools.md` describes how a newer upstream build is
+verified, accepted and rolled back.
+
 ## Dependency redistribution notices
 
 Findings, not legal advice; the authoritative list is

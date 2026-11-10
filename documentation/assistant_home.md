@@ -1,8 +1,8 @@
 ---
 title: The assistant overview on Home, and Needs you
 kind: reference
-summary: Home opens with what Goobster is looking after for you - a status line derived from records, Needs you (requests still waiting on you), What changed (findings you have not reviewed), five component cards and your responsibilities. Needs you is a filter of the Inbox, not a second queue; reading never resolves a request; loading Home changes nothing. A friend request, a request to join and a mission plan can be decided from the same buttons on Home and in the Inbox (`POST /api/app/assistant/gates/:ref/decide`), and a card that changed is refused with the current state (`STALE_GATE`). Also covers the Inbox's All / Needs you / Updates / Snoozed filters, the Responsibilities page and the read-only projection behind them.
-when: Understanding what Home shows and why a card is highlighted; telling an unread update from a request that still needs you; finding a snoozed or archived request; accepting, approving or declining a request from Home or the Inbox, and what a `STALE_GATE` refusal means; adding a decision for a new kind of request (`gateDecisions`); drafting, activating, pausing or revoking a responsibility in the portal; checking what `GET /api/app/home` returns under `assistant`.
+summary: Home opens with what Goobster is looking after for you - a status line derived from records, Needs you (requests still waiting on you), What changed (findings you have not reviewed), five component cards and your responsibilities. Needs you is a filter of the Inbox, not a second queue; reading never resolves a request; loading Home changes nothing. A friend request, a request to join and a mission plan can be decided from the same buttons on Home, in the Inbox and on a project's Needs-you board (`POST /api/app/assistant/gates/:ref/decide`), and a card that changed is refused with the current state (`STALE_GATE`). Also covers the Inbox's All / Needs you / Updates / Snoozed filters, project boards as a view of the same requests, the Responsibilities page and the read-only projection behind them.
+when: Understanding what Home shows and why a card is highlighted; telling an unread update from a request that still needs you; finding a snoozed or archived request; accepting, approving or declining a request from Home or the Inbox, and what a `STALE_GATE` refusal means; why a project board card has or lacks a button, or says it is waiting on the owner; adding a decision for a new kind of request (`gateDecisions`); drafting, activating, pausing or revoking a responsibility in the portal; checking what `GET /api/app/home` returns under `assistant`.
 tags: [assistant, home, inbox, needs-you, responsibilities, portal, updates]
 ---
 
@@ -39,8 +39,12 @@ counts shown here. Hearing it marks nothing reviewed either.
 4. **Components**: Knowledge, Research, Projects, Processes, Conversations.
    Each card is a link to its room and states, in words:
    - *n needs you* - open requests that touch it;
-   - *n blocked* - recurring processes whose latest recorded outcome in the
-     last 7 days was a failure or a block;
+   - *n not working* - recurring processes that are blocked, stalled or
+     cannot reach what they act on;
+   - *n with a problem* - recurring processes that run but are degraded.
+     Both come from the processes' own records
+     ([process_stewardship.md](process_stewardship.md)), so they stay on the
+     Processes card after you mark the message about them reviewed;
    - *n new updates* - findings you have not reviewed;
    - *n working* - work running right now under a valid lease;
    - *Up to date*, *Status unknown* or *Unavailable here*.
@@ -118,12 +122,52 @@ a new occurrence. Setup-audit findings are advice, not requests, and are not
 adopted. Adoption runs only while the Delegated assistant and Projects
 features are on.
 
+### Project boards
+
+The **Needs you** board on the Projects page, and the needs-you lines of a
+project's **Now** panel (the same board filtered to that project), are a
+view of those same requests. They are not a second list.
+
+- **The project says what is open; the request says which one it is.** The
+  board takes the project's own list of open gates and attaches, for each
+  one, your canonical request for it: the same reference Home and the Inbox
+  use, whether you have seen it, whether you snoozed it, and its decision
+  card. A gate that was just decided is off the board at once, because the
+  project no longer lists it.
+- **Decide on the card.** A plan waiting for approval and an approved plan
+  waiting to start carry the same *Approve plan* / *Start mission* button as
+  on Home and in the Inbox. Pressing it on the board is the same decision
+  (it is recorded with the surface `project`) and settles the request
+  everywhere. Other gates link to the Plan, where they are decided. The
+  button is offered to whoever the [pilot gate](#who-is-offered-a-card-the-pilot-gate)
+  includes; for anyone else the card is the same request without it, and
+  links to the Plan and to the Inbox.
+- **A request is its owner's.** A project's gates are addressed to the
+  project's owner. If you are a member, the card is shown as *Waiting on the
+  owner*, without buttons, and is not counted as yours.
+- **A snoozed request stays on its project's board**, marked *Snoozed*. It
+  left Needs you; the project still needs it.
+- **Goobster's steps.** A ready assistant step of a running plan is listed
+  in its own column when it waits on you: Goobster proposed to carry it out
+  and you have not pressed *Start*; the work on it is parked on you; or, if
+  you own the project, no responsibility of yours carries out plan steps
+  there ([delegated_plan_steps.md](delegated_plan_steps.md)). A step that is
+  queued or being worked on is not listed: it is not waiting on anyone.
+- **Opening the board changes nothing.** It files nothing in the Inbox and
+  marks nothing read. A gate that opened in the last moments may show
+  without its button until the next steward pass has filed it (seconds,
+  through the `mission.*` hint).
+
+With the Delegated assistant feature off, the board is the project's own
+list, as before.
+
 ## Deciding a request where it is shown
 
 A request that has a concrete decision carries it. The same buttons appear on
-the request under Needs you on Home, on its row in the Inbox and, when you
-ask in chat what needs you, on a card under the reply. One press settles it
-everywhere.
+the request under Needs you on Home, on its row in the Inbox, for a
+project's requests on its card on the [project board](#project-boards) and,
+when you ask in chat what needs you, on a card under the reply. One press
+settles it in all of them.
 
 | Request | Who sees the buttons | Choices |
 | --- | --- | --- |
@@ -138,8 +182,9 @@ where it is decided.
 
 What holds:
 
-- **One operation, wherever you press.** Home, the Inbox and a chat card post
-  the same decision; it is carried out by the service that owns the request
+- **One operation, wherever you press.** Home, the Inbox, a project board
+  and a chat card post the same decision; it is carried out by the service
+  that owns the request
   (`friendService.respond`, `accessRequestService.approve` / `decline`,
   `projectMissionService.approve` / `start`) with that service's own checks.
   Approving a plan still goes through the mission's human approval receipt
@@ -170,6 +215,34 @@ With the Delegated assistant feature off there are no cards: the Inbox keeps
 its own *Accept* / *Decline* and *Approve* / *Decline* buttons for friend and
 join requests, which call the friends and access-request routes directly, and
 Home links to the Inbox.
+
+### Who is offered a card: the pilot gate
+
+Deciding a request from its card is part of the Delegated assistant's
+conversational increment, so it is behind the pilot gate
+([delegated_operations.md](delegated_operations.md), capability
+`conversation`). Until the host records the pilot decision, only the
+installation's owner (an account with the operator role) is offered a card
+or can decide through one, on Home, in the Inbox, on a project board and
+in chat alike. The surface is named by the caller, so the gate is the same
+for all four: none of them is a way around it.
+
+For everyone else nothing about the request itself changes: it is still
+listed under Needs you and counted, on Home and in the Inbox. What differs
+is where it is answered:
+
+- a friend request keeps the Inbox's own *Accept* / *Decline* buttons, and
+  Home's row links to it (*In Inbox*);
+- a mission plan to approve or start keeps its *Open* link to the project,
+  where it is approved or started as before, and its card on the project
+  board links to the Plan and to the Inbox;
+- a request to join is only ever shown to a host, who is an owner.
+
+The decide route answers 403 `PILOT_ONLY` for an account the gate does not
+include, whatever reference it names, and the card read answers 404. When
+the host opens the pilot to everyone, the same requests carry their cards
+with nothing else to change; closing it again removes them, and a card
+shown earlier then decides nothing.
 
 ### How a card is described
 
@@ -226,13 +299,26 @@ what a responsibility is and how each action is checked.
 - **Draft** from plain choices: what to look after, what it may do (search
   and read the web, read your knowledge, add and amend generated notes, run
   a research expedition, and in one of your projects: read it, edit its
-  files under folders you name, run code in the sandbox), when it ends, and
-  whether proposed work starts automatically. A draft grants nothing.
-- **Activate** shows exactly what will be granted, as you, and until when,
-  and needs your confirmation. The question is built from what the server
-  says this revision allows, and your yes spends a single-use confirmation
-  receipt for it. Activation requires Attention to be on. **Resume** is
-  confirmed the same way.
+  files under folders you name, run code in the sandbox, carry out the
+  assistant steps of its approved plan), where it takes requests you address
+  to Goobster (that project's conversations, your discussions; see
+  [delegated_conversation_requests.md](delegated_conversation_requests.md)),
+  when it ends, and whether proposed work starts automatically. A draft
+  grants nothing.
+- **Repository work.** When the chosen project has a repository cloned into
+  it, the form also offers: commit there, push to GitHub, and open pull
+  requests, on the branches you name (`goobster/*` to start with), with how
+  many pushes and pull requests a day (2 to start with). The form, the
+  responsibility's row and the activation dialog each say that a push or a
+  pull request cannot be undone from here. While repository work is in the
+  pilot this part of the form is shown only to the installation's owner
+  (`GET /api/app/assistant/access`, `capabilities.reach`). See
+  [delegated_runs.md](delegated_runs.md#repository-work).
+- **Activate** shows exactly what will be granted, as you, where it will
+  take requests from, and until when, and needs your confirmation. The
+  question is built from what the server says this revision allows, and
+  your yes spends a single-use confirmation receipt for it. Activation
+  requires Attention to be on. **Resume** is confirmed the same way.
 - A draft Goobster proposed in a conversation is marked *proposed in a
   conversation*. *Discard* deletes it
   ([delegated_conversation.md](delegated_conversation.md)).
@@ -242,10 +328,21 @@ what a responsibility is and how each action is checked.
 
 Under each responsibility is its work: proposed items with *Start* and
 *Dismiss*, running and waiting items with *Cancel*, and finished items with
-their result. See [delegated_runs.md](delegated_runs.md).
+their result. See [delegated_runs.md](delegated_runs.md). Work you asked for
+in a conversation quotes your message and links back to the conversation;
+if you changed direction there, the withdrawn work stays listed with *Try
+again*.
 
-Grants the form cannot express yet (repositories, processes, budgets) can be
-created through the API.
+Grants the form cannot express yet (processes, the other budgets, more
+than one repository) can be created through the API.
+
+Below the responsibilities, **Processes** reports on the recurring work you
+have set up (scheduled tasks, project triggers, watches, followed sources).
+Each process shows two separate answers in words, whether it is working and
+whether it is still needed, with the reason for each, and the incidents still
+open are listed above them. The Home Processes card opens this section. It
+is a report with no controls: a process is still changed where you made it.
+See [process_stewardship.md](process_stewardship.md).
 
 ## API
 
@@ -256,10 +353,11 @@ created through the API.
     "schemaVersion": 1,
     "asOf": "2026-11-09T22:30:00.000Z",
     "availability": "ready",
+    "hostPaused": false,
     "freshness": { "state": "current", "lastPassAt": "2026-11-09T22:28:00.000Z" },
     "responsibilities": { "counts": { "active": 1, "paused": 0, "needsReview": 0, "draft": 0 }, "items": [] },
     "counts": { "unseen": 1, "needsAction": 1, "running": 0 },
-    "components": [{ "id": "knowledge", "state": "updates", "unseen": 1, "needsAction": 0, "running": 0, "blocked": 0, "freshness": "current", "latestUpdateId": 7, "unavailable": null }],
+    "components": [{ "id": "knowledge", "state": "updates", "unseen": 1, "needsAction": 0, "running": 0, "blocked": 0, "degraded": 0, "freshness": "current", "latestUpdateId": 7, "unavailable": null }],
     "needsYou": [],
     "brief": [],
     "partial": []
@@ -267,10 +365,16 @@ created through the API.
   ```
 
   `availability` is `ready`, `paused`, `none_delegated`, `attention_off`,
-  `unavailable` (feature off) or `unknown`. Component `state` is
-  `needs_you`, `blocked`, `working`, `updates`, `quiet`, `unknown` or
-  `unavailable`. `assistant` is `null` only if the projection itself failed;
-  the rest of the Home payload is unaffected.
+  `unavailable` (feature off) or `unknown`. `hostPaused` is `true` while the
+  host has [stopped all delegated work](delegated_operations.md#stop-all)
+  (Home then says so in place of the status line), `false` otherwise, and
+  `null` when it could not be read or the feature is off. Component `state` is
+  `needs_you`, `blocked`, `degraded`, `working`, `updates`, `quiet`,
+  `unknown` or `unavailable`, in that order of precedence. `blocked` and
+  `degraded` are counts of processes (not working, and running with a
+  problem); only the Processes component has them above zero. `assistant` is
+  `null` only if the projection itself failed; the rest of the Home payload
+  is unaffected.
 - `GET /api/app/inbox?view=all|needs_you|updates|snoozed` (with the existing
   `unread`, `archived`, `limit`, `cursor`). The response adds `view` and
   `needsYou`; each item adds `needsAction`, `update`
@@ -284,7 +388,7 @@ created through the API.
 - `POST /api/app/assistant/gates/:ref/decide` with
   `{ "option", "occurrence", "revision", "surface" }` decides the request
   the card describes. `:ref`, `occurrence` and `revision` are the card's;
-  `surface` is `home`, `inbox` or `chat` and is recorded where the owning
+  `surface` is `home`, `inbox`, `chat` or `project` and is recorded where the owning
   service keeps an audit (a join request's `operator_audit` row has
   `detail.via`). It answers
   `{ "decided": { "ref", "kind", "option", "message" }, "current": card | null }`.
@@ -292,6 +396,7 @@ created through the API.
   | Status | `error.code` | When |
   | --- | --- | --- |
   | 400 | `INVALID_DECISION` | A field is missing, or the option is not one the card offers |
+  | 403 | `PILOT_ONLY` | The pilot gate does not include this account (`error.details.capability` is `conversation`). Checked before the request is looked up |
   | 404 | `NOT_FOUND` | No such request for the signed-in person, or they may not decide it |
   | 409 | `NOT_DECIDABLE_HERE` | The request's kind has no decision card; it is decided where it lives |
   | 409 | `STALE_GATE` | The card changed after it was shown. `error.details.current` is the current card (`state: "resolved"` with `outcome` once settled), and nothing was decided |
@@ -301,6 +406,20 @@ created through the API.
   feature and is refused with the rest of `/api/app/assistant` when it is
   off (404 `FEATURE_UNAVAILABLE`); `assistantGateService.decide` refuses
   the same way for a caller that is not a route.
+
+- `GET /api/app/projects/needs-you?project=&owner=` returns the project
+  board (`assistantGateService.projectBoard`):
+  `{ cards, text, canonical: true }`. Each card keeps the fields it had
+  (`id`, `column`, `title`, `detail`, `projectSlug`, `projectName`,
+  `ownerId`, `missionId`, `choices` ...) and adds `mine` (boolean),
+  `waitingOn` (`"owner"` or `null`), `gate`
+  (`{ ref, inboxItemId, unseen, snoozedUntil }` or `null` until the request
+  is filed) and `decision` (the card above, or `null`). Column `assistant`
+  holds assistant plan steps: `id` is `agent:<plan id>:<step id>`, with
+  `state` (`proposed`, `waiting` or `undelegated`) and `initiativeId`.
+  `GET /api/app/projects/:slug/now` carries the same fields on
+  `needsYou.cards`. With the feature off the route returns the project's
+  own list and no `canonical` flag.
 
 None of the GET routes writes anything.
 
@@ -312,6 +431,12 @@ None of the GET routes writes anything.
 - A card's `revision` comes from the record that owns the request, not from
   the update's display revision, so rewording a notice does not invalidate
   a card and changing the plan does.
+- A project board shows a gate as the viewer's own only for the project's
+  owner, because that is who it is adopted for. Members see it as waiting on
+  the owner rather than getting a request of their own.
+- The board does not adopt a gate when it is read. A read that filed Inbox
+  items would break "opening changes nothing".
+- The chat tool action `needs-you` still returns the project's own list.
 - The caller names its `surface`. The chat card posts to the same route
   with `surface: 'chat'` and a confirmation receipt.
 - A plan to approve and an approved plan to start share one kind
@@ -319,6 +444,18 @@ None of the GET routes writes anything.
   have no card yet.
 - No option is marked `danger` yet: these buttons replace Inbox buttons
   that did not confirm either.
+- The pilot gate covers deciding in place on every surface, not only the
+  chat card (owner decision 9, read conservatively): DA-7a shipped before
+  the gate existed and was open to every account until DA-7b added the
+  check. An account outside the pilot gets the same fallback as an
+  installation with the feature off.
+
+A brief item that was shared with a project says so: its `audience` is
+`{ kind: 'project', projectId }` and `producer` names whose assistant found it
+(`you: true` on the producer's own view), shown on Home as *Shared with this
+project by Ada's assistant*. The other member sees no link into the
+producer's responsibility
+([delegated_project_findings.md](delegated_project_findings.md)).
 
 ## Not built yet
 
@@ -327,7 +464,5 @@ None of the GET routes writes anything.
   the other request kinds (review, unblock, answer, repair, responsibility
   review): those still link to where the request is decided.
 - Signals for the Conversations card beyond updates filed against it.
-- Project Needs-you boards still read their own query; they show the same
-  gates, and the adopted Inbox items resolve from the project's state.
 - Live push of overview changes: Home refetches when opened and after an
   action taken on it.

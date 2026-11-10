@@ -5,12 +5,15 @@ import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
 import { whenLabel } from '../observatory/format';
 import { ciBadge } from '../../components/repoParts';
+import { Link } from '@tanstack/react-router';
 import type { ProjectViewId } from '../../lib/rooms';
+import { GateDecision } from '../../components/GateDecision';
+import type { ProjectBoardCard } from '../../lib/types';
 
 type NowPayload = {
     running: { id: number; startedBy: string | null; createdAt: string }[];
     failure: { id: number; status: string; errorCode: string | null; exitCode: number | null; finishedAt: string | null; stderrTail: string | null } | null;
-    needsYou: { count: number; cards: { id: string; column: string; title: string; detail: string | null }[] };
+    needsYou: { count: number; cards: ProjectBoardCard[] };
     repos: {
         name: string; repo: string; branch: string | null; ahead: number | null; behind: number | null; changed: number | null;
         operation: string | null; conflicts: number; ci: { state: 'success' | 'failure' | 'pending' | 'skipped' | 'incomplete' | 'none'; failing: string[] } | null;
@@ -114,10 +117,17 @@ export function NowPanel({ slug, ownerId, onOpen, askGoobster, canRun }: {
         );
     }
     for (const card of data.needsYou.cards) {
+        const theirs = card.waitingOn === 'owner';
         items.push(
-            <li key={`needs-${card.id}`} className="obs-now-item">
-                🙋 {card.title}{card.detail ? <span className="hint"> · {card.detail}</span> : null}
+            <li key={`needs-${card.id}`} className="obs-now-item" data-testid="project-now-needs" data-card={card.id}>
+                {theirs ? '⏳' : card.column === 'assistant' ? '🤖' : '🙋'} {card.title}
+                {theirs
+                    ? <span className="hint"> · Waiting on the project&apos;s owner</span>
+                    // A decision states what it changes; the card's own text would say it twice.
+                    : card.detail && !card.decision?.detail ? <span className="hint"> · {card.detail}</span> : null}
                 <button type="button" className="btn small" onClick={() => onOpen('plan')}>Plan</button>
+                {card.column === 'assistant' && <Link to="/assistant" className="btn small subtle">Assistant</Link>}
+                {card.decision && <GateDecision card={card.decision} surface="project" />}
             </li>
         );
     }

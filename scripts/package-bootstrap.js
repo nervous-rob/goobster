@@ -17,8 +17,9 @@
  * report) unless the payload carries a payload-manifest.sig that verifies against --public-key.
  * The `.run` and the report are deterministic: building the same payload twice gives the same
  * bytes (no timestamps; SOURCE_DATE_EPOCH, or a fixed constant, for archive times). The
- * AppImage is built by appimagetool, pinned by URL and SHA-256 in scripts/bootstrap-pins.json;
- * when the tool cannot be fetched or verified the report says APPIMAGE_SKIPPED with the reason.
+ * AppImage is built by appimagetool, pinned by SHA-256 in scripts/bootstrap-pins.json and fetched
+ * from Goobster's mirror release first, upstream second (documentation/bootstrap_tools.md); when
+ * the tool cannot be fetched or verified the report says APPIMAGE_SKIPPED with the reason.
  * Nothing unpinned is ever executed. --require-appimage turns a skip into a failure (CI).
  *
  * Node built-ins only, plus scripts/lib (no dependency of the application).
@@ -31,11 +32,11 @@ const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const stage = require('./lib/bootstrapStage');
-const { download } = require('./lib/download');
+const bootstrapTools = require('./lib/bootstrapTools');
 
 const REPO = path.resolve(__dirname, '..');
 const TARGETS = Object.freeze({ 'linux-x64': { arch: 'x64', machine: 'x86_64' }, 'linux-arm64': { arch: 'arm64', machine: 'aarch64' } });
-const PINS_FILE = path.join(__dirname, 'bootstrap-pins.json');
+const PINS_FILE = bootstrapTools.PINS_FILE;
 const RUN_TEMPLATE = path.join(REPO, 'bootstrap', 'linux', 'install.sh');
 const APPRUN_TEMPLATE = path.join(REPO, 'bootstrap', 'linux', 'appimage', 'AppRun');
 const DESKTOP_FILE = path.join(REPO, 'bootstrap', 'linux', 'appimage', 'goobster.desktop');
@@ -181,35 +182,25 @@ function buildAppDir({ payloadDir, appDir, identity, build, signed, publicKeyFil
     if (touched.status !== 0) throw new Error('could not normalise the AppDir timestamps');
 }
 
-async function fetchPinned({ pin, destination, executable }) {
-    if (fs.existsSync(destination) && sha256File(destination) === pin.sha256) {
-        if (executable) fs.chmodSync(destination, 0o755);
-        return { ok: true, cached: true };
-    }
-    try {
-        await download(pin.url, destination);
-    } catch (error) {
-        fs.rmSync(destination, { force: true });
-        return { ok: false, reason: 'TOOL_UNAVAILABLE', detail: error && error.message ? String(error.message).slice(0, 160) : 'download failed' };
-    }
-    if (sha256File(destination) !== pin.sha256) {
-        fs.rmSync(destination, { force: true });
-        return { ok: false, reason: 'TOOL_HASH_MISMATCH', detail: `the download of ${path.basename(pin.url)} does not match its pinned SHA-256` };
-    }
+/** One pinned tool: the cached copy, Goobster's mirror, then upstream. Kept only when it matches its SHA-256. */
+async function fetchPinned({ pins, pin, destination, executable, doDownload, log = () => {} }) {
+    const got = await bootstrapTools.fetchPinned({ pins, pin, destination, doDownload });
+    if (!got.ok) return { ok: false, reason: got.reason === 'HASH_MISMATCH' ? 'TOOL_HASH_MISMATCH' : 'TOOL_UNAVAILABLE', detail: got.detail };
     if (executable) fs.chmodSync(destination, 0o755);
-    return { ok: true, cached: false };
+    log(`${path.basename(destination)}: pinned copy from ${got.source === 'upstream' ? 'upstream' : `the ${got.source}`}`);
+    return { ok: true, cached: got.cached };
 }
 
 /**
  * @returns {Promise<{ built: boolean, file?: string, reason?: string, detail?: string, tool?: Object }>}
  */
-async function buildAppImage({ options, target, identity, build, signed, publicKeyFile, outFile, appDir, env }) {
+async function buildAppImage({ options, target, identity, build, signed, publicKeyFile, outFile, appDir, env, log, doDownload, pins: suppliedPins }) {
     const hostMachine = os.arch() === 'arm64' ? 'arm64' : (os.arch() === 'x64' ? 'x64' : os.arch());
     if (process.platform !== 'linux') return { built: false, reason: 'HOST_NOT_LINUX', detail: 'appimagetool only runs on Linux' };
     if (hostMachine !== TARGETS[target].arch) {
         return { built: false, reason: 'HOST_ARCH_MISMATCH', detail: `building the ${TARGETS[target].arch} AppImage needs a ${TARGETS[target].arch} host` };
     }
-    const pins = JSON.parse(fs.readFileSync(PINS_FILE, 'utf8'));
+    const pins = suppliedPins || bootstrapTools.readPins(PINS_FILE);
     const arch = TARGETS[target].arch;
     const toolPin = pins.appimagetool && pins.appimagetool[arch];
     const runtimePin = pins.appimageRuntime && pins.appimageRuntime[arch];
@@ -218,9 +209,9 @@ async function buildAppImage({ options, target, identity, build, signed, publicK
     fs.mkdirSync(toolsDir, { recursive: true });
     const tool = path.join(toolsDir, `appimagetool-${pins.appimagetool.version}-${arch}`);
     const runtime = path.join(toolsDir, `type2-runtime-${arch}-${runtimePin.sha256.slice(0, 12)}`);
-    const gotTool = await fetchPinned({ pin: toolPin, destination: tool, executable: true });
+    const gotTool = await fetchPinned({ pins, pin: toolPin, destination: tool, executable: true, doDownload, log });
     if (!gotTool.ok) return { built: false, reason: gotTool.reason, detail: gotTool.detail };
-    const gotRuntime = await fetchPinned({ pin: runtimePin, destination: runtime, executable: false });
+    const gotRuntime = await fetchPinned({ pins, pin: runtimePin, destination: runtime, executable: false, doDownload, log });
     if (!gotRuntime.ok) return { built: false, reason: gotRuntime.reason, detail: gotRuntime.detail };
 
     buildAppDir({ payloadDir: options.payloadDir, appDir, identity, build, signed, publicKeyFile, env });
@@ -244,10 +235,10 @@ async function buildAppImage({ options, target, identity, build, signed, publicK
 // ------------------------------------------------------------------ driver
 /**
  * @param {Object} options parsed options
- * @param {{ env?: Object, log?: (line: string) => void }} [io]
+ * @param {{ env?: Object, log?: (line: string) => void, doDownload?: Function, pins?: Object }} [io]
  * @returns {Promise<{ report: Object, reportFile: string, runFile: string, appImageFile: string|null }>}
  */
-async function build(options, { env = process.env, log = () => {} } = {}) {
+async function build(options, { env = process.env, log = () => {}, doDownload = undefined, pins = null } = {}) {
     const target = options.target;
     if (!TARGETS[target]) throw new Error(`--target must be one of ${Object.keys(TARGETS).join(', ')}`);
     if (!options.payload || !options.out) throw new Error('--payload and --out are required');
@@ -305,7 +296,7 @@ async function build(options, { env = process.env, log = () => {} } = {}) {
                 skipped.push({ code: 'APPIMAGE_SKIPPED', reason: 'APPDIR_ONLY', detail: 'only the AppDir was assembled' });
             } else {
                 const outFile = path.join(outDir, appImageName);
-                const result = await buildAppImage({ options: { ...options, payloadDir }, target, identity, build: buildKind, signed: signing.signed, publicKeyFile, outFile, appDir, env });
+                const result = await buildAppImage({ options: { ...options, payloadDir }, target, identity, build: buildKind, signed: signing.signed, publicKeyFile, outFile, appDir, env, log, doDownload, pins });
                 if (result.built) {
                     appImageFile = outFile;
                     appImageInfo = result.tool;

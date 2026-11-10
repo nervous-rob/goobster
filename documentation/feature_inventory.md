@@ -56,7 +56,7 @@ camelCase; they are the keys of `features.json` from #317 onwards.
 | `cursor` | feature | `github` | `/agent`, `launchCursorAgent`, the agent tracker step and mission-control thread gate |
 | `screenVision` | feature | - | `/screenvision`, the companion page, `/api/screen/*` and its WebSocket |
 | `discordActivity` | feature | `discord` | The embedded Activity transport (`/activity/*`, `/api/activity/*`, its WebSocket) |
-| `assistant` | feature | - | Delegated responsibilities, initiatives, canonical updates and the process catalog (`assistant_*` tables, `/api/app/assistant/*`, the `assistantSteward` runtime step); fresh-install default off ([ADR 0016](adr/0016-delegated-responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md)) |
+| `assistant` | feature | - | Delegated responsibilities, initiatives, canonical updates and the process catalog (`assistant_*` tables, `/api/app/assistant/*`, the `assistantSteward` runtime step); fresh-install default off ([ADR 0016](adr/0016-delegated-responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md), [ADR 0018](adr/0018-delegated-runs.md), [ADR 0019](adr/0019-delegated-plan-steps.md), [ADR 0021](adr/0021-conversation-requests-and-steering.md), [ADR 0025](adr/0025-delegated-repository-work.md)) |
 
 Soft requirements are recorded per surface as `alsoRequires` and never
 promoted to a feature dependency. Examples: the music playback commands

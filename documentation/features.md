@@ -362,12 +362,13 @@ Feature id: `discordActivity`. The Discord Embedded Activity transport. Depends 
 
 ## Delegated assistant
 
-Feature id: `assistant`. Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations. Inert until a person activates one.
+Feature id: `assistant`. Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations, a health and relevance assessment, and incidents. Inert until a person activates one.
 
 - **Kind:** feature
 - **Fresh install default:** off
 - **Depends on:** nothing
 - **Owns:** 4 chat tools (`controlDelegatedWork`, `describeDelegatedWork`, `proposeResponsibility`, `spokenBriefing`); 1 portal route group
 - **Host override:** `GOOBSTER_FEATURE_ASSISTANT=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
-- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md), [delegated_runs.md](delegated_runs.md), [delegated_conversation.md](delegated_conversation.md)
+- **Config keys:** `assistant.installationRuns`, `assistant.runsPerAccount`, `assistant.defaultModelTokens`, `assistant.defaultSearches`, `assistant.defaultComputeSeconds`
+- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md), [delegated_runs.md](delegated_runs.md), [delegated_plan_steps.md](delegated_plan_steps.md), [delegated_conversation_requests.md](delegated_conversation_requests.md), [delegated_conversation.md](delegated_conversation.md), [delegated_operations.md](delegated_operations.md), [delegated_project_findings.md](delegated_project_findings.md), [delegated_evaluation.md](delegated_evaluation.md), [process_stewardship.md](process_stewardship.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.
