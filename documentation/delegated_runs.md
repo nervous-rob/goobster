@@ -35,6 +35,7 @@ the responsibility:
 | Start one research expedition (`startResearch`) | `research` on `web` **and** `kg.generated.add` on `knowledge` |
 | Search Goobster's public documentation (`consultDocs`) | nothing |
 | Report its result (`finish`) | nothing |
+| Report the result of a plan step (`reportStepResult`, only in a run that carries out a plan step, where it replaces `finish`) | `plan.step.execute` on that `project` |
 
 Before each call the run asks `authorize()` whether the responsibility
 covers it, as you, right now. A call that is not covered is refused and
@@ -69,6 +70,21 @@ anything, push to a repository or change a note you wrote.
   project's history.
 - A sandbox run is an ordinary project job (no network), visible under the
   project's Runs with `startedBy = assistant`.
+
+- **Private knowledge does not flow into a shared project.** Once a run
+  has read your private knowledge (`lookupNotes`, `listGeneratedNotes`), a
+  call that writes into the project (`writeProjectFile`, `runProjectFile`)
+  is refused with `PRIVATE_CONTEXT`, unless the project is yours alone (you
+  own it, it has no members and no share link).
+
+### Plan steps
+
+A responsibility that grants `plan.step.execute` on its project carries out
+the *assistant* steps of that project's plan, once a person has approved and
+started the plan. Such a run is told the plan and the one step, ends with
+`reportStepResult`, and the step is marked done only after the files it had
+to produce were checked. It never approves, starts or completes a plan. See
+[delegated_plan_steps.md](delegated_plan_steps.md).
 
 ### Research expeditions
 
@@ -172,10 +188,12 @@ finished. Failure records in the work ledger hold a code only.
 - `POST /api/app/assistant/initiatives/:id/actions` -
   `{ action: queue | cancel | retry, expectedRevision }` (unchanged).
 
-Design and reasons: [ADR 0018](adr/0018-delegated-runs.md).
+Design and reasons: [ADR 0018](adr/0018-delegated-runs.md); for plan steps,
+[ADR 0019](adr/0019-delegated-plan-steps.md).
 
 ## Not built yet
 
 Editing notes you saved, connecting or archiving notes, repository work
 (commit, push, pull requests), acting on processes, findings shared with a
-project's members, and work that carries a project plan forward (DA-4).
+project's members, and work proposed from what was said in a conversation
+(DA-4b).

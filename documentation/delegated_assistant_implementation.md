@@ -8,9 +8,10 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 # Planned: delegated assistant implementation and acceptance plan
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
-canonical updates and process observations), the read-only DA-2 Home and the
-DA-3 runner are implemented; everything else in this
-document is still planned.** Updated 2026-11-09 (DA-7 through DA-12 added as planned increments).
+canonical updates and process observations), the read-only DA-2 Home, the
+DA-3 runner and DA-4a (the assistant plan step, carried out under a
+responsibility and verified) are implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-4a recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -73,7 +74,7 @@ increment done because its proposal exists.
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
 | DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Still open: briefing feedback, deciding a request from Home itself, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
 | DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
-| DA-4: project continuity | Planned | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
+| DA-4: project continuity | In progress. Done (DA-4a): the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). Planned (DA-4b): opportunities derived from conversations, supersession when a person steers, project boards reading the canonical gates | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | Planned | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
@@ -250,14 +251,23 @@ locks/revision checks must protect human work across multiple conversations.
 Exit scenarios:
 
 - A discussion proposes a library comparison; Goobster researches it under a grant
-   without inventing a commitment to migrate.
-- An eligible step advances once, produces the required artifacts, and links evidence.
-- Editing approved scope invalidates stale dispatch authority before execution.
-- User steering supersedes queued work and identifies downstream assumptions.
-- A collaborator's request runs as that collaborator, with an explicit payer.
-- Private chat evidence is not copied into a shared project by a helpful summary.
-- Lost membership stops queued and running work from reading or publishing project data.
-- Failed verification reports a blocker rather than marking the objective completed.
+   without inventing a commitment to migrate. (Planned, DA-4b.)
+- An eligible step advances once, produces the required artifacts, and links evidence. (Done, DA-4a.)
+- Editing approved scope invalidates stale dispatch authority before execution. (Done, DA-4a.)
+- User steering supersedes queued work and identifies downstream assumptions. (Planned, DA-4b.)
+- A collaborator's request runs as that collaborator, with an explicit payer. (Done, DA-4a, for each
+   person's own responsibility; shared responsibilities are deferred.)
+- Private chat evidence is not copied into a shared project by a helpful summary. (Done, DA-4a.)
+- Lost membership stops queued and running work from reading or publishing project data. (Done, DA-4a.)
+- Failed verification reports a blocker rather than marking the objective completed. (Done, DA-4a.)
+
+**Shipped in DA-4a** ([delegated_plan_steps.md](delegated_plan_steps.md),
+[ADR 0019](adr/0019-delegated-plan-steps.md)): the second paragraph above
+(the `agent` step, delegated execution as a supported path, no forged
+receipt) and the parts of the third that concern artifacts, evidence and
+private material. The first paragraph (opportunity extraction from
+conversations) and linking back to the initiating conversation are still
+planned for DA-4b.
 
 ### DA-5: keep processes healthy and useful
 

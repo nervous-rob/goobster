@@ -8,8 +8,9 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 # Planned: delegated assistant architecture
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
-are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13, is planned.** Updated 2026-11-09.
+are implemented as recorded in ADR 0016, 0017 and 0018, and the `agent` plan
+step of section 7 as recorded in ADR 0019; the rest, and all of section 13,
+is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -364,6 +365,17 @@ with active decisions/criteria and directly used claims, not a speculative
 dependency graph over every stored sentence.
 
 ## 7. Project continuity and plan authorization
+
+**Shipped in DA-4a:** the `agent` step kind, its link to a durable run
+through the `READY -> STARTING -> RUNNING` protocol, the delegation's own
+authorization kind and grant revision on the step, dispatch-time
+invalidation when the approved plan revision moved, deterministic
+verification, and the rule that keeps private context out of a shared
+project. See [delegated_plan_steps.md](delegated_plan_steps.md) and
+[ADR 0019](adr/0019-delegated-plan-steps.md). Source references from
+conversations, matching existing work before drafting, and supersession when
+the user changes direction (the first and last paragraphs below) are still
+planned.
 
 Preserve source conversation/message references from Study, ordinary Parlor,
 and project discussions. Match existing work before drafting more. A private
