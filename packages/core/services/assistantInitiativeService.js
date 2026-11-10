@@ -60,53 +60,13 @@ function utcText(date = new Date()) {
     return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-function fingerprint(parts) {
-    return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 24);
-}
-
 /**
- * Source adapters: each reads the CURRENT material state of one linked
- * record and returns a revision fingerprint plus deterministic text. The
- * text names the record; it never copies private content.
+ * Source adapters, one module per adapter under ./assistant/sources: each
+ * reads the CURRENT material state of one linked record and returns a
+ * revision fingerprint plus deterministic text. The text names the record;
+ * it never copies private content.
  */
-const SOURCES = {
-    attention_item: {
-        async read(responsibility) {
-            if (!responsibility.attentionItemId) return [];
-            const item = await db.get(
-                `SELECT id, userId, state, goal, unresolved, deadlineAt, kind
-                 FROM attention_items WHERE id = @id`,
-                { id: responsibility.attentionItemId }
-            );
-            if (!item || item.userId !== responsibility.ownerUserId) return [];
-            return [{
-                sourceId: String(item.id),
-                revision: fingerprint([item.state, item.goal, item.unresolved, item.deadlineAt]),
-                title: `Linked ${String(item.kind || 'goal').replace(/_/g, ' ')} changed`,
-                reason: item.state === 'resolved' ? 'resolved' : 'changed',
-                category: 'attention'
-            }];
-        }
-    },
-    project_plan: {
-        feature: 'projects',
-        async read(responsibility) {
-            if (!responsibility.planId || !responsibility.projectId) return [];
-            const plan = await db.get(
-                'SELECT id, projectId, status, planRevision FROM project_missions WHERE id = @id',
-                { id: responsibility.planId }
-            );
-            if (!plan || Number(plan.projectId) !== Number(responsibility.projectId)) return [];
-            return [{
-                sourceId: String(plan.id),
-                revision: `${plan.planRevision}:${plan.status}`,
-                title: 'Linked project plan changed',
-                reason: String(plan.status || '').toLowerCase(),
-                category: 'project'
-            }];
-        }
-    }
-};
+const SOURCES = require('./assistant/sources');
 
 class AssistantInitiativeService {
     constructor() {

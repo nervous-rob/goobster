@@ -9,7 +9,8 @@ table names that ADR reserved. Behaviour is documented in
 [delegated_responsibilities.md](../delegated_responsibilities.md). The
 services are `assistantInitiativeService.js`, `assistantUpdateService.js`,
 `assistantProcessService.js` and `assistantStewardService.js` under
-`packages/core/services/`.
+`packages/core/services/`. The source adapters live one module per adapter
+under `packages/core/services/assistant/sources/`.
 
 Nothing in this ADR runs delegated work. A runner that claims queued
 initiatives arrives with DA-3, and process health and repair arrive with
