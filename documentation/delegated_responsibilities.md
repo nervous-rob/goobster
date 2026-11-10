@@ -55,8 +55,10 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   daily caps on the responsibility's [runs](delegated_runs.md), with
   conservative defaults when unset; the host sets those defaults, and a
   number above the host's is treated as the host's
-  ([delegated_operations.md](delegated_operations.md#caps)). `repairAttempts` and `externalOperations`
-  are recorded for later increments. The account's usage cap always remains
+  ([delegated_operations.md](delegated_operations.md#caps)). `externalOperations`
+  caps pushes and pull requests a day (default 2 when unset, never more than
+  20; see [delegated_runs.md](delegated_runs.md#repository-work)).
+  `repairAttempts` is recorded for a later increment. The account's usage cap always remains
   the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
   `stopCondition`, and `autoStart` (`true` queues proposed work without
@@ -87,9 +89,9 @@ permission and no wildcard resource.
 | `process.pause` | Pause a process whose purpose is over | `process` |
 | `process.archive` | Archive a process Goobster paused that way, after 7 days | `process` |
 | `cleanup.exact` | Remove an exact, owned set of artifacts (not used yet: only you can clean up a process) | `process` |
-| `repo.commit` | Commit in a project repository clone | `repository` |
-| `repo.push` | Push a branch (never forced) | `repository` |
-| `pr.create` | Open a pull request | `repository` |
+| `repo.commit` | Commit in a project repository clone, on a work branch | `repository` |
+| `repo.push` | Push a work branch (never forced) | `repository` |
+| `pr.create` | Open a pull request from a work branch | `repository` |
 | `external.write` | Another external write | `external` |
 
 Resource shapes:
@@ -106,7 +108,10 @@ Resource shapes:
   The repository must be cloned in that project. A trailing `*` in `branches`
   matches a prefix. `repo.push` and `pr.create` must name at least one branch
   pattern: an empty list would match every branch, the default one included,
-  so it is rejected when the responsibility is saved.
+  so it is rejected when the responsibility is saved. Whatever the patterns
+  say, a delegated run never works on the branch the clone started from, the
+  repository's default branch or a protected branch
+  ([delegated_runs.md](delegated_runs.md#repository-work)).
 - `external`: `{ "kind": "external", "ids": ["…"] }`.
 
 Unknown operations, kinds or fields are rejected when the responsibility is

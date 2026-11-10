@@ -327,6 +327,12 @@ Connections), never the server's token and never from the sandbox.
   merge instead. A rejected push says to pull first (`REJECTED`); a
   protected branch says to push elsewhere and open a pull request
   (`PROTECTED_BRANCH`, then `repo_pr`).
+- **Delegated work.** A [responsibility](delegated_responsibilities.md)
+  you activate can let unattended work commit, push and open a pull request
+  in one clone, on work branches you name, as you. It never touches the
+  branch the clone started from, the default branch or a protected branch,
+  never forces, and is capped per day:
+  [delegated_runs.md → Repository work](delegated_runs.md#repository-work).
 - **Reversible.** `repo_reset`, `repo_branch`, `repo_merge`, `repo_rebase` and `repo_remove` take a
   workspace snapshot first, so what they discard is one `restore` away
   (`restore rev=<hash> path=repos/<name>`).

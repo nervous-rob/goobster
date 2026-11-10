@@ -665,9 +665,10 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; two items are available** (answering a request on Home
-and in the Inbox, and "For the host" at the end of this section, both marked
-below); nothing else here is. Increments DA-7 through
+**Status: planned; four items are available** (answering a request on Home
+and in the Inbox, repository work, findings shared with a project, and "For
+the host" at the end of this section, each marked below); nothing else here
+is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -722,9 +723,16 @@ DA-12. The technical contracts are in
 ### Doing more
 
 - Repository work on named branches, never the default branch, never forced.
+  **Available (DA-11a)** to the installation's owner while it is in the
+  pilot: a responsibility can commit, push and open pull requests in a
+  repository cloned into its project, at most a few times a day, and tells
+  you that a push or a pull request cannot be undone
+  ([delegated_runs.md](delegated_runs.md#repository-work)).
 - Suggested edits to notes you saved, shown as a diff you apply; connecting
   and archiving notes, both restorable.
 - Findings shared with a project's current members, with the author shown.
+  **Available (DA-11c)** to the installation's owner while it is in the
+  pilot ([delegated_project_findings.md](delegated_project_findings.md)).
 - Outside services one named resource at a time, each with a plain list of
   what it reads and writes. There is no "watch everything" option.
 

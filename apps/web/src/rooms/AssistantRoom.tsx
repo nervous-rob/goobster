@@ -11,7 +11,7 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, describeListening, type Project } from './assistant/grants';
+import { describeGrants, describeListening, externalOperationsPerDay, reachesGitHub, type Project } from './assistant/grants';
 import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
@@ -78,7 +78,7 @@ export function AssistantRoom() {
         const grants = describeGrants(item.operations, projectById);
         const listening = describeListening(item, me.assistant.name);
         const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
+            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(item.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day.` : ''}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
             : question;
         if (ask && !await confirm(ask)) return;
         setBusy(item.id);
