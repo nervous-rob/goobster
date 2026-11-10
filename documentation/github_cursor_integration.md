@@ -142,6 +142,13 @@ commit and push with their own account - never the server's token. That
 lives with projects: see [projects.md → Repositories](projects.md#repositories)
 and [ADR 0015](adr/0015-project-repositories.md).
 
+A [responsibility](delegated_responsibilities.md) can grant the same three
+actions to unattended work in one such clone: commit, push and open a pull
+request, on work branches the person names, as that person. It uses their
+own GitHub connection like the panel does, never forces a push, never works
+on the default or a protected branch, and is capped per day. See
+[delegated_runs.md → Repository work](delegated_runs.md#repository-work).
+
 ## Conversation → issue with a reaction
 
 React 📋 on any message (a bug report, a feature idea) and Goobster drafts a
@@ -180,6 +187,7 @@ still decides.
 - Chat/voice tools never write with the server's token: every such write goes through an explicit confirmation button.
   The one exception is scoped on purpose: [project repositories](projects.md#repositories) commit and push with the
   **person's own** connected GitHub account, under their own allowlist, never with the operator's token.
+  A [delegated run](delegated_runs.md#repository-work) uses that same path, and only inside a responsibility the person activated.
 - Every write-side action is recorded in the `integration_audit` table (project clones and pushes under the person's DM scope).
 - Privacy: `/forget-me` deletes the person's `agent_runs` (the prompt they wrote) and the
   `pending_integration_actions` they requested, and clears them as the resolver of someone

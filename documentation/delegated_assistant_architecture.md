@@ -15,7 +15,8 @@ supersession when a person changes direction) together with the project
 board of section 9.2 as recorded in ADR 0021, and the assessment and
 incidents of section 8 as recorded in ADR 0020; the rest, and all of section
 13 except 13.1 without its spoken briefing (ADR 0023), the explicit-request
-part of the `conversation_request` adapter (13.2) and 13.6 (the host's
+part of the `conversation_request` adapter (13.2), repository work (ADR 0025)
+and findings for a project's members (both 13.5) and 13.6 (the host's
 controls and the evaluation set), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
@@ -777,8 +778,9 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with two parts implemented: 13.1 except the spoken
-briefing (DA-7a, DA-7b) and 13.6 (DA-12: the host's controls and the
+**Status: planned, with four parts implemented: 13.1 except the spoken
+briefing (DA-7a, DA-7b), repository work (DA-11a) and findings for a
+project's members (DA-11c) in 13.5, and 13.6 (DA-12: the host's controls and the
 evaluation set). Nothing else in this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
@@ -1041,6 +1043,32 @@ only, with the acting person's own connected GitHub token.
 The grant must name branch patterns (already enforced when saved). A run
 additionally refuses the repository's default branch and any branch GitHub
 reports as protected, whatever the pattern says.
+
+**Shipped in DA-11a** as specified, in `runTools/projectRepos.js`
+([delegated_runs.md](delegated_runs.md#repository-work); ADR 0025 and the amendment to
+ADR 0015 hold the reasons). What the implementation settled:
+
+- The commit trailer is looked for in the last 50 commits of the work
+  branch, not only at HEAD. A push whose remote head is an ancestor of the
+  local commit, or absent, did not land; any other remote head stops for
+  review. An open pull request for the branch is adopted when its
+  description carries the operation's marker, and otherwise reported as
+  already open.
+- The branch the clone started from is refused too (`BASE_BRANCH`), beside
+  the default branch (`DEFAULT_BRANCH`) and protected branches
+  (`PROTECTED_BRANCH`). When GitHub cannot say, the call is refused
+  (`BRANCH_UNVERIFIED`).
+- These checks run in a new optional `guard(args, ctx)` on the tool spec,
+  after `authorize()` and before the call is journaled as dispatched. The
+  same guard asks the pilot gate (`reach`).
+- `externalOperations` is enforced for `pushProjectRepo` and
+  `openPullRequest`: per responsibility per UTC day, counted from the
+  journal, 2 when unset and never above 20 (`EXTERNAL_BUDGET`). DA-11d
+  should reuse `guard` and this budget for `external.write`.
+- `publishes: 'external'`: a push or pull request is refused with
+  `PRIVATE_CONTEXT` once the run has read private knowledge.
+- The tools are offered only when the grant names the operation on a
+  repository of the linked project (`available({ grants, capabilities })`).
 
 **Knowledge beyond generated notes.** Preconditions, in order:
 `kg_edges` gains `revision`, an evidence reference and a retraction record;

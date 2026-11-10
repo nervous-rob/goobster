@@ -1083,6 +1083,37 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Repository grants in the draft form (assistantRepository.spec.js,
+    // DA-11a): a dedicated person with Attention at "delegate", their own
+    // project and one repository cloned into it (the row only: nothing here
+    // talks to GitHub). `owner: true` makes them the installation's owner,
+    // who is the only one offered repository work during the pilot.
+    app.post('/e2e/fixtures/assistant-repository', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Maintainer' });
+            if (req.body?.owner) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'delegate' });
+            await policies.setBoundary({ userId, category: 'github', externalWrite: true });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'Field notes') });
+            await db.run(
+                `INSERT INTO project_repos (projectId, userId, name, repo, branch, createdBy)
+                 VALUES (@projectId, @userId, 'notes', 'Acme/Notes', 'main', @userId)`,
+                { projectId: project.id, userId }
+            );
+            res.json({ ok: true, projectId: project.id, slug: project.slug });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {

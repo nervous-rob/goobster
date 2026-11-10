@@ -164,13 +164,24 @@ Two observations shaped the design:
 
 - **Editing saved notes, edges and archiving** (`kg.saved.amend`, `kg.edge`,
   `kg.archive`): edges have no evidence or retraction history yet.
-- **Repository operations** (`repo.commit`, `repo.push`, `pr.create`).
+- **Repository operations** (`repo.commit`, `repo.push`, `pr.create`) were
+  added by DA-11a: [ADR 0025](0025-delegated-repository-work.md).
 - **Process actions** (DA-5). **Plan-driven project work** was added by
   DA-4a in [ADR 0019](0019-delegated-plan-steps.md), which also adds
   `available({ planStep })`, `final`, `source: 'private'` and
   `publishes: 'project'` to the tool spec.
 - **Project audiences.** A run's finding goes to the owner only. (Added later
   by DA-11c: see `documentation/delegated_project_findings.md`.)
+
+## Amendment (DA-11a): the tool contract grew for effects that leave
+
+[ADR 0025](0025-delegated-repository-work.md) adds repository work and, for
+it, four things to the tool contract of decisions 1 and 5: `needs` may be async, an
+optional `guard(args, ctx)` runs after `authorize()` and before the call is
+journaled as dispatched, `publishes: 'external'` is refused after any
+private read, and `budget: 'externalOperations'` is a daily cap counted from
+the journal. `available()` also receives the grant's operations and the
+owner's pilot capabilities. Nothing else in this ADR changes.
 
 ## Consequences
 

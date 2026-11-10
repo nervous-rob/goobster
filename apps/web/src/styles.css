@@ -2510,7 +2510,7 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .assistant-draft h2 { margin: 0; font-size: 1rem; }
 .assistant-draft .field { display: flex; flex-direction: column; gap: 6px; border: 0; padding: 0; margin: 0; }
 .assistant-draft fieldset.field legend { padding: 0; font-weight: 600; margin-bottom: 4px; }
-.assistant-draft input[type="text"], .assistant-draft textarea, .assistant-draft select {
+.assistant-draft input[type="text"], .assistant-draft input[type="number"], .assistant-draft textarea, .assistant-draft select {
   background: var(--bg-raise-2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 8px 10px; font: inherit; max-width: 560px;
 }

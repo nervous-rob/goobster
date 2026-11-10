@@ -7,7 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { useMe } from '../hooks/useSession';
-import { describeGrants, describeListening, describeSharing, type Project } from '../rooms/assistant/grants';
+import { describeGrants, describeListening, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from '../rooms/assistant/grants';
 import { GateDecision } from './GateDecision';
 import type { Responsibility } from '../lib/types';
 
@@ -140,6 +140,7 @@ export function ProposalCard({ id }: { id: number }) {
             </ul>
             <div className="hint">
                 {item.rules?.autoStart ? 'It would start proposed work by itself, within its daily budgets.' : 'Each piece of work waits for you to press Start.'}{' '}
+                {reachesGitHub(item.operations) && `Pushes and pull requests would go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day. `}
                 {item.expiresAt ? `It ends ${whenLabel(item.expiresAt)}.` : 'It has no end date.'}{' '}
                 Nothing is running, and it allows nothing until you turn it on. You can pause or revoke it at any time.
             </div>

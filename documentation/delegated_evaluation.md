@@ -196,8 +196,13 @@ which is what the pilot measures.
 
 - Recording the prompt version on each production run. Today it is in the
   evaluation's records only.
+- A case for repository work. It shipped (DA-11a) without one: a case
+  needs a stand-in remote and a stand-in GitHub in the harness. Its tools
+  are offered only to a responsibility that grants them, so the six cases
+  see the same tools as before, but the fingerprint covers every tool's
+  definition and so changed with it.
 - Cases for capabilities that are still planned (conversation, delivery,
-  repository work, outside services). Each increment adds its own.
+  outside services). Each increment adds its own.
 - A larger corpus, repeated runs per case, and any comparison across runs.
   One run of six cases is a sample, not a statistic.
 

@@ -142,10 +142,15 @@ records the pilot decision, only the owner has them.**
     Drafting and activating your own responsibility on the Responsibilities
     page is not part of DA-7 and stays open to everyone.
 
-  Of `reach`, two things are gated. The grant vocabulary already contains
-  the `reach` operations (`repo.commit`,
-  `repo.push`, `pr.create`, `kg.saved.amend`, `kg.edge`, `kg.archive`,
-  `external.write`), so those are gated now: for anyone but the owner,
+  Of `reach`, repository work and shared findings have shipped. Repository
+  work (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is
+  gated as `reach`: committing, pushing and opening pull requests in a
+  project's clone are offered to a run, and shown in the draft form, only
+  for the owner, and each call checks the gate again before it reaches
+  GitHub. The
+  grant vocabulary contains all the `reach` operations (`repo.commit`,
+  `repo.push`, `pr.create`, and the not yet built `kg.saved.amend`,
+  `kg.edge`, `kg.archive`, `external.write`), so for anyone but the owner,
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.
