@@ -9,10 +9,11 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
 are implemented as recorded in ADR 0016, 0017 and 0018, the `agent` plan
-step of section 7 as recorded in ADR 0019, and the rest of section 7 for
+step of section 7 as recorded in ADR 0019, the rest of section 7 for
 explicit requests (requests addressed to Goobster in a conversation,
 supersession when a person changes direction) together with the project
-board of section 9.2 as recorded in ADR 0021; the rest, and all of section
+board of section 9.2 as recorded in ADR 0021, and the assessment and
+incidents of section 8 as recorded in ADR 0020; the rest, and all of section
 13 except 13.1 without its spoken briefing (ADR 0023), the explicit-request
 part of the `conversation_request` adapter (13.2) and 13.6 (the host's
 controls and the evaluation set), is planned.** Updated 2026-11-10.
@@ -422,7 +423,15 @@ status or step no longer match. See
 **Shipped in DA-1d:** the catalog read model, contracts and typed
 observations for automations and project triggers. See
 [delegated_responsibilities.md](delegated_responsibilities.md#processes).
-Health, relevance, repair and retirement are still planned.
+
+**Shipped in DA-5a:** observations for watches and followed sources, the
+settled outcome of project-trigger jobs, the two-axis assessment, incident
+grouping with hysteresis and cooldown, the `process_health` and
+`process_relevance` generators and the Home Processes card reading the
+assessment. See [process_stewardship.md](process_stewardship.md) and
+[ADR 0020](adr/0020-process-assessment-and-incidents.md). It observes and
+reports only. Repair and retirement (pause, archive, restore, cleanup) are
+still planned.
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,

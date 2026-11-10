@@ -147,7 +147,8 @@ work runs under a grant:
      `dispatch`. `project_trigger_deliveries` stays the trigger's delivery
      ledger, and the catalog reads it as history instead of duplicating it.
    - `record()` never throws and records nothing while the feature is off.
-   - Health and relevance stay `unknown` until DA-5 judges them.
+   - Health and relevance stay `unknown` until DA-5 judges them. (DA-5a
+     does: [ADR 0020](0020-process-assessment-and-incidents.md).)
 
 6. **Retention.** The steward applies it every 6 hours:
    - Process observations: 90 days, plus any contract or observation whose
@@ -189,4 +190,6 @@ work runs under a grant:
   volatile text would defeat deduplication.
 - Process history starts now for automations and project triggers.
   Attention watches and followed sources show up in the catalog, and they
-  get observations when DA-5 instruments them.
+  get observations when DA-5 instruments them. (DA-5a does, and adds the
+  `execution` and `output` phases for project triggers:
+  [ADR 0020](0020-process-assessment-and-incidents.md).)

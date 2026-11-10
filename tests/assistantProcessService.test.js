@@ -36,6 +36,7 @@ afterAll(async () => {
 beforeEach(async () => {
     useState();
     for (const table of [
+        'assistant_process_incident_members', 'assistant_process_incidents',
         'assistant_process_observations', 'assistant_process_contracts', 'project_trigger_deliveries', 'project_triggers',
         'observatory_jobs', 'project_members', 'observatory_projects', 'automations', 'attention_items'
     ]) {
@@ -63,12 +64,17 @@ describe('the read model', () => {
         await expect(processes.get({ userId: A, kind: 'nonsense', id })).rejects.toMatchObject({ status: 404 });
     });
 
-    test('a process with no contract is reported, not judged', async () => {
-        const id = await automation();
+    test('a process with no contract and nothing observed is reported, not judged', async () => {
+        const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 19).replace('T', ' ');
+        const id = await automation(A, { nextRun: tomorrow });
         const detail = await processes.get({ userId: A, kind: 'automation', id });
         expect(detail.process).toMatchObject({ name: 'nightly digest', enabled: true, trigger: { kind: 'cron', schedule: '0 3 * * *' } });
         expect(detail.contract).toBeNull();
-        expect(detail.assessment).toEqual({ execution: 'unknown', relevance: 'unknown', purposeKnown: false });
+        expect(detail.assessment).toMatchObject({
+            execution: 'unknown', relevance: 'unknown', purposeKnown: false,
+            reasons: { execution: 'NO_OBSERVATIONS', relevance: 'PURPOSE_UNKNOWN' }
+        });
+        expect(detail.incident).toBeNull();
     });
 });
 

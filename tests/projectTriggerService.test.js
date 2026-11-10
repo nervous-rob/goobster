@@ -1042,6 +1042,19 @@ describe('output contracts through triggers', () => {
             expect(settledRow.lastOutcome).toMatch(/^started: job #\d+/);
             expect(settledRow.lastJobOutcome)
                 .toMatch(/^failed: job #\d+ exit 0; output contract failed — missing pipeline\/manifest\.json$/);
+            // The process catalog sees one occurrence: it was dispatched, it ran,
+            // and what it produced failed its contract. Not a failed run.
+            const observed = await db.all(
+                `SELECT occurrenceKey, phase, outcome, reasonCode FROM assistant_process_observations
+                 WHERE processKind = 'project_trigger' AND processId = @id ORDER BY phase`,
+                { id: String(stage.id) }
+            );
+            expect(observed.map(row => [row.phase, row.outcome, row.reasonCode])).toEqual([
+                ['dispatch', 'ok', expect.any(String)],
+                ['execution', 'ok', null],
+                ['output', 'failed', 'OUTPUT_CONTRACT_FAILED']
+            ]);
+            expect(new Set(observed.map(row => row.occurrenceKey)).size).toBe(1);
 
             const runs = [];
             const listener = makeService({ observatory: makeFakeObservatory(runs) });
@@ -1547,6 +1560,17 @@ describe('two-stage pipeline scenario (real Observatory, fake sandbox)', () => {
             stage2Row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: stage2.id });
             expect(stage2Row.lastJobOutcome)
                 .toBe(`ok: job #${good.id} completed, 1 required output(s) validated`);
+            // The validated run is its own occurrence, with a passing output phase.
+            const validated = await db.all(
+                `SELECT phase, outcome, reasonCode FROM assistant_process_observations
+                 WHERE processKind = 'project_trigger' AND processId = @id AND evidenceKind = 'observatory_job' AND evidenceId = @job
+                 ORDER BY phase`,
+                { id: String(stage2.id), job: String(good.id) }
+            );
+            expect(validated.filter(row => row.phase !== 'dispatch')).toEqual([
+                { phase: 'execution', outcome: 'ok', reasonCode: null },
+                { phase: 'output', outcome: 'ok', reasonCode: 'OUTPUT_VALIDATED' }
+            ]);
             stage3Row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: stage3.id });
             expect(stage3Row.lastOutcome)
                 .toBe(`started: job #${child.id} (stage-three v1), awaiting settlement`);

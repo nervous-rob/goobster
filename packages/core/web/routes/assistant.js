@@ -21,6 +21,7 @@ const responsibilities = require('../../services/assistantResponsibilityService'
 const initiatives = require('../../services/assistantInitiativeService');
 const updates = require('../../services/assistantUpdateService');
 const processes = require('../../services/assistantProcessService');
+const incidents = require('../../services/assistantIncidentService');
 const gates = require('../../services/assistantGateService');
 const confirmations = require('../../services/assistantConfirmationService');
 const control = require('../../services/assistantControlService');
@@ -225,15 +226,21 @@ function mountAssistant(app, ctx, h) {
     })));
 
     // --- Process catalog (read model + contracts) ---------------------------
+    // Reads: each process with how it is doing, and the incidents still open.
+    // Nothing on these routes pauses, repairs or removes a process.
     const processBase = '/api/app/assistant/processes';
-    app.get(processBase, requireAuth, route(async (req) => processes.list({ userId: req.webUser.userId })));
+    app.get(processBase, requireAuth, route(async (req) => ({
+        ...(await processes.list({ userId: req.webUser.userId })),
+        ...(await incidents.list({ userId: req.webUser.userId }))
+    })));
 
     app.get(`${processBase}/:kind/:id`, requireAuth, route(async (req) => processes.get({
         userId: req.webUser.userId, kind: req.params.kind, id: req.params.id, limit: req.query.limit
     })));
 
     // { purpose?, expectedCadenceSeconds?, freshnessSeconds?, quietResultOk?, criticality?,
-    //   attentionItemId?, projectId?, reviewAt?, stopCondition?, expectedRevision (to replace) }
+    //   attentionItemId?, projectId?, reviewAt?, stopCondition?, dependsOn?: ["<kind>:<id>"],
+    //   expectedRevision (to replace) }
     app.put(`${processBase}/:kind/:id/contract`, requireAuth, route(async (req) => processes.putContract({
         userId: req.webUser.userId, kind: req.params.kind, id: req.params.id, body: req.body
     })));
