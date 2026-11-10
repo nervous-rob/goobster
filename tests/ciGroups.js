@@ -403,6 +403,7 @@ const GROUPS = [
             'assistantPlanStep',
             'assistantProcessAssessment',
             'assistantProcessLifecycle',
+            'assistantProcessRepair',
             'assistantProcessService',
             'assistantProjectBoard',
             'assistantRepoTools',

@@ -39,7 +39,16 @@ const STOP_TEXT: Record<string, string> = {
     OPEN_LIMIT: 'This responsibility already had as many open requests from conversations as it takes at once. Try again when some are finished.',
     NO_STEP: 'The plan step no longer exists or is no longer for Goobster.',
     INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.',
-    ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.'
+    ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.',
+    NO_INCIDENT: 'The process is no longer failing, so nothing was repaired.',
+    INCIDENT_CLOSED: 'The problem this was proposed for is over, so nothing was repaired.',
+    PROCESS_OFF: 'The process is switched off, so nothing was repaired.',
+    PROCESS_GONE: 'The process no longer exists.',
+    REPAIR_IN_PROGRESS: 'A repair of this process is already being checked.',
+    AWAITING_PERSON: 'A repair of this process is waiting for your answer.',
+    ATTEMPTS_EXHAUSTED: 'The repair attempts allowed for this problem are used up.',
+    ATTEMPT_SUPERSEDED: 'Another repair attempt was made since this was proposed.',
+    NO_REPAIR_KNOWN: 'None of the repairs Goobster can apply fits what is wrong with it now.'
 };
 
 function originSummary(origin: NonNullable<AssistantInitiative['origin']>) {
@@ -51,6 +60,8 @@ function originSummary(origin: NonNullable<AssistantInitiative['origin']>) {
             return <div className="hint">{origin.entryTitle ? `"${origin.entryTitle}"` : 'An item you kept'}{origin.sourceLabel ? ` from ${origin.sourceLabel}` : ''}</div>;
         case 'ci_verdict':
             return <div className="hint">{origin.repo} {origin.branch}: {origin.state} at {origin.sha}{origin.moved ? ' (the branch has moved on)' : ''}</div>;
+        case 'process_incident':
+            return <div className="hint">{origin.processName ? `"${origin.processName}"` : 'One of your processes'} keeps failing{origin.attempt && origin.attempt > 1 ? ` (repair attempt ${origin.attempt})` : ''}</div>;
         default:
             return <div className="hint">{origin.language} run #{origin.jobId}: {String(origin.status || '').toLowerCase().replace('_', ' ')}</div>;
     }
@@ -65,6 +76,7 @@ function originLinkText(origin: NonNullable<AssistantInitiative['origin']>): str
     if (origin.kind === 'parlor_message' || origin.kind === 'chat_message') {
         return `Open the conversation${origin.conversationTitle ? `: ${origin.conversationTitle}` : ''}`;
     }
+    if (origin.kind === 'process_incident') return 'Open Processes';
     return origin.kind === 'ci_verdict' ? 'Open the code view' : 'Open the project';
 }
 

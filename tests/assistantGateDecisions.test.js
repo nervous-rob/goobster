@@ -374,11 +374,11 @@ describe('a mission plan', () => {
 
 describe('the registry', () => {
     test('lists the kinds that can be decided in place and refuses a second descriptor for one', () => {
-        expect(gates.decisionKinds().sort()).toEqual(['access_request', 'friend_request', 'process_retirement', 'project_approve']);
+        expect(gates.decisionKinds().sort()).toEqual(['access_request', 'friend_request', 'process_repair', 'process_retirement', 'project_approve']);
         const fresh = new AssistantGateService();
         const descriptor = { describe: async () => null, decide: async () => ({}) };
-        fresh.registerDecision('process_repair', descriptor);
-        expect(() => fresh.registerDecision('process_repair', descriptor)).toThrow(/already has/);
+        fresh.registerDecision('custom_review', descriptor);
+        expect(() => fresh.registerDecision('custom_review', descriptor)).toThrow(/already has/);
         expect(() => fresh.registerDecision('Bad Kind', descriptor)).toThrow(TypeError);
         expect(() => fresh.registerDecision('other_kind', { describe: async () => null })).toThrow(TypeError);
     });
@@ -386,7 +386,7 @@ describe('the registry', () => {
     test('a request with no descriptor has no card and stays decided where it lives', async () => {
         const { update } = await updates.publish({
             audience: { userId: A }, identityKey: 'repair:import', kind: 'question', title: 'Nightly import: review the repair',
-            components: ['processes'], gate: { kind: 'process_repair', id: 'automation:5' }, deliver: true
+            components: ['processes'], gate: { kind: 'custom_review', id: 'automation:5' }, deliver: true
         });
         const [item] = await needsYou(A);
         expect(item).toMatchObject({ needsAction: true, decision: null });
@@ -399,7 +399,7 @@ describe('the registry', () => {
     test('a new kind is one descriptor: it is described, dispatched once and never resolved by the gate service', async () => {
         const fresh = new AssistantGateService();
         const calls = [];
-        fresh.registerDecision('process_repair', {
+        fresh.registerDecision('custom_review', {
             describe: async (gate) => ({
                 state: 'open', title: 'Review the repair', detail: `For ${gate.id}`, revision: 'config:4',
                 options: [{ id: 'apply', label: 'Apply repair', effect: 'Changes the source address.', danger: true }, { id: 'dismiss', label: 'Dismiss' }]
@@ -411,16 +411,16 @@ describe('the registry', () => {
         });
         const { update } = await updates.publish({
             audience: { userId: A }, identityKey: 'repair:import', kind: 'question', title: 'Nightly import: review the repair',
-            components: ['processes'], gate: { kind: 'process_repair', id: 'automation:5' }, deliver: true
+            components: ['processes'], gate: { kind: 'custom_review', id: 'automation:5' }, deliver: true
         });
         const card = await fresh.card({ userId: A, ref: update.id });
-        expect(card).toMatchObject({ ref: String(update.id), kind: 'process_repair', occurrence: 1, revision: 'config:4' });
+        expect(card).toMatchObject({ ref: String(update.id), kind: 'custom_review', occurrence: 1, revision: 'config:4' });
         expect(card.options).toEqual([
             { id: 'apply', label: 'Apply repair', effect: 'Changes the source address.', danger: true },
             { id: 'dismiss', label: 'Dismiss', effect: null, danger: false }
         ]);
         const result = await fresh.decide({ userId: A, ref: update.id, option: 'apply', occurrence: 1, revision: 'config:4', surface: 'chat' });
-        expect(result.decided).toEqual({ ref: String(update.id), kind: 'process_repair', option: 'apply', message: 'Applied.' });
+        expect(result.decided).toEqual({ ref: String(update.id), kind: 'custom_review', option: 'apply', message: 'Applied.' });
         expect(calls).toEqual([{
             gate: 'automation:5', viewer: A, option: 'apply',
             context: { occurrence: 1, revision: 'config:4', surface: 'chat', gateway: null }

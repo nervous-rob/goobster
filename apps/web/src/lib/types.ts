@@ -405,7 +405,7 @@ export type GateDecisionCard = {
     ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
     occurrence: number; revision: string; options: GateDecisionOption[];
 };
-export type GateSurface = 'home' | 'inbox' | 'chat' | 'project';
+export type GateSurface = 'home' | 'inbox' | 'chat' | 'project' | 'processes';
 export type GateDecisionResult = {
     decided: { ref: string; kind: string; option: string; message: string };
     current: GateDecisionCard | null;
@@ -507,7 +507,8 @@ export type AssistantInitiativeOrigin =
     }
     | { kind: 'followed_source_entry'; available: boolean; sourceLabel?: string; entryTitle?: string; link?: string | null }
     | { kind: 'ci_verdict'; available: boolean; repo?: string; branch?: string; state?: string; sha?: string; moved?: boolean; link?: string }
-    | { kind: 'job_failure'; available: boolean; jobId?: number; language?: string; status?: string; link?: string };
+    | { kind: 'job_failure'; available: boolean; jobId?: number; language?: string; status?: string; link?: string }
+    | { kind: 'process_incident'; available: boolean; ref?: string; processName?: string | null; attempt?: number; link?: string };
 
 /** What delegating would do with the wider sources a responsibility names (GET .../responsibilities/:id/sources). */
 export type ResponsibilitySources = {
@@ -570,6 +571,23 @@ export type AssistantProcess = {
     lifecycle: ProcessLifecycle | null;
     /** What the signed-in person may do with it now. */
     controls: ProcessAction[];
+    /** The newest repair of it, or null when none was ever proposed. */
+    repair: ProcessRepair | null;
+};
+/**
+ * One repair of a failing process (documentation/process_stewardship.md,
+ * "Repair"). `ask` is the decision card while it waits for the person: to
+ * approve a proposed repair, or to say what to do once attempts are used up.
+ */
+export type ProcessRepair = {
+    id: number;
+    status: 'proposed' | 'declined' | 'withdrawn' | 'verifying' | 'observing' | 'succeeded' | 'failed' | 'closed';
+    action: 'rerun' | 'follow_redirect'; attempt: number; allowed: number | null;
+    actor: 'person' | 'assistant' | null; proposedBy: 'steward' | 'run'; responsibilityId: number | null;
+    diagnosisCode: string | null; diagnosis: string | null; address: string | null;
+    rollback: 'none' | 'restored' | 'kept' | null; stopCode: string | null; direction: 'asked' | 'pause' | 'leave' | null;
+    appliedAt: string | null; verifiedAt: string | null; endedAt: string | null; createdAt: string; revision: number;
+    ask?: GateDecisionCard | null;
 };
 export type ProcessAction = 'pause' | 'resume' | 'archive' | 'restore' | 'keep' | 'preview_cleanup' | 'cleanup';
 export type ProcessLifecycle = {
