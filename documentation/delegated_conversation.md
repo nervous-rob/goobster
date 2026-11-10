@@ -111,7 +111,7 @@ to say them as given. So the numbers you hear are the numbers Home shows:
 | Whether anything is delegated, paused, turned off or stopped by the host | The status line |
 | How many things need you, and up to five of their titles | The **Needs you** count and its list |
 | How many updates you have not reviewed, and up to three findings (title and first sentence) | The update count and **What changed** |
-| How many pieces of work are running, and how many processes are failing or blocked | The same counts on Home |
+| How many pieces of work are running, how many processes are not working, and how many are running with a problem | The same counts on Home |
 | That the picture may be out of date, or that part of it could not be read | Home's freshness line and its "could not be read" notice |
 
 A part that could not be read is said to be unknown. It is never said as

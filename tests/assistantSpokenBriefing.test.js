@@ -66,7 +66,8 @@ const TOOL = 'spokenBriefing';
 const KG_ADD = { operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } };
 
 const TABLES = [
-    'assistant_update_receipts', 'assistant_updates', 'assistant_process_observations', 'assistant_initiatives',
+    'assistant_update_receipts', 'assistant_updates', 'assistant_process_incident_members', 'assistant_process_incidents',
+    'assistant_process_observations', 'assistant_process_contracts', 'automations', 'assistant_initiatives',
     'assistant_responsibility_revisions', 'assistant_responsibilities', 'attention_policies', 'inbox_items',
     'friendships', 'web_sessions', 'web_rate_events', 'auth_identities', 'app_accounts', 'principals'
 ];
@@ -121,6 +122,27 @@ const sharedTable = (userId = A) => ({
 
 const tool = (context = voiceChat()) => toolsRegistry.execute(TOOL, { interactionContext: context });
 const utc = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+
+const automation = (name) => db.insert(
+    `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+     VALUES (@userId, 'g1', 'c1', @name, 'import', '0 3 * * *', @nextRun)`,
+    { userId: A, name, nextRun: utc(new Date(Date.now() + 600 * 60000)) }
+);
+
+/** Typed outcomes for one process, oldest first, an hour apart, the newest an hour ago. */
+async function observe(id, outcomes) {
+    for (const [index, outcome] of outcomes.entries()) {
+        await db.run(
+            `INSERT INTO assistant_process_observations (ownerUserId, processKind, processId, occurrenceKey, phase, outcome, reasonCode, observedAt)
+             VALUES (@owner, 'automation', @id, @key, 'outcome', @outcome, @code, @at)`,
+            {
+                owner: A, id: String(id), key: `fire:${index}`, outcome,
+                code: outcome === 'failed' ? 'RUN_FAILED' : null,
+                at: utc(new Date(Date.now() - (outcomes.length - index) * 3600 * 1000))
+            }
+        );
+    }
+}
 const beat = (date = new Date()) => instanceState.set(steward.HEARTBEAT_KEY, { at: date.toISOString() });
 
 async function active(userId = A, title = 'Keep my garden notes current') {
@@ -141,7 +163,8 @@ const gate = (overrides = {}) => finding({
 
 /**
  * A full Home: one request and one friend request waiting, four findings,
- * one piece of work running and one process failing.
+ * one piece of work running, one process not working and one running with
+ * a problem.
  */
 async function busyHome() {
     const grant = await active();
@@ -159,11 +182,8 @@ async function busyHome() {
          VALUES (@rid, @rev, @owner, @owner, 'project_plan', '1', 'a', 'k1', 'Advance the plan', 'RUNNING', 't', @later)`,
         { rid: grant.id, rev: grant.revision, owner: A, later: utc(new Date(Date.now() + 5 * 60000)) }
     );
-    await db.run(
-        `INSERT INTO assistant_process_observations (ownerUserId, processKind, processId, occurrenceKey, phase, outcome, observedAt)
-         VALUES (@owner, 'automation', '5', 'fire:2', 'outcome', 'failed', @at)`,
-        { owner: A, at: utc(new Date()) }
-    );
+    await observe(await automation('nightly import'), ['ok', 'failed', 'failed', 'failed']);
+    await observe(await automation('flaky report'), ['ok', 'ok', 'failed']);
     return { grant, titles };
 }
 
@@ -190,15 +210,15 @@ describe('the briefing says what Home shows', () => {
         const { titles } = await busyHome();
         const view = await home.project({ userId: A });
         expect(view.counts).toEqual({ unseen: 5, needsAction: 2, running: 1 });
-        expect(view.components.find(c => c.id === 'processes').blocked).toBe(1);
+        expect(view.components.find(c => c.id === 'processes')).toMatchObject({ blocked: 1, degraded: 1 });
 
         const spoken = await briefing.brief({ userId: A });
-        expect(spoken.counts).toEqual({ ...view.counts, blocked: 1 });
+        expect(spoken.counts).toEqual({ ...view.counts, blocked: 1, degraded: 1 });
         expect(spoken.text).toContain('I am looking after one responsibility.');
         expect(spoken.text).toContain('Two things need you.');
         expect(spoken.text).toContain('You have five updates you have not reviewed.');
         expect(spoken.text).toContain('One piece of work is running.');
-        expect(spoken.text).toContain('One of your processes is failing or blocked.');
+        expect(spoken.text).toContain('One of your processes is not working. One of your processes is running with a problem.');
 
         // Needs you: exactly the titles Home previews, in Home's order.
         expect(spoken.needsYou).toEqual(view.needsYou.map(item => item.title));
@@ -337,7 +357,7 @@ describe('the briefing says what Home shows', () => {
             availability: 'ready', hostPaused: true, freshness: { state: 'current', lastPassAt: null },
             responsibilities: { counts: { active: 2, paused: 0, needsReview: 0, draft: 0 }, items: [] },
             counts: { unseen: 14, needsAction: 1, running: 0 },
-            components: [{ id: 'processes', blocked: 3 }],
+            components: [{ id: 'processes', blocked: 3, degraded: 2 }],
             needsYou: [{ title: 'Approve the plan', update: { id: 4, revision: 2 } }],
             brief: [{ id: 9, revision: 3, title: 'A finding', summary: 'A finding' }],
             partial: []
@@ -345,7 +365,7 @@ describe('the briefing says what Home shows', () => {
         const spoken = briefing.compose(projection);
         expect(spoken.text).toBe('The host has stopped all delegated work for now. Nothing is lost, and it continues when they resume it. '
             + 'One thing needs you. It is: Approve the plan. You have 14 updates you have not reviewed. The newest finding: A finding. '
-            + 'Three of your processes are failing or blocked.');
+            + 'Three of your processes are not working. Two of your processes are running with a problem.');
         expect(spoken.mentioned).toEqual([{ id: 4, revision: 2 }, { id: 9, revision: 3 }]);
         expect(briefing.compose(projection).text).toBe(spoken.text);
 

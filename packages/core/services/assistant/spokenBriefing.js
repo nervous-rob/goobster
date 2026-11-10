@@ -104,7 +104,7 @@ function statusSentence(projection) {
  * @param {{ now?: Date }} [options]
  * @returns {{
  *   text: string,
- *   counts: { needsAction: number|null, unseen: number|null, running: number|null, blocked: number|null },
+ *   counts: { needsAction: number|null, unseen: number|null, running: number|null, blocked: number|null, degraded: number|null },
  *   needsYou: string[],
  *   findings: Array<{ id: number, revision: number, title: string }>,
  *   mentioned: Array<{ id: number, revision: number }>,
@@ -115,7 +115,9 @@ function compose(projection, { now = new Date() } = {}) {
     const counts = projection.counts || {};
     const available = projection.availability !== 'unavailable';
     const processes = (projection.components || []).find(component => component.id === 'processes');
-    const blocked = available && processes && typeof processes.blocked === 'number' ? processes.blocked : null;
+    const processCount = (field) => (available && processes && typeof processes[field] === 'number' ? processes[field] : null);
+    const blocked = processCount('blocked');
+    const degraded = processCount('degraded');
     const sentences = [statusSentence(projection)];
     const mentioned = new Map();
     const mention = (update) => {
@@ -173,7 +175,8 @@ function compose(projection, { now = new Date() } = {}) {
         }
     }
 
-    // Work in progress and processes in trouble, as Home labels them.
+    // Work in progress and processes in trouble, as Home labels them: not
+    // working, and running with a problem, are two counts.
     if (available) {
         if (counts.running == null) {
             sentences.push('I could not read what is running just now.');
@@ -183,7 +186,10 @@ function compose(projection, { now = new Date() } = {}) {
             sentences.push('Nothing is running right now.');
         }
         if (blocked > 0) {
-            sentences.push(`${capitalize(sayNumber(blocked))} of your processes ${blocked === 1 ? 'is' : 'are'} failing or blocked.`);
+            sentences.push(`${capitalize(sayNumber(blocked))} of your processes ${blocked === 1 ? 'is' : 'are'} not working.`);
+        }
+        if (degraded > 0) {
+            sentences.push(`${capitalize(sayNumber(degraded))} of your processes ${degraded === 1 ? 'is' : 'are'} running with a problem.`);
         }
     }
 
@@ -205,7 +211,8 @@ function compose(projection, { now = new Date() } = {}) {
             needsAction: counts.needsAction ?? null,
             unseen: counts.unseen ?? null,
             running: counts.running ?? null,
-            blocked
+            blocked,
+            degraded
         },
         needsYou: needs,
         findings,
