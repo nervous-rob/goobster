@@ -320,6 +320,12 @@ describe('the person answers', () => {
     test('nobody else can see or answer it', async () => {
         const { card, request } = await requested();
         expect(await needsYou(B)).toEqual([]);
+        // Outside the pilot, a card is not theirs to press on any surface.
+        expect(await caught(decide(card, 'approve', B))).toMatchObject({ status: 403, code: access.REFUSAL_CODE });
+        expect(await caught(requests.decide({ userId: B, id: request.id, approve: true }))).toMatchObject({ code: 'NOT_FOUND' });
+        // With the pilot opened to everyone it is still not theirs: it does not exist for them.
+        await access.recordDecision({ scope: 'everyone' });
+        expect(await needsYou(B)).toEqual([]);
         expect(await caught(decide(card, 'approve', B))).toMatchObject({ status: 404, code: 'NOT_FOUND' });
         expect(await caught(requests.decide({ userId: B, id: request.id, approve: true }))).toMatchObject({ code: 'NOT_FOUND' });
         expect(calls('approved')).toEqual([]);

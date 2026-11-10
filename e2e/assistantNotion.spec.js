@@ -141,7 +141,9 @@ test.describe('the Notion connector in a responsibility', () => {
         const pressed = await stranger.request.post(`/api/app/assistant/gates/${card.ref}/decide`, {
             data: { option: 'approve', occurrence: card.occurrence, revision: card.revision, surface: 'inbox' }
         });
-        expect(pressed.status()).toBe(404);
+        // Outside the pilot nobody is offered a card, so pressing one is refused whoever it belongs to.
+        expect(pressed.status()).toBe(403);
+        expect(JSON.stringify(await pressed.json())).toContain('PILOT_ONLY');
         await other.close();
         expect((await state(page, REFUSING)).childArchived).toBe(false);
 
