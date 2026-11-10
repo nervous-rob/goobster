@@ -547,7 +547,10 @@ class AssistantRunService {
         // people read is not offered the person's private knowledge at all.
         // A finding for the project's members cannot quote what the run never reads.
         const sharing = planStep ? { shared: false } : await projectAudience.decide({ initiative, responsibility, project });
-        const offer = { project, features, planStep, grants: this._grants(responsibility), capabilities: await this._capabilities(responsibility) };
+        const offer = {
+            project, features, planStep, grants: this._grants(responsibility), capabilities: await this._capabilities(responsibility),
+            origin: initiative.origin || null
+        };
         const offered = new Set(Object.keys(TOOLS).filter((name) => {
             const spec = TOOLS[name];
             if (typeof spec.available === 'function' && !spec.available(offer)) return false;
@@ -557,6 +560,8 @@ class AssistantRunService {
 
         const ctx = {
             run, actor, project, budgets, used, offered,
+            // What the attempt was proposed for, as its adapter stored it. A reference, never content.
+            origin: initiative.origin || null,
             externalBudget: this.externalBudget(responsibility),
             // The agent plan step this run carries out, once dispatched.
             planStep: null,

@@ -5,7 +5,9 @@
  * The `assistant` feature is installation-wide, so on its own it cannot
  * keep a capability to one person. Everything added by DA-7 through DA-11
  * asks this service first: until the host records the pilot decision, only
- * the owner - an account with the operator role - gets it.
+ * the owner - an account with the operator role - gets it. So does repair
+ * through delegated runs (DA-5c), the one capability of the first pilot's
+ * own increments that changes a process.
  *
  * One capability per increment, so a stage has one name to check at its
  * entry points and at dispatch:
@@ -15,6 +17,7 @@
  *   delivery      DA-9   live overview, interruption rule, digest, push
  *   feedback      DA-10  feedback that changes selection, timing, authority
  *   reach         DA-11  repository work, saved-note edits, connectors
+ *   repair        DA-5c  repairing a recurring process (ADR 0029)
  *
  * The decision is `instance_state.assistantPilot` (`{ scope, decidedAt }`);
  * who recorded it is in `operator_audit`. Unset means owner-only.
@@ -30,7 +33,8 @@ const CAPABILITIES = Object.freeze({
     sources: 'DA-8',
     delivery: 'DA-9',
     feedback: 'DA-10',
-    reach: 'DA-11'
+    reach: 'DA-11',
+    repair: 'DA-5c'
 });
 /** Grant operations that belong to a gated capability. */
 const OPERATION_CAPABILITY = Object.freeze({
@@ -40,7 +44,8 @@ const OPERATION_CAPABILITY = Object.freeze({
     'repo.commit': 'reach',
     'repo.push': 'reach',
     'pr.create': 'reach',
-    'external.write': 'reach'
+    'external.write': 'reach',
+    'process.repair': 'repair'
 });
 const REFUSAL_CODE = 'PILOT_ONLY';
 

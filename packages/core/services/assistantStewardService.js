@@ -17,14 +17,17 @@
  *     (assistantIncidentService; a stall counts toward an incident only
  *     for time this installation was itself running), and for a process
  *     that outlived its purpose either pause it under a grant that names
- *     it or ask its owner (assistantProcessLifecycleService);
+ *     it or ask its owner (assistantProcessLifecycleService); then check
+ *     repairs that were applied against what the process recorded since,
+ *     undo the ones that failed, and offer the one repair that needs no
+ *     judgement where nothing covers the process (assistantProcessRepairService);
  *  6. file Inbox envelopes still owed by committed updates.
  * Each pass records its time in `instance_state` (`assistant_steward_pass`)
  * so the Home projection can say when its picture was last refreshed, and
  * since when passes have followed each other without a gap.
  * Every six hours it also applies retention: process observations 90 days,
- * terminal initiatives, settled updates, resolved incidents and lifecycle
- * records of processes that are running again 180 days, the daily proposal
+ * terminal initiatives, settled updates, resolved incidents, ended repairs
+ * and lifecycle records of processes that are running again 180 days, the daily proposal
  * counters 14 days and the chat-message labels 30 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
@@ -33,8 +36,10 @@
  * to the responsibility's own budget, off while the host's stop-all is on).
  * Nothing here runs a search or a sandbox, and nothing here starts work:
  * initiatives wait for their owner (or the DA-3 runner) to be queued and
- * claimed. The one thing it changes outside its own records is a pause or
- * archive of a process, and only where `authorize()` says a grant covers it.
+ * claimed. What it changes outside its own records is a pause or archive of
+ * a process, only where `authorize()` says a grant covers it, and the undoing
+ * of a repair that failed its check (never the repair itself, which a person
+ * approves or a delegated run applies).
  */
 
 const db = require('../db');
@@ -45,7 +50,7 @@ const LOCK = 'assistant_steward';
 const { HEARTBEAT_KEY, STALE_AFTER_MS } = require('./assistantHomeService');
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
-const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180, incidents: 180, lifecycle: 180 };
+const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180, incidents: 180, lifecycle: 180, repairs: 180 };
 // The first pass waits so it does not compete for pooled connections with
 // the other startup sweeps that each hold one for a singleton lock.
 const FIRST_PASS_DELAY_MS = 60 * 1000;
@@ -95,6 +100,7 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 processes: await processes.prune({ days: RETENTION_DAYS.observations, now }),
                 incidents: await require('./assistantIncidentService').prune({ days: RETENTION_DAYS.incidents, now }),
                 lifecycle: await require('./assistantProcessLifecycleService').prune({ days: RETENTION_DAYS.lifecycle, now }),
+                repairs: await require('./assistantProcessRepairService').prune({ days: RETENTION_DAYS.repairs, now }),
                 runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
                 updates: await updates.prune({ days: RETENTION_DAYS.updates, now }),

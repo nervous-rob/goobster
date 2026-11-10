@@ -375,6 +375,7 @@ async function forgetAssistantResponsibilities(userId) {
     const incidents = (await db.run('DELETE FROM assistant_process_incidents WHERE ownerUserId = @userId', { userId })).changes;
     const processLifecycle = (await db.run('DELETE FROM assistant_process_lifecycle WHERE ownerUserId = @userId', { userId })).changes;
     const processCleanups = (await db.run('DELETE FROM assistant_process_cleanups WHERE ownerUserId = @userId', { userId })).changes;
+    const processRepairs = (await db.run('DELETE FROM assistant_process_repairs WHERE ownerUserId = @userId', { userId })).changes;
 
     const revisions = (await db.run(
         `DELETE FROM assistant_responsibility_revisions
@@ -460,7 +461,7 @@ async function forgetAssistantResponsibilities(userId) {
     return {
         responsibilities, revisions, anonymized: others.length,
         initiatives, cursors, proposalCounters, messageLabels, updates, receipts, processContracts, processObservations, incidents, incidentMembers,
-        processLifecycle, processCleanups,
+        processLifecycle, processCleanups, processRepairs,
         runs, runOperations
     };
 }
@@ -510,7 +511,8 @@ async function countAssistantResponsibilities(userId) {
         archivedProcesses: await count(
             "SELECT COUNT(*) AS c FROM assistant_process_lifecycle WHERE ownerUserId = @userId AND stage IN ('ARCHIVED', 'CLEANED')"
         ),
-        processCleanups: await count('SELECT COUNT(*) AS c FROM assistant_process_cleanups WHERE ownerUserId = @userId')
+        processCleanups: await count('SELECT COUNT(*) AS c FROM assistant_process_cleanups WHERE ownerUserId = @userId'),
+        processRepairs: await count('SELECT COUNT(*) AS c FROM assistant_process_repairs WHERE ownerUserId = @userId')
     };
 }
 
@@ -545,6 +547,7 @@ async function auditAssistantResponsibilities(userId) {
         incidentMembers: await count('SELECT COUNT(*) AS c FROM assistant_process_incident_members WHERE ownerUserId = @userId'),
         processLifecycle: await count('SELECT COUNT(*) AS c FROM assistant_process_lifecycle WHERE ownerUserId = @userId'),
         processCleanups: await count('SELECT COUNT(*) AS c FROM assistant_process_cleanups WHERE ownerUserId = @userId'),
+        processRepairs: await count('SELECT COUNT(*) AS c FROM assistant_process_repairs WHERE ownerUserId = @userId'),
         runs: await count('SELECT COUNT(*) AS c FROM assistant_runs WHERE ownerUserId = @userId OR actingUserId = @userId OR payerUserId = @userId'),
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),

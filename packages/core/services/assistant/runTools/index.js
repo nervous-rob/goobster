@@ -16,11 +16,11 @@
  *    database that commits in the same transaction as its journal row, so
  *    "in flight" means "did not happen".
  *  - `run(args, ctx)`: does it and returns the text the model sees.
- *  - optional `available({ project, features, planStep, grants, capabilities })`:
+ *  - optional `available({ project, features, planStep, grants, capabilities, origin })`:
  *    false keeps the tool off this run's offer (no linked project, a
  *    feature switched off, not a plan-step run, an operation the grant does
  *    not name, a capability still in the pilot that the owner does not
- *    have).
+ *    have, an attempt that was not proposed for this kind of work).
  *  - optional `source: 'private'` (the tool returns the person's private
  *    knowledge) and `publishes`: 'project' (what the tool writes can be
  *    read by the project's audience) or 'external' (it leaves this
@@ -58,6 +58,7 @@ const TOOLS = {
     ...require('./connectors'),
     ...require('./startResearch'),
     ...require('./generatedNotes'),
+    ...require('./processRepair'),
     ...require('./consultDocs'),
     ...require('./finish'),
     ...require('./planStep')

@@ -288,9 +288,99 @@ const processRetirement = {
     }
 };
 
+// --- A repair of a failing process (gate kind `process_repair`) -------------
+
+/**
+ * Two questions share this kind (documentation/process_stewardship.md,
+ * "Repair"), each naming one repair record:
+ *  - a proposed repair: approve it (it is applied as the person's own act,
+ *    then checked and undone if it fails) or leave the process as it is;
+ *  - attempts used up: pause the process, or leave it running.
+ * The gate's occurrence is the record's id doubled, plus one for the second
+ * question. A gate that names no repair record of this person has no card.
+ * Every answer goes through `assistantProcessRepairService`; this descriptor
+ * decides nothing itself.
+ */
+const processRepair = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_OPEN', 'NOT_FOUND', 'NOT_RUNNING', 'ARCHIVED', 'CHANGED'],
+
+    async _record(gate, viewer) {
+        const occurrence = Number(gate.occurrence);
+        if (!Number.isSafeInteger(occurrence) || occurrence < 2) return null;
+        const db = require('../db');
+        const row = await db.get(
+            'SELECT * FROM assistant_process_repairs WHERE id = @id AND ownerUserId = @owner',
+            { id: Math.floor(occurrence / 2), owner: String(viewer.userId) }
+        );
+        if (!row || `${row.processKind}:${row.processId}` !== String(gate.id)) return null;
+        return { row, direction: occurrence % 2 === 1 };
+    },
+
+    async describe(gate, viewer) {
+        const found = await this._record(gate, viewer);
+        if (!found) return null;
+        const { row, direction } = found;
+        const name = `"${String(row.name || 'A process').slice(0, 80)}"`;
+        const code = row.diagnosisCode ? ` (${row.diagnosisCode})` : '';
+        if (direction) {
+            const open = row.direction === 'asked';
+            return {
+                state: open ? 'open' : 'resolved',
+                title: `${name} still fails after repair`,
+                detail: 'The repair attempts allowed for this problem are used up. Nothing more will be tried.',
+                outcome: row.direction === 'pause' ? `${name} was paused.`
+                    : row.direction === 'leave' ? `You chose to leave ${name} running.`
+                        : `${name} is no longer failing this way.`,
+                revision: `d${row.revision}`,
+                options: [
+                    { id: 'pause', label: 'Pause it', effect: 'Nothing new starts. A run already under way finishes. Nothing is deleted, and you can resume it from Processes.' },
+                    { id: 'leave', label: 'Leave it running', effect: 'It keeps running and failing as it is. No more repairs are tried for this problem.' }
+                ]
+            };
+        }
+        const open = row.status === 'PROPOSED';
+        let patch;
+        try { patch = JSON.parse(row.patchJson || '{}') || {}; } catch { patch = {}; }
+        const redirect = row.action === 'follow_redirect';
+        return {
+            state: open ? 'open' : 'resolved',
+            title: redirect ? `${name} has moved: use its new address?` : `${name} keeps failing: run it once more?`,
+            detail: redirect
+                ? `Its address now redirects to ${patch.address}. Nothing has been changed.`
+                : `It keeps failing${code}. Nothing has been changed.`,
+            outcome: row.status === 'DECLINED' ? `You left ${name} as it is.`
+                : row.status === 'WITHDRAWN' ? `This repair of ${name} is no longer needed.`
+                    : `The repair of ${name} was applied.`,
+            revision: `p${row.revision}`,
+            options: [
+                redirect
+                    ? { id: 'approve', label: 'Use the new address', effect: 'It is pointed at the new address and checked once now. If that check fails, the old address is put back.' }
+                    : { id: 'approve', label: 'Run it once now', effect: 'It runs once now with nothing about it changed, and you are told whether it worked.' },
+                { id: 'decline', label: 'Leave it', effect: 'Nothing is run or changed, and this repair is not offered again for this problem.' }
+            ]
+        };
+    },
+
+    async decide(gate, viewer, optionId, { revision }) {
+        const found = await this._record(gate, viewer);
+        const shown = /^([dp])(\d+)$/.exec(String(revision));
+        if (!found || !shown || (shown[1] === 'd') !== found.direction) throw stale();
+        const repairs = require('./assistantProcessRepairService');
+        const params = { userId: viewer.userId, repairId: found.row.id, expectedRevision: Number(shown[2]) };
+        if (found.direction) {
+            if (optionId !== 'pause' && optionId !== 'leave') throw stale();
+            return { message: (await repairs.direct({ ...params, direction: optionId })).message };
+        }
+        if (optionId === 'approve') return { message: (await repairs.approve(params)).message };
+        if (optionId === 'decline') return { message: (await repairs.decline(params)).message };
+        throw stale();
+    }
+};
+
 module.exports = {
     project_approve: projectApprove,
     friend_request: friendRequest,
     access_request: accessRequest,
-    process_retirement: processRetirement
+    process_retirement: processRetirement,
+    process_repair: processRepair
 };

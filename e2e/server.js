@@ -760,6 +760,7 @@ async function main() {
                 ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
                 ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
                 ['assistant_process_cleanups', 'ownerUserId'], ['assistant_process_lifecycle', 'ownerUserId'],
+                ['assistant_process_repairs', 'ownerUserId'],
                 ['attention_items', 'userId'], ['automations', 'userId']
             ]) {
                 await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
