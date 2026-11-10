@@ -311,6 +311,7 @@ const aiTools = {
     proposeResponsibility: 'assistant',
     describeDelegatedWork: 'assistant',
     controlDelegatedWork: 'assistant',
+    spokenBriefing: 'assistant',
     searchGithubCode: 'github',
     readGithubFile: 'github',
     searchNotion: 'core',

@@ -4,9 +4,9 @@
 // execution on the same policy, including stale tool calls.
 //
 // The delegation tools are blocked for both directions: an incognito turn
-// neither reads delegated work into the conversation nor drafts or steers
-// it (documentation/delegated_conversation.md).
-const DELEGATION_TOOLS = new Set(['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork']);
+// neither reads delegated work into the conversation (written or spoken)
+// nor drafts or steers it (documentation/delegated_conversation.md).
+const DELEGATION_TOOLS = new Set(['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork', 'spokenBriefing']);
 const INCOGNITO_BLOCKED_TOOLS = new Set([
     'rememberFact', 'saveArtifact', 'findImages', 'fetchWebFile', 'noteCapabilityGap',
     ...DELEGATION_TOOLS

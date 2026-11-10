@@ -100,6 +100,7 @@ const TOOL_ORDER = [
     'proposeResponsibility',
     'describeDelegatedWork',
     'controlDelegatedWork',
+    'spokenBriefing',
     'searchGithubCode',
     'readGithubFile',
     'searchNotion',

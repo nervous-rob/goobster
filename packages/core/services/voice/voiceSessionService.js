@@ -7,14 +7,13 @@ const {
 const prism = require('prism-media');
 const transcriptionService = require('../transcriptionService');
 const aiService = require('../aiService');
-const toolsRegistry = require('../../utils/toolsRegistry');
 const { getBotPreferredName } = require('../../utils/guildContext');
 const { pcmRms } = require('./pcmUtils');
 const { playResponseCue, playErrorCue } = require('./notificationSounds');
 const {
     HISTORY_LIMIT,
     VOICE_MAX_TOOL_ROUNDS,
-    getVoiceToolNames,
+    getVoiceToolDefinitions,
     shouldRespond,
     buildToolContext,
     buildScreenTurnContext,
@@ -513,7 +512,7 @@ class VoiceSessionService {
 
             const snapshot = session.turnBuffer.slice(0, snapshotLength);
             const toolContext = buildToolContext(session, snapshot);
-            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
+            const functionDefs = await getVoiceToolDefinitions(session, toolContext);
             const systemPrompt = await buildVoiceSystemPrompt({
                 session,
                 turnText,

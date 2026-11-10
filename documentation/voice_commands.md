@@ -110,6 +110,8 @@ Starts a live voice conversation in your current voice channel.
 
 `/voicechat stop` ends the session; `/voicechat status` shows the active channel, mode, and engine.
 
+A voice channel is a shared room, so some things are never said in one. Asking for a briefing of your delegated work ("what needs me?") in a `/voicechat` session is refused: Goobster says it is private and points you to the voice chat in your own portal chat, where the [spoken briefing](delegated_conversation.md#hearing-a-briefing) is available.
+
 ## TTS Configuration
 
 TTS requires an ElevenLabs API key, set either in `config.json`:

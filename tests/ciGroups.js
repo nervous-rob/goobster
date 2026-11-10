@@ -416,6 +416,7 @@ const GROUPS = [
             'assistantResponsibilityService',
             'assistantRunService',
             'assistantKnowledgeWork',
+            'assistantSpokenBriefing',
             'assistantStewardService',
             'assistantUpdateService',
             'dmPrivacy',

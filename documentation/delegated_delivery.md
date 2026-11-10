@@ -183,6 +183,12 @@ A browser notification, a Discord DM and a digest record that an update was
 mark it reviewed. Home stays highlighted, the Inbox item stays unread and a
 request stays in Needs you until you have looked or decided.
 
+A [spoken briefing](delegated_conversation.md#hearing-a-briefing) records
+the same thing for the updates it names. You asked for it, so it is not a
+contact: it uses none of the daily cap, and it does not count as the update
+having left the portal. An update you heard about can still be in that
+day's digest.
+
 ## What is stored
 
 | Table | Holds | Kept |
@@ -232,7 +238,6 @@ Tests: `tests/assistantDeliveryService.test.js`,
 ## Not built yet
 
 - "Wrong time" feedback that moves the digest or contact time (DA-10).
-- A spoken briefing as a delivery (DA-7c).
 - A finding shared with a project's members
   ([delegated_project_findings.md](delegated_project_findings.md)) reaching
   them outside the portal. The shared copy files no personal Inbox item, so

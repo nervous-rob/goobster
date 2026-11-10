@@ -2,7 +2,6 @@ const { EndBehaviorType } = require('@discordjs/voice');
 const prism = require('prism-media');
 const aiService = require('../aiService');
 const transcriptionService = require('../transcriptionService');
-const toolsRegistry = require('../../utils/toolsRegistry');
 const usageTracker = require('../usageTracker');
 const { ScribeRealtimeConnection } = require('./scribeRealtimeService');
 const { MultiContextTTSService } = require('./multiContextTTSService');
@@ -12,7 +11,7 @@ const { createStreamingUrlStripper } = require('./speechText');
 const {
     HISTORY_LIMIT,
     VOICE_MAX_TOOL_ROUNDS,
-    getVoiceToolNames,
+    getVoiceToolDefinitions,
     shouldRespond,
     buildToolContext,
     buildScreenTurnContext,
@@ -435,7 +434,7 @@ class RealtimeVoiceEngine {
 
             const snapshot = session.turnBuffer.slice(0, session.turnBuffer.length);
             const toolContext = buildToolContext(session, snapshot);
-            const functionDefs = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
+            const functionDefs = await getVoiceToolDefinitions(session, toolContext);
             const systemPrompt = await buildVoiceSystemPrompt({
                 session,
                 turnText,

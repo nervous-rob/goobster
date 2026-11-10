@@ -1,9 +1,9 @@
 ---
 title: Delegating and steering by conversation
 kind: reference
-summary: In your own private chat you can ask Goobster to take something on, ask what he is working on and why, and tell him to stop. Asking produces a draft responsibility that grants nothing; only your own press on its card in portal chat, or on the Responsibilities page, turns it on, and that press is proved by a single-use confirmation receipt bound to exactly what you were shown. The model can never activate, resume, widen, start or decide anything. Covers the three chat tools (`proposeResponsibility`, `describeDelegatedWork`, `controlDelegatedWork`), where they refuse (guild channels, automations, incognito, accounts outside the pilot), the proposal and request cards, confirmation receipts (`POST /api/app/assistant/confirmations`), what is stored and for how long.
-when: Asking Goobster in chat to look after something; understanding why a responsibility drafted in chat is not running; turning a drafted responsibility on, keeping it or discarding it; asking what delegated work is doing, why it stopped or what it was refused; stopping delegated work by saying so; deciding a friend request or plan approval from a chat card; understanding `HUMAN_ONLY`, `HUMAN_CONFIRMATION_REQUIRED`, `CONFIRMATION_INVALID` or `PILOT_ONLY`; checking that a model cannot grant itself authority.
-tags: [assistant, responsibilities, delegation, chat, tools, confirmation, authority, privacy]
+summary: In your own private chat you can ask Goobster to take something on, ask what he is working on and why, and tell him to stop; in your own voice chat in the portal you can ask for a spoken briefing of what Home shows, which marks nothing reviewed and is never read out in a Discord voice channel. Asking produces a draft responsibility that grants nothing; only your own press on its card in portal chat, or on the Responsibilities page, turns it on, and that press is proved by a single-use confirmation receipt bound to exactly what you were shown. The model can never activate, resume, widen, start or decide anything. Covers the chat tools (`proposeResponsibility`, `describeDelegatedWork`, `controlDelegatedWork`, `spokenBriefing`), where they refuse (guild channels, automations, incognito, accounts outside the pilot), the proposal and request cards, confirmation receipts (`POST /api/app/assistant/confirmations`), what is stored and for how long.
+when: Asking Goobster in chat to look after something; understanding why a responsibility drafted in chat is not running; turning a drafted responsibility on, keeping it or discarding it; asking what delegated work is doing, why it stopped or what it was refused; stopping delegated work by saying so; asking by voice what needs you or what changed; understanding why a briefing was refused in a voice channel; deciding a friend request or plan approval from a chat card; understanding `HUMAN_ONLY`, `HUMAN_CONFIRMATION_REQUIRED`, `CONFIRMATION_INVALID` or `PILOT_ONLY`; checking that a model cannot grant itself authority.
+tags: [assistant, responsibilities, delegation, chat, voice, briefing, tools, confirmation, authority, privacy]
 feature: assistant
 ---
 
@@ -12,7 +12,8 @@ feature: assistant
 A [responsibility](delegated_responsibilities.md) can be asked for in
 conversation. Three chat tools let Goobster draft one from what you said,
 answer from his records what he is working on and why, and stop work when
-you say so.
+you say so. A fourth, offered only in a voice conversation, reads you a
+[briefing](#hearing-a-briefing) of what Home shows.
 
 **The rule everything here follows: a model call is never a confirmation.**
 What Goobster drafts grants nothing. Turning it on is your own press, in the
@@ -21,13 +22,14 @@ automation, can activate, resume or widen a responsibility, start a piece of
 work, or decide a request for you. The design and the reasons are in
 [ADR 0023](adr/0023-conversational-delegation-and-receipts.md).
 
-## The three tools
+## The tools
 
 | Tool | What it does | What it cannot do |
 | --- | --- | --- |
 | `proposeResponsibility` | Writes a **draft** from a title, an outcome, the operations and resources it would need, and optionally a linked project, Attention item, end date and stop condition | Activate it. Turn on automatic start. Grant an operation the vocabulary does not have |
 | `describeDelegatedWork` | Reads your own responsibilities, your open and recent work, one run's step-by-step record, or the requests waiting on you | Read another person's. Change anything |
 | `controlDelegatedWork` | `cancel` one piece of work, or `pause` one responsibility | Start, queue, retry, resume, activate, edit or widen anything |
+| `spokenBriefing` | In your own voice chat, says what Home shows: what needs you, what changed, what is running | Mark anything seen, read or reviewed. Decide a request. Speak where anyone else can hear |
 
 They are part of the `assistant` feature and are offered only when it is
 available.
@@ -96,9 +98,56 @@ Another person's responsibility or work answers `NOT_FOUND`.
 
 Any other action is refused by the tool. Resuming is yours.
 
+### Hearing a briefing
+
+In the portal's voice chat (the **Voice chat** button in your own chat),
+ask "what needs me?", "brief me" or "what changed?". Goobster calls
+`spokenBriefing` and says the answer aloud.
+
+The briefing is composed from the [Home](assistant_home.md) projection, the
+same read the Home page makes, at the moment you ask. The words are written
+by the server from that projection, not by the model, and the model is told
+to say them as given. So the numbers you hear are the numbers Home shows:
+
+| Said | From Home |
+| --- | --- |
+| Whether anything is delegated, paused, turned off or stopped by the host | The status line |
+| How many things need you, and up to five of their titles | The **Needs you** count and its list |
+| How many updates you have not reviewed, and up to three findings (title and first sentence) | The update count and **What changed** |
+| How many pieces of work are running, how many processes are not working, and how many are running with a problem | The same counts on Home |
+| That the picture may be out of date, or that part of it could not be read | Home's freshness line and its "could not be read" notice |
+
+A part that could not be read is said to be unknown. It is never said as
+zero. A title is spoken as words only: links and markup are left out.
+
+**Hearing it changes nothing you have to review.** The briefing has no way
+to acknowledge an update, mark an Inbox item read, or decide a request, and
+it has no arguments a model could use to ask for that. Home and the Inbox
+show the same counts and the same items afterwards. The one thing recorded
+is that the updates it named were *delivered* to you by voice
+(`deliveredRevision` on your receipt), which is kept separate from
+reviewing them ([ADR 0017](adr/0017-initiatives-updates-processes.md)).
+The reasons for this design are in
+[ADR 0024](adr/0024-spoken-briefing.md).
+
+**It is only ever said to you alone.**
+
+| Where you ask | What happens |
+| --- | --- |
+| Your own voice chat in the portal | The briefing is spoken |
+| A Discord voice channel (`/voicechat`) | Refused before anything is read. A voice channel is shared: other people hear what is said, and the reply can be posted as a transcript in a text channel. Goobster says a briefing is private and points you to your portal voice chat or to Home. He does not say whether you have any delegated work |
+| A shared table in the portal | Refused the same way |
+| A written turn (typed chat, a Discord DM) | Not offered. Ask in writing and `describeDelegatedWork` answers instead |
+| Incognito, an unattended turn, the feature off, an account outside the pilot | Not offered, and refused if called, as for the other tools below |
+
+Asking for a briefing by voice in Discord is therefore always refused
+today: Discord has no voice session that is yours alone.
+
 ## Where the tools answer
 
-Only in your own private conversation: a portal chat of yours or a DM.
+Only in your own private conversation: a portal chat of yours or a DM. The
+spoken briefing is narrower still: only a spoken turn in your own portal
+chat ([above](#hearing-a-briefing)).
 
 | Situation | What happens |
 | --- | --- |
@@ -190,13 +239,20 @@ A responsibility in API responses carries `proposedBy` (`'model'` or
 | The draft (`assistant_responsibilities`) | The same fields as any responsibility, plus who proposed it, the conversation reference and when you kept it | Like any responsibility once kept, edited or activated; 7 days otherwise; deleted at once when discarded |
 | A receipt (`assistant_confirmation_receipts`) | Your id, what it confirmed (kind, id, action, revision), the hash of what was shown, the surface, the hash of its secret, when it was issued, expires and was used | 30 days after it expires |
 
+The spoken briefing stores nothing of its own. It sets `deliveredRevision`
+on the update receipts you already have (`assistant_update_receipts`),
+which the privacy paths already cover.
+
 Receipts are personal data: the transparency report counts them, the
 account export includes them (without the secret's hash), and `/forget-me`
 deletes them. No prompt, reply or grant text is stored in a receipt.
 
 ## Not built yet
 
-- The spoken briefing (DA-7c).
+- Drafting or confirming a responsibility by voice alone. In voice chat
+  Goobster can draft one, and the card to turn it on is in the portal.
+- A voice session of your own in Discord. Until there is one, a briefing is
+  never spoken there.
 - Confirmation from Discord. A DM is told to use the portal.
 - A receipt for *Start* on a piece of work and for an edit. Both are refused
   inside a model call and are reachable only from your signed-in session.

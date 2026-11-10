@@ -16,6 +16,11 @@ Everything in the overview is read from records. Nothing in it is generated
 text, and **opening Home changes nothing**: it does not mark an item read,
 start research, run a job, turn on Attention or activate a responsibility.
 
+The same overview can be heard. In your own voice chat in the portal, ask
+what needs you and Goobster reads a
+[spoken briefing](delegated_conversation.md#hearing-a-briefing) with the
+counts shown here. Hearing it marks nothing reviewed either.
+
 ## What the overview shows
 
 1. **Status line.** Derived from counts: "Looking after 2 responsibilities ·
