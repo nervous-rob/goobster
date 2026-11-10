@@ -20,6 +20,8 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [paths, setPaths] = useState('');
     const [runCode, setRunCode] = useState(false);
     const [planSteps, setPlanSteps] = useState(false);
+    const [projectRequests, setProjectRequests] = useState(false);
+    const [parlorRequests, setParlorRequests] = useState(false);
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
     const [deepResearch, setDeepResearch] = useState(false);
@@ -52,6 +54,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         return list;
     }
 
+    /** Where it listens for requests addressed to Goobster. */
+    function sources(): string[] {
+        const list: string[] = [];
+        if (projectId && projectRequests) list.push('project_chat');
+        if (parlorRequests) list.push('parlor');
+        return list;
+    }
+
     async function save(event: React.FormEvent) {
         event.preventDefault();
         const granted = operations();
@@ -64,6 +74,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 ...(outcome.trim() ? { outcome: outcome.trim() } : {}),
                 operations: granted,
                 ...(projectId ? { projectId: Number(projectId) } : {}),
+                ...(sources().length ? { scopes: { sources: sources() } } : {}),
                 ...(days ? { expiresAt: new Date(Date.now() + Number(days) * 86400_000).toISOString() } : {}),
                 ...(autoStart ? { rules: { autoStart: true } } : {})
             });
@@ -129,10 +140,31 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                     Only steps of a plan a person approved and started. It never approves, starts or completes a plan, and each step&apos;s files are checked before the step is marked done. It needs to edit files to write them.
                                 </div>
                             )}
+                            <label>
+                                <input type="checkbox" checked={projectRequests} data-testid="responsibility-project-requests"
+                                    onChange={(e) => setProjectRequests(e.target.checked)} />{' '}
+                                Take requests you address to {me.assistant.name} in this project&apos;s conversations
+                            </label>
                         </>
                     )}
                 </fieldset>
             )}
+            <fieldset className="field">
+                <legend>Requests in conversation (optional)</legend>
+                <label>
+                    <input type="checkbox" checked={parlorRequests} data-testid="responsibility-parlor-requests"
+                        onChange={(e) => setParlorRequests(e.target.checked)} />{' '}
+                    Take requests you address to {me.assistant.name} in your discussions
+                </label>
+                {(parlorRequests || (projectId && projectRequests)) && (
+                    <div className="hint">
+                        Only a message you write yourself that calls {me.assistant.name} by name and asks for something, such as
+                        &quot;{me.assistant.name}, compare library X and library Y&quot;. Each becomes proposed work here, within what this
+                        responsibility allows; the result comes to you, not into the conversation. &quot;{me.assistant.name}, stop&quot; or
+                        &quot;{me.assistant.name}, actually ...&quot; withdraws what you asked for there before. Nobody else&apos;s messages are read.
+                    </div>
+                )}
+            </fieldset>
             <label className="field">
                 <span>Ends</span>
                 <select value={days} onChange={(e) => setDays(e.target.value)}>

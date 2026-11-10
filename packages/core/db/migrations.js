@@ -158,6 +158,8 @@ const COLUMN_MIGRATIONS = [
     ['project_mission_steps', 'retryCount', 'retryCount INTEGER NOT NULL DEFAULT 0'],
     ['assistant_initiatives', 'planStepId', 'planStepId INTEGER'],
     ['assistant_initiatives', 'planRevision', 'planRevision INTEGER'],
+    ['assistant_initiatives', 'originJson', 'originJson TEXT'],
+    ['assistant_initiatives', 'supersededBy', 'supersededBy TEXT'],
     // Listed so the SQLite rebuild that widens the evidence kind CHECK can
     // carry both columns over from any older shape of the table.
     ['project_mission_evidence', 'label', 'label TEXT'],

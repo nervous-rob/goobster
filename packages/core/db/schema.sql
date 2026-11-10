@@ -3536,7 +3536,9 @@ CREATE TABLE IF NOT EXISTS assistant_responsibility_revisions (
 CREATE TABLE IF NOT EXISTS assistant_source_cursors (
     id INTEGER PRIMARY KEY,
     responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
-    -- attention_item | project_plan | project_plan_step
+    -- attention_item | project_plan | project_plan_step | conversation_request
+    -- (conversation_request keeps one row per responsibility: sourceId
+    -- 'messages', sourceRevision the last parlor_messages.id examined)
     sourceKind TEXT NOT NULL,
     sourceId TEXT NOT NULL,
     -- Opaque fingerprint of the source's material state at the last scan
@@ -3593,6 +3595,16 @@ CREATE TABLE IF NOT EXISTS assistant_initiatives (
     -- proposed under. Dispatch refuses when the plan has moved on.
     planStepId INTEGER,
     planRevision INTEGER,
+    -- Where a conversation-derived attempt came from (ADR 0021): JSON
+    -- { kind: 'parlor_message', surface: 'project'|'parlor', conversationId,
+    --   messageId, speakerUserId, audience: { kind, projectId?|conversationId? } }.
+    -- References only; the message text is read again, under the current
+    -- access check, whenever it is shown or used.
+    originJson TEXT,
+    -- SUPERSEDED only: what replaced it, as a reference
+    -- ('parlor:<conversationId>:<messageId>' for a change of direction said
+    -- in a conversation, 'plan:<missionId>' for a plan that moved on).
+    supersededBy TEXT,
     UNIQUE (responsibilityId, dedupeKey, sourceRevision, attempt)
 );
 

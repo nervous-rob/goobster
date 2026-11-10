@@ -390,9 +390,11 @@ async function forgetAssistantResponsibilities(userId) {
              WHERE responsibilityId = @id AND (actingUserId = @userId OR payerUserId = @userId)`,
             { id: row.id, userId }
         );
+        // The origin of a conversation request names its speaker, the acting person.
         await db.run(
             `UPDATE assistant_initiatives SET
                 actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                originJson = CASE WHEN actingUserId = @userId THEN NULL ELSE originJson END,
                 status = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'CANCELLED' ELSE status END,
                 stopCode = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'PRINCIPAL_ERASED' ELSE stopCode END,
                 endedAt = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN @now ELSE endedAt END,

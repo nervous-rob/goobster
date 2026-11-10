@@ -129,6 +129,7 @@ const GROUPS = [
             'windowsHelper',
             'windowsBootstrapCli',
             'packageBootstrapWin32',
+            'bootstrapTools',
             'releaseIndex',
             'releaseArtifacts',
             'releaseManagerTrust',
@@ -387,6 +388,7 @@ const GROUPS = [
         description: 'Erasure, permissions, approvals, sandbox',
         files: files([
             'approvalExecutor',
+            'assistantConversationRequests',
             'assistantGateDecisions',
             'assistantHomeService',
             'assistantIncidentService',
@@ -394,6 +396,7 @@ const GROUPS = [
             'assistantPlanStep',
             'assistantProcessAssessment',
             'assistantProcessService',
+            'assistantProjectBoard',
             'assistantResponsibilityService',
             'assistantRunService',
             'assistantStewardService',
