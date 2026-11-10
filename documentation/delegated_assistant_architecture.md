@@ -697,7 +697,10 @@ explain the limitation. Feature descriptors, packaging dependencies, discovery
 and dispatch gates must be added together when implementing the feature.
 The paired API cannot start a duplicate worker; the standalone API must work
 without Discord. Maintenance pause prevents background mutation, and restore
-does not reactivate grants or pending actions without reconciliation.
+does not reactivate grants or pending actions without reconciliation. Built
+for runs: a restore marks every run that was in flight, and its initiative,
+failed (`INTERRUPTED_BY_RESTORE`) and nothing resumes it
+([delegated_runs.md](delegated_runs.md), ADR 0018 decision 13).
 
 ## 12. Invariants and verification targets
 

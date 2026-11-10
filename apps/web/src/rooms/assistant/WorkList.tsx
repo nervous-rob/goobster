@@ -16,7 +16,8 @@ const STOP_TEXT: Record<string, string> = {
     NO_RESULT: 'It finished without a result. You can try again.',
     OPERATION_UNCERTAIN: 'A step may or may not have happened. Check before trying again.',
     REPLAN_REQUIRED: 'The responsibility changed since this was proposed.',
-    LEASE_EXPIRED: 'It was interrupted and will pick up where it left off.'
+    LEASE_EXPIRED: 'It was interrupted and will pick up where it left off.',
+    INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.'
 };
 
 export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[]; busy: boolean; onAct: (item: AssistantInitiative, action: string) => void }) {

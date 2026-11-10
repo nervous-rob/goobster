@@ -5,8 +5,8 @@
  * directory: an archive is written (database snapshot, file sets, an
  * encrypted config.json, the names of environment secrets that were set),
  * inspected, and restored into a fresh installation - which comes back
- * paused, with every piece of in-flight work marked failed and recorded in
- * work_failures. The engine and schema gates, the passphrase cases, the
+ * paused, with every piece of in-flight work (delegated runs included)
+ * marked failed and recorded in work_failures. The engine and schema gates, the passphrase cases, the
  * paused core runtime, the resume that skips missed schedules, the erasure
  * path for work_failures and the two CLI scripts are covered too. Runs on
  * both engines; the parts that must differ (fresh SQLite file vs. the same
@@ -188,6 +188,44 @@ async function seedInstallation() {
         `INSERT INTO kg_reflection_runs (guildId, requestedBy, status, passes) VALUES (@guildId, @userId, 'running', 1)`,
         { guildId: GUILD, userId: USER }
     );
+    // Delegated work: a run in flight, one a restart left to resume from its
+    // journal, and one claimed whose run had not opened - plus parked and
+    // queued work, which is not in flight and must be left alone.
+    seeded.responsibility = await db.insert(
+        `INSERT INTO assistant_responsibilities (ownerUserId, title, status) VALUES (@userId, 'Keep the notebook moving', 'ACTIVE')`,
+        { userId: USER }
+    );
+    const initiative = (key, status, extra = {}) => db.insert(
+        `INSERT INTO assistant_initiatives
+            (responsibilityId, responsibilityRevision, ownerUserId, sourceKind, sourceId, sourceRevision, dedupeKey, title,
+             status, stopCode, waitReason, recheckAfter, leaseToken, leaseExpiresAt)
+         VALUES (@rid, 1, @userId, 'attention_item', @key, 'r1', @key, 'Linked goal changed',
+             @status, @stopCode, @waitReason, @recheckAfter, @leaseToken, @leaseExpiresAt)`,
+        {
+            rid: seeded.responsibility, userId: USER, key, status,
+            stopCode: null, waitReason: null, recheckAfter: null, leaseToken: null, leaseExpiresAt: null, ...extra
+        }
+    );
+    const run = (initiativeId, status) => db.insert(
+        `INSERT INTO assistant_runs (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, status)
+         VALUES (@initiativeId, @rid, 1, @userId, @status)`,
+        { initiativeId, rid: seeded.responsibility, userId: USER, status }
+    );
+    // Its lease lapsed during the downtime: lease reaping would requeue it.
+    seeded.runningInitiative = await initiative('running', 'RUNNING', { leaseToken: 'lease-a', leaseExpiresAt: ago(1) });
+    seeded.runningRun = await run(seeded.runningInitiative, 'RUNNING');
+    seeded.resumingInitiative = await initiative('resuming', 'QUEUED', { stopCode: 'LEASE_EXPIRED' });
+    seeded.resumingRun = await run(seeded.resumingInitiative, 'RUNNING');
+    seeded.claimedInitiative = await initiative('claimed', 'RUNNING', { leaseToken: 'lease-b', leaseExpiresAt: ahead(1) });
+    // Claimed again after a wait; its run row had not been reopened yet.
+    seeded.reclaimedInitiative = await initiative('reclaimed', 'RUNNING', { leaseToken: 'lease-c', leaseExpiresAt: ahead(1) });
+    seeded.reclaimedRun = await run(seeded.reclaimedInitiative, 'WAITING');
+    // Cancelled by its owner while the worker was gone: only the run row is still open.
+    seeded.cancelledInitiative = await initiative('cancelled', 'CANCELLED', { stopCode: 'CANCELLED_BY_OWNER' });
+    seeded.cancelledRun = await run(seeded.cancelledInitiative, 'RUNNING');
+    seeded.parkedInitiative = await initiative('parked', 'WAITING', { waitReason: 'budget', stopCode: 'TOKEN_BUDGET', recheckAfter: ahead(5) });
+    seeded.parkedRun = await run(seeded.parkedInitiative, 'WAITING');
+    seeded.queuedInitiative = await initiative('queued', 'QUEUED');
     await db.run(
         `INSERT INTO web_live_turns (userId, turnId, startedAtMs) VALUES (@userId, 'turn-live-1', @now)`,
         { userId: USER, now: Date.now() }
@@ -455,7 +493,7 @@ describe('restore into a fresh installation', () => {
     test('marks every piece of in-flight work failed with one fixed reason - nothing is left for a retry', async () => {
         expect(report.interrupted).toEqual({
             job: 2, expedition: 1, mission_step: 1, sandbox: 1, integration_action: 1,
-            watch: 1, delivery: 1, reflection: 1, chat: 1
+            watch: 1, delivery: 1, reflection: 1, assistant_run: 5, chat: 1
         });
         const jobs = await db.all('SELECT id, status, error, runnerId, leaseToken FROM observatory_jobs ORDER BY id');
         expect(jobs.find(j => j.id === seeded.settledJob).status).toBe('COMPLETED');
@@ -481,11 +519,58 @@ describe('restore into a fresh installation', () => {
         expect((await db.get('SELECT COUNT(*) AS c FROM execution_admissions')).c).toBe(0);
     });
 
+    test('fails delegated runs that were in flight and leaves parked and queued work as it was', async () => {
+        const initiative = (id) => db.get(
+            'SELECT status, stopCode, leaseToken, leaseExpiresAt, endedAt, revision FROM assistant_initiatives WHERE id = @id', { id }
+        );
+        const run = (id) => db.get('SELECT status, stopCode, endedAt FROM assistant_runs WHERE id = @id', { id });
+        for (const id of [seeded.runningInitiative, seeded.resumingInitiative, seeded.claimedInitiative, seeded.reclaimedInitiative]) {
+            const row = await initiative(id);
+            expect(row).toMatchObject({ status: 'FAILED', stopCode: INTERRUPTED_CODE, leaseToken: null, leaseExpiresAt: null });
+            expect(row.endedAt).toBeTruthy();
+            expect(Number(row.revision)).toBe(2);
+        }
+        for (const id of [seeded.runningRun, seeded.resumingRun, seeded.reclaimedRun, seeded.cancelledRun]) {
+            const row = await run(id);
+            expect(row).toMatchObject({ status: 'FAILED', stopCode: INTERRUPTED_CODE });
+            expect(row.endedAt).toBeTruthy();
+        }
+        expect((await db.get(`SELECT COUNT(*) AS c FROM assistant_initiatives WHERE status = 'RUNNING'`)).c).toBe(0);
+        expect((await db.get(`SELECT COUNT(*) AS c FROM assistant_runs WHERE status = 'RUNNING'`)).c).toBe(0);
+
+        // What its owner had already ended keeps its own outcome.
+        expect(await initiative(seeded.cancelledInitiative)).toMatchObject({ status: 'CANCELLED', stopCode: 'CANCELLED_BY_OWNER', revision: 1 });
+        expect(await initiative(seeded.parkedInitiative)).toMatchObject({ status: 'WAITING', stopCode: 'TOKEN_BUDGET', revision: 1 });
+        expect(await run(seeded.parkedRun)).toMatchObject({ status: 'WAITING', stopCode: null });
+        expect(await initiative(seeded.queuedInitiative)).toMatchObject({ status: 'QUEUED', stopCode: null, revision: 1 });
+    });
+
+    test('nothing picks an interrupted delegated run up again: not lease reaping, not the requeue pass, not a claim', async () => {
+        const initiatives = require('@goobster/core/services/assistantInitiativeService');
+        const interrupted = [seeded.runningInitiative, seeded.resumingInitiative, seeded.claimedInitiative, seeded.reclaimedInitiative];
+        // The running one's lease had lapsed: before this fix reaping returned it to QUEUED.
+        expect(await initiatives.reapExpiredLeases({})).toBe(0);
+        expect(await initiatives.requeueDue({})).toBe(0);
+        for (const id of interrupted) {
+            expect(await initiatives.claim({ id })).toEqual({ ok: false, code: 'NOT_QUEUED', status: 'FAILED' });
+            expect(await initiatives.renewLease({ id, leaseToken: 'lease-a' })).toBe(false);
+            expect(await initiatives.settle({ id, leaseToken: 'lease-a', status: 'COMPLETED' })).toEqual({ ok: false, code: 'LEASE_LOST' });
+        }
+        const rows = await db.all(
+            `SELECT id, status, stopCode FROM assistant_initiatives WHERE status = 'FAILED' ORDER BY id`
+        );
+        expect(rows.map(row => Number(row.id))).toEqual(interrupted);
+        expect(new Set(rows.map(row => row.stopCode))).toEqual(new Set([INTERRUPTED_CODE]));
+        // The queue holds only what was queued before the backup.
+        const queued = await db.all(`SELECT id FROM assistant_initiatives WHERE status = 'QUEUED'`);
+        expect(queued.map(row => Number(row.id))).toEqual([seeded.queuedInitiative]);
+    });
+
     test('records one work_failures row per interrupted piece, with the owner and no body', async () => {
         const rows = await db.all('SELECT kind, workId, phase, code, reason, actor FROM work_failures ORDER BY id');
-        expect(rows).toHaveLength(10);
+        expect(rows).toHaveLength(15);
         expect(new Set(rows.map(r => r.kind))).toEqual(new Set([
-            'job', 'expedition', 'mission_step', 'sandbox', 'integration_action', 'watch', 'delivery', 'reflection', 'chat'
+            'job', 'expedition', 'mission_step', 'sandbox', 'integration_action', 'watch', 'delivery', 'reflection', 'assistant_run', 'chat'
         ]));
         for (const row of rows) {
             expect(row.code).toBe(INTERRUPTED_CODE);
@@ -494,11 +579,20 @@ describe('restore into a fresh installation', () => {
         expect(rows.find(r => r.kind === 'job' && r.workId === String(seeded.runningJob))).toMatchObject({ phase: 'RUNNING', actor: USER });
         expect(rows.find(r => r.kind === 'job' && r.workId === String(seeded.interruptedJob))).toMatchObject({ phase: 'INTERRUPTED', actor: OTHER });
         expect(rows.find(r => r.kind === 'chat')).toMatchObject({ workId: 'turn-live-1', phase: 'streaming', actor: USER });
+        // A delegated run is keyed by its run id; one claimed before its run opened has none.
+        const delegated = rows.filter(r => r.kind === 'assistant_run');
+        expect(delegated.map(r => r.workId)).toEqual([
+            String(seeded.runningRun), String(seeded.resumingRun), null, String(seeded.reclaimedRun), String(seeded.cancelledRun)
+        ]);
+        expect(delegated.map(r => r.phase)).toEqual(['RUNNING', 'RUNNING', 'CLAIMED', 'WAITING', 'RUNNING']);
+        expect(delegated.every(r => r.actor === USER)).toBe(true);
+        expect(JSON.stringify(rows)).not.toContain('Linked goal changed');
+        expect(JSON.stringify(rows)).not.toContain('Keep the notebook moving');
         expect(JSON.stringify(rows)).not.toContain('queued while streaming');
         expect(JSON.stringify(rows)).not.toContain('while True');
 
         const mine = await workFailures.listForUser(USER);
-        expect(mine).toHaveLength(9);
+        expect(mine).toHaveLength(14);
         expect(mine[0]).not.toHaveProperty('actor');
         expect(await workFailures.listForWork('expedition', seeded.expedition)).toHaveLength(1);
     });
@@ -658,7 +752,7 @@ describe('work_failures and privacy', () => {
 
         const total = (await db.get('SELECT COUNT(*) AS c FROM work_failures')).c;
         const counts = await privacyService.forgetUser({ userId: USER });
-        expect(counts.anonymizedWorkFailures).toBe(9);
+        expect(counts.anonymizedWorkFailures).toBe(14);
         expect((await db.get('SELECT COUNT(*) AS c FROM work_failures')).c).toBe(total);
         expect(await workFailures.countForUser(USER)).toBe(0);
         expect(await workFailures.countForUser(OTHER)).toBe(1);
