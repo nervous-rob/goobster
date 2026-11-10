@@ -655,6 +655,13 @@ a.nav-btn {
   width: 100%;
   height: 100%;
 }
+/* A project's map box takes its height from its content, and GraphView sizes
+   the canvas to that box. In flow, the canvas made the box one empty-state
+   line taller than itself, so both grew on every frame. */
+.obs-knowledge .graph-wrap .graph-canvas {
+  position: absolute;
+  inset: 0;
+}
 #pane-library .map-slicers {
   width: 236px;
   flex: none;
