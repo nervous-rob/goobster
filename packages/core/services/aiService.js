@@ -279,6 +279,25 @@ class AIServiceRouter {
         } }, work);
     }
 
+    /**
+     * Where a request with these options would be sent right now: the
+     * person's own connection when they chose one, else the installation's
+     * provider and its default model. Names only, as `usage_log` records
+     * them. Never throws; an unknown part is null.
+     * @param {{ usageContext?: { userId?: string, guildId?: string }, provider?: string, model?: string }} [opts]
+     * @returns {Promise<{ provider: string|null, model: string|null, personal: boolean }>}
+     */
+    async routeFor(opts = {}) {
+        try {
+            const personal = await this._personalConnection(opts);
+            if (personal) return { provider: 'openrouter', model: personal.model || null, personal: true };
+        } catch { /* no personal connection can be read: the installation's route */ }
+        const provider = opts.provider || currentProviderKey || null;
+        let model = null;
+        try { model = opts.model || this.defaultModelFor(provider) || null; } catch { /* unknown */ }
+        return { provider, model, personal: false };
+    }
+
     async _personalConnection(opts) {
         if (opts.personalAiDisabled) return null;
         const { guildId, userId } = opts.usageContext || {};

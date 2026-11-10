@@ -32,6 +32,7 @@ const knowledgeImpact = require('../../services/knowledgeImpactService');
 const knowledgeGraph = require('../../services/knowledgeGraphService');
 const { dmScopeId } = require('../../utils/dmScope');
 const connectors = require('../../services/assistantConnectorService');
+const outcomes = require('../../services/assistantOutcomeService');
 const { AssistantResponsibilityError } = responsibilities;
 
 /** Actions that turn authority on: the route takes them only with a receipt. */
@@ -312,6 +313,13 @@ function mountAssistant(app, ctx, h) {
             reason: req.body?.reason
         });
     }));
+
+    // ?days=1..90 (default 14). What the person's responsibilities did in the
+    // period and what it cost: counts and names only, their own only
+    // (documentation/delegated_pilot.md). Reads; changes nothing.
+    app.get('/api/app/assistant/outcomes', requireAuth, route(async (req) => ({
+        outcomes: await outcomes.summarize({ userId: req.webUser.userId, days: req.query.days ?? null })
+    })));
 
     // --- Process catalog (read model, contracts, lifecycle) ------------------
     // Reads: each process with how it is doing, what stewardship has done
