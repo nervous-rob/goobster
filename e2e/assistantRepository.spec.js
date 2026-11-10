@@ -12,8 +12,8 @@
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 
-const OWNER = '99000000000000441';
-const OTHER = '99000000000000442';
+const OWNER = '99000000000001101';
+const OTHER = '99000000000001102';
 
 async function seed(page, body) {
     const seeded = await page.request.post('/e2e/fixtures/assistant-repository', { data: body });
