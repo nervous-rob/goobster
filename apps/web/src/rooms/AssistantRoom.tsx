@@ -15,6 +15,7 @@ import { describeGrants, describeInterruption, describeListening, describeNotici
 import { ConnectorList } from './assistant/ConnectorList';
 import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
+import { OutcomeSummary } from './assistant/OutcomeSummary';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
 /**
@@ -179,6 +180,7 @@ export function AssistantRoom() {
                         <ConnectorList enabled={enabled} />
                         {featureActive(me, 'knowledge') && <KnowledgeChanges />}
                         <ProcessList data={processesQ.data} pending={processesQ.isPending} error={processesQ.isError ? processesQ.error as Error : null} />
+                        <OutcomeSummary />
                     </>
                 )}
             </div>

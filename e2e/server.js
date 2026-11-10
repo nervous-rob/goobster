@@ -1383,6 +1383,86 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // The outcome summary (assistantOutcomes.spec.js, DA-6): a dedicated
+    // person with two active responsibilities and the rows their runs would
+    // have left over the last days, one of them older than a week. Rows are
+    // written as the services leave them; no model runs. Safe to call twice:
+    // it starts that person over.
+    app.post('/e2e/fixtures/assistant-outcomes', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const responsibilityService = require('@goobster/core/services/assistantResponsibilityService');
+            const runService = require('@goobster/core/services/assistantRunService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Pilot' });
+            for (const table of ['assistant_run_operations', 'assistant_runs', 'assistant_process_repairs']) {
+                await db.run(`DELETE FROM ${table} WHERE ownerUserId = @userId`, { userId });
+            }
+            for (const [table, column] of [
+                ['kg_change_sets', 'userId'], ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'],
+                ['assistant_initiatives', 'ownerUserId'], ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'],
+                ['attention_policies', 'userId'], ['usage_reservations', 'payer']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            if (req.body?.empty) return res.json({ ok: true });
+            const ago = (days) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 19).replace('T', ' ');
+            const prompt = runService.promptVersion().label;
+            const grant = async (title) => {
+                const made = await responsibilityService.create({
+                    userId, body: { title, operations: [{ operation: 'read', resource: { kind: 'knowledge', ids: ['personal'] } }] }
+                });
+                return (await responsibilityService.act({
+                    userId, id: made.responsibility.id, action: 'activate', expectedRevision: made.responsibility.revision
+                })).responsibility;
+            };
+            let seq = 0;
+            const run = async (responsibility, { status = 'COMPLETED', outcome = 'DONE', stopCode = null, planStepId = null, tokens = 0, days = 1 } = {}) => {
+                seq += 1;
+                const initiativeId = Number(await db.insert(
+                    `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, sourceKind, sourceId,
+                        sourceRevision, dedupeKey, title, status, stopCode, planStepId, createdAt)
+                     VALUES (@rid, @rev, @userId, @userId, 'attention_item', @source, 'r1', @key, 'Fixture work', @status, @stopCode, @planStepId, @at)`,
+                    { rid: responsibility.id, rev: responsibility.revision, userId, source: `outcome-${seq}`, key: `outcome-${userId}-${seq}`, status, stopCode, planStepId, at: ago(days) }
+                ));
+                const runId = Number(await db.insert(
+                    `INSERT INTO assistant_runs (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId, status,
+                        outcome, stopCode, tokensUsed, startedAt, promptVersion, provider, model)
+                     VALUES (@initiativeId, @rid, @rev, @userId, @userId, @userId, @status, @outcome, @stopCode, @tokens, @at, @prompt, 'openai', 'fixture-model')`,
+                    {
+                        initiativeId, rid: responsibility.id, rev: responsibility.revision, userId, status,
+                        outcome: status === 'COMPLETED' ? outcome : null, stopCode, tokens, at: ago(days), prompt
+                    }
+                ));
+                if (tokens > 0) {
+                    await db.insert(
+                        `INSERT INTO usage_reservations (actor, payer, workKind, workId, estimatedTokens, actualTokens, status)
+                         VALUES (@userId, @userId, 'assistant_run', @workId, @tokens, @tokens, 'settled')`,
+                        { userId, workId: String(runId), tokens }
+                    );
+                }
+                return runId;
+            };
+            const plan = await grant('Carry the crossing plan forward');
+            const notes = await grant('Keep what I know about the crossing current');
+            // The plan: two steps whose files were verified this week, one more a fortnight ago, and one that failed its check.
+            await run(plan, { planStepId: 9101, tokens: 1200 });
+            await run(plan, { planStepId: 9102, tokens: 800, days: 2 });
+            await run(plan, { planStepId: 9103, tokens: 500, days: 12 });
+            await run(plan, { planStepId: 9104, status: 'FAILED', stopCode: 'VERIFICATION_FAILED', tokens: 400, days: 3 });
+            // The notes: one finding and one refused call; nothing was checked.
+            const finding = await run(notes, { tokens: 600 });
+            await db.insert(
+                `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, effect, status, refusalCode, resultText)
+                 VALUES (@runId, @userId, 'searchWeb', 'outcome-fixture', 'read', 'REFUSED', 'OPERATION_OUT_OF_SCOPE', NULL)`,
+                { runId: finding, userId }
+            );
+            res.json({ ok: true, plan: plan.id, notes: notes.id, prompt });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The Notion connector (assistantNotion.spec.js, DA-11e): an in-memory
     // Notion (tests/helpers/fakeNotion.js) stands in for notionService's
     // requests, holding one page per person. The person gets a token for it

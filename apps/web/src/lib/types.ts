@@ -663,6 +663,47 @@ export type ProcessIncident = {
     criticality: 'low' | 'normal' | 'high'; openedAt: string; recoveringSince: string | null;
     members: Array<{ ref: string; name: string | null; role: 'failing' | 'dependent'; state: string }>;
 };
+/** Counts of what one responsibility (or all of them) did in a period. Counts and names only. */
+export type AssistantOutcomeCounts = {
+    work: { proposed: number; completed: number; failed: number; waiting: number; open: number; withdrawn: number };
+    runs: { total: number; completed: number; failed: number; waiting: number; review: number; cancelled: number; running: number };
+    /** Results code checked: plan steps whose files were verified, repairs whose check afterwards was clean. */
+    verified: { planSteps: number; repairs: number; total: number };
+    /** Results a run reported and nothing checked. */
+    reported: { findings: number; noChange: number };
+    changes: { applied: number; outside: number };
+    notes: { proposed: number; applied: number; dismissed: number; stale: number; waiting: number; direct: number; undone: number };
+    repairs: { applied: number; verified: number; succeeded: number; failed: number; rolledBack: number };
+    requests: { asked: number; answered: number; open: number };
+    refusals: { total: number; byCode: Record<string, number> };
+    stopped: { total: number; byCode: Record<string, number> };
+    review: number;
+    delivery: { updates: number; digest: number; contacts: number };
+    cost: {
+        tokens: number; heldTokens: number; searches: number; computeSeconds: number;
+        resources: Record<string, number>; failures: number; provisional: boolean;
+    };
+    /** Null when there is no result of that kind: no figure, never zero. */
+    tokensPerVerified: number | null;
+    tokensPerResult: number | null;
+};
+export type AssistantOutcomeRow = AssistantOutcomeCounts & {
+    id: number; title: string; status: string; revision: number;
+    limits: {
+        modelTokens: number | null; searches: number | null; computeSeconds: number | null;
+        externalOperations: number | null; repairAttempts: number | null; interruption: 'home' | 'digest' | 'immediate' | string;
+    };
+    models: Array<{ provider: string | null; model: string | null; prompt: string | null; runs: number }>;
+};
+export type AssistantOutcomes = {
+    period: { from: string; to: string; days: number };
+    /** The prompt version a run started now would be given. */
+    prompt: string;
+    responsibilities: AssistantOutcomeRow[];
+    totals: AssistantOutcomeCounts;
+    costSource: 'ledger' | 'runs';
+    notMeasured: string[];
+};
 export type AssistantProcessList = {
     processes: AssistantProcess[];
     counts: {
