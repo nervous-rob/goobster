@@ -129,6 +129,7 @@ const GROUPS = [
             'windowsHelper',
             'windowsBootstrapCli',
             'packageBootstrapWin32',
+            'bootstrapTools',
             'releaseIndex',
             'releaseArtifacts',
             'releaseManagerTrust',
