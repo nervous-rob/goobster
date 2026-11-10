@@ -349,7 +349,8 @@ module.exports = {
                     objective: { type: 'string', description: 'mission propose/update: the outcome we are pursuing' },
                     successCriteria: { type: 'string', description: 'mission: measurable criteria, one per line or semicolon-separated' },
                     deadline: { type: 'string', description: 'mission: YYYY-MM-DD or UTC timestamp' },
-                    stepKind: { type: 'string', enum: ['expedition', 'job', 'watch', 'human'], description: 'mission add_step: step type' },
+                    stepKind: { type: 'string', enum: ['expedition', 'job', 'watch', 'human', 'agent'], description: 'mission add_step: step type. agent = a step the owner\'s delegated assistant carries out once the plan is approved and started (nobody starts it by hand); give artifacts.' },
+                    artifacts: { type: 'string', description: 'mission add_step agent: workspace-relative files the step must produce, comma-separated' },
                     stepTitle: { type: 'string', description: 'mission add_step: short step title' },
                     stepDescription: { type: 'string', description: 'mission add_step: what this step does' },
                     stepId: { type: 'integer', description: 'mission start_step / complete_step / skip_step' },
@@ -383,7 +384,7 @@ module.exports = {
             relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, requireGreenCi, missionAction, title, objective,
             successCriteria, deadline, stepKind, stepTitle, stepDescription, stepId, seed,
             watchTopic, criterionId, evidenceKind, evidenceId, polarity, verdict, reviewNotes,
-            choices, selectedId, template, template_args: templateArgs,
+            choices, selectedId, artifacts, template, template_args: templateArgs,
             interactionContext
         }) => {
             if (!observatoryService.enabled) {
@@ -1139,7 +1140,8 @@ module.exports = {
                                             actionParams: {
                                                 seed,
                                                 asset: slug,
-                                                topic: watchTopic
+                                                topic: watchTopic,
+                                                ...(stepKind === 'agent' ? { instructions: stepDescription, artifacts } : {})
                                             }
                                         }]
                                         : []
@@ -1180,6 +1182,9 @@ module.exports = {
                                         asset: slug,
                                         topic: watchTopic,
                                         prompt: reviewNotes || prompt || stepDescription,
+                                        ...(stepKind === 'agent'
+                                            ? { instructions: prompt || stepDescription || content, artifacts }
+                                            : {}),
                                         choices: choiceList.length
                                             ? choiceList.map(label => ({ label }))
                                             : undefined

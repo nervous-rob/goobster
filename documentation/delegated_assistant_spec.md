@@ -10,9 +10,18 @@ tags: [planning, assistant, initiative, responsibilities, home, knowledge, proje
 **Status: planned; no feature implementation is claimed.** This is the product
 contract for the next delegated-assistant work. Existing Attention, Knowledge,
 Projects, Research, Inbox, and Home behavior remains governed by its shipped
-documentation until an increment explicitly lands.
+documentation until an increment explicitly lands. What has landed is recorded
+in the [implementation plan's status table](delegated_assistant_implementation.md#delivery-sequence);
+the shipped behaviour guides are
+[delegated_responsibilities.md](delegated_responsibilities.md),
+[assistant_home.md](assistant_home.md), [delegated_runs.md](delegated_runs.md)
+and, for section 7, [delegated_plan_steps.md](delegated_plan_steps.md) (plan
+steps) and
+[delegated_conversation_requests.md](delegated_conversation_requests.md)
+(requests made in conversation and changes of direction; journey B for
+explicit requests, and the project board of journey G).
 
-Updated: **2026-11-08**. Code baseline: `c3b773ee` (2026-10-27).
+Updated: **2026-11-10**. Code baseline: `c3b773ee` (2026-10-27).
 Recheck implementation seams against current main before starting each increment.
 
 Read with [the architecture](delegated_assistant_architecture.md) and
@@ -455,6 +464,13 @@ deletions. Ordinary undo cannot resurrect privacy-erased personal data.
 
 ## 7. Carrying project work forward
 
+**Shipped in DA-4a:** delegated execution of the assistant steps of an
+approved, started Plan, with its own authorization record, verification
+before a step is done, and an explicit actor and payer
+([delegated_plan_steps.md](delegated_plan_steps.md)). Initiatives that
+originate from conversations, and the handoff back to the originating
+conversation, are still planned.
+
 Ordinary Chat, Parlor, and project conversations can originate an initiative.
 It retains the original human statements and routes to an existing project,
 plan, expedition, or process when possible. Unrelated suggestions stay candidates
@@ -640,9 +656,9 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; two items are available** (answering a request on Home
-and in the Inbox, and "Reaching you", both marked below); nothing else here
-is. Increments DA-7 through
+**Status: planned; three items are available** (answering a request on Home
+and in the Inbox, "Reaching you", and "For the host" at the end of this
+section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -711,8 +727,15 @@ records the pilot decision
 
 ### For the host
 
+**Available** (Host → Delegated work;
+[delegated_operations.md](delegated_operations.md)):
+
 - A view of delegated work across the installation without any private
   text, with caps and a stop-all control.
+- Everything in this section that is not available yet starts with the
+  host's own account only when it arrives. The host opens it to everyone by
+  recording the pilot decision on the same page, and can close it again.
+  Answering a request on Home and in the Inbox is already open to everyone.
 
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same

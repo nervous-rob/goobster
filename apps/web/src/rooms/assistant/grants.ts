@@ -1,4 +1,4 @@
-import type { Interruption, ResponsibilityOperation } from '../../lib/types';
+import type { Interruption, Responsibility, ResponsibilityOperation } from '../../lib/types';
 
 /** Plain words for what a responsibility grants. */
 
@@ -32,6 +32,7 @@ const OPERATION_TEXT: Record<string, string> = {
     'kg.archive': 'archive notes',
     'file.edit': 'edit files',
     'sandbox.run': 'run code in the sandbox',
+    'plan.step.execute': 'carry out assistant steps of its approved plan',
     'process.repair': 'repair',
     'process.pause': 'pause',
     'process.archive': 'archive',
@@ -66,4 +67,14 @@ export function describeGrants(operations: ResponsibilityOperation[], projects: 
         byResource.set(where, [...(byResource.get(where) || []), OPERATION_TEXT[entry.operation] || entry.operation]);
     }
     return [...byResource.entries()].map(([where, verbs]) => `${verbs.join(', ')}: ${where}`);
+}
+
+/** Where it takes requests addressed to the assistant, in plain words (delegated_conversation_requests.md). */
+export function describeListening(item: Pick<Responsibility, 'scopes'>, name: string): string | null {
+    const sources = item.scopes?.sources || [];
+    const places = [
+        sources.includes('project_chat') ? 'its project\'s conversations' : null,
+        sources.includes('parlor') ? 'your discussions' : null
+    ].filter(Boolean);
+    return places.length ? `Takes requests you address to ${name} in ${places.join(' and ')}` : null;
 }

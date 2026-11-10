@@ -28,7 +28,7 @@ const logger = require('../utils/logger');
 
 const COMPONENTS = ['knowledge', 'research', 'projects', 'processes', 'conversations', 'responsibilities'];
 const KINDS = ['finding', 'progress', 'process', 'question', 'responsibility'];
-const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review'];
+const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review', 'open_conversation'];
 const INBOX_SOURCE_TYPE = 'assistant_update';
 const PAGE_MAX = 50;
 const ACK_MAX = 100;
@@ -558,6 +558,31 @@ class AssistantUpdateService {
      * The stored row of one update this person can see, or null. For
      * services that act on the update's gate (assistantGateService).
      */
+    /**
+     * This person's own updates for a set of identities, as they see them
+     * now (receipts applied), keyed by identity. A read. Used by the
+     * project board to show a project's gates as the same canonical
+     * requests Home and the Inbox show.
+     * @param {{ userId: string, identityKeys: string[], now?: Date }} params
+     * @returns {Promise<Map<string, Object>>}
+     */
+    async personalByIdentity({ userId, identityKeys, now = new Date() }) {
+        const keys = [...new Set((identityKeys || []).map(String))].slice(0, 200);
+        if (!userId || !keys.length) return new Map();
+        const params = { userId: String(userId) };
+        const names = keys.map((key, index) => {
+            params[`k${index}`] = key;
+            return `@k${index}`;
+        });
+        const rows = await db.all(
+            `SELECT * FROM assistant_updates
+             WHERE audienceKind = 'user' AND audienceUserId = @userId AND identityKey IN (${names.join(', ')})`,
+            params
+        );
+        const receipts = await this._receipts(userId, rows.map(row => Number(row.id)));
+        return new Map(rows.map(row => [row.identityKey, this.present(row, receipts.get(Number(row.id)), now)]));
+    }
+
     async rowFor({ userId, id }) {
         const clean = positiveId(id);
         return userId && clean ? this._visibleRow(userId, clean) : null;

@@ -176,6 +176,30 @@ describe('what producers announce', () => {
         expect(ran.filter(event => event.kinds.includes('run')).length).toBeGreaterThanOrEqual(2);
     });
 
+    test('work withdrawn because its source moved on is announced', async () => {
+        await policies.enroll({ userId: OWNER, initiative: 'assist' });
+        const { responsibility: grant } = await responsibilities.create({
+            userId: OWNER, activate: true, body: { title: 'Keep the plan moving', operations: [READ_WEB] }
+        });
+        const id = await db.insert(
+            `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,
+                sourceKind, sourceId, sourceRevision, dedupeKey, title, reason)
+             VALUES (@rid, @rev, @u, @u, 'project_plan_step', 'step:1', 'r1', 'project_plan_step:step:1', 'Draft the bed layout', 'The step is ready.')`,
+            { rid: grant.id, rev: grant.revision, u: OWNER }
+        );
+        jest.spyOn(initiatives.SOURCES.project_plan_step, 'stale').mockImplementation(async () => [{ id, code: 'PLAN_CHANGED' }]);
+        jest.spyOn(initiatives.SOURCES.project_plan_step, 'read').mockImplementation(async () => []);
+
+        const withdrawn = await announced(async () => {
+            expect((await initiatives.reconcileResponsibility(grant.id)).superseded).toBe(1);
+        });
+        expect(withdrawn).toEqual([{ userId: OWNER, kinds: ['initiative'] }]);
+        expect((await initiatives.get({ userId: OWNER, id })).status).toBe('SUPERSEDED');
+
+        // Nothing left to withdraw: nothing to say.
+        expect(await announced(() => initiatives.reconcileResponsibility(grant.id))).toEqual([]);
+    });
+
     test('run progress is announced at most once per run every five seconds', async () => {
         const events = await announced(async () => {
             for (let i = 0; i < 20; i += 1) live.progress(OWNER, 4242);

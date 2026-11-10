@@ -2122,7 +2122,21 @@ class ParlorService {
             { id: conversation.id }
         );
         if (notify) await this._notifyTurn(conversation.id, userId);
+        this._noteForAssistant(userId, text);
         return message;
+    }
+
+    /**
+     * Tell the delegated assistant a person spoke, so a request addressed to
+     * Goobster is picked up soon (documentation/delegated_conversation_requests.md).
+     * Only a hint: the assistant reads the stored message itself, and its
+     * periodic pass finds anything this misses.
+     */
+    _noteForAssistant(userId, text) {
+        try {
+            requireOptional('./assistantInitiativeService', { feature: 'assistant' })
+                ?.noteConversationMessage({ userId, text });
+        } catch { /* a hint, never the turn's problem */ }
     }
 
     /**
@@ -2209,6 +2223,7 @@ class ParlorService {
                         await this._autoTitle({ conversationId: conversation.id, ownerId, userMessage: text });
                     }
                     try { events.onUserMessage?.({ ...userMessage, grounding: [] }); } catch { /* never break the turn */ }
+                    service._noteForAssistant(userId, text);
                     // Other humans in a shared discussion see the message
                     // land immediately (personas may generate for a while)
                     await service._notifyTurn(conversation.id, userId);

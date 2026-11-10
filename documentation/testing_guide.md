@@ -257,12 +257,32 @@ refresh the recorded seconds, run
 shard uploads its Playwright traces as the artifact
 `playwright-shard-<n>`.
 
+Each shard installs Chromium with `scripts/ci-playwright-chromium.sh`.
+The nine font packages Chromium needs on a runner are kept in a cache
+(keyed on the runner image and the Playwright version) and installed from
+it without downloading; Playwright's own dry run then confirms that
+nothing is missing. With no cache, or if anything about the cache is off,
+the script runs `npx playwright install --with-deps chromium` as before,
+so a miss costs time and never a failure. The step's log says which path
+ran (`system packages from the cache` or `full install`) and prints a
+hash of the installed fonts. Locally nothing changes: `npm run
+test:e2e:install` is still the plain Playwright command.
+
 Every journey of a shard talks to one `e2e/server.js` process. A fixture
 route there has to be safe to call twice, because CI retries a failed
 journey once and the retry seeds again, and it must not be able to end
 the process: `e2e/harness.spec.js` holds both. A long run of journeys
 failing in about 100 ms each means that server has exited; look for the
 first failure before the run, not at the run.
+
+A journey whose actions each take longer than the one before, while the
+server answers in milliseconds, is the page doing more work on every
+frame, and it is not a cold start: the first portal journey of a shard
+costs about 0.3 s more than the next one. Open the shard's trace and
+compare an element's size across the snapshots. The followed-sources
+journey passed the 45-second limit this way, on a map canvas that grew
+about 100 px a frame (fixed in `apps/web/src/styles.css`, held by the
+last test in `e2e/followedSources.spec.js`).
 
 A new push to a pull request cancels the run for the previous push. Runs
 on `main` are never cancelled.

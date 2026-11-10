@@ -273,6 +273,16 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `limits.windowHours` | integer | env `GOOBSTER_LIMITS_WINDOW_HOURS`<br>config.json `limits.windowHours`<br>database `limits.windowHours` (wins) | `24` | hot | core | Length of the token window, in hours. Precedence: database, then environment, then config.json, then default. |
 | `limits.retentionDays` | integer | env `GOOBSTER_LIMITS_RETENTION_DAYS`<br>config.json `limits.retentionDays`<br>database `limits.retentionDays` (wins) | `90` | hot | core | Days usage reservations are kept. Precedence: database, then environment, then config.json, then default. |
 
+## Delegated work caps (enforced policy)
+
+| Setting | Type | Where | Default | Applies | Needed by | What it does |
+| --- | --- | --- | --- | --- | --- | --- |
+| `assistant.installationRuns` | integer | env `GOOBSTER_ASSISTANT_INSTALLATION_RUNS`<br>config.json `assistant.installationRuns`<br>database `assistantCaps.installationRuns` (wins) | `2` | hot | assistant | Delegated runs that may execute at once across the installation. Precedence: database, then environment, then config.json, then default. |
+| `assistant.runsPerAccount` | integer | env `GOOBSTER_ASSISTANT_RUNS_PER_ACCOUNT`<br>config.json `assistant.runsPerAccount`<br>database `assistantCaps.runsPerAccount` (wins) | `1` | hot | assistant | Delegated runs one account may have executing at once. Precedence: database, then environment, then config.json, then default. |
+| `assistant.defaultModelTokens` | integer | env `GOOBSTER_ASSISTANT_DEFAULT_MODEL_TOKENS`<br>config.json `assistant.defaultModelTokens`<br>database `assistantCaps.defaultModelTokens` (wins) | `200000` | hot | assistant | Model tokens a responsibility may use per UTC day when it sets no budget, and the most its own budget can allow. Precedence: database, then environment, then config.json, then default. |
+| `assistant.defaultSearches` | integer | env `GOOBSTER_ASSISTANT_DEFAULT_SEARCHES`<br>config.json `assistant.defaultSearches`<br>database `assistantCaps.defaultSearches` (wins) | `20` | hot | assistant | Web searches a responsibility may make per UTC day when it sets no budget, and the most its own budget can allow. Precedence: database, then environment, then config.json, then default. |
+| `assistant.defaultComputeSeconds` | integer | env `GOOBSTER_ASSISTANT_DEFAULT_COMPUTE_SECONDS`<br>config.json `assistant.defaultComputeSeconds`<br>database `assistantCaps.defaultComputeSeconds` (wins) | `120` | hot | assistant | Sandbox seconds a responsibility may use per UTC day when it sets no budget, and the most its own budget can allow. Precedence: database, then environment, then config.json, then default. |
+
 ## Instance defaults (fallbacks, not policy)
 
 | Setting | Type | Where | Default | Applies | Needed by | What it does |

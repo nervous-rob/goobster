@@ -20,6 +20,14 @@
  *    default, never unlimited. An exhausted budget parks the run until the
  *    window resets; it does not poll.
  *
+ *  - A run that has read the person's private knowledge does not write
+ *    into a project other people can read (`PRIVATE_CONTEXT`).
+ *  - A run dispatched for an `agent` step of a project plan (ADR 0019)
+ *    claims the step only inside the plan revision a person approved and
+ *    started, and the step is marked done only after its reported result
+ *    is verified against the journal and the workspace. See
+ *    ./assistant/planStepRun.js.
+ *
  * It never takes the foreground chat claim (`web_live_turns`).
  * Spec: documentation/delegated_runs.md.
  */
@@ -29,14 +37,24 @@ const db = require('../db');
 const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const workFailureService = require('./workFailureService');
+const assistantConfig = require('../config/assistantConfig');
+const control = require('./assistantControlService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
 
 /** Tells open portals that someone's run started, moved or stopped (kinds only). */
 const live = () => require('./assistantLiveService');
 
-/** Used when the responsibility sets no budget of its own (per UTC day). */
-const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20, computeSeconds: 120 };
+/**
+ * Used when the responsibility sets no budget of its own (per UTC day), and
+ * the most its own budget can allow. These are the configured values; what
+ * the host set in the Host room wins (assistantControlService.budgetDefaults).
+ */
+const DEFAULT_BUDGETS = Object.freeze({
+    modelTokens: assistantConfig.defaultModelTokens,
+    searches: assistantConfig.defaultSearches,
+    computeSeconds: assistantConfig.defaultComputeSeconds
+});
 const MAX_ROUNDS = 8;
 const RUN_DEADLINE_MS = 10 * 60 * 1000;
 const REPLY_TOKENS = 1200;
@@ -46,7 +64,7 @@ const CHILD_RECHECK_MS = 5 * 60 * 1000;
 /** authorize() codes after which the run cannot continue at all. */
 const STOP_CODES = new Set([
     'RESPONSIBILITY_NOT_FOUND', 'RESPONSIBILITY_REVOKED', 'RESPONSIBILITY_EXPIRED', 'RESPONSIBILITY_INACTIVE',
-    'REVISION_CONFLICT', 'ACTOR_MISMATCH', 'ATTENTION_NOT_ENROLLED', 'FEATURE_UNAVAILABLE'
+    'REVISION_CONFLICT', 'ACTOR_MISMATCH', 'ATTENTION_NOT_ENROLLED', 'FEATURE_UNAVAILABLE', 'ASSISTANT_PAUSED'
 ]);
 
 function utcText(date = new Date()) {
@@ -142,11 +160,17 @@ class AssistantRunService {
         return map;
     }
 
-    /** The grant's daily caps: its own numbers, or the defaults when unset. */
-    budgets(responsibility) {
+    /**
+     * The grant's daily caps: the host's default when it sets none, and
+     * never more than that default when it does (a responsibility's own
+     * budget can be lower than the host's number, not higher).
+     * @param {{ budgetsJson?: string }} responsibility
+     * @param {{ modelTokens: number, searches: number, computeSeconds: number }} [hostDefaults]
+     */
+    budgets(responsibility, hostDefaults = DEFAULT_BUDGETS) {
         let stored = {};
         try { stored = JSON.parse(responsibility.budgetsJson || '{}') || {}; } catch { stored = {}; }
-        const pick = (key) => (Number.isSafeInteger(stored[key]) ? stored[key] : DEFAULT_BUDGETS[key]);
+        const pick = (key) => (Number.isSafeInteger(stored[key]) ? Math.min(stored[key], hostDefaults[key]) : hostDefaults[key]);
         return { modelTokens: pick('modelTokens'), searches: pick('searches'), computeSeconds: pick('computeSeconds') };
     }
 
@@ -276,7 +300,8 @@ class AssistantRunService {
                 { runId: ctx.run.id, tool: name, hash, seq }
             );
             if (prior?.status === 'SUCCEEDED') {
-                if (name === 'finish') await spec.run(args, ctx);
+                if (spec.final) await spec.run(args, ctx);
+                if (spec.source === 'private') ctx.privateRead = true;
                 if (typeof spec.replay === 'function') return spec.replay(prior, ctx);
                 return prior.resultText || '';
             }
@@ -324,8 +349,16 @@ class AssistantRunService {
                 });
                 if (!verdict.ok) {
                     if (STOP_CODES.has(verdict.code)) ctx.halt(verdict.code);
+                    // A plan step is project work: without the project there is nothing left to do.
+                    if (ctx.planStep && verdict.code === 'RESOURCE_UNAVAILABLE' && required.resource?.kind === 'project') ctx.halt(verdict.code);
                     return refuse(verdict.code);
                 }
+            }
+            if (spec.publishes === 'project' && ctx.privateRead) {
+                // What it read from the person's private knowledge may be in
+                // what it writes: only a project nobody else reads may take it.
+                const allowed = await require('./knowledgeTransferService').privateContextAllowed({ userId: ctx.actor, project: ctx.project });
+                if (!allowed) return refuse('PRIVATE_CONTEXT');
             }
             if (spec.budget === 'searches') {
                 if (ctx.used.searches + ctx.searches >= ctx.budgets.searches) return refuse('SEARCH_BUDGET');
@@ -358,6 +391,7 @@ class AssistantRunService {
                 return `That did not work (${error?.code || 'ERROR'}).`;
             }
             await mark(id, 'SUCCEEDED', result);
+            if (spec.source === 'private') ctx.privateRead = true;
             await ctx.account();
             ctx.childPending();
             return result;
@@ -380,16 +414,34 @@ class AssistantRunService {
         const run = await this._open(initiative, responsibility);
         const actor = responsibility.actingUserId || responsibility.ownerUserId;
         const project = await this._project(responsibility);
-        const budgets = this.budgets(responsibility);
+        const budgets = this.budgets(responsibility, await control.budgetDefaults());
         const used = await this._usedToday(responsibility.id, run.id, now);
         const { features } = require('../features/featureState');
-        // Each tool says when it is on offer (a linked project, a feature that is on).
-        const offered = new Set(Object.keys(TOOLS).filter((name) => (
-            typeof TOOLS[name].available === 'function' ? Boolean(TOOLS[name].available({ project, features })) : true
-        )));
+        const planStep = initiative.planStep || null;
+        const steps = planStep ? require('./assistant/planStepRun') : null;
+        // Private knowledge this run already read (a resumed run remembers).
+        const journaled = await db.all(
+            "SELECT DISTINCT tool FROM assistant_run_operations WHERE runId = @runId AND status = 'SUCCEEDED'", { runId: run.id }
+        );
+        // Can anyone but the person read what is written into the project?
+        const sharedProject = project
+            ? !(await require('./knowledgeTransferService').privateContextAllowed({ userId: actor, project }))
+            : false;
+        // Each tool says when it is on offer (a linked project, a feature
+        // that is on, a plan-step run). A plan step in a project other
+        // people read is not offered the person's private knowledge at all.
+        const offered = new Set(Object.keys(TOOLS).filter((name) => {
+            const spec = TOOLS[name];
+            if (typeof spec.available === 'function' && !spec.available({ project, features, planStep })) return false;
+            return !(planStep && sharedProject && spec.source === 'private');
+        }));
 
         const ctx = {
             run, actor, project, budgets, used, offered,
+            // The agent plan step this run carries out, once dispatched.
+            planStep: null,
+            stepReport: null,
+            privateRead: journaled.some(row => TOOLS[row.tool]?.source === 'private'),
             searches: Number(run.searches || 0),
             compute: Number(run.computeSeconds || 0),
             fileHashes: new Map(),
@@ -407,6 +459,7 @@ class AssistantRunService {
             halt(code) { if (!this.stop) this.stop = code; },
             heartbeat: async () => {
                 if (shouldStop()) { ctx.halt('RUNNER_STOPPING'); return false; }
+                if (await ctx.hostStopped()) return false;
                 const alive = await initiatives.renewLease({ id: initiative.id, leaseToken });
                 if (!alive) ctx.halt('LEASE_LOST');
                 else {
@@ -416,9 +469,17 @@ class AssistantRunService {
                 }
                 return alive;
             },
+            // The host's stop-all, read from the database so every process agrees.
+            hostStopped: async () => {
+                const paused = await control.isPaused();
+                if (paused) ctx.halt(control.PAUSED_CODE);
+                return paused;
+            },
             account: async () => {
                 ctx.tokens = Math.max(ctx.tokens, await this.tokensFor(run.id));
                 if (ctx.used.tokens + ctx.tokens >= ctx.budgets.modelTokens) ctx.halt('TOKEN_BUDGET');
+                // Checked after each step too, so no further model round starts.
+                await ctx.hostStopped();
             }
         };
 
@@ -451,6 +512,48 @@ class AssistantRunService {
         // Nothing is spent when today's budget is already gone.
         if (used.tokens >= budgets.modelTokens) return park('budget', 'TOKEN_BUDGET', nextDay(now));
 
+        // A plan step: authorized and claimed before any model call.
+        let stepWork = null;
+        if (planStep) {
+            const dispatched = await steps.dispatch({ initiative, run, responsibility, actor, project });
+            if (!dispatched.ok) return this._planStepRefused({ dispatched, steps, run, initiative, leaseToken, actor, now, park, finishRun });
+            stepWork = { step: dispatched.step, mission: dispatched.mission };
+            ctx.planStep = { id: dispatched.step.id, missionId: dispatched.mission.id };
+            if (dispatched.settled) {
+                // A crash after the step was settled: finish the bookkeeping, do no work again.
+                return this._planStepAlreadySettled({
+                    settledAs: dispatched.settled, stepWork, run, initiative, leaseToken, responsibility, project, actor, finishRun
+                });
+            }
+        }
+        const releaseStep = async (code) => {
+            if (stepWork) await steps.release({ runId: run.id, stepId: stepWork.step.id, code });
+        };
+
+        // A request made in a conversation (ADR 0021): read it again now, as
+        // the person. Deleted, out of reach or no longer covered ends the
+        // attempt here, before any model call.
+        let request = null;
+        const requests = !planStep && initiative.origin?.kind === 'parlor_message'
+            ? require('./assistant/conversationRequestRun') : null;
+        if (requests) {
+            const loaded = await requests.load({ initiative, responsibility });
+            if (!loaded.ok) {
+                const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: loaded.code });
+                await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? loaded.code : 'LEASE_LOST' });
+                return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: loaded.code, runId: run.id };
+            }
+            request = loaded.source;
+        }
+        // The lease is gone: cancelled, parked, revoked, or stopped by a
+        // change of direction, whose update is brought up to date now that
+        // the run has actually stopped.
+        const leaseLost = async () => {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            await require('./assistant/steering').afterRunStopped({ initiativeId: initiative.id });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        };
+
         let loop = null;
         let failure = null;
         try {
@@ -458,7 +561,11 @@ class AssistantRunService {
             loop = await workContext.run(
                 { kind: 'assistant_run', id: run.id, actor, payer: run.payerUserId || actor },
                 () => runAgentLoop({
-                    messages: this._messages({ responsibility, initiative, project, tools: [...offered] }),
+                    messages: stepWork
+                        ? steps.messages({ responsibility, project, tools: [...offered], ...stepWork })
+                        : request
+                            ? requests.messages({ responsibility, project, tools: [...offered], source: request })
+                            : this._messages({ responsibility, initiative, project, tools: [...offered] }),
                     chatOptions: {
                         max_tokens: REPLY_TOKENS,
                         background: true,
@@ -478,6 +585,11 @@ class AssistantRunService {
             failure = error;
         }
         try { ctx.tokens = Math.max(ctx.tokens, await this.tokensFor(run.id)); } catch { /* keep the last known figure */ }
+        // A stop that landed during the last model call: work that has not
+        // reported yet waits like the rest, and reports after the resume.
+        if (!failure && !ctx.stop && !ctx.result) {
+            try { await ctx.hostStopped(); } catch { /* the flag could not be read; the settle below decides */ }
+        }
 
         if (failure) {
             const code = failure.code === 'BUDGET_EXCEEDED' ? 'ACCOUNT_BUDGET'
@@ -485,6 +597,8 @@ class AssistantRunService {
             await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'run', code });
             if (code === 'ACCOUNT_BUDGET') return park('budget', code, nextDay(now));
             if (code === 'NO_PROVIDER') return park('dependency', code, new Date(now.getTime() + 60 * 60 * 1000));
+            // The step did not fail, the provider did: it goes back for a later attempt.
+            await releaseStep(code);
             const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'FAILED', stopCode: code });
             await finishRun({ status: settled.ok ? 'FAILED' : 'CANCELLED', stopCode: settled.ok ? code : 'LEASE_LOST' });
             logger.warn?.(`[assistant run] run ${run.id} failed: ${code}`);
@@ -492,11 +606,16 @@ class AssistantRunService {
         }
 
         if (ctx.stop === 'LEASE_LOST') {
-            // Cancelled, parked or revoked while working: no result is written.
-            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
-            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+            // Cancelled, parked, revoked or superseded while working: no result is written.
+            await releaseStep('LEASE_LOST');
+            return leaseLost();
         }
         if (ctx.stop === 'OPERATION_UNCERTAIN') {
+            // A write that may or may not have happened is a blocker on the plan too.
+            if (stepWork) {
+                const closed = await steps.settle({ ctx, step: stepWork.step, ok: false, code: ctx.stop });
+                if (!closed.ok) await releaseStep(closed.code);
+            }
             const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'REVIEW', stopCode: ctx.stop });
             await finishRun({ status: settled.ok ? 'REVIEW' : 'CANCELLED', stopCode: ctx.stop });
             return { status: 'REVIEW', stopCode: ctx.stop, runId: run.id };
@@ -509,9 +628,18 @@ class AssistantRunService {
         }
         if (ctx.stop === 'CHILD_PENDING') return park('dependency', 'CHILD_PENDING', new Date(now.getTime() + CHILD_RECHECK_MS));
         if (ctx.stop === 'TOKEN_BUDGET' && !ctx.result) return park('budget', 'TOKEN_BUDGET', nextDay(now));
+        // Stopped by the host: it waits, and a resume puts it back in the queue.
+        if (ctx.stop === control.PAUSED_CODE && !ctx.result) return park('dependency', control.PAUSED_CODE, null);
         if (ctx.stop && !ctx.result) {
-            // The grant stopped covering the work (paused, revoked, expired, edited).
-            return park('responsibility', ctx.stop, null);
+            // The grant stopped covering the work (paused, revoked, expired,
+            // edited), or the person lost the project of a plan step.
+            await releaseStep(ctx.stop);
+            return park(ctx.stop === 'RESOURCE_UNAVAILABLE' ? 'access' : 'responsibility', ctx.stop, null);
+        }
+        if (stepWork) {
+            return this._finishPlanStep({
+                ctx, steps, stepWork, loop, run, initiative, leaseToken, responsibility, project, actor, park, finishRun
+            });
         }
 
         // What the run actually changed, read from its journal (not from
@@ -538,10 +666,7 @@ class AssistantRunService {
             id: initiative.id, leaseToken, status: 'COMPLETED', outcome: result.outcome,
             recheckAfter: result.outcome === 'NO_CHANGE' ? new Date(now.getTime() + 24 * 60 * 60 * 1000) : null
         });
-        if (!settled.ok) {
-            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
-            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
-        }
+        if (!settled.ok) return leaseLost();
         let updateId = null;
         if (result.outcome === 'DONE') {
             try {
@@ -551,9 +676,13 @@ class AssistantRunService {
                     kind: 'finding',
                     title: result.title || clip(initiative.title, 200),
                     summary: result.summary || null,
-                    components: [...new Set([...(project ? ['projects'] : []), 'research', ...applied.components])],
+                    components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
                     source: { kind: 'initiative', id: initiative.id },
-                    actions: [{ kind: 'open_initiative', id: String(initiative.id) }],
+                    // A result of something asked in a conversation links back to it.
+                    actions: [
+                        { kind: 'open_initiative', id: String(initiative.id) },
+                        ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                    ],
                     responsibilityId: responsibility.id,
                     initiativeId: initiative.id,
                     producerUserId: actor,
@@ -567,6 +696,171 @@ class AssistantRunService {
         }
         await finishRun({ status: 'COMPLETED', outcome: result.outcome, title: result.title || null, summary: result.summary || null, updateId });
         return { status: 'COMPLETED', outcome: result.outcome, runId: run.id, updateId };
+    }
+
+    // --- Plan-step runs (ADR 0019) -----------------------------------------------------
+
+    /** Tell the person, privately, how their plan-step run ended. Never throws. */
+    async _publishPlanStepUpdate({ run, initiative, responsibility, project, actor, title, summary, components = [] }) {
+        try {
+            const published = await require('./assistantUpdateService').publish({
+                audience: { userId: responsibility.ownerUserId },
+                identityKey: `initiative:${initiative.id}`,
+                kind: 'progress',
+                title,
+                summary: summary || null,
+                components: [...new Set(['projects', ...components])],
+                source: { kind: 'initiative', id: initiative.id },
+                actions: [{ kind: 'open_initiative', id: String(initiative.id) }, { kind: 'open_project', id: String(project.id) }],
+                responsibilityId: responsibility.id,
+                initiativeId: initiative.id,
+                producerUserId: actor,
+                deliver: true
+            });
+            return published.update.id;
+        } catch (error) {
+            logger.warn?.(`[assistant run] run ${run.id} finished but its update could not be filed: ${error.message}`);
+            await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'publish', code: 'UPDATE_FAILED' });
+            return null;
+        }
+    }
+
+    /** The step could not be dispatched: nothing was claimed and no model was called. */
+    async _planStepRefused({ dispatched, steps, run, initiative, leaseToken, actor, now, park, finishRun }) {
+        const initiatives = require('./assistantInitiativeService');
+        const code = dispatched.code;
+        // A resumed run may still hold the step from before.
+        await steps.release({ runId: run.id, stepId: initiative.planStep.id, code });
+        if (dispatched.authorize) {
+            // The grant no longer covers it, or the person lost the project.
+            return park(code === 'RESOURCE_UNAVAILABLE' ? 'access' : 'responsibility', code, null);
+        }
+        if (code === 'RESOURCE_UNAVAILABLE') return park('access', code, null);
+        if (code === 'PLAN_BLOCKED') {
+            // Another step failed: wait for the people on the project to unblock the plan.
+            return park('dependency', code, new Date(now.getTime() + steps.BLOCKED_RECHECK_MS));
+        }
+        if (steps.SUPERSEDING.has(code)) {
+            // The plan moved on, or someone else has the step: this attempt is void.
+            const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: code });
+            await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? code : 'LEASE_LOST' });
+            return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: code, runId: run.id };
+        }
+        await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'dispatch', code });
+        const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'FAILED', stopCode: code });
+        await finishRun({ status: settled.ok ? 'FAILED' : 'CANCELLED', stopCode: settled.ok ? code : 'LEASE_LOST' });
+        return { status: 'FAILED', stopCode: code, runId: run.id };
+    }
+
+    /** A resumed run whose step was settled before the crash: close the attempt to match. */
+    async _planStepAlreadySettled({ settledAs, stepWork, run, initiative, leaseToken, responsibility, project, actor, finishRun }) {
+        const initiatives = require('./assistantInitiativeService');
+        const done = settledAs === 'DONE';
+        const settled = await initiatives.settle({
+            id: initiative.id, leaseToken, status: done ? 'COMPLETED' : 'FAILED', outcome: done ? 'DONE' : null,
+            stopCode: done ? null : 'STEP_FAILED'
+        });
+        if (!settled.ok) {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        }
+        const title = clip(`${done ? 'Plan step done' : 'Plan step blocked'}: ${stepWork.step.title}`, 200);
+        const updateId = await this._publishPlanStepUpdate({ run, initiative, responsibility, project, actor, title, summary: null });
+        await finishRun({
+            status: done ? 'COMPLETED' : 'FAILED', outcome: done ? 'DONE' : null, stopCode: done ? null : 'STEP_FAILED', title, updateId
+        });
+        return { status: done ? 'COMPLETED' : 'FAILED', outcome: done ? 'DONE' : undefined, stopCode: done ? undefined : 'STEP_FAILED', runId: run.id, updateId };
+    }
+
+    /**
+     * The end of a plan-step run: verify what was reported, then settle the
+     * step, then the attempt, then tell the person. The step comes first so
+     * a crash in between resumes into _planStepAlreadySettled instead of
+     * doing the work twice.
+     */
+    async _finishPlanStep({ ctx, steps, stepWork, loop, run, initiative, leaseToken, responsibility, project, actor, park, finishRun }) {
+        const initiatives = require('./assistantInitiativeService');
+        const { step, mission } = stepWork;
+        const lost = async () => {
+            await steps.release({ runId: run.id, stepId: step.id, code: 'LEASE_LOST' });
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        };
+        // Nothing is written for work that no longer holds its lease.
+        if (!(await initiatives.renewLease({ id: initiative.id, leaseToken }))) return lost();
+
+        const stopped = async (code) => {
+            await steps.release({ runId: run.id, stepId: step.id, code });
+            return park(code === 'RESOURCE_UNAVAILABLE' ? 'access' : 'responsibility', code, null);
+        };
+        let verified = await steps.verify({ ctx, step, mission });
+        if (!verified.ok && verified.authorize) return stopped(verified.code);
+
+        let closed;
+        if (verified.ok) {
+            closed = await steps.settle({ ctx, step, ok: true, verified });
+            if (!closed.ok && closed.code === 'EVIDENCE_LIMIT') verified = { ok: false, code: 'VERIFICATION_FAILED', detail: 'EVIDENCE_LIMIT' };
+        }
+        if (!verified.ok) closed = await steps.settle({ ctx, step, ok: false, code: verified.code });
+        if (!closed.ok) {
+            if (closed.code === 'RESOURCE_UNAVAILABLE' || closed.code === 'FEATURE_UNAVAILABLE') return stopped(closed.code);
+            // A person closed the step, or the plan ended, while the run worked.
+            const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: 'PLAN_STEP_CLOSED' });
+            await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? 'PLAN_STEP_CLOSED' : 'LEASE_LOST' });
+            return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: 'PLAN_STEP_CLOSED', runId: run.id };
+        }
+
+        const applied = await this._applied(run.id);
+        // The headline is the code's (what was verified); the model's own words follow it.
+        const reported = [ctx.result?.title, ctx.result?.summary].filter(Boolean).join('\n')
+            || clip(String(loop?.content || '').trim(), SUMMARY_CHARS);
+        if (verified.ok) {
+            const title = clip(`Plan step done: ${step.title}`, 200);
+            const summary = clip(
+                `${reported ? `${reported}\n\n` : ''}Files: ${verified.artifacts.map(a => a.path).join(', ')}.`, SUMMARY_CHARS
+            );
+            const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'COMPLETED', outcome: 'DONE' });
+            if (!settled.ok) {
+                await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+                return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+            }
+            const updateId = await this._publishPlanStepUpdate({
+                run, initiative, responsibility, project, actor, title, summary, components: applied.components
+            });
+            await finishRun({ status: 'COMPLETED', outcome: 'DONE', title, summary, updateId });
+            return { status: 'COMPLETED', outcome: 'DONE', runId: run.id, updateId };
+        }
+
+        // Not verified: a blocker on the plan, never a completed objective.
+        const code = verified.code;
+        await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'verify', code: verified.detail || code });
+        const title = clip(`Plan step blocked: ${step.title}`, 200);
+        const why = {
+            STEP_BLOCKED: 'It reported that it could not finish the step.',
+            NO_STEP_REPORT: 'It ended without reporting a result.',
+            VERIFICATION_FAILED: {
+                NO_ARTIFACT: 'It reported the step done but named no file holding the result.',
+                ARTIFACT_NOT_WRITTEN: 'A file the step needs was not written by this run.',
+                ARTIFACT_MISSING: 'A file it reported is not in the project.',
+                ARTIFACT_EMPTY: 'A file it reported is empty.',
+                EVIDENCE_LIMIT: 'The plan cannot hold more evidence links.'
+            }[verified.detail] || 'Its result could not be verified.'
+        }[code];
+        const summary = clip(
+            `${why} The step is marked failed and the plan is blocked until someone retries or skips it.`
+            + `${reported ? `\n\n${reported}` : ''}${applied.lines.length ? `\n\nChanged: ${applied.lines.join(' ')}` : ''}`,
+            SUMMARY_CHARS
+        );
+        const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'FAILED', stopCode: code });
+        if (!settled.ok) {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        }
+        const updateId = await this._publishPlanStepUpdate({
+            run, initiative, responsibility, project, actor, title, summary, components: applied.components
+        });
+        await finishRun({ status: 'FAILED', stopCode: code, title, summary, updateId });
+        return { status: 'FAILED', stopCode: code, runId: run.id, updateId };
     }
 
     /** Expeditions this run started, by the attempt id its journal row gives them. */

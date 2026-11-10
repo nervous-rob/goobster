@@ -14,6 +14,13 @@
  * Events on the domain bus are hints. Step linkage is updated from the
  * job / expedition / watch settle paths so a missed event cannot leave
  * a step running forever.
+ *
+ * An `agent` step (ADR 0019) is carried out by a delegated run under a
+ * responsibility. Nobody starts one from a human surface or a chat tool:
+ * the run service calls beginDelegatedStep / settleDelegatedStep /
+ * releaseDelegatedStep here, after `authorize()` allowed
+ * `plan.step.execute`. Those three never mint, consume or look at a
+ * confirmation receipt, and never approve, start or complete a plan.
  */
 
 const crypto = require('node:crypto');
@@ -28,7 +35,8 @@ const { blockingAmong, unavailableResult, FEATURE_UNAVAILABLE } = require('../fe
 
 const OPEN_STATUSES = ['DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW'];
 const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED'];
-const STEP_KINDS = new Set(['expedition', 'job', 'watch', 'human']);
+const STEP_KINDS = new Set(['expedition', 'job', 'watch', 'human', 'agent']);
+/** Evidence kinds a person or the chat tool may link. `agent_run` is linked only by settleDelegatedStep. */
 const EVIDENCE_KINDS = new Set(['claim', 'note', 'job', 'artifact']);
 const POLARITIES = new Set(['for', 'against', 'neutral']);
 const VERDICTS = new Set(['met', 'unmet', 'mixed']);
@@ -50,7 +58,14 @@ const MAX_EVIDENCE = 40;
 const MAX_EVIDENCE_LABEL = 200;
 const MAX_REVIEW_NOTES = 4000;
 const MAX_REOPEN = 400;
-const DEFAULT_BUDGET = { maxExpeditions: 3, maxJobs: 5, maxWatches: 3 };
+const DEFAULT_BUDGET = { maxExpeditions: 3, maxJobs: 5, maxWatches: 3, maxAgentRuns: 3 };
+/** An agent step's executionAttemptId is this prefix plus its assistant_runs.id. */
+const AGENT_ATTEMPT_PREFIX = 'assistant_run:';
+const MAX_AGENT_INSTRUCTIONS = 1500;
+const MAX_AGENT_ARTIFACTS = 8;
+const MAX_ARTIFACT_PATH = 300;
+/** Workspace-relative file path: no absolute paths, no `..`, no backslashes. */
+const ARTIFACT_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\\0]+$/;
 
 /** Watch statuses that mean the turn is still in progress (not a Mission outcome). */
 const WATCH_IN_FLIGHT = new Set(['ARMED', 'FIRING']);
@@ -153,6 +168,7 @@ function legalizeBudget(input) {
         maxExpeditions: num(raw.maxExpeditions, DEFAULT_BUDGET.maxExpeditions, 12),
         maxJobs: num(raw.maxJobs, DEFAULT_BUDGET.maxJobs, 20),
         maxWatches: num(raw.maxWatches, DEFAULT_BUDGET.maxWatches, 12),
+        maxAgentRuns: num(raw.maxAgentRuns, DEFAULT_BUDGET.maxAgentRuns, 12),
         notes: clip(raw.notes, 400) || null
     };
 }
@@ -237,6 +253,38 @@ function legalizeHumanActionParams(params) {
     delete body.selectedId;
     delete body.answeredAt;
     return body;
+}
+
+/**
+ * Legalize what an agent step asks for: optional instructions and the
+ * workspace files it must produce (checked when the step is verified).
+ * @param {object} params
+ * @returns {{ instructions?: string, artifacts?: string[] }}
+ */
+function legalizeAgentActionParams(params) {
+    const body = parseJson(params, {}) || {};
+    const out = {};
+    const instructions = String(body.instructions || '').trim().slice(0, MAX_AGENT_INSTRUCTIONS);
+    if (instructions) out.instructions = instructions;
+    const raw = Array.isArray(body.artifacts)
+        ? body.artifacts
+        : String(body.artifacts || '').split(/[\n,]+/);
+    const artifacts = [];
+    for (const item of raw) {
+        const path = String(item || '').trim().replace(/^\.\//, '');
+        if (!path) continue;
+        if (path.length > MAX_ARTIFACT_PATH || path.endsWith('/') || !ARTIFACT_PATH.test(path)) {
+            throw new ProjectMissionError(400, 'BAD_STEP_PARAMS',
+                'An agent step names the files it must produce as workspace-relative paths.');
+        }
+        if (!artifacts.includes(path)) artifacts.push(path);
+    }
+    if (artifacts.length > MAX_AGENT_ARTIFACTS) {
+        throw new ProjectMissionError(400, 'BAD_STEP_PARAMS',
+            `An agent step can require at most ${MAX_AGENT_ARTIFACTS} files.`);
+    }
+    if (artifacts.length) out.artifacts = artifacts;
+    return out;
 }
 
 function legalizeDependsOn(input) {
@@ -432,6 +480,16 @@ class ProjectMissionService {
             watchId: row.watchId || null,
             actionParams: parseJson(row.actionParamsJson, {}) || {},
             executionAttemptId: row.executionAttemptId || null,
+            // Who dispatched the current attempt. `delegated` names the
+            // person a responsibility acted for and the grant it ran under.
+            authorization: row.authorizationKind || null,
+            delegation: row.authorizationKind === 'delegated' ? {
+                actingUserId: row.startedByUserId || null,
+                runId: row.agentRunId == null ? null : Number(row.agentRunId),
+                responsibilityId: row.grantResponsibilityId == null ? null : Number(row.grantResponsibilityId),
+                grantRevision: row.grantRevision == null ? null : Number(row.grantRevision)
+            } : null,
+            retryCount: Number(row.retryCount) || 0,
             planRevision: Number(row.planRevision) || 0,
             sortOrder: row.sortOrder,
             startedAt: row.startedAt || null,
@@ -699,7 +757,7 @@ class ProjectMissionService {
         const cleanKind = String(kind || '').trim().toLowerCase();
         if (!STEP_KINDS.has(cleanKind)) {
             throw new ProjectMissionError(400, 'BAD_STEP_KIND',
-                'Step kind must be expedition, job, watch, or human.');
+                'Step kind must be expedition, job, watch, human, or agent.');
         }
         const cleanTitle = clip(title, MAX_STEP_TITLE);
         if (!cleanTitle) {
@@ -708,6 +766,8 @@ class ProjectMissionService {
         let params = parseJson(actionParams, {}) || {};
         if (cleanKind === 'human') {
             params = legalizeHumanActionParams(params);
+        } else if (cleanKind === 'agent') {
+            params = legalizeAgentActionParams(params);
         } else {
             for (const key of Object.keys(params)) {
                 if (params[key] == null || params[key] === '') delete params[key];
@@ -1162,6 +1222,13 @@ class ProjectMissionService {
         await this.reconcileStartingSteps({ missionId: row.id });
         await this.reconcileRunningSteps({ missionId: row.id });
         const step = await this._getStep(row.id, stepId);
+        if (step.kind === 'agent') {
+            // ADR 0019: only a responsibility's run dispatches an agent step,
+            // through beginDelegatedStep. A person can do it and mark it done, or skip it.
+            throw new ProjectMissionError(409, 'AGENT_STEP_DELEGATED',
+                `Step “${step.title}” is carried out by a responsibility that may carry out this plan's agent steps. `
+                + 'Mark it done yourself, or skip it.');
+        }
         if (step.status !== 'READY' && step.status !== 'PENDING') {
             throw new ProjectMissionError(409, 'BAD_STEP_STATUS',
                 `Step “${step.title}” is ${step.status}, not ready to start.`);
@@ -1215,7 +1282,7 @@ class ProjectMissionService {
             `UPDATE project_mission_steps
              SET status = 'STARTING', executionAttemptId = @attemptId,
                  startedByUserId = @startedBy, startedAt = datetime('now'),
-                 updatedAt = datetime('now')
+                 authorizationKind = 'human', updatedAt = datetime('now')
              WHERE id = @id AND missionId = @missionId
                AND status IN ('READY', 'PENDING')`,
             { id: step.id, missionId: row.id, attemptId, startedBy: userId }
@@ -1256,7 +1323,7 @@ class ProjectMissionService {
                 `UPDATE project_mission_steps
                  SET status = 'READY', executionAttemptId = NULL, startedAt = NULL,
                      startedByUserId = NULL, expeditionId = NULL, jobId = NULL, watchId = NULL,
-                     updatedAt = datetime('now')
+                     authorizationKind = NULL, updatedAt = datetime('now')
                  WHERE id = @id AND status = 'STARTING' AND executionAttemptId = @attemptId`,
                 { id: step.id, attemptId }
             );
@@ -1324,7 +1391,8 @@ class ProjectMissionService {
         if (kind === 'human') return;
         const key = kind === 'expedition' ? 'maxExpeditions'
             : kind === 'job' ? 'maxJobs'
-                : 'maxWatches';
+                : kind === 'agent' ? 'maxAgentRuns'
+                    : 'maxWatches';
         const cap = budget[key];
         const used = await db.get(
             `SELECT COUNT(*) AS c FROM project_mission_steps
@@ -1380,6 +1448,37 @@ class ProjectMissionService {
                 if (!this._ignoreChildCancel(error)) throw error;
             }
         }
+        const runId = this._agentRunOf(step);
+        if (runId) {
+            // The step was closed by a person (done, skipped, plan cancelled):
+            // the attempt carrying it loses its lease and writes nothing more.
+            // Plain SQL: the assistant feature's code may not be installed.
+            const now = toUtcText(new Date());
+            await db.run(
+                `UPDATE assistant_initiatives
+                 SET status = 'CANCELLED', stopCode = 'PLAN_STEP_CLOSED', leaseToken = NULL, leaseExpiresAt = NULL,
+                     revision = revision + 1, endedAt = @now, updatedAt = @now
+                 WHERE id IN (SELECT initiativeId FROM assistant_runs WHERE id = @runId)
+                   AND status IN ('QUEUED', 'RUNNING', 'WAITING')`,
+                { runId, now }
+            );
+            await db.run(
+                `UPDATE assistant_runs
+                 SET status = 'CANCELLED', stopCode = 'PLAN_STEP_CLOSED', endedAt = @now, updatedAt = @now
+                 WHERE id = @runId AND status IN ('RUNNING', 'WAITING')`,
+                { runId, now }
+            );
+        }
+    }
+
+    /** The assistant_runs.id carrying an agent step's current attempt, or null. */
+    _agentRunOf(step) {
+        if (!step || step.kind !== 'agent') return null;
+        if (step.agentRunId) return Number(step.agentRunId);
+        const attempt = String(step.executionAttemptId || '');
+        if (!attempt.startsWith(AGENT_ATTEMPT_PREFIX)) return null;
+        const id = Number(attempt.slice(AGENT_ATTEMPT_PREFIX.length));
+        return Number.isSafeInteger(id) && id > 0 ? id : null;
     }
 
     /**
@@ -1440,6 +1539,7 @@ class ProjectMissionService {
     }
 
     async _settleIfChildTerminal(step) {
+        if (step.kind === 'agent') return this._reconcileAgentStep(step);
         if (step.kind === 'job' && step.jobId) {
             const job = await db.get(
                 'SELECT status FROM observatory_jobs WHERE id = @id',
@@ -1500,6 +1600,11 @@ class ProjectMissionService {
             );
             return row ? { col: 'watchId', id: row.id } : null;
         }
+        if (step.kind === 'agent') {
+            const runId = this._agentRunOf({ ...step, agentRunId: null });
+            const row = runId ? await db.get('SELECT id FROM assistant_runs WHERE id = @id', { id: runId }) : null;
+            return row ? { col: 'agentRunId', id: row.id } : null;
+        }
         return null;
     }
 
@@ -1550,9 +1655,10 @@ class ProjectMissionService {
         let linked = {
             jobId: step.jobId,
             expeditionId: step.expeditionId,
-            watchId: step.watchId
+            watchId: step.watchId,
+            agentRunId: step.agentRunId
         };
-        if (!linked.jobId && !linked.expeditionId && !linked.watchId) {
+        if (!linked.jobId && !linked.expeditionId && !linked.watchId && !linked.agentRunId) {
             const child = await this._findChildByAttempt(step);
             if (child) {
                 linked[child.col] = child.id;
@@ -1564,7 +1670,7 @@ class ProjectMissionService {
                 );
             }
         }
-        if (linked.jobId || linked.expeditionId || linked.watchId) {
+        if (linked.jobId || linked.expeditionId || linked.watchId || linked.agentRunId) {
             const promoted = (await db.run(
                 `UPDATE project_mission_steps
                  SET status = 'RUNNING', updatedAt = datetime('now')
@@ -1745,6 +1851,10 @@ class ProjectMissionService {
                 if (advanced) nextStatus = 'REVIEW';
             }
         });
+        if (step.kind === 'agent' && IN_FLIGHT_STEP.has(step.status)) {
+            // A person did the step themselves: the run that held it stops.
+            await this._cancelLinkedWork(step, userId);
+        }
         this._publish(
             nextStatus === 'REVIEW'
                 ? domainEventBus.TOPICS.MISSION_REVIEW
@@ -1830,6 +1940,8 @@ class ProjectMissionService {
             `UPDATE project_mission_steps
              SET status = 'READY', executionAttemptId = NULL, startedByUserId = NULL,
                  expeditionId = NULL, jobId = NULL, watchId = NULL,
+                 agentRunId = NULL, authorizationKind = NULL, grantResponsibilityId = NULL, grantRevision = NULL,
+                 retryCount = retryCount + 1,
                  startedAt = NULL, finishedAt = NULL, updatedAt = datetime('now')
              WHERE id = @id AND status = 'FAILED'`,
             { id: step.id }
@@ -1883,6 +1995,373 @@ class ProjectMissionService {
             payload: { stepId: step.id, expeditionId, jobId, watchId }
         });
         return this.get({ userId, project: projectRow.slug, owner: projectRow.ownerId, missionId: row.id });
+    }
+
+    // --- Delegated execution of agent steps (ADR 0019) ---------------------------------
+
+    /** What a run needs to know about an agent step: the step, its plan and its project. */
+    async agentStepContext(stepId) {
+        const id = Number(stepId);
+        if (!Number.isSafeInteger(id) || id <= 0) return null;
+        const step = await db.get('SELECT * FROM project_mission_steps WHERE id = @id', { id });
+        if (!step || step.kind !== 'agent') return null;
+        const mission = await db.get('SELECT * FROM project_missions WHERE id = @id', { id: step.missionId });
+        if (!mission) return null;
+        return {
+            step: this._shapeStep(step),
+            mission: {
+                id: Number(mission.id),
+                projectId: Number(mission.projectId),
+                title: mission.title,
+                objective: mission.objective,
+                successCriteria: parseJson(mission.successCriteriaJson, []) || [],
+                status: mission.status,
+                planRevision: Number(mission.planRevision) || 1,
+                approvedRevision: mission.approvedRevision != null ? Number(mission.approvedRevision) : null
+            }
+        };
+    }
+
+    /**
+     * Dispatch an agent step to a delegated run. The caller has already been
+     * allowed `plan.step.execute` on the project by `authorize()`; this
+     * checks the plan side, inside the project's write lock: the plan is the
+     * revision a person approved and started, the step is part of it and
+     * READY, the acting person can still reach the project, and the plan's
+     * own budget has room. It follows the READY → STARTING → RUNNING
+     * protocol with `executionAttemptId = assistant_run:<runId>`, so a crash
+     * between claim and link is repaired by reconcileStartingSteps.
+     *
+     * The delegation authorization record is the step's own columns
+     * (authorizationKind, grantResponsibilityId, grantRevision) and a
+     * `step_started` timeline event. No confirmation receipt is read or written.
+     *
+     * @param {{ stepId, planRevision?, runId, actorUserId, responsibilityId, grantRevision }} params
+     *   planRevision: the approved revision the work was proposed under
+     * @returns {Promise<{ ok: true, resumed?: boolean, settled?: 'DONE'|'FAILED', stepId, missionId, projectId }
+     *   | { ok: false, code: 'NO_STEP'|'STEP_NOT_ELIGIBLE'|'PLAN_BLOCKED'|'PLAN_NOT_ACTIVE'|'PLAN_REVISION_STALE'
+     *       |'PLAN_BUDGET'|'RESOURCE_UNAVAILABLE' }>}
+     */
+    async beginDelegatedStep({
+        stepId, planRevision = null, runId, actorUserId, responsibilityId = null, grantRevision = null
+    } = {}) {
+        const id = Number(stepId);
+        const run = Number(runId);
+        if (!Number.isSafeInteger(id) || !Number.isSafeInteger(run) || run <= 0 || !actorUserId) {
+            return { ok: false, code: 'NO_STEP' };
+        }
+        const actor = String(actorUserId);
+        const attemptId = `${AGENT_ATTEMPT_PREFIX}${run}`;
+        const head = await db.get(
+            `SELECT s.id, s.missionId, m.projectId, p.slug
+             FROM project_mission_steps s
+             JOIN project_missions m ON m.id = s.missionId
+             JOIN observatory_projects p ON p.id = m.projectId
+             WHERE s.id = @id AND s.kind = 'agent'`,
+            { id }
+        );
+        if (!head) return { ok: false, code: 'NO_STEP' };
+        const base = { stepId: id, missionId: Number(head.missionId), projectId: Number(head.projectId) };
+        let claim;
+        try {
+            claim = await db.transaction(async (tx) => {
+                await require('../utils/editConflict').lockProjectWrite(tx, head.projectId, actor);
+                const step = await tx.get('SELECT * FROM project_mission_steps WHERE id = @id', { id });
+                const mission = await tx.get('SELECT * FROM project_missions WHERE id = @id', { id: head.missionId });
+                if (!step || !mission) return { ok: false, code: 'NO_STEP' };
+                const mine = step.executionAttemptId === attemptId;
+                if (mine && IN_FLIGHT_STEP.has(step.status)) return { ok: true, resumed: true };
+                if (mine && (step.status === 'DONE' || step.status === 'FAILED')) return { ok: true, settled: step.status };
+                if (!['ACTIVE', 'BLOCKED'].includes(mission.status)) return { ok: false, code: 'PLAN_NOT_ACTIVE' };
+                // Closed, or held by a person or another run.
+                if (!['READY', 'PENDING'].includes(step.status)) return { ok: false, code: 'STEP_NOT_ELIGIBLE' };
+                if (mission.status === 'BLOCKED') return { ok: false, code: 'PLAN_BLOCKED' };
+                const approved = mission.approvedRevision != null ? Number(mission.approvedRevision) : null;
+                if (!mission.approvedAt || approved == null
+                    || approved !== (Number(mission.planRevision) || 1)
+                    || (planRevision != null && Number(planRevision) !== approved)
+                    || (Number(step.planRevision) || 0) > approved) {
+                    return { ok: false, code: 'PLAN_REVISION_STALE' };
+                }
+                if (step.status !== 'READY') return { ok: false, code: 'STEP_NOT_ELIGIBLE' };
+                const budget = legalizeBudget(mission.budgetJson);
+                const used = await tx.get(
+                    `SELECT COUNT(*) AS c FROM project_mission_steps
+                     WHERE missionId = @missionId AND kind = 'agent'
+                       AND status IN ('STARTING', 'RUNNING', 'DONE', 'FAILED')`,
+                    { missionId: mission.id }
+                );
+                if (Number(used?.c || 0) >= budget.maxAgentRuns) return { ok: false, code: 'PLAN_BUDGET' };
+                const claimed = (await tx.run(
+                    `UPDATE project_mission_steps
+                     SET status = 'STARTING', executionAttemptId = @attemptId,
+                         startedByUserId = @actor, startedAt = datetime('now'),
+                         authorizationKind = 'delegated', grantResponsibilityId = @responsibilityId,
+                         grantRevision = @grantRevision, agentRunId = NULL, updatedAt = datetime('now')
+                     WHERE id = @id AND status = 'READY'`,
+                    {
+                        id, attemptId, actor,
+                        responsibilityId: responsibilityId == null ? null : Number(responsibilityId),
+                        grantRevision: grantRevision == null ? null : Number(grantRevision)
+                    }
+                )).changes > 0;
+                return claimed ? { ok: true, claimed: true } : { ok: false, code: 'STEP_NOT_ELIGIBLE' };
+            });
+        } catch (error) {
+            if (error?.code === 'NO_SUCH_PROJECT') return { ok: false, code: 'RESOURCE_UNAVAILABLE' };
+            throw error;
+        }
+        if (!claim.ok) return claim;
+        if (claim.settled) return { ok: true, settled: claim.settled, ...base };
+
+        // Link the run that already exists and promote. A resumed attempt
+        // left in STARTING by a crash is promoted the same way.
+        const linked = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'RUNNING', agentRunId = @run, updatedAt = datetime('now')
+             WHERE id = @id AND executionAttemptId = @attemptId AND status IN ('STARTING', 'RUNNING')`,
+            { id, run, attemptId }
+        )).changes > 0;
+        if (!linked) return { ok: false, code: 'STEP_NOT_ELIGIBLE' };
+        if (claim.claimed) {
+            await this._appendEvent(db, {
+                missionId: head.missionId, userId: actor, kind: 'step_started',
+                payload: {
+                    stepId: id, stepKind: 'agent', attemptId, authorization: 'delegated',
+                    runId: run,
+                    responsibilityId: responsibilityId == null ? null : Number(responsibilityId),
+                    grantRevision: grantRevision == null ? null : Number(grantRevision)
+                }
+            });
+            this._publish(domainEventBus.TOPICS.MISSION_STEP_STARTED, {
+                userId: actor, missionId: head.missionId, projectId: head.projectId, slug: head.slug,
+                stepId: id, kind: 'agent'
+            });
+        }
+        return { ok: true, resumed: Boolean(claim.resumed), ...base };
+    }
+
+    /**
+     * Close an agent step its run still holds. Inside a transaction.
+     * `ok` links the verified result as `agent_run` evidence and marks the
+     * step done; otherwise the step fails and the plan is blocked.
+     * @returns {Promise<{ ok: boolean, code?: string, missionStatus?: string }>}
+     */
+    async _closeAgentStep(tx, { step, mission, actor, ok, code = null, evidence = null }) {
+        const runId = this._agentRunOf(step);
+        let nextMission = mission.status;
+        if (ok) {
+            const criteria = parseJson(mission.successCriteriaJson, []) || [];
+            const wanted = [...new Set((evidence?.criteria || []).map(c => String(c)))]
+                .filter(cid => criteria.some(c => c.id === cid));
+            const targets = wanted.length ? wanted : [''];
+            const count = await tx.get(
+                'SELECT COUNT(*) AS c FROM project_mission_evidence WHERE missionId = @missionId',
+                { missionId: mission.id }
+            );
+            if (Number(count?.c || 0) + targets.length > MAX_EVIDENCE) return { ok: false, code: 'EVIDENCE_LIMIT' };
+            const artifacts = (evidence?.artifacts || []).map(a => ({
+                path: String(a.path), bytes: Number(a.bytes) || 0, sha256: String(a.sha256 || '')
+            }));
+            const provenance = JSON.stringify({
+                scope: 'project',
+                stepId: step.id,
+                authorization: 'delegated',
+                responsibilityId: step.grantResponsibilityId == null ? null : Number(step.grantResponsibilityId),
+                grantRevision: step.grantRevision == null ? null : Number(step.grantRevision),
+                artifacts
+            });
+            for (const criterionId of targets) {
+                // Linked, never counted for or against: only a person's
+                // review says what the result proves.
+                await tx.insert(
+                    `INSERT INTO project_mission_evidence
+                        (missionId, userId, criterionId, kind, refId, label, polarity, provenanceJson)
+                     VALUES
+                        (@missionId, @userId, @criterionId, 'agent_run', @refId, @label, 'neutral', @provenance)`,
+                    {
+                        missionId: mission.id,
+                        userId: actor,
+                        criterionId,
+                        refId: runId,
+                        label: clip(evidence?.label || step.title, MAX_EVIDENCE_LABEL) || null,
+                        provenance
+                    }
+                );
+            }
+            await tx.run(
+                `UPDATE project_mission_steps
+                 SET status = 'DONE', finishedAt = datetime('now'), updatedAt = datetime('now')
+                 WHERE id = @id`,
+                { id: step.id }
+            );
+            await this._appendEvent(tx, {
+                missionId: mission.id, userId: actor, kind: 'step_done',
+                payload: {
+                    stepId: step.id, authorization: 'delegated', runId,
+                    artifacts: artifacts.map(a => a.path),
+                    criteria: wanted
+                }
+            });
+            await this._refreshReadySteps(tx, mission.id);
+            if (mission.status === 'ACTIVE' && await this._maybeAdvanceToReview(tx, mission, actor)) nextMission = 'REVIEW';
+            return { ok: true, missionStatus: nextMission };
+        }
+        const reason = clip(code, 60) || 'STEP_FAILED';
+        await tx.run(
+            `UPDATE project_mission_steps
+             SET status = 'FAILED', finishedAt = datetime('now'), updatedAt = datetime('now')
+             WHERE id = @id`,
+            { id: step.id }
+        );
+        await this._appendEvent(tx, {
+            missionId: mission.id, userId: actor, kind: 'step_failed',
+            payload: { stepId: step.id, reason, authorization: 'delegated', runId }
+        });
+        if (await this._maybeBlock(tx, mission, actor, `Agent step “${step.title}” did not finish (${reason}).`)) {
+            nextMission = 'BLOCKED';
+        }
+        return { ok: true, missionStatus: nextMission };
+    }
+
+    _publishAgentStepClosed({ head, actor, ok, missionStatus }) {
+        const topic = missionStatus === 'BLOCKED'
+            ? domainEventBus.TOPICS.MISSION_BLOCKED
+            : missionStatus === 'REVIEW'
+                ? domainEventBus.TOPICS.MISSION_REVIEW
+                : (ok ? domainEventBus.TOPICS.MISSION_STEP_COMPLETED : domainEventBus.TOPICS.MISSION_STEP_FAILED);
+        this._publish(topic, {
+            userId: actor, missionId: head.missionId, projectId: head.projectId, slug: head.slug,
+            stepId: head.id, status: missionStatus
+        });
+    }
+
+    async _agentStepHead(stepId) {
+        const id = Number(stepId);
+        if (!Number.isSafeInteger(id) || id <= 0) return null;
+        return db.get(
+            `SELECT s.id, s.missionId, s.userId AS stepUserId, s.startedByUserId, m.projectId, m.userId AS ownerId, p.slug
+             FROM project_mission_steps s
+             JOIN project_missions m ON m.id = s.missionId
+             JOIN observatory_projects p ON p.id = m.projectId
+             WHERE s.id = @id AND s.kind = 'agent'`,
+            { id }
+        );
+    }
+
+    /**
+     * Settle an agent step from the run that holds it, after the run service
+     * verified the result. One transaction under the project's write lock,
+     * which re-checks that the acting person is still on the project: a
+     * person removed while the run worked publishes nothing.
+     *
+     * @param {{ stepId, runId, actorUserId, ok: boolean, code?: string,
+     *   evidence?: { criteria?: string[], label?: string, artifacts?: { path, bytes, sha256 }[] } }} params
+     * @returns {Promise<{ ok: true, stepStatus: 'DONE'|'FAILED', missionStatus: string }
+     *   | { ok: false, code: 'NO_STEP'|'STEP_NOT_HELD'|'PLAN_NOT_ACTIVE'|'EVIDENCE_LIMIT'|'RESOURCE_UNAVAILABLE' }>}
+     */
+    async settleDelegatedStep({ stepId, runId, actorUserId, ok, code = null, evidence = null } = {}) {
+        const head = await this._agentStepHead(stepId);
+        if (!head || !actorUserId) return { ok: false, code: 'NO_STEP' };
+        const actor = String(actorUserId);
+        const attemptId = `${AGENT_ATTEMPT_PREFIX}${Number(runId)}`;
+        let outcome;
+        try {
+            outcome = await db.transaction(async (tx) => {
+                await require('../utils/editConflict').lockProjectWrite(tx, head.projectId, actor);
+                const step = await tx.get('SELECT * FROM project_mission_steps WHERE id = @id', { id: head.id });
+                if (!step || !IN_FLIGHT_STEP.has(step.status) || step.executionAttemptId !== attemptId) {
+                    return { ok: false, code: 'STEP_NOT_HELD' };
+                }
+                const mission = await tx.get('SELECT * FROM project_missions WHERE id = @id', { id: head.missionId });
+                if (!mission || !['ACTIVE', 'BLOCKED'].includes(mission.status)) return { ok: false, code: 'PLAN_NOT_ACTIVE' };
+                return this._closeAgentStep(tx, { step, mission, actor, ok: Boolean(ok), code, evidence });
+            });
+        } catch (error) {
+            if (error?.code === 'NO_SUCH_PROJECT') return { ok: false, code: 'RESOURCE_UNAVAILABLE' };
+            throw error;
+        }
+        if (!outcome.ok) return outcome;
+        this._publishAgentStepClosed({ head, actor, ok: Boolean(ok), missionStatus: outcome.missionStatus });
+        return { ok: true, stepStatus: ok ? 'DONE' : 'FAILED', missionStatus: outcome.missionStatus };
+    }
+
+    /**
+     * Give an agent step back (READY) when the run that held it stops
+     * without a result: its grant stopped covering the work, the acting
+     * person lost the project, or the attempt was cancelled. Nothing is
+     * reported as done or failed; a person, or a later attempt, takes it up.
+     * @returns {Promise<boolean>} whether the step was released
+     */
+    async releaseDelegatedStep({ stepId, runId, code = null } = {}) {
+        const head = await this._agentStepHead(stepId);
+        if (!head) return false;
+        return this._releaseAgentStep(head, `${AGENT_ATTEMPT_PREFIX}${Number(runId)}`, code);
+    }
+
+    async _releaseAgentStep(head, attemptId, code) {
+        const released = (await db.run(
+            `UPDATE project_mission_steps
+             SET status = 'READY', executionAttemptId = NULL, startedByUserId = NULL, startedAt = NULL,
+                 agentRunId = NULL, authorizationKind = NULL, grantResponsibilityId = NULL, grantRevision = NULL,
+                 updatedAt = datetime('now')
+             WHERE id = @id AND status IN ('STARTING', 'RUNNING') AND executionAttemptId = @attemptId`,
+            { id: head.id, attemptId }
+        )).changes > 0;
+        if (!released) return false;
+        // The mission owner, not the person the run acted for: they may no
+        // longer be on the project.
+        await this._appendEvent(db, {
+            missionId: head.missionId, userId: head.ownerId, kind: 'step_released',
+            payload: { stepId: head.id, reason: clip(code, 60) || 'RELEASED' }
+        });
+        try {
+            require('./eventBusService').publishProjectChange({
+                userId: head.ownerId, slug: head.slug, reason: 'mission', projectId: head.projectId
+            });
+        } catch { /* portal refetch is best-effort */ }
+        return true;
+    }
+
+    /**
+     * Backstop for a RUNNING agent step (reconcileRunningSteps). The run
+     * service settles or releases the step itself; this covers a crash in
+     * between and work that stopped from the outside (grant paused or
+     * revoked, attempt cancelled, the person erased). The step stays held
+     * only while its attempt will continue by itself.
+     */
+    async _reconcileAgentStep(step) {
+        const runId = this._agentRunOf(step);
+        const attempt = runId ? await db.get(
+            `SELECT i.status, i.waitReason, i.stopCode, g.status AS grantStatus
+             FROM assistant_runs r
+             JOIN assistant_initiatives i ON i.id = r.initiativeId
+             LEFT JOIN assistant_responsibilities g ON g.id = r.responsibilityId
+             WHERE r.id = @runId`,
+            { runId }
+        ) : null;
+        const state = attempt?.status || null;
+        const grantLive = attempt?.grantStatus === 'ACTIVE';
+        if (grantLive && (state === 'QUEUED' || state === 'RUNNING')) return false;
+        if (grantLive && state === 'WAITING' && ['budget', 'dependency'].includes(attempt.waitReason)) return false;
+        const head = await this._agentStepHead(step.id);
+        if (!head) return false;
+        if (state === 'FAILED' || state === 'REVIEW') {
+            const actor = head.ownerId;
+            const outcome = await db.transaction(async (tx) => {
+                const fresh = await tx.get('SELECT * FROM project_mission_steps WHERE id = @id', { id: step.id });
+                if (!fresh || fresh.status !== 'RUNNING' || fresh.executionAttemptId !== step.executionAttemptId) return null;
+                const mission = await tx.get('SELECT * FROM project_missions WHERE id = @id', { id: head.missionId });
+                if (!mission) return null;
+                return this._closeAgentStep(tx, {
+                    step: fresh, mission, actor, ok: false, code: attempt.stopCode || `RUN_${state}`
+                });
+            });
+            if (!outcome) return false;
+            this._publishAgentStepClosed({ head, actor, ok: false, missionStatus: outcome.missionStatus });
+            return true;
+        }
+        return this._releaseAgentStep(head, step.executionAttemptId, state ? `RUN_${state}` : 'RUN_MISSING');
     }
 
     // --- Plan steps linked to code -----------------------------------------------------
@@ -2549,5 +3028,7 @@ module.exports.RECEIPT_KINDS = RECEIPT_KINDS;
 module.exports.ASSESSMENTS = ASSESSMENTS;
 module.exports.legalizeCriteria = legalizeCriteria;
 module.exports.legalizeHumanActionParams = legalizeHumanActionParams;
+module.exports.legalizeAgentActionParams = legalizeAgentActionParams;
+module.exports.AGENT_ATTEMPT_PREFIX = AGENT_ATTEMPT_PREFIX;
 module.exports.toUtcText = toUtcText;
 module.exports.watchReconcileOutcome = watchReconcileOutcome;

@@ -24,6 +24,13 @@ The address the portal uses for the manager is `manager.baseUrl` in
 must be `http` on this machine or `https`, with no credentials, path or query;
 anything else is refused and the Host room says so.
 
+The Host room also has **Schedules** ([operator_schedules.md](operator_schedules.md))
+and **Delegated work** ([delegated_operations.md](delegated_operations.md):
+stop all delegated work, its caps, the pilot decision and an installation
+view with no private text). Those two act directly on the database through
+`packages/core/web/routes/admin.js`, take effect at once with no restart,
+and do not need the manager.
+
 Only operators (`identity.operators`, or the Discord owner) reach any of this.
 A member gets `403` and nothing renders; the response does not reveal that a
 manager exists.
