@@ -138,7 +138,49 @@ const REFLECTION = {
     staleRunMinutes: 15
 };
 
+/**
+ * Epistemic state of a note's claim (architecture section 6). `current` is
+ * the default; `disputed` and `superseded` stay retrievable with an explicit
+ * label; `retracted` is never presented as current knowledge.
+ */
+const CLAIM_STATUSES = ['current', 'disputed', 'superseded', 'retracted'];
+
+/** Why an edge is not live: kept for review and restore, never deleted by it. */
+const EDGE_RETRACTION_CODES = ['run', 'user', 'unmerged', 'superseded'];
+
+/** Where an edge's evidence points (`kg_edges.evidenceKind`). */
+const EDGE_EVIDENCE_KINDS = ['run', 'note', 'merge', 'user'];
+
+/**
+ * Archived notes (ADR 0027) leave retrieval but stay restorable. They no
+ * longer count toward a scope's live cap, so archiving is a way to make
+ * room; this many archived notes per scope are kept, oldest generated ones
+ * going first. A note the person saved is never removed by that bound.
+ */
+const MAX_ARCHIVED_PER_SCOPE = 500;
+
+/** Delegated knowledge work (ADR 0027): bounds on what one run and one person carry. */
+const CHANGE_SETS = {
+    /** Open saved-note proposals one responsibility may have waiting. */
+    maxOpenPerResponsibility: 10,
+    /** Proposals and direct changes one run may file. */
+    maxPerRun: 5,
+    /** A proposal no one decided goes STALE after this many days. */
+    openDays: 30,
+    /** Decided change sets (and their before/after text) are removed after this many days. */
+    retentionDays: 180,
+    /** Notes one source-retraction review names; the rest are counted. */
+    maxNotesPerReview: 50,
+    maxRationaleLength: 600,
+    maxReasonLength: 300
+};
+
 module.exports = {
+    CLAIM_STATUSES,
+    EDGE_RETRACTION_CODES,
+    EDGE_EVIDENCE_KINDS,
+    MAX_ARCHIVED_PER_SCOPE,
+    CHANGE_SETS,
     MAX_LABEL_LENGTH,
     MAX_CONTENT_LENGTH,
     MAX_RELATION_LENGTH,

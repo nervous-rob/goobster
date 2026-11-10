@@ -47,7 +47,10 @@
  *
  * A write that declines answers with text starting "Not " ("Not pushed:
  * ..."): it changed nothing, is left out of the run's "Changed:" list and
- * does not count against `externalOperations`.
+ * does not count against `externalOperations`. A spec with `proposes: true`
+ * changes nothing either: it files a request for the person to decide, and
+ * the run's report lists it as waiting for them, not as changed. A spec
+ * with `quiet: true` records evidence only and is not reported at all.
  *
  * To add a capability: add a module here and one line below. The order of
  * the lines is the order the tools are offered in.
@@ -62,6 +65,7 @@ const TOOLS = {
     ...require('./connectors'),
     ...require('./startResearch'),
     ...require('./generatedNotes'),
+    ...require('./savedNotes'),
     ...require('./consultDocs'),
     ...require('./finish'),
     ...require('./planStep')

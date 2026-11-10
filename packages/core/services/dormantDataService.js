@@ -352,6 +352,8 @@ async function forgetAssistantResponsibilities(userId) {
         { userId }
     )).changes;
     const runs = (await db.run(`DELETE FROM assistant_runs WHERE ${runsOwned}`, { userId })).changes;
+    // Proposed and applied note changes hold the person's note text (before and after).
+    const knowledgeChanges = (await db.run('DELETE FROM kg_change_sets WHERE userId = @userId', { userId })).changes;
     const cursors = (await db.run(`DELETE FROM assistant_source_cursors WHERE ${owned}`, { userId })).changes;
     const proposalCounters = (await db.run(
         `DELETE FROM assistant_proposal_counters WHERE ownerUserId = @userId OR ${owned}`, { userId }
@@ -377,6 +379,8 @@ async function forgetAssistantResponsibilities(userId) {
     const processObservations = (await db.run('DELETE FROM assistant_process_observations WHERE ownerUserId = @userId', { userId })).changes;
     const incidentMembers = (await db.run('DELETE FROM assistant_process_incident_members WHERE ownerUserId = @userId', { userId })).changes;
     const incidents = (await db.run('DELETE FROM assistant_process_incidents WHERE ownerUserId = @userId', { userId })).changes;
+    const processLifecycle = (await db.run('DELETE FROM assistant_process_lifecycle WHERE ownerUserId = @userId', { userId })).changes;
+    const processCleanups = (await db.run('DELETE FROM assistant_process_cleanups WHERE ownerUserId = @userId', { userId })).changes;
 
     const revisions = (await db.run(
         `DELETE FROM assistant_responsibility_revisions
@@ -462,7 +466,8 @@ async function forgetAssistantResponsibilities(userId) {
     return {
         responsibilities, revisions, anonymized: others.length,
         initiatives, cursors, proposalCounters, messageLabels, updates, receipts, processContracts, processObservations, incidents, incidentMembers,
-        runs, runOperations, connectorRequests
+        processLifecycle, processCleanups,
+        runs, runOperations, knowledgeChanges, connectorRequests
     };
 }
 
@@ -499,6 +504,7 @@ async function countAssistantResponsibilities(userId) {
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),
         messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId'),
+        knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId'),
         connectorRequests: await count('SELECT COUNT(*) AS c FROM assistant_connector_requests WHERE ownerUserId = @userId'),
         updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
         updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
@@ -507,7 +513,12 @@ async function countAssistantResponsibilities(userId) {
         processIncidents: await count('SELECT COUNT(*) AS c FROM assistant_process_incidents WHERE ownerUserId = @userId'),
         openProcessIncidents: await count(
             "SELECT COUNT(*) AS c FROM assistant_process_incidents WHERE ownerUserId = @userId AND status <> 'RESOLVED'"
-        )
+        ),
+        pausedProcesses: await count("SELECT COUNT(*) AS c FROM assistant_process_lifecycle WHERE ownerUserId = @userId AND stage = 'PAUSED'"),
+        archivedProcesses: await count(
+            "SELECT COUNT(*) AS c FROM assistant_process_lifecycle WHERE ownerUserId = @userId AND stage IN ('ARCHIVED', 'CLEANED')"
+        ),
+        processCleanups: await count('SELECT COUNT(*) AS c FROM assistant_process_cleanups WHERE ownerUserId = @userId')
     };
 }
 
@@ -540,10 +551,13 @@ async function auditAssistantResponsibilities(userId) {
         processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId'),
         incidents: await count('SELECT COUNT(*) AS c FROM assistant_process_incidents WHERE ownerUserId = @userId'),
         incidentMembers: await count('SELECT COUNT(*) AS c FROM assistant_process_incident_members WHERE ownerUserId = @userId'),
+        processLifecycle: await count('SELECT COUNT(*) AS c FROM assistant_process_lifecycle WHERE ownerUserId = @userId'),
+        processCleanups: await count('SELECT COUNT(*) AS c FROM assistant_process_cleanups WHERE ownerUserId = @userId'),
         runs: await count('SELECT COUNT(*) AS c FROM assistant_runs WHERE ownerUserId = @userId OR actingUserId = @userId OR payerUserId = @userId'),
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),
         messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId'),
+        knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId'),
         connectorRequests: await count('SELECT COUNT(*) AS c FROM assistant_connector_requests WHERE ownerUserId = @userId')
     };
 }

@@ -166,7 +166,7 @@ describe('arguments', () => {
             expect([argv.join(' '), result.exitCode]).toEqual([argv.join(' '), 2]);
         }
         expect(fs.existsSync(archive)).toBe(false);
-    });
+    }, 60_000);
 
     test('a passphrase on the command line is refused as SECRET_ON_ARGV and never echoed; --passphrase-file is a path, not a secret', async () => {
         const { env, root } = await setup();

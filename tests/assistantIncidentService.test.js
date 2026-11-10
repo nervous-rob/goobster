@@ -9,8 +9,8 @@
  * interruption; a process waiting on a failing one joins that incident; a
  * stall is held against a process only for time this installation was
  * itself running; nothing is opened or said for a person with Attention off;
- * a purpose that is over produces one informational update and one
- * candidate; an ignored result alone produces nothing; and one person's
+ * a purpose that is over produces one request and one candidate and
+ * changes nothing; an ignored result alone produces nothing; and one person's
  * incidents never reach another.
  */
 
@@ -40,8 +40,8 @@ const utc = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
 
 const TABLES = [
     'assistant_update_receipts', 'assistant_updates', 'assistant_process_incident_members', 'assistant_process_incidents',
-    'assistant_process_observations', 'assistant_process_contracts', 'attention_notices', 'attention_items',
-    'attention_policies', 'inbox_items', 'instance_state', 'automations'
+    'assistant_process_observations', 'assistant_process_contracts', 'assistant_process_lifecycle', 'attention_notices',
+    'attention_items', 'attention_policies', 'inbox_items', 'instance_state', 'automations'
 ];
 
 afterAll(async () => {
@@ -159,7 +159,7 @@ describe('opening an incident', () => {
         const job = await automation('nightly import');
         for (const hour of [1, 2, 3]) await ran(job, hour, 'failed');
         useState({ inactive: ['assistant'] });
-        expect(await pass(4)).toEqual({ owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0 });
+        expect(await pass(4)).toEqual({ owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0 });
         expect(await incidents.healthCandidates({ userId: A })).toEqual([]);
         expect(await incidents.relevanceCandidates({ userId: A })).toEqual([]);
         useState();
@@ -401,7 +401,7 @@ describe('relevance', () => {
         ));
     }
 
-    test('a process whose goal is resolved while it is still on gets one informational update and one candidate', async () => {
+    test('a process whose goal is resolved while it is still on gets one request and one candidate, and is left alone', async () => {
         const job = await automation('release watch');
         const itemId = await goal('resolved');
         await contract(job, { purpose: 'Tell me when the release ships', attentionItemId: itemId });
@@ -413,9 +413,10 @@ describe('relevance', () => {
             identityKey: `process_relevance:${job.ref}`, kind: 'process', materialRevision: 1,
             title: '"release watch" may no longer be needed'
         });
-        expect(update.summary).toBe('The goal it was set up for is resolved. It is still switched on. Nothing was changed.');
-        // It asks for nothing: no gate, and the process is untouched.
-        expect(update.gateJson).toBeNull();
+        expect(update.summary).toBe('The goal it was set up for is resolved. It is still switched on. Nothing was changed: pause it, or say it should keep running.');
+        // With no grant naming the process it only asks (tests/assistantProcessLifecycle.test.js); the process is untouched.
+        expect(JSON.parse(update.gateJson)).toEqual({ kind: 'process_retirement', id: job.ref, occurrence: 1 });
+        expect(update.gateResolvedAt).toBeNull();
         expect((await db.get('SELECT isEnabled FROM automations WHERE id = @id', { id: job.id })).isEnabled).toBe(1);
 
         expect(await pass(3)).toMatchObject({ relevance: 0 });

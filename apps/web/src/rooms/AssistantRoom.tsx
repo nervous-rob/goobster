@@ -13,6 +13,7 @@ import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
 import { describeGrants, describeListening, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
 import { ConnectorList } from './assistant/ConnectorList';
+import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
@@ -24,7 +25,8 @@ import { ResponsibilityRow } from './assistant/ResponsibilityRow';
  * grants nothing; only Activate, pressed by the person, turns one on.
  *
  * Below them, Processes reports on the recurring work the person has set up
- * (documentation/process_stewardship.md). That part is read-only.
+ * (documentation/process_stewardship.md) and lets them pause, archive,
+ * restore and clean up each one; it owns those actions itself.
  *
  * This file is the page: its queries and the two action handlers. The parts
  * live under ./assistant (the draft form, one responsibility's row, its work
@@ -155,6 +157,7 @@ export function AssistantRoom() {
                             <DraftForm projects={projects} onCreated={refresh} />
                         </div>
                         <ConnectorList enabled={enabled} />
+                        {featureActive(me, 'knowledge') && <KnowledgeChanges />}
                         <ProcessList data={processesQ.data} pending={processesQ.isPending} error={processesQ.isError ? processesQ.error as Error : null} />
                     </>
                 )}

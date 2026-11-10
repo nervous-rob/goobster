@@ -190,6 +190,7 @@ class FactsService {
                 `SELECT n.id, n.label, n.content, n.updatedAt, n.source AS nodeSource
                  FROM kg_nodes n
                  WHERE n.guildId = @guildId AND n.type = 'fact'
+                   AND n.archivedAt IS NULL AND n.claimStatus IN ('current', 'disputed')
                  ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
                 { guildId, limit }
             )

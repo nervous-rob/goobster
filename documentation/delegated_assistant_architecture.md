@@ -12,8 +12,9 @@ are implemented as recorded in ADR 0016, 0017 and 0018, the `agent` plan
 step of section 7 as recorded in ADR 0019, the rest of section 7 for
 explicit requests (requests addressed to Goobster in a conversation,
 supersession when a person changes direction) together with the project
-board of section 9.2 as recorded in ADR 0021, and the assessment and
-incidents of section 8 as recorded in ADR 0020; the rest, and all of section
+board of section 9.2 as recorded in ADR 0021, and the assessment,
+incidents and retirement of section 8 as recorded in ADR 0020 and 0022
+(repair is planned); the rest, and all of section
 13 except "Deciding a request in place" (13.1), the explicit-request part
 of the `conversation_request` adapter (13.2), repository work (ADR 0025)
 and findings for a project's members (both 13.5) and 13.6 (the host's
@@ -360,6 +361,15 @@ removes material from normal retrieval but preserves review/restore access.
 Retrieval normally favors current claims and can include disputed/historical
 claims with explicit labels; it never presents retracted content as current.
 
+**Shipped in DA-11b** ([delegated_knowledge.md](delegated_knowledge.md),
+ADR 0027): `kg_change_sets` with `PROPOSED -> APPLIED | REJECTED | STALE` and
+`APPLIED -> REVERTED` (an undo is refused once the note has moved), claim
+status on nodes, evidence and retraction on edges, reversible merge and
+archive, and the source-retraction impact review. The semantic operations
+built are `amend`, `dispute`, `link`, `unlink`, `archive` and `merge` (as
+archive-as-alias); `supersede`, `retract` of a note and `delete` are not
+available to a run.
+
 Capacity enforcement must protect deliberate saves and active dependencies.
 Archive eligible generated material, refuse an addition, or ask for a storage
 choice instead of silently deleting saved knowledge. Mirror-aware retirement
@@ -431,8 +441,24 @@ grouping with hysteresis and cooldown, the `process_health` and
 `process_relevance` generators and the Home Processes card reading the
 assessment. See [process_stewardship.md](process_stewardship.md) and
 [ADR 0020](adr/0020-process-assessment-and-incidents.md). It observes and
-reports only. Repair and retirement (pause, archive, restore, cleanup) are
-still planned.
+reports only.
+
+**Shipped in DA-5b:** retirement as `PAUSED -> ARCHIVED -> CLEANED` with
+restore and a separate, rechecked resume
+(`assistantProcessLifecycleService`, tables `assistant_process_lifecycle` and
+`assistant_process_cleanups`). Each owning service gained its own pause,
+resume, archive and restore, fenced in its own launch claim; an `archivedAt`
+column on each process table makes an archived definition unstartable from
+any path. The person acts through `POST /api/app/assistant/processes/:kind/:id/actions`;
+the assistant pauses and archives only under `process.pause` /
+`process.archive` on the exact process, checked by `authorize()` at the
+moment of the change, and otherwise files a `process_retirement` request that
+is decided in place. Cleanup is the person's only, from a frozen manifest of
+exact row ids. See
+[process_stewardship.md](process_stewardship.md#retiring-a-process) and
+[ADR 0022](adr/0022-process-retirement.md). Still planned: repair, cleanup
+under `cleanup.exact`, declared owned artifacts beyond a process's own
+records, and permanent deletion (which no grant reaches today).
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,

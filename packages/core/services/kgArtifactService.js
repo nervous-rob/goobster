@@ -336,7 +336,7 @@ class KgArtifactService {
                     (${termHits}) AS termHits
              FROM kg_nodes n
              JOIN kg_artifacts a ON a.nodeId = n.id
-             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact'
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact' AND n.archivedAt IS NULL
                AND (${clauses.join(' OR ')})${kindClause}
              ORDER BY phraseHit DESC, termHits DESC, n.salience DESC, n.updatedAt DESC, n.id ASC
              LIMIT @fetch`,
@@ -382,7 +382,7 @@ class KgArtifactService {
                     a.extractedText, a.relativePath, a.metadataJson
              FROM kg_nodes n
              JOIN kg_artifacts a ON a.nodeId = n.id
-             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact'${kindClause}
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'artifact' AND n.archivedAt IS NULL${kindClause}
              ORDER BY a.createdAt DESC, n.id DESC
              LIMIT @limit`,
             params

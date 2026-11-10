@@ -759,8 +759,12 @@ class PrivacyService {
             // Process incidents and the processes named in them.
             counts.processIncidents = forgottenResponsibilities.incidents;
             counts.processIncidentMembers = forgottenResponsibilities.incidentMembers;
+            // What was paused, archived or cleaned up, and cleanup manifests.
+            counts.processLifecycle = forgottenResponsibilities.processLifecycle;
+            counts.processCleanups = forgottenResponsibilities.processCleanups;
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
+            counts.knowledgeChangeSets = forgottenResponsibilities.knowledgeChanges;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
             // What a run asked the person to approve on an outside connector.
             counts.assistantConnectorRequests = forgottenResponsibilities.connectorRequests;
@@ -1305,10 +1309,13 @@ class PrivacyService {
             assistant_process_observations: responsibilities.processObservations,
             assistant_process_incidents: responsibilities.incidents,
             assistant_process_incident_members: responsibilities.incidentMembers,
+            assistant_process_lifecycle: responsibilities.processLifecycle,
+            assistant_process_cleanups: responsibilities.processCleanups,
             assistant_runs: responsibilities.runs,
             assistant_run_operations: responsibilities.runOperations,
             assistant_proposal_counters: responsibilities.proposalCounters,
             assistant_message_labels: responsibilities.messageLabels,
+            kg_change_sets: responsibilities.knowledgeChanges,
             assistant_connector_requests: responsibilities.connectorRequests,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(

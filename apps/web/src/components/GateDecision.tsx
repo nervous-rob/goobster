@@ -22,6 +22,9 @@ const ALSO_REFRESH: Record<string, QueryKey[]> = {
     friend_request: [keys.friends],
     access_request: [['admin-accounts'], ['admin-access-requests']],
     project_approve: [['project-mission'], ['project-needs-you'], ['project-now']],
+    process_retirement: [keys.assistantProcesses],
+    note_proposal: [keys.assistantKnowledge, ['knowledge']],
+    source_retraction: [keys.assistantKnowledge, ['knowledge']],
     connector_request: [keys.assistantConnectors]
 };
 
@@ -32,6 +35,7 @@ export function GateDecision({ card, surface }: { card: GateDecisionCard; surfac
     const detailId = useId();
     const [busy, setBusy] = useState<string | null>(null);
     if (card.state !== 'open' || card.options.length === 0) return null;
+    const diff = card.diff || [];
 
     const refresh = () => Promise.all(
         [['inbox'], keys.home, keys.me, ...(ALSO_REFRESH[card.kind] || [])]
@@ -54,6 +58,17 @@ export function GateDecision({ card, surface }: { card: GateDecisionCard; surfac
 
     return (
         <div className="gate-decision" role="group" aria-label={card.title} data-testid="gate-decision" data-gate-kind={card.kind}>
+            {diff.length > 0 && (
+                <div className="gate-diff" data-testid="gate-diff" role="group" aria-label="What would change">
+                    {diff.map((entry, index) => (
+                        <div key={index} className={`gate-diff-line gate-diff-${entry.op}`} data-op={entry.op}>
+                            <span aria-hidden="true">{entry.op === 'add' ? '+ ' : entry.op === 'del' ? '- ' : '  '}</span>
+                            <span className="sr-only">{entry.op === 'add' ? 'Added: ' : entry.op === 'del' ? 'Removed: ' : entry.op === 'skip' ? '' : 'Unchanged: '}</span>
+                            {entry.text}
+                        </div>
+                    ))}
+                </div>
+            )}
             {card.options.map((option, index) => (
                 <button key={option.id} type="button"
                     className={`btn small${option.danger ? ' danger' : index === 0 ? ' primary' : ''}`}

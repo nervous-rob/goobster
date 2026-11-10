@@ -401,9 +401,30 @@ export type InboxUpdateRef = {
  * card, so one that has changed is refused instead of applied.
  */
 export type GateDecisionOption = { id: string; label: string; effect: string | null; danger: boolean };
+/** One run of a proposed text change: added, removed, unchanged, or a folded stretch of unchanged passages. */
+export type GateDiffEntry = { op: 'same' | 'add' | 'del' | 'skip'; text: string };
 export type GateDecisionCard = {
     ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
     occurrence: number; revision: string; options: GateDecisionOption[];
+    /** Present only on a card that proposes a change to text (a note proposal). */
+    diff?: GateDiffEntry[];
+};
+
+/** What delegated runs proposed, changed and archived in the person's notes (documentation/delegated_knowledge.md). */
+export type KnowledgeChange = {
+    id: number; kind: 'saved_note_edit' | 'direct_change' | 'source_retraction'; status: 'PROPOSED' | 'APPLIED' | 'REJECTED' | 'STALE' | 'REVERTED';
+    nodeId: number | null; label: string | null; rationale: string | null; diff: GateDiffEntry[];
+    claimStatus: { from: string; to: string } | null; policy: string | null; decision: string | null;
+    impact: { source: string | null; reason: string | null; notes: Array<{ id: number; label: string }>; moreNotes: number; assumptions: Array<{ missionId: number; title: string }>; unverifiable: boolean } | null;
+    revertible: boolean; createdAt: string; decidedAt: string | null; revertedAt: string | null;
+};
+export type KnowledgeArchivedNote = {
+    id: number; label: string; content: string; curation: string; archivedAt: string; archivedBy: string | null; archiveCode: string;
+    mergedInto: { id: number; label: string | null } | null; connections: number;
+};
+export type KnowledgeOverview = {
+    proposals: KnowledgeChange[]; changes: KnowledgeChange[]; archived: KnowledgeArchivedNote[];
+    retractedLinks: Array<{ id: number; relation: string; from: string; to: string; retractedAt: string }>;
 };
 export type GateSurface = 'home' | 'inbox' | 'chat' | 'project';
 export type GateDecisionResult = {
@@ -566,6 +587,43 @@ export type AssistantProcess = {
     enabled: boolean; trigger: { kind: 'cron' | 'event' | 'poll'; schedule?: string; topic?: string; source?: string };
     lastRunAt: string | null; nextRunAt: string | null; hasContract: boolean; criticality: 'low' | 'normal' | 'high';
     assessment: ProcessAssessment; incident: ProcessIncidentRef | null;
+    /** Archived: kept with its history, not running, and not counted with the rest. */
+    archived: boolean;
+    /** Null until the process has been paused, archived or kept through stewardship. */
+    lifecycle: ProcessLifecycle | null;
+    /** What the signed-in person may do with it now. */
+    controls: ProcessAction[];
+};
+export type ProcessAction = 'pause' | 'resume' | 'archive' | 'restore' | 'keep' | 'preview_cleanup' | 'cleanup';
+export type ProcessLifecycle = {
+    stage: 'active' | 'paused' | 'archived' | 'cleaned'; revision: number; actor: 'person' | 'assistant';
+    responsibilityId: number | null; reasonCode: string | null;
+    pausedAt: string | null; archivedAt: string | null; cleanedAt: string | null; resumedAt: string | null;
+    /** Runs that had already started when it was paused, and what became of them. */
+    started: { count: number; policy: 'finish' | 'abandon' } | null;
+    cleaned: { observations: number; sourceEntries: number; sourceCache: boolean } | null;
+    kept: { revision: number; reason: string | null; at: string | null } | null;
+};
+/** A previewed (or applied) cleanup: exactly what it removes, and what it leaves alone. */
+export type ProcessCleanup = {
+    id: number; status: 'PREVIEWED' | 'APPLIED' | 'EXPIRED' | 'INVALIDATED'; manifestHash: string; expiresAt: string;
+    removes: { observations: number; sourceEntries: number; sourceCache: boolean };
+    keeps: { definition?: boolean; contract?: boolean; inboxResults?: number; deliveries?: number; jobs?: number; keptEntries?: number };
+    more: boolean;
+    result: { removed: { observations: number; sourceEntries: number; sourceCache: boolean } } | null;
+    appliedAt: string | null;
+};
+export type ProcessActionResult = {
+    action: ProcessAction; changed: boolean; lifecycle: ProcessLifecycle | null; controls: ProcessAction[];
+    process: { kind: AssistantProcess['kind']; id: number; ref: string; name: string; enabled: boolean };
+    started?: { count: number; policy: 'finish' | 'abandon' };
+    /** Event deliveries that were waiting to retry and were dropped by the pause. */
+    dropped?: number;
+    /** Events that settled while it was paused and will not be replayed. */
+    skipped?: number;
+    dependents?: Array<{ ref: string; name: string; enabled: boolean }>;
+    notRestored?: { observations: number; sourceEntries: number; sourceCache: boolean } | null;
+    cleanup?: ProcessCleanup;
 };
 export type ProcessIncident = {
     id: number; key: string; occurrence: number; status: 'OPEN' | 'RECOVERING' | 'RESOLVED'; causeCode: string | null;
@@ -576,7 +634,7 @@ export type AssistantProcessList = {
     processes: AssistantProcess[];
     counts: {
         total: number; healthy: number; degraded: number; blocked: number; stalled: number; unreachable: number; unknown: number;
-        notWorking: number; retirementCandidates: number; reviewDue: number;
+        notWorking: number; retirementCandidates: number; reviewDue: number; paused: number; archived: number;
     };
     incidents: ProcessIncident[];
 };
